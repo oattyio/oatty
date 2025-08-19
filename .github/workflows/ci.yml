@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: |
+          cd heroku
+          cargo build --workspace --locked
+      - name: Test
+        run: |
+          cd heroku
+          cargo test --workspace --locked
+      - name: Clippy
+        run: |
+          cd heroku
+          cargo clippy --workspace -- -D warnings
+      - name: Fmt
+        run: |
+          cd heroku
+          cargo fmt --all -- --check
+

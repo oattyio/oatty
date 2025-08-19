@@ -1,0 +1,80 @@
+1. Parse the Schema’s Parameter Metadata
+Args → Required positional parameters that identify the resource path or are essential to the endpoint.
+
+Typically found in the schema’s href path template like:
+
+bash
+Copy
+/apps/{app_id}/dynos/{dyno_id}
+→ app_id and dyno_id are required args in CLI syntax:
+
+php-template
+Copy
+heroku dyno restart <app_id> <dyno_id>
+Flags → Optional or additional parameters that modify the request but aren’t required to identify the resource.
+
+These are usually:
+
+Query string params (e.g. ?limit=10)
+
+Optional JSON body fields ("required": false)
+
+Enum switches or booleans
+
+2. Rules for Classification
+Schema Field Location	Required?	CLI Representation
+Path variable	Yes	Positional arg
+Path variable	No	Optional arg (rare, but possible)
+Query parameter	Either	--flag (with = for value if not boolean)
+Body property	Required	--flag (must supply value)
+Body property	Optional	--flag (optional)
+
+3. Derive CLI Signature from Schema
+Example schema snippet:
+
+json
+Copy
+{
+  "href": "/apps/{app_id}/dynos",
+  "method": "POST",
+  "required": ["app_id", "size"],
+  "properties": {
+    "app_id": { "type": "string" },
+    "size": { "type": "string", "enum": ["Free", "Hobby", "Standard-1X"] },
+    "attach": { "type": "boolean" }
+  }
+}
+CLI mapping:
+
+arduino
+Copy
+heroku dyno create <app_id> --size=Standard-1X --attach
+<app_id> = positional arg (from href)
+
+--size = required flag (from required body field)
+
+--attach = optional flag
+
+4. Implementation Steps
+Extract path variables from href templates → mark them as positional args in command definition.
+
+Extract query parameters and body fields from schema → mark them as flags.
+
+Mark required vs optional based on "required" array in schema.
+
+Generate command metadata (name, description, arg list, flag list, defaults, validators) from schema.
+
+Validate before sending request:
+
+If any required arg/flag is missing → fail fast with generated help text.
+
+Optional: For the TUI, present required args first, then optional flags, auto-filled with defaults if present.
+
+5. Benefits of This Approach
+Single source of truth → Schema drives both CLI and TUI.
+
+Automatic updates → New endpoints/fields in the schema instantly generate new CLI commands.
+
+Consistent validation → Types, enums, and required fields enforced automatically.
+
+Zero hand-maintenance → No manual flag vs arg lists.

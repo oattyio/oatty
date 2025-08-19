@@ -1,0 +1,22 @@
+steps:
+  - id: create_app
+    op: http.post
+    params:
+      path: /apps
+      body:
+        name: example-app
+  - id: provision_pg
+    op: http.post
+    depends_on: [create_app]
+    params:
+      path: /apps/{{ steps.create_app.response.name }}/addons
+      body:
+        plan: heroku-postgresql:hobby-dev
+  - id: set_config
+    op: http.patch
+    depends_on: [create_app]
+    params:
+      path: /apps/{{ steps.create_app.response.name }}/config-vars
+      body:
+        RUST_LOG: info
+

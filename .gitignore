@@ -1,0 +1,10 @@
+/target
+**/*.rs.bk
+Cargo.lock
+.DS_Store
+.idea/
+.vscode/
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+

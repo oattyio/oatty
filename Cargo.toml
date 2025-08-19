@@ -1,0 +1,43 @@
+[workspace]
+members = [
+    "crates/cli",
+    "crates/tui",
+    "crates/registry",
+    "crates/engine",
+    "crates/api",
+    "crates/util",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2018"
+license = "MIT OR Apache-2.0"
+authors = ["Heroku CLI Team <devnull@example.com>"]
+repository = "https://example.com/heroku"
+
+[workspace.dependencies]
+anyhow = "1"
+thiserror = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+clap = { version = "4", features = ["derive"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+ratatui = "0.27"
+crossterm = "0.27"
+regex = "1"
+url = "2"
+percent-encoding = "2"
+lazy_static = "1"
+bytes = "1"
+base64 = "0.22"
+glob = "0.3"
+walkdir = "2"
+serde_with = "3"
+time = { version = "0.3", features = ["serde-human-readable"] }
+http = "1"
+hyper = { version = "1", features = ["http1", "http2", "client"] }
+dirs-next = "2"
