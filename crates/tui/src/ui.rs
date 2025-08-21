@@ -6,34 +6,50 @@ use crate::theme;
 pub fn draw(f: &mut Frame, app: &mut App) {
     let size = f.size();
 
+    // Default view: command palette (input), hints, logs
+    let constraints = [
+        Constraint::Length(3),  // input line area
+        Constraint::Length(1),  // hints area
+        Constraint::Min(1),     // spacer / future content
+        Constraint::Length(6),  // logs
+    ];
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(10),
-            Constraint::Length(5),
-        ])
+        .constraints(constraints)
         .split(size);
 
-    draw_search(f, app, chunks[0]);
+    crate::palette::render_palette(f, chunks[0], app);
+    // Hints outside the input block, shown only when popup is not open and no error present
+    if !app.palette.popup_open && app.palette.error.is_none() {
+        let hints = Paragraph::new(
+            Line::from(vec![
+                Span::styled("Hints: ", theme::text_muted()),
+                Span::styled("↑/↓", theme::title_style().fg(theme::ACCENT)),
+                Span::styled(" cycle  ", theme::text_muted()),
+                Span::styled("Tab", theme::title_style().fg(theme::ACCENT)),
+                Span::styled(" accept  ", theme::text_muted()),
+                Span::styled("Ctrl-R", theme::title_style().fg(theme::ACCENT)),
+                Span::styled(" history  ", theme::text_muted()),
+                Span::styled("Ctrl-F", theme::title_style().fg(theme::ACCENT)),
+                Span::styled(" builder  ", theme::text_muted()),
+                Span::styled("Esc", theme::title_style().fg(theme::ACCENT)),
+                Span::styled(" cancel", theme::text_muted()),
+            ]),
+        )
+        .style(theme::text_muted());
+        f.render_widget(hints, chunks[1]);
+    }
 
-    let main = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(30),
-            Constraint::Percentage(35),
-            Constraint::Percentage(35),
-        ])
-        .split(chunks[1]);
-
-    draw_commands(f, app, main[0]);
-    draw_inputs(f, app, main[1]);
-    draw_preview(f, app, main[2]);
-
-    draw_logs(f, app, chunks[2]);
+    draw_logs(f, app, chunks[3]);
 
     if app.show_help {
         draw_help_modal(f, app, f.size());
+    }
+    if app.show_table {
+        draw_table_modal(f, app, f.size());
+    }
+    if app.show_builder {
+        draw_builder_modal(f, app, f.size());
     }
 }
 
@@ -50,7 +66,6 @@ fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     };
     let block = Block::default()
         .title(title)
-        .style(Style::default().bg(theme::BG_PANEL))
         .borders(Borders::ALL)
         .border_style(theme::border_style(app.focus == Focus::Search));
     let inner = block.inner(area);
@@ -69,7 +84,6 @@ fn draw_commands(f: &mut Frame, app: &mut App, area: Rect) {
     let title = format!("Commands ({})", app.filtered.len());
     let block = Block::default()
         .title(Span::styled(title, theme::title_style()))
-        .style(Style::default().bg(theme::BG_PANEL))
         .borders(Borders::ALL)
         .border_style(theme::border_style(app.focus == Focus::Commands));
 
@@ -82,11 +96,7 @@ fn draw_commands(f: &mut Frame, app: &mut App, area: Rect) {
             let mut split = name.splitn(2, ':');
             let group = split.next().unwrap_or("");
             let rest = split.next().unwrap_or("");
-            let display = if rest.is_empty() {
-                group.to_string()
-            } else {
-                format!("{} {}", group, rest)
-            };
+            let display = if rest.is_empty() { group.to_string() } else { format!("{} {}", group, rest) };
             ListItem::new(display).style(theme::text_style())
         })
         .collect();
@@ -101,12 +111,17 @@ fn draw_commands(f: &mut Frame, app: &mut App, area: Rect) {
 
 fn draw_inputs(f: &mut Frame, app: &App, area: Rect) {
     let title = match &app.picked {
-        Some(s) => format!("Inputs: {}", s.name),
+        Some(s) => {
+            let mut split = s.name.splitn(2, ':');
+            let group = split.next().unwrap_or("");
+            let rest = split.next().unwrap_or("");
+            let disp = if rest.is_empty() { group.to_string() } else { format!("{} {}", group, rest) };
+            format!("Inputs: {}", disp)
+        }
         None => "Inputs".into(),
     };
     let block = Block::default()
         .title(Span::styled(title, theme::title_style()))
-        .style(Style::default().bg(theme::BG_PANEL))
         .borders(Borders::ALL)
         .border_style(theme::border_style(app.focus == Focus::Inputs));
 
@@ -257,9 +272,23 @@ impl IfEmptyStr for String {
 }
 
 fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
+    // If we have a JSON result, prefer a table when an array is present; else fallback to key/values
+    if let Some(json) = &app.result_json {
+        let has_array = match json {
+            serde_json::Value::Array(a) => !a.is_empty(),
+            serde_json::Value::Object(m) => m.values().any(|v| matches!(v, serde_json::Value::Array(_))),
+            _ => false,
+        };
+        if has_array {
+            crate::tables::draw_json_table(f, area, json);
+        } else {
+            crate::tables::draw_kv_or_text(f, area, json);
+        }
+        return;
+    }
+
     let block = Block::default()
         .title(Span::styled("Command  [Ctrl+Y] Copy", theme::title_style()))
-        .style(Style::default().bg(theme::BG_PANEL))
         .borders(Borders::ALL)
         .border_style(theme::border_style(false));
     let mut text = String::new();
@@ -282,7 +311,6 @@ fn draw_logs(f: &mut Frame, app: &App, area: Rect) {
             format!("Logs ({})", app.logs.len()),
             theme::title_style(),
         ))
-        .style(Style::default().bg(theme::BG_PANEL))
         .borders(Borders::ALL)
         .border_style(theme::border_style(false));
     let items: Vec<ListItem> = app
@@ -316,7 +344,9 @@ fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 
 fn draw_help_modal(f: &mut Frame, app: &App, area: Rect) {
     let area = centered_rect(80, 70, area);
-    let mut title = if let Some(spec) = &app.picked {
+    // Prefer help_spec when set, otherwise picked
+    let spec_for_help = app.help_spec.as_ref().or(app.picked.as_ref());
+    let mut title = if let Some(spec) = spec_for_help {
         let mut split = spec.name.splitn(2, ':');
         let group = split.next().unwrap_or("");
         let rest = split.next().unwrap_or("");
@@ -332,12 +362,11 @@ fn draw_help_modal(f: &mut Frame, app: &App, area: Rect) {
     title.push_str("  [Esc] Close");
     let block = Block::default()
         .title(Span::styled(title, theme::title_style().fg(theme::ACCENT)))
-        .style(Style::default().bg(theme::BG_PANEL))
         .borders(Borders::ALL)
         .border_style(theme::border_style(true));
 
     // Prepare content text (without footer)
-    let text = if let Some(spec) = &app.picked {
+    let text = if let Some(spec) = spec_for_help {
         build_command_help(spec)
     } else {
         "Select a command to view detailed help.".to_string()
@@ -358,8 +387,111 @@ fn draw_help_modal(f: &mut Frame, app: &App, area: Rect) {
         .wrap(Wrap { trim: false });
     f.render_widget(p, splits[0]);
 
-    // Footer hint pinned to baseline
-    let footer = Paragraph::new("Hint: Ctrl+H close  Ctrl+Y copy").style(theme::text_muted());
+    // Footer hint pinned to baseline (styled)
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled("Hint: ", theme::text_muted()),
+        Span::styled("Ctrl+H", theme::title_style().fg(theme::ACCENT)),
+        Span::styled(" close  ", theme::text_muted()),
+        Span::styled("Ctrl+Y", theme::title_style().fg(theme::ACCENT)),
+        Span::styled(" copy", theme::text_muted()),
+    ]))
+    .style(theme::text_muted());
+    f.render_widget(footer, splits[1]);
+}
+
+fn draw_builder_modal(f: &mut Frame, app: &mut App, area: Rect) {
+    let area = centered_rect(96, 90, area);
+    let block = Block::default()
+        .title(Span::styled("Command Builder  [Esc] Close", theme::title_style().fg(theme::ACCENT)))
+        .borders(Borders::ALL)
+        .border_style(theme::border_style(true));
+    f.render_widget(Clear, area);
+    f.render_widget(block.clone(), area);
+    let inner = block.inner(area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),
+            Constraint::Min(10),
+            Constraint::Length(1),
+        ])
+        .split(inner);
+
+    draw_search(f, app, chunks[0]);
+
+    let main = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage(30),
+            Constraint::Percentage(35),
+            Constraint::Percentage(35),
+        ])
+        .split(chunks[1]);
+    draw_commands(f, app, main[0]);
+    draw_inputs(f, app, main[1]);
+    draw_preview(f, app, main[2]);
+
+    // Footer hint for builder modal
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled("Hint: ", theme::text_muted()),
+        Span::styled("Ctrl+F", theme::title_style().fg(theme::ACCENT)),
+        Span::styled(" close  ", theme::text_muted()),
+        Span::styled("Enter", theme::title_style().fg(theme::ACCENT)),
+        Span::styled(" apply  ", theme::text_muted()),
+        Span::styled("Esc", theme::title_style().fg(theme::ACCENT)),
+        Span::styled(" cancel", theme::text_muted()),
+    ])).style(theme::text_muted());
+    f.render_widget(footer, chunks[2]);
+}
+
+fn draw_table_modal(f: &mut Frame, app: &App, area: Rect) {
+    // Large modal to maximize space for tables
+    let area = centered_rect(96, 90, area);
+    let title = "Results  [Esc] Close  ↑/↓ Scroll";
+    let block = Block::default()
+        .title(Span::styled(title, theme::title_style().fg(theme::ACCENT)))
+        .borders(Borders::ALL)
+        .border_style(theme::border_style(true));
+
+    f.render_widget(Clear, area);
+    f.render_widget(block.clone(), area);
+    let inner = block.inner(area);
+    // Split for content + footer
+    let splits = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
+        .split(inner);
+
+    if let Some(json) = &app.result_json {
+        // Prefer table if array is present, else KV fallback even in modal
+        let has_array = match json {
+            serde_json::Value::Array(a) => !a.is_empty(),
+            serde_json::Value::Object(m) => m.values().any(|v| matches!(v, serde_json::Value::Array(_))),
+            _ => false,
+        };
+        if has_array {
+            crate::tables::draw_json_table_with_offset(f, splits[0], json, app.table_offset);
+        } else {
+            crate::tables::draw_kv_or_text(f, splits[0], json);
+        }
+    } else {
+        let p = Paragraph::new("No results to display").style(theme::text_muted());
+        f.render_widget(p, splits[0]);
+    }
+
+    // Footer hint for table modal
+    let footer = Paragraph::new(Line::from(vec![
+        Span::styled("Hint: ", theme::text_muted()),
+        Span::styled("Esc", theme::title_style().fg(theme::ACCENT)),
+        Span::styled(" close  ", theme::text_muted()),
+        Span::styled("↑/↓", theme::title_style().fg(theme::ACCENT)),
+        Span::styled(" scroll  ", theme::text_muted()),
+        Span::styled("PgUp/PgDn", theme::title_style().fg(theme::ACCENT)),
+        Span::styled(" faster  ", theme::text_muted()),
+        Span::styled("Home/End", theme::title_style().fg(theme::ACCENT)),
+        Span::styled(" jump", theme::text_muted()),
+    ])).style(theme::text_muted());
     f.render_widget(footer, splits[1]);
 }
 

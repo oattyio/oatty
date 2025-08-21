@@ -2,6 +2,8 @@ mod app;
 mod preview;
 mod theme;
 mod ui;
+mod tables;
+mod palette;
 
 use anyhow::Result;
 use arboard::Clipboard;
@@ -30,6 +32,24 @@ pub fn run() -> Result<()> {
     let mut last_tick = Instant::now();
 
     loop {
+        // Check for async execution completion
+        if let Some(rx) = app.exec_rx.as_ref() {
+            if let Ok(out) = rx.try_recv() {
+                app.exec_rx = None;
+                app.executing = false;
+                app.logs.push(out.log);
+                if app.logs.len() > 500 { let _ = app.logs.drain(0..app.logs.len()-500); }
+                app.result_json = out.result_json;
+                app.show_table = out.open_table;
+                if out.open_table { app.table_offset = 0; }
+                // Clear input for next command
+                app.palette.input.clear();
+                app.palette.cursor = 0;
+                app.palette.suggestions.clear();
+                app.palette.popup_open = false;
+                app.palette.error = None;
+            }
+        }
         terminal.draw(|f| ui::draw(f, &mut app))?;
 
         let timeout = tick_rate
@@ -55,6 +75,9 @@ pub fn run() -> Result<()> {
 
         if last_tick.elapsed() >= tick_rate {
             last_tick = Instant::now();
+            if app.executing {
+                app.throbber_idx = (app.throbber_idx + 1) % 10;
+            }
         }
     }
 
@@ -70,13 +93,154 @@ pub fn run() -> Result<()> {
 
 fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
     // Global: close modal on Esc
-    if app.show_help && key.code == KeyCode::Esc {
+    if (app.show_help || app.show_table || app.show_builder) && key.code == KeyCode::Esc {
         app::update(app, app::Msg::CloseModal);
         return Ok(false);
     }
+    // Toggle builder modal (Ctrl+F)
+    if key.code == KeyCode::Char('f') && key.modifiers.contains(KeyModifiers::CONTROL) {
+        app::update(app, app::Msg::ToggleBuilder);
+        return Ok(false);
+    }
+    // While table modal open, handle scrolling keys
+    if app.show_table {
+        match key.code {
+            KeyCode::Up => { app::update(app, app::Msg::TableScroll(-1)); return Ok(false); }
+            KeyCode::Down => { app::update(app, app::Msg::TableScroll(1)); return Ok(false); }
+            KeyCode::PageUp => { app::update(app, app::Msg::TableScroll(-10)); return Ok(false); }
+            KeyCode::PageDown => { app::update(app, app::Msg::TableScroll(10)); return Ok(false); }
+            KeyCode::Home => { app::update(app, app::Msg::TableHome); return Ok(false); }
+            KeyCode::End => { app::update(app, app::Msg::TableEnd); return Ok(false); }
+            KeyCode::Char('t') => { app::update(app, app::Msg::ToggleTable); return Ok(false); }
+            _ => {}
+        }
+    }
+    // If builder modal open, Enter should close builder and populate palette with constructed command
+    if app.show_builder && key.code == KeyCode::Enter {
+        if let Some(spec) = &app.picked {
+            let line = palette_line_from_spec(spec, &app.fields);
+            app.palette.input = line;
+            app.palette.cursor = app.palette.input.len();
+            crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+        }
+        app.show_builder = false;
+        return Ok(false);
+    }
+    // Default palette interaction when not in builder
+    if !app.show_builder {
+        match key.code {
+            KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+                app.palette.insert_char(c);
+                crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+                app.palette.popup_open = true;
+                app.palette.error = None;
+            }
+            KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Open help for exact command (group sub) or top command suggestion
+                let toks: Vec<&str> = app.palette.input.split_whitespace().collect();
+                let mut target: Option<heroku_registry::CommandSpec> = None;
+                if toks.len() >= 2 {
+                    let key = format!("{}:{}", toks[0], toks[1]);
+                    if let Some(spec) = app.registry.commands.iter().find(|c| c.name == key).cloned() {
+                        target = Some(spec);
+                    }
+                }
+                if target.is_none() {
+                    crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+                    if let Some(top) = app.palette.suggestions.get(0) {
+                        if matches!(top.kind, crate::palette::ItemKind::Command) {
+                            // Convert "group sub" to registry key
+                            let mut parts = top.insert_text.split_whitespace();
+                            let group = parts.next().unwrap_or("");
+                            let sub = parts.next().unwrap_or("");
+                            let key = format!("{}:{}", group, sub);
+                            if let Some(spec) = app.registry.commands.iter().find(|c| c.name == key).cloned() {
+                                target = Some(spec);
+                            }
+                        }
+                    }
+                }
+                if let Some(spec) = target {
+                    app.help_spec = Some(spec);
+                    app.toggle_help();
+                }
+            }
+            KeyCode::Backspace => { app.palette.backspace(); crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers); app.palette.error = None; }
+            KeyCode::Left => app.palette.move_cursor_left(),
+            KeyCode::Right => app.palette.move_cursor_right(),
+            KeyCode::Down => {
+                let len = app.palette.suggestions.len();
+                if len > 0 { app.palette.selected = (app.palette.selected + 1) % len; }
+            }
+            KeyCode::Up | KeyCode::BackTab => {
+                let len = app.palette.suggestions.len();
+                if len > 0 { app.palette.selected = (app.palette.selected + len - 1) % len; }
+            }
+            KeyCode::Tab => {
+                if app.palette.popup_open {
+                    if let Some(item) = app.palette.suggestions.get(app.palette.selected).cloned() {
+                        if matches!(item.kind, crate::palette::ItemKind::Command) {
+                            app.palette.input = format!("{} ", item.insert_text);
+                            app.palette.cursor = app.palette.input.len();
+                        } else {
+                            replace_current_token(&mut app.palette, &item.insert_text);
+                        }
+                        crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+                        app.palette.selected = 0;
+                        if matches!(item.kind, crate::palette::ItemKind::Command) {
+                            app.palette.popup_open = false;
+                            app.palette.suggestions.clear();
+                        } else {
+                            app.palette.popup_open = !app.palette.suggestions.is_empty();
+                        }
+                    }
+                } else {
+                    // Open suggestions; if only one, accept it
+                    crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+                    if app.palette.suggestions.len() == 1 {
+                        if let Some(item) = app.palette.suggestions.get(0).cloned() {
+                            if matches!(item.kind, crate::palette::ItemKind::Command) {
+                                app.palette.input = format!("{} ", item.insert_text);
+                                app.palette.cursor = app.palette.input.len();
+                            } else {
+                                replace_current_token(&mut app.palette, &item.insert_text);
+                            }
+                            crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+                            app.palette.selected = 0;
+                            if matches!(item.kind, crate::palette::ItemKind::Command) {
+                                app.palette.popup_open = false;
+                                app.palette.suggestions.clear();
+                            } else {
+                                app.palette.popup_open = !app.palette.suggestions.is_empty();
+                            }
+                        }
+                    } else {
+                        app.palette.popup_open = !app.palette.suggestions.is_empty();
+                    }
+                }
+            }
+            KeyCode::Enter => {
+                if let Err(msg) = start_palette_execution(app) {
+                    app.palette.error = Some(msg);
+                } else {
+                    app.palette.error = None;
+                }
+            }
+            KeyCode::Esc => { app.palette.popup_open = false; }
+            _ => {}
+        }
+        return Ok(false);
+    }
+
     let mut effect: Option<app::Effect> = None;
     match app.focus {
         app::Focus::Search => match key.code {
+            KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                effect = app::update(app, app::Msg::ToggleTable)
+            }
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                effect = app::update(app, app::Msg::ToggleBuilder)
+            }
             KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 effect = app::update(app, app::Msg::ToggleHelp)
             }
@@ -98,6 +262,10 @@ fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
             _ => {}
         },
         app::Focus::Commands => match key.code {
+            KeyCode::Char('t') => effect = app::update(app, app::Msg::ToggleTable),
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                effect = app::update(app, app::Msg::ToggleBuilder)
+            }
             KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 effect = app::update(app, app::Msg::ToggleHelp)
             }
@@ -112,6 +280,10 @@ fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
             _ => {}
         },
         app::Focus::Inputs => match key.code {
+            KeyCode::Char('t') => effect = app::update(app, app::Msg::ToggleTable),
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                effect = app::update(app, app::Msg::ToggleBuilder)
+            }
             KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 effect = app::update(app, app::Msg::ToggleHelp)
             }
@@ -148,4 +320,205 @@ fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
         }
     }
     Ok(false)
+}
+
+fn replace_current_token(p: &mut crate::palette::PaletteState, text: &str) {
+    let ctx = p.input.clone();
+    let cur = p.cursor;
+    let bytes = ctx.as_bytes();
+    let mut i = 0; let mut start = cur; let mut end = cur; let mut found = false;
+    while i < bytes.len() {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
+        if i >= bytes.len() { break; }
+        start = i;
+        while i < bytes.len() && !bytes[i].is_ascii_whitespace() { i += 1; }
+        end = i;
+        if start <= cur && cur <= end { found = true; break; }
+    }
+    if !found { start = cur; end = cur; }
+    p.input.replace_range(start..end, text);
+    let ins_len = text.len();
+    p.cursor = start + ins_len;
+    if !p.input.ends_with(' ') { p.input.insert(p.cursor, ' '); p.cursor += 1; }
+}
+
+fn palette_line_from_spec(spec: &heroku_registry::CommandSpec, fields: &[crate::app::Field]) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    // Convert spec.name (group:rest) to execution form: "group rest"
+    let mut split = spec.name.splitn(2, ':');
+    let group = split.next().unwrap_or("");
+    let rest = split.next().unwrap_or("");
+    parts.push(group.to_string());
+    if !rest.is_empty() { parts.push(rest.to_string()); }
+    // positionals in order
+    for p in &spec.positional_args {
+        if let Some(f) = fields.iter().find(|f| &f.name == p) {
+            let v = f.value.trim();
+            if v.is_empty() { parts.push(format!("<{}>", p)); } else { parts.push(v.to_string()); }
+        } else {
+            parts.push(format!("<{}>", p));
+        }
+    }
+    // flags
+    for f in fields.iter().filter(|f| !spec.positional_args.iter().any(|p| p == &f.name)) {
+        if f.is_bool {
+            if !f.value.is_empty() { parts.push(format!("--{}", f.name)); }
+        } else if !f.value.trim().is_empty() {
+            parts.push(format!("--{}", f.name));
+            parts.push(f.value.trim().to_string());
+        }
+    }
+    parts.join(" ")
+}
+
+fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
+    // Parse input into tokens: expect "group sub [args...]"
+    let input = app.palette.input.trim();
+    if input.is_empty() { return Err("Type a command (e.g., apps info)".into()); }
+    let tokens: Vec<&str> = input.split_whitespace().collect();
+    if tokens.len() < 2 { return Err("Incomplete command. Use '<group> <sub>' (e.g., apps info)".into()); }
+    let key = format!("{}:{}", tokens[0], tokens[1]);
+    let spec = app.registry.commands.iter().find(|c| c.name == key).cloned().ok_or_else(|| format!("Unknown command '{} {}'", tokens[0], tokens[1]))?;
+
+    // Parse flags/args from tokens after first two
+    let parts = &tokens[2..];
+    let mut user_flags: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+    let mut user_args: Vec<String> = Vec::new();
+    let mut i = 0;
+    while i < parts.len() {
+        let t = parts[i];
+        if t.starts_with("--") {
+            let long = t.trim_start_matches('-');
+            // Equals form
+            if let Some(eq) = long.find('=') {
+                let name = &long[..eq];
+                let val = &long[eq+1..];
+                user_flags.insert(name.to_string(), Some(val.to_string()));
+            } else {
+                // Boolean or expects a value
+                if let Some(fspec) = spec.flags.iter().find(|f| f.name == long) {
+                    if fspec.r#type == "boolean" {
+                        user_flags.insert(long.to_string(), None);
+                    } else {
+                        // Next token is value if present and not another flag
+                        if i + 1 < parts.len() && !parts[i+1].starts_with('-') {
+                            user_flags.insert(long.to_string(), Some(parts[i+1].to_string()));
+                            i += 1;
+                        } else {
+                            return Err(format!("Flag '--{}' requires a value", long));
+                        }
+                    }
+                } else {
+                    return Err(format!("Unknown flag '--{}'", long));
+                }
+            }
+        } else {
+            user_args.push(t.to_string());
+        }
+        i += 1;
+    }
+
+    // Validate required positionals
+    if user_args.len() < spec.positional_args.len() {
+        let missing: Vec<String> = spec.positional_args[user_args.len()..].iter().map(|s| s.to_string()).collect();
+        return Err(format!("Missing required argument(s): {}", missing.join(", ")));
+    }
+    // Validate required flags
+    for f in &spec.flags {
+        if f.required {
+            if f.r#type == "boolean" {
+                if !user_flags.contains_key(&f.name) {
+                    return Err(format!("Missing required flag: --{}", f.name));
+                }
+            } else {
+                match user_flags.get(&f.name) {
+                    Some(Some(v)) if !v.is_empty() => {}
+                    _ => return Err(format!("Missing required flag value: --{} <VALUE>", f.name)),
+                }
+            }
+        }
+    }
+
+    // Build positional map and body
+    let mut pos_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for (i, name) in spec.positional_args.iter().enumerate() {
+        pos_map.insert(name.clone(), user_args.get(i).cloned().unwrap_or_default());
+    }
+    let mut body = serde_json::Map::new();
+    for (name, maybe_val) in user_flags.into_iter() {
+        if let Some(fspec) = spec.flags.iter().find(|f| f.name == name) {
+            if fspec.r#type == "boolean" {
+                body.insert(name, serde_json::Value::Bool(true));
+            } else if let Some(v) = maybe_val {
+                body.insert(name, serde_json::Value::String(v));
+            }
+        }
+    }
+
+    let path = crate::preview::resolve_path(&spec.path, &pos_map);
+    let cli_line = format!("heroku {}", app.palette.input.trim());
+
+    let should_dry_run = app.debug_enabled && app.dry_run;
+    if should_dry_run {
+        let req = crate::preview::request_preview(&spec, &path, &body);
+        app.logs.push(format!("Dry-run:\n{}\n{}", cli_line, req));
+        if app.logs.len() > 500 { let _ = app.logs.drain(0..app.logs.len()-500); }
+        // Show demo table for GET collections in debug to visualize
+        if spec.method == "GET" && !spec.path.ends_with('}') {
+            app.result_json = Some(crate::tables::sample_apps());
+            app.show_table = true;
+            app.table_offset = 0;
+        }
+        // Clear input for next command
+        app.palette.input.clear();
+        app.palette.cursor = 0;
+        app.palette.suggestions.clear();
+        app.palette.popup_open = false;
+        return Ok(());
+    }
+
+    // Live request: spawn background task and show throbber
+    let (tx, rx) = std::sync::mpsc::channel::<app::ExecOutcome>();
+    app.exec_rx = Some(rx);
+    app.executing = true;
+    app.throbber_idx = 0;
+
+    let spec_clone = spec.clone();
+    let path_s = path.clone();
+    let body_map = body.clone();
+    std::thread::spawn(move || {
+        let rt = match tokio::runtime::Runtime::new() { Ok(r) => r, Err(e) => { let _ = tx.send(app::ExecOutcome { log: format!("Error: failed to start runtime: {}", e), result_json: None, open_table: false }); return; } };
+        let outcome = rt.block_on(async move {
+            let client = heroku_api::HerokuClient::new_from_env().map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc", e))?;
+            let method = match spec_clone.method.as_str() {
+                "GET" => reqwest::Method::GET,
+                "POST" => reqwest::Method::POST,
+                "DELETE" => reqwest::Method::DELETE,
+                "PATCH" => reqwest::Method::PATCH,
+                other => return Err(format!("unsupported method: {}", other)),
+            };
+            let mut builder = client.request(method, &path_s);
+            if !body_map.is_empty() { builder = builder.json(&serde_json::Value::Object(body_map.clone())); }
+            let resp = builder.send().await.map_err(|e| format!("Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY or ~/.netrc is set", e))?;
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            if status.as_u16() == 401 { return Err("Unauthorized (401). Hint: set HEROKU_API_KEY=... or configure ~/.netrc with machine api.heroku.com".into()); }
+            if status.as_u16() == 403 { return Err("Forbidden (403). Hint: check team/app access, permissions, and role membership".into()); }
+            let log = format!("{}\n{}", status, text);
+            let mut result_json = None;
+            let mut open_table = false;
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+                open_table = matches!(json, serde_json::Value::Array(_));
+                result_json = Some(json);
+            }
+            Ok::<app::ExecOutcome, String>(app::ExecOutcome { log, result_json, open_table })
+        });
+
+        match outcome {
+            Ok(out) => { let _ = tx.send(out); },
+            Err(err) => { let _ = tx.send(app::ExecOutcome { log: format!("Error: {}", err), result_json: None, open_table: false }); }
+        }
+    });
+
+    Ok(())
 }

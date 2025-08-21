@@ -31,8 +31,10 @@ pub fn text_muted() -> Style {
     Style::default().fg(FG_MUTED)
 }
 pub fn highlight_style() -> Style {
+    // Used for focused input rows; keep a subtle background hint
     Style::default().fg(FG).bg(BG_HIGHLIGHT)
 }
 pub fn list_highlight_style() -> Style {
-    Style::default().fg(FG_MUTED).bg(BG_SELECT)
+    // Used for list/table selection; emphasize subtly via accent + bold, no fill
+    Style::default().fg(ACCENT).add_modifier(Modifier::BOLD)
 }
