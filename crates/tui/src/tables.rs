@@ -1,5 +1,6 @@
 use ratatui::{prelude::*, widgets::*};
 use serde_json::Value;
+use std::collections::{BTreeSet, HashMap};
 
 use crate::theme;
 
@@ -9,12 +10,7 @@ pub fn draw_json_table(f: &mut Frame, area: Rect, json: &Value) {
     draw_json_table_with_offset(f, area, json, 0);
 }
 
-pub fn draw_json_table_with_offset(
-    f: &mut Frame,
-    area: Rect,
-    json: &Value,
-    offset: usize,
-) {
+pub fn draw_json_table_with_offset(f: &mut Frame, area: Rect, json: &Value, offset: usize) {
     // Find the array to render: either the value itself, or the first array field of an object
     let arr = match json {
         Value::Array(a) => Some(a.as_slice()),
@@ -47,9 +43,7 @@ pub fn draw_json_table_with_offset(
     for item in arr.iter() {
         let mut cells: Vec<Cell> = Vec::new();
         for key in &columns {
-            let val = item
-                .get(key)
-                .unwrap_or(&Value::Null);
+            let val = item.get(key).unwrap_or(&Value::Null);
             let txt = render_value(key, val);
             cells.push(Cell::from(txt).style(theme::text_style()));
         }
@@ -74,7 +68,11 @@ pub fn draw_json_table_with_offset(
     let visible = inner_height.saturating_sub(header_rows).max(1) as usize;
     let start = offset.min(rows.len().saturating_sub(1));
     let end = (start + visible).min(rows.len());
-    let rows_slice = if start < end { rows[start..end].to_vec() } else { Vec::new() };
+    let rows_slice = if start < end {
+        rows[start..end].to_vec()
+    } else {
+        Vec::new()
+    };
 
     let table = Table::new(rows_slice, widths)
         .header(Row::new(headers))
@@ -92,7 +90,6 @@ pub fn draw_json_table_with_offset(
 
 // Choose columns using schema-informed + heuristic scoring and ensure at least 4 columns.
 fn infer_columns(arr: &[Value]) -> Vec<String> {
-    use std::collections::{BTreeSet, HashMap};
     let mut score: HashMap<String, i32> = HashMap::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
     let sample = arr.iter().take(50); // sample up to 50 rows
@@ -135,7 +132,9 @@ fn infer_columns(arr: &[Value]) -> Vec<String> {
         extras.sort_by(|a, b| b.1.cmp(&a.1));
         for (k, _) in extras.into_iter() {
             cols.push(k);
-            if cols.len() >= 4 { break; }
+            if cols.len() >= 4 {
+                break;
+            }
         }
     }
     cols
@@ -144,11 +143,21 @@ fn infer_columns(arr: &[Value]) -> Vec<String> {
 fn base_key_score(k: &str) -> i32 {
     let l = k.to_lowercase();
     let mut s = 0;
-    if l == "id" || l.ends_with("_id") { s += 10; }
-    if l.contains("name") { s += 9; }
-    if l.contains("status") || l.contains("state") { s += 8; }
-    if l.contains("created_at") || l.contains("updated_at") || l.ends_with("_at") { s += 7; }
-    if l.contains("owner") || l.contains("app") { s += 4; }
+    if l == "id" || l.ends_with("_id") {
+        s += 10;
+    }
+    if l.contains("name") {
+        s += 9;
+    }
+    if l.contains("status") || l.contains("state") {
+        s += 8;
+    }
+    if l.contains("created_at") || l.contains("updated_at") || l.ends_with("_at") {
+        s += 7;
+    }
+    if l.contains("owner") || l.contains("app") {
+        s += 4;
+    }
     s
 }
 
@@ -179,13 +188,14 @@ fn property_frequency_boost(k: &str) -> i32 {
 
 fn normalize_header(k: &str) -> String {
     let s = k.to_string();
-    if s.ends_with("_id") { return s.trim_end_matches("_id").to_string() + " ID"; }
-    if s.ends_with("_url") { return s.trim_end_matches("_url").to_string() + " URL"; }
+    if s.ends_with("_id") {
+        return s.trim_end_matches("_id").to_string() + " ID";
+    }
+    if s.ends_with("_url") {
+        return s.trim_end_matches("_url").to_string() + " URL";
+    }
     // snake_case to Title Case, preserve common acronyms
-    let parts: Vec<String> = s
-        .split('_')
-        .map(|p| preserve_acronym(p))
-        .collect();
+    let parts: Vec<String> = s.split('_').map(|p| preserve_acronym(p)).collect();
     parts.join(" ")
 }
 
@@ -226,15 +236,19 @@ fn is_sensitive_key(k: &str) -> bool {
     l.contains("token") || l.contains("password") || l.contains("api_key") || l.contains("secret")
 }
 
-fn mask_secret(_s: &str) -> String { "••••".into() }
+fn mask_secret(_s: &str) -> String {
+    "••••".into()
+}
 
 fn ellipsize_middle_if_sha_like(s: &str, keep_total: usize) -> String {
     // Heuristic: hex-looking and long → compress
     let is_hexish = s.len() >= 16 && s.chars().all(|c| c.is_ascii_hexdigit());
-    if !is_hexish || s.len() <= keep_total { return s.to_string(); }
+    if !is_hexish || s.len() <= keep_total {
+        return s.to_string();
+    }
     let head = keep_total / 2;
     let tail = keep_total - head;
-    format!("{}…{}", &s[..head], &s[s.len()-tail..])
+    format!("{}…{}", &s[..head], &s[s.len() - tail..])
 }
 
 // Optional sample data for debug/demo usage

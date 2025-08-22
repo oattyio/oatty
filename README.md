@@ -1,9 +1,9 @@
 # Heroku CLI (Rust, Experimental)
 
-A schema-driven Heroku CLI with both non-interactive and interactive TUI modes. Commands, arguments, and flags are derived at runtime from the embedded Heroku JSON Hyper-Schema.
+A schema-driven Heroku CLI with both non-interactive and interactive TUI modes. Commands, arguments, and flags are derived from a pre-built manifest generated at build time from the Heroku JSON Hyper-Schema.
 
 ## Features
-- Dynamic command registry from embedded Hyper-Schema (no static command tables).
+- Dynamic command registry from a generated manifest (no static command tables at runtime).
 - CLI and TUI supported:
   - CLI: derive Clap tree; build requests; `--dry-run` prints structured request.
   - TUI: modern dark theme, search + auto-scrolling command list, inputs with validation, enum cycling, boolean toggles, live Command preview, logs.
@@ -31,7 +31,7 @@ A schema-driven Heroku CLI with both non-interactive and interactive TUI modes. 
   - Copy command to clipboard: Ctrl+Y.
 
 ## Architecture
-- Registry (schema → commands): parses Hyper-Schema links and derives unique command names from path context (e.g., `apps:list`, `users:apps:list`). Extracts positional args, flags, enums, and defaults.
+- Registry (manifest → commands): at build time, the schema is converted into a compact JSON manifest; at runtime, the registry deserializes this manifest to expose commands (e.g., `apps:list`, `users:apps:list`).
 - CLI: loads registry and builds Clap tree; parses inputs; builds and sends requests (or `--dry-run`).
 - TUI: Ratatui + Crossterm; state (app.rs), rendering (ui.rs), CLI preview (preview.rs), theme (theme.rs).
 - API: minimal reqwest client with headers, timeouts, and auth precedence.
@@ -43,12 +43,16 @@ A schema-driven Heroku CLI with both non-interactive and interactive TUI modes. 
 - `RUST_LOG`: set to `info`/`debug` to see logs.
 
 ## Development
-- Workspace: `cli`, `tui`, `registry`, `engine` (placeholder), `api`, `util`, `xtask`.
-- Build all: `cd heroku && cargo build --workspace`
+- Workspace: `cli`, `tui`, `registry`, `engine`, `api`, `util`, `registry-gen`.
+- Build all: `cargo build --workspace` (generates and embeds the manifest)
 - Test all: `cargo test --workspace`
 - Lint: `cargo clippy --workspace -- -D warnings`
 - Format: `cargo fmt --all`
-- Optional codegen (for inspection only): `cargo run -p xtask -- codegen --schema ../../heroku-schema.json`
+### Build-time manifest
+- Source schema: `schemas/heroku-schema.json`
+- Generator crate: `crates/registry-gen` (library + bin)
+- Build script: `crates/registry/build.rs` writes `OUT_DIR/heroku-manifest.json`
+
 
 ## Flow
 

@@ -8,11 +8,7 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-tokio = { workspace = true }
 tracing = { workspace = true }
-regex = { workspace = true }
-glob = { workspace = true }
-walkdir = { workspace = true }
 heroku-api = { path = "../api" }
 heroku-util = { path = "../util" }
 heroku-registry = { path = "../registry" }

@@ -1,10 +1,10 @@
 use anyhow::{anyhow, Context, Result};
+use heroku_registry;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use heroku_registry;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkflowFile {
@@ -43,7 +43,8 @@ pub struct TaskResult {
 }
 
 pub fn load_workflow_from_file(path: impl AsRef<Path>) -> Result<WorkflowFile> {
-    let bytes = fs::read(path.as_ref()).with_context(|| format!("read {}", path.as_ref().display()))?;
+    let bytes =
+        fs::read(path.as_ref()).with_context(|| format!("read {}", path.as_ref().display()))?;
     let s = String::from_utf8_lossy(&bytes);
     if path.as_ref().extension().and_then(|x| x.to_str()) == Some("json") {
         let wf: WorkflowFile = serde_json::from_str(&s).context("parse workflow json")?;
@@ -76,25 +77,30 @@ fn interpolate_string(s: &str, ctx: &ContextState) -> String {
     while let Some(start) = rest.find("${{") {
         let (head, tail) = rest.split_at(start);
         out.push_str(head);
-        if let Some(end_idx) = tail.find("}}"){ 
+        if let Some(end_idx) = tail.find("}}") {
             let expr = &tail[3..end_idx].trim();
             let val = resolve_expr(expr, ctx).unwrap_or_default();
             out.push_str(&val);
-            rest = &tail[end_idx+2..];
+            rest = &tail[end_idx + 2..];
         } else {
             // No closing, bail out
             out.push_str(tail);
             break;
         }
     }
-    if out.is_empty() { s.to_string() } else { out.push_str(rest); out }
+    if out.is_empty() {
+        s.to_string()
+    } else {
+        out.push_str(rest);
+        out
+    }
 }
 
 fn resolve_expr(expr: &str, ctx: &ContextState) -> Option<String> {
     // Support tasks.<name>.output.<path>, env.<VAR>, or simple equality in if (a == b)
     if let Some(eq_pos) = expr.find("==") {
         let left = expr[..eq_pos].trim();
-        let right = expr[eq_pos+2..].trim().trim_matches('"');
+        let right = expr[eq_pos + 2..].trim().trim_matches('"');
         let left_val = resolve_expr(left, ctx).unwrap_or_default();
         return Some(((left_val == right) as i32).to_string());
     }
@@ -110,7 +116,9 @@ fn resolve_expr(expr: &str, ctx: &ContextState) -> Option<String> {
         let mut cur = output;
         for p in rest {
             match cur {
-                Value::Object(map) => { cur = map.get(p)?; }
+                Value::Object(map) => {
+                    cur = map.get(p)?;
+                }
                 _ => return None,
             }
         }
@@ -131,11 +139,14 @@ pub async fn dry_run_plan(workflow: &Workflow, reg: &heroku_registry::Registry) 
     for task in &workflow.tasks {
         // Evaluate if condition
         if let Some(cond) = &task.r#if {
-            let pred = resolve_expr(cond.trim().trim_start_matches("${{").trim_end_matches("}}"), &ctx)
-                .unwrap_or_else(|| "0".into());
-            if pred != "1" && pred.to_lowercase() != "true" { 
+            let pred = resolve_expr(
+                cond.trim().trim_start_matches("${{").trim_end_matches("}}"),
+                &ctx,
+            )
+            .unwrap_or_else(|| "0".into());
+            if pred != "1" && pred.to_lowercase() != "true" {
                 steps.push(json!({"task": task.name, "skipped": true}));
-                continue; 
+                continue;
             }
         }
         let spec = reg
@@ -156,26 +167,46 @@ pub async fn dry_run_plan(workflow: &Workflow, reg: &heroku_registry::Registry) 
             }
         }));
         // Simulate output capture (dry-run has none)
-        ctx.tasks.insert(task.name.clone(), TaskResult{ status: "skipped".into(), output: json!({}), logs: vec![] });
+        ctx.tasks.insert(
+            task.name.clone(),
+            TaskResult {
+                status: "skipped".into(),
+                output: json!({}),
+                logs: vec![],
+            },
+        );
     }
     Ok(json!({"plan": steps}))
 }
 
-fn build_path_and_body(spec: &heroku_registry::CommandSpec, params: &Value) -> Result<(String, Value)> {
+fn build_path_and_body(
+    spec: &heroku_registry::CommandSpec,
+    params: &Value,
+) -> Result<(String, Value)> {
     // params expected to be a map of positional names + flags
-    let map = params.as_object().ok_or_else(|| anyhow!("task.with must be an object"))?;
+    let map = params
+        .as_object()
+        .ok_or_else(|| anyhow!("task.with must be an object"))?;
     // Resolve path
     let mut path = spec.path.clone();
     for pa in &spec.positional_args {
-        if let Some(v) = map.get(pa) { path = path.replace(&format!("{{{}}}", pa), &as_string(v)); }
+        if let Some(v) = map.get(pa) {
+            path = path.replace(&format!("{{{}}}", pa), &as_string(v));
+        }
     }
     // Build body from non-positional keys that match flags
     let mut body = serde_json::Map::new();
     for (k, v) in map.iter() {
-        if spec.positional_args.iter().any(|p| p == k) { continue; }
+        if spec.positional_args.iter().any(|p| p == k) {
+            continue;
+        }
         body.insert(k.clone(), v.clone());
     }
-    let body_val = if body.is_empty() { Value::Null } else { Value::Object(body) };
+    let body_val = if body.is_empty() {
+        Value::Null
+    } else {
+        Value::Object(body)
+    };
     Ok((path, body_val))
 }
 

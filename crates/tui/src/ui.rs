@@ -8,10 +8,10 @@ pub fn draw(f: &mut Frame, app: &mut App) {
 
     // Default view: command palette (input), hints, logs
     let constraints = [
-        Constraint::Length(3),  // input line area
-        Constraint::Length(1),  // hints area
-        Constraint::Min(1),     // spacer / future content
-        Constraint::Length(6),  // logs
+        Constraint::Length(3), // input line area
+        Constraint::Length(1), // hints area
+        Constraint::Min(1),    // spacer / future content
+        Constraint::Length(6), // logs
     ];
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -21,21 +21,19 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     crate::palette::render_palette(f, chunks[0], app);
     // Hints outside the input block, shown only when popup is not open and no error present
     if !app.palette.popup_open && app.palette.error.is_none() {
-        let hints = Paragraph::new(
-            Line::from(vec![
-                Span::styled("Hints: ", theme::text_muted()),
-                Span::styled("↑/↓", theme::title_style().fg(theme::ACCENT)),
-                Span::styled(" cycle  ", theme::text_muted()),
-                Span::styled("Tab", theme::title_style().fg(theme::ACCENT)),
-                Span::styled(" accept  ", theme::text_muted()),
-                Span::styled("Ctrl-R", theme::title_style().fg(theme::ACCENT)),
-                Span::styled(" history  ", theme::text_muted()),
-                Span::styled("Ctrl-F", theme::title_style().fg(theme::ACCENT)),
-                Span::styled(" builder  ", theme::text_muted()),
-                Span::styled("Esc", theme::title_style().fg(theme::ACCENT)),
-                Span::styled(" cancel", theme::text_muted()),
-            ]),
-        )
+        let hints = Paragraph::new(Line::from(vec![
+            Span::styled("Hints: ", theme::text_muted()),
+            Span::styled("↑/↓", theme::title_style().fg(theme::ACCENT)),
+            Span::styled(" cycle  ", theme::text_muted()),
+            Span::styled("Tab", theme::title_style().fg(theme::ACCENT)),
+            Span::styled(" accept  ", theme::text_muted()),
+            Span::styled("Ctrl-R", theme::title_style().fg(theme::ACCENT)),
+            Span::styled(" history  ", theme::text_muted()),
+            Span::styled("Ctrl-F", theme::title_style().fg(theme::ACCENT)),
+            Span::styled(" builder  ", theme::text_muted()),
+            Span::styled("Esc", theme::title_style().fg(theme::ACCENT)),
+            Span::styled(" cancel", theme::text_muted()),
+        ]))
         .style(theme::text_muted());
         f.render_widget(hints, chunks[1]);
     }
@@ -96,7 +94,11 @@ fn draw_commands(f: &mut Frame, app: &mut App, area: Rect) {
             let mut split = name.splitn(2, ':');
             let group = split.next().unwrap_or("");
             let rest = split.next().unwrap_or("");
-            let display = if rest.is_empty() { group.to_string() } else { format!("{} {}", group, rest) };
+            let display = if rest.is_empty() {
+                group.to_string()
+            } else {
+                format!("{} {}", group, rest)
+            };
             ListItem::new(display).style(theme::text_style())
         })
         .collect();
@@ -115,7 +117,11 @@ fn draw_inputs(f: &mut Frame, app: &App, area: Rect) {
             let mut split = s.name.splitn(2, ':');
             let group = split.next().unwrap_or("");
             let rest = split.next().unwrap_or("");
-            let disp = if rest.is_empty() { group.to_string() } else { format!("{} {}", group, rest) };
+            let disp = if rest.is_empty() {
+                group.to_string()
+            } else {
+                format!("{} {}", group, rest)
+            };
             format!("Inputs: {}", disp)
         }
         None => "Inputs".into(),
@@ -276,7 +282,9 @@ fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
     if let Some(json) = &app.result_json {
         let has_array = match json {
             serde_json::Value::Array(a) => !a.is_empty(),
-            serde_json::Value::Object(m) => m.values().any(|v| matches!(v, serde_json::Value::Array(_))),
+            serde_json::Value::Object(m) => {
+                m.values().any(|v| matches!(v, serde_json::Value::Array(_)))
+            }
             _ => false,
         };
         if has_array {
@@ -402,7 +410,10 @@ fn draw_help_modal(f: &mut Frame, app: &App, area: Rect) {
 fn draw_builder_modal(f: &mut Frame, app: &mut App, area: Rect) {
     let area = centered_rect(96, 90, area);
     let block = Block::default()
-        .title(Span::styled("Command Builder  [Esc] Close", theme::title_style().fg(theme::ACCENT)))
+        .title(Span::styled(
+            "Command Builder  [Esc] Close",
+            theme::title_style().fg(theme::ACCENT),
+        ))
         .borders(Borders::ALL)
         .border_style(theme::border_style(true));
     f.render_widget(Clear, area);
@@ -441,7 +452,8 @@ fn draw_builder_modal(f: &mut Frame, app: &mut App, area: Rect) {
         Span::styled(" apply  ", theme::text_muted()),
         Span::styled("Esc", theme::title_style().fg(theme::ACCENT)),
         Span::styled(" cancel", theme::text_muted()),
-    ])).style(theme::text_muted());
+    ]))
+    .style(theme::text_muted());
     f.render_widget(footer, chunks[2]);
 }
 
@@ -467,7 +479,9 @@ fn draw_table_modal(f: &mut Frame, app: &App, area: Rect) {
         // Prefer table if array is present, else KV fallback even in modal
         let has_array = match json {
             serde_json::Value::Array(a) => !a.is_empty(),
-            serde_json::Value::Object(m) => m.values().any(|v| matches!(v, serde_json::Value::Array(_))),
+            serde_json::Value::Object(m) => {
+                m.values().any(|v| matches!(v, serde_json::Value::Array(_)))
+            }
             _ => false,
         };
         if has_array {
@@ -491,7 +505,8 @@ fn draw_table_modal(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(" faster  ", theme::text_muted()),
         Span::styled("Home/End", theme::title_style().fg(theme::ACCENT)),
         Span::styled(" jump", theme::text_muted()),
-    ])).style(theme::text_muted());
+    ]))
+    .style(theme::text_muted());
     f.render_widget(footer, splits[1]);
 }
 

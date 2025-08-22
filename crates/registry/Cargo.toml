@@ -7,10 +7,9 @@ edition = "2018"
 anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-serde_yaml = { workspace = true }
-tracing = { workspace = true }
 clap = { workspace = true }
-walkdir = { workspace = true }
-url = { workspace = true }
-heroku-util = { path = "../util" }
-percent-encoding = { workspace = true }
+
+[build-dependencies]
+anyhow = { workspace = true }
+serde_json = { workspace = true }
+heroku-registry-gen = { path = "../registry-gen" }

@@ -111,11 +111,12 @@ impl App {
         };
         // Debug: add a static provider for apps:info positional <app>
         if app.debug_enabled {
-            app.providers.push(Box::new(crate::palette::StaticValuesProvider {
-                command_key: "apps:info".into(),
-                field: "app".into(),
-                values: vec!["demo".into(), "api".into(), "web".into(), "my-app".into()],
-            }));
+            app.providers
+                .push(Box::new(crate::palette::StaticValuesProvider {
+                    command_key: "apps:info".into(),
+                    field: "app".into(),
+                    values: vec!["demo".into(), "api".into(), "web".into(), "my-app".into()],
+                }));
         }
         app.rebuild_fields_for_current_selection();
         if !app.filtered.is_empty() {
@@ -267,7 +268,8 @@ impl App {
         if self.dry_run {
             self.logs.push(format!("Dry-run:\n{}\n{}", cli, req));
         } else {
-            self.logs.push(format!("Run (simulated):\n{}\n{}", cli, req));
+            self.logs
+                .push(format!("Run (simulated):\n{}\n{}", cli, req));
             // DEBUG: populate a small sample JSON result for table preview on GET list-like
             if self.debug_enabled && spec.method == "GET" {
                 // naive: if path ends with a collection (no trailing placeholder), show demo
@@ -369,9 +371,15 @@ pub fn update(app: &mut App, msg: Msg) -> Option<Effect> {
             }
         }
         Msg::CloseModal => {
-            if app.show_help { app.toggle_help(); }
-            if app.show_table { app.show_table = false; }
-            if app.show_builder { app.show_builder = false; }
+            if app.show_help {
+                app.toggle_help();
+            }
+            if app.show_table {
+                app.show_table = false;
+            }
+            if app.show_builder {
+                app.show_builder = false;
+            }
             app.help_spec = None;
         }
         Msg::FocusNext => {
@@ -435,8 +443,12 @@ pub fn update(app: &mut App, msg: Msg) -> Option<Effect> {
             let off = app.table_offset as isize + delta;
             app.table_offset = off.max(0) as usize;
         }
-        Msg::TableHome => { app.table_offset = 0; }
-        Msg::TableEnd => { app.table_offset = usize::MAX / 2; } // clamped during render
+        Msg::TableHome => {
+            app.table_offset = 0;
+        }
+        Msg::TableEnd => {
+            app.table_offset = usize::MAX / 2;
+        } // clamped during render
     }
     None
 }

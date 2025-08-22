@@ -1,9 +1,9 @@
 mod app;
+mod palette;
 mod preview;
+mod tables;
 mod theme;
 mod ui;
-mod tables;
-mod palette;
 
 use anyhow::Result;
 use arboard::Clipboard;
@@ -18,8 +18,7 @@ use ratatui::{prelude::*, Terminal};
 use std::io;
 use std::time::{Duration, Instant};
 
-pub fn run() -> Result<()> {
-    let registry = heroku_registry::Registry::from_embedded_schema()?;
+pub fn run(registry: heroku_registry::Registry) -> Result<()> {
     let mut app = app::App::new(registry);
 
     enable_raw_mode()?;
@@ -38,10 +37,14 @@ pub fn run() -> Result<()> {
                 app.exec_rx = None;
                 app.executing = false;
                 app.logs.push(out.log);
-                if app.logs.len() > 500 { let _ = app.logs.drain(0..app.logs.len()-500); }
+                if app.logs.len() > 500 {
+                    let _ = app.logs.drain(0..app.logs.len() - 500);
+                }
                 app.result_json = out.result_json;
                 app.show_table = out.open_table;
-                if out.open_table { app.table_offset = 0; }
+                if out.open_table {
+                    app.table_offset = 0;
+                }
                 // Clear input for next command
                 app.palette.input.clear();
                 app.palette.cursor = 0;
@@ -105,13 +108,34 @@ fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
     // While table modal open, handle scrolling keys
     if app.show_table {
         match key.code {
-            KeyCode::Up => { app::update(app, app::Msg::TableScroll(-1)); return Ok(false); }
-            KeyCode::Down => { app::update(app, app::Msg::TableScroll(1)); return Ok(false); }
-            KeyCode::PageUp => { app::update(app, app::Msg::TableScroll(-10)); return Ok(false); }
-            KeyCode::PageDown => { app::update(app, app::Msg::TableScroll(10)); return Ok(false); }
-            KeyCode::Home => { app::update(app, app::Msg::TableHome); return Ok(false); }
-            KeyCode::End => { app::update(app, app::Msg::TableEnd); return Ok(false); }
-            KeyCode::Char('t') => { app::update(app, app::Msg::ToggleTable); return Ok(false); }
+            KeyCode::Up => {
+                app::update(app, app::Msg::TableScroll(-1));
+                return Ok(false);
+            }
+            KeyCode::Down => {
+                app::update(app, app::Msg::TableScroll(1));
+                return Ok(false);
+            }
+            KeyCode::PageUp => {
+                app::update(app, app::Msg::TableScroll(-10));
+                return Ok(false);
+            }
+            KeyCode::PageDown => {
+                app::update(app, app::Msg::TableScroll(10));
+                return Ok(false);
+            }
+            KeyCode::Home => {
+                app::update(app, app::Msg::TableHome);
+                return Ok(false);
+            }
+            KeyCode::End => {
+                app::update(app, app::Msg::TableEnd);
+                return Ok(false);
+            }
+            KeyCode::Char('t') => {
+                app::update(app, app::Msg::ToggleTable);
+                return Ok(false);
+            }
             _ => {}
         }
     }
@@ -129,7 +153,9 @@ fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
     // Default palette interaction when not in builder
     if !app.show_builder {
         match key.code {
-            KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+            KeyCode::Char(c)
+                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+            {
                 app.palette.insert_char(c);
                 crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
                 app.palette.popup_open = true;
@@ -141,12 +167,22 @@ fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
                 let mut target: Option<heroku_registry::CommandSpec> = None;
                 if toks.len() >= 2 {
                     let key = format!("{}:{}", toks[0], toks[1]);
-                    if let Some(spec) = app.registry.commands.iter().find(|c| c.name == key).cloned() {
+                    if let Some(spec) = app
+                        .registry
+                        .commands
+                        .iter()
+                        .find(|c| c.name == key)
+                        .cloned()
+                    {
                         target = Some(spec);
                     }
                 }
                 if target.is_none() {
-                    crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+                    crate::palette::build_suggestions(
+                        &mut app.palette,
+                        &app.registry,
+                        &app.providers,
+                    );
                     if let Some(top) = app.palette.suggestions.get(0) {
                         if matches!(top.kind, crate::palette::ItemKind::Command) {
                             // Convert "group sub" to registry key
@@ -154,7 +190,13 @@ fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
                             let group = parts.next().unwrap_or("");
                             let sub = parts.next().unwrap_or("");
                             let key = format!("{}:{}", group, sub);
-                            if let Some(spec) = app.registry.commands.iter().find(|c| c.name == key).cloned() {
+                            if let Some(spec) = app
+                                .registry
+                                .commands
+                                .iter()
+                                .find(|c| c.name == key)
+                                .cloned()
+                            {
                                 target = Some(spec);
                             }
                         }
@@ -165,16 +207,24 @@ fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
                     app.toggle_help();
                 }
             }
-            KeyCode::Backspace => { app.palette.backspace(); crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers); app.palette.error = None; }
+            KeyCode::Backspace => {
+                app.palette.backspace();
+                crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+                app.palette.error = None;
+            }
             KeyCode::Left => app.palette.move_cursor_left(),
             KeyCode::Right => app.palette.move_cursor_right(),
             KeyCode::Down => {
                 let len = app.palette.suggestions.len();
-                if len > 0 { app.palette.selected = (app.palette.selected + 1) % len; }
+                if len > 0 {
+                    app.palette.selected = (app.palette.selected + 1) % len;
+                }
             }
             KeyCode::Up | KeyCode::BackTab => {
                 let len = app.palette.suggestions.len();
-                if len > 0 { app.palette.selected = (app.palette.selected + len - 1) % len; }
+                if len > 0 {
+                    app.palette.selected = (app.palette.selected + len - 1) % len;
+                }
             }
             KeyCode::Tab => {
                 if app.palette.popup_open {
@@ -182,10 +232,16 @@ fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
                         if matches!(item.kind, crate::palette::ItemKind::Command) {
                             app.palette.input = format!("{} ", item.insert_text);
                             app.palette.cursor = app.palette.input.len();
+                        } else if matches!(item.kind, crate::palette::ItemKind::Positional) {
+                            accept_positional_suggestion(&mut app.palette, &item.insert_text);
                         } else {
-                            replace_current_token(&mut app.palette, &item.insert_text);
+                            accept_non_command_suggestion(&mut app.palette, &item.insert_text);
                         }
-                        crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+                        crate::palette::build_suggestions(
+                            &mut app.palette,
+                            &app.registry,
+                            &app.providers,
+                        );
                         app.palette.selected = 0;
                         if matches!(item.kind, crate::palette::ItemKind::Command) {
                             app.palette.popup_open = false;
@@ -196,16 +252,26 @@ fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
                     }
                 } else {
                     // Open suggestions; if only one, accept it
-                    crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+                    crate::palette::build_suggestions(
+                        &mut app.palette,
+                        &app.registry,
+                        &app.providers,
+                    );
                     if app.palette.suggestions.len() == 1 {
                         if let Some(item) = app.palette.suggestions.get(0).cloned() {
                             if matches!(item.kind, crate::palette::ItemKind::Command) {
                                 app.palette.input = format!("{} ", item.insert_text);
                                 app.palette.cursor = app.palette.input.len();
+                            } else if matches!(item.kind, crate::palette::ItemKind::Positional) {
+                                accept_positional_suggestion(&mut app.palette, &item.insert_text);
                             } else {
-                                replace_current_token(&mut app.palette, &item.insert_text);
+                                accept_non_command_suggestion(&mut app.palette, &item.insert_text);
                             }
-                            crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+                            crate::palette::build_suggestions(
+                                &mut app.palette,
+                                &app.registry,
+                                &app.providers,
+                            );
                             app.palette.selected = 0;
                             if matches!(item.kind, crate::palette::ItemKind::Command) {
                                 app.palette.popup_open = false;
@@ -226,7 +292,9 @@ fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
                     app.palette.error = None;
                 }
             }
-            KeyCode::Esc => { app.palette.popup_open = false; }
+            KeyCode::Esc => {
+                app.palette.popup_open = false;
+            }
             _ => {}
         }
         return Ok(false);
@@ -326,43 +394,200 @@ fn replace_current_token(p: &mut crate::palette::PaletteState, text: &str) {
     let ctx = p.input.clone();
     let cur = p.cursor;
     let bytes = ctx.as_bytes();
-    let mut i = 0; let mut start = cur; let mut end = cur; let mut found = false;
+    let mut i = 0;
+    let mut start = cur;
+    let mut end = cur;
+    let mut found = false;
     while i < bytes.len() {
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
-        if i >= bytes.len() { break; }
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
         start = i;
-        while i < bytes.len() && !bytes[i].is_ascii_whitespace() { i += 1; }
+        while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
         end = i;
-        if start <= cur && cur <= end { found = true; break; }
+        if start <= cur && cur <= end {
+            found = true;
+            break;
+        }
     }
-    if !found { start = cur; end = cur; }
+    if !found {
+        start = cur;
+        end = cur;
+    }
     p.input.replace_range(start..end, text);
     let ins_len = text.len();
     p.cursor = start + ins_len;
-    if !p.input.ends_with(' ') { p.input.insert(p.cursor, ' '); p.cursor += 1; }
+    if !p.input.ends_with(' ') {
+        p.input.insert(p.cursor, ' ');
+        p.cursor += 1;
+    }
 }
 
-fn palette_line_from_spec(spec: &heroku_registry::CommandSpec, fields: &[crate::app::Field]) -> String {
+// Accept a non-command suggestion (flag/value) without clobbering the resolved command (group sub).
+// Rules:
+// - If cursor is at a new token position (ends with space), insert suggestion + trailing space.
+// - If current token starts with '-' or previous token is a flag expecting a value → replace token.
+// - Otherwise (we're on the command tokens or a positional token) → append suggestion separated by space.
+fn accept_non_command_suggestion(p: &mut crate::palette::PaletteState, text: &str) {
+    let input = &p.input;
+    let bytes = input.as_bytes();
+    let at_new_token = input.ends_with(' ');
+    // Tokenize into (start,end)
+    let mut spans: Vec<(usize, usize)> = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        let start = i;
+        while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        let end = i;
+        spans.push((start, end));
+    }
+    // Helper: safe insertion with space separation
+    let insert_with_space = |p: &mut crate::palette::PaletteState, s: &str| {
+        if !p.input.ends_with(' ') && !p.input.is_empty() {
+            p.input.push(' ');
+        }
+        p.input.push_str(s);
+        p.input.push(' ');
+        p.cursor = p.input.len();
+    };
+    if at_new_token || spans.is_empty() {
+        insert_with_space(p, text);
+        return;
+    }
+    // Find token under cursor; assume end token if cursor at end
+    let mut idx = None;
+    let cur = p.cursor.min(p.input.len());
+    for (ti, (start, end)) in spans.iter().enumerate() {
+        if *start <= cur && cur <= *end {
+            idx = Some(ti);
+            break;
+        }
+    }
+    let token_index = idx.unwrap_or(spans.len().saturating_sub(1));
+    // Extract current token and previous token text
+    let (start, end) = spans[token_index];
+    let current_token = &p.input[start..end];
+    let prev_token = if token_index > 0 {
+        Some(&p.input[spans[token_index - 1].0..spans[token_index - 1].1])
+    } else {
+        None
+    };
+
+    let prev_is_flag = prev_token.map(|t| t.starts_with("--")).unwrap_or(false);
+    if current_token.starts_with("--") || prev_is_flag {
+        // Replace current token (flag or value case)
+        p.input.replace_range(start..end, text);
+        p.cursor = start + text.len();
+        if !p.input.ends_with(' ') {
+            p.input.push(' ');
+            p.cursor += 1;
+        }
+    } else {
+        // We are on command tokens or positional-looking token → append
+        // Move cursor to end and insert suggestion
+        p.cursor = p.input.len();
+        insert_with_space(p, text);
+    }
+}
+
+// Accept a positional suggestion/value: fill the next positional slot after "group sub".
+// If the last existing positional is a placeholder like "<app>", replace it; otherwise append before any flags.
+fn accept_positional_suggestion(p: &mut crate::palette::PaletteState, value: &str) {
+    let tokens: Vec<&str> = p.input.split_whitespace().collect();
+    if tokens.len() < 2 {
+        // No command yet; just append
+        if !p.input.ends_with(' ') && !p.input.is_empty() {
+            p.input.push(' ');
+        }
+        p.input.push_str(value);
+        p.input.push(' ');
+        p.cursor = p.input.len();
+        return;
+    }
+    // Identify first flag position after command tokens
+    let mut first_flag_idx = tokens.len();
+    for (i, t) in tokens.iter().enumerate().skip(2) {
+        if t.starts_with("--") {
+            first_flag_idx = i;
+            break;
+        }
+    }
+    // Existing positionals are tokens[2..first_flag_idx]
+    let mut out: Vec<String> = Vec::new();
+    out.push(tokens[0].to_string());
+    out.push(tokens[1].to_string());
+    // Copy existing positionals
+    let mut replaced_placeholder = false;
+    if first_flag_idx > 2 {
+        for (i, t) in tokens[2..first_flag_idx].iter().enumerate() {
+            if i == (first_flag_idx - 2) - 1 && t.starts_with('<') && t.ends_with('>') {
+                // Replace last positional if it's a placeholder
+                out.push(value.to_string());
+                replaced_placeholder = true;
+            } else {
+                out.push((*t).to_string());
+            }
+        }
+    }
+    if !replaced_placeholder {
+        out.push(value.to_string());
+    }
+    // Append the rest (flags and any trailing tokens) in original order
+    for t in tokens.iter().skip(first_flag_idx) {
+        out.push((*t).to_string());
+    }
+    p.input = out.join(" ") + " ";
+    p.cursor = p.input.len();
+}
+
+fn palette_line_from_spec(
+    spec: &heroku_registry::CommandSpec,
+    fields: &[crate::app::Field],
+) -> String {
     let mut parts: Vec<String> = Vec::new();
     // Convert spec.name (group:rest) to execution form: "group rest"
     let mut split = spec.name.splitn(2, ':');
     let group = split.next().unwrap_or("");
     let rest = split.next().unwrap_or("");
     parts.push(group.to_string());
-    if !rest.is_empty() { parts.push(rest.to_string()); }
+    if !rest.is_empty() {
+        parts.push(rest.to_string());
+    }
     // positionals in order
     for p in &spec.positional_args {
         if let Some(f) = fields.iter().find(|f| &f.name == p) {
             let v = f.value.trim();
-            if v.is_empty() { parts.push(format!("<{}>", p)); } else { parts.push(v.to_string()); }
+            if v.is_empty() {
+                parts.push(format!("<{}>", p));
+            } else {
+                parts.push(v.to_string());
+            }
         } else {
             parts.push(format!("<{}>", p));
         }
     }
     // flags
-    for f in fields.iter().filter(|f| !spec.positional_args.iter().any(|p| p == &f.name)) {
+    for f in fields
+        .iter()
+        .filter(|f| !spec.positional_args.iter().any(|p| p == &f.name))
+    {
         if f.is_bool {
-            if !f.value.is_empty() { parts.push(format!("--{}", f.name)); }
+            if !f.value.is_empty() {
+                parts.push(format!("--{}", f.name));
+            }
         } else if !f.value.trim().is_empty() {
             parts.push(format!("--{}", f.name));
             parts.push(f.value.trim().to_string());
@@ -374,15 +599,26 @@ fn palette_line_from_spec(spec: &heroku_registry::CommandSpec, fields: &[crate::
 fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
     // Parse input into tokens: expect "group sub [args...]"
     let input = app.palette.input.trim();
-    if input.is_empty() { return Err("Type a command (e.g., apps info)".into()); }
+    if input.is_empty() {
+        return Err("Type a command (e.g., apps info)".into());
+    }
     let tokens: Vec<&str> = input.split_whitespace().collect();
-    if tokens.len() < 2 { return Err("Incomplete command. Use '<group> <sub>' (e.g., apps info)".into()); }
+    if tokens.len() < 2 {
+        return Err("Incomplete command. Use '<group> <sub>' (e.g., apps info)".into());
+    }
     let key = format!("{}:{}", tokens[0], tokens[1]);
-    let spec = app.registry.commands.iter().find(|c| c.name == key).cloned().ok_or_else(|| format!("Unknown command '{} {}'", tokens[0], tokens[1]))?;
+    let spec = app
+        .registry
+        .commands
+        .iter()
+        .find(|c| c.name == key)
+        .cloned()
+        .ok_or_else(|| format!("Unknown command '{} {}'", tokens[0], tokens[1]))?;
 
     // Parse flags/args from tokens after first two
     let parts = &tokens[2..];
-    let mut user_flags: std::collections::HashMap<String, Option<String>> = std::collections::HashMap::new();
+    let mut user_flags: std::collections::HashMap<String, Option<String>> =
+        std::collections::HashMap::new();
     let mut user_args: Vec<String> = Vec::new();
     let mut i = 0;
     while i < parts.len() {
@@ -392,7 +628,7 @@ fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
             // Equals form
             if let Some(eq) = long.find('=') {
                 let name = &long[..eq];
-                let val = &long[eq+1..];
+                let val = &long[eq + 1..];
                 user_flags.insert(name.to_string(), Some(val.to_string()));
             } else {
                 // Boolean or expects a value
@@ -401,8 +637,8 @@ fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
                         user_flags.insert(long.to_string(), None);
                     } else {
                         // Next token is value if present and not another flag
-                        if i + 1 < parts.len() && !parts[i+1].starts_with('-') {
-                            user_flags.insert(long.to_string(), Some(parts[i+1].to_string()));
+                        if i + 1 < parts.len() && !parts[i + 1].starts_with('-') {
+                            user_flags.insert(long.to_string(), Some(parts[i + 1].to_string()));
                             i += 1;
                         } else {
                             return Err(format!("Flag '--{}' requires a value", long));
@@ -420,8 +656,14 @@ fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
 
     // Validate required positionals
     if user_args.len() < spec.positional_args.len() {
-        let missing: Vec<String> = spec.positional_args[user_args.len()..].iter().map(|s| s.to_string()).collect();
-        return Err(format!("Missing required argument(s): {}", missing.join(", ")));
+        let missing: Vec<String> = spec.positional_args[user_args.len()..]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        return Err(format!(
+            "Missing required argument(s): {}",
+            missing.join(", ")
+        ));
     }
     // Validate required flags
     for f in &spec.flags {
@@ -462,7 +704,9 @@ fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
     if should_dry_run {
         let req = crate::preview::request_preview(&spec, &path, &body);
         app.logs.push(format!("Dry-run:\n{}\n{}", cli_line, req));
-        if app.logs.len() > 500 { let _ = app.logs.drain(0..app.logs.len()-500); }
+        if app.logs.len() > 500 {
+            let _ = app.logs.drain(0..app.logs.len() - 500);
+        }
         // Show demo table for GET collections in debug to visualize
         if spec.method == "GET" && !spec.path.ends_with('}') {
             app.result_json = Some(crate::tables::sample_apps());
@@ -487,7 +731,17 @@ fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
     let path_s = path.clone();
     let body_map = body.clone();
     std::thread::spawn(move || {
-        let rt = match tokio::runtime::Runtime::new() { Ok(r) => r, Err(e) => { let _ = tx.send(app::ExecOutcome { log: format!("Error: failed to start runtime: {}", e), result_json: None, open_table: false }); return; } };
+        let rt = match tokio::runtime::Runtime::new() {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = tx.send(app::ExecOutcome {
+                    log: format!("Error: failed to start runtime: {}", e),
+                    result_json: None,
+                    open_table: false,
+                });
+                return;
+            }
+        };
         let outcome = rt.block_on(async move {
             let client = heroku_api::HerokuClient::new_from_env().map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc", e))?;
             let method = match spec_clone.method.as_str() {
@@ -515,8 +769,16 @@ fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
         });
 
         match outcome {
-            Ok(out) => { let _ = tx.send(out); },
-            Err(err) => { let _ = tx.send(app::ExecOutcome { log: format!("Error: {}", err), result_json: None, open_table: false }); }
+            Ok(out) => {
+                let _ = tx.send(out);
+            }
+            Err(err) => {
+                let _ = tx.send(app::ExecOutcome {
+                    log: format!("Error: {}", err),
+                    result_json: None,
+                    open_table: false,
+                });
+            }
         }
     });
 
