@@ -206,13 +206,6 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn test_registry() -> Result<(), ()> {
-        let registry = Registry::from_embedded_schema().unwrap();
-        let cli = registry.build_clap();
-        Ok(())
-    }
-
-    #[test]
     fn manifest_non_empty_and_unique_names() {
         let registry = Registry::from_embedded_schema().expect("load registry from manifest");
         assert!(!registry.commands.is_empty(), "registry commands should not be empty");

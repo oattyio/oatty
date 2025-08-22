@@ -83,7 +83,7 @@ pub fn draw_json_table_with_offset(f: &mut Frame, area: Rect, json: &Value, offs
                 .border_style(theme::border_style(false)),
         )
         .column_spacing(1)
-        .highlight_style(theme::list_highlight_style());
+        .row_highlight_style(theme::list_highlight_style());
 
     f.render_widget(table, area);
 }

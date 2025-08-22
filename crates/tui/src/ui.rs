@@ -4,7 +4,7 @@ use crate::app::{App, Focus};
 use crate::theme;
 
 pub fn draw(f: &mut Frame, app: &mut App) {
-    let size = f.size();
+    let size = f.area();
 
     // Default view: command palette (input), hints, logs
     let constraints = [
@@ -19,8 +19,8 @@ pub fn draw(f: &mut Frame, app: &mut App) {
         .split(size);
 
     crate::palette::render_palette(f, chunks[0], app);
-    // Hints outside the input block, shown only when popup is not open and no error present
-    if !app.palette.popup_open && app.palette.error.is_none() {
+    // Hints outside the input block, shown when no error present and either no popup or no suggestions
+    if app.palette.error.is_none() && (!app.palette.popup_open || app.palette.suggestions.is_empty()) {
         let hints = Paragraph::new(Line::from(vec![
             Span::styled("Hints: ", theme::text_muted()),
             Span::styled("↑/↓", theme::title_style().fg(theme::ACCENT)),
@@ -41,13 +41,13 @@ pub fn draw(f: &mut Frame, app: &mut App) {
     draw_logs(f, app, chunks[3]);
 
     if app.show_help {
-        draw_help_modal(f, app, f.size());
+        draw_help_modal(f, app, f.area());
     }
     if app.show_table {
-        draw_table_modal(f, app, f.size());
+        draw_table_modal(f, app, f.area());
     }
     if app.show_builder {
-        draw_builder_modal(f, app, f.size());
+        draw_builder_modal(f, app, f.area());
     }
 }
 
@@ -74,7 +74,7 @@ fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     if app.focus == Focus::Search {
         let x = inner.x.saturating_add(app.search.chars().count() as u16);
         let y = inner.y;
-        f.set_cursor(x, y);
+        f.set_cursor_position((x, y));
     }
 }
 
@@ -258,7 +258,7 @@ fn draw_inputs(f: &mut Frame, app: &App, area: Rect) {
         if let (Some(row), Some(col)) = (cursor_row, cursor_col) {
             let x = content_rect.x.saturating_add(col);
             let y = content_rect.y.saturating_add(row);
-            f.set_cursor(x, y);
+            f.set_cursor_position((x, y));
         }
     }
 }

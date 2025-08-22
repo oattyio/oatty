@@ -390,44 +390,6 @@ fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
     Ok(false)
 }
 
-fn replace_current_token(p: &mut crate::palette::PaletteState, text: &str) {
-    let ctx = p.input.clone();
-    let cur = p.cursor;
-    let bytes = ctx.as_bytes();
-    let mut i = 0;
-    let mut start = cur;
-    let mut end = cur;
-    let mut found = false;
-    while i < bytes.len() {
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-            i += 1;
-        }
-        if i >= bytes.len() {
-            break;
-        }
-        start = i;
-        while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
-            i += 1;
-        }
-        end = i;
-        if start <= cur && cur <= end {
-            found = true;
-            break;
-        }
-    }
-    if !found {
-        start = cur;
-        end = cur;
-    }
-    p.input.replace_range(start..end, text);
-    let ins_len = text.len();
-    p.cursor = start + ins_len;
-    if !p.input.ends_with(' ') {
-        p.input.insert(p.cursor, ' ');
-        p.cursor += 1;
-    }
-}
-
 // Accept a non-command suggestion (flag/value) without clobbering the resolved command (group sub).
 // Rules:
 // - If cursor is at a new token position (ends with space), insert suggestion + trailing space.
@@ -464,6 +426,15 @@ fn accept_non_command_suggestion(p: &mut crate::palette::PaletteState, text: &st
         p.cursor = p.input.len();
     };
     if at_new_token || spans.is_empty() {
+        // If the last token was a lone '-' or '--', replace it with the suggestion
+        if !spans.is_empty() {
+            let (ls, le) = spans[spans.len() - 1];
+            let last_tok = &p.input[ls..le];
+            if last_tok == "-" || last_tok == "--" {
+                p.input.replace_range(ls..p.input.len(), "");
+                p.cursor = p.input.len();
+            }
+        }
         insert_with_space(p, text);
         return;
     }
@@ -487,8 +458,15 @@ fn accept_non_command_suggestion(p: &mut crate::palette::PaletteState, text: &st
     };
 
     let prev_is_flag = prev_token.map(|t| t.starts_with("--")).unwrap_or(false);
-    if current_token.starts_with("--") || prev_is_flag {
-        // Replace current token (flag or value case)
+    let inserting_is_flag = text.starts_with("--");
+    // If the cursor is on a flag value (previous token is a flag and current token isn't a flag)
+    // and the chosen suggestion is another flag, we should append the new flag instead of
+    // replacing the value the user has already typed.
+    if prev_is_flag && !current_token.starts_with("-") && inserting_is_flag {
+        p.cursor = p.input.len();
+        insert_with_space(p, text);
+    } else if current_token.starts_with("--") || prev_is_flag {
+        // Replace current token (flag token itself, or a value while inserting a value)
         p.input.replace_range(start..end, text);
         p.cursor = start + text.len();
         if !p.input.ends_with(' ') {
@@ -529,22 +507,11 @@ fn accept_positional_suggestion(p: &mut crate::palette::PaletteState, value: &st
     let mut out: Vec<String> = Vec::new();
     out.push(tokens[0].to_string());
     out.push(tokens[1].to_string());
-    // Copy existing positionals
-    let mut replaced_placeholder = false;
-    if first_flag_idx > 2 {
-        for (i, t) in tokens[2..first_flag_idx].iter().enumerate() {
-            if i == (first_flag_idx - 2) - 1 && t.starts_with('<') && t.ends_with('>') {
-                // Replace last positional if it's a placeholder
-                out.push(value.to_string());
-                replaced_placeholder = true;
-            } else {
-                out.push((*t).to_string());
-            }
-        }
+    // Copy existing positionals as-is, then append new positional value
+    for t in tokens[2..first_flag_idx].iter() {
+        out.push((*t).to_string());
     }
-    if !replaced_placeholder {
-        out.push(value.to_string());
-    }
+    out.push(value.to_string());
     // Append the rest (flags and any trailing tokens) in original order
     for t in tokens.iter().skip(first_flag_idx) {
         out.push((*t).to_string());
