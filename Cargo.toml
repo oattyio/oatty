@@ -7,6 +7,7 @@ members = [
     "crates/engine",
     "crates/api",
     "crates/util",
+    "crates/registry-types",
 ]
 resolver = "2"
 

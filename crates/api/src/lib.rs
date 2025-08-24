@@ -16,7 +16,7 @@ impl HerokuClient {
     pub fn new_from_env() -> Result<Self> {
         let token = std::env::var("HEROKU_API_KEY")
             .ok()
-            .or_else(|| get_netrc_token());
+            .or_else(get_netrc_token);
         let mut headers = reqwest::header::HeaderMap::new();
         if let Some(t) = token {
             let val = format!("Bearer {}", t);

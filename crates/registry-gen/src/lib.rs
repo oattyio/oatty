@@ -1,39 +1,11 @@
 use anyhow::{Context, Result};
 use heck::ToKebabCase;
+use heroku_registry_types::{CommandFlag, CommandSpec};
 use percent_encoding::percent_decode_str;
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::{HashMap};
+use std::collections::HashMap;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandFlag {
-    pub name: String,
-    pub required: bool,
-    #[serde(default)]
-    pub r#type: String,
-    #[serde(default)]
-    pub enum_values: Vec<String>,
-    #[serde(default)]
-    pub default_value: Option<String>,
-    #[serde(default)]
-    pub description: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CommandSpec {
-    pub name: String,
-    pub summary: String,
-    #[serde(default)]
-    pub positional_args: Vec<String>,
-    #[serde(default)]
-    pub positional_help: HashMap<String, String>,
-    #[serde(default)]
-    pub flags: Vec<CommandFlag>,
-    pub method: String,
-    pub path: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct Registry {
     pub commands: Vec<CommandSpec>,
 }
@@ -98,17 +70,20 @@ fn derive_commands_from_schema(v: &Value) -> Result<Vec<CommandSpec>> {
                 .to_string();
 
             if let Some((_, action)) = classify_command(href, method) {
-                let (path_tmpl, positional_args, positional_help) = path_and_vars_with_help(href, v);
+                let (path_tmpl, positional_args, positional_help) =
+                    path_and_vars_with_help(href, v);
                 let (flags, _required_names) = extract_flags_resolved(link, v);
 
                 if path_tmpl.is_empty() {
                     continue;
                 }
-                let mut name = derive_command_name(href, &title.to_kebab_case());
+                let (mut group, mut name) =
+                    derive_command_group_and_name(href, &title.to_kebab_case());
                 if cmd_names.insert(name.clone(), true).is_some() {
-                    name = derive_command_name(href, &action);
+                    (group, name) = derive_command_group_and_name(href, &action);
                 }
                 let spec = CommandSpec {
+                    group,
                     name,
                     summary: desc.clone(),
                     positional_args,
@@ -169,32 +144,43 @@ fn concrete_segments(href: &str) -> Vec<String> {
 }
 
 fn normalize_group(s: &str) -> String {
-    if s == "config-vars" { "config".into() } else { s.to_string() }
+    if s == "config-vars" {
+        "config".into()
+    } else {
+        s.to_string()
+    }
 }
 
-fn derive_command_name(href: &str, action: &str) -> String {
+fn derive_command_group_and_name(href: &str, action: &str) -> (String, String) {
     let segs = concrete_segments(href);
     if segs.is_empty() {
-        return format!("misc:{}", action);
+        return ("misc".to_string(), action.to_string());
     }
     let group = normalize_group(&segs[0]);
-    let rest = if segs.len() > 1 { segs[1..].join(":") } else { String::new() };
+    let rest = if segs.len() > 1 {
+        segs[1..].join(":")
+    } else {
+        String::new()
+    };
     let sub = if rest.is_empty() {
         action.to_string()
     } else {
         format!("{}:{}", rest, action)
     };
-    format!("{}:{}", group, sub)
+    (group, sub)
 }
 
-fn path_and_vars_with_help(href: &str, root: &Value) -> (String, Vec<String>, HashMap<String, String>) {
+fn path_and_vars_with_help(
+    href: &str,
+    root: &Value,
+) -> (String, Vec<String>, HashMap<String, String>) {
     let mut args: Vec<String> = Vec::new();
     let mut out_segs: Vec<String> = Vec::new();
     let mut help: HashMap<String, String> = HashMap::new();
     let mut prev: Option<&str> = None;
     for seg in href.trim_start_matches('/').split('/') {
         if seg.starts_with('{') {
-            let name = prev.map(|s| singularize(s)).unwrap_or_else(|| "id".to_string());
+            let name = prev.map(singularize).unwrap_or_else(|| "id".to_string());
             args.push(name.clone());
             out_segs.push(format!("{{{}}}", name));
 
@@ -214,7 +200,8 @@ fn path_and_vars_with_help(href: &str, root: &Value) -> (String, Vec<String>, Ha
                                         descs.push(d.to_string());
                                     }
                                 }
-                            } else if let Some(d) = item.get("description").and_then(|x| x.as_str()) {
+                            } else if let Some(d) = item.get("description").and_then(|x| x.as_str())
+                            {
                                 descs.push(d.to_string());
                             }
                         }
@@ -247,11 +234,18 @@ fn extract_placeholder_ptr(seg: &str) -> Option<String> {
     let inner = seg.trim_start_matches('{').trim_end_matches('}');
     let inner = inner.trim();
     let ptr = if inner.starts_with('(') && inner.ends_with(')') {
-        inner.trim_start_matches('(').trim_end_matches(')').to_string()
+        inner
+            .trim_start_matches('(')
+            .trim_end_matches(')')
+            .to_string()
     } else {
         inner.to_string()
     };
-    if ptr.is_empty() { None } else { Some(ptr) }
+    if ptr.is_empty() {
+        None
+    } else {
+        Some(ptr)
+    }
 }
 
 fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<String>) {
@@ -273,28 +267,43 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
                     if let Some(target) = root.pointer(ptr) {
                         if merged.get("type").is_none() {
                             if let Some(t) = target.get("type") {
-                                merged.as_object_mut().unwrap().insert("type".into(), t.clone());
+                                merged
+                                    .as_object_mut()
+                                    .unwrap()
+                                    .insert("type".into(), t.clone());
                             }
                         }
                         if merged.get("description").is_none() {
                             if let Some(d) = target.get("description") {
-                                merged.as_object_mut().unwrap().insert("description".into(), d.clone());
+                                merged
+                                    .as_object_mut()
+                                    .unwrap()
+                                    .insert("description".into(), d.clone());
                             }
                         }
                         if merged.get("enum").is_none() {
                             if let Some(e) = target.get("enum") {
-                                merged.as_object_mut().unwrap().insert("enum".into(), e.clone());
+                                merged
+                                    .as_object_mut()
+                                    .unwrap()
+                                    .insert("enum".into(), e.clone());
                             }
                         }
                         if merged.get("default").is_none() {
                             if let Some(df) = target.get("default") {
-                                merged.as_object_mut().unwrap().insert("default".into(), df.clone());
+                                merged
+                                    .as_object_mut()
+                                    .unwrap()
+                                    .insert("default".into(), df.clone());
                             }
                         }
                     }
                 }
 
-                let ty = merged.get("type").and_then(|x| x.as_str()).unwrap_or("string");
+                let ty = merged
+                    .get("type")
+                    .and_then(|x| x.as_str())
+                    .unwrap_or("string");
                 let required = required_names.iter().any(|n| n == name);
                 let enum_values = merged
                     .get("enum")
@@ -306,21 +315,17 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
                     })
                     .unwrap_or_default();
                 let mut default_value = merged.get("default").and_then(|x| {
-                    if let Some(s) = x.as_str() {
-                        Some(s.to_string())
-                    } else if let Some(b) = x.as_bool() {
-                        Some(b.to_string())
-                    } else if let Some(n) = x.as_i64() {
-                        Some(n.to_string())
-                    } else if let Some(n) = x.as_u64() {
-                        Some(n.to_string())
-                    } else if let Some(n) = x.as_f64() {
-                        Some(n.to_string())
-                    } else {
-                        None
-                    }
+                    x.as_str()
+                        .map(|s| s.to_string())
+                        .or_else(|| x.as_bool().map(|b| b.to_string()))
+                        .or_else(|| x.as_i64().map(|n| n.to_string()))
+                        .or_else(|| x.as_u64().map(|n| n.to_string()))
+                        .or_else(|| x.as_f64().map(|n| n.to_string()))
                 });
-                let description = merged.get("description").and_then(|x| x.as_str()).map(|s| s.to_string());
+                let description = merged
+                    .get("description")
+                    .and_then(|x| x.as_str())
+                    .map(|s| s.to_string());
                 if default_value.is_none() && !enum_values.is_empty() {
                     default_value = Some(enum_values[0].clone());
                 }
@@ -337,4 +342,3 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
     }
     (flags, required_names)
 }
-

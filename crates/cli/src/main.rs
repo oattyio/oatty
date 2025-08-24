@@ -1,7 +1,8 @@
-use anyhow::{bail, Context, Result};
+use anyhow::{anyhow, bail, Context, Result};
 use clap::ArgMatches;
 use heroku_api::HerokuClient;
-use heroku_registry::Registry;
+use heroku_engine::{dry_run_plan, load_workflow_from_file};
+use heroku_registry::{build_clap, Registry};
 use heroku_util::redact_sensitive;
 use reqwest::Method;
 use serde_json::{json, to_string_pretty, Map, Value};
@@ -39,7 +40,7 @@ use tracing_subscriber::fmt;
 async fn main() -> Result<()> {
     init_tracing();
     let registry = Registry::from_embedded_schema()?;
-    let cli = registry.build_clap();
+    let cli = build_clap(&registry);
     let matches = cli.get_matches();
 
     // No subcommands => TUI
@@ -53,11 +54,11 @@ async fn main() -> Result<()> {
 /// Initializes the tracing system for logging and diagnostics.
 ///
 /// This function sets up the tracing subscriber with configuration based on the
-/// `RUST_LOG` environment variable. It configures log levels and output formatting
+/// `HEROKU_LOG` environment variable. It configures log levels and output formatting
 /// for the application's diagnostic system.
 ///
 /// # Environment Variables
-/// - `RUST_LOG`: Controls the logging level. Valid values are:
+/// - `HEROKU_LOG`: Controls the logging level. Valid values are:
 ///   - `error`: Only error messages
 ///   - `warn`: Warning and error messages
 ///   - `info`: Info, warning, and error messages (default)
@@ -65,7 +66,7 @@ async fn main() -> Result<()> {
 ///   - `trace`: All log levels
 ///
 /// # Behavior
-/// - Reads the `RUST_LOG` environment variable
+/// - Reads the `HEROKU_LOG` environment variable
 /// - Defaults to "info" level if not set or invalid
 /// - Configures the tracing subscriber with the specified filter
 /// - Sets maximum log level to `Level::INFO`
@@ -73,13 +74,13 @@ async fn main() -> Result<()> {
 /// # Examples
 /// ```bash
 /// # Set debug logging
-/// RUST_LOG=debug cargo run
+/// HEROKU_LOG=debug cargo run
 ///
 /// # Set error-only logging
-/// RUST_LOG=error cargo run
+/// HEROKU_LOG=error cargo run
 /// ```
 fn init_tracing() {
-    let filter = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into());
+    let filter = std::env::var("HEROKU_LOG").unwrap_or_else(|_| "info".into());
     let _ = fmt()
         .with_env_filter(filter)
         .with_max_level(Level::INFO)
@@ -395,17 +396,17 @@ async fn run_workflow_cmd(
                 .get_one::<String>("file")
                 .map(|s| s.as_str())
                 .unwrap_or("workflows/create_app_and_db.yaml");
-            let workflow_file = heroku_engine::load_workflow_from_file(file)?;
+            let workflow_file = load_workflow_from_file(file)?;
             let name = sub
                 .get_one::<String>("name")
                 .map(|s| s.as_str())
                 .or_else(|| workflow_file.workflows.keys().next().map(|s| s.as_str()))
-                .ok_or_else(|| anyhow::anyhow!("no workflow name provided and file has none"))?;
+                .ok_or_else(|| anyhow!("no workflow name provided and file has none"))?;
             let workflow = workflow_file
                 .workflows
                 .get(name)
-                .ok_or_else(|| anyhow::anyhow!("workflow '{}' not found in file", name))?;
-            let plan = heroku_engine::dry_run_plan(workflow, registry).await?;
+                .ok_or_else(|| anyhow!("workflow '{}' not found in file", name))?;
+            let plan = dry_run_plan(workflow, registry).await?;
             println!("{}", serde_json::to_string_pretty(&plan)?);
         }
         Some(("run", sub)) => {
@@ -413,21 +414,21 @@ async fn run_workflow_cmd(
                 .get_one::<String>("file")
                 .map(|s| s.as_str())
                 .unwrap_or("workflows/create_app_and_db.yaml");
-            let wf_file = heroku_engine::load_workflow_from_file(file)?;
+            let wf_file = load_workflow_from_file(file)?;
             let name = sub
                 .get_one::<String>("name")
                 .map(|s| s.as_str())
                 .or_else(|| wf_file.workflows.keys().next().map(|s| s.as_str()))
-                .ok_or_else(|| anyhow::anyhow!("no workflow name provided and file has none"))?;
+                .ok_or_else(|| anyhow!("no workflow name provided and file has none"))?;
             let wf = wf_file
                 .workflows
                 .get(name)
-                .ok_or_else(|| anyhow::anyhow!("workflow '{}' not found in file", name))?;
-            let dry = sub.get_flag("dry-run")
-                || root.map(|r| r.get_flag("dry-run")).unwrap_or(false);
+                .ok_or_else(|| anyhow!("workflow '{}' not found in file", name))?;
+            let dry =
+                sub.get_flag("dry-run") || root.map(|r| r.get_flag("dry-run")).unwrap_or(false);
             if dry {
-                let plan = heroku_engine::dry_run_plan(wf, registry).await?;
-                println!("{}", serde_json::to_string_pretty(&plan)?);
+                let plan = dry_run_plan(wf, registry).await?;
+                println!("{}", to_string_pretty(&plan)?);
             } else {
                 println!("Workflow run not implemented yet; use --dry-run");
             }

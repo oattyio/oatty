@@ -17,3 +17,4 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 percent-encoding = { workspace = true }
 heck = { workspace = true }
+heroku-registry-types = { path = "../registry-types" }

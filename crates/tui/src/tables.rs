@@ -1,15 +1,63 @@
+//! JSON table rendering and data visualization for the Heroku TUI.
+//!
+//! This module provides functionality for rendering JSON data as tables,
+//! including automatic column detection, data formatting, and sensitive
+//! data handling.
+
 use ratatui::{prelude::*, widgets::*};
 use serde_json::Value;
 use std::collections::{BTreeSet, HashMap};
 
 use crate::theme;
 
-// Lightweight table model + renderer for JSON arrays.
-
+/// Renders a JSON array as a table with automatic column detection.
+///
+/// This function automatically detects the best columns to display from
+/// a JSON array and renders them in a formatted table.
+///
+/// # Arguments
+///
+/// * `f` - The frame to render to
+/// * `area` - The rectangular area to render the table in
+/// * `json` - The JSON value containing the array data
+///
+/// # Examples
+///
+/// ```rust
+/// use ratatui::Frame;
+/// use serde_json::json;
+///
+/// let data = json!([
+///     {"id": "1", "name": "app1", "status": "running"},
+///     {"id": "2", "name": "app2", "status": "stopped"}
+/// ]);
+/// draw_json_table(&mut frame, area, &data);
+/// ```
 pub fn draw_json_table(f: &mut Frame, area: Rect, json: &Value) {
     draw_json_table_with_offset(f, area, json, 0);
 }
 
+/// Renders a JSON array as a scrollable table with offset support.
+///
+/// This function renders a JSON array as a table with support for
+/// scrolling and pagination through large datasets.
+///
+/// # Arguments
+///
+/// * `f` - The frame to render to
+/// * `area` - The rectangular area to render the table in
+/// * `json` - The JSON value containing the array data
+/// * `offset` - The row offset for scrolling
+///
+/// # Examples
+///
+/// ```rust
+/// use ratatui::Frame;
+/// use serde_json::json;
+///
+/// let data = json!([/* large array */]);
+/// draw_json_table_with_offset(&mut frame, area, &data, 10);
+/// ```
 pub fn draw_json_table_with_offset(f: &mut Frame, area: Rect, json: &Value, offset: usize) {
     // Find the array to render: either the value itself, or the first array field of an object
     let arr = match json {
@@ -88,7 +136,18 @@ pub fn draw_json_table_with_offset(f: &mut Frame, area: Rect, json: &Value, offs
     f.render_widget(table, area);
 }
 
-// Choose columns using schema-informed + heuristic scoring and ensure at least 4 columns.
+/// Infers the best columns to display from a JSON array.
+///
+/// This function analyzes the structure of JSON objects in an array
+/// and selects the most relevant columns based on scoring heuristics.
+///
+/// # Arguments
+///
+/// * `arr` - The JSON array to analyze
+///
+/// # Returns
+///
+/// Vector of column names ordered by relevance.
 fn infer_columns(arr: &[Value]) -> Vec<String> {
     let mut score: HashMap<String, i32> = HashMap::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -140,6 +199,18 @@ fn infer_columns(arr: &[Value]) -> Vec<String> {
     cols
 }
 
+/// Calculates a base score for a column key based on naming conventions.
+///
+/// This function assigns scores to column names based on common patterns
+/// and naming conventions used in APIs.
+///
+/// # Arguments
+///
+/// * `k` - The column key to score
+///
+/// # Returns
+///
+/// A score indicating the relevance of the column.
 fn base_key_score(k: &str) -> i32 {
     let l = k.to_lowercase();
     let mut s = 0;
@@ -161,7 +232,18 @@ fn base_key_score(k: &str) -> i32 {
     s
 }
 
-// Frequency-based boost derived from schemas/top_properties.py output (top common payload keys)
+/// Applies frequency-based scoring boost for common API properties.
+///
+/// This function provides additional scoring based on the frequency
+/// of property names in typical API responses.
+///
+/// # Arguments
+///
+/// * `k` - The column key to score
+///
+/// # Returns
+///
+/// A boost score for common properties.
 fn property_frequency_boost(k: &str) -> i32 {
     let l = k.to_lowercase();
     match l.as_str() {
@@ -186,6 +268,25 @@ fn property_frequency_boost(k: &str) -> i32 {
     }
 }
 
+/// Normalizes a column header for display.
+///
+/// This function converts column keys into human-readable headers
+/// by applying common formatting rules.
+///
+/// # Arguments
+///
+/// * `k` - The column key to normalize
+///
+/// # Returns
+///
+/// A formatted header string.
+///
+/// # Examples
+///
+/// ```rust
+/// assert_eq!(normalize_header("created_at"), "Created At");
+/// assert_eq!(normalize_header("app_id"), "App ID");
+/// ```
 fn normalize_header(k: &str) -> String {
     let s = k.to_string();
     if s.ends_with("_id") {
@@ -195,10 +296,22 @@ fn normalize_header(k: &str) -> String {
         return s.trim_end_matches("_url").to_string() + " URL";
     }
     // snake_case to Title Case, preserve common acronyms
-    let parts: Vec<String> = s.split('_').map(|p| preserve_acronym(p)).collect();
+    let parts: Vec<String> = s.split('_').map(preserve_acronym).collect();
     parts.join(" ")
 }
 
+/// Preserves common acronyms when formatting text.
+///
+/// This function ensures that common acronyms like "ID", "URL", etc.
+/// are preserved in their uppercase form during text formatting.
+///
+/// # Arguments
+///
+/// * `p` - The text part to format
+///
+/// # Returns
+///
+/// The formatted text with preserved acronyms.
 fn preserve_acronym(p: &str) -> String {
     match p.to_ascii_uppercase().as_str() {
         "ID" => "ID".into(),
@@ -208,6 +321,15 @@ fn preserve_acronym(p: &str) -> String {
     }
 }
 
+/// Capitalizes the first character of a string.
+///
+/// # Arguments
+///
+/// * `s` - The string to capitalize
+///
+/// # Returns
+///
+/// The string with the first character capitalized.
 fn capitalize(s: &str) -> String {
     let mut c = s.chars();
     match c.next() {
@@ -216,6 +338,19 @@ fn capitalize(s: &str) -> String {
     }
 }
 
+/// Renders a JSON value as a string for table display.
+///
+/// This function converts JSON values to display strings, handling
+/// sensitive data masking and value formatting.
+///
+/// # Arguments
+///
+/// * `key` - The column key (used for sensitive data detection)
+/// * `v` - The JSON value to render
+///
+/// # Returns
+///
+/// A formatted string representation of the value.
 fn render_value(key: &str, v: &Value) -> String {
     // Redact when key looks sensitive
     let sensitive = is_sensitive_key(key);
@@ -231,15 +366,52 @@ fn render_value(key: &str, v: &Value) -> String {
     ellipsize_middle_if_sha_like(&out, 16)
 }
 
+/// Checks if a key represents sensitive data.
+///
+/// This function identifies keys that likely contain sensitive information
+/// like passwords, tokens, or API keys.
+///
+/// # Arguments
+///
+/// * `k` - The key to check
+///
+/// # Returns
+///
+/// True if the key represents sensitive data.
 fn is_sensitive_key(k: &str) -> bool {
     let l = k.to_lowercase();
     l.contains("token") || l.contains("password") || l.contains("api_key") || l.contains("secret")
 }
 
+/// Masks sensitive data for display.
+///
+/// This function replaces sensitive data with placeholder characters
+/// to prevent accidental exposure.
+///
+/// # Arguments
+///
+/// * `_s` - The sensitive string to mask
+///
+/// # Returns
+///
+/// A masked representation of the sensitive data.
 fn mask_secret(_s: &str) -> String {
     "••••".into()
 }
 
+/// Ellipsizes long hex-like strings in the middle.
+///
+/// This function compresses long hexadecimal strings (like hashes)
+/// by showing only the beginning and end with an ellipsis in the middle.
+///
+/// # Arguments
+///
+/// * `s` - The string to potentially ellipsize
+/// * `keep_total` - The total number of characters to keep
+///
+/// # Returns
+///
+/// The original string or an ellipsized version.
 fn ellipsize_middle_if_sha_like(s: &str, keep_total: usize) -> String {
     // Heuristic: hex-looking and long → compress
     let is_hexish = s.len() >= 16 && s.chars().all(|c| c.is_ascii_hexdigit());
@@ -251,7 +423,14 @@ fn ellipsize_middle_if_sha_like(s: &str, keep_total: usize) -> String {
     format!("{}…{}", &s[..head], &s[s.len() - tail..])
 }
 
-// Optional sample data for debug/demo usage
+/// Generates sample app data for debugging and demonstration.
+///
+/// This function creates sample JSON data that mimics the structure
+/// of typical Heroku API responses for testing and demo purposes.
+///
+/// # Returns
+///
+/// Sample JSON data representing app information.
 #[allow(dead_code)]
 pub fn sample_apps() -> Value {
     serde_json::json!([
@@ -260,7 +439,16 @@ pub fn sample_apps() -> Value {
     ])
 }
 
-// Render a single-object result as key: value list, or a scalar as-is.
+/// Renders a single JSON object as key-value pairs or scalar as text.
+///
+/// This function handles non-array JSON data by displaying it as
+/// a formatted key-value list or plain text.
+///
+/// # Arguments
+///
+/// * `f` - The frame to render to
+/// * `area` - The rectangular area to render in
+/// * `json` - The JSON value to render
 pub fn draw_kv_or_text(f: &mut Frame, area: Rect, json: &Value) {
     match json {
         Value::Object(map) => {

@@ -1,84 +1,210 @@
+//! Application state and logic for the Heroku TUI.
+//!
+//! This module contains the main application state, data structures, and business
+//! logic for the TUI interface. It manages the application lifecycle, user
+//! interactions, and coordinates between different UI components.
+
 use ratatui::widgets::ListState;
 
+use crate::start_palette_execution;
+
+/// Represents a single input field for a command parameter.
+///
+/// This struct contains all the metadata and state for a command parameter
+/// including its type, validation rules, current value, and UI state.
 #[derive(Debug, Clone)]
 pub struct Field {
+    /// The name of the field (e.g., "app", "region", "stack")
     pub name: String,
+    /// Whether this field is required for the command to execute
     pub required: bool,
+    /// Whether this field represents a boolean value (checkbox)
     pub is_bool: bool,
+    /// The current value entered by the user
     pub value: String,
+    /// Valid enum values for this field (empty if not an enum)
     pub enum_values: Vec<String>,
+    /// Current selection index for enum fields
     pub enum_idx: Option<usize>,
 }
 
+/// Represents the current focus area in the UI.
+///
+/// This enum tracks which part of the interface currently has focus,
+/// allowing for proper keyboard navigation and input handling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Focus {
+    /// Search input field in the command palette
     Search,
+    /// Command list in the builder modal
     Commands,
+    /// Input fields form in the builder modal
     Inputs,
 }
 
+/// The main application state containing all UI data and business logic.
+///
+/// This struct serves as the central state container for the entire TUI
+/// application, managing user interactions, data flow, and UI state.
 pub struct App {
+    /// The registry containing all available Heroku commands
     pub registry: heroku_registry::Registry,
+    /// Current focus area in the UI
     pub focus: Focus,
+    /// Search query for filtering commands
     pub search: String,
+    /// All available commands from the registry
     pub all_commands: Vec<heroku_registry::CommandSpec>,
+    /// Indices of commands that match the current search filter
     pub filtered: Vec<usize>,
+    /// Index of the currently selected command in the filtered list
     pub selected: usize,
 
+    /// The currently selected command specification
     pub picked: Option<heroku_registry::CommandSpec>,
+    /// Input fields for the selected command
     pub fields: Vec<Field>,
+    /// Index of the currently focused field
     pub field_idx: usize,
 
+    /// Application logs and status messages
     pub logs: Vec<String>,
+    /// Whether the help modal is currently shown
     pub show_help: bool,
+    /// Command specification to show help for (may differ from picked)
     pub help_spec: Option<heroku_registry::CommandSpec>,
+    /// State for the command list widget
     pub list_state: ListState,
+    /// Whether to run commands in dry-run mode
     pub dry_run: bool,
+    /// Whether debug mode is enabled
     pub debug_enabled: bool,
+    /// JSON result from the last executed command
     pub result_json: Option<serde_json::Value>,
+    /// Whether the table modal is currently shown
     pub show_table: bool,
+    /// Scroll offset for table display
     pub table_offset: usize,
+    /// Whether the builder modal is currently shown
     pub show_builder: bool,
+    /// State for the command palette input
     pub palette: crate::palette::PaletteState,
+    /// Value providers for command suggestions
     pub providers: Vec<Box<dyn crate::palette::ValueProvider>>,
+    /// Whether a command is currently executing
     pub executing: bool,
+    /// Animation frame for the execution throbber
     pub throbber_idx: usize,
+    /// Receiver for async execution results
     pub exec_rx: Option<std::sync::mpsc::Receiver<ExecOutcome>>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// Messages that can be sent to update the application state.
+///
+/// This enum defines all the possible user actions and system events
+/// that can trigger state changes in the application.
+#[derive(Debug, Clone)]
 pub enum Msg {
+    /// Toggle the help modal visibility
     ToggleHelp,
+    /// Toggle the table modal visibility
     ToggleTable,
+    /// Toggle the builder modal visibility
     ToggleBuilder,
+    /// Close any currently open modal
     CloseModal,
+    /// Move focus to the next UI element
     FocusNext,
+    /// Move focus to the previous UI element
     FocusPrev,
+    /// Move selection in a list by the given offset
     MoveSelection(isize),
+    /// Execute the currently selected action
     Enter,
+    /// Add a character to the search input
     SearchChar(char),
+    /// Remove a character from the search input
     SearchBackspace,
+    /// Clear the search input
     SearchClear,
+    /// Move up in the inputs form
     InputsUp,
+    /// Move down in the inputs form
     InputsDown,
+    /// Add a character to the current input field
     InputsChar(char),
+    /// Remove a character from the current input field
     InputsBackspace,
+    /// Toggle a boolean field value
     InputsToggleSpace,
+    /// Cycle through enum values to the left
     InputsCycleLeft,
+    /// Cycle through enum values to the right
     InputsCycleRight,
+    /// Execute the current command
     Run,
+    /// Copy the current command to clipboard
     CopyCommand,
+    /// Scroll the table by the given offset
     TableScroll(isize),
+    /// Jump to the beginning of the table
     TableHome,
+    /// Jump to the end of the table
     TableEnd,
+    /// Periodic UI tick (e.g., throbbers)
+    Tick,
+    /// Terminal resized
+    Resize(u16, u16),
+    /// Background execution completed with outcome
+    ExecCompleted(ExecOutcome),
 }
 
+/// Side effects that can be triggered by state changes.
+///
+/// This enum defines actions that should be performed as a result
+/// of state changes, such as copying to clipboard or showing notifications.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Effect {
+    /// Request to copy the current command to clipboard
     CopyCommandRequested,
 }
 
+/// Result of an asynchronous command execution.
+///
+/// This struct contains the outcome of a command execution including
+/// logs, results, and any UI state changes that should occur.
+#[derive(Debug, Clone)]
+pub struct ExecOutcome {
+    /// Log message from the command execution
+    pub log: String,
+    /// JSON result from the command (if any)
+    pub result_json: Option<serde_json::Value>,
+    /// Whether to automatically open the table modal
+    pub open_table: bool,
+}
+
 impl App {
+    /// Creates a new application instance with the given registry.
+    ///
+    /// This constructor initializes the application state with default values
+    /// and loads all commands from the provided registry.
+    ///
+    /// # Arguments
+    ///
+    /// * `registry` - The Heroku command registry containing all available commands
+    ///
+    /// # Returns
+    ///
+    /// A new App instance with initialized state.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use heroku_registry::Registry;
+    ///
+    /// let registry = Registry::from_embedded_schema()?;
+    /// let app = App::new(registry);
+    /// ```
     pub fn new(registry: heroku_registry::Registry) -> Self {
         let all = registry.commands.clone();
         let mut app = Self {
@@ -103,352 +229,316 @@ impl App {
             show_table: false,
             table_offset: 0,
             show_builder: false,
-            palette: Default::default(),
-            providers: Default::default(),
+            palette: crate::palette::PaletteState::default(),
+            providers: vec![],
             executing: false,
             throbber_idx: 0,
             exec_rx: None,
         };
-        // Debug: add a static provider for apps:info positional <app>
-        if app.debug_enabled {
-            app.providers
-                .push(Box::new(crate::palette::StaticValuesProvider {
-                    command_key: "apps:info".into(),
-                    field: "app".into(),
-                    values: vec!["demo".into(), "api".into(), "web".into(), "my-app".into()],
-                }));
-        }
-        app.rebuild_fields_for_current_selection();
-        if !app.filtered.is_empty() {
-            app.list_state.select(Some(0));
-        }
+        app.update_filtered();
         app
     }
 
-    pub fn filter_commands(&mut self) {
-        let q = self.search.to_lowercase();
-        self.filtered = self
-            .all_commands
-            .iter()
-            .enumerate()
-            .filter(|(_, c)| {
-                if q.is_empty() {
-                    return true;
-                }
-                let name = c.name.as_str();
-                let lower_name = name.to_lowercase();
-                // Display form: group + rest
-                let mut split = name.splitn(2, ':');
-                let group = split.next().unwrap_or("");
-                let rest = split.next().unwrap_or("");
-                let display = if rest.is_empty() {
-                    group.to_string()
-                } else {
-                    format!("{} {}", group, rest)
-                };
-                let display_lower = display.to_lowercase();
-                // Flat form: replace ':' with space for queries like "apps list"
-                let flat_lower = lower_name.replace(':', " ");
-                lower_name.contains(&q) || display_lower.contains(&q) || flat_lower.contains(&q)
-            })
-            .map(|(i, _)| i)
-            .collect();
-        self.selected = 0;
-        self.rebuild_fields_for_current_selection();
-        if self.filtered.is_empty() {
-            self.list_state.select(None);
+    /// Updates the filtered command list based on the current search query.
+    ///
+    /// This method filters the available commands using fuzzy matching
+    /// and updates the filtered indices and selection state.
+    pub fn update_filtered(&mut self) {
+        if self.search.is_empty() {
+            self.filtered = (0..self.all_commands.len()).collect();
         } else {
-            self.list_state.select(Some(0));
+            self.filtered = self
+                .all_commands
+                .iter()
+                .enumerate()
+                .filter_map(|(i, cmd)| {
+                    if cmd
+                        .name
+                        .to_lowercase()
+                        .contains(&self.search.to_lowercase())
+                    {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
         }
-    }
-
-    pub fn move_selection(&mut self, delta: isize) {
-        if self.filtered.is_empty() {
-            return;
-        }
-        let len = self.filtered.len() as isize;
-        let cur = self.selected as isize;
-        let next = (cur + delta).rem_euclid(len);
-        self.selected = next as usize;
-        self.rebuild_fields_for_current_selection();
+        self.selected = self.selected.min(self.filtered.len().saturating_sub(1));
         self.list_state.select(Some(self.selected));
     }
 
-    pub fn pick_current_command(&mut self) {
-        if self.filtered.is_empty() {
-            return;
-        }
-        // Fields are already synced with selection; Enter moves focus to Inputs
-        self.focus = Focus::Inputs;
-    }
-
-    pub fn inputs_prev(&mut self) {
-        if self.field_idx > 0 {
-            self.field_idx -= 1;
-        }
-    }
-    // Allow selecting a pseudo-field at index == fields.len() for Dry-run toggle when DEBUG enabled
-    pub fn inputs_next(&mut self) {
-        let max_index = if self.debug_enabled {
-            self.fields.len()
-        } else {
-            self.fields.len().saturating_sub(1)
-        };
-        if self.field_idx < max_index {
-            self.field_idx += 1;
-        }
-    }
-
-    pub fn edit_current_field<F: FnOnce(&mut String)>(&mut self, f: F) {
-        if self.field_idx >= self.fields.len() {
-            return;
-        }
-        if let Some(field) = self.fields.get_mut(self.field_idx) {
-            f(&mut field.value);
-        }
-    }
-
-    pub fn cycle_enum_current(&mut self, delta: isize) {
-        if self.field_idx >= self.fields.len() {
-            return;
-        }
-        if let Some(field) = self.fields.get_mut(self.field_idx) {
-            if field.enum_values.is_empty() {
-                return;
-            }
-            if field.enum_idx.is_none() {
-                field.enum_idx = Some(0);
-            }
-            let len = field.enum_values.len() as isize;
-            let idx = field.enum_idx.unwrap() as isize;
-            let next = (idx + delta).rem_euclid(len);
-            field.enum_idx = Some(next as usize);
-            field.value = field.enum_values[next as usize].clone();
-        }
-    }
-
+    /// Returns a list of required field names that are currently empty.
+    ///
+    /// This method checks all required fields and returns the names
+    /// of those that don't have values, for validation purposes.
+    ///
+    /// # Returns
+    ///
+    /// Vector of field names that are required but empty.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let missing = app.missing_required();
+    /// if !missing.is_empty() {
+    ///     println!("Missing required fields: {:?}", missing);
+    /// }
+    /// ```
     pub fn missing_required(&self) -> Vec<String> {
         self.fields
             .iter()
-            .filter(|f| f.required && f.value.trim().is_empty() && !f.is_bool)
+            .filter(|f| f.required && f.value.is_empty())
             .map(|f| f.name.clone())
             .collect()
     }
 
-    pub fn toggle_help(&mut self) {
-        self.show_help = !self.show_help;
-    }
-
-    pub fn run(&mut self) {
-        if self.picked.is_none() {
-            return;
-        }
-        let spec = self.picked.clone().unwrap();
-        let mut pos_map = std::collections::HashMap::new();
-        let mut body = serde_json::Map::new();
-
-        // Fill from fields
-        for f in &self.fields {
-            if spec.positional_args.iter().any(|p| p == &f.name) {
-                pos_map.insert(f.name.clone(), f.value.clone());
-            } else {
-                if f.is_bool {
-                    // in this simple UI, non-empty toggles true
-                    if !f.value.is_empty() {
-                        body.insert(f.name.clone(), serde_json::Value::Bool(true));
-                    }
-                } else if !f.value.is_empty() {
-                    body.insert(f.name.clone(), serde_json::Value::String(f.value.clone()));
+    /// Updates the application state based on a message.
+    ///
+    /// This method processes messages and updates the application state
+    /// accordingly. It handles user interactions, navigation, and state changes.
+    ///
+    /// # Arguments
+    ///
+    /// * `msg` - The message to process
+    ///
+    /// # Returns
+    ///
+    /// Vector of side effects that should be performed.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// let effects = app.update(Msg::ToggleHelp);
+    /// for effect in effects {
+    ///     match effect {
+    ///         Effect::CopyCommandRequested => {
+    ///             // Handle clipboard copy
+    ///         }
+    ///     }
+    /// }
+    /// ```
+    pub fn update(&mut self, msg: Msg) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        match msg {
+            Msg::Tick => {
+                if self.executing {
+                    self.throbber_idx = (self.throbber_idx + 1) % 10;
                 }
             }
-        }
-        let path = crate::preview::resolve_path(&spec.path, &pos_map);
-        let cli = crate::preview::cli_preview(&spec, &self.fields);
-        let req = crate::preview::request_preview(&spec, &path, &body);
-        if self.dry_run {
-            self.logs.push(format!("Dry-run:\n{}\n{}", cli, req));
-        } else {
-            self.logs
-                .push(format!("Run (simulated):\n{}\n{}", cli, req));
-            // DEBUG: populate a small sample JSON result for table preview on GET list-like
-            if self.debug_enabled && spec.method == "GET" {
-                // naive: if path ends with a collection (no trailing placeholder), show demo
-                if !spec.path.ends_with('}') {
-                    self.result_json = Some(crate::tables::sample_apps());
-                    self.show_table = true; // prefer modal view by default when results are available
+            Msg::Resize(_, _) => {
+                // No-op for now; placeholder to enable TEA-style event
+            }
+            Msg::ToggleHelp => {
+                self.show_help = !self.show_help;
+                if self.show_help {
+                    self.help_spec = self.picked.clone();
+                }
+            }
+            Msg::ToggleTable => {
+                self.show_table = !self.show_table;
+                if self.show_table {
                     self.table_offset = 0;
                 }
             }
-        }
-        if self.logs.len() > 500 {
-            self.logs.drain(0..self.logs.len() - 500);
-        }
-    }
-
-    fn rebuild_fields_for_current_selection(&mut self) {
-        if self.filtered.is_empty() {
-            self.picked = None;
-            self.fields.clear();
-            self.field_idx = 0;
-            return;
-        }
-        let idx = self.filtered[self.selected];
-        let spec = self.all_commands[idx].clone();
-        self.picked = Some(spec.clone());
-        self.fields.clear();
-        // positional args first
-        for pa in &spec.positional_args {
-            self.fields.push(Field {
-                name: pa.clone(),
-                required: true,
-                is_bool: false,
-                value: String::new(),
-                enum_values: vec![],
-                enum_idx: None,
-            });
-        }
-        // flags
-        for f in &spec.flags {
-            let mut field = Field {
-                name: f.name.clone(),
-                required: f.required,
-                is_bool: f.r#type == "boolean",
-                value: String::new(),
-                enum_values: f.enum_values.clone(),
-                enum_idx: None,
-            };
-            if !field.enum_values.is_empty() {
-                if let Some(def) = f.default_value.clone() {
-                    if let Some(pos) = field.enum_values.iter().position(|v| v == &def) {
-                        field.enum_idx = Some(pos);
-                        field.value = field.enum_values[pos].clone();
+            Msg::ToggleBuilder => {
+                self.show_builder = !self.show_builder;
+            }
+            Msg::CloseModal => {
+                self.show_help = false;
+                self.show_table = false;
+                self.show_builder = false;
+            }
+            Msg::FocusNext => {
+                self.focus = match self.focus {
+                    Focus::Search => Focus::Commands,
+                    Focus::Commands => Focus::Inputs,
+                    Focus::Inputs => Focus::Search,
+                };
+            }
+            Msg::FocusPrev => {
+                self.focus = match self.focus {
+                    Focus::Search => Focus::Inputs,
+                    Focus::Commands => Focus::Search,
+                    Focus::Inputs => Focus::Commands,
+                };
+            }
+            Msg::MoveSelection(delta) => {
+                if !self.filtered.is_empty() {
+                    let new_selected = if delta > 0 {
+                        self.selected.saturating_add(delta as usize)
                     } else {
-                        field.enum_idx = Some(0);
-                        field.value = field.enum_values[0].clone();
-                    }
-                } else {
-                    field.enum_idx = Some(0);
-                    field.value = field.enum_values[0].clone();
+                        self.selected.saturating_sub((-delta) as usize)
+                    };
+                    self.selected = new_selected.min(self.filtered.len().saturating_sub(1));
+                    self.list_state.select(Some(self.selected));
                 }
-            } else if field.is_bool {
-                if let Some(def) = &f.default_value {
-                    if def == "true" || def == "1" {
-                        field.value.push('x');
-                    }
+            }
+            Msg::Enter => {
+                if !self.filtered.is_empty() {
+                    let idx = self.filtered[self.selected];
+                    self.picked = Some(self.all_commands[idx].clone());
+                    self.fields = self
+                        .picked
+                        .as_ref()
+                        .unwrap()
+                        .flags
+                        .iter()
+                        .map(|f| Field {
+                            name: f.name.clone(),
+                            required: f.required,
+                            is_bool: f.r#type == "boolean",
+                            value: f.default_value.clone().unwrap_or_default(),
+                            enum_values: f.enum_values.clone(),
+                            enum_idx: None,
+                        })
+                        .collect();
+                    self.field_idx = 0;
+                    self.focus = Focus::Inputs;
                 }
-            } else if let Some(def) = &f.default_value {
-                field.value = def.clone();
             }
-            self.fields.push(field);
-        }
-        self.field_idx = 0;
-    }
-}
-
-#[derive(Debug)]
-pub struct ExecOutcome {
-    pub log: String,
-    pub result_json: Option<serde_json::Value>,
-    pub open_table: bool,
-}
-
-pub fn update(app: &mut App, msg: Msg) -> Option<Effect> {
-    match msg {
-        Msg::ToggleHelp => app.toggle_help(),
-        Msg::ToggleTable => app.show_table = !app.show_table,
-        Msg::ToggleBuilder => {
-            if app.show_builder {
-                app.show_builder = false;
-            } else {
-                app.show_builder = true;
-                // Seed the builder's search with the palette's current command token
-                let first = app.palette.input.split_whitespace().next().unwrap_or("");
-                app.search = first.to_string();
-                app.filter_commands();
-                app.focus = Focus::Search;
-                // Hide palette suggestions behind the modal
-                app.palette.popup_open = false;
+            Msg::SearchChar(c) => {
+                self.search.push(c);
+                self.update_filtered();
             }
-        }
-        Msg::CloseModal => {
-            if app.show_help {
-                app.toggle_help();
+            Msg::SearchBackspace => {
+                self.search.pop();
+                self.update_filtered();
             }
-            if app.show_table {
-                app.show_table = false;
+            Msg::SearchClear => {
+                self.search.clear();
+                self.update_filtered();
             }
-            if app.show_builder {
-                app.show_builder = false;
+            Msg::InputsUp => {
+                if self.field_idx > 0 {
+                    self.field_idx -= 1;
+                } else if self.debug_enabled {
+                    self.field_idx = self.fields.len();
+                }
             }
-            app.help_spec = None;
-        }
-        Msg::FocusNext => {
-            app.focus = match app.focus {
-                Focus::Search => Focus::Commands,
-                Focus::Commands => Focus::Inputs,
-                Focus::Inputs => Focus::Search,
-            };
-        }
-        Msg::FocusPrev => {
-            app.focus = match app.focus {
-                Focus::Search => Focus::Inputs,
-                Focus::Commands => Focus::Search,
-                Focus::Inputs => Focus::Commands,
-            };
-        }
-        Msg::MoveSelection(d) => app.move_selection(d),
-        Msg::Enter => match app.focus {
-            Focus::Commands | Focus::Search => app.pick_current_command(),
-            Focus::Inputs => app.run(),
-        },
-        Msg::SearchChar(c) => {
-            app.search.push(c);
-            app.filter_commands();
-        }
-        Msg::SearchBackspace => {
-            app.search.pop();
-            app.filter_commands();
-        }
-        Msg::SearchClear => {
-            app.search.clear();
-            app.filter_commands();
-        }
-        Msg::InputsUp => app.inputs_prev(),
-        Msg::InputsDown => app.inputs_next(),
-        Msg::InputsChar(c) => app.edit_current_field(|s| s.push(c)),
-        Msg::InputsBackspace => app.edit_current_field(|s| {
-            s.pop();
-        }),
-        Msg::InputsToggleSpace => {
-            if app.debug_enabled && app.field_idx == app.fields.len() {
-                app.dry_run = !app.dry_run;
-            } else if let Some(field) = app.fields.get(app.field_idx) {
-                if field.is_bool {
-                    app.edit_current_field(|s| {
-                        if s.is_empty() {
-                            s.push('x');
-                        } else {
-                            s.clear();
+            Msg::InputsDown => {
+                if self.debug_enabled && self.field_idx == self.fields.len() {
+                    self.field_idx = 0;
+                } else if self.field_idx < self.fields.len().saturating_sub(1) {
+                    self.field_idx += 1;
+                }
+            }
+            Msg::InputsChar(c) => {
+                if let Some(field) = self.fields.get_mut(self.field_idx) {
+                    if field.is_bool {
+                        if c == ' ' {
+                            field.value = if field.value.is_empty() {
+                                "true".into()
+                            } else {
+                                String::new()
+                            };
                         }
-                    });
+                    } else {
+                        field.value.push(c);
+                    }
                 }
             }
+            Msg::InputsBackspace => {
+                if let Some(field) = self.fields.get_mut(self.field_idx) {
+                    if !field.is_bool {
+                        field.value.pop();
+                    }
+                }
+            }
+            Msg::InputsToggleSpace => {
+                if let Some(field) = self.fields.get_mut(self.field_idx) {
+                    if field.is_bool {
+                        field.value = if field.value.is_empty() {
+                            "true".into()
+                        } else {
+                            String::new()
+                        };
+                    }
+                }
+            }
+            Msg::InputsCycleLeft => {
+                if let Some(field) = self.fields.get_mut(self.field_idx) {
+                    if !field.enum_values.is_empty() {
+                        let current = field.enum_idx.unwrap_or(0);
+                        let new_idx = if current == 0 {
+                            field.enum_values.len() - 1
+                        } else {
+                            current - 1
+                        };
+                        field.enum_idx = Some(new_idx);
+                        field.value = field.enum_values[new_idx].clone();
+                    }
+                }
+            }
+            Msg::InputsCycleRight => {
+                if let Some(field) = self.fields.get_mut(self.field_idx) {
+                    if !field.enum_values.is_empty() {
+                        let current = field.enum_idx.unwrap_or(0);
+                        let new_idx = (current + 1) % field.enum_values.len();
+                        field.enum_idx = Some(new_idx);
+                        field.value = field.enum_values[new_idx].clone();
+                    }
+                }
+            }
+            Msg::Run => {
+                if let Some(spec) = &self.picked {
+                    if self.missing_required().is_empty() {
+                        self.executing = true;
+                        self.throbber_idx = 0;
+                        // Start async execution here
+                        // For now, just simulate
+                        self.logs.push(format!("Executing: {}", spec.name));
+                        self.executing = false;
+                    }
+                } else if !self.palette.input.trim().is_empty() {
+                    match start_palette_execution(self) {
+                        Ok(()) => {
+                            // Execution started successfully
+                        }
+                        Err(e) => {
+                            self.palette.error = Some(e);
+                        }
+                    }
+                }
+            }
+            Msg::CopyCommand => {
+                effects.push(Effect::CopyCommandRequested);
+            }
+            Msg::TableScroll(delta) => {
+                let new_offset = if delta > 0 {
+                    self.table_offset.saturating_add(delta as usize)
+                } else {
+                    self.table_offset.saturating_sub((-delta) as usize)
+                };
+                self.table_offset = new_offset;
+            }
+            Msg::TableHome => {
+                self.table_offset = 0;
+            }
+            Msg::TableEnd => {
+                // Set to a large value to scroll to end
+                self.table_offset = usize::MAX;
+            }
+            Msg::ExecCompleted(out) => {
+                self.exec_rx = None;
+                self.executing = false;
+                self.logs.push(out.log);
+                if self.logs.len() > 500 {
+                    let _ = self.logs.drain(0..self.logs.len() - 500);
+                }
+                self.result_json = out.result_json;
+                self.show_table = out.open_table;
+                if out.open_table {
+                    self.table_offset = 0;
+                }
+                // Clear palette input and suggestion state
+                self.palette.input.clear();
+                self.palette.cursor = 0;
+                self.palette.suggestions.clear();
+                self.palette.popup_open = false;
+                self.palette.error = None;
+            }
         }
-        Msg::InputsCycleLeft => app.cycle_enum_current(-1),
-        Msg::InputsCycleRight => app.cycle_enum_current(1),
-        Msg::Run => app.run(),
-        Msg::CopyCommand => return Some(Effect::CopyCommandRequested),
-        Msg::TableScroll(delta) => {
-            // Basic vertical scrolling; clamp to non-negative
-            let off = app.table_offset as isize + delta;
-            app.table_offset = off.max(0) as usize;
-        }
-        Msg::TableHome => {
-            app.table_offset = 0;
-        }
-        Msg::TableEnd => {
-            app.table_offset = usize::MAX / 2;
-        } // clamped during render
+        effects
     }
-    None
 }

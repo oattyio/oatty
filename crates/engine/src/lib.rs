@@ -1,5 +1,4 @@
 use anyhow::{anyhow, Context, Result};
-use heroku_registry;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -133,8 +132,7 @@ fn resolve_expr(expr: &str, ctx: &ContextState) -> Option<String> {
 }
 
 pub async fn dry_run_plan(workflow: &Workflow, reg: &heroku_registry::Registry) -> Result<Value> {
-    let mut ctx = ContextState::default();
-    ctx.env = std::env::vars().collect();
+    let mut ctx = ContextState { env: std::env::vars().collect(), ..Default::default() };
     let mut steps: Vec<Value> = Vec::new();
     for task in &workflow.tasks {
         // Evaluate if condition
