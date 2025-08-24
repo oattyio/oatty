@@ -4,25 +4,24 @@
 //! logic for the TUI interface. It manages the application lifecycle, user
 //! interactions, and coordinates between different UI components.
 
+use std::sync::Arc;
+
 use heroku_registry::{CommandSpec, Registry};
 use ratatui::widgets::ListState;
 
 use crate::{palette::{PaletteState, ValueProvider}, start_palette_execution};
 
-/// Top-level route for the application.
+/// Top-level screens available for the application to display.
 ///
 /// This represents the primary navigation state for the TUI. Modal overlays
 /// (help, table, builder) remain separate toggles so they can appear atop any
 /// route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Route {
-    /// Default landing route with palette/logs layout
-    Home,
-}
+pub enum Screen { Home, Browser, Builder, Table, Help }
 
-impl Default for Route {
+impl Default for Screen {
     fn default() -> Self {
-        Route::Home
+        Screen::Home
     }
 }
 
@@ -126,7 +125,7 @@ pub struct BuilderState {
 #[derive(Debug)]
 pub struct CommandBrowserState {
     pub search: String,
-    pub all_commands: Vec<heroku_registry::CommandSpec>,
+    pub all_commands: Arc<[CommandSpec]>,
     pub filtered: Vec<usize>,
     pub selected: usize,
     pub list_state: ListState,
@@ -134,7 +133,7 @@ pub struct CommandBrowserState {
 
 pub struct App {
     /// Current primary route
-    pub route: Route,
+    pub route: Screen,
     /// Shared, cross-cutting context (registry, config)
     pub ctx: SharedCtx,
     /// State for the command palette input
@@ -268,7 +267,7 @@ impl App {
         let ctx = SharedCtx::new(registry);
         let all = ctx.registry.commands.clone();
         let mut app = Self {
-            route: Route::default(),
+            route: Screen::default(),
             ctx,
             browser: CommandBrowserState {
                 search: String::new(),

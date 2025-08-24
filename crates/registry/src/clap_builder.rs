@@ -122,7 +122,7 @@ fn create_root_command() -> ClapCommand {
 fn group_commands_by_resource(registry: &Registry) -> BTreeMap<String, Vec<&CommandSpec>> {
     let mut groups: BTreeMap<String, Vec<&CommandSpec>> = BTreeMap::new();
 
-    for cmd in &registry.commands {
+    for cmd in &*registry.commands {
         let mut parts = cmd.name.splitn(2, ':');
         let group = parts.next().unwrap_or("misc").to_string();
         groups.entry(group).or_default().push(cmd);

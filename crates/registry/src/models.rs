@@ -1,12 +1,14 @@
+use std::{fs, sync::Arc};
+
 use anyhow::{anyhow, Context, Result};
+use bincode::{config};
 use heroku_registry_types::CommandSpec;
-use serde_json;
 
 /// The main registry containing all available Heroku CLI commands.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct Registry {
     /// Collection of all available command specifications
-    pub commands: Vec<CommandSpec>,
+    pub commands: Arc<[CommandSpec]>,
 }
 
 impl Registry {
@@ -30,13 +32,15 @@ impl Registry {
     /// println!("Loaded {} commands", registry.commands.len());
     /// ```
     pub fn from_embedded_schema() -> Result<Self> {
-        let manifest = include_str!(concat!(env!("OUT_DIR"), "/heroku-manifest.json"));
-        let mut reg: Registry =
-            serde_json::from_str(manifest).context("parse embedded manifest")?;
-        if crate::workflows::feature_workflows() {
-            reg.add_workflow_commands();
-        }
-        Ok(reg)
+        let path = concat!(env!("OUT_DIR"), "/heroku-manifest.bin");
+        let bytes = fs::read(path)?;
+        let config = config::standard();
+
+        // Decode the CommandSpec struct from the bytes
+        let vec: Vec<CommandSpec> = bincode::decode_from_slice(&bytes, config).with_context(|| format!("decoding manifest at {}", path))?.0;
+        let commands: Arc<[CommandSpec]> = vec.into();
+
+        Ok(Registry { commands })
     }
 
     /// Finds a specific command by its group and command name.
@@ -69,22 +73,5 @@ impl Registry {
             .iter()
             .find(|c| c.group == group && c.name == cmd)
             .ok_or_else(|| anyhow!("command not found: {} {}", group, cmd))
-    }
-
-    /// Adds synthetic workflow commands to the registry.
-    ///
-    /// This method adds internal commands that are not HTTP API calls but provide
-    /// workflow functionality. These commands are only added when the workflows
-    /// feature is enabled via the `FEATURE_WORKFLOWS` environment variable.
-    ///
-    /// The added commands include:
-    /// - `workflow:list` - Lists available workflows
-    /// - `workflow:preview` - Previews a workflow plan
-    /// - `workflow:run` - Executes a workflow
-    ///
-    /// These commands use placeholder method and path values since they don't
-    /// correspond to actual HTTP endpoints.
-    fn add_workflow_commands(&mut self) {
-        crate::workflows::add_workflow_commands(self);
     }
 }

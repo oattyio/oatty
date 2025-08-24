@@ -1,22 +1,108 @@
 use anyhow::{Context, Result};
+use bincode::config;
 use heck::ToKebabCase;
 use heroku_registry_types::{CommandFlag, CommandSpec};
 use percent_encoding::percent_decode_str;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::{collections::HashMap, fs, path::PathBuf};
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct Registry {
     pub commands: Vec<CommandSpec>,
 }
 
-pub fn generate_manifest(schema_json: &str) -> Result<String> {
+fn generate_commands(schema_json: &str) -> Result<Vec<CommandSpec>> {
     let v: Value = serde_json::from_str(schema_json).context("parse schema json")?;
-    let commands = derive_commands_from_schema(&v)?;
-    // Do NOT add workflow commands here; they are runtime-synthesized.
-    let reg = Registry { commands };
-    let json = serde_json::to_string_pretty(&reg)?;
-    Ok(json)
+    let mut commands = derive_commands_from_schema(&v)?;
+    add_workflow_commands(&mut commands);
+    Ok(commands)
+}
+
+pub fn write_manifest(input: PathBuf, output: PathBuf) -> Result<()> {
+    let schema = fs::read_to_string(&input).with_context(|| format!("read {}", input.display()))?;
+    let commands = generate_commands(&schema)?;
+    if let Some(parent) = output.parent() {
+        if !parent.exists() {
+            fs::create_dir_all(parent)
+                .with_context(|| format!("create dir {}", parent.display()))?;
+        }
+    }
+    let config = config::standard();
+    let bytes = bincode::encode_to_vec(commands, config)?;
+    fs::write(&output, &bytes)?;
+    println!("wrote {} bytes to {}", bytes.len(), output.display());
+    Ok(())
+}
+
+
+/// Adds synthetic workflow commands to the registry.
+///
+/// This function adds internal commands that are not HTTP API calls but provide
+/// workflow functionality. These commands are only added when the workflows
+/// feature is enabled via the `FEATURE_WORKFLOWS` environment variable.
+///
+/// The added commands include:
+/// - `workflow:list` - Lists available workflows
+/// - `workflow:preview` - Previews a workflow plan
+/// - `workflow:run` - Executes a workflow
+///
+/// These commands use placeholder method and path values since they don't
+/// correspond to actual HTTP endpoints.
+///
+/// # Arguments
+///
+/// * `registry` - The registry to add workflow commands to
+fn add_workflow_commands(commands: &mut Vec<CommandSpec>) {
+    // Synthetic commands for local workflows. These are not HTTP calls,
+    // but exposing them via the registry makes them available to the TUI.
+    let mut add = |name: &str, summary: &str, flags: Vec<CommandFlag>| {
+        let group = name.split(':').next().unwrap_or("misc").to_string();
+        commands.push(CommandSpec {
+            group,
+            name: name.to_string(),
+            summary: summary.to_string(),
+            positional_args: vec![],
+            positional_help: HashMap::new(),
+            flags,
+            // Method/path are unused for internal commands; keep placeholders.
+            method: "INTERNAL".into(),
+            path: "__internal__".into(),
+        });
+    };
+
+    // Common flags
+    let file_flag = |required: bool| CommandFlag {
+        name: "file".into(),
+        required,
+        r#type: "string".into(),
+        enum_values: vec![],
+        default_value: None,
+        description: Some("Path to workflow YAML/JSON".into()),
+    };
+    let name_flag = |required: bool| CommandFlag {
+        name: "name".into(),
+        required,
+        r#type: "string".into(),
+        enum_values: vec![],
+        default_value: None,
+        description: Some("Workflow name within the file".into()),
+    };
+
+    add(
+        "workflow:list",
+        "List workflows in workflows/ directory",
+        vec![],
+    );
+    add(
+        "workflow:preview",
+        "Preview workflow plan",
+        vec![file_flag(false), name_flag(false)],
+    );
+    add(
+        "workflow:run",
+        "Run workflow (use global --dry-run)",
+        vec![file_flag(false), name_flag(false)],
+    );
 }
 
 fn derive_commands_from_schema(v: &Value) -> Result<Vec<CommandSpec>> {

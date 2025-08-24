@@ -653,7 +653,7 @@ fn compute_command_prefix(tokens: &[String]) -> String {
 /// the command summary in the display text.
 fn suggest_commands(reg: &heroku_registry::Registry, prefix: &str) -> Vec<SuggestionItem> {
     let mut items = Vec::new();
-    for command in &reg.commands {
+    for command in &*reg.commands {
         let group = &command.group;
         let name = &command.name;
         let exec = if name.is_empty() {

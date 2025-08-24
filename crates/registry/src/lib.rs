@@ -5,7 +5,7 @@
 
 pub mod clap_builder;
 pub mod models;
-pub mod workflows;
+pub mod feat_gate;
 
 pub use clap_builder::build_clap;
 pub use heroku_registry_types::{CommandFlag, CommandSpec};
@@ -30,7 +30,7 @@ mod tests {
             "registry commands should not be empty"
         );
         let mut seen = HashSet::new();
-        for c in &registry.commands {
+        for c in &*registry.commands {
             assert!(
                 seen.insert(&c.name),
                 "duplicate command name detected: {}",

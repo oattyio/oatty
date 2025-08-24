@@ -5,6 +5,7 @@ edition = "2018"
 
 [dependencies]
 anyhow = { workspace = true }
+bincode = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 clap = { workspace = true }
@@ -12,5 +13,7 @@ heroku-registry-types = { path = "../registry-types" }
 
 [build-dependencies]
 anyhow = { workspace = true }
+bincode = { workspace = true }
 serde_json = { workspace = true }
 heroku-registry-gen = { path = "../registry-gen" }
+

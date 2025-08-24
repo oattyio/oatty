@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use bincode::{Encode, Decode};
 
 /// Represents a command-line flag or option for a Heroku CLI command.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct CommandFlag {
     /// The name of the flag (e.g., "app", "region", "stack")
     pub name: String,
@@ -23,7 +24,7 @@ pub struct CommandFlag {
 }
 
 /// Represents a complete Heroku CLI command specification.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct CommandSpec {
     /// Resource group for the command (e.g., "apps")
     #[serde(default)]

@@ -8,6 +8,7 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = { workspace = true }
+bincode = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

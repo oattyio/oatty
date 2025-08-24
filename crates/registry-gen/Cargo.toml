@@ -7,10 +7,6 @@ readme = "README.md"
 [lib]
 path = "src/lib.rs"
 
-[[bin]]
-name = "schema-to-manifest"
-path = "src/bin/schema_to_manifest.rs"
-
 [dependencies]
 anyhow = { workspace = true }
 serde = { workspace = true }
@@ -18,3 +14,4 @@ serde_json = { workspace = true }
 percent-encoding = { workspace = true }
 heck = { workspace = true }
 heroku-registry-types = { path = "../registry-types" }
+bincode = { workspace = true }
