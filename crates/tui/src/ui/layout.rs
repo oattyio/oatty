@@ -4,8 +4,8 @@
 //! components in a consistent and maintainable way. It defines the main
 //! application layout structure and provides reusable layout functions.
 
-use ratatui::prelude::*;
 use crate::app::App;
+use ratatui::prelude::*;
 
 /// Creates the main vertical layout for the application.
 ///
@@ -49,8 +49,8 @@ pub fn create_main_layout(size: Rect, app: &App) -> Vec<Rect> {
     let mut palette_extra: u16 = 0;
     let show_popup = app.palette.error.is_none()
         && app.palette.popup_open
-        && !app.show_builder
-        && !app.show_help
+        && !app.builder.show
+        && !app.help.show
         && !app.palette.suggestions.is_empty();
     if show_popup {
         let rows = app.palette.suggestions.len().min(10) as u16; // match palette.rs max_rows

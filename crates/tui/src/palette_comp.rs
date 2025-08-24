@@ -51,7 +51,11 @@ pub fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
         KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
             // Handle character input
             app.palette.insert_char(c);
-            crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+            crate::palette::build_suggestions(
+                &mut app.palette,
+                &app.ctx.registry,
+                &app.ctx.providers,
+            );
             app.palette.popup_open = true;
             app.palette.error = None;
             Ok(true)
@@ -67,6 +71,7 @@ pub fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
                 let group = &toks[0];
                 let name = &toks[1];
                 if let Some(spec) = app
+                    .ctx
                     .registry
                     .commands
                     .iter()
@@ -79,7 +84,11 @@ pub fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
 
             // Fall back to top suggestion if no exact match
             if target.is_none() {
-                crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+                crate::palette::build_suggestions(
+                    &mut app.palette,
+                    &app.ctx.registry,
+                    &app.ctx.providers,
+                );
                 if let Some(top) = app.palette.suggestions.first() {
                     if matches!(top.kind, crate::palette::ItemKind::Command) {
                         // Convert "group sub" to registry key
@@ -87,6 +96,7 @@ pub fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
                         let group = parts.next().unwrap_or("");
                         let name = parts.next().unwrap_or("");
                         if let Some(spec) = app
+                            .ctx
                             .registry
                             .commands
                             .iter()
@@ -101,7 +111,7 @@ pub fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
 
             // Open help if we found a command
             if let Some(spec) = target {
-                app.help_spec = Some(spec);
+                app.help.spec = Some(spec);
                 let _ = app.update(app::Msg::ToggleHelp);
             }
             Ok(true)
@@ -109,7 +119,11 @@ pub fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
         KeyCode::Backspace => {
             // Handle backspace
             app.palette.backspace();
-            crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+            crate::palette::build_suggestions(
+                &mut app.palette,
+                &app.ctx.registry,
+                &app.ctx.providers,
+            );
             app.palette.error = None;
             Ok(true)
         }
@@ -172,8 +186,8 @@ pub fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
                     // Rebuild suggestions after accepting
                     crate::palette::build_suggestions(
                         &mut app.palette,
-                        &app.registry,
-                        &app.providers,
+                        &app.ctx.registry,
+                        &app.ctx.providers,
                     );
                     app.palette.selected = 0;
 
@@ -184,7 +198,11 @@ pub fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
                 }
             } else {
                 // Open suggestions; if only one, accept it
-                crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+                crate::palette::build_suggestions(
+                    &mut app.palette,
+                    &app.ctx.registry,
+                    &app.ctx.providers,
+                );
                 if app.palette.suggestions.len() == 1 {
                     if let Some(item) = app.palette.suggestions.first().cloned() {
                         match item.kind {
@@ -211,8 +229,8 @@ pub fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
                         }
                         crate::palette::build_suggestions(
                             &mut app.palette,
-                            &app.registry,
-                            &app.providers,
+                            &app.ctx.registry,
+                            &app.ctx.providers,
                         );
                         app.palette.selected = 0;
                         app.palette.popup_open = !app.palette.suggestions.is_empty();

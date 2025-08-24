@@ -106,13 +106,13 @@ fn render_modals(
     help: &mut HelpComponent,
     table: &mut TableComponent,
 ) {
-    if app.show_help {
+    if app.help.show {
         help.render(f, f.area(), app);
     }
-    if app.show_table {
+    if app.table.show {
         table.render(f, f.area(), app);
     }
-    if app.show_builder {
+    if app.builder.show {
         builder.render(f, f.area(), app);
     }
 }

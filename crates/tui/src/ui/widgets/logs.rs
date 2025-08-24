@@ -46,7 +46,7 @@ use ratatui::{prelude::*, widgets::*};
 pub fn draw_logs(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .title(Span::styled(
-            format!("Logs ({})", app.logs.len()),
+            format!("Logs ({})", app.logs.entries.len()),
             theme::title_style(),
         ))
         .borders(Borders::ALL)
@@ -54,6 +54,7 @@ pub fn draw_logs(f: &mut Frame, app: &App, area: Rect) {
 
     let items: Vec<ListItem> = app
         .logs
+        .entries
         .iter()
         .map(|l| ListItem::new(l.as_str()).style(theme::text_style()))
         .collect();

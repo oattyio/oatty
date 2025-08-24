@@ -132,7 +132,10 @@ fn resolve_expr(expr: &str, ctx: &ContextState) -> Option<String> {
 }
 
 pub async fn dry_run_plan(workflow: &Workflow, reg: &heroku_registry::Registry) -> Result<Value> {
-    let mut ctx = ContextState { env: std::env::vars().collect(), ..Default::default() };
+    let mut ctx = ContextState {
+        env: std::env::vars().collect(),
+        ..Default::default()
+    };
     let mut steps: Vec<Value> = Vec::new();
     for task in &workflow.tasks {
         // Evaluate if condition

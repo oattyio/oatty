@@ -101,7 +101,7 @@ impl BuilderComponent {
     /// `Result<Vec<Effect>>` containing any effects that should be processed
     pub fn handle_key(&mut self, app: &mut app::App, key: KeyEvent) -> Result<Vec<app::Effect>> {
         let mut effects: Vec<app::Effect> = Vec::new();
-        match app.focus {
+        match app.builder.focus {
             app::Focus::Search => match key.code {
                 KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                     effects.extend(app.update(app::Msg::ToggleTable))

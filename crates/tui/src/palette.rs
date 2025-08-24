@@ -14,6 +14,8 @@
 //!   (enums and provider values) until the value is complete.
 //! - Suggestions never render an empty popup.
 //!
+use std::fmt::Debug;
+
 use crate::theme;
 use ratatui::{
     prelude::*,
@@ -251,7 +253,7 @@ pub fn render_palette(f: &mut Frame, area: Rect, app: &crate::app::App) {
         .split(inner);
 
     // Input line with ghost text; dim when a modal is open. Show throbber if executing.
-    let dimmed = app.show_builder || app.show_help;
+    let dimmed = app.builder.show || app.help.show;
     let base_style = if dimmed {
         theme::text_muted()
     } else {
@@ -299,8 +301,8 @@ pub fn render_palette(f: &mut Frame, area: Rect, app: &crate::app::App) {
     // Popup suggestions (separate popup under the input; no overlap with input text). Hidden if error is present.
     if app.palette.error.is_none()
         && app.palette.popup_open
-        && !app.show_builder
-        && !app.show_help
+        && !app.builder.show
+        && !app.help.show
         && !app.palette.suggestions.is_empty()
     {
         let items_all: Vec<ListItem> = app
@@ -430,7 +432,7 @@ pub fn accept_positional_suggestion(p: &mut PaletteState, value: &str) {
 ///
 /// This trait allows external systems to provide dynamic values
 /// for command parameters, such as app names, region names, etc.
-pub trait ValueProvider: Send + Sync {
+pub trait ValueProvider: Send + Sync + Debug {
     /// Suggests values for the given command and field combination.
     ///
     /// # Arguments
@@ -705,10 +707,7 @@ fn parse_user_flags_args(
             let name = t.trim_start_matches('-');
             user_flags.push(name.to_string());
             if let Some(f) = spec.flags.iter().find(|f| f.name == name) {
-                if f.r#type != "boolean"
-                    && i + 1 < parts.len()
-                    && !parts[i + 1].starts_with('-')
-                {
+                if f.r#type != "boolean" && i + 1 < parts.len() && !parts[i + 1].starts_with('-') {
                     i += 1; // consume value
                 }
             }
@@ -741,8 +740,7 @@ fn find_pending_flag(
             if let Some(f) = spec.flags.iter().find(|f| f.name == name) {
                 if f.r#type != "boolean" {
                     // if the token after this flag is not a value, we are pending
-                    if ((j as usize) == parts.len() - 1
-                        || parts[(j as usize) + 1].starts_with('-'))
+                    if ((j as usize) == parts.len() - 1 || parts[(j as usize) + 1].starts_with('-'))
                         && !is_flag_value_complete(input)
                     {
                         return Some(name.to_string());

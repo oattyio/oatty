@@ -41,7 +41,7 @@ use ratatui::{prelude::*, widgets::*};
 pub fn draw_help_modal(f: &mut Frame, app: &App, area: Rect) {
     let area = centered_rect(80, 70, area);
     // Prefer help_spec when set, otherwise picked
-    let spec_for_help = app.help_spec.as_ref().or(app.picked.as_ref());
+    let spec_for_help = app.help.spec.as_ref().or(app.builder.picked.as_ref());
     let mut title = if let Some(spec) = spec_for_help {
         let mut split = spec.name.splitn(2, ':');
         let group = split.next().unwrap_or("");
@@ -150,7 +150,7 @@ pub fn draw_table_modal(f: &mut Frame, app: &App, area: Rect) {
         .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(inner);
 
-    if let Some(json) = &app.result_json {
+    if let Some(json) = &app.table.result_json {
         // Prefer table if array is present, else KV fallback even in modal
         let has_array = match json {
             serde_json::Value::Array(a) => !a.is_empty(),
@@ -160,7 +160,7 @@ pub fn draw_table_modal(f: &mut Frame, app: &App, area: Rect) {
             _ => false,
         };
         if has_array {
-            crate::tables::draw_json_table_with_offset(f, splits[0], json, app.table_offset);
+            crate::tables::draw_json_table_with_offset(f, splits[0], json, app.table.offset);
         } else {
             crate::tables::draw_kv_or_text(f, splits[0], json);
         }

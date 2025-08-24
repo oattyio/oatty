@@ -33,7 +33,7 @@ use ratatui::{prelude::*, widgets::*};
 /// ```
 pub fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     // Title with optional DEBUG badge
-    let title = if app.debug_enabled {
+    let title = if app.ctx.debug_enabled {
         Line::from(vec![
             Span::styled("Search Commands", theme::title_style()),
             Span::raw("  "),
@@ -45,14 +45,16 @@ pub fn draw_search(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
-        .border_style(theme::border_style(app.focus == Focus::Search));
+        .border_style(theme::border_style(app.builder.focus == Focus::Search));
     let inner = block.inner(area);
-    let p = Paragraph::new(app.search.as_str())
+    let p = Paragraph::new(app.browser.search.as_str())
         .style(theme::text_style())
         .block(block);
     f.render_widget(p, area);
-    if app.focus == Focus::Search {
-        let x = inner.x.saturating_add(app.search.chars().count() as u16);
+    if app.builder.focus == Focus::Search {
+        let x = inner
+            .x
+            .saturating_add(app.browser.search.chars().count() as u16);
         let y = inner.y;
         f.set_cursor_position((x, y));
     }
@@ -88,14 +90,14 @@ pub fn draw_search(f: &mut Frame, app: &App, area: Rect) {
 /// draw_commands(&mut frame, &mut app, area);
 /// ```
 pub fn draw_commands_list(f: &mut Frame, app: &mut App, area: Rect) {
-    let title = format!("Commands ({})", app.filtered.len());
+    let title = format!("Commands ({})", app.browser.filtered.len());
     let block = Block::default()
         .title(Span::styled(title, theme::title_style()))
         .borders(Borders::ALL)
-        .border_style(theme::border_style(app.focus == Focus::Commands));
+        .border_style(theme::border_style(app.builder.focus == Focus::Commands));
 
-    let filtered = &app.filtered;
-    let all_commands = &app.all_commands;
+    let filtered = &app.browser.filtered;
+    let all_commands = &app.browser.all_commands;
     let items: Vec<ListItem> = filtered
         .iter()
         .map(|idx| {
@@ -114,7 +116,7 @@ pub fn draw_commands_list(f: &mut Frame, app: &mut App, area: Rect) {
         .block(block)
         .highlight_style(theme::list_highlight_style())
         .highlight_symbol("> ");
-    let list_state = &mut app.list_state;
+    let list_state = &mut app.browser.list_state;
     f.render_stateful_widget(list, area, list_state);
 }
 
@@ -158,7 +160,7 @@ pub fn draw_commands_list(f: &mut Frame, app: &mut App, area: Rect) {
 /// draw_inputs(&mut frame, &app, area);
 /// ```
 pub fn draw_inputs(f: &mut Frame, app: &App, area: Rect) {
-    let title = match &app.picked {
+    let title = match &app.builder.picked {
         Some(s) => {
             let mut split = s.name.splitn(2, ':');
             let group = split.next().unwrap_or("");
@@ -175,7 +177,7 @@ pub fn draw_inputs(f: &mut Frame, app: &App, area: Rect) {
     let block = Block::default()
         .title(Span::styled(title, theme::title_style()))
         .borders(Borders::ALL)
-        .border_style(theme::border_style(app.focus == Focus::Inputs));
+        .border_style(theme::border_style(app.builder.focus == Focus::Inputs));
 
     // Draw the block first, then lay out inner area into content + footer rows
     f.render_widget(block.clone(), area);
@@ -190,7 +192,7 @@ pub fn draw_inputs(f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<Line> = Vec::new();
     let mut cursor_row: Option<u16> = None;
     let mut cursor_col: Option<u16> = None;
-    for (i, field) in app.fields.iter().enumerate() {
+    for (i, field) in app.builder.fields.iter().enumerate() {
         let marker = if field.required { "*" } else { "?" };
         let label = format!("{} {}", marker, field.name);
         let mut hint = String::new();
@@ -223,7 +225,7 @@ pub fn draw_inputs(f: &mut Frame, app: &App, area: Rect) {
             field.value.clone()
         };
 
-        if app.focus == Focus::Inputs && i == app.field_idx {
+        if app.builder.focus == Focus::Inputs && i == app.builder.field_idx {
             let prefix = if hint.is_empty() {
                 format!("{}: ", label)
             } else {
@@ -253,17 +255,17 @@ pub fn draw_inputs(f: &mut Frame, app: &App, area: Rect) {
         line.push_span(Span::raw(": "));
         line.push_span(Span::styled(val, theme::text_style()));
 
-        if app.focus == Focus::Inputs && i == app.field_idx {
+        if app.builder.focus == Focus::Inputs && i == app.builder.field_idx {
             line = line.style(theme::highlight_style());
         }
         lines.push(line);
     }
 
     // Add Dry-run toggle as a selectable option when DEBUG is enabled
-    if app.debug_enabled {
+    if app.ctx.debug_enabled {
         let dry_label = "  Dry-run";
-        let dry_val = if app.dry_run { "[x]" } else { "[ ]" };
-        if app.focus == Focus::Inputs && app.field_idx == app.fields.len() {
+        let dry_val = if app.ctx.dry_run { "[x]" } else { "[ ]" };
+        if app.builder.focus == Focus::Inputs && app.builder.field_idx == app.builder.fields.len() {
             // Cursor at start of checkbox
             let prefix = format!("{} {}: ", dry_label, "optional");
             cursor_col = Some(prefix.chars().count() as u16);
@@ -276,14 +278,14 @@ pub fn draw_inputs(f: &mut Frame, app: &App, area: Rect) {
             Span::raw(": "),
             Span::styled(dry_val, theme::text_style()),
         ]);
-        if app.focus == Focus::Inputs && app.field_idx == app.fields.len() {
+        if app.builder.focus == Focus::Inputs && app.builder.field_idx == app.builder.fields.len() {
             line = line.style(theme::highlight_style());
         }
         lines.push(line);
     }
 
     let missing: Vec<String> = app.missing_required();
-    if app.focus == Focus::Inputs && !missing.is_empty() {
+    if app.builder.focus == Focus::Inputs && !missing.is_empty() {
         lines.push(Line::from(""));
         lines.push(Line::from(vec![
             Span::styled("Missing required: ", Style::default().fg(theme::WARN)),
@@ -300,7 +302,7 @@ pub fn draw_inputs(f: &mut Frame, app: &App, area: Rect) {
         Paragraph::new("Tab focus  Enter run  Ctrl+H help  Ctrl+C quit").style(theme::text_muted());
     f.render_widget(footer, footer_rect);
 
-    if app.focus == Focus::Inputs {
+    if app.builder.focus == Focus::Inputs {
         if let (Some(row), Some(col)) = (cursor_row, cursor_col) {
             let x = content_rect.x.saturating_add(col);
             let y = content_rect.y.saturating_add(row);

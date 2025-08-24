@@ -1,4 +1,5 @@
 mod app;
+mod cmd;
 mod component;
 mod palette;
 mod palette_comp;
@@ -9,7 +10,6 @@ mod ui;
 
 use crate::component::Component;
 use anyhow::Result;
-use arboard::Clipboard;
 use crossterm::{
     event::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
@@ -49,7 +49,7 @@ pub fn run(registry: heroku_registry::Registry) -> Result<()> {
 
     loop {
         // Check for async execution completion and route through TEA message
-        if let Some(rx) = app.exec_rx.as_ref() {
+        if let Some(rx) = app.exec_receiver.as_ref() {
             if let Ok(out) = rx.try_recv() {
                 let _ = app.update(app::Msg::ExecCompleted(out));
             }
@@ -124,18 +124,22 @@ fn handle_key(
         return Ok(false);
     }
     // If builder modal open, Enter should close builder and populate palette with constructed command
-    if app.show_builder && key.code == KeyCode::Enter {
-        if let Some(spec) = &app.picked {
-            let line = palette_line_from_spec(spec, &app.fields);
+    if app.builder.show && key.code == KeyCode::Enter {
+        if let Some(spec) = &app.builder.picked {
+            let line = palette_line_from_spec(spec, &app.builder.fields);
             app.palette.input = line;
             app.palette.cursor = app.palette.input.len();
-            crate::palette::build_suggestions(&mut app.palette, &app.registry, &app.providers);
+            crate::palette::build_suggestions(
+                &mut app.palette,
+                &app.ctx.registry,
+                &app.ctx.providers,
+            );
         }
-        app.show_builder = false;
+        app.builder.show = false;
         return Ok(false);
     }
     // Default palette interaction when not in builder
-    if !app.show_builder {
+    if !app.builder.show {
         if palette.handle_key(app, key)? {
             return Ok(false);
         }
@@ -143,29 +147,15 @@ fn handle_key(
     }
 
     let effects = builder.handle_key(app, key)?;
-    for eff in effects {
-        match eff {
-            app::Effect::CopyCommandRequested => {
-                if let Some(spec) = &app.picked {
-                    let cmd = crate::preview::cli_preview(spec, &app.fields);
-                    match Clipboard::new().and_then(|mut cb| cb.set_text(cmd.clone())) {
-                        Ok(()) => app.logs.push(format!("Copied: {}", cmd)),
-                        Err(e) => app.logs.push(format!("Clipboard error: {}", e)),
-                    }
-                    if app.logs.len() > 500 {
-                        let _ = app.logs.drain(0..app.logs.len() - 500);
-                    }
-                }
-            }
-        }
-    }
+    let cmds = crate::cmd::from_effects(app, effects);
+    crate::cmd::run_cmds(app, cmds);
     Ok(false)
 }
 
 // Map common/global keys to simple messages so the main loop stays TEA-friendly.
 fn map_key_to_msg(app: &app::App, key: &KeyEvent) -> Option<app::Msg> {
     // Close any modal on Esc
-    if (app.show_help || app.show_table || app.show_builder) && key.code == KeyCode::Esc {
+    if (app.help.show || app.table.show || app.builder.show) && key.code == KeyCode::Esc {
         return Some(app::Msg::CloseModal);
     }
     // Toggle builder with Ctrl+F
@@ -173,7 +163,7 @@ fn map_key_to_msg(app: &app::App, key: &KeyEvent) -> Option<app::Msg> {
         return Some(app::Msg::ToggleBuilder);
     }
     // When table modal is open, support scrolling and toggles
-    if app.show_table {
+    if app.table.show {
         return match key.code {
             KeyCode::Up => Some(app::Msg::TableScroll(-1)),
             KeyCode::Down => Some(app::Msg::TableScroll(1)),
@@ -250,6 +240,7 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
     }
 
     let spec = app
+        .ctx
         .registry
         .commands
         .iter()
@@ -342,18 +333,20 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
     let path = crate::preview::resolve_path(&spec.path, &pos_map);
     let cli_line = format!("heroku {}", app.palette.input.trim());
 
-    let should_dry_run = app.debug_enabled && app.dry_run;
+    let should_dry_run = app.ctx.debug_enabled && app.ctx.dry_run;
     if should_dry_run {
         let req = crate::preview::request_preview(&spec, &path, &body);
-        app.logs.push(format!("Dry-run:\n{}\n{}", cli_line, req));
-        if app.logs.len() > 500 {
-            let _ = app.logs.drain(0..app.logs.len() - 500);
+        app.logs
+            .entries
+            .push(format!("Dry-run:\n{}\n{}", cli_line, req));
+        if app.logs.entries.len() > 500 {
+            let _ = app.logs.entries.drain(0..app.logs.entries.len() - 500);
         }
         // Show demo table for GET collections in debug to visualize
         if spec.method == "GET" && !spec.path.ends_with('}') {
-            app.result_json = Some(crate::tables::sample_apps());
-            app.show_table = true;
-            app.table_offset = 0;
+            app.table.result_json = Some(crate::tables::sample_apps());
+            app.table.show = true;
+            app.table.offset = 0;
         }
         // Clear input for next command
         app.palette.input.clear();
@@ -363,66 +356,10 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
         return Ok(());
     }
 
-    // Live request: spawn background task and show throbber
-    let (tx, rx) = std::sync::mpsc::channel::<app::ExecOutcome>();
-    app.exec_rx = Some(rx);
-    app.executing = true;
-    app.throbber_idx = 0;
-
-    let spec_clone = spec.clone();
-    let path_s = path.clone();
-    let body_map = body.clone();
-    std::thread::spawn(move || {
-        let rt = match tokio::runtime::Runtime::new() {
-            Ok(r) => r,
-            Err(e) => {
-                let _ = tx.send(app::ExecOutcome {
-                    log: format!("Error: failed to start runtime: {}", e),
-                    result_json: None,
-                    open_table: false,
-                });
-                return;
-            }
-        };
-        let outcome = rt.block_on(async move {
-            let client = heroku_api::HerokuClient::new_from_env().map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc", e))?;
-            let method = match spec_clone.method.as_str() {
-                "GET" => reqwest::Method::GET,
-                "POST" => reqwest::Method::POST,
-                "DELETE" => reqwest::Method::DELETE,
-                "PATCH" => reqwest::Method::PATCH,
-                other => return Err(format!("unsupported method: {}", other)),
-            };
-            let mut builder = client.request(method, &path_s);
-            if !body_map.is_empty() { builder = builder.json(&serde_json::Value::Object(body_map.clone())); }
-            let resp = builder.send().await.map_err(|e| format!("Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY or ~/.netrc is set", e))?;
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            if status.as_u16() == 401 { return Err("Unauthorized (401). Hint: set HEROKU_API_KEY=... or configure ~/.netrc with machine api.heroku.com".into()); }
-            if status.as_u16() == 403 { return Err("Forbidden (403). Hint: check team/app access, permissions, and role membership".into()); }
-            let log = format!("{}\n{}", status, text);
-            let mut result_json = None;
-            let mut open_table = false;
-            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                open_table = matches!(json, serde_json::Value::Array(_));
-                result_json = Some(json);
-            }
-            Ok::<app::ExecOutcome, String>(app::ExecOutcome { log, result_json, open_table })
-        });
-
-        match outcome {
-            Ok(out) => {
-                let _ = tx.send(out);
-            }
-            Err(err) => {
-                let _ = tx.send(app::ExecOutcome {
-                    log: format!("Error: {}", err),
-                    result_json: None,
-                    open_table: false,
-                });
-            }
-        }
-    });
-
+    // Live request: enqueue background HTTP execution via Cmd system
+    crate::cmd::run_cmds(
+        app,
+        vec![crate::cmd::Cmd::ExecuteHttp(spec.clone(), path, body)],
+    );
     Ok(())
 }

@@ -51,7 +51,7 @@ use ratatui::{prelude::*, widgets::*};
 /// ```
 pub fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
     // If we have a JSON result, prefer a table when an array is present; else fallback to key/values
-    if let Some(json) = &app.result_json {
+    if let Some(json) = &app.table.result_json {
         let has_array = match json {
             serde_json::Value::Array(a) => !a.is_empty(),
             serde_json::Value::Object(m) => {
@@ -73,8 +73,8 @@ pub fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
         .border_style(theme::border_style(false));
 
     let mut text = String::new();
-    if let Some(spec) = &app.picked {
-        let cli = crate::preview::cli_preview(spec, &app.fields);
+    if let Some(spec) = &app.builder.picked {
+        let cli = crate::preview::cli_preview(spec, &app.builder.fields);
         text = cli;
     } else {
         text.push_str("Select a command to see preview.");

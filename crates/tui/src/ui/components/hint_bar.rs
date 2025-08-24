@@ -22,4 +22,3 @@ impl Component for HintBarComponent {
         crate::ui::widgets::draw_hints(f, rect);
     }
 }
-

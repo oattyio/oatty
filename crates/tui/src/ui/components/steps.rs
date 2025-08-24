@@ -33,4 +33,3 @@ impl Component for StepsComponent {
         f.render_widget(content, rect);
     }
 }
-

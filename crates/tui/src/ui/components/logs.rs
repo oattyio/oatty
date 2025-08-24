@@ -21,4 +21,3 @@ impl Component for LogsComponent {
         crate::ui::widgets::draw_logs(f, app, rect);
     }
 }
-
