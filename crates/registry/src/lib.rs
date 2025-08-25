@@ -4,8 +4,8 @@
 //! organizing, and generating CLI commands from Heroku API schemas.
 
 pub mod clap_builder;
-pub mod models;
 pub mod feat_gate;
+pub mod models;
 
 pub use clap_builder::build_clap;
 pub use heroku_registry_types::{CommandFlag, CommandSpec};

@@ -54,15 +54,14 @@ pub fn create_main_layout(size: Rect, app: &App) -> Vec<Rect> {
         && !app.palette.suggestions.is_empty();
     if show_popup {
         let rows = app.palette.suggestions.len().min(10) as u16; // match palette.rs max_rows
-        let popup_height = rows + 2; // +2 for borders (thick block)
+        let popup_height = rows;
         palette_extra = popup_height;
     }
 
     let constraints = [
         Constraint::Length(3 + palette_extra), // Command palette area (+ suggestions)
         Constraint::Length(1),                 // Hints area
-        Constraint::Min(1),                    // Steps / center content
-        Constraint::Length(6),                 // Logs area
+        Constraint::Min(1),                    // logs / output content
     ];
 
     Layout::default()

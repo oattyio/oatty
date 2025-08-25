@@ -1,6 +1,6 @@
+use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use bincode::{Encode, Decode};
 
 /// Represents a command-line flag or option for a Heroku CLI command.
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]

@@ -4,12 +4,16 @@
 //! logic for the TUI interface. It manages the application lifecycle, user
 //! interactions, and coordinates between different UI components.
 
-use std::sync::Arc;
+use std::sync::{mpsc::Receiver, Arc};
 
 use heroku_registry::{CommandSpec, Registry};
+use heroku_util::fuzzy_score;
 use ratatui::widgets::ListState;
 
-use crate::{palette::{PaletteState, ValueProvider}, start_palette_execution};
+use crate::{
+    palette::{PaletteState, ValueProvider},
+    start_palette_execution,
+};
 
 /// Top-level screens available for the application to display.
 ///
@@ -17,7 +21,13 @@ use crate::{palette::{PaletteState, ValueProvider}, start_palette_execution};
 /// (help, table, builder) remain separate toggles so they can appear atop any
 /// route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Screen { Home, Browser, Builder, Table, Help }
+pub enum Screen {
+    Home,
+    Browser,
+    Builder,
+    Table,
+    Help,
+}
 
 impl Default for Screen {
     fn default() -> Self {
@@ -137,7 +147,7 @@ pub struct App {
     /// Shared, cross-cutting context (registry, config)
     pub ctx: SharedCtx,
     /// State for the command palette input
-    pub palette: crate::palette::PaletteState,
+    pub palette: PaletteState,
     /// Browser state for searching/selecting commands
     pub browser: CommandBrowserState,
     /// Builder modal state
@@ -154,7 +164,7 @@ pub struct App {
     /// Animation frame for the execution throbber
     pub throbber_idx: usize,
     /// Receiver for async execution results
-    pub exec_receiver: Option<std::sync::mpsc::Receiver<ExecOutcome>>,
+    pub exec_receiver: Option<Receiver<ExecOutcome>>,
 }
 
 /// Messages that can be sent to update the application state.
@@ -297,7 +307,7 @@ impl App {
             throbber_idx: 0,
             exec_receiver: None,
         };
-        app.update_filtered();
+        app.update_browser_filtered();
         app
     }
 
@@ -305,27 +315,33 @@ impl App {
     ///
     /// This method filters the available commands using fuzzy matching
     /// and updates the filtered indices and selection state.
-    pub fn update_filtered(&mut self) {
+    pub fn update_browser_filtered(&mut self) {
         if self.browser.search.is_empty() {
             self.browser.filtered = (0..self.browser.all_commands.len()).collect();
         } else {
-            self.browser.filtered = self
+            let mut items: Vec<(i64, usize)> = self
                 .browser
                 .all_commands
                 .iter()
                 .enumerate()
-                .filter_map(|(i, cmd)| {
-                    if cmd
-                        .name
-                        .to_lowercase()
-                        .contains(&self.browser.search.to_lowercase())
-                    {
-                        Some(i)
+                .filter_map(|(i, command)| {
+                    let group = &command.group;
+                    let name = &command.name;
+                    let exec = if name.is_empty() {
+                        group.to_string()
                     } else {
-                        None
+                        format!("{} {}", group, name)
+                    };
+                    if let Some(score) = fuzzy_score(&exec, &self.browser.search) {
+                        return Some((score, i));
                     }
+                    None
                 })
+                .into_iter()
                 .collect();
+            items.sort_by(|a, b| b.0.cmp(&a.0));
+
+            self.browser.filtered = items.iter().map(|x| x.1).collect();
         }
         self.browser.selected = self
             .browser
@@ -440,6 +456,8 @@ impl App {
                     self.browser.selected =
                         new_selected.min(self.browser.filtered.len().saturating_sub(1));
                     self.browser.list_state.select(Some(self.browser.selected));
+                    let idx = self.browser.filtered[self.browser.selected];
+                    self.builder.picked = Some(self.browser.all_commands[idx].clone());
                 }
             }
             Msg::Enter => {
@@ -468,15 +486,15 @@ impl App {
             }
             Msg::SearchChar(c) => {
                 self.browser.search.push(c);
-                self.update_filtered();
+                self.update_browser_filtered();
             }
             Msg::SearchBackspace => {
                 self.browser.search.pop();
-                self.update_filtered();
+                self.update_browser_filtered();
             }
             Msg::SearchClear => {
                 self.browser.search.clear();
-                self.update_filtered();
+                self.update_browser_filtered();
             }
             Msg::InputsUp => {
                 if self.builder.field_idx > 0 {
@@ -592,8 +610,9 @@ impl App {
                 self.exec_receiver = None;
                 self.executing = false;
                 self.logs.entries.push(out.log);
-                if self.logs.entries.len() > 500 {
-                    let _ = self.logs.entries.drain(0..self.logs.entries.len() - 500);
+                let log_len = self.logs.entries.len();
+                if log_len > 500 {
+                    let _ = self.logs.entries.drain(0..log_len - 500);
                 }
                 self.table.result_json = out.result_json;
                 self.table.show = out.open_table;

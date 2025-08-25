@@ -16,7 +16,8 @@
 //!
 use std::fmt::Debug;
 
-use crate::theme;
+use crate::theme::{self, border_style, list_highlight_style};
+use heroku_util::fuzzy_score;
 use ratatui::{
     prelude::*,
     text::{Line, Span},
@@ -236,12 +237,12 @@ pub fn accept_command_suggestion(p: &mut PaletteState, exec: &str) {
 /// - Suggestions popup with proper positioning
 /// - Cursor placement accounting for UTF-8 character width
 /// - Modal-aware dimming and popup hiding
-pub fn render_palette(f: &mut Frame, area: Rect, app: &crate::app::App) {
+pub fn render_palette(frame: &mut Frame, area: Rect, app: &crate::app::App) {
     let block = Block::default()
         .borders(Borders::LEFT)
         .border_style(theme::border_style(true))
         .border_type(ratatui::widgets::block::BorderType::Thick);
-    f.render_widget(block.clone(), area);
+    frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
     let splits = Layout::default()
         .direction(Direction::Vertical)
@@ -275,7 +276,7 @@ pub fn render_palette(f: &mut Frame, area: Rect, app: &crate::app::App) {
         }
     }
     let p = Paragraph::new(Line::from(spans)).block(Block::default());
-    f.render_widget(p, splits[0]);
+    frame.render_widget(p, splits[0]);
     // Cursor placement (count characters, not bytes); hide when a modal is open
     if !dimmed {
         let col = app
@@ -286,7 +287,7 @@ pub fn render_palette(f: &mut Frame, area: Rect, app: &crate::app::App) {
             .unwrap_or(0);
         let x = splits[0].x.saturating_add(col);
         let y = splits[0].y;
-        f.set_cursor_position((x, y));
+        frame.set_cursor_position((x, y));
     }
 
     // Error line below input when present
@@ -295,10 +296,10 @@ pub fn render_palette(f: &mut Frame, area: Rect, app: &crate::app::App) {
             Span::styled("✖ ", Style::default().fg(theme::WARN)),
             Span::styled(err.as_str(), theme::text_style()),
         ]);
-        f.render_widget(Paragraph::new(line), splits[1]);
+        frame.render_widget(Paragraph::new(line), splits[1]);
     }
 
-    // Popup suggestions (separate popup under the input; no overlap with input text). Hidden if error is present.
+    // Popup suggestions (separate popup under the input; no overlap with input text). Hidden if error is present or no suggestions exist.
     if app.palette.error.is_none()
         && app.palette.popup_open
         && !app.builder.show
@@ -316,24 +317,24 @@ pub fn render_palette(f: &mut Frame, area: Rect, app: &crate::app::App) {
         if rows == 0 {
             return;
         }
-        let popup_height = rows as u16 + 2; // +2 for borders
+        let popup_height = rows as u16 + 3;
         let popup_area = Rect::new(area.x, area.y + 1, area.width, popup_height);
         let popup_block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme::border_style(false))
-            .border_type(ratatui::widgets::block::BorderType::Thick);
+            .borders(Borders::NONE)
+            .border_style(border_style(false))
+            .border_type(BorderType::Thick);
         let list = List::new(items_all)
             .block(popup_block)
-            .highlight_style(theme::list_highlight_style())
-            .highlight_symbol("> ");
-        let mut list_state = ratatui::widgets::ListState::default();
+            .highlight_style(list_highlight_style())
+            .highlight_symbol("► ");
+        let mut list_state = ListState::default();
         let sel = if app.palette.suggestions.is_empty() {
             None
         } else {
             Some(app.palette.selected.min(app.palette.suggestions.len() - 1))
         };
         list_state.select(sel);
-        f.render_stateful_widget(list, popup_area, &mut list_state);
+        frame.render_stateful_widget(list, popup_area, &mut list_state);
     }
 }
 
@@ -484,69 +485,6 @@ impl ValueProvider for StaticValuesProvider {
     }
 }
 
-/// Simple subsequence fuzzy matcher with a naive scoring heuristic.
-///
-/// Returns `Some(score)` if all characters in `needle` appear in order within
-/// `hay`, otherwise returns `None`. Higher scores indicate better matches. The
-/// scoring favors consecutive matches, prefix matches, and shorter candidates.
-///
-/// Arguments:
-/// - `hay`: The candidate string to search within.
-/// - `needle`: The query to match as a subsequence.
-///
-/// Returns: `Option<i64>` where `Some(score)` indicates a match.
-///
-/// Example:
-///
-/// ```rust
-/// assert!(fuzzy_score("applications", "app").unwrap() > 0);
-/// assert!(fuzzy_score("applications", "axp").is_none());
-/// ```
-pub fn fuzzy_score(hay: &str, needle: &str) -> Option<i64> {
-    if needle.is_empty() {
-        return Some(0);
-    }
-    let mut h_lower = String::with_capacity(hay.len());
-    for ch in hay.chars() {
-        h_lower.extend(ch.to_lowercase());
-    }
-    let mut n_lower = String::with_capacity(needle.len());
-    for ch in needle.chars() {
-        n_lower.extend(ch.to_lowercase());
-    }
-
-    let h = h_lower.as_str();
-    let n = n_lower.as_str();
-
-    let mut hi = 0usize;
-    let mut score: i64 = 0;
-    let mut consec = 0i64;
-    let mut first_match_idx: Option<usize> = None;
-    for ch in n.chars() {
-        if let Some(pos) = h[hi..].find(ch) {
-            let abs = hi + pos;
-            if first_match_idx.is_none() {
-                first_match_idx = Some(abs);
-            }
-            hi = abs + ch.len_utf8();
-            consec += 1;
-            score += 6 * consec; // stronger reward for consecutive matches
-        } else {
-            return None;
-        }
-    }
-    // Boost for prefix match
-    if h.starts_with(n) {
-        score += 30;
-    }
-    // Earlier start is better
-    if let Some(start) = first_match_idx {
-        score += i64::max(0, 20 - start as i64);
-    }
-    // Prefer shorter candidates when all else equal
-    score -= hay.len() as i64 / 8;
-    Some(score)
-}
 /// Tokenize input using a simple, shell-like lexer.
 ///
 /// Supports single and double quotes and backslash escapes. Used by the
@@ -653,6 +591,10 @@ fn compute_command_prefix(tokens: &[String]) -> String {
 /// the command summary in the display text.
 fn suggest_commands(reg: &heroku_registry::Registry, prefix: &str) -> Vec<SuggestionItem> {
     let mut items = Vec::new();
+    if prefix.is_empty() {
+        return items;
+    }
+
     for command in &*reg.commands {
         let group = &command.group;
         let name = &command.name;
@@ -675,17 +617,24 @@ fn suggest_commands(reg: &heroku_registry::Registry, prefix: &str) -> Vec<Sugges
 }
 
 /// Finalize suggestion list for the UI: rank, truncate, ghost text, and state flags.
-fn finalize_suggestions(st: &mut PaletteState, items: &mut Vec<SuggestionItem>) {
+fn finalize_suggestions(state: &mut PaletteState, items: &mut Vec<SuggestionItem>) {
     items.sort_by(|a, b| b.score.cmp(&a.score));
     if items.len() > MAX_SUGGESTIONS {
         items.truncate(MAX_SUGGESTIONS);
     }
-    st.ghost = items
-        .first()
-        .map(|top| ghost_remainder(&st.input, st.cursor, &top.insert_text));
-    st.suggestions = items.clone();
-    st.selected = st.selected.min(st.suggestions.len().saturating_sub(1));
-    st.popup_open = !st.suggestions.is_empty();
+    state.selected = state
+        .selected
+        .min(state.suggestions.len().saturating_sub(1));
+    state.suggestions = items.clone();
+    state.popup_open = !state.suggestions.is_empty();
+    set_ghost_text(state);
+}
+
+pub fn set_ghost_text(state: &mut PaletteState) {
+    state.ghost = state
+        .suggestions
+        .get(state.selected)
+        .map(|top| ghost_remainder(&state.input, state.cursor, &top.insert_text));
 }
 
 /// Parse user-provided flags and positional arguments from the portion of tokens

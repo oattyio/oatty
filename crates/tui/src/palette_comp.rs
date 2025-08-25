@@ -8,7 +8,7 @@
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::app;
+use crate::{app, palette::set_ghost_text};
 
 /// Handle key events for the command palette when the builder is not open.
 ///
@@ -137,19 +137,20 @@ pub fn handle_key(app: &mut app::App, key: KeyEvent) -> Result<bool> {
             app.palette.move_cursor_right();
             Ok(true)
         }
-        KeyCode::Down => {
-            // Navigate down through suggestions
+        KeyCode::Down | KeyCode::Up => {
+            // Navigate down/up through suggestions
             let len = app.palette.suggestions.len();
             if len > 0 {
-                app.palette.selected = (app.palette.selected + 1) % len;
-            }
-            Ok(true)
-        }
-        KeyCode::Up | KeyCode::BackTab => {
-            // Navigate up through suggestions
-            let len = app.palette.suggestions.len();
-            if len > 0 {
-                app.palette.selected = (app.palette.selected + len - 1) % len;
+                let selected = app.palette.selected as isize;
+                let delta = if key.code == KeyCode::Down {
+                    1isize
+                } else {
+                    -1isize
+                };
+                // Wrap around using modulus with length as isize
+                let new_selected = (selected + delta).rem_euclid(len as isize) as usize;
+                app.palette.selected = new_selected;
+                set_ghost_text(&mut app.palette);
             }
             Ok(true)
         }

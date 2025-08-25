@@ -1,6 +1,6 @@
 use super::components::{
     BuilderComponent, HelpComponent, HintBarComponent, LogsComponent, PaletteComponent,
-    StepsComponent, TableComponent,
+    TableComponent,
 };
 use crate::app::App;
 use crate::component::Component;
@@ -21,7 +21,6 @@ pub fn draw(
     app: &mut App,
     palette: &mut PaletteComponent,
     hints: &mut HintBarComponent,
-    steps: &mut StepsComponent,
     logs: &mut LogsComponent,
     builder: &mut BuilderComponent,
     help: &mut HelpComponent,
@@ -35,8 +34,7 @@ pub fn draw(
     // Render main UI components
     render_command_palette(f, app, palette, chunks[0]);
     render_hints(f, app, hints, chunks[1]);
-    render_steps(f, app, steps, chunks[2]);
-    render_logs(f, app, logs, chunks[3]);
+    render_logs(f, app, logs, chunks[2]);
 
     // Render modal overlays if active
     render_modals(f, app, builder, help, table);
@@ -81,11 +79,6 @@ fn render_hints(f: &mut Frame, app: &mut App, hints: &mut HintBarComponent, area
     {
         hints.render(f, area, app);
     }
-}
-
-// Render the steps/workflow area (center panel)
-fn render_steps(f: &mut Frame, _app: &mut App, steps: &mut StepsComponent, area: Rect) {
-    steps.render(f, area, _app);
 }
 
 // Render logs area via component

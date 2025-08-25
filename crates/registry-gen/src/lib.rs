@@ -34,7 +34,6 @@ pub fn write_manifest(input: PathBuf, output: PathBuf) -> Result<()> {
     Ok(())
 }
 
-
 /// Adds synthetic workflow commands to the registry.
 ///
 /// This function adds internal commands that are not HTTP API calls but provide

@@ -8,7 +8,15 @@ mod tables;
 mod theme;
 mod ui;
 
-use crate::component::Component;
+use crate::{
+    cmd::{run_cmds, Cmd},
+    component::Component,
+    preview::resolve_path,
+    ui::components::{
+        BuilderComponent, HelpComponent, HintBarComponent, LogsComponent, PaletteComponent,
+        TableComponent,
+    },
+};
 use anyhow::Result;
 use crossterm::{
     event::{
@@ -18,24 +26,23 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{prelude::*, Terminal};
-use std::io;
+use serde_json::{Map, Value};
 use std::time::{Duration, Instant};
+use std::{collections::HashMap, io};
 
 pub fn run(registry: heroku_registry::Registry) -> Result<()> {
     let mut app = app::App::new(registry);
-    let mut palette_component = ui::components::PaletteComponent::new();
+    let mut palette_component = PaletteComponent::new();
     let _ = palette_component.init();
-    let mut hint_bar_component = ui::components::HintBarComponent::new();
+    let mut hint_bar_component = HintBarComponent::new();
     let _ = hint_bar_component.init();
-    let mut steps_component = ui::components::StepsComponent::new();
-    let _ = steps_component.init();
-    let mut logs_component = ui::components::LogsComponent::new();
+    let mut logs_component = LogsComponent::new();
     let _ = logs_component.init();
-    let mut builder_component = ui::components::BuilderComponent::new();
+    let mut builder_component = BuilderComponent::new();
     let _ = builder_component.init();
-    let mut help_component = ui::components::HelpComponent::new();
+    let mut help_component = HelpComponent::new();
     let _ = help_component.init();
-    let mut table_component = ui::components::TableComponent::new();
+    let mut table_component = TableComponent::new();
     let _ = table_component.init();
 
     enable_raw_mode()?;
@@ -54,13 +61,12 @@ pub fn run(registry: heroku_registry::Registry) -> Result<()> {
                 let _ = app.update(app::Msg::ExecCompleted(out));
             }
         }
-        terminal.draw(|f| {
+        terminal.draw(|frame| {
             ui::draw(
-                f,
+                frame,
                 &mut app,
                 &mut palette_component,
                 &mut hint_bar_component,
-                &mut steps_component,
                 &mut logs_component,
                 &mut builder_component,
                 &mut help_component,
@@ -315,22 +321,22 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
     }
 
     // Build positional map and body
-    let mut pos_map: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut pos_map: HashMap<String, String> = HashMap::new();
     for (i, name) in spec.positional_args.iter().enumerate() {
         pos_map.insert(name.clone(), user_args.get(i).cloned().unwrap_or_default());
     }
-    let mut body = serde_json::Map::new();
+    let mut body = Map::new();
     for (name, maybe_val) in user_flags.into_iter() {
-        if let Some(fspec) = spec.flags.iter().find(|f| f.name == name) {
-            if fspec.r#type == "boolean" {
-                body.insert(name, serde_json::Value::Bool(true));
+        if let Some(flag) = spec.flags.iter().find(|f| f.name == name) {
+            if flag.r#type == "boolean" {
+                body.insert(name, Value::Bool(true));
             } else if let Some(v) = maybe_val {
-                body.insert(name, serde_json::Value::String(v));
+                body.insert(name, Value::String(v));
             }
         }
     }
 
-    let path = crate::preview::resolve_path(&spec.path, &pos_map);
+    let path = resolve_path(&spec.path, &pos_map);
     let cli_line = format!("heroku {}", app.palette.input.trim());
 
     let should_dry_run = app.ctx.debug_enabled && app.ctx.dry_run;
@@ -357,9 +363,6 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
     }
 
     // Live request: enqueue background HTTP execution via Cmd system
-    crate::cmd::run_cmds(
-        app,
-        vec![crate::cmd::Cmd::ExecuteHttp(spec.clone(), path, body)],
-    );
+    run_cmds(app, vec![Cmd::ExecuteHttp(spec, path, body)]);
     Ok(())
 }

@@ -132,7 +132,7 @@ pub fn draw_help_modal(f: &mut Frame, app: &App, area: Rect) {
 /// let area = Rect::new(0, 0, 100, 50);
 /// draw_table_modal(&mut frame, &app, area);
 /// ```
-pub fn draw_table_modal(f: &mut Frame, app: &App, area: Rect) {
+pub fn draw_table_modal(frame: &mut Frame, app: &App, area: Rect) {
     // Large modal to maximize space for tables
     let area = centered_rect(96, 90, area);
     let title = "Results  [Esc] Close  ↑/↓ Scroll";
@@ -141,8 +141,8 @@ pub fn draw_table_modal(f: &mut Frame, app: &App, area: Rect) {
         .borders(Borders::ALL)
         .border_style(theme::border_style(true));
 
-    f.render_widget(Clear, area);
-    f.render_widget(block.clone(), area);
+    frame.render_widget(Clear, area);
+    frame.render_widget(block.clone(), area);
     let inner = block.inner(area);
     // Split for content + footer
     let splits = Layout::default()
@@ -160,13 +160,13 @@ pub fn draw_table_modal(f: &mut Frame, app: &App, area: Rect) {
             _ => false,
         };
         if has_array {
-            crate::tables::draw_json_table_with_offset(f, splits[0], json, app.table.offset);
+            crate::tables::draw_json_table_with_offset(frame, splits[0], json, app.table.offset);
         } else {
-            crate::tables::draw_kv_or_text(f, splits[0], json);
+            crate::tables::draw_kv_or_text(frame, splits[0], json);
         }
     } else {
         let p = Paragraph::new("No results to display").style(theme::text_muted());
-        f.render_widget(p, splits[0]);
+        frame.render_widget(p, splits[0]);
     }
 
     // Footer hint for table modal
@@ -182,7 +182,7 @@ pub fn draw_table_modal(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(" jump", theme::text_muted()),
     ]))
     .style(theme::text_muted());
-    f.render_widget(footer, splits[1]);
+    frame.render_widget(footer, splits[1]);
 }
 
 /// Renders the command builder modal with full interface.

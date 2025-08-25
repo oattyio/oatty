@@ -1,7 +1,7 @@
 use std::{fs, sync::Arc};
 
 use anyhow::{anyhow, Context, Result};
-use bincode::{config};
+use bincode::config;
 use heroku_registry_types::CommandSpec;
 
 /// The main registry containing all available Heroku CLI commands.
@@ -37,7 +37,9 @@ impl Registry {
         let config = config::standard();
 
         // Decode the CommandSpec struct from the bytes
-        let vec: Vec<CommandSpec> = bincode::decode_from_slice(&bytes, config).with_context(|| format!("decoding manifest at {}", path))?.0;
+        let vec: Vec<CommandSpec> = bincode::decode_from_slice(&bytes, config)
+            .with_context(|| format!("decoding manifest at {}", path))?
+            .0;
         let commands: Arc<[CommandSpec]> = vec.into();
 
         Ok(Registry { commands })

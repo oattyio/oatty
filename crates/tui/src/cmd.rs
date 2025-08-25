@@ -4,7 +4,7 @@ use heroku_registry::CommandSpec;
 use serde_json::Value;
 use tokio::runtime::Runtime;
 
-use crate::app::{self, Effect};
+use crate::app::{self, Effect, ExecOutcome};
 
 /// Side-effect commands executed outside of pure state updates.
 #[derive(Debug)]
@@ -40,8 +40,9 @@ pub fn run_cmds(app: &mut app::App, commands: Vec<Cmd>) {
                     Ok(()) => app.logs.entries.push(format!("Copied: {}", text)),
                     Err(e) => app.logs.entries.push(format!("Clipboard error: {}", e)),
                 }
-                if app.logs.entries.len() > 500 {
-                    let _ = app.logs.entries.drain(0..app.logs.entries.len() - 500);
+                let log_len = app.logs.entries.len();
+                if log_len > 500 {
+                    let _ = app.logs.entries.drain(0..log_len - 500);
                 }
             }
             Cmd::ExecuteHttp(spec, path, body) => {
@@ -63,10 +64,6 @@ fn execute_http(
     app.executing = true;
     app.throbber_idx = 0;
 
-    let spec_clone = spec.clone();
-    let path_s = path.clone();
-    let body_map = body.clone();
-
     spawn(move || {
         let runtime = match Runtime::new() {
             Ok(runtime) => runtime,
@@ -80,31 +77,7 @@ fn execute_http(
             }
         };
 
-        let outcome = runtime.block_on(async move {
-                let client = heroku_api::HerokuClient::new_from_env().map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc", e))?;
-                let method = match spec_clone.method.as_str() {
-                    "GET" => reqwest::Method::GET,
-                    "POST" => reqwest::Method::POST,
-                    "DELETE" => reqwest::Method::DELETE,
-                    "PATCH" => reqwest::Method::PATCH,
-                    other => return Err(format!("unsupported method: {}", other)),
-                };
-                let mut builder = client.request(method, &path_s);
-                if !body_map.is_empty() { builder = builder.json(&serde_json::Value::Object(body_map.clone())); }
-                let resp = builder.send().await.map_err(|e| format!("Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY or ~/.netrc is set", e))?;
-                let status = resp.status();
-                let text = resp.text().await.unwrap_or_default();
-                if status.as_u16() == 401 { return Err("Unauthorized (401). Hint: set HEROKU_API_KEY=... or configure ~/.netrc with machine api.heroku.com".into()); }
-                if status.as_u16() == 403 { return Err("Forbidden (403). Hint: check team/app access, permissions, and role membership".into()); }
-                let log = format!("{}\n{}", status, text);
-                let mut result_json = None;
-                let mut open_table = false;
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
-                    open_table = matches!(json, serde_json::Value::Array(_));
-                    result_json = Some(json);
-                }
-                Ok::<app::ExecOutcome, String>(app::ExecOutcome { log, result_json, open_table })
-            });
+        let outcome = runtime.block_on(exec_remote(spec, path, body));
 
         match outcome {
             Ok(out) => {
@@ -119,4 +92,51 @@ fn execute_http(
             }
         }
     });
+}
+
+async fn exec_remote(
+    spec: CommandSpec,
+    path: String,
+    body: serde_json::Map<String, Value>,
+) -> Result<ExecOutcome, String> {
+    let client = heroku_api::HerokuClient::new_from_env().map_err(|e| {
+        format!(
+            "Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc",
+            e
+        )
+    })?;
+    let method = match spec.method.as_str() {
+        "GET" => reqwest::Method::GET,
+        "POST" => reqwest::Method::POST,
+        "DELETE" => reqwest::Method::DELETE,
+        "PATCH" => reqwest::Method::PATCH,
+        other => return Err(format!("unsupported method: {}", other)),
+    };
+    let mut builder = client.request(method, &path);
+    if !body.is_empty() {
+        builder = builder.json(&serde_json::Value::Object(body.clone()));
+    }
+    let resp = builder.send().await.map_err(|e| format!("Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY or ~/.netrc is set", e))?;
+    let status = resp.status();
+    let text = resp.text().await.unwrap_or_default();
+    if status.as_u16() == 401 {
+        return Err("Unauthorized (401). Hint: set HEROKU_API_KEY=... or configure ~/.netrc with machine api.heroku.com".into());
+    }
+    if status.as_u16() == 403 {
+        return Err(
+            "Forbidden (403). Hint: check team/app access, permissions, and role membership".into(),
+        );
+    }
+    let log = format!("{}\n{}", status, text);
+    let mut result_json = None;
+    let mut open_table = false;
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
+        open_table = true;
+        result_json = Some(json);
+    }
+    Ok(app::ExecOutcome {
+        log,
+        result_json,
+        open_table,
+    })
 }

@@ -14,7 +14,7 @@ pub mod widgets;
 use crate::app::App;
 use crate::ui::components::{
     BuilderComponent, HelpComponent, HintBarComponent, LogsComponent, PaletteComponent,
-    StepsComponent, TableComponent,
+    TableComponent,
 };
 use ratatui::Frame;
 
@@ -60,13 +60,12 @@ pub fn draw(
     app: &mut App,
     palette: &mut PaletteComponent,
     hints: &mut HintBarComponent,
-    steps: &mut StepsComponent,
     logs: &mut LogsComponent,
     builder: &mut BuilderComponent,
     help: &mut HelpComponent,
     table: &mut TableComponent,
 ) {
-    main::draw(f, app, palette, hints, steps, logs, builder, help, table);
+    main::draw(f, app, palette, hints, logs, builder, help, table);
 }
 
 // Re-export commonly used components for convenience
