@@ -3,13 +3,11 @@
 //! This module provides all the user interface rendering functionality,
 //! including main layout, modals, components, and utilities.
 
-pub mod builder;
 pub mod components;
 pub mod layout;
 pub mod main;
 pub mod modals;
 pub mod utils;
-pub mod widgets;
 
 use crate::app::App;
 use crate::ui::components::{

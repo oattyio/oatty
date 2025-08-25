@@ -85,12 +85,9 @@ It is a design contract for contributors, ensuring that **new features remain co
 
 ### 4.2 Expanded Steps View
 - Displays workflow tasks with dependencies.
-- Two modes:
-  - **Dry-run**: preview steps and inputs.
-  - **Execution**: live progress with ✓/✗ markers.
+- **Execution**: live progress with ✓/✗ markers.
 
 ### 4.3 User Overrides
-- Users may skip or reorder steps in dry-run view.
 - Keeps flexibility without editing workflow files.
 
 ---
@@ -115,7 +112,6 @@ It is a design contract for contributors, ensuring that **new features remain co
 | `Enter`    | Execute command / expand row        |
 | `s`        | Sort by column                      |
 | `c`        | Choose columns                      |
-| `d`        | Dry-run workflow                    |
 | `F1`       | Toggle Guided / Power mode          |
 | `Esc`      | Clear input or close panel          |
 

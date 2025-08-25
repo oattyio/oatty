@@ -24,9 +24,8 @@ Key Features
   - Table modal includes styled footer hints and scrolling.
 - Safety: secret-like fields masked in tables; Authorization redacted in logs (via util).
 
-Execution & Dry-run
+Execution
 - Live requests: via `heroku-api` with auth precedence `HEROKU_API_KEY` > `~/.netrc`.
-- Dry-run: when `DEBUG=1` and the TUI “Dry-run” is checked, logs the request plan instead of executing.
 - Errors: show inline with hints (auth/network/permissions), and also log.
 
 Keybindings
@@ -59,7 +58,7 @@ Dev Notes
 Usage
 ```bash
 cargo run -p heroku-cli              # opens TUI
-DEBUG=1 cargo run -p heroku-cli      # enables extra debug UI (e.g., Dry-run)
+DEBUG=1 cargo run -p heroku-cli      # enables extra debug
 HEROKU_API_KEY=... cargo run -p heroku-cli
 ```
 

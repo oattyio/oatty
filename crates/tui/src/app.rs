@@ -46,8 +46,6 @@ pub struct SharedCtx {
     pub registry: Registry,
     /// Global debug flag (from env)
     pub debug_enabled: bool,
-    /// Global dry-run toggle (can be toggled by UI)
-    pub dry_run: bool,
     /// Value providers for suggestions
     pub providers: Vec<Box<dyn ValueProvider>>,
 }
@@ -60,7 +58,6 @@ impl SharedCtx {
         Self {
             registry,
             debug_enabled,
-            dry_run: false,
             providers: vec![],
         }
     }

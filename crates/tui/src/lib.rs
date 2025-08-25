@@ -2,9 +2,7 @@ mod app;
 mod cmd;
 mod component;
 mod palette;
-mod palette_comp;
 mod preview;
-mod tables;
 mod theme;
 mod ui;
 
@@ -337,30 +335,6 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
     }
 
     let path = resolve_path(&spec.path, &pos_map);
-    let cli_line = format!("heroku {}", app.palette.input.trim());
-
-    let should_dry_run = app.ctx.debug_enabled && app.ctx.dry_run;
-    if should_dry_run {
-        let req = crate::preview::request_preview(&spec, &path, &body);
-        app.logs
-            .entries
-            .push(format!("Dry-run:\n{}\n{}", cli_line, req));
-        if app.logs.entries.len() > 500 {
-            let _ = app.logs.entries.drain(0..app.logs.entries.len() - 500);
-        }
-        // Show demo table for GET collections in debug to visualize
-        if spec.method == "GET" && !spec.path.ends_with('}') {
-            app.table.result_json = Some(crate::tables::sample_apps());
-            app.table.show = true;
-            app.table.offset = 0;
-        }
-        // Clear input for next command
-        app.palette.input.clear();
-        app.palette.cursor = 0;
-        app.palette.suggestions.clear();
-        app.palette.popup_open = false;
-        return Ok(());
-    }
 
     // Live request: enqueue background HTTP execution via Cmd system
     run_cmds(app, vec![Cmd::ExecuteHttp(spec, path, body)]);

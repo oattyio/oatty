@@ -4,7 +4,7 @@ Overview
 - Small helpers shared across crates; notably, redaction of sensitive values for safe logging.
 
 Redaction
-- `redact_sensitive(&str) -> String` (referenced in CLI dry-run paths) masks sensitive headers and token-like substrings.
+- `redact_sensitive(&str) -> String` (referenced in CLI paths) masks sensitive headers and token-like substrings.
 - Intended to prevent leaking credentials in logs, previews, or errors.
 
 Examples

@@ -99,7 +99,7 @@ fn add_workflow_commands(commands: &mut Vec<CommandSpec>) {
     );
     add(
         "workflow:run",
-        "Run workflow (use global --dry-run)",
+        "Run workflow",
         vec![file_flag(false), name_flag(false)],
     );
 }

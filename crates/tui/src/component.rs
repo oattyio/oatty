@@ -61,11 +61,11 @@ use ratatui::Frame;
 ///         vec![]
 ///     }
 ///
-///     fn render(&mut self, f: &mut Frame, rect: Rect, app: &mut heroku_tui::app::App) {
+///     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut heroku_tui::app::App) {
 ///         // Draw the component's UI elements
 ///         use ratatui::widgets::Paragraph;
 ///         let widget = Paragraph::new(&self.internal_state);
-///         f.render_widget(widget, rect);
+///         frame.render_widget(widget, rect);
 ///     }
 /// }
 /// ```
@@ -239,14 +239,14 @@ pub trait Component {
     ///
     /// # Arguments
     ///
-    /// * `f` - The frame to render to
+    /// * `frame` - The frame to render to
     /// * `rect` - The rectangular area allocated for this component
     /// * `app` - The application state (read-only during rendering)
     ///
     /// # Examples
     ///
     /// ```rust
-    /// fn render(&mut self, f: &mut Frame, rect: Rect, app: &App) {
+    /// fn render(&mut self, frame: &mut Frame, rect: Rect, app: &App) {
     ///     use ratatui::widgets::{Block, Borders, Paragraph};
     ///     
     ///     let block = Block::default()
@@ -256,8 +256,8 @@ pub trait Component {
     ///     let widget = Paragraph::new(&self.content)
     ///         .block(block);
     ///     
-    ///     f.render_widget(widget, rect);
+    ///     frame.render_widget(widget, rect);
     /// }
     /// ```
-    fn render(&mut self, f: &mut Frame, rect: Rect, app: &mut crate::app::App);
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut crate::app::App);
 }

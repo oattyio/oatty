@@ -43,7 +43,6 @@ workflows:
 ## TUI Integration
 - **Unified UI**: workflows shown like commands.
 - **Expanded steps view**:
-  - Preview (dry-run).
   - Show data dependencies.
   - User may select/deselect tasks.
 - **Run view**:

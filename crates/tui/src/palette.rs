@@ -16,13 +16,7 @@
 //!
 use std::fmt::Debug;
 
-use crate::theme::{self, border_style, list_highlight_style};
 use heroku_util::fuzzy_score;
-use ratatui::{
-    prelude::*,
-    text::{Line, Span},
-    widgets::*,
-};
 
 /// Maximum number of suggestions to display in the popup.
 const MAX_SUGGESTIONS: usize = 20;
@@ -236,107 +230,8 @@ pub fn accept_command_suggestion(p: &mut PaletteState, exec: &str) {
 /// - Error display with warning styling
 /// - Suggestions popup with proper positioning
 /// - Cursor placement accounting for UTF-8 character width
-/// - Modal-aware dimming and popup hiding
-pub fn render_palette(frame: &mut Frame, area: Rect, app: &crate::app::App) {
-    let block = Block::default()
-        .borders(Borders::LEFT)
-        .border_style(theme::border_style(true))
-        .border_type(ratatui::widgets::block::BorderType::Thick);
-    frame.render_widget(block.clone(), area);
-    let inner = block.inner(area);
-    let splits = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Min(1),
-            Constraint::Length(1),
-        ])
-        .split(inner);
-
-    // Input line with ghost text; dim when a modal is open. Show throbber if executing.
-    let dimmed = app.builder.show || app.help.show;
-    let base_style = if dimmed {
-        theme::text_muted()
-    } else {
-        theme::text_style()
-    };
-    let mut spans: Vec<Span> = Vec::new();
-    if app.executing {
-        let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-        let sym = frames[app.throbber_idx % frames.len()];
-        spans.push(Span::styled(
-            format!("{} ", sym),
-            theme::title_style().fg(theme::ACCENT),
-        ));
-    }
-    spans.push(Span::styled(app.palette.input.as_str(), base_style));
-    if let Some(ghost) = &app.palette.ghost {
-        if !ghost.is_empty() {
-            spans.push(Span::styled(ghost.as_str(), theme::text_muted()));
-        }
-    }
-    let p = Paragraph::new(Line::from(spans)).block(Block::default());
-    frame.render_widget(p, splits[0]);
-    // Cursor placement (count characters, not bytes); hide when a modal is open
-    if !dimmed {
-        let col = app
-            .palette
-            .input
-            .get(..app.palette.cursor)
-            .map(|s| s.chars().count() as u16)
-            .unwrap_or(0);
-        let x = splits[0].x.saturating_add(col);
-        let y = splits[0].y;
-        frame.set_cursor_position((x, y));
-    }
-
-    // Error line below input when present
-    if let Some(err) = &app.palette.error {
-        let line = Line::from(vec![
-            Span::styled("✖ ", Style::default().fg(theme::WARN)),
-            Span::styled(err.as_str(), theme::text_style()),
-        ]);
-        frame.render_widget(Paragraph::new(line), splits[1]);
-    }
-
-    // Popup suggestions (separate popup under the input; no overlap with input text). Hidden if error is present or no suggestions exist.
-    if app.palette.error.is_none()
-        && app.palette.popup_open
-        && !app.builder.show
-        && !app.help.show
-        && !app.palette.suggestions.is_empty()
-    {
-        let items_all: Vec<ListItem> = app
-            .palette
-            .suggestions
-            .iter()
-            .map(|s| ListItem::new(s.display.clone()).style(theme::text_style()))
-            .collect();
-        let max_rows = 10usize;
-        let rows = items_all.len().min(max_rows);
-        if rows == 0 {
-            return;
-        }
-        let popup_height = rows as u16 + 3;
-        let popup_area = Rect::new(area.x, area.y + 1, area.width, popup_height);
-        let popup_block = Block::default()
-            .borders(Borders::NONE)
-            .border_style(border_style(false))
-            .border_type(BorderType::Thick);
-        let list = List::new(items_all)
-            .block(popup_block)
-            .highlight_style(list_highlight_style())
-            .highlight_symbol("► ");
-        let mut list_state = ListState::default();
-        let sel = if app.palette.suggestions.is_empty() {
-            None
-        } else {
-            Some(app.palette.selected.min(app.palette.suggestions.len() - 1))
-        };
-        list_state.select(sel);
-        frame.render_stateful_widget(list, popup_area, &mut list_state);
-    }
-}
+// This function has been migrated to PaletteComponent::render()
+// and is no longer needed as part of the component architecture migration.
 
 /// Accept a non-command suggestion (flag/value) without clobbering the resolved command (group sub).
 ///

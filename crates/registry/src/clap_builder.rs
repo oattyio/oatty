@@ -8,7 +8,7 @@ use std::collections::BTreeMap;
 /// Clap command structure. Commands are grouped by their resource prefix (before ':'),
 /// and each command includes its flags, positional arguments, and help text.
 ///
-/// The generated command tree includes global flags for JSON output, dry-run mode,
+/// The generated command tree includes global flags for JSON output,
 /// and verbose logging that apply to all commands.
 ///
 /// # Arguments
@@ -49,7 +49,6 @@ pub fn build_clap(registry: &Registry) -> ClapCommand {
 /// to all subcommands. The global flags include:
 ///
 /// - `--json` - Enables JSON output format
-/// - `--dry-run` - Shows what would be executed without actually running commands
 /// - `--verbose` - Enables verbose logging output
 ///
 /// # Returns
@@ -71,13 +70,6 @@ fn create_root_command() -> ClapCommand {
             Arg::new("json")
                 .long("json")
                 .help("JSON output")
-                .global(true)
-                .action(ArgAction::SetTrue),
-        )
-        .arg(
-            Arg::new("dry-run")
-                .long("dry-run")
-                .help("Do not execute, print requests")
                 .global(true)
                 .action(ArgAction::SetTrue),
         )

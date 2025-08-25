@@ -132,58 +132,8 @@ pub fn draw_help_modal(f: &mut Frame, app: &App, area: Rect) {
 /// let area = Rect::new(0, 0, 100, 50);
 /// draw_table_modal(&mut frame, &app, area);
 /// ```
-pub fn draw_table_modal(frame: &mut Frame, app: &App, area: Rect) {
-    // Large modal to maximize space for tables
-    let area = centered_rect(96, 90, area);
-    let title = "Results  [Esc] Close  ↑/↓ Scroll";
-    let block = Block::default()
-        .title(Span::styled(title, theme::title_style().fg(theme::ACCENT)))
-        .borders(Borders::ALL)
-        .border_style(theme::border_style(true));
-
-    frame.render_widget(Clear, area);
-    frame.render_widget(block.clone(), area);
-    let inner = block.inner(area);
-    // Split for content + footer
-    let splits = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Min(1), Constraint::Length(1)])
-        .split(inner);
-
-    if let Some(json) = &app.table.result_json {
-        // Prefer table if array is present, else KV fallback even in modal
-        let has_array = match json {
-            serde_json::Value::Array(a) => !a.is_empty(),
-            serde_json::Value::Object(m) => {
-                m.values().any(|v| matches!(v, serde_json::Value::Array(_)))
-            }
-            _ => false,
-        };
-        if has_array {
-            crate::tables::draw_json_table_with_offset(frame, splits[0], json, app.table.offset);
-        } else {
-            crate::tables::draw_kv_or_text(frame, splits[0], json);
-        }
-    } else {
-        let p = Paragraph::new("No results to display").style(theme::text_muted());
-        frame.render_widget(p, splits[0]);
-    }
-
-    // Footer hint for table modal
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled("Hint: ", theme::text_muted()),
-        Span::styled("Esc", theme::title_style().fg(theme::ACCENT)),
-        Span::styled(" close  ", theme::text_muted()),
-        Span::styled("↑/↓", theme::title_style().fg(theme::ACCENT)),
-        Span::styled(" scroll  ", theme::text_muted()),
-        Span::styled("PgUp/PgDn", theme::title_style().fg(theme::ACCENT)),
-        Span::styled(" faster  ", theme::text_muted()),
-        Span::styled("Home/End", theme::title_style().fg(theme::ACCENT)),
-        Span::styled(" jump", theme::text_muted()),
-    ]))
-    .style(theme::text_muted());
-    frame.render_widget(footer, splits[1]);
-}
+// This function has been migrated to TableComponent::render()
+// and is no longer needed as part of the component architecture migration.
 
 /// Renders the command builder modal with full interface.
 ///
@@ -226,55 +176,8 @@ pub fn draw_table_modal(frame: &mut Frame, app: &App, area: Rect) {
 /// let area = Rect::new(0, 0, 100, 50);
 /// draw_builder_modal(&mut frame, &mut app, area);
 /// ```
-pub fn draw_builder_modal(f: &mut Frame, app: &mut App, area: Rect) {
-    let area = centered_rect(96, 90, area);
-    let block = Block::default()
-        .title(Span::styled(
-            "Command Builder  [Esc] Close",
-            theme::title_style().fg(theme::ACCENT),
-        ))
-        .borders(Borders::ALL)
-        .border_style(theme::border_style(true));
-    f.render_widget(Clear, area);
-    f.render_widget(block.clone(), area);
-    let inner = block.inner(area);
-
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),
-            Constraint::Min(10),
-            Constraint::Length(1),
-        ])
-        .split(inner);
-
-    super::builder::draw_search(f, app, chunks[0]);
-
-    let main = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage(30),
-            Constraint::Percentage(35),
-            Constraint::Percentage(35),
-        ])
-        .split(chunks[1]);
-    super::builder::draw_commands_list(f, app, main[0]);
-    super::builder::draw_inputs(f, app, main[1]);
-    super::widgets::draw_preview(f, app, main[2]);
-
-    // Footer hint for builder modal
-    let footer = Paragraph::new(Line::from(vec![
-        Span::styled("Hint: ", theme::text_muted()),
-        Span::styled("Ctrl+F", theme::title_style().fg(theme::ACCENT)),
-        Span::styled(" close  ", theme::text_muted()),
-        Span::styled("Enter", theme::title_style().fg(theme::ACCENT)),
-        Span::styled(" apply  ", theme::text_muted()),
-        Span::styled("Esc", theme::title_style().fg(theme::ACCENT)),
-        Span::styled(" cancel", theme::text_muted()),
-    ]))
-    .style(theme::text_muted());
-    f.render_widget(footer, chunks[2]);
-}
+// This function has been migrated to BuilderComponent::render()
+// and is no longer needed as part of the component architecture migration.
 
 /// Builds comprehensive help text for a command specification.
 ///
@@ -373,24 +276,6 @@ fn build_command_help(spec: &heroku_registry::CommandSpec) -> String {
             out.push('\n');
         }
     }
-
-    // Example
-    out.push_str("\nEXAMPLE:\n  ");
-    out.push_str(&{
-        let fields: Vec<crate::app::Field> = spec
-            .positional_args
-            .iter()
-            .map(|p| crate::app::Field {
-                name: p.clone(),
-                required: true,
-                is_bool: false,
-                value: String::new(),
-                enum_values: vec![],
-                enum_idx: None,
-            })
-            .collect();
-        crate::preview::cli_preview(spec, &fields)
-    });
 
     out
 }

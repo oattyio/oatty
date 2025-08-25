@@ -1,6 +1,6 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
@@ -129,93 +129,4 @@ fn resolve_expr(expr: &str, ctx: &ContextState) -> Option<String> {
         });
     }
     None
-}
-
-pub async fn dry_run_plan(workflow: &Workflow, reg: &heroku_registry::Registry) -> Result<Value> {
-    let mut ctx = ContextState {
-        env: std::env::vars().collect(),
-        ..Default::default()
-    };
-    let mut steps: Vec<Value> = Vec::new();
-    for task in &workflow.tasks {
-        // Evaluate if condition
-        if let Some(cond) = &task.r#if {
-            let pred = resolve_expr(
-                cond.trim().trim_start_matches("${{").trim_end_matches("}}"),
-                &ctx,
-            )
-            .unwrap_or_else(|| "0".into());
-            if pred != "1" && pred.to_lowercase() != "true" {
-                steps.push(json!({"task": task.name, "skipped": true}));
-                continue;
-            }
-        }
-        let spec = reg
-            .commands
-            .iter()
-            .find(|c| c.name == task.command)
-            .ok_or_else(|| anyhow!("unknown command in workflow: {}", task.command))?;
-        let params = interpolate_value(&task.with, &ctx);
-        let (path, body) = build_path_and_body(spec, &params)?;
-        steps.push(json!({
-            "task": task.name,
-            "command": task.command,
-            "request": {
-                "method": spec.method,
-                "url": format!("https://api.heroku.com{}", path),
-                "headers": {"Accept": "application/vnd.heroku+json; version=3"},
-                "body": body
-            }
-        }));
-        // Simulate output capture (dry-run has none)
-        ctx.tasks.insert(
-            task.name.clone(),
-            TaskResult {
-                status: "skipped".into(),
-                output: json!({}),
-                logs: vec![],
-            },
-        );
-    }
-    Ok(json!({"plan": steps}))
-}
-
-fn build_path_and_body(
-    spec: &heroku_registry::CommandSpec,
-    params: &Value,
-) -> Result<(String, Value)> {
-    // params expected to be a map of positional names + flags
-    let map = params
-        .as_object()
-        .ok_or_else(|| anyhow!("task.with must be an object"))?;
-    // Resolve path
-    let mut path = spec.path.clone();
-    for pa in &spec.positional_args {
-        if let Some(v) = map.get(pa) {
-            path = path.replace(&format!("{{{}}}", pa), &as_string(v));
-        }
-    }
-    // Build body from non-positional keys that match flags
-    let mut body = serde_json::Map::new();
-    for (k, v) in map.iter() {
-        if spec.positional_args.iter().any(|p| p == k) {
-            continue;
-        }
-        body.insert(k.clone(), v.clone());
-    }
-    let body_val = if body.is_empty() {
-        Value::Null
-    } else {
-        Value::Object(body)
-    };
-    Ok((path, body_val))
-}
-
-fn as_string(v: &Value) -> String {
-    match v {
-        Value::String(s) => s.clone(),
-        Value::Number(n) => n.to_string(),
-        Value::Bool(b) => b.to_string(),
-        other => other.to_string(),
-    }
 }

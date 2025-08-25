@@ -1,12 +1,10 @@
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result};
 use clap::ArgMatches;
 use heroku_api::HerokuClient;
-use heroku_engine::{dry_run_plan, load_workflow_from_file};
 use heroku_registry::{build_clap, Registry};
-use heroku_util::redact_sensitive;
 use reqwest::Method;
-use serde_json::{json, to_string_pretty, Map, Value};
-use std::{collections::HashMap, fs::read_dir, path::Path};
+use serde_json::{Map, Value};
+use std::collections::HashMap;
 use tracing::Level;
 use tracing_subscriber::fmt;
 
@@ -109,7 +107,6 @@ fn init_tracing() {
 /// 3. Collects positional arguments and flags from the command line
 /// 4. Builds the HTTP request body from flags
 /// 5. Constructs and executes the HTTP request to the Heroku API
-/// 6. Handles dry-run mode by printing the request details instead of executing
 /// 7. Outputs the response to stdout
 ///
 /// # Returns
@@ -121,8 +118,7 @@ fn init_tracing() {
 /// # List apps
 /// heroku-cli apps list
 ///
-/// # Create app with dry-run
-/// heroku-cli apps app:create --name my-app --dry-run
+/// heroku-cli apps app:create --name my-app
 ///
 /// # Set config var
 /// heroku-cli config config:set KEY=value
@@ -139,7 +135,7 @@ async fn run_command(registry: &Registry, matches: &ArgMatches) -> Result<()> {
 
     // Route workflow commands via the registry so they are available in the TUI.
     if group == "workflow" {
-        return run_workflow_cmd(registry, cmd_matches, Some(matches)).await;
+        return Ok(()); // unimplemented
     }
 
     let cmd_spec = registry.find_by_group_and_cmd(group, cmd_name)?;
@@ -172,37 +168,6 @@ async fn run_command(registry: &Registry, matches: &ArgMatches) -> Result<()> {
     let mut builder = client.request(method, &path);
     if let Some(ref b) = body_value {
         builder = builder.json(b);
-    }
-
-    let dry_run = matches.get_flag("dry-run");
-    if dry_run {
-        // Build request to inspect
-        let req = builder.build()?;
-        let url = req.url().to_string();
-        let method = req.method().to_string();
-        // Basic headers set; redact secrets
-        let mut headers_out = Map::new();
-        for (name, value) in req.headers().iter() {
-            let val = value.to_str().unwrap_or("");
-            let line = format!("{}: {}", name.as_str(), val);
-            let redacted = redact_sensitive(&line);
-            // Extract after ': '
-            let out_val = redacted
-                .splitn(2, ':')
-                .nth(1)
-                .map(|s| s.trim())
-                .unwrap_or("")
-                .to_string();
-            headers_out.insert(name.as_str().to_string(), Value::String(out_val));
-        }
-        let out = json!({
-            "method": method,
-            "url": url,
-            "headers": headers_out,
-            "body": body_value
-        });
-        println!("{}", to_string_pretty(&out)?);
-        return Ok(());
     }
 
     // Execute
@@ -255,187 +220,4 @@ fn resolve_path(template: &str, pos: &HashMap<String, String>) -> String {
         out = out.replace(&needle, v);
     }
     out
-}
-
-/// Checks if the workflow feature is enabled via environment variable.
-///
-/// This function determines whether workflow functionality should be available
-/// by checking the `FEATURE_WORKFLOWS` environment variable. This allows for
-/// feature flagging of workflow capabilities.
-///
-/// # Environment Variables
-/// - `FEATURE_WORKFLOWS`: Controls workflow feature availability
-///   - `"1"` or `"true"` (case-insensitive): Enables workflows
-///   - Any other value or unset: Disables workflows
-///
-/// # Returns
-/// Returns `true` if workflows are enabled, `false` otherwise.
-///
-/// # Examples
-/// ```bash
-/// # Enable workflows
-/// FEATURE_WORKFLOWS=1 cargo run
-///
-/// # Enable workflows (alternative)
-/// FEATURE_WORKFLOWS=true cargo run
-///
-/// # Disable workflows (default)
-/// cargo run
-/// ```
-fn feature_workflows() -> bool {
-    std::env::var("FEATURE_WORKFLOWS")
-        .map(|v| v == "1" || v.to_lowercase() == "true")
-        .unwrap_or(false)
-}
-
-/// Adds workflow subcommands to the CLI if the feature is enabled.
-///
-/// This function conditionally extends the CLI with workflow-related subcommands
-/// when the `FEATURE_WORKFLOWS` environment variable is set. If workflows are
-/// disabled, it returns the original CLI command unchanged.
-///
-/// # Arguments
-/// - `root`: The base CLI command to extend with workflow subcommands
-///
-/// # Returns
-/// Returns a `clap::Command` that includes workflow subcommands if enabled,
-/// or the original command if workflows are disabled.
-///
-/// # Workflow Subcommands
-/// When enabled, adds the following subcommands:
-/// - `list`: Lists available workflows in the workflows/ directory
-/// - `preview`: Previews a workflow plan without executing it
-///   - `--file, -f`: Path to workflow YAML/JSON file
-///   - `--name`: Workflow name within the file
-/// - `run`: Executes a workflow
-///   - `--file, -f`: Path to workflow YAML/JSON file
-///   - `--name`: Workflow name within the file
-///   - `--dry-run`: Preview the execution plan without running
-///
-/// # Examples
-/// ```bash
-/// # List workflows (if enabled)
-/// heroku-cli workflow list
-///
-/// # Preview workflow
-/// heroku-cli workflow preview --file workflows/my-workflow.yaml --name create-app
-///
-/// # Run workflow with dry-run
-/// heroku-cli workflow run --file workflows/my-workflow.yaml --name create-app --dry-run
-/// ```
-// Workflow command tree is now injected via the registry; no separate CLI wiring needed.
-
-/// Executes workflow-related commands.
-///
-/// This function handles the execution of workflow subcommands when the workflow
-/// feature is enabled. It provides functionality for listing, previewing, and
-/// running workflows defined in YAML/JSON files.
-///
-/// # Arguments
-/// - `registry`: The command registry containing API endpoint specifications
-/// - `m`: Parsed command-line arguments for workflow subcommands
-///
-/// # Subcommands
-///
-/// ## `list`
-/// Lists all workflow files found in the `workflows/` directory.
-///
-/// ## `preview`
-/// Loads a workflow from a file and generates a dry-run plan showing what
-/// actions would be taken without actually executing them.
-///
-/// ### Arguments
-/// - `--file, -f`: Path to the workflow YAML/JSON file (defaults to `workflows/create_app_and_db.yaml`)
-/// - `--name`: Name of the workflow within the file (defaults to the first workflow if not specified)
-///
-/// ## `run`
-/// Loads and executes a workflow. Currently only supports dry-run mode.
-///
-/// ### Arguments
-/// - `--file, -f`: Path to the workflow YAML/JSON file (defaults to `workflows/create_app_and_db.yaml`)
-/// - `--name`: Name of the workflow within the file (defaults to the first workflow if not specified)
-/// - `--dry-run`: Preview the execution plan without running (currently required)
-///
-/// # Returns
-/// Returns `Result<()>` where `Ok(())` indicates successful execution and `Err`
-/// contains any error that occurred during workflow processing.
-///
-/// # Examples
-/// ```bash
-/// # List available workflows
-/// heroku-cli workflow list
-///
-/// # Preview a workflow
-/// heroku-cli workflow preview --file workflows/my-workflow.yaml --name create-app
-///
-/// # Run workflow in dry-run mode
-/// heroku-cli workflow run --file workflows/my-workflow.yaml --name create-app --dry-run
-/// ```
-async fn run_workflow_cmd(
-    registry: &heroku_registry::Registry,
-    m: &ArgMatches,
-    root: Option<&ArgMatches>,
-) -> Result<()> {
-    if !feature_workflows() {
-        bail!("workflows are disabled; set FEATURE_WORKFLOWS=1");
-    }
-    match m.subcommand() {
-        Some(("list", _)) => {
-            let dir = Path::new("workflows");
-            if dir.exists() {
-                for entry in read_dir(dir)? {
-                    let e = entry?;
-                    println!("{}", e.path().display());
-                }
-            } else {
-                println!("No workflows directory found");
-            }
-        }
-        Some(("preview", sub)) => {
-            let file = sub
-                .get_one::<String>("file")
-                .map(|s| s.as_str())
-                .unwrap_or("workflows/create_app_and_db.yaml");
-            let workflow_file = load_workflow_from_file(file)?;
-            let name = sub
-                .get_one::<String>("name")
-                .map(|s| s.as_str())
-                .or_else(|| workflow_file.workflows.keys().next().map(|s| s.as_str()))
-                .ok_or_else(|| anyhow!("no workflow name provided and file has none"))?;
-            let workflow = workflow_file
-                .workflows
-                .get(name)
-                .ok_or_else(|| anyhow!("workflow '{}' not found in file", name))?;
-            let plan = dry_run_plan(workflow, registry).await?;
-            println!("{}", serde_json::to_string_pretty(&plan)?);
-        }
-        Some(("run", sub)) => {
-            let file = sub
-                .get_one::<String>("file")
-                .map(|s| s.as_str())
-                .unwrap_or("workflows/create_app_and_db.yaml");
-            let wf_file = load_workflow_from_file(file)?;
-            let name = sub
-                .get_one::<String>("name")
-                .map(|s| s.as_str())
-                .or_else(|| wf_file.workflows.keys().next().map(|s| s.as_str()))
-                .ok_or_else(|| anyhow!("no workflow name provided and file has none"))?;
-            let wf = wf_file
-                .workflows
-                .get(name)
-                .ok_or_else(|| anyhow!("workflow '{}' not found in file", name))?;
-            let dry =
-                sub.get_flag("dry-run") || root.map(|r| r.get_flag("dry-run")).unwrap_or(false);
-            if dry {
-                let plan = dry_run_plan(wf, registry).await?;
-                println!("{}", to_string_pretty(&plan)?);
-            } else {
-                println!("Workflow run not implemented yet; use --dry-run");
-            }
-        }
-        _ => {
-            println!("Available subcommands: list, preview, run");
-        }
-    }
-    Ok(())
 }

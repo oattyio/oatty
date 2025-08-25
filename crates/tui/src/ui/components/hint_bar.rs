@@ -4,9 +4,14 @@
 //! useful key bindings and tips. It implements the shared Component
 //! trait to align with the app-wide component architecture.
 
-use ratatui::{layout::Rect, Frame};
+use ratatui::{
+    layout::Rect,
+    text::{Line, Span},
+    widgets::Paragraph,
+    Frame,
+};
 
-use crate::{app, component::Component};
+use crate::{app, component::Component, theme};
 
 #[derive(Default)]
 pub struct HintBarComponent;
@@ -19,6 +24,18 @@ impl HintBarComponent {
 
 impl Component for HintBarComponent {
     fn render(&mut self, f: &mut Frame, rect: Rect, _app: &mut app::App) {
-        crate::ui::widgets::draw_hints(f, rect);
+        let hints = Paragraph::new(Line::from(vec![
+            Span::styled("Hints: ", theme::text_muted()),
+            Span::styled("↑/↓", theme::title_style().fg(theme::ACCENT)),
+            Span::styled(" cycle  ", theme::text_muted()),
+            Span::styled("Tab", theme::title_style().fg(theme::ACCENT)),
+            Span::styled(" accept  ", theme::text_muted()),
+            Span::styled("Ctrl-F", theme::title_style().fg(theme::ACCENT)),
+            Span::styled(" builder  ", theme::text_muted()),
+            Span::styled("Esc", theme::title_style().fg(theme::ACCENT)),
+            Span::styled(" cancel", theme::text_muted()),
+        ]))
+        .style(theme::text_muted());
+        f.render_widget(hints, rect);
     }
 }

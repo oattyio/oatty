@@ -54,7 +54,7 @@ Dynamic Registry (Schema → Commands/Args/Flags)
 
 Clap Tree (Non-Interactive CLI)
 - Build from the derived Registry:
-  - Root command has global flags (e.g., --json, --dry-run, --verbose placeholder).
+  - Root command has global flags (e.g., --json, --verbose placeholder).
   - Group commands: one subcommand per group (first path segment).
   - Subcommand per derived command with positional args and flags.
 - Enum validation uses PossibleValuesParser; strings leaked into 'static for Clap’s builder lifetime (acceptable in a short-lived CLI process).
@@ -91,7 +91,6 @@ TUI Architecture (Ratatui)
   - Search: type to filter; Backspace deletes; Esc clears.
   - Commands: Up/Down select; Enter focuses Inputs (Inputs sync live on selection change).
   - Inputs: Up/Down field nav; Left/Right cycles enum values; Space toggles boolean flags; Enter runs.
-  - Dry-run: a global checkbox rendered at end of Inputs only when DEBUG is truthy; Space toggles.
 - Help Modal (Heroku CLI style):
   - Sections: Usage, Description, Arguments (inline name: description), Options (inline flags with type/required/enum/default — description), Example.
   - Footer pinned: "Hint: Ctrl+H close  Ctrl+Y copy".
@@ -104,7 +103,7 @@ Theming
   - Focused borders use ACCENT; list selection uses muted foreground + BG_SELECT (dim).
 
 Workflows Architecture (Engine + CLI/TUI)
-- Status: Engine scaffolded; dry-run planner implemented; execution not yet implemented.
+- Status: Engine scaffolded; execution not yet implemented.
 - Data model (crates/engine):
   - WorkflowFile { workflows: HashMap<String, Workflow> }
   - Workflow { tasks: Vec<Task> }
@@ -119,24 +118,14 @@ Workflows Architecture (Engine + CLI/TUI)
     - env.VAR
     - tasks.<name>.output.<path>
     - Simple equality in if expressions (a == "b") ⇒ "1"/"0" for truthiness.
-- Dry-run planner:
-  - dry_run_plan(workflow, registry):
-    - Interpolates each task.with.
-    - Validates command exists; resolves path placeholders from positional names; builds body from non-positional fields.
-    - Emits a plan per task: {method, url, headers, body}; marks tasks skipped when if is false.
-    - Does not issue network calls; execution path is intentionally deterministic and side-effect free.
 - CLI integration (crates/cli):
   - Feature flag gated: set FEATURE_WORKFLOWS=1 to enable.
-  - Subcommands: workflow list | preview [--file <path>] [--name <name>] | run [--file] [--name] [--dry-run].
-  - preview/run --dry-run prints the JSON plan from the engine.
+  - Subcommands: workflow list | preview [--file <path>] [--name <name>] | run [--file] [--name].
 - TUI integration (planned):
   - Add a Workflows pane listing files from workflows/ and workflows in a file.
-  - Preview panel: interpolated inputs and dry-run plan; run view with per-task progress and logs.
 
 Security & Guardrails
 - Never log tokens/secrets; redact Authorization and secret-looking values.
-- Dry-run output is structured and redacted; the Command panel avoids payload display by default.
-- DEBUG unlocks developer-only features (e.g., dry-run checkbox in TUI) to keep production UX clean.
 
 Important Decisions & Rationale
 - Dynamic derivation over static tables: keeps CLI/TUI in sync with schema; zero manual drift.
@@ -162,8 +151,7 @@ Extending the System (Agent Tips)
 Getting Started (Dev)
 - Build: `cd heroku && cargo build --workspace`
 - TUI: `cargo run -p heroku-cli`
-- CLI dry-run: `cargo run -p heroku-cli -- apps list --dry-run`
-- Live API: `export HEROKU_API_KEY=...` then run without `--dry-run`.
+- Live API: `export HEROKU_API_KEY=...`.
 - Enable debug-only features: `export DEBUG=1`.
 
 Testing Strategy
@@ -179,7 +167,6 @@ Testing Strategy
 
 - CLI (crates/cli)
   - Build Clap and snapshot `--help` for a couple of commands to catch naming/flag drift.
-  - Dry-run output: Given fixed inputs and env, assert redacted headers and structured body format.
 
 - API (crates/api)
   - Unit: auth precedence (HEROKU_API_KEY over ~/.netrc) with temporary files; redaction on Authorization header.
@@ -192,7 +179,7 @@ Testing Strategy
 
 - Security
   - Redaction: snapshot tests for util::redact_sensitive covering Authorization and secret-like patterns.
-  - Logging: ensure help/command previews never include tokens; payloads only appear in Logs during run/dry-run (not in the Command panel).
+  - Logging: ensure help/command previews never include tokens;
 
 - Test Data
   - Keep minimal JSON schema fragments under a `tests/data/` folder inside the registry crate for unit tests.

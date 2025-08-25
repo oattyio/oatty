@@ -5,7 +5,6 @@ A schema-driven Heroku CLI with both non-interactive and interactive TUI modes. 
 ## Features
 - Dynamic command registry from a generated manifest (no static command tables at runtime).
 - CLI and TUI supported:
-  - CLI: derive Clap tree; build requests; `--dry-run` prints structured request.
   - TUI: modern dark theme, search + auto-scrolling command list, inputs with validation, enum cycling, boolean toggles, live Command preview, logs.
 - Auth precedence: `HEROKU_API_KEY` > `~/.netrc` (basic parser).
 - Redaction: Authorization and secret-like values are masked in output.
@@ -13,12 +12,11 @@ A schema-driven Heroku CLI with both non-interactive and interactive TUI modes. 
 ## Usage
 - Build: `cd heroku && cargo build --workspace`
 - Run TUI (no args): `cd heroku && cargo run -p heroku-cli`
-- CLI dry-run examples:
-  - `cargo run -p heroku-cli -- apps list --dry-run`
-  - `cargo run -p heroku-cli -- apps info my-app --dry-run`
-  - `cargo run -p heroku-cli -- apps create --name demo --dry-run`
-  - `cargo run -p heroku-cli -- releases list my-app --dry-run`
-- Live calls: `export HEROKU_API_KEY=...` then run without `--dry-run`.
+- CLI examples:
+  - `cargo run -p heroku-cli -- apps list `
+  - `cargo run -p heroku-cli -- apps info my-app `
+  - `cargo run -p heroku-cli -- apps create --name demo `
+  - `cargo run -p heroku-cli -- releases list my-app `
 
 ### TUI Controls
 - Search: type to filter (Esc clears); cursor indicates where typing goes.
@@ -26,20 +24,19 @@ A schema-driven Heroku CLI with both non-interactive and interactive TUI modes. 
 - Inputs: required args first, then flags; cursor and subtle highlight mark the active field.
   - Booleans: Space toggles [ ]/[x].
   - Enums: Left/Right cycles allowed values; defaults applied from schema.
-  - Global Dry-run toggle: only shown when `DEBUG` is set; select last row and press Space.
 - Run: Enter; Help: Ctrl+H; Tab/Shift-Tab cycles focus; Quit: Ctrl+C.
   - Copy command to clipboard: Ctrl+Y.
 
 ## Architecture
 - Registry (manifest → commands): at build time, the schema is converted into a compact JSON manifest; at runtime, the registry deserializes this manifest to expose commands (e.g., `apps:list`, `users:apps:list`).
-- CLI: loads registry and builds Clap tree; parses inputs; builds and sends requests (or `--dry-run`).
+- CLI: loads registry and builds Clap tree; parses inputs; builds and sends requests (or ``).
 - TUI: Ratatui + Crossterm; state (app.rs), rendering (ui.rs), CLI preview (preview.rs), theme (theme.rs).
 - API: minimal reqwest client with headers, timeouts, and auth precedence.
 - Util: redaction helpers.
 
 ## Environment
 - `HEROKU_API_KEY`: Bearer token for Heroku API (preferred over `~/.netrc`).
-- `DEBUG`: when truthy (non-empty, not `0`/`false`), TUI exposes a Dry-run checkbox.
+- `DEBUG`: when truthy (non-empty, not `0`/`false`)
 - `RUST_LOG`: set to `info`/`debug` to see logs.
 
 ## Development
@@ -75,7 +72,7 @@ flowchart LR
   CLI -->|Build Request| REQ[Build reqwest Request]
   RUN --> REQ
 
-  REQ -->|--dry-run or DEBUG| OUT1[Print structured request]
+  REQ -->| or DEBUG| OUT1[Print structured request]
   REQ -->|execute| HTTP[Heroku API]
   HTTP --> OUT2[Status + Body]
 
@@ -88,7 +85,7 @@ flowchart LR
 ```
 
 ## Security
-- Secrets are redacted from output by default (headers/payload in dry-run output and logs).
+- Secrets are redacted from output by default (headers/payload in output and logs).
 - Network calls go through reqwest with default timeouts.
 
 ## Status
