@@ -41,7 +41,7 @@ use ratatui::{prelude::*, widgets::*};
 pub fn draw_help_modal(f: &mut Frame, app: &App, area: Rect) {
     let area = centered_rect(80, 70, area);
     // Prefer help_spec when set, otherwise picked
-    let spec_for_help = app.help.spec.as_ref().or(app.builder.picked.as_ref());
+    let spec_for_help = app.help.spec.as_ref().or(app.builder.selected_command());
     let mut title = if let Some(spec) = spec_for_help {
         let mut split = spec.name.splitn(2, ':');
         let group = split.next().unwrap_or("");
@@ -124,13 +124,15 @@ pub fn draw_help_modal(f: &mut Frame, app: &App, area: Rect) {
 ///
 /// # Examples
 ///
-/// ```rust
-/// use ratatui::Frame;
-/// use crate::app::App;
+/// ```rust,no_run
+/// use ratatui::prelude::*;
+/// use heroku_tui::app::App;
+/// use heroku_registry::Registry;
 ///
-/// let app = App::new();
+/// let registry = Registry::from_embedded_schema().unwrap();
+/// let app = App::new(registry);
 /// let area = Rect::new(0, 0, 100, 50);
-/// draw_table_modal(&mut frame, &app, area);
+/// // draw_table_modal(&mut frame, &app, area);
 /// ```
 // This function has been migrated to TableComponent::render()
 // and is no longer needed as part of the component architecture migration.
@@ -158,23 +160,25 @@ pub fn draw_help_modal(f: &mut Frame, app: &App, area: Rect) {
 /// # Layout Structure
 ///
 /// ```
-/// ┌─ Search Bar ──────────────────────────────────────────────┐
-/// ├─ Commands ──┬─ Inputs ──┬─ Preview ───────────────────────┤
-/// │             │           │                                  │
-/// │             │           │                                  │
-/// │             │           │                                  │
-/// └─ Footer ───────────────────────────────────────────────────┘
+/// +- Search Bar ----------------------------------------------+
+/// +- Commands ---+- Inputs ---+- Preview ---------------------+
+/// |              |            |                               |
+/// |              |            |                               |
+/// |              |            |                               |
+/// +- Footer --------------------------------------------------+
 /// ```
 ///
 /// # Examples
 ///
-/// ```rust
-/// use ratatui::Frame;
-/// use crate::app::App;
+/// ```rust,no_run
+/// use ratatui::prelude::*;
+/// use heroku_tui::app::App;
+/// use heroku_registry::Registry;
 ///
-/// let mut app = App::new();
+/// let registry = Registry::from_embedded_schema().unwrap();
+/// let mut app = App::new(registry);
 /// let area = Rect::new(0, 0, 100, 50);
-/// draw_builder_modal(&mut frame, &mut app, area);
+/// // draw_builder_modal(&mut frame, &mut app, area);
 /// ```
 // This function has been migrated to BuilderComponent::render()
 // and is no longer needed as part of the component architecture migration.
@@ -204,10 +208,20 @@ pub fn draw_help_modal(f: &mut Frame, app: &App, area: Rect) {
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,no_run
 /// use heroku_registry::CommandSpec;
 ///
-/// let spec = CommandSpec { /* ... */ };
+/// // Create a minimal CommandSpec for testing
+/// let spec = CommandSpec {
+///     name: "apps:info".to_string(),
+///     group: "apps".to_string(),
+///     summary: "Show app info".to_string(),
+///     method: "GET".to_string(),
+///     path: "/apps/{app}".to_string(),
+///     flags: vec![],
+///     positional_args: vec!["app".to_string()],
+///     positional_help: std::collections::HashMap::new(),
+/// };
 /// let help_text = build_command_help(&spec);
 /// println!("{}", help_text);
 /// ```

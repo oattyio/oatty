@@ -1,9 +1,9 @@
 use super::components::{
-    BuilderComponent, HelpComponent, HintBarComponent, LogsComponent, PaletteComponent,
-    TableComponent,
+    BuilderComponent, HelpComponent, HintBarComponent, LogsComponent, TableComponent,
 };
 use crate::app::App;
 use crate::component::Component;
+use crate::ui::components::palette::PaletteComponent;
 use ratatui::prelude::*;
 
 /// Renders the main user interface layout and coordinates all UI components.
@@ -74,8 +74,8 @@ fn render_command_palette(
 /// * `area` - The area to render hints in
 fn render_hints(f: &mut Frame, app: &mut App, hints: &mut HintBarComponent, area: Rect) {
     // Only show hints when no error present and either no popup or no suggestions
-    if app.palette.error.is_none()
-        && (!app.palette.popup_open || app.palette.suggestions.is_empty())
+    if app.palette.selected_error_message().is_none()
+        && (!app.palette.is_popup_open() || app.palette.selected_suggestions().is_empty())
     {
         hints.render(f, area, app);
     }
@@ -105,7 +105,7 @@ fn render_modals(
     if app.table.show {
         table.render(f, f.area(), app);
     }
-    if app.builder.show {
+    if app.builder.is_visible() {
         builder.render(f, f.area(), app);
     }
 }

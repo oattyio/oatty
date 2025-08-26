@@ -11,8 +11,8 @@ pub mod utils;
 
 use crate::app::App;
 use crate::ui::components::{
-    BuilderComponent, HelpComponent, HintBarComponent, LogsComponent, PaletteComponent,
-    TableComponent,
+    BuilderComponent, HelpComponent, HintBarComponent, LogsComponent, TableComponent,
+    palette::PaletteComponent,
 };
 use ratatui::Frame;
 
@@ -45,13 +45,23 @@ use ratatui::Frame;
 ///
 /// # Examples
 ///
-/// ```rust
-/// use ratatui::Frame;
-/// use crate::app::App;
+/// ```rust,no_run
+/// use ratatui::prelude::*;
+/// use heroku_tui::app::App;
+/// use heroku_tui::ui::draw;
+/// use heroku_tui::ui::components::*;
+/// use heroku_registry::Registry;
 ///
-/// let mut app = App::new();
-/// let mut frame = // ... frame setup
-/// crate::ui::draw(&mut frame, &mut app);
+/// let registry = Registry::from_embedded_schema().unwrap();
+/// let mut app = App::new(registry);
+/// let mut frame = Frame::new(/* terminal setup */);
+/// let mut palette = PaletteComponent::new();
+/// let mut hints = HintBarComponent::new();
+/// let mut logs = LogsComponent::new();
+/// let mut builder = BuilderComponent::new();
+/// let mut help = HelpComponent::new();
+/// let mut table = TableComponent::new();
+/// draw(&mut frame, &mut app, &mut palette, &mut hints, &mut logs, &mut builder, &mut help, &mut table);
 /// ```
 pub fn draw(
     f: &mut Frame,

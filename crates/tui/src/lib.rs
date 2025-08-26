@@ -1,18 +1,17 @@
 mod app;
 mod cmd;
 mod component;
-mod palette;
 mod preview;
 mod theme;
 mod ui;
 
 use crate::{
-    cmd::{run_cmds, Cmd},
+    cmd::{Cmd, run_cmds},
     component::Component,
     preview::resolve_path,
     ui::components::{
-        BuilderComponent, HelpComponent, HintBarComponent, LogsComponent, PaletteComponent,
-        TableComponent,
+        BuilderComponent, HelpComponent, HintBarComponent, LogsComponent, TableComponent,
+        palette::PaletteComponent,
     },
 };
 use anyhow::Result;
@@ -21,9 +20,11 @@ use crossterm::{
         self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
     },
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{prelude::*, Terminal};
+use heroku_types::Field;
+use heroku_util::lex_shell_like;
+use ratatui::{Terminal, prelude::*};
 use serde_json::{Map, Value};
 use std::time::{Duration, Instant};
 use std::{collections::HashMap, io};
@@ -118,8 +119,8 @@ pub fn run(registry: heroku_registry::Registry) -> Result<()> {
 
 fn handle_key(
     app: &mut app::App,
-    palette: &mut ui::components::PaletteComponent,
-    builder: &mut ui::components::BuilderComponent,
+    palette: &mut PaletteComponent,
+    builder: &mut BuilderComponent,
     key: KeyEvent,
 ) -> Result<bool> {
     // First, map common/global keys to messages and handle them uniformly
@@ -128,22 +129,19 @@ fn handle_key(
         return Ok(false);
     }
     // If builder modal open, Enter should close builder and populate palette with constructed command
-    if app.builder.show && key.code == KeyCode::Enter {
-        if let Some(spec) = &app.builder.picked {
-            let line = palette_line_from_spec(spec, &app.builder.fields);
-            app.palette.input = line;
-            app.palette.cursor = app.palette.input.len();
-            crate::palette::build_suggestions(
-                &mut app.palette,
-                &app.ctx.registry,
-                &app.ctx.providers,
-            );
+    if app.builder.is_visible() && key.code == KeyCode::Enter {
+        if let Some(spec) = app.builder.selected_command() {
+            let line = palette_line_from_spec(spec, app.builder.input_fields());
+            app.palette.set_input(line);
+            app.palette.set_cursor(app.palette.selected_input().len());
+            app.palette
+                .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
         }
-        app.builder.show = false;
+        app.builder.apply_visibility(false);
         return Ok(false);
     }
     // Default palette interaction when not in builder
-    if !app.builder.show {
+    if !app.builder.is_visible() {
         if palette.handle_key(app, key)? {
             return Ok(false);
         }
@@ -159,7 +157,7 @@ fn handle_key(
 // Map common/global keys to simple messages so the main loop stays TEA-friendly.
 fn map_key_to_msg(app: &app::App, key: &KeyEvent) -> Option<app::Msg> {
     // Close any modal on Esc
-    if (app.help.show || app.table.show || app.builder.show) && key.code == KeyCode::Esc {
+    if (app.help.show || app.table.show || app.builder.is_visible()) && key.code == KeyCode::Esc {
         return Some(app::Msg::CloseModal);
     }
     // Toggle builder with Ctrl+F
@@ -190,7 +188,7 @@ fn map_key_to_msg(app: &app::App, key: &KeyEvent) -> Option<app::Msg> {
 // moved palette suggestion helpers to crate::palette
 fn palette_line_from_spec(
     spec: &heroku_registry::CommandSpec,
-    fields: &[crate::app::Field],
+    fields: &[Field],
 ) -> String {
     let mut parts: Vec<String> = Vec::new();
     // Convert spec.name (group:rest) to execution form: "group rest"
@@ -233,12 +231,12 @@ fn palette_line_from_spec(
 
 pub fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
     // Parse input into tokens: expect "group sub [args...]"
-    let input = app.palette.input.trim();
+    let input = app.palette.selected_input().trim();
     if input.is_empty() {
         return Err("Type a command (e.g., apps info)".into());
     }
     // Use palette tokenizer to keep quoting behavior consistent across modules
-    let tokens = crate::palette::lex_shell_like(input);
+    let tokens = lex_shell_like(input);
     if tokens.len() < 2 {
         return Err("Incomplete command. Use '<group> <sub>' (e.g., apps info)".into());
     }

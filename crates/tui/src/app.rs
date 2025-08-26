@@ -4,36 +4,17 @@
 //! logic for the TUI interface. It manages the application lifecycle, user
 //! interactions, and coordinates between different UI components.
 
-use std::sync::{mpsc::Receiver, Arc};
+use std::sync::{Arc, mpsc::Receiver};
 
-use heroku_registry::{CommandSpec, Registry};
+use heroku_registry::Registry;
+use heroku_types::{CommandSpec, Field, Focus, Screen, ExecOutcome};
 use heroku_util::fuzzy_score;
 use ratatui::widgets::ListState;
 
 use crate::{
-    palette::{PaletteState, ValueProvider},
     start_palette_execution,
+    ui::components::{builder::BuilderState, palette::{state::ValueProvider, PaletteState}, table::TableState},
 };
-
-/// Top-level screens available for the application to display.
-///
-/// This represents the primary navigation state for the TUI. Modal overlays
-/// (help, table, builder) remain separate toggles so they can appear atop any
-/// route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Screen {
-    Home,
-    Browser,
-    Builder,
-    Table,
-    Help,
-}
-
-impl Default for Screen {
-    fn default() -> Self {
-        Screen::Home
-    }
-}
 
 /// Cross-cutting shared context owned by the App.
 ///
@@ -63,41 +44,6 @@ impl SharedCtx {
     }
 }
 
-/// Represents a single input field for a command parameter.
-///
-/// This struct contains all the metadata and state for a command parameter
-/// including its type, validation rules, current value, and UI state.
-#[derive(Debug, Clone)]
-pub struct Field {
-    /// The name of the field (e.g., "app", "region", "stack")
-    pub name: String,
-    /// Whether this field is required for the command to execute
-    pub required: bool,
-    /// Whether this field represents a boolean value (checkbox)
-    pub is_bool: bool,
-    /// The current value entered by the user
-    pub value: String,
-    /// Valid enum values for this field (empty if not an enum)
-    pub enum_values: Vec<String>,
-    /// Current selection index for enum fields
-    pub enum_idx: Option<usize>,
-}
-
-/// Represents the current focus area in the UI.
-///
-/// This enum tracks which part of the interface currently has focus,
-/// allowing for proper keyboard navigation and input handling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum Focus {
-    /// Search input field in the command palette
-    #[default]
-    Search,
-    /// Command list in the builder modal
-    Commands,
-    /// Input fields form in the builder modal
-    Inputs,
-}
-
 /// The main application state containing all UI data and business logic.
 ///
 /// This struct serves as the central state container for the entire TUI
@@ -111,22 +57,6 @@ pub struct LogsState {
 pub struct HelpState {
     pub show: bool,
     pub spec: Option<heroku_registry::CommandSpec>,
-}
-
-#[derive(Debug, Default)]
-pub struct TableState {
-    pub show: bool,
-    pub offset: usize,
-    pub result_json: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Default, Clone)]
-pub struct BuilderState {
-    pub show: bool,
-    pub focus: Focus,
-    pub picked: Option<CommandSpec>,
-    pub fields: Vec<Field>,
-    pub field_idx: usize,
 }
 
 #[derive(Debug)]
@@ -234,19 +164,7 @@ pub enum Effect {
     CopyCommandRequested,
 }
 
-/// Result of an asynchronous command execution.
-///
-/// This struct contains the outcome of a command execution including
-/// logs, results, and any UI state changes that should occur.
-#[derive(Debug, Clone)]
-pub struct ExecOutcome {
-    /// Log message from the command execution
-    pub log: String,
-    /// JSON result from the command (if any)
-    pub result_json: Option<serde_json::Value>,
-    /// Whether to automatically open the table modal
-    pub open_table: bool,
-}
+
 
 impl App {
     /// Creates a new application instance with the given registry.
@@ -283,13 +201,7 @@ impl App {
                 selected: 0,
                 list_state: ListState::default(),
             },
-            builder: BuilderState {
-                show: false,
-                focus: Focus::Search,
-                picked: None,
-                fields: Vec::new(),
-                field_idx: 0,
-            },
+            builder: BuilderState::default(),
             logs: LogsState {
                 entries: vec!["Welcome to Heroku TUI".into()],
             },
@@ -365,12 +277,7 @@ impl App {
     /// }
     /// ```
     pub fn missing_required(&self) -> Vec<String> {
-        self.builder
-            .fields
-            .iter()
-            .filter(|f| f.required && f.value.is_empty())
-            .map(|f| f.name.clone())
-            .collect()
+        self.builder.missing_required_fields()
     }
 
     /// Updates the application state based on a message.
@@ -412,7 +319,7 @@ impl App {
             Msg::ToggleHelp => {
                 self.help.show = !self.help.show;
                 if self.help.show {
-                    self.help.spec = self.builder.picked.clone();
+                    self.help.spec = self.builder.selected_command().cloned();
                 }
             }
             Msg::ToggleTable => {
@@ -422,26 +329,18 @@ impl App {
                 }
             }
             Msg::ToggleBuilder => {
-                self.builder.show = !self.builder.show;
+                self.builder.toggle_visibility();
             }
             Msg::CloseModal => {
                 self.help.show = false;
                 self.table.show = false;
-                self.builder.show = false;
+                self.builder.apply_visibility(false);
             }
             Msg::FocusNext => {
-                self.builder.focus = match self.builder.focus {
-                    Focus::Search => Focus::Commands,
-                    Focus::Commands => Focus::Inputs,
-                    Focus::Inputs => Focus::Search,
-                };
+                self.builder.apply_next_focus();
             }
             Msg::FocusPrev => {
-                self.builder.focus = match self.builder.focus {
-                    Focus::Search => Focus::Inputs,
-                    Focus::Commands => Focus::Search,
-                    Focus::Inputs => Focus::Commands,
-                };
+                self.builder.apply_previous_focus();
             }
             Msg::MoveSelection(delta) => {
                 if !self.browser.filtered.is_empty() {
@@ -454,18 +353,15 @@ impl App {
                         new_selected.min(self.browser.filtered.len().saturating_sub(1));
                     self.browser.list_state.select(Some(self.browser.selected));
                     let idx = self.browser.filtered[self.browser.selected];
-                    self.builder.picked = Some(self.browser.all_commands[idx].clone());
+                    self.builder.apply_command_selection(self.browser.all_commands[idx].clone());
                 }
             }
             Msg::Enter => {
                 if !self.browser.filtered.is_empty() {
                     let idx = self.browser.filtered[self.browser.selected];
-                    self.builder.picked = Some(self.browser.all_commands[idx].clone());
-                    self.builder.fields = self
-                        .builder
-                        .picked
-                        .as_ref()
-                        .unwrap()
+                    let command = self.browser.all_commands[idx].clone();
+                    self.builder.apply_command_selection(command.clone());
+                    let fields = command
                         .flags
                         .iter()
                         .map(|f| Field {
@@ -477,8 +373,9 @@ impl App {
                             enum_idx: None,
                         })
                         .collect();
-                    self.builder.field_idx = 0;
-                    self.builder.focus = Focus::Inputs;
+                    self.builder.apply_fields(fields);
+                    self.builder.apply_field_idx(0);
+                    self.builder.apply_focus(Focus::Inputs);
                 }
             }
             Msg::SearchChar(c) => {
@@ -494,78 +391,28 @@ impl App {
                 self.update_browser_filtered();
             }
             Msg::InputsUp => {
-                if self.builder.field_idx > 0 {
-                    self.builder.field_idx -= 1;
-                } else if self.ctx.debug_enabled {
-                    self.builder.field_idx = self.builder.fields.len();
-                }
+                self.builder.reduce_move_field_up(self.ctx.debug_enabled);
             }
             Msg::InputsDown => {
-                if self.ctx.debug_enabled && self.builder.field_idx == self.builder.fields.len() {
-                    self.builder.field_idx = 0;
-                } else if self.builder.field_idx < self.builder.fields.len().saturating_sub(1) {
-                    self.builder.field_idx += 1;
-                }
+                self.builder.reduce_move_field_down(self.ctx.debug_enabled);
             }
             Msg::InputsChar(c) => {
-                if let Some(field) = self.builder.fields.get_mut(self.builder.field_idx) {
-                    if field.is_bool {
-                        if c == ' ' {
-                            field.value = if field.value.is_empty() {
-                                "true".into()
-                            } else {
-                                String::new()
-                            };
-                        }
-                    } else {
-                        field.value.push(c);
-                    }
-                }
+                self.builder.reduce_add_char_to_field(c);
             }
             Msg::InputsBackspace => {
-                if let Some(field) = self.builder.fields.get_mut(self.builder.field_idx) {
-                    if !field.is_bool {
-                        field.value.pop();
-                    }
-                }
+                self.builder.reduce_remove_char_from_field();
             }
             Msg::InputsToggleSpace => {
-                if let Some(field) = self.builder.fields.get_mut(self.builder.field_idx) {
-                    if field.is_bool {
-                        field.value = if field.value.is_empty() {
-                            "true".into()
-                        } else {
-                            String::new()
-                        };
-                    }
-                }
+                self.builder.reduce_toggle_boolean_field();
             }
             Msg::InputsCycleLeft => {
-                if let Some(field) = self.builder.fields.get_mut(self.builder.field_idx) {
-                    if !field.enum_values.is_empty() {
-                        let current = field.enum_idx.unwrap_or(0);
-                        let new_idx = if current == 0 {
-                            field.enum_values.len() - 1
-                        } else {
-                            current - 1
-                        };
-                        field.enum_idx = Some(new_idx);
-                        field.value = field.enum_values[new_idx].clone();
-                    }
-                }
+                self.builder.reduce_cycle_enum_left();
             }
             Msg::InputsCycleRight => {
-                if let Some(field) = self.builder.fields.get_mut(self.builder.field_idx) {
-                    if !field.enum_values.is_empty() {
-                        let current = field.enum_idx.unwrap_or(0);
-                        let new_idx = (current + 1) % field.enum_values.len();
-                        field.enum_idx = Some(new_idx);
-                        field.value = field.enum_values[new_idx].clone();
-                    }
-                }
+                self.builder.reduce_cycle_enum_right();
             }
             Msg::Run => {
-                if let Some(spec) = &self.builder.picked {
+                if let Some(spec) = self.builder.selected_command() {
                     if self.missing_required().is_empty() {
                         self.executing = true;
                         self.throbber_idx = 0;
@@ -574,13 +421,13 @@ impl App {
                         self.logs.entries.push(format!("Executing: {}", spec.name));
                         self.executing = false;
                     }
-                } else if !self.palette.input.trim().is_empty() {
+                } else if !self.palette.is_input_empty() {
                     match start_palette_execution(self) {
                         Ok(()) => {
                             // Execution started successfully
                         }
                         Err(e) => {
-                            self.palette.error = Some(e);
+                            self.palette.apply_error(e);
                         }
                     }
                 }
@@ -617,11 +464,7 @@ impl App {
                     self.table.offset = 0;
                 }
                 // Clear palette input and suggestion state
-                self.palette.input.clear();
-                self.palette.cursor = 0;
-                self.palette.suggestions.clear();
-                self.palette.popup_open = false;
-                self.palette.error = None;
+                self.palette.reduce_clear_all();
             }
         }
         effects

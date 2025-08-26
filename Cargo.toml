@@ -7,12 +7,12 @@ members = [
     "crates/engine",
     "crates/api",
     "crates/util",
-    "crates/registry-types",
+    "crates/types",
 ]
 resolver = "2"
 
 [workspace.package]
-edition = "2018"
+edition = "2024"
 license = "MIT OR Apache-2.0"
 authors = ["Heroku CLI Team <devnull@example.com>"]
 repository = "https://example.com/heroku"

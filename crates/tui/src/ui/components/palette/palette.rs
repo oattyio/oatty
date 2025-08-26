@@ -6,15 +6,16 @@
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use heroku_util::lex_shell_like;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
     text::{Line, Span},
     widgets::*,
-    Frame,
 };
 
-use crate::{app, component::Component, palette::set_ghost_text, theme};
+use crate::{app, component::Component, theme, ui::components::palette::state::ItemKind};
 
 /// Command palette component for input and suggestions.
 ///
@@ -105,20 +106,17 @@ impl PaletteComponent {
                 if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
             {
                 // Handle character input
-                app.palette.insert_char(c);
-                crate::palette::build_suggestions(
-                    &mut app.palette,
-                    &app.ctx.registry,
-                    &app.ctx.providers,
-                );
-                app.palette.popup_open = true;
-                app.palette.error = None;
+                app.palette.apply_insert_char(c);
+                app.palette
+                    .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
+                app.palette.set_popup_open(true);
+                app.palette.reduce_clear_error();
                 Ok(true)
             }
             KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Open help for exact command (group sub) or top command suggestion
                 // Use the palette's shell-like lexer to respect quoting rules.
-                let toks = crate::palette::lex_shell_like(&app.palette.input);
+                let toks = lex_shell_like(app.palette.selected_input());
                 let mut target: Option<heroku_registry::CommandSpec> = None;
 
                 // Try to find exact command match first
@@ -139,13 +137,10 @@ impl PaletteComponent {
 
                 // Fall back to top suggestion if no exact match
                 if target.is_none() {
-                    crate::palette::build_suggestions(
-                        &mut app.palette,
-                        &app.ctx.registry,
-                        &app.ctx.providers,
-                    );
-                    if let Some(top) = app.palette.suggestions.first() {
-                        if matches!(top.kind, crate::palette::ItemKind::Command) {
+                    app.palette
+                        .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
+                    if let Some(top) = app.palette.selected_suggestions().first() {
+                        if matches!(top.kind, ItemKind::Command) {
                             // Convert "group sub" to registry key
                             let mut parts = top.insert_text.split_whitespace();
                             let group = parts.next().unwrap_or("");
@@ -173,30 +168,27 @@ impl PaletteComponent {
             }
             KeyCode::Backspace => {
                 // Handle backspace
-                app.palette.backspace();
-                crate::palette::build_suggestions(
-                    &mut app.palette,
-                    &app.ctx.registry,
-                    &app.ctx.providers,
-                );
-                app.palette.error = None;
+                app.palette.reduce_backspace();
+                app.palette
+                    .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
+                app.palette.reduce_clear_error();
                 Ok(true)
             }
             KeyCode::Left => {
                 // Move cursor left
-                app.palette.move_cursor_left();
+                app.palette.reduce_move_cursor_left();
                 Ok(true)
             }
             KeyCode::Right => {
                 // Move cursor right
-                app.palette.move_cursor_right();
+                app.palette.reduce_move_cursor_right();
                 Ok(true)
             }
             KeyCode::Down | KeyCode::Up => {
                 // Navigate down/up through suggestions
-                let len = app.palette.suggestions.len();
+                let len = app.palette.selected_suggestions().len();
                 if len > 0 {
-                    let selected = app.palette.selected as isize;
+                    let selected = app.palette.selected_suggestion_index() as isize;
                     let delta = if key.code == KeyCode::Down {
                         1isize
                     } else {
@@ -204,95 +196,68 @@ impl PaletteComponent {
                     };
                     // Wrap around using modulus with length as isize
                     let new_selected = (selected + delta).rem_euclid(len as isize) as usize;
-                    app.palette.selected = new_selected;
-                    set_ghost_text(&mut app.palette);
+                    app.palette.set_selected(new_selected);
+                    app.palette.apply_set_ghost_text();
                 }
                 Ok(true)
             }
             KeyCode::Tab => {
                 // Accept suggestion
-                if app.palette.popup_open {
-                    if let Some(item) = app.palette.suggestions.get(app.palette.selected).cloned() {
+                if app.palette.is_popup_open() {
+                    if let Some(item) = app.palette.selected_suggestions().get(app.palette.selected_suggestion_index()).cloned() {
                         match item.kind {
-                            crate::palette::ItemKind::Command => {
+                            ItemKind::Command => {
                                 // Replace input with command exec
-                                crate::palette::accept_command_suggestion(
-                                    &mut app.palette,
-                                    &item.insert_text,
-                                );
-                                app.palette.popup_open = false;
-                                app.palette.suggestions.clear();
+                                app.palette.apply_accept_command_suggestion(&item.insert_text);
+                                app.palette.set_popup_open(false);
+                                app.palette.reduce_clear_suggestions();
                             }
-                            crate::palette::ItemKind::Positional => {
+                            ItemKind::Positional => {
                                 // Accept positional suggestion
-                                crate::palette::accept_positional_suggestion(
-                                    &mut app.palette,
-                                    &item.insert_text,
-                                );
+                                app.palette.apply_accept_positional_suggestion(&item.insert_text);
                             }
                             _ => {
                                 // Accept flag or value suggestion
-                                crate::palette::accept_non_command_suggestion(
-                                    &mut app.palette,
-                                    &item.insert_text,
-                                );
+                                app.palette.apply_accept_non_command_suggestion(&item.insert_text);
                             }
                         }
 
                         // Rebuild suggestions after accepting
-                        crate::palette::build_suggestions(
-                            &mut app.palette,
-                            &app.ctx.registry,
-                            &app.ctx.providers,
-                        );
-                        app.palette.selected = 0;
+                        app.palette
+                            .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
+                        app.palette.set_selected(0);
 
                         // Keep popup open unless we accepted a command
-                        if !matches!(item.kind, crate::palette::ItemKind::Command) {
-                            app.palette.popup_open = !app.palette.suggestions.is_empty();
+                        if !matches!(item.kind, ItemKind::Command) {
+                            app.palette.set_popup_open(!app.palette.is_popup_visible());
                         }
                     }
                 } else {
                     // Open suggestions; if only one, accept it
-                    crate::palette::build_suggestions(
-                        &mut app.palette,
-                        &app.ctx.registry,
-                        &app.ctx.providers,
-                    );
-                    if app.palette.suggestions.len() == 1 {
-                        if let Some(item) = app.palette.suggestions.first().cloned() {
+                    app.palette
+                        .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
+                    if app.palette.count_suggestions() == 1 {
+                        if let Some(item) = app.palette.selected_suggestions().first().cloned() {
                             match item.kind {
-                                crate::palette::ItemKind::Command => {
-                                    crate::palette::accept_command_suggestion(
-                                        &mut app.palette,
-                                        &item.insert_text,
-                                    );
-                                    app.palette.popup_open = false;
-                                    app.palette.suggestions.clear();
+                                ItemKind::Command => {
+                                    app.palette.apply_accept_command_suggestion(&item.insert_text);
+                                    app.palette.set_popup_open(false);
+                                    app.palette.reduce_clear_suggestions();
                                 }
-                                crate::palette::ItemKind::Positional => {
-                                    crate::palette::accept_positional_suggestion(
-                                        &mut app.palette,
-                                        &item.insert_text,
-                                    );
+                                ItemKind::Positional => {
+                                    app.palette.apply_accept_positional_suggestion(&item.insert_text);
                                 }
                                 _ => {
-                                    crate::palette::accept_non_command_suggestion(
-                                        &mut app.palette,
-                                        &item.insert_text,
-                                    );
+                                    app.palette.apply_accept_non_command_suggestion(&item.insert_text);
                                 }
                             }
-                            crate::palette::build_suggestions(
-                                &mut app.palette,
-                                &app.ctx.registry,
-                                &app.ctx.providers,
-                            );
-                            app.palette.selected = 0;
-                            app.palette.popup_open = !app.palette.suggestions.is_empty();
+                            app.palette
+                                .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
+                            app.palette.set_selected(0);
+                            app.palette.set_popup_open(!app.palette.is_popup_visible());
                         }
                     } else {
-                        app.palette.popup_open = !app.palette.suggestions.is_empty();
+                        app.palette.set_popup_open(!app.palette.is_popup_visible());
                     }
                 }
                 Ok(true)
@@ -309,11 +274,7 @@ impl PaletteComponent {
             }
             KeyCode::Esc => {
                 // Clear input and close suggestions
-                app.palette.input.clear();
-                app.palette.cursor = 0;
-                app.palette.suggestions.clear();
-                app.palette.popup_open = false;
-                app.palette.error = None;
+                app.palette.reduce_clear_all();
                 Ok(true)
             }
             _ => Ok(false),
@@ -348,7 +309,7 @@ impl Component for PaletteComponent {
             .split(inner);
 
         // Input line with ghost text; dim when a modal is open. Show throbber if executing.
-        let dimmed = app.builder.show || app.help.show;
+        let dimmed = app.builder.is_visible() || app.help.show;
         let base_style = if dimmed {
             theme::text_muted()
         } else {
@@ -363,8 +324,8 @@ impl Component for PaletteComponent {
                 theme::title_style().fg(theme::ACCENT),
             ));
         }
-        spans.push(Span::styled(app.palette.input.as_str(), base_style));
-        if let Some(ghost) = &app.palette.ghost {
+        spans.push(Span::styled(app.palette.selected_input(), base_style));
+        if let Some(ghost) = app.palette.selected_ghost_text() {
             if !ghost.is_empty() {
                 spans.push(Span::styled(ghost.as_str(), theme::text_muted()));
             }
@@ -376,8 +337,8 @@ impl Component for PaletteComponent {
         if !dimmed {
             let col = app
                 .palette
-                .input
-                .get(..app.palette.cursor)
+                .selected_input()
+                .get(..app.palette.selected_cursor_position())
                 .map(|s| s.chars().count() as u16)
                 .unwrap_or(0);
             let x = splits[0].x.saturating_add(col);
@@ -386,7 +347,7 @@ impl Component for PaletteComponent {
         }
 
         // Error line below input when present
-        if let Some(err) = &app.palette.error {
+        if let Some(err) = app.palette.selected_error_message() {
             let line = Line::from(vec![
                 Span::styled("✖ ", Style::default().fg(theme::WARN)),
                 Span::styled(err.as_str(), theme::text_style()),
@@ -396,15 +357,15 @@ impl Component for PaletteComponent {
 
         // Popup suggestions (separate popup under the input; no overlap with input text).
         // Hidden if error is present or no suggestions exist.
-        if app.palette.error.is_none()
-            && app.palette.popup_open
-            && !app.builder.show
+        if app.palette.selected_error_message().is_none()
+            && app.palette.is_popup_open()
+            && !app.builder.is_visible()
             && !app.help.show
-            && !app.palette.suggestions.is_empty()
+            && !app.palette.selected_suggestions().is_empty()
         {
             let items_all: Vec<ListItem> = app
                 .palette
-                .suggestions
+                .selected_suggestions()
                 .iter()
                 .map(|s| ListItem::new(s.display.clone()).style(theme::text_style()))
                 .collect();
@@ -424,10 +385,10 @@ impl Component for PaletteComponent {
                 .highlight_style(theme::list_highlight_style())
                 .highlight_symbol("► ");
             let mut list_state = ListState::default();
-            let sel = if app.palette.suggestions.is_empty() {
+            let sel = if app.palette.selected_suggestions().is_empty() {
                 None
             } else {
-                Some(app.palette.selected.min(app.palette.suggestions.len() - 1))
+                Some(app.palette.selected_suggestion_index().min(app.palette.selected_suggestions().len() - 1))
             };
             list_state.select(sel);
             f.render_stateful_widget(list, popup_area, &mut list_state);

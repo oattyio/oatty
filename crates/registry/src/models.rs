@@ -1,8 +1,8 @@
 use std::{fs, sync::Arc};
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use bincode::config;
-use heroku_registry_types::CommandSpec;
+use heroku_types::CommandSpec;
 
 /// The main registry containing all available Heroku CLI commands.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]

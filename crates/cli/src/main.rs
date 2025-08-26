@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use clap::ArgMatches;
 use heroku_api::HerokuClient;
-use heroku_registry::{build_clap, Registry};
+use heroku_registry::{Registry, build_clap};
 use reqwest::Method;
 use serde_json::{Map, Value};
 use std::collections::HashMap;

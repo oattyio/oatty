@@ -4,10 +4,10 @@
 //! orchestrated by the TEA root with a consistent API.
 
 use ratatui::{
+    Frame,
     layout::Rect,
     text::Span,
     widgets::{Block, Borders, List, ListItem},
-    Frame,
 };
 
 use crate::{app, component::Component, theme};

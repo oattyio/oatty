@@ -7,11 +7,11 @@
 use std::collections::{BTreeSet, HashMap};
 
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
     text::{Line, Span},
     widgets::*,
-    Frame,
 };
 use serde_json::{Map, Value};
 
@@ -361,7 +361,7 @@ impl Component for TableComponent {
     /// * `f` - The frame to render to
     /// * `rect` - The rectangular area to render in
     /// * `app` - The application state containing result data
-    fn render(&mut self, f: &mut Frame, rect: Rect, app: &mut app::App) {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
         use crate::ui::utils::centered_rect;
         // Large modal to maximize space for tables
         let area = centered_rect(96, 90, rect);
@@ -371,8 +371,8 @@ impl Component for TableComponent {
             .borders(Borders::ALL)
             .border_style(theme::border_style(true));
 
-        f.render_widget(Clear, area);
-        f.render_widget(block.clone(), area);
+        frame.render_widget(Clear, area);
+        frame.render_widget(block.clone(), area);
         let inner = block.inner(area);
         // Split for content + footer
         let splits = Layout::default()
@@ -388,13 +388,13 @@ impl Component for TableComponent {
                 _ => false,
             };
             if has_array {
-                self.render_json_table(f, splits[0], json, app.table.offset);
+                self.render_json_table(frame, splits[0], json, app.table.offset);
             } else {
-                self.render_kv_or_text(f, splits[0], json);
+                self.render_kv_or_text(frame, splits[0], json);
             }
         } else {
             let p = Paragraph::new("No results to display").style(theme::text_muted());
-            f.render_widget(p, splits[0]);
+            frame.render_widget(p, splits[0]);
         }
 
         // Footer hint for table modal
@@ -410,6 +410,6 @@ impl Component for TableComponent {
             Span::styled(" jump", theme::text_muted()),
         ]))
         .style(theme::text_muted());
-        f.render_widget(footer, splits[1]);
+        frame.render_widget(footer, splits[1]);
     }
 }

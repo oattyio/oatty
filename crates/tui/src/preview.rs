@@ -77,7 +77,7 @@ pub fn resolve_path(template: &str, pos: &std::collections::HashMap<String, Stri
 /// let preview = cli_preview(&spec, &fields);
 /// assert_eq!(preview, "heroku apps info --app=my-app");
 /// ```
-pub fn cli_preview(spec: &heroku_registry::CommandSpec, fields: &[crate::app::Field]) -> String {
+pub fn cli_preview(spec: &heroku_registry::CommandSpec, fields: &[heroku_types::Field]) -> String {
     let mut parts = vec!["heroku".to_string()];
     // Clap-compatible: group + subcommand (rest may contain ':')
     let mut split = spec.name.splitn(2, ':');

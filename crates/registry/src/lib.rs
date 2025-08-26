@@ -8,7 +8,7 @@ pub mod feat_gate;
 pub mod models;
 
 pub use clap_builder::build_clap;
-pub use heroku_registry_types::{CommandFlag, CommandSpec};
+pub use heroku_types::{CommandFlag, CommandSpec};
 pub use models::Registry;
 
 #[cfg(test)]

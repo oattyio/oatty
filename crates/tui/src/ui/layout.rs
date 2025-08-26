@@ -33,27 +33,31 @@ use ratatui::prelude::*;
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,no_run
 /// use ratatui::prelude::*;
+/// use heroku_tui::ui::layout::create_main_layout;
+/// use heroku_tui::app::App;
+/// use heroku_registry::Registry;
 ///
+/// let registry = Registry::from_embedded_schema().unwrap();
+/// let app = App::new(registry);
 /// let screen_size = Rect::new(0, 0, 80, 24);
-/// let layout_areas = create_main_layout(screen_size);
+/// let layout_areas = create_main_layout(screen_size, &app);
 ///
 /// // layout_areas[0] = Command palette area
 /// // layout_areas[1] = Hints area  
-/// // layout_areas[2] = Spacer area
-/// // layout_areas[3] = Logs area
+/// // layout_areas[2] = Logs area
 /// ```
 pub fn create_main_layout(size: Rect, app: &App) -> Vec<Rect> {
     // Dynamically expand the palette area when suggestions popup is visible
     let mut palette_extra: u16 = 0;
-    let show_popup = app.palette.error.is_none()
-        && app.palette.popup_open
-        && !app.builder.show
+    let show_popup = app.palette.selected_error_message().is_none()
+        && app.palette.is_popup_open()
+        && !app.builder.is_visible()
         && !app.help.show
-        && !app.palette.suggestions.is_empty();
+        && !app.palette.selected_suggestions().is_empty();
     if show_popup {
-        let rows = app.palette.suggestions.len().min(10) as u16; // match palette.rs max_rows
+        let rows = app.palette.selected_suggestions().len().min(10) as u16; // match palette.rs max_rows
         let popup_height = rows;
         palette_extra = popup_height;
     }

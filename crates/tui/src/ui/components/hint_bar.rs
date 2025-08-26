@@ -5,10 +5,10 @@
 //! trait to align with the app-wide component architecture.
 
 use ratatui::{
+    Frame,
     layout::Rect,
     text::{Line, Span},
     widgets::Paragraph,
-    Frame,
 };
 
 use crate::{app, component::Component, theme};

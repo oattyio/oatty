@@ -1,7 +1,7 @@
 [package]
 name = "heroku-registry"
 version = "0.1.0"
-edition = "2018"
+edition = "2024"
 
 [dependencies]
 anyhow = { workspace = true }
@@ -9,7 +9,7 @@ bincode = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 clap = { workspace = true }
-heroku-registry-types = { path = "../registry-types" }
+heroku-types = { path = "../types" }
 
 [build-dependencies]
 anyhow = { workspace = true }

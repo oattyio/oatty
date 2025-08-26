@@ -11,5 +11,4 @@ pub use builder::BuilderComponent;
 pub use help::HelpComponent;
 pub use hint_bar::HintBarComponent;
 pub use logs::LogsComponent;
-pub use palette::PaletteComponent;
 pub use table::TableComponent;

@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use bincode::config;
 use heck::ToKebabCase;
-use heroku_registry_types::{CommandFlag, CommandSpec};
+use heroku_types::{CommandFlag, CommandSpec};
 use percent_encoding::percent_decode_str;
 use serde_json::Value;
 use std::{collections::HashMap, fs, path::PathBuf};
@@ -326,11 +326,7 @@ fn extract_placeholder_ptr(seg: &str) -> Option<String> {
     } else {
         inner.to_string()
     };
-    if ptr.is_empty() {
-        None
-    } else {
-        Some(ptr)
-    }
+    if ptr.is_empty() { None } else { Some(ptr) }
 }
 
 fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<String>) {

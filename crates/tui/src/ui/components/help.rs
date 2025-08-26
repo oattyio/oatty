@@ -4,7 +4,7 @@
 //! comprehensive documentation for Heroku commands including usage syntax,
 //! arguments, options, and examples.
 
-use ratatui::{layout::Rect, Frame};
+use ratatui::{Frame, layout::Rect};
 
 use crate::{app, component::Component};
 

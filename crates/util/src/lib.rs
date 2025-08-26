@@ -82,3 +82,77 @@ pub fn fuzzy_score(hay: &str, needle: &str) -> Option<i64> {
     score -= hay.len() as i64 / 8;
     Some(score)
 }
+
+/// Tokenize input using a simple, shell-like lexer.
+///
+/// Supports single and double quotes and backslash escapes. Used by the
+/// suggestion engine to derive tokens and assess completeness of flag values.
+///
+/// Arguments:
+/// - `input`: The raw input line.
+///
+/// Returns: A vector of tokens preserving quoted segments.
+///
+/// Example:
+///
+/// ```rust
+/// let toks = lex_shell_like("cmd --flag 'some value'");
+/// assert_eq!(toks, vec!["cmd", "--flag", "'some value'"].iter().map(|s| s.to_string()).collect::<Vec<_>>());
+/// ```
+pub fn lex_shell_like(input: &str) -> Vec<String> {
+    lex_shell_like_ranged(input)
+        .into_iter()
+        .map(|t| t.text.to_string())
+        .collect()
+}
+/// Token with original byte positions.
+pub struct LexTok<'a> {
+    pub text: &'a str,
+    pub start: usize,
+    pub end: usize,
+}
+
+/// Tokenize input returning borrowed slices and byte ranges.
+pub fn lex_shell_like_ranged(input: &str) -> Vec<LexTok<'_>> {
+    let mut out: Vec<LexTok<'_>> = Vec::new();
+    let mut i = 0usize;
+    let bytes = input.as_bytes();
+    while i < bytes.len() {
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
+        let start = i;
+        let mut in_sq = false;
+        let mut in_dq = false;
+        while i < bytes.len() {
+            let b = bytes[i];
+            if b == b'\\' && i + 1 < bytes.len() {
+                i += 2;
+                continue;
+            }
+            if b == b'\'' && !in_dq {
+                in_sq = !in_sq;
+                i += 1;
+                continue;
+            }
+            if b == b'"' && !in_sq {
+                in_dq = !in_dq;
+                i += 1;
+                continue;
+            }
+            if !in_sq && !in_dq && b.is_ascii_whitespace() {
+                break;
+            }
+            i += 1;
+        }
+        out.push(LexTok {
+            text: &input[start..i],
+            start,
+            end: i,
+        });
+    }
+    out
+}

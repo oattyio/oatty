@@ -26,7 +26,8 @@ use ratatui::prelude::*;
 /// # Examples
 ///
 /// ```rust
-/// use ratatui::Rect;
+/// use ratatui::prelude::*;
+/// use heroku_tui::ui::utils::centered_rect;
 ///
 /// let parent = Rect::new(0, 0, 100, 50);
 /// let centered = centered_rect(80, 70, parent);
@@ -61,7 +62,7 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 /// # Examples
 ///
 /// ```rust
-/// use crate::ui::utils::IfEmptyStr;
+/// use heroku_tui::ui::utils::IfEmptyStr;
 ///
 /// let empty = String::new();
 /// let result = empty.if_empty_then("default".to_string());
@@ -86,10 +87,6 @@ pub trait IfEmptyStr {
 
 impl IfEmptyStr for String {
     fn if_empty_then(self, alt: String) -> String {
-        if self.is_empty() {
-            alt
-        } else {
-            self
-        }
+        if self.is_empty() { alt } else { self }
     }
 }

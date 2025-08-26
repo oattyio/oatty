@@ -4,7 +4,8 @@ use heroku_registry::CommandSpec;
 use serde_json::Value;
 use tokio::runtime::Runtime;
 
-use crate::app::{self, Effect, ExecOutcome};
+use crate::app::{self, Effect};
+use heroku_types::ExecOutcome;
 
 /// Side-effect commands executed outside of pure state updates.
 #[derive(Debug)]
@@ -20,8 +21,8 @@ pub fn from_effects(app: &mut app::App, effects: Vec<Effect>) -> Vec<Cmd> {
     for eff in effects {
         match eff {
             Effect::CopyCommandRequested => {
-                if let Some(spec) = &app.builder.picked {
-                    let cmd = crate::preview::cli_preview(spec, &app.builder.fields);
+                if let Some(spec) = app.builder.selected_command() {
+                    let cmd = crate::preview::cli_preview(spec, app.builder.input_fields());
                     out.push(Cmd::ClipboardSet(cmd));
                 }
             }
@@ -59,7 +60,7 @@ fn execute_http(
     body: serde_json::Map<String, Value>,
 ) {
     // Live request: spawn background task and show throbber
-    let (tx, rx) = std::sync::mpsc::channel::<app::ExecOutcome>();
+    let (tx, rx) = std::sync::mpsc::channel::<heroku_types::ExecOutcome>();
     app.exec_receiver = Some(rx);
     app.executing = true;
     app.throbber_idx = 0;
@@ -68,7 +69,7 @@ fn execute_http(
         let runtime = match Runtime::new() {
             Ok(runtime) => runtime,
             Err(e) => {
-                let _ = tx.send(app::ExecOutcome {
+                let _ = tx.send(heroku_types::ExecOutcome {
                     log: format!("Error: failed to start runtime: {}", e),
                     result_json: None,
                     open_table: false,
@@ -84,7 +85,7 @@ fn execute_http(
                 let _ = tx.send(out);
             }
             Err(err) => {
-                let _ = tx.send(app::ExecOutcome {
+                let _ = tx.send(heroku_types::ExecOutcome {
                     log: format!("Error: {}", err),
                     result_json: None,
                     open_table: false,
@@ -134,7 +135,7 @@ async fn exec_remote(
         open_table = true;
         result_json = Some(json);
     }
-    Ok(app::ExecOutcome {
+    Ok(heroku_types::ExecOutcome {
         log,
         result_json,
         open_table,

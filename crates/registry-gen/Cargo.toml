@@ -1,7 +1,7 @@
 [package]
 name = "heroku-registry-gen"
 version = "0.1.0"
-edition = "2018"
+edition = "2024"
 readme = "README.md"
 
 [lib]
@@ -13,5 +13,5 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 percent-encoding = { workspace = true }
 heck = { workspace = true }
-heroku-registry-types = { path = "../registry-types" }
+heroku-types = { path = "../types" }
 bincode = { workspace = true }

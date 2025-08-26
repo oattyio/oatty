@@ -1,6 +1,7 @@
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use serde_json::Value;
 
 /// Represents a command-line flag or option for a Heroku CLI command.
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -46,6 +47,75 @@ pub struct CommandSpec {
     pub method: String,
     /// API endpoint path (e.g., "/apps" or "/apps/{app}/dynos")
     pub path: String,
+}
+
+/// Represents a single input field for a command parameter.
+///
+/// This struct contains all the metadata and state for a command parameter
+/// including its type, validation rules, current value, and UI state.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Field {
+    /// The name of the field (e.g., "app", "region", "stack")
+    pub name: String,
+    /// Whether this field is required for the command to execute
+    pub required: bool,
+    /// Whether this field represents a boolean value (checkbox)
+    pub is_bool: bool,
+    /// The current value entered by the user
+    pub value: String,
+    /// Valid enum values for this field (empty if not an enum)
+    pub enum_values: Vec<String>,
+    /// Current selection index for enum fields
+    pub enum_idx: Option<usize>,
+}
+
+/// Represents the current focus area in the UI.
+///
+/// This enum tracks which part of the interface currently has focus,
+/// allowing for proper keyboard navigation and input handling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Focus {
+    /// Search input field in the command palette
+    #[default]
+    Search,
+    /// Command list in the builder modal
+    Commands,
+    /// Input fields form in the builder modal
+    Inputs,
+}
+
+/// Top-level screens available for the application to display.
+///
+/// This represents the primary navigation state for the TUI. Modal overlays
+/// (help, table, builder) remain separate toggles so they can appear atop any
+/// route.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Screen {
+    Home,
+    Browser,
+    Builder,
+    Table,
+    Help,
+}
+
+impl Default for Screen {
+    fn default() -> Self {
+        Screen::Home
+    }
+}
+
+/// Result of an asynchronous command execution.
+///
+/// This struct contains the outcome of a command execution including
+/// logs, results, and any UI state changes that should occur.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExecOutcome {
+    /// Log message from the command execution
+    pub log: String,
+    /// JSON result from the command (if any)
+    pub result_json: Option<Value>,
+    /// Whether to automatically open the table modal
+    pub open_table: bool,
 }
 
 #[cfg(test)]
