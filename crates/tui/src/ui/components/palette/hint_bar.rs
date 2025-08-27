@@ -11,7 +11,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use crate::{app, component::Component, theme};
+use crate::{app, theme, ui::components::component::Component};
 
 #[derive(Default)]
 pub struct HintBarComponent;
@@ -23,7 +23,7 @@ impl HintBarComponent {
 }
 
 impl Component for HintBarComponent {
-    fn render(&mut self, f: &mut Frame, rect: Rect, _app: &mut app::App) {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, _app: &mut app::App) {
         let hints = Paragraph::new(Line::from(vec![
             Span::styled("Hints: ", theme::text_muted()),
             Span::styled("↑/↓", theme::title_style().fg(theme::ACCENT)),
@@ -36,6 +36,6 @@ impl Component for HintBarComponent {
             Span::styled(" cancel", theme::text_muted()),
         ]))
         .style(theme::text_muted());
-        f.render_widget(hints, rect);
+        frame.render_widget(hints, rect);
     }
 }

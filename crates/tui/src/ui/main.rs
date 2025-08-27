@@ -1,9 +1,8 @@
-use super::components::{
-    BuilderComponent, HelpComponent, HintBarComponent, LogsComponent, TableComponent,
-};
+use super::components::{BuilderComponent, HelpComponent, LogsComponent, TableComponent};
 use crate::app::App;
-use crate::component::Component;
-use crate::ui::components::palette::PaletteComponent;
+use crate::ui::components::component::Component;
+use crate::ui::components::palette::{HintBarComponent, PaletteComponent};
+use crate::ui::layout::MainLayout;
 use ratatui::prelude::*;
 
 /// Renders the main user interface layout and coordinates all UI components.
@@ -29,7 +28,7 @@ pub fn draw(
     let size = f.area();
 
     // Create main layout with vertical sections
-    let chunks = super::layout::create_main_layout(size, app);
+    let chunks = MainLayout::vertical_layout(size, app);
 
     // Render main UI components
     render_command_palette(f, app, palette, chunks[0]);
@@ -56,12 +55,7 @@ pub fn draw(
 /// * `f` - The frame to render to
 /// * `app` - The application state
 /// * `area` - The area to render the palette in
-fn render_command_palette(
-    f: &mut Frame,
-    app: &mut App,
-    palette: &mut PaletteComponent,
-    area: Rect,
-) {
+fn render_command_palette(f: &mut Frame, app: &mut App, palette: &mut PaletteComponent, area: Rect) {
     palette.render(f, area, app);
 }
 
@@ -73,12 +67,7 @@ fn render_command_palette(
 /// * `app` - The application state
 /// * `area` - The area to render hints in
 fn render_hints(f: &mut Frame, app: &mut App, hints: &mut HintBarComponent, area: Rect) {
-    // Only show hints when no error present and either no popup or no suggestions
-    if app.palette.selected_error_message().is_none()
-        && (!app.palette.is_popup_open() || app.palette.selected_suggestions().is_empty())
-    {
-        hints.render(f, area, app);
-    }
+    hints.render(f, area, app);
 }
 
 // Render logs area via component
@@ -99,10 +88,10 @@ fn render_modals(
     help: &mut HelpComponent,
     table: &mut TableComponent,
 ) {
-    if app.help.show {
+    if app.help.is_visible() {
         help.render(f, f.area(), app);
     }
-    if app.table.show {
+    if app.table.is_visible() {
         table.render(f, f.area(), app);
     }
     if app.builder.is_visible() {

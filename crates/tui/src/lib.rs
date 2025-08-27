@@ -1,28 +1,25 @@
 mod app;
 mod cmd;
-mod component;
 mod preview;
 mod theme;
 mod ui;
 
 use crate::{
     cmd::{Cmd, run_cmds},
-    component::Component,
     preview::resolve_path,
     ui::components::{
-        BuilderComponent, HelpComponent, HintBarComponent, LogsComponent, TableComponent,
-        palette::PaletteComponent,
+        BuilderComponent, HelpComponent, LogsComponent, TableComponent,
+        component::Component,
+        palette::{HintBarComponent, PaletteComponent},
     },
 };
 use anyhow::Result;
 use crossterm::{
-    event::{
-        self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers,
-    },
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use heroku_types::Field;
+use heroku_types::{CommandSpec, Field};
 use heroku_util::lex_shell_like;
 use ratatui::{Terminal, prelude::*};
 use serde_json::{Map, Value};
@@ -80,17 +77,10 @@ pub fn run(registry: heroku_registry::Registry) -> Result<()> {
         if event::poll(timeout)? {
             match event::read()? {
                 Event::Key(key) => {
-                    if key.code == KeyCode::Char('c')
-                        && key.modifiers.contains(KeyModifiers::CONTROL)
-                    {
+                    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                         break;
                     }
-                    if handle_key(
-                        &mut app,
-                        &mut palette_component,
-                        &mut builder_component,
-                        key,
-                    )? {
+                    if handle_key(&mut app, &mut palette_component, &mut builder_component, key)? {
                         break;
                     }
                 }
@@ -108,11 +98,7 @@ pub fn run(registry: heroku_registry::Registry) -> Result<()> {
     }
 
     disable_raw_mode()?;
-    execute!(
-        terminal.backend_mut(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    )?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
     Ok(())
 }
@@ -131,9 +117,9 @@ fn handle_key(
     // If builder modal open, Enter should close builder and populate palette with constructed command
     if app.builder.is_visible() && key.code == KeyCode::Enter {
         if let Some(spec) = app.builder.selected_command() {
-            let line = palette_line_from_spec(spec, app.builder.input_fields());
+            let line = palette_line_from_spec(&spec, app.builder.input_fields());
             app.palette.set_input(line);
-            app.palette.set_cursor(app.palette.selected_input().len());
+            app.palette.set_cursor(app.palette.input().len());
             app.palette
                 .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
         }
@@ -157,7 +143,7 @@ fn handle_key(
 // Map common/global keys to simple messages so the main loop stays TEA-friendly.
 fn map_key_to_msg(app: &app::App, key: &KeyEvent) -> Option<app::Msg> {
     // Close any modal on Esc
-    if (app.help.show || app.table.show || app.builder.is_visible()) && key.code == KeyCode::Esc {
+    if (app.help.is_visible() || app.table.is_visible() || app.builder.is_visible()) && key.code == KeyCode::Esc {
         return Some(app::Msg::CloseModal);
     }
     // Toggle builder with Ctrl+F
@@ -165,7 +151,7 @@ fn map_key_to_msg(app: &app::App, key: &KeyEvent) -> Option<app::Msg> {
         return Some(app::Msg::ToggleBuilder);
     }
     // When table modal is open, support scrolling and toggles
-    if app.table.show {
+    if app.table.is_visible() {
         return match key.code {
             KeyCode::Up => Some(app::Msg::TableScroll(-1)),
             KeyCode::Down => Some(app::Msg::TableScroll(1)),
@@ -186,23 +172,19 @@ fn map_key_to_msg(app: &app::App, key: &KeyEvent) -> Option<app::Msg> {
 // - If current token starts with '-' or previous token is a flag expecting a value → replace token.
 // - Otherwise (we're on the command tokens or a positional token) → append suggestion separated by space.
 // moved palette suggestion helpers to crate::palette
-fn palette_line_from_spec(
-    spec: &heroku_registry::CommandSpec,
-    fields: &[Field],
-) -> String {
+fn palette_line_from_spec(spec: &CommandSpec, fields: &[Field]) -> String {
     let mut parts: Vec<String> = Vec::new();
     // Convert spec.name (group:rest) to execution form: "group rest"
-    let mut split = spec.name.splitn(2, ':');
-    let group = split.next().unwrap_or("");
-    let rest = split.next().unwrap_or("");
+    let group = &spec.group;
+    let rest = &spec.name;
     parts.push(group.to_string());
     if !rest.is_empty() {
         parts.push(rest.to_string());
     }
     // positionals in order
     for p in &spec.positional_args {
-        if let Some(f) = fields.iter().find(|f| &f.name == p) {
-            let v = f.value.trim();
+        if let Some(field) = fields.iter().find(|f| &f.name == p) {
+            let v = field.value.trim();
             if v.is_empty() {
                 parts.push(format!("<{}>", p));
             } else {
@@ -229,9 +211,9 @@ fn palette_line_from_spec(
     parts.join(" ")
 }
 
-pub fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
+pub fn start_palette_execution(app: &mut app::App) -> Result<CommandSpec, String> {
     // Parse input into tokens: expect "group sub [args...]"
-    let input = app.palette.selected_input().trim();
+    let input = app.palette.input().trim();
     if input.is_empty() {
         return Err("Type a command (e.g., apps info)".into());
     }
@@ -252,8 +234,7 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
 
     // Parse flags/args from tokens after first two
     let parts = &tokens[2..];
-    let mut user_flags: std::collections::HashMap<String, Option<String>> =
-        std::collections::HashMap::new();
+    let mut user_flags: HashMap<String, Option<String>> = HashMap::new();
     let mut user_args: Vec<String> = Vec::new();
     let mut i = 0;
     while i < parts.len() {
@@ -295,22 +276,21 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
             .iter()
             .map(|s| s.to_string())
             .collect();
-        return Err(format!(
-            "Missing required argument(s): {}",
-            missing.join(", ")
-        ));
+        return Err(format!("Missing required argument(s): {}", missing.join(", ")));
     }
     // Validate required flags
-    for f in &spec.flags {
-        if f.required {
-            if f.r#type == "boolean" {
-                if !user_flags.contains_key(&f.name) {
-                    return Err(format!("Missing required flag: --{}", f.name));
+    for flag in &spec.flags {
+        if flag.required {
+            if flag.r#type == "boolean" {
+                if !user_flags.contains_key(&flag.name) {
+                    return Err(format!("Missing required flag: --{}", flag.name));
                 }
             } else {
-                match user_flags.get(&f.name) {
+                match user_flags.get(&flag.name) {
                     Some(Some(v)) if !v.is_empty() => {}
-                    _ => return Err(format!("Missing required flag value: --{} <VALUE>", f.name)),
+                    _ => {
+                        return Err(format!("Missing required flag value: --{} <VALUE>", flag.name));
+                    }
                 }
             }
         }
@@ -333,8 +313,7 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<(), String> {
     }
 
     let path = resolve_path(&spec.path, &pos_map);
-
     // Live request: enqueue background HTTP execution via Cmd system
-    run_cmds(app, vec![Cmd::ExecuteHttp(spec, path, body)]);
-    Ok(())
+    run_cmds(app, vec![Cmd::ExecuteHttp(spec.clone(), path, body)]);
+    Ok(spec)
 }

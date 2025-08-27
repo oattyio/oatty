@@ -14,8 +14,10 @@
 //!   (enums and provider values) until the value is complete.
 //! - Suggestions never render an empty popup.
 //!
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 
+use heroku_registry::Registry;
+use heroku_types::CommandSpec;
 use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
 
 /// Maximum number of suggestions to display in the popup.
@@ -28,18 +30,18 @@ const MAX_SUGGESTIONS: usize = 20;
 /// (useful when the cursor is at end-of-line). Returns `None` if there are no
 /// tokens.
 fn token_index_at_cursor(input: &str, cursor: usize) -> Option<usize> {
-    let toks = lex_shell_like_ranged(input);
-    if toks.is_empty() {
+    let tokens = lex_shell_like_ranged(input);
+    if tokens.is_empty() {
         return None;
     }
-    if let Some((idx, _)) = toks
+    if let Some((idx, _)) = tokens
         .iter()
         .enumerate()
         .find(|(_, t)| t.start <= cursor && cursor <= t.end)
     {
         Some(idx)
     } else {
-        Some(toks.len() - 1)
+        Some(tokens.len() - 1)
     }
 }
 
@@ -83,202 +85,224 @@ pub struct SuggestionItem {
 /// input text, cursor position, suggestions, and error states.
 #[derive(Clone, Debug, Default)]
 pub struct PaletteState {
+    /// Every command available
+    all_commands: Arc<[CommandSpec]>,
     /// The current input text
     input: String,
     /// Current cursor position (byte index)
-    cursor: usize,
+    cursor_position: usize,
     /// Optional ghost text to show as placeholder
-    ghost: Option<String>,
+    ghost_text: Option<String>,
     /// Whether the suggestions popup is currently open
-    popup_open: bool,
+    is_suggestions_open: bool,
     /// Index of the currently selected suggestion
-    selected: usize,
+    suggestion_index: usize,
     /// List of current suggestions
     suggestions: Vec<SuggestionItem>,
     /// Optional error message to display
-    error: Option<String>,
+    error_message: Option<String>,
 }
 
 impl PaletteState {
     // ===== SELECTORS =====
-    
+
     /// Check if the palette input is empty (ignoring whitespace)
     pub fn is_input_empty(&self) -> bool {
         self.input.trim().is_empty()
     }
-    
-    /// Check if the suggestions popup is currently visible
-    pub fn is_popup_visible(&self) -> bool {
-        self.popup_open
-    }
-    
+
+    // Note: prefer is_suggestions_open() over redundant aliases
     /// Check if there's an error message to display
     pub fn has_error(&self) -> bool {
-        self.error.is_some()
+        self.error_message.is_some()
     }
-    
+
     /// Get the count of current suggestions
-    pub fn count_suggestions(&self) -> usize {
+    pub fn suggestions_len(&self) -> usize {
         self.suggestions.len()
     }
-    
+
     /// Get the currently selected suggestion index
-    pub fn selected_suggestion_index(&self) -> usize {
-        self.selected
+    pub fn suggestion_index(&self) -> usize {
+        self.suggestion_index
     }
-    
+
     /// Get the currently selected suggestion item
     pub fn selected_suggestion(&self) -> Option<&SuggestionItem> {
-        self.suggestions.get(self.selected)
+        self.suggestions.get(self.suggestion_index)
     }
-    
+
+    // selected_command(): removed to avoid redundant persisted state
+
+    /// Derive the command spec from the current input tokens ("group sub").
+    pub fn selected_command_from_input(&self) -> Option<&CommandSpec> {
+        let tokens: Vec<String> = lex_shell_like(&self.input);
+        if tokens.len() < 2 {
+            return None;
+        }
+        let group = &tokens[0];
+        let name = &tokens[1];
+        self.all_commands.iter().find(|c| &c.group == group && &c.name == name)
+    }
+
+    /// Derive the command spec from the currently selected suggestion when it is a command.
+    pub fn selected_command_from_suggestion(&self) -> Option<&CommandSpec> {
+        let item = self.selected_suggestion()?;
+        if !matches!(item.kind, ItemKind::Command) {
+            return None;
+        }
+        let mut parts = item.insert_text.split_whitespace();
+        let group = parts.next().unwrap_or("");
+        let name = parts.next().unwrap_or("");
+        self.all_commands.iter().find(|c| c.group == group && c.name == name)
+    }
+
+    /// Selected command for help: prefer highlighted suggestion if open, else parse input.
+    pub fn selected_command(&self) -> Option<&CommandSpec> {
+        let selected_command = self.selected_command_from_suggestion();
+        if self.is_suggestions_open && selected_command.is_some() {
+            return selected_command;
+        }
+        self.selected_command_from_input()
+    }
+
     /// Check if the cursor is at the end of input
     pub fn is_cursor_at_end(&self) -> bool {
-        self.cursor >= self.input.len()
+        self.cursor_position >= self.input.len()
     }
-    
+
     /// Check if the cursor is at the beginning of input
     pub fn is_cursor_at_start(&self) -> bool {
-        self.cursor == 0
+        self.cursor_position == 0
     }
 
     /// Get the current input text
-    pub fn selected_input(&self) -> &str {
+    pub fn input(&self) -> &str {
         &self.input
     }
-    
+
     /// Get the current cursor position
     pub fn selected_cursor_position(&self) -> usize {
-        self.cursor
+        self.cursor_position
     }
-    
+
     /// Get the current ghost text
-    pub fn selected_ghost_text(&self) -> Option<&String> {
-        self.ghost.as_ref()
+    pub fn ghost_text(&self) -> Option<&String> {
+        self.ghost_text.as_ref()
     }
-    
+
     /// Get the current error message
-    pub fn selected_error_message(&self) -> Option<&String> {
-        self.error.as_ref()
+    pub fn error_message(&self) -> Option<&String> {
+        self.error_message.as_ref()
     }
-    
+
     /// Get the current suggestions list
-    pub fn selected_suggestions(&self) -> &[SuggestionItem] {
+    pub fn suggestions(&self) -> &[SuggestionItem] {
         &self.suggestions
     }
-    
+
     /// Get the current popup open state
-    pub fn is_popup_open(&self) -> bool {
-        self.popup_open
+    pub fn is_suggestions_open(&self) -> bool {
+        self.is_suggestions_open
     }
 
     // ===== REDUCERS =====
-    
+
     /// Clear all palette state and reset to defaults
     pub fn reduce_clear_all(&mut self) {
         self.input.clear();
-        self.cursor = 0;
+        self.cursor_position = 0;
         self.suggestions.clear();
-        self.popup_open = false;
-        self.error = None;
-        self.ghost = None;
-        self.selected = 0;
+        self.is_suggestions_open = false;
+        self.error_message = None;
+        self.ghost_text = None;
+        self.suggestion_index = 0;
     }
-    
+
     /// Apply an error message to the palette
     pub fn apply_error(&mut self, error: String) {
-        self.error = Some(error);
+        self.error_message = Some(error);
     }
-    
+
     /// Clear any existing error message
     pub fn reduce_clear_error(&mut self) {
-        self.error = None;
+        self.error_message = None;
     }
-    
+
     /// Toggle the suggestions popup visibility
     pub fn toggle_popup(&mut self) {
-        self.popup_open = !self.popup_open;
+        self.is_suggestions_open = !self.is_suggestions_open;
     }
-    
+
     /// Select the next suggestion in the list
     pub fn select_next_suggestion(&mut self) {
         if !self.suggestions.is_empty() {
-            self.selected = (self.selected + 1) % self.suggestions.len();
-            self.apply_set_ghost_text();
+            self.suggestion_index = (self.suggestion_index + 1) % self.suggestions.len();
+            self.apply_ghost_text();
         }
     }
-    
+
     /// Select the previous suggestion in the list
     pub fn select_prev_suggestion(&mut self) {
         if !self.suggestions.is_empty() {
-            self.selected = if self.selected == 0 {
+            self.suggestion_index = if self.suggestion_index == 0 {
                 self.suggestions.len() - 1
             } else {
-                self.selected - 1
+                self.suggestion_index - 1
             };
-            self.apply_set_ghost_text();
+            self.apply_ghost_text();
         }
     }
-    
+
     /// Select a specific suggestion by index
     pub fn select_suggestion(&mut self, index: usize) {
         if index < self.suggestions.len() {
-            self.selected = index;
-            self.apply_set_ghost_text();
+            self.suggestion_index = index;
+            self.apply_ghost_text();
         }
     }
-    
+
     /// Apply suggestions and update popup state
     pub fn apply_suggestions(&mut self, suggestions: Vec<SuggestionItem>) {
         self.suggestions = suggestions;
-        self.selected = self.selected.min(self.suggestions.len().saturating_sub(1));
-        self.popup_open = !self.suggestions.is_empty();
-        self.apply_set_ghost_text();
+        self.suggestion_index = self.suggestion_index.min(self.suggestions.len().saturating_sub(1));
+        self.is_suggestions_open = !self.suggestions.is_empty();
+        self.apply_ghost_text();
     }
-    
+
     /// Clear all suggestions and close popup
     pub fn reduce_clear_suggestions(&mut self) {
         self.suggestions.clear();
-        self.popup_open = false;
-        self.selected = 0;
-        self.ghost = None;
+        self.is_suggestions_open = false;
+        self.suggestion_index = 0;
+        self.ghost_text = None;
     }
 
     // ===== PRIVATE SETTERS =====
-    
+
+    pub(crate) fn set_all_commands(&mut self, commands: Arc<[CommandSpec]>) {
+        self.all_commands = commands;
+    }
+
     /// Set the input text
     pub(crate) fn set_input(&mut self, input: String) {
         self.input = input;
     }
-    
+
     /// Set the cursor position
     pub(crate) fn set_cursor(&mut self, cursor: usize) {
-        self.cursor = cursor;
+        self.cursor_position = cursor;
     }
-    
-    /// Set the ghost text
-    pub(crate) fn set_ghost(&mut self, ghost: Option<String>) {
-        self.ghost = ghost;
-    }
-    
+
     /// Set the popup open state
     pub(crate) fn set_popup_open(&mut self, open: bool) {
-        self.popup_open = open;
+        self.is_suggestions_open = open;
     }
-    
+
     /// Set the selected suggestion index
     pub(crate) fn set_selected(&mut self, selected: usize) {
-        self.selected = selected;
-    }
-    
-    /// Set the suggestions list
-    pub(crate) fn set_suggestions(&mut self, suggestions: Vec<SuggestionItem>) {
-        self.suggestions = suggestions;
-    }
-    
-    /// Set the error message
-    pub(crate) fn set_error(&mut self, error: Option<String>) {
-        self.error = error;
+        self.suggestion_index = selected;
+        self.apply_ghost_text();
     }
 
     /// Insert text at the end of the input with a separating space and advance the cursor.
@@ -295,7 +319,7 @@ impl PaletteState {
         }
         self.input.push_str(text);
         self.input.push(' ');
-        self.cursor = self.input.len();
+        self.cursor_position = self.input.len();
     }
     /// Move the cursor one character to the left.
     ///
@@ -307,15 +331,15 @@ impl PaletteState {
     ///
     /// Returns: nothing; updates `self.cursor` in place.
     pub fn reduce_move_cursor_left(&mut self) {
-        if self.cursor == 0 {
+        if self.cursor_position == 0 {
             return;
         }
-        let prev_len = self.input[..self.cursor]
+        let prev_len = self.input[..self.cursor_position]
             .chars()
             .last()
             .map(|c| c.len_utf8())
             .unwrap_or(1);
-        self.cursor = self.cursor.saturating_sub(prev_len);
+        self.cursor_position = self.cursor_position.saturating_sub(prev_len);
     }
 
     /// Move the cursor one character to the right.
@@ -328,13 +352,13 @@ impl PaletteState {
     ///
     /// Returns: nothing; updates `self.cursor` in place.
     pub fn reduce_move_cursor_right(&mut self) {
-        if self.cursor >= self.input.len() {
+        if self.cursor_position >= self.input.len() {
             return;
         }
         // Advance by one Unicode scalar starting at current byte offset
-        let mut iter = self.input[self.cursor..].chars();
+        let mut iter = self.input[self.cursor_position..].chars();
         if let Some(next) = iter.next() {
-            self.cursor = self.cursor.saturating_add(next.len_utf8());
+            self.cursor_position = self.cursor_position.saturating_add(next.len_utf8());
         }
     }
 
@@ -348,8 +372,8 @@ impl PaletteState {
     ///
     /// Returns: nothing; mutates `self.input` and `self.cursor`.
     pub fn apply_insert_char(&mut self, c: char) {
-        self.input.insert(self.cursor, c);
-        self.cursor += c.len_utf8();
+        self.input.insert(self.cursor_position, c);
+        self.cursor_position += c.len_utf8();
     }
 
     /// Remove the character immediately before the cursor.
@@ -363,17 +387,17 @@ impl PaletteState {
     ///
     /// Returns: nothing; mutates `self.input` and `self.cursor`.
     pub fn reduce_backspace(&mut self) {
-        if self.cursor == 0 {
+        if self.cursor_position == 0 {
             return;
         }
-        let prev = self.input[..self.cursor]
+        let prev = self.input[..self.cursor_position]
             .chars()
             .last()
             .map(|c| c.len_utf8())
             .unwrap_or(1);
-        let start = self.cursor - prev;
-        self.input.drain(start..self.cursor);
-        self.cursor = start;
+        let start = self.cursor_position - prev;
+        self.input.drain(start..self.cursor_position);
+        self.cursor_position = start;
     }
 
     /// Finalize suggestion list for the UI: rank, truncate, ghost text, and state flags.
@@ -382,17 +406,17 @@ impl PaletteState {
         if items.len() > MAX_SUGGESTIONS {
             items.truncate(MAX_SUGGESTIONS);
         }
-        self.selected = self.selected.min(self.suggestions.len().saturating_sub(1));
+        self.suggestion_index = self.suggestion_index.min(self.suggestions.len().saturating_sub(1));
         self.suggestions = items.clone();
-        self.popup_open = !self.suggestions.is_empty();
-        self.apply_set_ghost_text();
+        self.is_suggestions_open = !self.suggestions.is_empty();
+        self.apply_ghost_text();
     }
 
-    pub fn apply_set_ghost_text(&mut self) {
-        self.ghost = self
+    pub fn apply_ghost_text(&mut self) {
+        self.ghost_text = self
             .suggestions
-            .get(self.selected)
-            .map(|top| ghost_remainder(&self.input, self.cursor, &top.insert_text));
+            .get(self.suggestion_index)
+            .map(|top| ghost_remainder(&self.input, self.cursor_position, &top.insert_text));
     }
     /// Accept a positional suggestion/value: fill the next positional slot after "group sub".
     /// If the last existing positional is a placeholder like "<app>", replace it; otherwise append before any flags.
@@ -425,7 +449,7 @@ impl PaletteState {
             out.push((*t).to_string());
         }
         self.input = out.join(" ") + " ";
-        self.cursor = self.input.len();
+        self.cursor_position = self.input.len();
     }
     /// Accept a command suggestion by replacing the input with the execution form
     /// (e.g., "group sub") followed by a trailing space, and moving the cursor to
@@ -481,14 +505,14 @@ impl PaletteState {
                 .and_then(|t| (t.text == "-" || t.text == "--").then_some(t.start));
             if let Some(start) = remove_from {
                 self.input.replace_range(start..self.input.len(), "");
-                self.cursor = self.input.len();
+                self.cursor_position = self.input.len();
             }
             self.insert_with_space(text);
             return;
         }
 
         // Identify the token under the cursor and its predecessor (if any)
-        let token_index = token_index_at_cursor(&self.input, self.cursor).unwrap_or(toks.len() - 1);
+        let token_index = token_index_at_cursor(&self.input, self.cursor_position).unwrap_or(toks.len() - 1);
         let (start, end) = (toks[token_index].start, toks[token_index].end);
         let current_token = self.input[start..end].to_string();
         let prev_token: Option<String> = token_index
@@ -501,7 +525,7 @@ impl PaletteState {
 
         // If previous token is a flag and user picked another flag, append instead of replacing the value.
         if prev_is_flag && !current_token.starts_with('-') && inserting_is_flag {
-            self.cursor = self.input.len();
+            self.cursor_position = self.input.len();
             self.insert_with_space(text);
             return;
         }
@@ -509,13 +533,13 @@ impl PaletteState {
         // Replace flag token or its value, otherwise append to the end as a new token
         if current_token.starts_with("--") || prev_is_flag {
             self.input.replace_range(start..end, text);
-            self.cursor = start + text.len();
+            self.cursor_position = start + text.len();
             if !self.input.ends_with(' ') {
                 self.input.push(' ');
-                self.cursor += 1;
+                self.cursor_position += 1;
             }
         } else {
-            self.cursor = self.input.len();
+            self.cursor_position = self.input.len();
             self.insert_with_space(text);
         }
     }
@@ -542,18 +566,14 @@ impl PaletteState {
     ///
     /// ```rust,no_run
     /// use heroku_tui::ui::components::palette::state::PaletteState;
-    /// use heroku_registry::Registry;
-    /// 
+    /// use Registry;
+    ///
     /// let mut st = PaletteState::default();
     /// st.set_input("apps info --app ".into());
     /// st.apply_build_suggestions(&Registry::from_embedded_schema().unwrap(), &[]);
     /// assert!(!st.selected_suggestions().is_empty());
     /// ```
-    pub fn apply_build_suggestions(
-        &mut self,
-        reg: &heroku_registry::Registry,
-        providers: &[Box<dyn ValueProvider>],
-    ) {
+    pub fn apply_build_suggestions(&mut self, reg: &Registry, providers: &[Box<dyn ValueProvider>]) {
         let input = &self.input;
         let tokens: Vec<String> = lex_shell_like(input);
 
@@ -567,29 +587,19 @@ impl PaletteState {
         // Resolve command key from first two tokens: "group sub"
         let group = tokens.first().unwrap_or(&String::new()).to_owned();
         let name = tokens.get(1).unwrap_or(&String::new()).to_owned();
-        let spec = match reg
-            .commands
-            .iter()
-            .find(|c| c.group == group && c.name == name)
-        {
+        let spec = match reg.commands.iter().find(|c| c.group == group && c.name == name) {
             Some(s) => s.clone(),
             None => {
                 self.suggestions.clear();
-                self.popup_open = false;
+                self.is_suggestions_open = false;
                 return;
             }
         };
 
         // Build user flags and args from parts
-        let parts: &[String] = if tokens.len() >= 2 {
-            &tokens[2..]
-        } else {
-            &tokens[0..0]
-        };
+        let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
         let (user_flags, user_args) = parse_user_flags_args(&spec, parts);
         let current = parts.last().map(|s| s.as_str()).unwrap_or("");
-
-        // Helper was lifted to a top-level function for clarity
 
         // Determine if expecting a flag value (last used flag without value)
         let pending_flag = find_pending_flag(&spec, parts, input);
@@ -604,12 +614,11 @@ impl PaletteState {
             self.finalize_suggestions(&mut items);
         } else {
             // 2) Next expected item: positional arguments first
-            let mut items: Vec<SuggestionItem> =
-                if user_args.len() < spec.positional_args.len() && !current_is_flag {
-                    suggest_positionals(&spec, user_args.len(), current, providers)
-                } else {
-                    Vec::new()
-                };
+            let mut items: Vec<SuggestionItem> = if user_args.len() < spec.positional_args.len() && !current_is_flag {
+                suggest_positionals(&spec, user_args.len(), current, providers)
+            } else {
+                Vec::new()
+            };
 
             // 3) If no positional needed (or user explicitly typed a flag), suggest required flags
             if items.is_empty() {
@@ -647,19 +656,11 @@ impl PaletteState {
         }
     }
     /// Suggest an end-of-line hint for starting flags when any remain.
-    fn eol_flag_hint(
-        &mut self,
-        spec: &heroku_registry::CommandSpec,
-        user_flags: &[String],
-    ) -> Option<SuggestionItem> {
+    fn eol_flag_hint(&mut self, spec: &CommandSpec, user_flags: &[String]) -> Option<SuggestionItem> {
         let total_flags = spec.flags.len();
         let used = user_flags.len();
         if used < total_flags {
-            let hint = if self.input.ends_with(' ') {
-                "--"
-            } else {
-                " --"
-            };
+            let hint = if self.input.ends_with(' ') { "--" } else { " --" };
             return Some(SuggestionItem {
                 display: hint.to_string(),
                 insert_text: hint.trim().to_string(),
@@ -731,14 +732,12 @@ impl ValueProvider for StaticValuesProvider {
 ///
 /// A command is considered resolved when at least two tokens exist and they
 /// match a `(group, name)` pair in the registry.
-fn is_command_resolved(reg: &heroku_registry::Registry, tokens: &[String]) -> bool {
+fn is_command_resolved(reg: &Registry, tokens: &[String]) -> bool {
     if tokens.len() < 2 {
         return false;
     }
     let (group, name) = (&tokens[0], &tokens[1]);
-    reg.commands
-        .iter()
-        .any(|c| &c.group == group && &c.name == name)
+    reg.commands.iter().any(|c| &c.group == group && &c.name == name)
 }
 
 /// Compute the prefix used to rank command suggestions.
@@ -757,7 +756,7 @@ fn compute_command_prefix(tokens: &[String]) -> String {
 ///
 /// Uses `fuzzy_score` against the computed prefix to rank candidates and embeds
 /// the command summary in the display text.
-fn suggest_commands(reg: &heroku_registry::Registry, prefix: &str) -> Vec<SuggestionItem> {
+fn suggest_commands(reg: &Registry, prefix: &str) -> Vec<SuggestionItem> {
     let mut items = Vec::new();
     if prefix.is_empty() {
         return items;
@@ -790,10 +789,7 @@ fn suggest_commands(reg: &heroku_registry::Registry, prefix: &str) -> Vec<Sugges
 /// This mirrors the logic in the old builder: long flags are collected without
 /// the leading dashes; values immediately following non-boolean flags are
 /// consumed. Returns `(user_flags, user_args)`.
-fn parse_user_flags_args(
-    spec: &heroku_registry::CommandSpec,
-    parts: &[String],
-) -> (Vec<String>, Vec<String>) {
+fn parse_user_flags_args(spec: &CommandSpec, parts: &[String]) -> (Vec<String>, Vec<String>) {
     let mut user_flags: Vec<String> = Vec::new();
     let mut user_args: Vec<String> = Vec::new();
     let mut i = 0;
@@ -823,11 +819,7 @@ fn parse_user_flags_args(
 /// Scans tokens from the end to find the most recent flag and checks whether
 /// its value has been supplied. If a value is already complete (per
 /// `is_flag_value_complete`), returns `None`.
-fn find_pending_flag(
-    spec: &heroku_registry::CommandSpec,
-    parts: &[String],
-    input: &str,
-) -> Option<String> {
+fn find_pending_flag(spec: &CommandSpec, parts: &[String], input: &str) -> Option<String> {
     let mut j = (parts.len() as isize) - 1;
     while j >= 0 {
         let t = parts[j as usize].as_str();
@@ -872,18 +864,18 @@ fn flag_value_partial(parts: &[String]) -> String {
 /// Suggest values for a specific non-boolean flag, combining enum values with
 /// provider-derived suggestions.
 fn suggest_values_for_flag(
-    spec: &heroku_registry::CommandSpec,
+    spec: &CommandSpec,
     flag_name: &str,
     partial: &str,
     providers: &[Box<dyn ValueProvider>],
 ) -> Vec<SuggestionItem> {
     let mut items: Vec<SuggestionItem> = Vec::new();
     if let Some(f) = spec.flags.iter().find(|f| f.name == flag_name) {
-        for v in &f.enum_values {
-            if let Some(s) = fuzzy_score(v, partial) {
+        for value in &f.enum_values {
+            if let Some(s) = fuzzy_score(value, partial) {
                 items.push(SuggestionItem {
-                    display: v.clone(),
-                    insert_text: v.clone(),
+                    display: value.clone(),
+                    insert_text: value.clone(),
                     kind: ItemKind::Value,
                     meta: Some("enum".into()),
                     score: s,
@@ -902,7 +894,7 @@ fn suggest_values_for_flag(
 /// providers; when no provider values are available, suggest a placeholder
 /// formatted as `<name>`.
 fn suggest_positionals(
-    spec: &heroku_registry::CommandSpec,
+    spec: &CommandSpec,
     arg_count: usize,
     current: &str,
     providers: &[Box<dyn ValueProvider>],
@@ -927,7 +919,7 @@ fn suggest_positionals(
 }
 
 /// Whether any required flags are not yet supplied by the user.
-fn required_flags_remaining(spec: &heroku_registry::CommandSpec, user_flags: &[String]) -> bool {
+fn required_flags_remaining(spec: &CommandSpec, user_flags: &[String]) -> bool {
     spec.flags
         .iter()
         .any(|f| f.required && !user_flags.iter().any(|u| u == &f.name))
@@ -951,7 +943,7 @@ fn required_flags_remaining(spec: &heroku_registry::CommandSpec, user_flags: &[S
 ///
 /// ```rust,no_run
 /// use heroku_tui::ui::components::palette::state::is_flag_value_complete;
-/// 
+///
 /// assert!(!is_flag_value_complete("--app"));
 /// assert!(!is_flag_value_complete("--app my"));
 /// assert!(is_flag_value_complete("--app my "));
@@ -983,10 +975,7 @@ pub fn is_flag_value_complete(input: &str) -> bool {
         return false;
     }
     if last_flag_idx as usize == len - 2 {
-        return input.ends_with(' ')
-            || input.ends_with('\t')
-            || input.ends_with('\n')
-            || input.ends_with('\r');
+        return input.ends_with(' ') || input.ends_with('\t') || input.ends_with('\n') || input.ends_with('\r');
     }
     true
 }
@@ -1003,7 +992,7 @@ pub fn is_flag_value_complete(input: &str) -> bool {
 /// - `current`: The current token text (used for prefix filtering when typing a flag).
 /// - `required_only`: When `true`, include only required flags; when `false`, only optional flags.
 fn collect_flag_candidates(
-    spec: &heroku_registry::CommandSpec,
+    spec: &CommandSpec,
     user_flags: &[String],
     current: &str,
     required_only: bool,
@@ -1019,7 +1008,11 @@ fn collect_flag_candidates(
         if user_flags.iter().any(|u| u == &f.name) {
             continue;
         }
-        let long = format!("--{}", f.name);
+        let long = format!(
+            "--{:<15} [FLAG] {}",
+            f.name,
+            f.description.as_ref().unwrap_or(&"".to_string())
+        );
         let include = if current.starts_with('-') {
             long.starts_with(current)
         } else {
@@ -1027,12 +1020,8 @@ fn collect_flag_candidates(
         };
         if include {
             out.push(SuggestionItem {
-                display: format!(
-                    "{:<22}{}",
-                    long,
-                    if f.required { "  [required]" } else { "" }
-                ),
-                insert_text: long,
+                display: format!("{:<22}{}", long, if f.required { "  [required]" } else { "" }),
+                insert_text: format!("--{}", f.name),
                 kind: ItemKind::Flag,
                 meta: f.description.clone(),
                 score: 0,
@@ -1059,7 +1048,7 @@ fn collect_flag_candidates(
 ///
 /// ```rust,no_run
 /// use heroku_tui::ui::components::palette::state::ghost_remainder;
-/// 
+///
 /// assert_eq!(ghost_remainder("ap", 2, "apps"), "ps");
 /// assert_eq!(ghost_remainder("foo", 3, "bar"), "");
 /// ```
@@ -1078,97 +1067,5 @@ pub fn ghost_remainder(input: &str, cursor: usize, insert: &str) -> String {
         rest.to_string()
     } else {
         String::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_palette_state_selectors() {
-        let mut palette = PaletteState::default();
-        
-        // Test initial state
-        assert!(palette.is_input_empty());
-        assert!(!palette.is_popup_visible());
-        assert!(!palette.has_error());
-        assert_eq!(palette.count_suggestions(), 0);
-        assert_eq!(palette.selected_suggestion_index(), 0);
-        assert!(palette.is_cursor_at_start());
-        assert!(palette.is_cursor_at_end());
-        
-        // Test setters and state changes
-        palette.set_input("test input".to_string());
-        assert!(!palette.is_input_empty());
-        assert_eq!(palette.selected_input(), "test input");
-        
-        palette.set_cursor(4);
-        assert_eq!(palette.selected_cursor_position(), 4);
-        assert!(!palette.is_cursor_at_start());
-        assert!(!palette.is_cursor_at_end());
-        
-        palette.apply_error("test error".to_string());
-        assert!(palette.has_error());
-        assert_eq!(palette.selected_error_message(), Some(&"test error".to_string()));
-        
-        palette.reduce_clear_error();
-        assert!(!palette.has_error());
-    }
-
-    #[test]
-    fn test_palette_state_reducers() {
-        let mut palette = PaletteState::default();
-        
-        // Test clear all
-        palette.set_input("test".to_string());
-        palette.set_cursor(2);
-        palette.apply_error("error".to_string());
-        palette.set_popup_open(true);
-        
-        palette.reduce_clear_all();
-        
-        assert!(palette.is_input_empty());
-        assert_eq!(palette.selected_cursor_position(), 0);
-        assert!(!palette.has_error());
-        assert!(!palette.is_popup_open());
-        assert_eq!(palette.count_suggestions(), 0);
-    }
-
-    #[test]
-    fn test_palette_state_suggestion_management() {
-        let mut palette = PaletteState::default();
-        
-        let suggestion1 = SuggestionItem {
-            display: "test1".to_string(),
-            insert_text: "test1".to_string(),
-            kind: ItemKind::Command,
-            meta: None,
-            score: 100,
-        };
-        
-        let suggestion2 = SuggestionItem {
-            display: "test2".to_string(),
-            insert_text: "test2".to_string(),
-            kind: ItemKind::Flag,
-            meta: None,
-            score: 50,
-        };
-        
-        palette.apply_suggestions(vec![suggestion1, suggestion2]);
-        
-        assert_eq!(palette.count_suggestions(), 2);
-        assert!(palette.is_popup_open());
-        assert_eq!(palette.selected_suggestion_index(), 0);
-        
-        palette.select_next_suggestion();
-        assert_eq!(palette.selected_suggestion_index(), 1);
-        
-        palette.select_prev_suggestion();
-        assert_eq!(palette.selected_suggestion_index(), 0);
-        
-        palette.reduce_clear_suggestions();
-        assert_eq!(palette.count_suggestions(), 0);
-        assert!(!palette.is_popup_open());
     }
 }

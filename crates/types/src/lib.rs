@@ -1,13 +1,15 @@
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use serde_json::Value;
+use std::collections::HashMap;
 
 /// Represents a command-line flag or option for a Heroku CLI command.
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct CommandFlag {
     /// The name of the flag (e.g., "app", "region", "stack")
     pub name: String,
+    // the shortened command name of the flag (e.g. "a", "r" or "s")
+    pub short_name: Option<String>,
     /// Whether this flag is required for the command to execute
     pub required: bool,
     /// The data type of the flag value (e.g., "string", "boolean", "integer")

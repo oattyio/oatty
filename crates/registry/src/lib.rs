@@ -25,17 +25,10 @@ mod tests {
     #[test]
     fn manifest_non_empty_and_unique_names() {
         let registry = Registry::from_embedded_schema().expect("load registry from manifest");
-        assert!(
-            !registry.commands.is_empty(),
-            "registry commands should not be empty"
-        );
+        assert!(!registry.commands.is_empty(), "registry commands should not be empty");
         let mut seen = HashSet::new();
         for c in &*registry.commands {
-            assert!(
-                seen.insert(&c.name),
-                "duplicate command name detected: {}",
-                c.name
-            );
+            assert!(seen.insert(&c.name), "duplicate command name detected: {}", c.name);
         }
     }
 }

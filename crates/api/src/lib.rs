@@ -14,9 +14,7 @@ pub struct HerokuClient {
 
 impl HerokuClient {
     pub fn new_from_env() -> Result<Self> {
-        let token = std::env::var("HEROKU_API_KEY")
-            .ok()
-            .or_else(get_netrc_token);
+        let token = std::env::var("HEROKU_API_KEY").ok().or_else(get_netrc_token);
         let mut headers = reqwest::header::HeaderMap::new();
         if let Some(t) = token {
             let val = format!("Bearer {}", t);
@@ -37,10 +35,7 @@ impl HerokuClient {
         Ok(Self {
             base_url: std::env::var("HEROKU_API_BASE").unwrap_or_else(|_| DEFAULT_BASE_URL.into()),
             http,
-            user_agent: format!(
-                "heroku-cli/0.1 (+https://example.com); {}",
-                std::env::consts::OS
-            ),
+            user_agent: format!("heroku-cli/0.1 (+https://example.com); {}", std::env::consts::OS),
         })
     }
 

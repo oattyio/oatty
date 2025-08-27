@@ -6,13 +6,12 @@
 pub mod components;
 pub mod layout;
 pub mod main;
-pub mod modals;
 pub mod utils;
 
 use crate::app::App;
+use crate::ui::components::palette::HintBarComponent;
 use crate::ui::components::{
-    BuilderComponent, HelpComponent, HintBarComponent, LogsComponent, TableComponent,
-    palette::PaletteComponent,
+    BuilderComponent, HelpComponent, LogsComponent, TableComponent, palette::PaletteComponent,
 };
 use ratatui::Frame;
 

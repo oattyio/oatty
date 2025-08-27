@@ -15,7 +15,10 @@ use ratatui::{
 };
 use serde_json::{Map, Value};
 
-use crate::{app, component::Component, theme};
+use crate::{
+    app, theme,
+    ui::{components::component::Component, utils::centered_rect},
+};
 
 /// Results table modal component for displaying JSON data.
 ///
@@ -228,10 +231,8 @@ impl TableComponent {
                     }
                 }
             }
-            let mut extras: Vec<(String, usize)> = freq
-                .into_iter()
-                .filter(|(header, _)| !cols.contains(header))
-                .collect();
+            let mut extras: Vec<(String, usize)> =
+                freq.into_iter().filter(|(header, _)| !cols.contains(header)).collect();
             extras.sort_by(|a, b| b.1.cmp(&a.1));
             for (header, _) in extras.into_iter() {
                 cols.push(header);
@@ -333,10 +334,7 @@ impl TableComponent {
     }
 
     fn is_sensitive_key(&self, key: &str) -> bool {
-        matches!(
-            key,
-            "token" | "key" | "secret" | "password" | "api_key" | "auth_token"
-        )
+        matches!(key, "token" | "key" | "secret" | "password" | "api_key" | "auth_token")
     }
 
     fn ellipsize_middle_if_sha_like(&self, s: &str, keep_total: usize) -> String {
@@ -362,7 +360,6 @@ impl Component for TableComponent {
     /// * `rect` - The rectangular area to render in
     /// * `app` - The application state containing result data
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
-        use crate::ui::utils::centered_rect;
         // Large modal to maximize space for tables
         let area = centered_rect(96, 90, rect);
         let title = "Results  [Esc] Close  ↑/↓ Scroll";
@@ -372,7 +369,7 @@ impl Component for TableComponent {
             .border_style(theme::border_style(true));
 
         frame.render_widget(Clear, area);
-        frame.render_widget(block.clone(), area);
+        frame.render_widget(&block, area);
         let inner = block.inner(area);
         // Split for content + footer
         let splits = Layout::default()
@@ -380,15 +377,15 @@ impl Component for TableComponent {
             .constraints([Constraint::Min(1), Constraint::Length(1)])
             .split(inner);
 
-        if let Some(json) = &app.table.result_json {
-            // Prefer table if array is present, else KV fallback even in modal
+        if let Some(json) = app.table.selected_result_json() {
             let has_array = match json {
                 Value::Array(a) => !a.is_empty(),
                 Value::Object(m) => m.values().any(|v| matches!(v, Value::Array(_))),
                 _ => false,
             };
+
             if has_array {
-                self.render_json_table(frame, splits[0], json, app.table.offset);
+                self.render_json_table(frame, splits[0], json, app.table.count_offset());
             } else {
                 self.render_kv_or_text(frame, splits[0], json);
             }

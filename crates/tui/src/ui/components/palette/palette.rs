@@ -6,7 +6,6 @@
 
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use heroku_util::lex_shell_like;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -15,7 +14,10 @@ use ratatui::{
     widgets::*,
 };
 
-use crate::{app, component::Component, theme, ui::components::palette::state::ItemKind};
+use crate::{
+    app, theme,
+    ui::components::{component::Component, palette::state::ItemKind},
+};
 
 /// Command palette component for input and suggestions.
 ///
@@ -102,9 +104,7 @@ impl PaletteComponent {
     /// ```
     pub fn handle_key(&self, app: &mut app::App, key: KeyEvent) -> Result<bool> {
         match key.code {
-            KeyCode::Char(c)
-                if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
-            {
+            KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
                 // Handle character input
                 app.palette.apply_insert_char(c);
                 app.palette
@@ -114,54 +114,12 @@ impl PaletteComponent {
                 Ok(true)
             }
             KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // Open help for exact command (group sub) or top command suggestion
-                // Use the palette's shell-like lexer to respect quoting rules.
-                let toks = lex_shell_like(app.palette.selected_input());
-                let mut target: Option<heroku_registry::CommandSpec> = None;
-
-                // Try to find exact command match first
-                if toks.len() >= 2 {
-                    let group = &toks[0];
-                    let name = &toks[1];
-                    if let Some(spec) = app
-                        .ctx
-                        .registry
-                        .commands
-                        .iter()
-                        .find(|c| &c.group == group && &c.name == name)
-                        .cloned()
-                    {
-                        target = Some(spec);
-                    }
-                }
-
-                // Fall back to top suggestion if no exact match
-                if target.is_none() {
-                    app.palette
-                        .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
-                    if let Some(top) = app.palette.selected_suggestions().first() {
-                        if matches!(top.kind, ItemKind::Command) {
-                            // Convert "group sub" to registry key
-                            let mut parts = top.insert_text.split_whitespace();
-                            let group = parts.next().unwrap_or("");
-                            let name = parts.next().unwrap_or("");
-                            if let Some(spec) = app
-                                .ctx
-                                .registry
-                                .commands
-                                .iter()
-                                .find(|c| c.group == group && c.name == name)
-                                .cloned()
-                            {
-                                target = Some(spec);
-                            }
-                        }
-                    }
-                }
-
-                // Open help if we found a command
-                if let Some(spec) = target {
-                    app.help.spec = Some(spec);
+                // Ensure suggestions are up to date, then fetch effective command
+                app.palette
+                    .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
+                let spec = app.palette.selected_command();
+                if spec.is_some() {
+                    app.help.set_spec(spec.cloned());
                     let _ = app.update(app::Msg::ToggleHelp);
                 }
                 Ok(true)
@@ -186,25 +144,21 @@ impl PaletteComponent {
             }
             KeyCode::Down | KeyCode::Up => {
                 // Navigate down/up through suggestions
-                let len = app.palette.selected_suggestions().len();
+                let len = app.palette.suggestions().len();
                 if len > 0 {
-                    let selected = app.palette.selected_suggestion_index() as isize;
-                    let delta = if key.code == KeyCode::Down {
-                        1isize
-                    } else {
-                        -1isize
-                    };
+                    let selected = app.palette.suggestion_index() as isize;
+                    let delta = if key.code == KeyCode::Down { 1isize } else { -1isize };
                     // Wrap around using modulus with length as isize
                     let new_selected = (selected + delta).rem_euclid(len as isize) as usize;
                     app.palette.set_selected(new_selected);
-                    app.palette.apply_set_ghost_text();
+                    app.palette.apply_ghost_text();
                 }
                 Ok(true)
             }
             KeyCode::Tab => {
                 // Accept suggestion
-                if app.palette.is_popup_open() {
-                    if let Some(item) = app.palette.selected_suggestions().get(app.palette.selected_suggestion_index()).cloned() {
+                if app.palette.is_suggestions_open() {
+                    if let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index()).cloned() {
                         match item.kind {
                             ItemKind::Command => {
                                 // Replace input with command exec
@@ -229,15 +183,15 @@ impl PaletteComponent {
 
                         // Keep popup open unless we accepted a command
                         if !matches!(item.kind, ItemKind::Command) {
-                            app.palette.set_popup_open(!app.palette.is_popup_visible());
+                            app.palette.set_popup_open(!app.palette.is_suggestions_open());
                         }
                     }
                 } else {
                     // Open suggestions; if only one, accept it
                     app.palette
                         .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
-                    if app.palette.count_suggestions() == 1 {
-                        if let Some(item) = app.palette.selected_suggestions().first().cloned() {
+                    if app.palette.suggestions_len() == 1 {
+                        if let Some(item) = app.palette.suggestions().first().cloned() {
                             match item.kind {
                                 ItemKind::Command => {
                                     app.palette.apply_accept_command_suggestion(&item.insert_text);
@@ -254,10 +208,10 @@ impl PaletteComponent {
                             app.palette
                                 .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
                             app.palette.set_selected(0);
-                            app.palette.set_popup_open(!app.palette.is_popup_visible());
+                            app.palette.set_popup_open(!app.palette.is_suggestions_open());
                         }
                     } else {
-                        app.palette.set_popup_open(!app.palette.is_popup_visible());
+                        app.palette.set_popup_open(!app.palette.is_suggestions_open());
                     }
                 }
                 Ok(true)
@@ -301,15 +255,11 @@ impl Component for PaletteComponent {
         let inner = block.inner(rect);
         let splits = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Min(1),
-                Constraint::Length(1),
-            ])
+            .constraints([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)])
             .split(inner);
 
         // Input line with ghost text; dim when a modal is open. Show throbber if executing.
-        let dimmed = app.builder.is_visible() || app.help.show;
+        let dimmed = app.builder.is_visible() || app.help.is_visible();
         let base_style = if dimmed {
             theme::text_muted()
         } else {
@@ -324,8 +274,8 @@ impl Component for PaletteComponent {
                 theme::title_style().fg(theme::ACCENT),
             ));
         }
-        spans.push(Span::styled(app.palette.selected_input(), base_style));
-        if let Some(ghost) = app.palette.selected_ghost_text() {
+        spans.push(Span::styled(app.palette.input(), base_style));
+        if let Some(ghost) = app.palette.ghost_text() {
             if !ghost.is_empty() {
                 spans.push(Span::styled(ghost.as_str(), theme::text_muted()));
             }
@@ -337,7 +287,7 @@ impl Component for PaletteComponent {
         if !dimmed {
             let col = app
                 .palette
-                .selected_input()
+                .input()
                 .get(..app.palette.selected_cursor_position())
                 .map(|s| s.chars().count() as u16)
                 .unwrap_or(0);
@@ -347,7 +297,7 @@ impl Component for PaletteComponent {
         }
 
         // Error line below input when present
-        if let Some(err) = app.palette.selected_error_message() {
+        if let Some(err) = app.palette.error_message() {
             let line = Line::from(vec![
                 Span::styled("✖ ", Style::default().fg(theme::WARN)),
                 Span::styled(err.as_str(), theme::text_style()),
@@ -357,15 +307,15 @@ impl Component for PaletteComponent {
 
         // Popup suggestions (separate popup under the input; no overlap with input text).
         // Hidden if error is present or no suggestions exist.
-        if app.palette.selected_error_message().is_none()
-            && app.palette.is_popup_open()
+        if app.palette.error_message().is_none()
+            && app.palette.is_suggestions_open()
             && !app.builder.is_visible()
-            && !app.help.show
-            && !app.palette.selected_suggestions().is_empty()
+            && !app.help.is_visible()
+            && !app.palette.suggestions().is_empty()
         {
             let items_all: Vec<ListItem> = app
                 .palette
-                .selected_suggestions()
+                .suggestions()
                 .iter()
                 .map(|s| ListItem::new(s.display.clone()).style(theme::text_style()))
                 .collect();
@@ -385,10 +335,10 @@ impl Component for PaletteComponent {
                 .highlight_style(theme::list_highlight_style())
                 .highlight_symbol("► ");
             let mut list_state = ListState::default();
-            let sel = if app.palette.selected_suggestions().is_empty() {
+            let sel = if app.palette.suggestions().is_empty() {
                 None
             } else {
-                Some(app.palette.selected_suggestion_index().min(app.palette.selected_suggestions().len() - 1))
+                Some(app.palette.suggestion_index().min(app.palette.suggestions().len() - 1))
             };
             list_state.select(sel);
             f.render_stateful_widget(list, popup_area, &mut list_state);

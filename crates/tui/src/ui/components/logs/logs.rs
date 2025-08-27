@@ -10,7 +10,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem},
 };
 
-use crate::{app, component::Component, theme};
+use crate::{app, theme, ui::components::component::Component};
 
 #[derive(Default)]
 pub struct LogsComponent;

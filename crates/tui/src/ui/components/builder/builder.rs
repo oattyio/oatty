@@ -14,8 +14,14 @@ use ratatui::{
     widgets::*,
 };
 
-use crate::{app, component::Component, theme, ui::utils::IfEmptyStr};
-use heroku_types::{Focus, Field};
+use crate::{
+    app, theme,
+    ui::{
+        components::{builder::layout::BuilderLayout, component::Component},
+        utils::IfEmptyStr,
+    },
+};
+use heroku_types::{Field, Focus};
 
 /// Command builder component for interactive command construction.
 ///
@@ -108,7 +114,7 @@ impl BuilderComponent {
     /// `Result<Vec<Effect>>` containing any effects that should be processed
     pub fn handle_key(&mut self, app: &mut app::App, key: KeyEvent) -> Result<Vec<app::Effect>> {
         let mut effects: Vec<app::Effect> = Vec::new();
-        
+
         // Handle global shortcuts first
         if let Some(effect) = self.handle_global_shortcuts(key) {
             effects.extend(app.update(effect));
@@ -140,18 +146,10 @@ impl BuilderComponent {
     /// Handle global shortcuts that work across all panels.
     fn handle_global_shortcuts(&self, key: KeyEvent) -> Option<app::Msg> {
         match key.code {
-            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                Some(app::Msg::ToggleBuilder)
-            }
-            KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                Some(app::Msg::ToggleHelp)
-            }
-            KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                Some(app::Msg::ToggleTable)
-            }
-            KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                Some(app::Msg::CopyCommand)
-            }
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(app::Msg::ToggleBuilder),
+            KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(app::Msg::ToggleHelp),
+            KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(app::Msg::ToggleTable),
+            KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(app::Msg::CopyCommand),
             _ => None,
         }
     }
@@ -159,7 +157,7 @@ impl BuilderComponent {
     /// Handle key events specific to the search panel.
     fn handle_search_keys(&self, key: KeyEvent) -> Vec<app::Msg> {
         let mut effects = Vec::new();
-        
+
         match key.code {
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
                 effects.push(app::Msg::SearchChar(c));
@@ -173,14 +171,14 @@ impl BuilderComponent {
             KeyCode::Enter => effects.push(app::Msg::Enter),
             _ => {}
         }
-        
+
         effects
     }
 
     /// Handle key events specific to the commands panel.
     fn handle_commands_keys(&self, key: KeyEvent) -> Vec<app::Msg> {
         let mut effects = Vec::new();
-        
+
         match key.code {
             KeyCode::Down => effects.push(app::Msg::MoveSelection(1)),
             KeyCode::Up => effects.push(app::Msg::MoveSelection(-1)),
@@ -189,14 +187,14 @@ impl BuilderComponent {
             KeyCode::BackTab => effects.push(app::Msg::FocusPrev),
             _ => {}
         }
-        
+
         effects
     }
 
     /// Handle key events specific to the inputs panel.
     fn handle_inputs_keys(&self, key: KeyEvent) -> Vec<app::Msg> {
         let mut effects = Vec::new();
-        
+
         match key.code {
             KeyCode::Tab => effects.push(app::Msg::FocusNext),
             KeyCode::BackTab => effects.push(app::Msg::FocusPrev),
@@ -212,7 +210,7 @@ impl BuilderComponent {
             }
             _ => {}
         }
-        
+
         effects
     }
 }
@@ -232,10 +230,10 @@ impl Component for BuilderComponent {
 
         let area = centered_rect(96, 90, rect);
         self.render_modal_frame(f, area);
-        
+
         let inner = self.create_modal_layout(area);
-        let chunks = self.create_vertical_layout(inner);
-        
+        let chunks = BuilderLayout::vertical_layout(inner);
+
         // Render search panel
         self.render_search_panel(f, app, chunks[0]);
 
@@ -260,7 +258,7 @@ impl BuilderComponent {
             ))
             .borders(Borders::ALL)
             .border_style(theme::border_style(true));
-        
+
         f.render_widget(Clear, area);
         f.render_widget(block.clone(), area);
     }
@@ -274,21 +272,8 @@ impl BuilderComponent {
             ))
             .borders(Borders::ALL)
             .border_style(theme::border_style(true));
-        
-        block.inner(area)
-    }
 
-    /// Creates the vertical layout for search, main content, and footer.
-    fn create_vertical_layout(&self, inner: Rect) -> Vec<Rect> {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),  // Search panel
-                Constraint::Min(10),    // Main content
-                Constraint::Length(1),  // Footer
-            ])
-            .split(inner)
-            .to_vec()
+        block.inner(area)
     }
 
     /// Creates the horizontal layout for the main panels.
@@ -316,7 +301,7 @@ impl BuilderComponent {
             Span::styled(" cancel", theme::text_muted()),
         ]))
         .style(theme::text_muted());
-        
+
         f.render_widget(footer, area);
     }
 
@@ -327,12 +312,12 @@ impl BuilderComponent {
             .title(title)
             .borders(Borders::ALL)
             .border_style(theme::border_style(app.builder.selected_focus() == Focus::Search));
-        
+
         let inner = block.inner(area);
-        let p = Paragraph::new(app.browser.search.as_str())
+        let p = Paragraph::new(app.builder.search_input().as_str())
             .style(theme::text_style())
             .block(block);
-        
+
         f.render_widget(p, area);
         self.set_search_cursor(f, app, inner);
     }
@@ -353,7 +338,9 @@ impl BuilderComponent {
     /// Sets the cursor position for the search input.
     fn set_search_cursor(&self, f: &mut Frame, app: &app::App, inner: Rect) {
         if app.builder.selected_focus() == Focus::Search {
-            let x = inner.x.saturating_add(app.browser.search.chars().count() as u16);
+            let x = inner
+                .x
+                .saturating_add(app.builder.search_input().chars().count() as u16);
             let y = inner.y;
             f.set_cursor_position((x, y));
         }
@@ -361,29 +348,27 @@ impl BuilderComponent {
 
     /// Renders the commands list panel.
     fn render_commands_panel(&self, f: &mut Frame, app: &mut app::App, area: Rect) {
-        let title = format!("Commands ({})", app.browser.filtered.len());
+        let title = format!("Commands ({})", app.builder.filtered().len());
         let block = Block::default()
             .title(Span::styled(title, theme::title_style()))
             .borders(Borders::ALL)
-            .border_style(theme::border_style(
-                app.builder.selected_focus() == Focus::Commands,
-            ));
+            .border_style(theme::border_style(app.builder.selected_focus() == Focus::Commands));
 
         let items = self.create_command_list_items(app);
         let list = List::new(items)
             .block(block)
             .highlight_style(theme::list_highlight_style())
             .highlight_symbol("> ");
-        
-        let list_state = &mut app.browser.list_state;
+
+        let list_state = &mut app.builder.list_state();
         f.render_stateful_widget(list, area, list_state);
     }
 
     /// Creates list items for the commands panel.
     fn create_command_list_items(&self, app: &app::App) -> Vec<ListItem<'_>> {
-        let filtered = &app.browser.filtered;
-        let all_commands = &app.browser.all_commands;
-        
+        let filtered = &app.builder.filtered();
+        let all_commands = app.builder.all_commands();
+
         filtered
             .iter()
             .map(|idx| {
@@ -401,7 +386,6 @@ impl BuilderComponent {
 
     /// Renders the input fields panel.
     fn render_inputs_panel(&self, f: &mut Frame, app: &mut app::App, area: Rect) {
-
         let title = self.create_inputs_title(app);
         let block = Block::default()
             .title(Span::styled(title, theme::title_style()))
@@ -409,13 +393,13 @@ impl BuilderComponent {
             .border_style(theme::border_style(app.builder.selected_focus() == Focus::Inputs));
 
         // Draw the block first, then lay out inner area into content + footer rows
-        f.render_widget(block.clone(), area);
+        f.render_widget(&block, area);
         let inner = block.inner(area);
         let splits = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Min(1), Constraint::Length(1)])
             .split(inner);
-        
+
         let content_rect = splits[0];
         let footer_rect = splits[1];
 
@@ -432,12 +416,12 @@ impl BuilderComponent {
                 let mut split = s.name.splitn(2, ':');
                 let group = split.next().unwrap_or("");
                 let rest = split.next().unwrap_or("");
-                let disp = if rest.is_empty() {
+                let title = if rest.is_empty() {
                     group.to_string()
                 } else {
                     format!("{} {}", group, rest)
                 };
-                format!("Inputs: {}", disp)
+                format!("Inputs: {}", title)
             }
             None => "Inputs".into(),
         }
@@ -445,21 +429,20 @@ impl BuilderComponent {
 
     /// Creates the input field lines and cursor position.
     fn create_input_lines(&self, app: &app::App) -> (Vec<Line<'_>>, Option<(u16, u16)>) {
-
         let mut lines: Vec<Line> = Vec::new();
         let mut cursor_pos: Option<(u16, u16)> = None;
 
         for (i, field) in app.builder.input_fields().iter().enumerate() {
             let (line, field_cursor) = self.create_field_line(app, field, i);
             lines.push(line);
-            
+
             if field_cursor.is_some() {
                 cursor_pos = field_cursor;
             }
         }
 
         // Add missing required fields warning
-        let missing: Vec<String> = app.missing_required();
+        let missing: Vec<String> = app.builder.missing_required_fields();
         if app.builder.selected_focus() == Focus::Inputs && !missing.is_empty() {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
@@ -473,7 +456,6 @@ impl BuilderComponent {
 
     /// Creates a single field line with cursor position.
     fn create_field_line(&self, app: &app::App, field: &Field, field_idx: usize) -> (Line<'_>, Option<(u16, u16)>) {
-
         let marker = if field.required { "*" } else { "?" };
         let label = format!("{} {}", marker, field.name);
         let hint = self.create_field_hint(field);
@@ -537,13 +519,12 @@ impl BuilderComponent {
             })
             .collect::<Vec<String>>()
             .join("|");
-        
+
         format!("enum: {}", opts)
     }
 
     /// Creates the display value for a field.
     fn create_field_value(&self, field: &Field) -> String {
-
         if field.is_bool {
             if field.value.is_empty() {
                 "[ ]".to_string()
@@ -565,8 +546,7 @@ impl BuilderComponent {
 
     /// Renders the input footer.
     fn render_input_footer(&self, f: &mut Frame, area: Rect) {
-        let footer = Paragraph::new("Tab focus  Enter run  Ctrl+H help  Ctrl+C quit")
-            .style(theme::text_muted());
+        let footer = Paragraph::new("Tab focus  Enter run  Ctrl+H help  Ctrl+C quit").style(theme::text_muted());
         f.render_widget(footer, area);
     }
 
@@ -589,10 +569,8 @@ impl BuilderComponent {
             .border_style(theme::border_style(false));
 
         let content = self.create_preview_content(app);
-        let p = Paragraph::new(content)
-            .style(theme::text_style())
-            .block(block);
-        
+        let p = Paragraph::new(content).style(theme::text_style()).block(block);
+
         f.render_widget(p, area);
     }
 
@@ -607,7 +585,7 @@ impl BuilderComponent {
             if !rest.is_empty() {
                 parts.push(rest.to_string());
             }
-            
+
             // Add fields
             for field in app.builder.input_fields() {
                 if !field.value.trim().is_empty() {
@@ -619,7 +597,7 @@ impl BuilderComponent {
                     }
                 }
             }
-            
+
             format!("heroku {}", parts.join(" "))
         } else {
             "Select a command to see preview".to_string()

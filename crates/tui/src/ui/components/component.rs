@@ -69,7 +69,7 @@ use ratatui::Frame;
 ///     }
 /// }
 /// ```
-pub trait Component {
+pub(crate) trait Component {
     /// Initialize any internal state.
     ///
     /// This method is called once when the component is created, allowing
@@ -188,11 +188,7 @@ pub trait Component {
     /// }
     /// ```
     #[allow(dead_code)]
-    fn handle_mouse_events(
-        &mut self,
-        _app: &mut crate::app::App,
-        _mouse: MouseEvent,
-    ) -> Vec<Effect> {
+    fn handle_mouse_events(&mut self, _app: &mut crate::app::App, _mouse: MouseEvent) -> Vec<Effect> {
         Vec::new()
     }
 

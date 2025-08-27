@@ -8,9 +8,9 @@ use ratatui::style::{Color, Modifier, Style};
 
 /// Heroku Cloud Blue accent color for highlights and focus indicators.
 ///
-/// This is an approximation of the official Heroku Cloud Blue color (#00A3E0)
+/// This is an approximation of the official Heroku Cloud Blue color (#08ABED)
 /// used for accent elements throughout the interface.
-pub const ACCENT: Color = Color::Rgb(0, 163, 224);
+pub const ACCENT: Color = Color::Rgb(8, 171, 237);
 
 /// Primary foreground color for normal text.
 ///
@@ -48,7 +48,6 @@ pub const BG_HIGHLIGHT: Color = Color::Rgb(20, 32, 44);
 ///
 /// An even subtler blue-tinted dark color used specifically for
 /// list and table selection highlighting.
-#[allow(dead_code)]
 pub const BG_SELECT: Color = Color::Rgb(18, 28, 38);
 
 /// Warning color for error states and alerts.

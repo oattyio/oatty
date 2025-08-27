@@ -181,12 +181,7 @@ fn build_group_command(group: &str, cmds: Vec<&CommandSpec>) -> ClapCommand {
 /// // For a command named "apps:list", this creates a "list" subcommand
 /// ```
 fn build_subcommand(cmd: &CommandSpec) -> ClapCommand {
-    let subname = cmd
-        .name
-        .split_once(':')
-        .map(|x| x.1)
-        .unwrap_or("run")
-        .to_string();
+    let subname = cmd.name.split_once(':').map(|x| x.1).unwrap_or("run").to_string();
     let static_sub_name: &'static str = Box::leak(subname.into_boxed_str());
     let mut subcommand = ClapCommand::new(static_sub_name).about(&cmd.summary);
 

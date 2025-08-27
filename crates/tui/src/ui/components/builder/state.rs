@@ -1,5 +1,8 @@
+use std::sync::Arc;
 
-use heroku_types::{Focus, Field, CommandSpec};
+use heroku_types::{CommandSpec, Field, Focus};
+use heroku_util::fuzzy_score;
+use ratatui::widgets::ListState;
 
 #[derive(Debug, Default, Clone)]
 pub struct BuilderState {
@@ -8,79 +11,34 @@ pub struct BuilderState {
     selected_command: Option<CommandSpec>,
     input_fields: Vec<Field>,
     current_field_idx: usize,
+
+    search_input: String,
+    all_commands: Arc<[CommandSpec]>,
+    filtered: Vec<usize>,
+    selected: usize,
+    list_state: ListState,
 }
 
 impl BuilderState {
-    // Selectors
+    // =======================
+    // Visibility & Focus API
+    // =======================
     pub fn is_visible(&self) -> bool {
         self.is_visible
+    }
+    pub fn toggle_visibility(&mut self) {
+        self.is_visible = !self.is_visible;
+    }
+    pub fn apply_visibility(&mut self, visible: bool) {
+        self.is_visible = visible;
     }
 
     pub fn selected_focus(&self) -> Focus {
         self.current_focus
     }
-
-    pub fn selected_command(&self) -> Option<&CommandSpec> {
-        self.selected_command.as_ref()
-    }
-
-    pub fn input_fields(&self) -> &[Field] {
-        &self.input_fields
-    }
-
-    pub fn current_field_idx(&self) -> usize {
-        self.current_field_idx
-    }
-
-    pub fn count_fields(&self) -> usize {
-        self.input_fields.len()
-    }
-
-    pub fn selected_field(&self) -> Option<&Field> {
-        self.input_fields.get(self.current_field_idx)
-    }
-
-    pub fn selected_field_mut(&mut self) -> Option<&mut Field> {
-        self.input_fields.get_mut(self.current_field_idx)
-    }
-
-    pub fn missing_required_fields(&self) -> Vec<String> {
-        self.input_fields
-            .iter()
-            .filter(|f| f.required && f.value.is_empty())
-            .map(|f| f.name.clone())
-            .collect()
-    }
-
-    pub fn has_selected_command(&self) -> bool {
-        self.selected_command.is_some()
-    }
-
-    pub fn is_at_debug_field(&self) -> bool {
-        self.current_field_idx == self.input_fields.len()
-    }
-
-    pub fn can_move_up(&self) -> bool {
-        self.current_field_idx > 0
-    }
-
-    pub fn can_move_down(&self) -> bool {
-        self.current_field_idx < self.input_fields.len().saturating_sub(1)
-    }
-
-    // Reducers
-    pub fn toggle_visibility(&mut self) {
-        self.is_visible = !self.is_visible;
-    }
-
-    pub fn apply_visibility(&mut self, visible: bool) {
-        self.is_visible = visible;
-    }
-
     pub fn apply_focus(&mut self, focus: Focus) {
         self.current_focus = focus;
     }
-
     pub fn apply_next_focus(&mut self) {
         self.current_focus = match self.current_focus {
             Focus::Search => Focus::Commands,
@@ -88,7 +46,6 @@ impl BuilderState {
             Focus::Inputs => Focus::Search,
         };
     }
-
     pub fn apply_previous_focus(&mut self) {
         self.current_focus = match self.current_focus {
             Focus::Search => Focus::Inputs,
@@ -97,18 +54,155 @@ impl BuilderState {
         };
     }
 
-    pub fn apply_command_selection(&mut self, command: CommandSpec) {
+    // ========================
+    // Search & Filtered List
+    // ========================
+    pub fn search_input(&self) -> &String {
+        &self.search_input
+    }
+    pub fn search_input_push(&mut self, ch: char) {
+        self.search_input.push(ch);
+        self.update_browser_filtered();
+    }
+    pub fn search_input_pop(&mut self) {
+        self.search_input.pop();
+        self.update_browser_filtered();
+    }
+    pub fn search_input_clear(&mut self) {
+        self.search_input.clear();
+        self.update_browser_filtered();
+    }
+
+    pub fn filtered(&self) -> &Vec<usize> {
+        &self.filtered
+    }
+    pub fn list_state(&mut self) -> &mut ListState {
+        &mut self.list_state
+    }
+    pub fn all_commands(&self) -> Arc<[CommandSpec]> {
+        self.all_commands.clone()
+    }
+    pub fn set_all_commands(&mut self, commands: Arc<[CommandSpec]>) {
+        self.all_commands = commands;
+    }
+
+    /// Updates the filtered command list based on the current search query.
+    ///
+    /// This method filters the available commands using fuzzy matching
+    /// and updates the filtered indices and selection state.
+    pub fn update_browser_filtered(&mut self) {
+        if self.search_input.is_empty() {
+            self.filtered = (0..self.all_commands.len()).collect();
+        } else {
+            let mut items: Vec<(i64, usize)> = self
+                .all_commands
+                .iter()
+                .enumerate()
+                .filter_map(|(i, command)| {
+                    let group = &command.group;
+                    let name = &command.name;
+                    let exec = if name.is_empty() {
+                        group.to_string()
+                    } else {
+                        format!("{} {}", group, name)
+                    };
+                    if let Some(score) = fuzzy_score(&exec, &self.search_input) {
+                        return Some((score, i));
+                    }
+                    None
+                })
+                .into_iter()
+                .collect();
+            items.sort_by(|a, b| b.0.cmp(&a.0));
+
+            self.filtered = items.iter().map(|x| x.1).collect();
+        }
+        self.selected = self.selected.min(self.filtered.len().saturating_sub(1));
+        self.list_state.select(Some(self.selected));
+    }
+
+    pub fn move_selection(&mut self, delta: isize) {
+        if self.filtered.is_empty() {
+            return;
+        }
+
+        let mut selected = self.selected;
+        let new_selected = if delta > 0 {
+            selected.saturating_add(delta as usize)
+        } else {
+            selected.saturating_sub((-delta) as usize)
+        };
+        selected = new_selected.min(self.filtered.len().saturating_sub(1));
+        self.list_state.select(Some(selected));
+
+        let idx = self.filtered[selected];
+        let command = self.all_commands[idx].clone();
+        self.selected = selected;
+        self.apply_command_selection(command);
+    }
+
+    // ======================
+    // Command & Field State
+    // ======================
+    pub fn selected_command(&self) -> Option<&CommandSpec> {
+        self.selected_command.as_ref()
+    }
+    pub fn input_fields(&self) -> &[Field] {
+        &self.input_fields
+    }
+    pub fn current_field_idx(&self) -> usize {
+        self.current_field_idx
+    }
+    pub fn count_fields(&self) -> usize {
+        self.input_fields.len()
+    }
+    pub fn missing_required_fields(&self) -> Vec<String> {
+        self.input_fields
+            .iter()
+            .filter(|f| f.required && f.value.is_empty())
+            .map(|f| f.name.clone())
+            .collect()
+    }
+    pub fn has_selected_command(&self) -> bool {
+        self.selected_command.is_some()
+    }
+
+    /// Handle Enter within the builder context: focus Inputs when a selection exists.
+    pub fn apply_enter(&mut self) {
+        if !self.filtered.is_empty() {
+            self.apply_focus(Focus::Inputs);
+        }
+    }
+
+    // Internal helpers for managing field/selection state
+    fn apply_command_selection(&mut self, command: CommandSpec) {
+        let fields = command
+            .flags
+            .iter()
+            .map(|f| Field {
+                name: f.name.clone(),
+                required: f.required,
+                is_bool: f.r#type == "boolean",
+                value: f.default_value.clone().unwrap_or_default(),
+                enum_values: f.enum_values.clone(),
+                enum_idx: None,
+            })
+            .collect();
+        self.set_input_fields(fields);
+        self.apply_field_idx(0);
         self.selected_command = Some(command);
     }
 
-    pub fn apply_fields(&mut self, fields: Vec<Field>) {
+    fn set_input_fields(&mut self, fields: Vec<Field>) {
         self.input_fields = fields;
     }
-
-    pub fn apply_field_idx(&mut self, idx: usize) {
+    fn apply_field_idx(&mut self, idx: usize) {
         self.current_field_idx = idx;
     }
 
+    // =================
+    // Field Navigation
+    // =================
     pub fn reduce_clear_all(&mut self) {
         self.selected_command = None;
         self.input_fields.clear();
@@ -132,6 +226,9 @@ impl BuilderState {
         }
     }
 
+    // =================
+    // Field Editing
+    // =================
     pub fn reduce_add_char_to_field(&mut self, c: char) {
         if let Some(field) = self.selected_field_mut() {
             if field.is_bool {
@@ -194,24 +291,19 @@ impl BuilderState {
         }
     }
 
-    // Private setters
-    fn set_visibility(&mut self, visible: bool) {
-        self.is_visible = visible;
+    // ================
+    // Private helpers
+    // ================
+    fn selected_field_mut(&mut self) -> Option<&mut Field> {
+        self.input_fields.get_mut(self.current_field_idx)
     }
-
-    fn set_focus(&mut self, focus: Focus) {
-        self.current_focus = focus;
+    fn is_at_debug_field(&self) -> bool {
+        self.current_field_idx == self.input_fields.len()
     }
-
-    fn set_selected_command(&mut self, command: Option<CommandSpec>) {
-        self.selected_command = command;
+    fn can_move_up(&self) -> bool {
+        self.current_field_idx > 0
     }
-
-    fn set_fields(&mut self, fields: Vec<Field>) {
-        self.input_fields = fields;
-    }
-
-    fn set_field_idx(&mut self, idx: usize) {
-        self.current_field_idx = idx;
+    fn can_move_down(&self) -> bool {
+        self.current_field_idx < self.input_fields.len().saturating_sub(1)
     }
 }

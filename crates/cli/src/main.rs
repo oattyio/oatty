@@ -79,10 +79,7 @@ async fn main() -> Result<()> {
 /// ```
 fn init_tracing() {
     let filter = std::env::var("HEROKU_LOG").unwrap_or_else(|_| "info".into());
-    let _ = fmt()
-        .with_env_filter(filter)
-        .with_max_level(Level::INFO)
-        .try_init();
+    let _ = fmt().with_env_filter(filter).with_max_level(Level::INFO).try_init();
 }
 
 /// Executes a Heroku API command in CLI mode.
@@ -125,13 +122,9 @@ fn init_tracing() {
 /// ```
 async fn run_command(registry: &Registry, matches: &ArgMatches) -> Result<()> {
     // format is <group> <qualified subcommand> e.g. apps app:create
-    let (group, sub) = matches
-        .subcommand()
-        .context("expected a resource group subcommand")?;
+    let (group, sub) = matches.subcommand().context("expected a resource group subcommand")?;
 
-    let (cmd_name, cmd_matches) = sub
-        .subcommand()
-        .context("expected a command under the group")?;
+    let (cmd_name, cmd_matches) = sub.subcommand().context("expected a command under the group")?;
 
     // Route workflow commands via the registry so they are available in the TUI.
     if group == "workflow" {

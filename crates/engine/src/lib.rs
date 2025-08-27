@@ -42,8 +42,7 @@ pub struct TaskResult {
 }
 
 pub fn load_workflow_from_file(path: impl AsRef<Path>) -> Result<WorkflowFile> {
-    let bytes =
-        fs::read(path.as_ref()).with_context(|| format!("read {}", path.as_ref().display()))?;
+    let bytes = fs::read(path.as_ref()).with_context(|| format!("read {}", path.as_ref().display()))?;
     let s = String::from_utf8_lossy(&bytes);
     if path.as_ref().extension().and_then(|x| x.to_str()) == Some("json") {
         let wf: WorkflowFile = serde_json::from_str(&s).context("parse workflow json")?;

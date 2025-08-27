@@ -1,5 +1,5 @@
-pub mod table;
 pub mod state;
+pub mod table;
 
-pub use table::TableComponent;
 pub use state::TableState;
+pub use table::TableComponent;
