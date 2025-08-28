@@ -7,10 +7,13 @@ mod ui;
 use crate::{
     cmd::{Cmd, run_cmds},
     preview::resolve_path,
-    ui::components::{
-        BuilderComponent, HelpComponent, LogsComponent, TableComponent,
-        component::Component,
-        palette::{HintBarComponent, PaletteComponent},
+    ui::{
+        components::{
+            BuilderComponent, HelpComponent, LogsComponent, TableComponent,
+            component::Component,
+            palette::{HintBarComponent, PaletteComponent},
+        },
+        main,
     },
 };
 use anyhow::Result;
@@ -53,7 +56,7 @@ pub fn run(registry: heroku_registry::Registry) -> Result<()> {
 
     // Initial render so UI is visible before any events
     terminal.draw(|frame| {
-        ui::draw(
+        main::draw(
             frame,
             &mut app,
             &mut palette_component,
@@ -69,11 +72,11 @@ pub fn run(registry: heroku_registry::Registry) -> Result<()> {
         let mut should_render = false;
 
         // Check for async execution completion and route through TEA message
-        if let Some(rx) = app.exec_receiver.as_ref() {
-            if let Ok(out) = rx.try_recv() {
-                let _ = app.update(app::Msg::ExecCompleted(out));
-                should_render = true;
-            }
+        if let Some(rx) = app.exec_receiver.as_ref()
+            && let Ok(out) = rx.try_recv()
+        {
+            let _ = app.update(app::Msg::ExecCompleted(out));
+            should_render = true;
         }
 
         // Poll for terminal events; when executing, use tick rate, otherwise a longer wait
@@ -88,7 +91,13 @@ pub fn run(registry: heroku_registry::Registry) -> Result<()> {
                     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                         break;
                     }
-                    if handle_key(&mut app, &mut palette_component, &mut builder_component, key)? {
+                    if handle_key(
+                        &mut app,
+                        &mut palette_component,
+                        &mut builder_component,
+                        &mut table_component,
+                        key,
+                    )? {
                         break;
                     }
                     should_render = true;
@@ -110,7 +119,7 @@ pub fn run(registry: heroku_registry::Registry) -> Result<()> {
 
         if should_render {
             terminal.draw(|frame| {
-                ui::draw(
+                main::draw(
                     frame,
                     &mut app,
                     &mut palette_component,
@@ -134,6 +143,7 @@ fn handle_key(
     app: &mut app::App,
     palette: &mut PaletteComponent,
     builder: &mut BuilderComponent,
+    table: &mut TableComponent,
     key: KeyEvent,
 ) -> Result<bool> {
     // First, map common/global keys to messages and handle them uniformly
@@ -141,10 +151,16 @@ fn handle_key(
         let _ = app.update(msg);
         return Ok(false);
     }
+    // When table modal is visible, route keys to the table component (local-first handling)
+    if app.table.is_visible()
+        && table.handle_key(app, key)?
+    {
+        return Ok(false);
+    }
     // If builder modal open, Enter should close builder and populate palette with constructed command
     if app.builder.is_visible() && key.code == KeyCode::Enter {
         if let Some(spec) = app.builder.selected_command() {
-            let line = palette_line_from_spec(&spec, app.builder.input_fields());
+            let line = palette_line_from_spec(spec, app.builder.input_fields());
             app.palette.set_input(line);
             app.palette.set_cursor(app.palette.input().len());
             app.palette
@@ -212,19 +228,7 @@ fn map_key_to_msg(app: &app::App, key: &KeyEvent) -> Option<app::Msg> {
     if key.code == KeyCode::Char('f') && key.modifiers.contains(KeyModifiers::CONTROL) {
         return Some(app::Msg::ToggleBuilder);
     }
-    // When table modal is open, support scrolling and toggles
-    if app.table.is_visible() {
-        return match key.code {
-            KeyCode::Up => Some(app::Msg::TableScroll(-1)),
-            KeyCode::Down => Some(app::Msg::TableScroll(1)),
-            KeyCode::PageUp => Some(app::Msg::TableScroll(-10)),
-            KeyCode::PageDown => Some(app::Msg::TableScroll(10)),
-            KeyCode::Home => Some(app::Msg::TableHome),
-            KeyCode::End => Some(app::Msg::TableEnd),
-            KeyCode::Char('t') => Some(app::Msg::ToggleTable),
-            _ => None,
-        };
-    }
+    // Table modal keys are handled in TableComponent::handle_key
     None
 }
 
@@ -376,6 +380,6 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<CommandSpec, String
 
     let path = resolve_path(&spec.path, &pos_map);
     // Live request: enqueue background HTTP execution via Cmd system
-    run_cmds(app, vec![Cmd::ExecuteHttp(spec.clone(), path, body)]);
+    run_cmds(app, vec![Cmd::ExecuteHttp(Box::new(spec.clone()), path, body)]);
     Ok(spec)
 }

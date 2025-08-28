@@ -39,16 +39,17 @@ impl Component for LogsHintBarComponent {
             }
         }
 
-        let mut spans: Vec<Span> = Vec::new();
-        spans.push(Span::styled("Logs: ", theme::text_muted()));
-        spans.push(Span::styled("↑/↓", theme::title_style().fg(theme::ACCENT)));
-        spans.push(Span::styled(" move  ", theme::text_muted()));
-        spans.push(Span::styled("Shift+↑/↓", theme::title_style().fg(theme::ACCENT)));
-        spans.push(Span::styled(" range  ", theme::text_muted()));
-        spans.push(Span::styled("Enter", theme::title_style().fg(theme::ACCENT)));
-        spans.push(Span::styled(" open  ", theme::text_muted()));
-        spans.push(Span::styled("c", theme::title_style().fg(theme::ACCENT)));
-        spans.push(Span::styled(" copy  ", theme::text_muted()));
+        let mut spans: Vec<Span> = vec![
+            Span::styled("Logs: ", theme::text_muted()),
+            Span::styled("↑/↓", theme::title_style().fg(theme::ACCENT)),
+            Span::styled(" move  ", theme::text_muted()),
+            Span::styled("Shift+↑/↓", theme::title_style().fg(theme::ACCENT)),
+            Span::styled(" range  ", theme::text_muted()),
+            Span::styled("Enter", theme::title_style().fg(theme::ACCENT)),
+            Span::styled(" open  ", theme::text_muted()),
+            Span::styled("c", theme::title_style().fg(theme::ACCENT)),
+            Span::styled(" copy  ", theme::text_muted()),
+        ];
         if show_pretty_toggle {
             spans.push(Span::styled("v ", theme::title_style().fg(theme::ACCENT)));
             // Show current mode with green highlight

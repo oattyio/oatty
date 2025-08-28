@@ -1,15 +1,15 @@
-use lazy_static::lazy_static;
+use once_cell::sync::Lazy;
 use regex::Regex;
 
 /// Redacts values that look like secrets in a string.
 pub fn redact_sensitive(input: &str) -> String {
-    lazy_static! {
-        static ref REDACT_PATTERNS: Vec<Regex> = vec![
+    static REDACT_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
+        vec![
             Regex::new(r"(?i)(authorization: )([\w\-\.=:/+]+)").unwrap(),
             Regex::new(r"(?i)([A-Z0-9_]*?(KEY|TOKEN|SECRET|PASSWORD))=([^\s]+)").unwrap(),
             Regex::new(r"(?i)(DATABASE_URL)=([^\s]+)").unwrap(),
-        ];
-    }
+        ]
+    });
     let mut redacted = input.to_string();
     for re in REDACT_PATTERNS.iter() {
         redacted = re

@@ -89,7 +89,7 @@ impl LogsComponent {
             match app.logs.rich_entries.get(idx) {
                 Some(LogEntry::Api { json: Some(j), .. }) => {
                     app.logs.cached_detail_index = Some(idx);
-                    app.logs.cached_redacted_json = Some(self.redact_json(j));
+                    app.logs.cached_redacted_json = Some(Self::redact_json(j));
                     // Cache inferred columns for table view
                     app.logs.cached_columns = Some(infer_columns_from_json(j));
                 }
@@ -114,14 +114,14 @@ impl LogsComponent {
         }
     }
 
-    fn redact_json(&self, v: &Value) -> Value {
+    fn redact_json(v: &Value) -> Value {
         match v {
             Value::String(s) => Value::String(redact_sensitive(s)),
-            Value::Array(arr) => Value::Array(arr.iter().map(|x| self.redact_json(x)).collect()),
+            Value::Array(arr) => Value::Array(arr.iter().map(Self::redact_json).collect()),
             Value::Object(map) => {
                 let mut out = serde_json::Map::new();
                 for (k, val) in map.iter() {
-                    out.insert(k.clone(), self.redact_json(val));
+                    out.insert(k.clone(), Self::redact_json(val));
                 }
                 Value::Object(out)
             }
@@ -140,11 +140,11 @@ impl LogsComponent {
         if start == end {
             // Single
             if let Some(LogEntry::Api { json, raw, .. }) = app.logs.rich_entries.get(start) {
-                if let Some(j) = json {
-                    if app.logs.pretty_json {
-                        let red = self.redact_json(j);
-                        return serde_json::to_string_pretty(&red).unwrap_or_else(|_| redact_sensitive(raw));
-                    }
+                if let Some(j) = json
+                    && app.logs.pretty_json
+                {
+                    let red = Self::redact_json(j);
+                    return serde_json::to_string_pretty(&red).unwrap_or_else(|_| redact_sensitive(raw));
                 }
                 return redact_sensitive(raw);
             }
@@ -325,7 +325,7 @@ impl LogsComponent {
         // Single API with JSON and array → table
         if start == end {
             if let Some(LogEntry::Api { json: Some(j), .. }) = app.logs.rich_entries.get(start) {
-                let table = TableComponent::default();
+                let table = TableComponent;
                 if self.json_has_array(j) {
                     let red_ref: &Value = match app.logs.cached_detail_index {
                         Some(i) if i == start => app.logs.cached_redacted_json.as_ref().unwrap_or(j),

@@ -66,7 +66,7 @@ pub enum Cmd {
     ///     assert!(b.is_empty());
     /// }
     /// ```
-    ExecuteHttp(CommandSpec, String, serde_json::Map<String, Value>),
+    ExecuteHttp(Box<CommandSpec>, String, serde_json::Map<String, Value>),
 }
 
 /// Convert application [`Effect`]s into actual [`Cmd`] instances.
@@ -142,7 +142,7 @@ pub fn run_cmds(app: &mut app::App, commands: Vec<Cmd>) {
                 }
             }
             Cmd::ExecuteHttp(spec, path, body) => {
-                execute_http(app, spec, path, body);
+                execute_http(app, *spec, path, body);
             }
         }
     }

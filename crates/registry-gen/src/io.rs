@@ -22,10 +22,10 @@ use crate::schema::generate_commands;
 pub fn write_manifest(input: PathBuf, output: PathBuf) -> Result<()> {
     let schema = fs::read_to_string(&input).with_context(|| format!("read {}", input.display()))?;
     let commands = generate_commands(&schema)?;
-    if let Some(parent) = output.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent).with_context(|| format!("create dir {}", parent.display()))?;
-        }
+    if let Some(parent) = output.parent()
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent).with_context(|| format!("create dir {}", parent.display()))?;
     }
     let config = config::standard();
     let bytes = bincode::encode_to_vec(commands, config)?;

@@ -120,13 +120,13 @@ impl HelpComponent {
         let flags = {
             let mut flags: Vec<_> = spec.flags.iter().collect();
             flags.sort_by_key(|flag| !flag.required);
-            flags.into_iter().filter_map(|flag| {
+            flags.into_iter().map(|flag| {
                 let format_str = if flag.required {
                     format!(" --{} <value>", flag.name)
                 } else {
                     format!(" [--{} <value>]", flag.name)
                 };
-                Some(Span::styled(format_str, theme::text_style()))
+                Span::styled(format_str, theme::text_style())
             })
         };
         flags.for_each(|f| command.push_span(f));
@@ -144,7 +144,7 @@ impl HelpComponent {
             for p in &spec.positional_args {
                 if let Some(desc) = spec.positional_help.get(p) {
                     let mut arg_line = Line::styled(format!("  {} ", p.to_uppercase()), theme::list_highlight_style());
-                    arg_line.push_span(Span::styled(format!("{}", desc), theme::text_muted()));
+                    arg_line.push_span(Span::styled(desc.to_string(), theme::text_muted()));
                     lines.push(arg_line);
                 } else {
                     lines.push(Line::raw(format!(

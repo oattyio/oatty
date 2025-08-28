@@ -111,7 +111,6 @@ impl BuilderState {
                     }
                     None
                 })
-                .into_iter()
                 .collect();
             items.sort_by(|a, b| b.0.cmp(&a.0));
 
@@ -260,48 +259,48 @@ impl BuilderState {
     }
 
     pub fn reduce_remove_char_from_field(&mut self) {
-        if let Some(field) = self.selected_field_mut() {
-            if !field.is_bool {
-                field.value.pop();
-            }
+        if let Some(field) = self.selected_field_mut()
+            && !field.is_bool
+        {
+            field.value.pop();
         }
     }
 
     pub fn reduce_toggle_boolean_field(&mut self) {
-        if let Some(field) = self.selected_field_mut() {
-            if field.is_bool {
-                field.value = if field.value.is_empty() {
-                    "true".into()
-                } else {
-                    String::new()
-                };
-            }
+        if let Some(field) = self.selected_field_mut()
+            && field.is_bool
+        {
+            field.value = if field.value.is_empty() {
+                "true".into()
+            } else {
+                String::new()
+            };
         }
     }
 
     pub fn reduce_cycle_enum_left(&mut self) {
-        if let Some(field) = self.selected_field_mut() {
-            if !field.enum_values.is_empty() {
-                let current = field.enum_idx.unwrap_or(0);
-                let new_idx = if current == 0 {
-                    field.enum_values.len() - 1
-                } else {
-                    current - 1
-                };
-                field.enum_idx = Some(new_idx);
-                field.value = field.enum_values[new_idx].clone();
-            }
+        if let Some(field) = self.selected_field_mut()
+            && !field.enum_values.is_empty()
+        {
+            let current = field.enum_idx.unwrap_or(0);
+            let new_idx = if current == 0 {
+                field.enum_values.len() - 1
+            } else {
+                current - 1
+            };
+            field.enum_idx = Some(new_idx);
+            field.value = field.enum_values[new_idx].clone();
         }
     }
 
     pub fn reduce_cycle_enum_right(&mut self) {
-        if let Some(field) = self.selected_field_mut() {
-            if !field.enum_values.is_empty() {
-                let current = field.enum_idx.unwrap_or(0);
-                let new_idx = (current + 1) % field.enum_values.len();
-                field.enum_idx = Some(new_idx);
-                field.value = field.enum_values[new_idx].clone();
-            }
+        if let Some(field) = self.selected_field_mut()
+            && !field.enum_values.is_empty()
+        {
+            let current = field.enum_idx.unwrap_or(0);
+            let new_idx = (current + 1) % field.enum_values.len();
+            field.enum_idx = Some(new_idx);
+            field.value = field.enum_values[new_idx].clone();
         }
     }
 

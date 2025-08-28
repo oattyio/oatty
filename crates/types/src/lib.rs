@@ -91,19 +91,14 @@ pub enum Focus {
 /// This represents the primary navigation state for the TUI. Modal overlays
 /// (help, table, builder) remain separate toggles so they can appear atop any
 /// route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum Screen {
+    #[default]
     Home,
     Browser,
     Builder,
     Table,
     Help,
-}
-
-impl Default for Screen {
-    fn default() -> Self {
-        Screen::Home
-    }
 }
 
 /// Result of an asynchronous command execution.
@@ -123,7 +118,6 @@ pub struct ExecOutcome {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json;
 
     #[test]
     fn command_spec_round_trip_minimal() {

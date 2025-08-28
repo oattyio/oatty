@@ -466,26 +466,12 @@ impl PaletteState {
         self.insert_with_space(exec);
     }
 
-    /// Renders the palette UI components.
-    ///
-    /// This function renders the complete command palette including the input line,
-    /// optional ghost text, error messages, and the suggestions popup. It handles
-    /// cursor placement, modal states, and execution indicators.
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - Frame to render to
-    /// * `area` - Area allocated for the palette
-    /// * `app` - Application state providing palette, theme, and modal flags
-    ///
-    /// # Features
-    ///
-    /// - Input line with ghost text and execution throbber
-    /// - Error display with warning styling
-    /// - Suggestions popup with proper positioning
-    /// - Cursor placement accounting for UTF-8 character width
-    // This function has been migrated to PaletteComponent::render()
-    // and is no longer needed as part of the component architecture migration.
+    // Renders the palette UI components.
+    //
+    // This function used to render the complete command palette including the input line,
+    // optional ghost text, error messages, and the suggestions popup. Rendering responsibility
+    // has been migrated to PaletteComponent::render(), and this legacy documentation remains
+    // here only as historical context for future refactors.
 
     /// Accept a non-command suggestion (flag/value) without clobbering the resolved command (group sub).
     ///
@@ -646,10 +632,10 @@ impl PaletteState {
             }
 
             // 6) End of line hint for starting flags if any remain
-            if items.is_empty() {
-                if let Some(hint) = self.eol_flag_hint(&spec, &user_flags) {
-                    items.push(hint);
-                }
+            if items.is_empty()
+                && let Some(hint) = self.eol_flag_hint(&spec, &user_flags)
+            {
+                items.push(hint);
             }
 
             self.finalize_suggestions(&mut items);
@@ -798,10 +784,10 @@ fn parse_user_flags_args(spec: &CommandSpec, parts: &[String]) -> (Vec<String>, 
         if t.starts_with("--") {
             let name = t.trim_start_matches('-');
             user_flags.push(name.to_string());
-            if let Some(f) = spec.flags.iter().find(|f| f.name == name) {
-                if f.r#type != "boolean" && i + 1 < parts.len() && !parts[i + 1].starts_with('-') {
-                    i += 1; // consume value
-                }
+            if let Some(f) = spec.flags.iter().find(|f| f.name == name)
+                && f.r#type != "boolean" && i + 1 < parts.len() && !parts[i + 1].starts_with('-')
+            {
+                i += 1; // consume value
             }
         } else if t.contains('=') && t.starts_with("--") {
             let name = t.split('=').next().unwrap_or("").trim_start_matches('-');
@@ -825,14 +811,14 @@ fn find_pending_flag(spec: &CommandSpec, parts: &[String], input: &str) -> Optio
         let t = parts[j as usize].as_str();
         if t.starts_with("--") {
             let name = t.trim_start_matches('-');
-            if let Some(f) = spec.flags.iter().find(|f| f.name == name) {
-                if f.r#type != "boolean" {
-                    // if the token after this flag is not a value, we are pending
-                    if ((j as usize) == parts.len() - 1 || parts[(j as usize) + 1].starts_with('-'))
-                        && !is_flag_value_complete(input)
-                    {
-                        return Some(name.to_string());
-                    }
+            if let Some(f) = spec.flags.iter().find(|f| f.name == name)
+                && f.r#type != "boolean"
+            {
+                // if the token after this flag is not a value, we are pending
+                if ((j as usize) == parts.len() - 1 || parts[(j as usize) + 1].starts_with('-'))
+                    && !is_flag_value_complete(input)
+                {
+                    return Some(name.to_string());
                 }
             }
             break;

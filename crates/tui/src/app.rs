@@ -89,44 +89,10 @@ pub enum Msg {
     ToggleBuilder,
     /// Close any currently open modal
     CloseModal,
-    /// Move focus to the next UI element
-    FocusNext,
-    /// Move focus to the previous UI element
-    FocusPrev,
-    /// Move selection in a list by the given offset
-    MoveSelection(isize),
-    /// Execute the currently selected action
-    Enter,
-    /// Add a character to the search input
-    SearchChar(char),
-    /// Remove a character from the search input
-    SearchBackspace,
-    /// Clear the search input
-    SearchClear,
-    /// Move up in the inputs form
-    InputsUp,
-    /// Move down in the inputs form
-    InputsDown,
-    /// Add a character to the current input field
-    InputsChar(char),
-    /// Remove a character from the current input field
-    InputsBackspace,
-    /// Toggle a boolean field value
-    InputsToggleSpace,
-    /// Cycle through enum values to the left
-    InputsCycleLeft,
-    /// Cycle through enum values to the right
-    InputsCycleRight,
     /// Execute the current command
     Run,
     /// Copy the current command to clipboard
     CopyCommand,
-    /// Scroll the table by the given offset
-    TableScroll(isize),
-    /// Jump to the beginning of the table
-    TableHome,
-    /// Jump to the end of the table
-    TableEnd,
     /// Periodic UI tick (e.g., throbbers)
     Tick,
     /// Terminal resized
@@ -268,48 +234,6 @@ impl App {
                 self.table.apply_show(false);
                 self.builder.apply_visibility(false);
             }
-            Msg::FocusNext => {
-                self.builder.apply_next_focus();
-            }
-            Msg::FocusPrev => {
-                self.builder.apply_previous_focus();
-            }
-            Msg::MoveSelection(delta) => {
-                self.builder.move_selection(delta);
-            }
-            Msg::Enter => {
-                self.builder.apply_enter();
-            }
-            Msg::SearchChar(ch) => {
-                self.builder.search_input_push(ch);
-            }
-            Msg::SearchBackspace => {
-                self.builder.search_input_pop();
-            }
-            Msg::SearchClear => {
-                self.builder.search_input_clear();
-            }
-            Msg::InputsUp => {
-                self.builder.reduce_move_field_up(self.ctx.debug_enabled);
-            }
-            Msg::InputsDown => {
-                self.builder.reduce_move_field_down(self.ctx.debug_enabled);
-            }
-            Msg::InputsChar(c) => {
-                self.builder.reduce_add_char_to_field(c);
-            }
-            Msg::InputsBackspace => {
-                self.builder.reduce_remove_char_from_field();
-            }
-            Msg::InputsToggleSpace => {
-                self.builder.reduce_toggle_boolean_field();
-            }
-            Msg::InputsCycleLeft => {
-                self.builder.reduce_cycle_enum_left();
-            }
-            Msg::InputsCycleRight => {
-                self.builder.reduce_cycle_enum_right();
-            }
             Msg::Run => {
                 // always execute from palette
                 if !self.palette.is_input_empty() {
@@ -331,16 +255,6 @@ impl App {
             }
             Msg::CopyCommand => {
                 effects.push(Effect::CopyCommandRequested);
-            }
-            Msg::TableScroll(delta) => {
-                self.table.reduce_scroll(delta);
-            }
-            Msg::TableHome => {
-                self.table.reduce_home();
-            }
-            Msg::TableEnd => {
-                // Set to a large value to scroll to end
-                self.table.reduce_end();
             }
             Msg::ExecCompleted(out) => {
                 let raw = out.log;

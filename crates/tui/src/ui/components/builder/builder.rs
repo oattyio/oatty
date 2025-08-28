@@ -112,6 +112,10 @@ impl BuilderComponent {
     /// # Returns
     ///
     /// `Result<Vec<Effect>>` containing any effects that should be processed
+    ///
+    /// Local/UI state updates are applied directly to `app` here (no App::Msg),
+    /// mirroring the palette's local-first handling. Only global actions
+    /// escalate via `app.update(..)` to produce side effects.
     pub fn handle_key(&mut self, app: &mut app::App, key: KeyEvent) -> Result<Vec<app::Effect>> {
         let mut effects: Vec<app::Effect> = Vec::new();
 
@@ -121,22 +125,16 @@ impl BuilderComponent {
             return Ok(effects);
         }
 
-        // Handle focus-specific key events
+        // Handle focus-specific key events (local updates applied in-place)
         match app.builder.selected_focus() {
             Focus::Search => {
-                for msg in self.handle_search_keys(key) {
-                    effects.extend(app.update(msg));
-                }
+                self.handle_search_keys(app, key);
             }
             Focus::Commands => {
-                for msg in self.handle_commands_keys(key) {
-                    effects.extend(app.update(msg));
-                }
+                self.handle_commands_keys(app, key);
             }
             Focus::Inputs => {
-                for msg in self.handle_inputs_keys(key) {
-                    effects.extend(app.update(msg));
-                }
+                self.handle_inputs_keys(app, key);
             }
         }
 
@@ -155,63 +153,58 @@ impl BuilderComponent {
     }
 
     /// Handle key events specific to the search panel.
-    fn handle_search_keys(&self, key: KeyEvent) -> Vec<app::Msg> {
-        let mut effects = Vec::new();
-
+    ///
+    /// Applies local state updates directly to `app.builder`.
+    fn handle_search_keys(&self, app: &mut app::App, key: KeyEvent) {
         match key.code {
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
-                effects.push(app::Msg::SearchChar(c));
+                app.builder.search_input_push(c);
             }
-            KeyCode::Backspace => effects.push(app::Msg::SearchBackspace),
-            KeyCode::Esc => effects.push(app::Msg::SearchClear),
-            KeyCode::Tab => effects.push(app::Msg::FocusNext),
-            KeyCode::BackTab => effects.push(app::Msg::FocusPrev),
-            KeyCode::Down => effects.push(app::Msg::MoveSelection(1)),
-            KeyCode::Up => effects.push(app::Msg::MoveSelection(-1)),
-            KeyCode::Enter => effects.push(app::Msg::Enter),
+            KeyCode::Backspace => app.builder.search_input_pop(),
+            KeyCode::Esc => app.builder.search_input_clear(),
+            KeyCode::Tab => app.builder.apply_next_focus(),
+            KeyCode::BackTab => app.builder.apply_previous_focus(),
+            KeyCode::Down => app.builder.move_selection(1),
+            KeyCode::Up => app.builder.move_selection(-1),
+            KeyCode::Enter => app.builder.apply_enter(),
             _ => {}
         }
-
-        effects
     }
 
     /// Handle key events specific to the commands panel.
-    fn handle_commands_keys(&self, key: KeyEvent) -> Vec<app::Msg> {
-        let mut effects = Vec::new();
-
+    ///
+    /// Applies local state updates directly to `app.builder`.
+    fn handle_commands_keys(&self, app: &mut app::App, key: KeyEvent) {
         match key.code {
-            KeyCode::Down => effects.push(app::Msg::MoveSelection(1)),
-            KeyCode::Up => effects.push(app::Msg::MoveSelection(-1)),
-            KeyCode::Enter => effects.push(app::Msg::Enter),
-            KeyCode::Tab => effects.push(app::Msg::FocusNext),
-            KeyCode::BackTab => effects.push(app::Msg::FocusPrev),
+            KeyCode::Down => app.builder.move_selection(1),
+            KeyCode::Up => app.builder.move_selection(-1),
+            KeyCode::Enter => app.builder.apply_enter(),
+            KeyCode::Tab => app.builder.apply_next_focus(),
+            KeyCode::BackTab => app.builder.apply_previous_focus(),
             _ => {}
         }
-
-        effects
     }
 
     /// Handle key events specific to the inputs panel.
-    fn handle_inputs_keys(&self, key: KeyEvent) -> Vec<app::Msg> {
-        let mut effects = Vec::new();
-
+    ///
+    /// Applies local state updates directly to `app.builder`.
+    fn handle_inputs_keys(&self, app: &mut app::App, key: KeyEvent) {
         match key.code {
-            KeyCode::Tab => effects.push(app::Msg::FocusNext),
-            KeyCode::BackTab => effects.push(app::Msg::FocusPrev),
-            KeyCode::Up => effects.push(app::Msg::InputsUp),
-            KeyCode::Down => effects.push(app::Msg::InputsDown),
-            KeyCode::Enter => effects.push(app::Msg::Run),
-            KeyCode::Left => effects.push(app::Msg::InputsCycleLeft),
-            KeyCode::Right => effects.push(app::Msg::InputsCycleRight),
-            KeyCode::Backspace => effects.push(app::Msg::InputsBackspace),
-            KeyCode::Char(' ') => effects.push(app::Msg::InputsToggleSpace),
+            KeyCode::Tab => app.builder.apply_next_focus(),
+            KeyCode::BackTab => app.builder.apply_previous_focus(),
+            KeyCode::Up => app.builder.reduce_move_field_up(app.ctx.debug_enabled),
+            KeyCode::Down => app.builder.reduce_move_field_down(app.ctx.debug_enabled),
+            // Note: Enter in builder is handled at the top-level input loop to
+            // close the modal and populate the palette; no direct run here.
+            KeyCode::Left => app.builder.reduce_cycle_enum_left(),
+            KeyCode::Right => app.builder.reduce_cycle_enum_right(),
+            KeyCode::Backspace => app.builder.reduce_remove_char_from_field(),
+            KeyCode::Char(' ') => app.builder.reduce_toggle_boolean_field(),
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
-                effects.push(app::Msg::InputsChar(c));
+                app.builder.reduce_add_char_to_field(c);
             }
             _ => {}
         }
-
-        effects
     }
 }
 
@@ -552,12 +545,12 @@ impl BuilderComponent {
 
     /// Sets the cursor position for the input panel.
     fn set_input_cursor(&self, f: &mut Frame, app: &mut app::App, area: Rect, cursor_pos: Option<(u16, u16)>) {
-        if app.builder.selected_focus() == Focus::Inputs {
-            if let Some((col, row)) = cursor_pos {
-                let x = area.x.saturating_add(col);
-                let y = area.y.saturating_add(row);
-                f.set_cursor_position((x, y));
-            }
+        if app.builder.selected_focus() == Focus::Inputs
+            && let Some((col, row)) = cursor_pos
+        {
+            let x = area.x.saturating_add(col);
+            let y = area.y.saturating_add(row);
+            f.set_cursor_position((x, y));
         }
     }
 

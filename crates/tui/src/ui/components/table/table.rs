@@ -3,6 +3,8 @@
 //! This module provides a component for rendering the table modal, which displays
 //! JSON results from command execution in a tabular format with scrolling and
 //! navigation capabilities.
+use anyhow::Result;
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::{
     Frame,
@@ -65,6 +67,45 @@ impl TableComponent {
     /// A new TableComponent with default state
     pub fn new() -> Self {
         Self
+    }
+
+    /// Handle key events for the results table modal.
+    ///
+    /// Applies local state updates directly to `app.table` for scrolling and navigation.
+    /// Returns `Ok(true)` if the key was handled by the table, otherwise `Ok(false)`.
+    pub fn handle_key(&self, app: &mut app::App, key: KeyEvent) -> Result<bool> {
+        match key.code {
+            KeyCode::Up => {
+                app.table.reduce_scroll(-1);
+                Ok(true)
+            }
+            KeyCode::Down => {
+                app.table.reduce_scroll(1);
+                Ok(true)
+            }
+            KeyCode::PageUp => {
+                app.table.reduce_scroll(-10);
+                Ok(true)
+            }
+            KeyCode::PageDown => {
+                app.table.reduce_scroll(10);
+                Ok(true)
+            }
+            KeyCode::Home => {
+                app.table.reduce_home();
+                Ok(true)
+            }
+            KeyCode::End => {
+                app.table.reduce_end();
+                Ok(true)
+            }
+            // Toggle handled via App message; keep consistent with global actions
+            KeyCode::Char('t') => {
+                let _ = app.update(app::Msg::ToggleTable);
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
     }
 
     /// Renders a JSON array as a table with offset support using known columns.
@@ -228,16 +269,16 @@ impl TableComponent {
             Value::Null => "null".to_string(),
             // Take the highest scoring key from the object as a string
             Value::Object(map) => {
-                if let Some(key) = get_scored_keys(&map).get(0) {
+                if let Some(key) = get_scored_keys(map).first() {
                     let value = map.get(key).unwrap();
                     if let Some(s) = value.as_str() {
-                        return s.to_string();
+                        s.to_string()
                     } else {
-                        return value.to_string();
+                        value.to_string()
                     }
+                } else {
+                    value.to_string()
                 }
-
-                return value.to_string();
             }
             _ => value.to_string(),
         }

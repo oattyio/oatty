@@ -48,6 +48,7 @@ pub const BG_HIGHLIGHT: Color = Color::Rgb(20, 32, 44);
 ///
 /// An even subtler blue-tinted dark color used specifically for
 /// list and table selection highlighting.
+#[allow(dead_code)]
 pub const BG_SELECT: Color = Color::Rgb(18, 28, 38);
 
 /// Warning color for error states and alerts.

@@ -15,6 +15,7 @@ use ratatui::prelude::*;
 ///
 /// * `f` - The frame to render to
 /// * `app` - The application state containing all UI data
+#[allow(clippy::too_many_arguments)]
 pub fn draw(
     f: &mut Frame,
     app: &mut App,

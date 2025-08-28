@@ -9,6 +9,10 @@ on:
 jobs:
   build:
     runs-on: ${{ matrix.os }}
+    env:
+      CARGO_TERM_COLOR: always
+      CARGO_INCREMENTAL: 0
+      RUST_BACKTRACE: 1
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
@@ -21,18 +25,26 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Build
         run: |
-          cd heroku
-          cargo build --workspace --locked
+          cargo build --workspace --locked --all-targets
       - name: Test
         run: |
-          cd heroku
           cargo test --workspace --locked
       - name: Clippy
         run: |
-          cd heroku
-          cargo clippy --workspace -- -D warnings
+          cargo clippy --workspace --all-targets -- -D warnings
       - name: Fmt
         run: |
-          cd heroku
           cargo fmt --all -- --check
+      - name: Docs
+        run: |
+          cargo doc --workspace --no-deps
+      - name: Audit (dependencies)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        uses: actions-rs/audit-check@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Release build (Linux)
+        if: ${{ matrix.os == 'ubuntu-latest' }}
+        run: |
+          cargo build --workspace --locked --release
 

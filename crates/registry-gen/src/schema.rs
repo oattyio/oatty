@@ -264,10 +264,10 @@ fn path_and_vars_with_help(href: &str, root: &Value) -> (String, Vec<String>, Ha
             if let Some(ptr_enc) = extract_placeholder_ptr(seg) {
                 let decoded = percent_decode_str(&ptr_enc).decode_utf8_lossy().to_string();
                 let ptr = decoded.strip_prefix('#').unwrap_or(&decoded);
-                if let Some(val) = root.pointer(ptr) {
-                    if let Some(desc) = get_description(val, root) {
-                        help.insert(name.clone(), desc);
-                    }
+                if let Some(val) = root.pointer(ptr)
+                    && let Some(desc) = get_description(val, root)
+                {
+                    help.insert(name.clone(), desc);
                 }
             }
         } else {
@@ -349,25 +349,25 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
                 if let Some(r) = val.get("$ref").and_then(|x| x.as_str()) {
                     let ptr = r.strip_prefix('#').unwrap_or(r);
                     if let Some(target) = root.pointer(ptr) {
-                        if merged.get("type").is_none() {
-                            if let Some(t) = target.get("type") {
-                                merged.as_object_mut().unwrap().insert("type".into(), t.clone());
-                            }
+                        if merged.get("type").is_none()
+                            && let Some(t) = target.get("type")
+                        {
+                            merged.as_object_mut().unwrap().insert("type".into(), t.clone());
                         }
-                        if merged.get("description").is_none() {
-                            if let Some(d) = target.get("description") {
-                                merged.as_object_mut().unwrap().insert("description".into(), d.clone());
-                            }
+                        if merged.get("description").is_none()
+                            && let Some(d) = target.get("description")
+                        {
+                            merged.as_object_mut().unwrap().insert("description".into(), d.clone());
                         }
-                        if merged.get("enum").is_none() {
-                            if let Some(e) = target.get("enum") {
-                                merged.as_object_mut().unwrap().insert("enum".into(), e.clone());
-                            }
+                        if merged.get("enum").is_none()
+                            && let Some(e) = target.get("enum")
+                        {
+                            merged.as_object_mut().unwrap().insert("enum".into(), e.clone());
                         }
-                        if merged.get("default").is_none() {
-                            if let Some(df) = target.get("default") {
-                                merged.as_object_mut().unwrap().insert("default".into(), df.clone());
-                            }
+                        if merged.get("default").is_none()
+                            && let Some(df) = target.get("default")
+                        {
+                            merged.as_object_mut().unwrap().insert("default".into(), df.clone());
                         }
                     }
                 }

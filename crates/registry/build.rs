@@ -16,10 +16,10 @@ fn main() -> Result<()> {
     println!("cargo:rerun-if-changed={}", schema_path.display());
 
     // Ensure output directory exists
-    if let Some(parent) = manifest_path.parent() {
-        if !parent.exists() {
-            fs::create_dir_all(parent)?;
-        }
+    if let Some(parent) = manifest_path.parent()
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent)?;
     }
 
     heroku_registry_gen::write_manifest(schema_path, manifest_path)

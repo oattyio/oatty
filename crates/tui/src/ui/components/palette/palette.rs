@@ -275,10 +275,10 @@ impl Component for PaletteComponent {
             ));
         }
         spans.push(Span::styled(app.palette.input(), base_style));
-        if let Some(ghost) = app.palette.ghost_text() {
-            if !ghost.is_empty() {
-                spans.push(Span::styled(ghost.as_str(), theme::text_muted()));
-            }
+        if let Some(ghost) = app.palette.ghost_text()
+            && !ghost.is_empty()
+        {
+            spans.push(Span::styled(ghost.as_str(), theme::text_muted()));
         }
         let p = Paragraph::new(Line::from(spans)).block(Block::default());
         f.render_widget(p, splits[0]);
