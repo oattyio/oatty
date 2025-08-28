@@ -3,9 +3,7 @@
 //! This module provides a component for rendering the table modal, which displays
 //! JSON results from command execution in a tabular format with scrolling and
 //! navigation capabilities.
-
-use std::collections::{BTreeSet, HashMap};
-
+use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -13,8 +11,9 @@ use ratatui::{
     text::{Line, Span},
     widgets::*,
 };
-use serde_json::{Map, Value};
+use serde_json::{Value};
 
+use crate::ui::utils::{get_scored_keys, infer_columns_from_json};
 use crate::{
     app, theme,
     ui::{components::component::Component, utils::centered_rect},
@@ -68,8 +67,15 @@ impl TableComponent {
         Self
     }
 
-    /// Renders a JSON array as a table with offset support.
-    pub fn render_json_table(&self, frame: &mut Frame, area: Rect, json: &Value, offset: usize) {
+    /// Renders a JSON array as a table with offset support using known columns.
+    pub fn render_json_table_with_columns(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        json: &Value,
+        offset: usize,
+        columns: &[String],
+    ) {
         // Find the array to render: either the value itself, or the first array field of an object
         let arr = match json {
             Value::Array(a) => Some(a.as_slice()),
@@ -91,23 +97,10 @@ impl TableComponent {
             return;
         }
 
-        let columns = self.infer_columns(arr);
         let headers: Vec<_> = columns
             .iter()
             .map(|header| Cell::from(self.normalize_header(header)).style(theme::title_style()))
             .collect();
-
-        // Build rows
-        let mut rows: Vec<Row> = Vec::new();
-        for item in arr.iter() {
-            let mut cells: Vec<Cell> = Vec::new();
-            for key in &columns {
-                let val = item.get(key).unwrap_or(&Value::Null);
-                let txt = self.render_value(key, val);
-                cells.push(Cell::from(txt).style(theme::text_style()));
-            }
-            rows.push(Row::new(cells));
-        }
 
         // Column widths: split area width evenly with a floor
         let col_count = columns.len() as u16;
@@ -125,13 +118,21 @@ impl TableComponent {
         let inner_height = area.height.saturating_sub(2); // block borders
         let header_rows = 1u16;
         let visible = inner_height.saturating_sub(header_rows).max(1) as usize;
-        let start = offset.min(rows.len().saturating_sub(1));
-        let end = (start + visible).min(rows.len());
-        let rows_slice = if start < end {
-            rows[start..end].to_vec()
-        } else {
-            Vec::new()
-        };
+        let total_rows = arr.len();
+        let start = offset.min(total_rows.saturating_sub(1));
+        let end = (start + visible).min(total_rows);
+        let mut rows_slice: Vec<Row> = Vec::with_capacity(end.saturating_sub(start));
+        if start < end {
+            for item in &arr[start..end] {
+                let mut cells: Vec<Cell> = Vec::with_capacity(columns.len());
+                for key in columns.iter() {
+                    let val = item.get(key).unwrap_or(&Value::Null);
+                    let txt = self.render_value(key, val);
+                    cells.push(Cell::from(txt).style(theme::text_style()));
+                }
+                rows_slice.push(Row::new(cells));
+            }
+        }
 
         let table = Table::new(rows_slice, widths)
             .header(Row::new(headers))
@@ -145,6 +146,21 @@ impl TableComponent {
             .row_highlight_style(theme::list_highlight_style());
 
         frame.render_widget(table, area);
+
+        // Scrollbar indicating vertical position within table rows
+        if total_rows > 0 {
+            let mut sb_state = ScrollbarState::new(total_rows).position(start);
+            let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .thumb_style(theme::title_style().fg(theme::ACCENT))
+                .track_style(theme::text_muted());
+            frame.render_stateful_widget(sb, area, &mut sb_state);
+        }
+    }
+
+    /// Renders a JSON array as a table with offset support.
+    pub fn render_json_table(&self, frame: &mut Frame, area: Rect, json: &Value, offset: usize) {
+        let cols = infer_columns_from_json(json);
+        self.render_json_table_with_columns(frame, area, json, offset, &cols);
     }
 
     /// Renders JSON as key-value pairs or plain text.
@@ -152,7 +168,7 @@ impl TableComponent {
         match json {
             Value::Object(map) => {
                 // Sort keys using the same scoring
-                let keys: Vec<String> = self.get_scored_keys(map);
+                let keys: Vec<String> = get_scored_keys(map);
                 let mut lines: Vec<Line> = Vec::new();
                 for header in keys.iter().take(24) {
                     let val = self.render_value(header, map.get(header).unwrap_or(&Value::Null));
@@ -194,114 +210,8 @@ impl TableComponent {
         }
     }
 
-    // Helper methods moved from tables.rs
-    fn infer_columns(&self, arr: &[Value]) -> Vec<String> {
-        let mut score: HashMap<String, i32> = HashMap::new();
-        let mut seen: BTreeSet<String> = BTreeSet::new();
-        let sample = arr.iter().take(50); // sample up to 50 rows
-        for item in sample {
-            if let Value::Object(map) = item {
-                for (header, v) in map.iter() {
-                    seen.insert(header.clone());
-                    let mut s = self.base_key_score(header) + self.property_frequency_boost(header);
-                    // Penalize nested arrays/objects (not scalar-ish)
-                    match v {
-                        Value::Array(a) => s -= (a.len() as i32).min(3) + 3,
-                        Value::Object(_) => s -= 5,
-                        Value::String(sv) if sv.len() > 80 => s -= 3,
-                        _ => {}
-                    }
-                    *score.entry(header.clone()).or_insert(0) += s;
-                }
-            }
-        }
-        let mut keys: Vec<(String, i32)> = seen
-            .into_iter()
-            .map(|header| (header.clone(), *score.get(&header).unwrap_or(&0)))
-            .collect();
-        keys.sort_by(|a, b| b.1.cmp(&a.1));
-        let mut cols: Vec<String> = keys.into_iter().take(6).map(|(header, _)| header).collect();
-        if cols.len() < 4 {
-            // Ensure at least 4 columns by adding additional keys by frequency of appearance
-            let mut freq: HashMap<String, usize> = HashMap::new();
-            for item in arr.iter().take(100) {
-                if let Value::Object(map) = item {
-                    for header in map.keys() {
-                        *freq.entry(header.clone()).or_insert(0) += 1;
-                    }
-                }
-            }
-            let mut extras: Vec<(String, usize)> =
-                freq.into_iter().filter(|(header, _)| !cols.contains(header)).collect();
-            extras.sort_by(|a, b| b.1.cmp(&a.1));
-            for (header, _) in extras.into_iter() {
-                cols.push(header);
-                if cols.len() >= 4 {
-                    break;
-                }
-            }
-        }
-        cols
-    }
-
-    /// Applies frequency-based scoring boost for common API properties.
-    ///
-    /// This function provides additional scoring based on the frequency
-    /// of property names in typical API responses.
-    ///
-    /// # Arguments
-    ///
-    /// * `header` - The column key to score
-    ///
-    /// # Returns
-    ///
-    /// A boost score for common properties.
-    fn property_frequency_boost(&self, header: &str) -> i32 {
-        let l = header.to_lowercase();
-        match l.as_str() {
-            // Very common, highly informative
-            "name" => 11,
-            // Timestamps
-            "created_at" | "updated_at" => 8,
-            // Common resource scoping/identity
-            "app" | "owner" | "email" => 6,
-            // Lifecycle/status
-            "type" | "state" | "status" => 6,
-            // Misc descriptive
-            "description" => 3,
-            // Resource context
-            "region" | "team" | "stack" | "user" | "plan" | "pipeline" => 5,
-            // URLs
-            "url" | "web_url" | "git_url" => 4,
-            // roles and others
-            "role" => 3,
-            _ => 0,
-        }
-    }
-
-    fn base_key_score(&self, key: &str) -> i32 {
-        match key {
-            "name" | "app" | "dyno" | "addon" | "config_var" => 100,
-            "status" | "state" | "type" | "region" | "stack" => 80,
-            "created_at" | "updated_at" | "released_at" => 60,
-            "owner" | "user" | "email" | "description" => 40,
-            "id" => -100,
-            _ => 20,
-        }
-    }
-
     fn normalize_header(&self, key: &str) -> String {
         key.replace('_', " ").to_string()
-    }
-
-    fn get_scored_keys(&self, map: &Map<String, Value>) -> Vec<String> {
-        let mut keys: Vec<String> = map.keys().cloned().collect();
-        keys.sort_by(|a, b| {
-            let sa = self.base_key_score(a) + self.property_frequency_boost(a);
-            let sb = self.base_key_score(b) + self.property_frequency_boost(b);
-            sb.cmp(&sa)
-        });
-        keys
     }
 
     fn render_value(&self, key: &str, value: &Value) -> String {
@@ -318,7 +228,7 @@ impl TableComponent {
             Value::Null => "null".to_string(),
             // Take the highest scoring key from the object as a string
             Value::Object(map) => {
-                if let Some(key) = self.get_scored_keys(&map).get(0) {
+                if let Some(key) = get_scored_keys(&map).get(0) {
                     let value = map.get(key).unwrap();
                     if let Some(s) = value.as_str() {
                         return s.to_string();
@@ -377,15 +287,11 @@ impl Component for TableComponent {
             .constraints([Constraint::Min(1), Constraint::Length(1)])
             .split(inner);
 
-        if let Some(json) = app.table.selected_result_json() {
-            let has_array = match json {
-                Value::Array(a) => !a.is_empty(),
-                Value::Object(m) => m.values().any(|v| matches!(v, Value::Array(_))),
-                _ => false,
-            };
-
-            if has_array {
-                self.render_json_table(frame, splits[0], json, app.table.count_offset());
+        let cols = app.table.cached_columns().cloned();
+        let json = app.table.selected_result_json();
+        if let Some(json) = json {
+            if let Some(cols) = cols {
+                self.render_json_table_with_columns(frame, splits[0], json, app.table.count_offset(), &cols);
             } else {
                 self.render_kv_or_text(frame, splits[0], json);
             }

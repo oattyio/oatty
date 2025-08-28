@@ -7,7 +7,6 @@ use heroku_types::CommandSpec;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    symbols::line,
     text::{Line, Span, Text},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };

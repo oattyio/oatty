@@ -101,6 +101,9 @@ pub fn from_effects(app: &mut app::App, effects: Vec<Effect>) -> Vec<Cmd> {
                     out.push(Cmd::ClipboardSet(cmd));
                 }
             }
+            Effect::CopyLogsRequested(text) => {
+                out.push(Cmd::ClipboardSet(text));
+            }
         }
     }
     out
@@ -129,7 +132,7 @@ pub fn run_cmds(app: &mut app::App, commands: Vec<Cmd>) {
             Cmd::ClipboardSet(text) => {
                 // Perform clipboard write and log outcome
                 match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text.clone())) {
-                    Ok(()) => app.logs.entries.push(format!("Copied: {}", text)),
+                    Ok(()) => (),
                     Err(e) => app.logs.entries.push(format!("Clipboard error: {}", e)),
                 }
                 // Limit log size

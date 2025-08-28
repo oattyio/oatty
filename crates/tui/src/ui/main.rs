@@ -67,6 +67,7 @@ fn render_command_palette(f: &mut Frame, app: &mut App, palette: &mut PaletteCom
 /// * `app` - The application state
 /// * `area` - The area to render hints in
 fn render_hints(f: &mut Frame, app: &mut App, hints: &mut HintBarComponent, area: Rect) {
+    // Always render palette hints here; logs hints are drawn inside the logs block now.
     hints.render(f, area, app);
 }
 

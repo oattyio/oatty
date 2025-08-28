@@ -32,6 +32,7 @@ pub fn run(registry: heroku_registry::Registry) -> Result<()> {
     let _ = palette_component.init();
     let mut hint_bar_component = HintBarComponent::new();
     let _ = hint_bar_component.init();
+    
     let mut logs_component = LogsComponent::new();
     let _ = logs_component.init();
     let mut builder_component = BuilderComponent::new();
@@ -126,12 +127,47 @@ fn handle_key(
         app.builder.apply_visibility(false);
         return Ok(false);
     }
-    // Default palette interaction when not in builder
-    if !app.builder.is_visible() {
-        if palette.handle_key(app, key)? {
-            return Ok(false);
-        }
+    // Logs detail takes precedence for navigation/copy while open
+    if app.logs.detail.is_some() {
+        let mut logs = LogsComponent::new();
+        let effects = logs.handle_key_events(app, key);
+        let cmds = crate::cmd::from_effects(app, effects);
+        crate::cmd::run_cmds(app, cmds);
         return Ok(false);
+    }
+
+    // Default palette/logs interaction when not in builder
+    if !app.builder.is_visible() {
+        // Top-level focus toggle with Tab / Shift+Tab
+        if key.code == KeyCode::Tab && !key.modifiers.contains(KeyModifiers::CONTROL) {
+            // Only toggle focus with Tab when not interacting with palette suggestions
+            let palette_busy = app.palette.is_suggestions_open() || !app.palette.input().is_empty();
+            if palette_busy && matches!(app.main_focus, app::MainFocus::Palette) {
+                // Let palette handle Tab for suggestions/accept
+            } else {
+                app.main_focus = match app.main_focus {
+                    app::MainFocus::Palette => app::MainFocus::Logs,
+                    app::MainFocus::Logs => app::MainFocus::Palette,
+                };
+                return Ok(false);
+            }
+        }
+
+        match app.main_focus {
+            app::MainFocus::Logs => {
+                let mut logs = LogsComponent::new();
+                let effects = logs.handle_key_events(app, key);
+                let cmds = crate::cmd::from_effects(app, effects);
+                crate::cmd::run_cmds(app, cmds);
+                return Ok(false);
+            }
+            app::MainFocus::Palette => {
+                if palette.handle_key(app, key)? {
+                    return Ok(false);
+                }
+                return Ok(false);
+            }
+        }
     }
 
     let effects = builder.handle_key(app, key)?;

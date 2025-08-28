@@ -1,8 +1,13 @@
+use serde_json::Value;
+
+use crate::ui::utils::infer_columns_from_json;
+
 #[derive(Debug)]
 pub struct TableState {
-    pub show: bool,
-    pub offset: usize,
-    pub result_json: Option<serde_json::Value>,
+    show: bool,
+    offset: usize,
+    result_json: Option<serde_json::Value>,
+    cached_columns: Option<Vec<String>>,
 }
 
 impl Default for TableState {
@@ -11,6 +16,7 @@ impl Default for TableState {
             show: false,
             offset: 0,
             result_json: None,
+            cached_columns: None,
         }
     }
 }
@@ -25,6 +31,28 @@ impl TableState {
     }
     pub fn selected_result_json(&self) -> Option<&serde_json::Value> {
         self.result_json.as_ref()
+    }
+    pub fn cached_columns(&mut self) -> Option<&Vec<String>> {
+        if self.result_json.is_none() {
+            return None;
+        }
+        if self.cached_columns.is_some() {
+            return self.cached_columns.as_ref();
+        }
+
+        let json = self.result_json.as_ref().unwrap();
+        let has_array = match json {
+            Value::Array(a) => !a.is_empty(),
+            Value::Object(m) => m.values().any(|v| matches!(v, Value::Array(_))),
+            _ => false,
+        };
+        let cols = if has_array {
+            Some(infer_columns_from_json(json))
+        } else {
+            None
+        };
+        self.cached_columns = cols;
+        self.cached_columns.as_ref()
     }
 
     // Reducers
@@ -44,6 +72,7 @@ impl TableState {
 
     pub fn apply_result_json(&mut self, value: Option<serde_json::Value>) {
         self.result_json = value;
+        self.cached_columns = None;
     }
 
     pub fn reduce_scroll(&mut self, delta: isize) {

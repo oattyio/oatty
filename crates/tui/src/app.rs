@@ -9,6 +9,7 @@ use std::sync::mpsc::Receiver;
 use heroku_registry::Registry;
 use heroku_types::{ExecOutcome, Screen};
 
+use crate::ui::components::logs::state::LogEntry;
 use crate::{
     start_palette_execution,
     ui::components::{
@@ -70,6 +71,8 @@ pub struct App {
     pub throbber_idx: usize,
     /// Receiver for async execution results
     pub exec_receiver: Option<Receiver<ExecOutcome>>,
+    /// Top-level focus between palette and logs
+    pub main_focus: MainFocus,
 }
 
 /// Messages that can be sent to update the application state.
@@ -130,6 +133,23 @@ pub enum Msg {
     Resize(u16, u16),
     /// Background execution completed with outcome
     ExecCompleted(ExecOutcome),
+    // Logs interactions
+    /// Move log selection cursor up
+    LogsUp,
+    /// Move log selection cursor down
+    LogsDown,
+    /// Extend selection upwards (Shift+Up)
+    LogsExtendUp,
+    /// Extend selection downwards (Shift+Down)
+    LogsExtendDown,
+    /// Open details for the current selection
+    LogsOpenDetail,
+    /// Close details view and return to list
+    LogsCloseDetail,
+    /// Copy current selection (redacted)
+    LogsCopy,
+    /// Toggle pretty/raw for single API response
+    LogsTogglePretty,
 }
 
 /// Side effects that can be triggered by state changes.
@@ -140,6 +160,15 @@ pub enum Msg {
 pub enum Effect {
     /// Request to copy the current command to clipboard
     CopyCommandRequested,
+    /// Request to copy the current logs selection (already rendered/redacted)
+    CopyLogsRequested(String),
+}
+
+/// Top-level focus for main screen interactions
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MainFocus {
+    Palette,
+    Logs,
 }
 
 impl App {
@@ -176,6 +205,7 @@ impl App {
             executing: false,
             throbber_idx: 0,
             exec_receiver: None,
+            main_focus: MainFocus::Palette,
         };
         app.builder.set_all_commands(app.ctx.registry.commands.clone());
         app.palette.set_all_commands(app.ctx.registry.commands.clone());
@@ -287,6 +317,10 @@ impl App {
                         Ok(_) => {
                             let input = &self.palette.input();
                             self.logs.entries.push(format!("Running: {}", input));
+                            self.logs.rich_entries.push(LogEntry::Text {
+                                level: Some("info".into()),
+                                msg: format!("Running: {}", input),
+                            });
                             // Execution started successfully
                         }
                         Err(e) => {
@@ -309,18 +343,32 @@ impl App {
                 self.table.reduce_end();
             }
             Msg::ExecCompleted(out) => {
+                let raw = out.log;
                 self.exec_receiver = None;
                 self.executing = false;
-                self.logs.entries.push(out.log);
+                // Pre-redact for list display to avoid per-frame redaction
+                self.logs.entries.push(heroku_util::redact_sensitive(&raw));
+                self.logs.rich_entries.push(LogEntry::Api {
+                    status: 0,
+                    raw,
+                    json: out.result_json.clone(),
+                });
                 let log_len = self.logs.entries.len();
                 if log_len > 500 {
                     let _ = self.logs.entries.drain(0..log_len - 500);
+                }
+                let rich_len = self.logs.rich_entries.len();
+                if rich_len > 500 {
+                    let _ = self.logs.rich_entries.drain(0..rich_len - 500);
                 }
                 self.table.apply_result_json(out.result_json);
                 self.table.apply_show(out.open_table);
                 // Clear palette input and suggestion state
                 self.palette.reduce_clear_all();
             }
+            // Placeholder handlers for upcoming logs features
+            Msg::LogsUp | Msg::LogsDown | Msg::LogsExtendUp | Msg::LogsExtendDown => {}
+            Msg::LogsOpenDetail | Msg::LogsCloseDetail | Msg::LogsCopy | Msg::LogsTogglePretty => {}
         }
         effects
     }
