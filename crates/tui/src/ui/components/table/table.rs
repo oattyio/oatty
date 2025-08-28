@@ -11,7 +11,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::*,
 };
-use serde_json::{Value};
+use serde_json::Value;
 
 use crate::ui::utils::{get_scored_keys, infer_columns_from_json};
 use crate::{

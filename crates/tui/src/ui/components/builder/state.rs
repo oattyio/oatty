@@ -176,18 +176,32 @@ impl BuilderState {
 
     // Internal helpers for managing field/selection state
     fn apply_command_selection(&mut self, command: CommandSpec) {
-        let fields = command
-            .flags
-            .iter()
-            .map(|f| Field {
+        let CommandSpec {
+            flags, positional_args, ..
+        } = &command;
+        let mut fields: Vec<Field> = Vec::with_capacity(flags.len() + positional_args.len());
+
+        positional_args.iter().for_each(|a| {
+            fields.push(Field {
+                name: a.clone(),
+                required: true,
+                is_bool: false,
+                value: String::new(),
+                enum_values: vec![],
+                enum_idx: None,
+            });
+        });
+
+        flags.iter().for_each(|f| {
+            fields.push(Field {
                 name: f.name.clone(),
                 required: f.required,
                 is_bool: f.r#type == "boolean",
                 value: f.default_value.clone().unwrap_or_default(),
                 enum_values: f.enum_values.clone(),
                 enum_idx: None,
-            })
-            .collect();
+            });
+        });
         self.set_input_fields(fields);
         self.apply_field_idx(0);
         self.selected_command = Some(command);

@@ -1,12 +1,12 @@
 //! Logs hint bar showing keyboard shortcuts when logs are focused.
 
+use ratatui::style::{Color, Style};
 use ratatui::{
     Frame,
     layout::Rect,
     text::{Line, Span},
     widgets::Paragraph,
 };
-use ratatui::style::{Color, Style};
 
 use crate::{app, theme, ui::components::component::Component};
 

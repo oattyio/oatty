@@ -32,7 +32,7 @@ pub fn run(registry: heroku_registry::Registry) -> Result<()> {
     let _ = palette_component.init();
     let mut hint_bar_component = HintBarComponent::new();
     let _ = hint_bar_component.init();
-    
+
     let mut logs_component = LogsComponent::new();
     let _ = logs_component.init();
     let mut builder_component = BuilderComponent::new();
@@ -51,31 +51,38 @@ pub fn run(registry: heroku_registry::Registry) -> Result<()> {
     let tick_rate = Duration::from_millis(250);
     let mut last_tick = Instant::now();
 
+    // Initial render so UI is visible before any events
+    terminal.draw(|frame| {
+        ui::draw(
+            frame,
+            &mut app,
+            &mut palette_component,
+            &mut hint_bar_component,
+            &mut logs_component,
+            &mut builder_component,
+            &mut help_component,
+            &mut table_component,
+        )
+    })?;
+
     loop {
+        let mut should_render = false;
+
         // Check for async execution completion and route through TEA message
         if let Some(rx) = app.exec_receiver.as_ref() {
             if let Ok(out) = rx.try_recv() {
                 let _ = app.update(app::Msg::ExecCompleted(out));
+                should_render = true;
             }
         }
-        terminal.draw(|frame| {
-            ui::draw(
-                frame,
-                &mut app,
-                &mut palette_component,
-                &mut hint_bar_component,
-                &mut logs_component,
-                &mut builder_component,
-                &mut help_component,
-                &mut table_component,
-            )
-        })?;
 
-        let timeout = tick_rate
-            .checked_sub(last_tick.elapsed())
-            .unwrap_or_else(|| Duration::from_secs(0));
-
-        if event::poll(timeout)? {
+        // Poll for terminal events; when executing, use tick rate, otherwise a longer wait
+        let poll_timeout = if app.executing {
+            tick_rate
+        } else {
+            Duration::from_secs(1)
+        };
+        if event::poll(poll_timeout)? {
             match event::read()? {
                 Event::Key(key) => {
                     if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -84,17 +91,36 @@ pub fn run(registry: heroku_registry::Registry) -> Result<()> {
                     if handle_key(&mut app, &mut palette_component, &mut builder_component, key)? {
                         break;
                     }
+                    should_render = true;
                 }
                 Event::Resize(w, h) => {
                     let _ = app.update(app::Msg::Resize(w, h));
+                    should_render = true;
                 }
                 _ => {}
             }
         }
 
-        if last_tick.elapsed() >= tick_rate {
+        // Drive periodic animations (e.g., throbber) only when executing
+        if app.executing && last_tick.elapsed() >= tick_rate {
             last_tick = Instant::now();
             let _ = app.update(app::Msg::Tick);
+            should_render = true;
+        }
+
+        if should_render {
+            terminal.draw(|frame| {
+                ui::draw(
+                    frame,
+                    &mut app,
+                    &mut palette_component,
+                    &mut hint_bar_component,
+                    &mut logs_component,
+                    &mut builder_component,
+                    &mut help_component,
+                    &mut table_component,
+                )
+            })?;
         }
     }
 

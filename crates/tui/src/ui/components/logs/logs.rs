@@ -14,7 +14,10 @@ use ratatui::{
 };
 use serde_json::Value;
 
-use super::{state::{LogDetailView, LogEntry}, hint_bar::LogsHintBarComponent};
+use super::{
+    hint_bar::LogsHintBarComponent,
+    state::{LogDetailView, LogEntry},
+};
 use crate::{
     app, theme,
     ui::{
