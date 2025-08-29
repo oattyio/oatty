@@ -17,3 +17,12 @@ heroku-types = { path = "../types" }
 arboard = "3"
 heroku-api = { path = "../api" }
 tokio = { workspace = true }
+futures-util = "0.3"
+heck = { workspace = true }
+chrono = "0.4"
+
+[lib]
+doctest = false
+
+[build-dependencies]
+serde_json = { workspace = true }

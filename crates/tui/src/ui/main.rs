@@ -17,7 +17,7 @@ use ratatui::prelude::*;
 /// * `app` - The application state containing all UI data
 #[allow(clippy::too_many_arguments)]
 pub fn draw(
-    f: &mut Frame,
+    frame: &mut Frame,
     app: &mut App,
     palette: &mut PaletteComponent,
     hints: &mut HintBarComponent,
@@ -26,18 +26,18 @@ pub fn draw(
     help: &mut HelpComponent,
     table: &mut TableComponent,
 ) {
-    let size = f.area();
+    let size = frame.area();
 
     // Create main layout with vertical sections
     let chunks = MainLayout::vertical_layout(size, app);
 
     // Render main UI components
-    render_command_palette(f, app, palette, chunks[0]);
-    render_hints(f, app, hints, chunks[1]);
-    render_logs(f, app, logs, chunks[2]);
+    render_command_palette(frame, app, palette, chunks[0]);
+    render_hints(frame, app, hints, chunks[1]);
+    render_logs(frame, app, logs, chunks[2]);
 
     // Render modal overlays if active
-    render_modals(f, app, builder, help, table);
+    render_modals(frame, app, builder, help, table);
 }
 
 // Creates the main vertical layout for the application.

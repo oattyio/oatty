@@ -48,6 +48,8 @@ mod tests {
         let root: serde_json::Value = json!({
             "definitions": {
                 "str": {"type": "string"},
+                "bool_arr": {"type": ["boolean"]},
+                "nullable_str": {"type": ["string", "null"]},
                 "union": {
                     "anyOf": [
                         {"$ref": "#/definitions/str"},
@@ -65,6 +67,12 @@ mod tests {
 
         let schema = json!({"$ref": "#/definitions/union"});
         assert_eq!(get_type(&schema, &root), "string");
+
+        let schema_bool_arr = json!({"$ref": "#/definitions/bool_arr"});
+        assert_eq!(get_type(&schema_bool_arr, &root), "boolean");
+
+        let schema_nullable = json!({"$ref": "#/definitions/nullable_str"});
+        assert_eq!(get_type(&schema_nullable, &root), "string");
 
         let schema_mixed = json!({"$ref": "#/definitions/mixed"});
         assert_eq!(get_type(&schema_mixed, &root), "string"); // default

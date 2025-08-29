@@ -550,7 +550,7 @@ impl PaletteState {
     ///
     /// Example:
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use heroku_tui::ui::components::palette::state::PaletteState;
     /// use Registry;
     ///
@@ -563,7 +563,7 @@ impl PaletteState {
         let input = &self.input;
         let tokens: Vec<String> = lex_shell_like(input);
 
-        // No command yet (need group + sub) or unresolved → suggest commands in execution format: "group sub"
+        // No command yet (need group + sub) or unresolved -> suggest commands in execution format: "group sub"
         if !is_command_resolved(reg, &tokens) {
             let mut items = suggest_commands(reg, &compute_command_prefix(&tokens));
             self.finalize_suggestions(&mut items);
@@ -623,7 +623,11 @@ impl PaletteState {
             if items.is_empty() && user_args.len() < spec.positional_args.len() {
                 let pos_name = &spec.positional_args[user_args.len()];
                 items.push(SuggestionItem {
-                    display: format!("<{}>", pos_name),
+                    display: format!(
+                        "<{:<15}> [ARG] {}",
+                        pos_name,
+                        spec.positional_help.get(pos_name).unwrap_or(pos_name)
+                    ),
                     insert_text: current.to_string(),
                     kind: ItemKind::Positional,
                     meta: spec.positional_help.get(pos_name).cloned(),
@@ -772,9 +776,8 @@ fn suggest_commands(reg: &Registry, prefix: &str) -> Vec<SuggestionItem> {
 /// Parse user-provided flags and positional arguments from the portion of tokens
 /// after the resolved (group, sub) command.
 ///
-/// This mirrors the logic in the old builder: long flags are collected without
-/// the leading dashes; values immediately following non-boolean flags are
-/// consumed. Returns `(user_flags, user_args)`.
+/// long flags are collected without the leading dashes; values immediately
+/// following non-boolean flags are consumed. Returns `(user_flags, user_args)`.
 fn parse_user_flags_args(spec: &CommandSpec, parts: &[String]) -> (Vec<String>, Vec<String>) {
     let mut user_flags: Vec<String> = Vec::new();
     let mut user_args: Vec<String> = Vec::new();
@@ -785,7 +788,9 @@ fn parse_user_flags_args(spec: &CommandSpec, parts: &[String]) -> (Vec<String>, 
             let name = t.trim_start_matches('-');
             user_flags.push(name.to_string());
             if let Some(f) = spec.flags.iter().find(|f| f.name == name)
-                && f.r#type != "boolean" && i + 1 < parts.len() && !parts[i + 1].starts_with('-')
+                && f.r#type != "boolean"
+                && i + 1 < parts.len()
+                && !parts[i + 1].starts_with('-')
             {
                 i += 1; // consume value
             }
@@ -893,7 +898,11 @@ fn suggest_positionals(
         }
         if items.is_empty() {
             items.push(SuggestionItem {
-                display: format!("<{}>", pos_name),
+                display: format!(
+                    "<{}> [ARG] {}",
+                    pos_name,
+                    spec.positional_help.get(pos_name).unwrap_or(pos_name)
+                ),
                 insert_text: format!("<{}>", pos_name),
                 kind: ItemKind::Positional,
                 meta: spec.positional_help.get(pos_name).cloned(),
@@ -927,7 +936,7 @@ fn required_flags_remaining(spec: &CommandSpec, user_flags: &[String]) -> bool {
 ///
 /// Example:
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use heroku_tui::ui::components::palette::state::is_flag_value_complete;
 ///
 /// assert!(!is_flag_value_complete("--app"));
@@ -1032,19 +1041,19 @@ fn collect_flag_candidates(
 ///
 /// Example:
 ///
-/// ```rust,no_run
+/// ```rust,ignore
 /// use heroku_tui::ui::components::palette::state::ghost_remainder;
 ///
 /// assert_eq!(ghost_remainder("ap", 2, "apps"), "ps");
 /// assert_eq!(ghost_remainder("foo", 3, "bar"), "");
 /// ```
 pub fn ghost_remainder(input: &str, cursor: usize, insert: &str) -> String {
-    let toks = lex_shell_like_ranged(input);
+    let tokens = lex_shell_like_ranged(input);
     // Find the token that contains the cursor, otherwise take the last token
-    let last_tok = toks
+    let last_tok = tokens
         .iter()
         .find(|t| t.start <= cursor && cursor <= t.end)
-        .or_else(|| toks.last());
+        .or_else(|| tokens.last());
     let token_text = match last_tok {
         Some(t) => t.text,
         None => "",

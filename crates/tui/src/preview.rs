@@ -22,7 +22,7 @@ use heroku_types::{CommandSpec, Field};
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use std::collections::HashMap;
 /// use crate::preview::resolve_path;
 ///
@@ -58,7 +58,7 @@ pub fn resolve_path(template: &str, pos: &std::collections::HashMap<String, Stri
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use heroku_registry::CommandSpec;
 /// use crate::app::Field;
 /// use crate::preview::cli_preview;

@@ -6,4 +6,5 @@
 pub mod components;
 pub mod layout;
 pub mod main;
+pub mod theme;
 pub mod utils;

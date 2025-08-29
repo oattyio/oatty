@@ -470,8 +470,22 @@ fn get_type(schema: &Value, root: &Value) -> String {
         }
     }
 
+    // Handle direct string type
     if let Some(ty) = schema.get("type").and_then(|x| x.as_str()) {
         return ty.to_string();
+    }
+    // Handle JSON Schema where type can be an array of strings (union), e.g. ["boolean"], ["string","null"]
+    if let Some(arr) = schema.get("type").and_then(|x| x.as_array()) {
+        let mut types: std::collections::HashSet<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect();
+        // Prefer non-null concrete type when present
+        types.retain(|t| t != "null");
+        if types.len() == 1 {
+            return types.into_iter().next().unwrap();
+        }
+        // If multiple or empty after removing null, fall back to string
     }
 
     if let Some(any) = schema.get("anyOf").and_then(|x| x.as_array()) {

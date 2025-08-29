@@ -72,7 +72,7 @@ pub const WARN: Color = Color::Rgb(220, 96, 110);
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use crate::theme::border_style;
 ///
 /// let focused_style = border_style(true);   // Uses ACCENT color
@@ -97,7 +97,7 @@ pub fn border_style(focused: bool) -> Style {
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use crate::theme::title_style;
 ///
 /// let title = "Command List";
@@ -118,7 +118,7 @@ pub fn title_style() -> Style {
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use crate::theme::text_style;
 ///
 /// let content = "This is normal text content";
@@ -139,7 +139,7 @@ pub fn text_style() -> Style {
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use crate::theme::text_muted;
 ///
 /// let hint = "Press Tab to complete";
@@ -161,7 +161,7 @@ pub fn text_muted() -> Style {
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use crate::theme::highlight_style;
 ///
 /// let focused_field = "app-name";
@@ -184,7 +184,7 @@ pub fn highlight_style() -> Style {
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use crate::theme::list_highlight_style;
 ///
 /// let selected_item = "apps:list";

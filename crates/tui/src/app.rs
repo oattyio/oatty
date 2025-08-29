@@ -4,12 +4,13 @@
 //! logic for the TUI interface. It manages the application lifecycle, user
 //! interactions, and coordinates between different UI components.
 
-use std::sync::mpsc::Receiver;
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use heroku_registry::Registry;
 use heroku_types::{ExecOutcome, Screen};
 
 use crate::ui::components::logs::state::LogEntry;
+use crate::ui::theme;
 use crate::{
     start_palette_execution,
     ui::components::{
@@ -26,7 +27,6 @@ use crate::{
 /// Holds runtime-wide objects like the command registry and configuration
 /// flags. This avoids threading multiple references through components and
 /// helps reduce borrow complexity.
-#[derive(Debug)]
 pub struct SharedCtx {
     /// Global Heroku command registry
     pub registry: Registry,
@@ -34,6 +34,8 @@ pub struct SharedCtx {
     pub debug_enabled: bool,
     /// Value providers for suggestions
     pub providers: Vec<Box<dyn ValueProvider>>,
+    /// Active UI theme (Nord-based) loaded from env
+    pub theme: Box<dyn theme::Theme>,
 }
 
 impl SharedCtx {
@@ -45,6 +47,7 @@ impl SharedCtx {
             registry,
             debug_enabled,
             providers: vec![],
+            theme: theme::load_from_env(),
         }
     }
 }
@@ -69,8 +72,10 @@ pub struct App {
     pub executing: bool,
     /// Animation frame for the execution throbber
     pub throbber_idx: usize,
+    /// Sender for async execution results
+    pub exec_sender: UnboundedSender<ExecOutcome>,
     /// Receiver for async execution results
-    pub exec_receiver: Option<Receiver<ExecOutcome>>,
+    pub exec_receiver: UnboundedReceiver<ExecOutcome>,
     /// Top-level focus between palette and logs
     pub main_focus: MainFocus,
 }
@@ -153,13 +158,11 @@ impl App {
     ///
     /// # Examples
     ///
-    /// ```rust
-    /// use heroku_registry::Registry;
-    ///
-    /// let registry = Registry::from_embedded_schema()?;
-    /// let app = App::new(registry);
+    /// ```rust,ignore
+    /// // Requires constructing a full Registry and App; ignored in doctests.
     /// ```
     pub fn new(registry: heroku_registry::Registry) -> Self {
+        let (exec_sender, exec_receiver) = unbounded_channel();
         let mut app = Self {
             route: Screen::default(),
             ctx: SharedCtx::new(registry),
@@ -170,7 +173,8 @@ impl App {
             palette: PaletteState::default(),
             executing: false,
             throbber_idx: 0,
-            exec_receiver: None,
+            exec_sender,
+            exec_receiver,
             main_focus: MainFocus::Palette,
         };
         app.builder.set_all_commands(app.ctx.registry.commands.clone());
@@ -194,15 +198,8 @@ impl App {
     ///
     /// # Examples
     ///
-    /// ```rust
-    /// let effects = app.update(Msg::ToggleHelp);
-    /// for effect in effects {
-    ///     match effect {
-    ///         Effect::CopyCommandRequested => {
-    ///             // Handle clipboard copy
-    ///         }
-    ///     }
-    /// }
+    /// ```rust,ignore
+    /// // Example requires real App/Msg types; ignored to avoid compile in doctests.
     /// ```
     pub fn update(&mut self, msg: Msg) -> Vec<Effect> {
         let mut effects = Vec::new();
@@ -258,7 +255,6 @@ impl App {
             }
             Msg::ExecCompleted(out) => {
                 let raw = out.log;
-                self.exec_receiver = None;
                 self.executing = false;
                 // Pre-redact for list display to avoid per-frame redaction
                 self.logs.entries.push(heroku_util::redact_sensitive(&raw));

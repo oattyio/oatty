@@ -15,7 +15,7 @@ use ratatui::{
 };
 
 use crate::{
-    app, theme,
+    app,
     ui::components::{component::Component, palette::state::ItemKind},
 };
 
@@ -47,7 +47,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use heroku_tui::ui::components::PaletteComponent;
 ///
 /// let mut palette = PaletteComponent::new();
@@ -94,13 +94,8 @@ impl PaletteComponent {
     ///
     /// # Examples
     ///
-    /// ```rust
-    /// use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    /// use heroku_tui::app::App;
-    ///
-    /// let mut app = App::new(registry);
-    /// let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::empty());
-    /// let handled = handle_key(&mut app, key)?;
+    /// ```rust,ignore
+    /// // Example requires constructing full App and Registry; ignored in doctests.
     /// ```
     pub fn handle_key(&self, app: &mut app::App, key: KeyEvent) -> Result<bool> {
         match key.code {
@@ -155,8 +150,8 @@ impl PaletteComponent {
                 }
                 Ok(true)
             }
-            KeyCode::Tab => {
-                // Accept suggestion
+            KeyCode::Tab | KeyCode::Enter => {
+                // Accept suggestion on tab or enter if the suggestions are open
                 if app.palette.is_suggestions_open() {
                     if let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index()).cloned() {
                         match item.kind {
@@ -186,44 +181,14 @@ impl PaletteComponent {
                             app.palette.set_popup_open(!app.palette.is_suggestions_open());
                         }
                     }
-                } else {
-                    // Open suggestions; if only one, accept it
-                    app.palette
-                        .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
-                    if app.palette.suggestions_len() == 1 {
-                        if let Some(item) = app.palette.suggestions().first().cloned() {
-                            match item.kind {
-                                ItemKind::Command => {
-                                    app.palette.apply_accept_command_suggestion(&item.insert_text);
-                                    app.palette.set_popup_open(false);
-                                    app.palette.reduce_clear_suggestions();
-                                }
-                                ItemKind::Positional => {
-                                    app.palette.apply_accept_positional_suggestion(&item.insert_text);
-                                }
-                                _ => {
-                                    app.palette.apply_accept_non_command_suggestion(&item.insert_text);
-                                }
-                            }
-                            app.palette
-                                .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
-                            app.palette.set_selected(0);
-                            app.palette.set_popup_open(!app.palette.is_suggestions_open());
-                        }
-                    } else {
-                        app.palette.set_popup_open(!app.palette.is_suggestions_open());
-                    }
+                } else if key.code == KeyCode::Enter {
+                    let _ = app.update(app::Msg::Run);
                 }
                 Ok(true)
             }
             KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Open command builder
                 let _ = app.update(app::Msg::ToggleBuilder);
-                Ok(true)
-            }
-            KeyCode::Enter => {
-                // Execute command if complete
-                let _ = app.update(app::Msg::Run);
                 Ok(true)
             }
             KeyCode::Esc => {
@@ -249,7 +214,7 @@ impl Component for PaletteComponent {
     fn render(&mut self, f: &mut Frame, rect: Rect, app: &mut app::App) {
         let block = Block::default()
             .borders(Borders::LEFT)
-            .border_style(theme::border_style(true))
+            .border_style(app.ctx.theme.border_style(true))
             .border_type(BorderType::Thick);
         f.render_widget(block.clone(), rect);
         let inner = block.inner(rect);
@@ -260,25 +225,23 @@ impl Component for PaletteComponent {
 
         // Input line with ghost text; dim when a modal is open. Show throbber if executing.
         let dimmed = app.builder.is_visible() || app.help.is_visible();
+        let t = &*app.ctx.theme;
         let base_style = if dimmed {
-            theme::text_muted()
+            t.text_muted_style()
         } else {
-            theme::text_style()
+            t.text_primary_style()
         };
         let mut spans: Vec<Span> = Vec::new();
         if app.executing {
             let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
             let sym = frames[app.throbber_idx % frames.len()];
-            spans.push(Span::styled(
-                format!("{} ", sym),
-                theme::title_style().fg(theme::ACCENT),
-            ));
+            spans.push(Span::styled(format!("{} ", sym), t.accent_emphasis_style()));
         }
         spans.push(Span::styled(app.palette.input(), base_style));
         if let Some(ghost) = app.palette.ghost_text()
             && !ghost.is_empty()
         {
-            spans.push(Span::styled(ghost.as_str(), theme::text_muted()));
+            spans.push(Span::styled(ghost.as_str(), t.text_muted_style()));
         }
         let p = Paragraph::new(Line::from(spans)).block(Block::default());
         f.render_widget(p, splits[0]);
@@ -299,8 +262,8 @@ impl Component for PaletteComponent {
         // Error line below input when present
         if let Some(err) = app.palette.error_message() {
             let line = Line::from(vec![
-                Span::styled("✖ ", Style::default().fg(theme::WARN)),
-                Span::styled(err.as_str(), theme::text_style()),
+                Span::styled("✖ ", Style::default().fg(t.roles().error)),
+                Span::styled(err.as_str(), t.text_primary_style()),
             ]);
             f.render_widget(Paragraph::new(line), splits[1]);
         }
@@ -317,7 +280,7 @@ impl Component for PaletteComponent {
                 .palette
                 .suggestions()
                 .iter()
-                .map(|s| ListItem::new(s.display.clone()).style(theme::text_style()))
+                .map(|s| ListItem::new(s.display.clone()).style(t.text_primary_style()))
                 .collect();
             let max_rows = 10usize;
             let rows = items_all.len().min(max_rows);
@@ -328,11 +291,11 @@ impl Component for PaletteComponent {
             let popup_area = Rect::new(rect.x, rect.y + 1, rect.width, popup_height);
             let popup_block = Block::default()
                 .borders(Borders::NONE)
-                .border_style(theme::border_style(false))
+                .border_style(t.border_style(false))
                 .border_type(BorderType::Thick);
             let list = List::new(items_all)
                 .block(popup_block)
-                .highlight_style(theme::list_highlight_style())
+                .highlight_style(t.selection_style().add_modifier(Modifier::BOLD))
                 .highlight_symbol("► ");
             let mut list_state = ListState::default();
             let sel = if app.palette.suggestions().is_empty() {

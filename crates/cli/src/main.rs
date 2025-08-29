@@ -5,7 +5,6 @@ use heroku_registry::{Registry, build_clap};
 use reqwest::Method;
 use serde_json::{Map, Value};
 use std::collections::HashMap;
-use tracing::Level;
 use tracing_subscriber::fmt;
 
 #[tokio::main]
@@ -43,7 +42,8 @@ async fn main() -> Result<()> {
 
     // No subcommands => TUI
     if matches.subcommand_name().is_none() {
-        return heroku_tui::run(registry).map(|_| ());
+        heroku_tui::run(registry).await?;
+        return Ok(());
     }
 
     run_command(&registry, &matches).await
@@ -78,8 +78,10 @@ async fn main() -> Result<()> {
 /// HEROKU_LOG=error cargo run
 /// ```
 fn init_tracing() {
+    // Respect HEROKU_LOG without imposing a lower max level ceiling.
+    // Example: HEROKU_LOG=debug will now allow `tracing::debug!` to emit.
     let filter = std::env::var("HEROKU_LOG").unwrap_or_else(|_| "info".into());
-    let _ = fmt().with_env_filter(filter).with_max_level(Level::INFO).try_init();
+    let _ = fmt().with_env_filter(filter).try_init();
 }
 
 /// Executes a Heroku API command in CLI mode.

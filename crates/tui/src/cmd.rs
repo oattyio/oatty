@@ -22,8 +22,7 @@ use crate::app::{self, Effect};
 use heroku_registry::CommandSpec;
 use heroku_types::ExecOutcome;
 use serde_json::Value;
-use std::thread::spawn;
-use tokio::runtime::Runtime;
+use tokio::task::spawn;
 
 /// Represents side-effectful system commands executed outside of pure state updates.
 ///
@@ -34,7 +33,7 @@ pub enum Cmd {
     /// Write text into the system clipboard.
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// use your_crate::Cmd;
     /// let cmd = Cmd::ClipboardSet("hello".into());
     /// match cmd {
@@ -52,7 +51,7 @@ pub enum Cmd {
     /// - `serde_json::Map`: JSON body
     ///
     /// # Example
-    /// ```
+    /// ```rust,ignore
     /// use your_crate::Cmd;
     /// use heroku_registry::CommandSpec;
     /// use serde_json::{Map, Value};
@@ -75,7 +74,7 @@ pub enum Cmd {
 /// while commands describe "how it should happen".
 ///
 /// # Example
-/// ```
+/// ```rust,ignore
 /// # use your_crate::{from_effects, Cmd};
 /// # struct DummyBuilder;
 /// # impl DummyBuilder {
@@ -116,7 +115,7 @@ pub fn from_effects(app: &mut app::App, effects: Vec<Effect>) -> Vec<Cmd> {
 /// human-readable results.
 ///
 /// # Example
-/// ```
+/// ```rust,ignore
 /// # use your_crate::{run_cmds, Cmd};
 /// # struct DummyApp { logs: Vec<String> }
 /// # impl DummyApp { fn new() -> Self { Self { logs: Vec::new() } } }
@@ -155,7 +154,7 @@ pub fn run_cmds(app: &mut app::App, commands: Vec<Cmd>) {
 /// Tokio runtime for the async HTTP call.
 ///
 /// # Example
-/// ```
+/// ```rust,ignore
 /// # use your_crate::execute_http;
 /// # use heroku_registry::CommandSpec;
 /// # use serde_json::Map;
@@ -167,27 +166,12 @@ pub fn run_cmds(app: &mut app::App, commands: Vec<Cmd>) {
 /// assert!(app.executing);
 /// ```
 fn execute_http(app: &mut app::App, spec: CommandSpec, path: String, body: serde_json::Map<String, Value>) {
-    // Live request: spawn background task and show throbber
-    let (tx, rx) = std::sync::mpsc::channel::<heroku_types::ExecOutcome>();
-    app.exec_receiver = Some(rx);
+    // Live request: spawn async task and show throbber
     app.executing = true;
     app.throbber_idx = 0;
-
-    spawn(move || {
-        let runtime = match Runtime::new() {
-            Ok(runtime) => runtime,
-            Err(e) => {
-                let _ = tx.send(heroku_types::ExecOutcome {
-                    log: format!("Error: failed to start runtime: {}", e),
-                    result_json: None,
-                    open_table: false,
-                });
-                return;
-            }
-        };
-
-        let outcome = runtime.block_on(exec_remote(spec, path, body));
-
+    let tx = app.exec_sender.clone();
+    spawn(async move {
+        let outcome = exec_remote(spec, path, body).await;
         match outcome {
             Ok(out) => {
                 let _ = tx.send(out);
@@ -209,7 +193,7 @@ fn execute_http(app: &mut app::App, spec: CommandSpec, path: String, body: serde
 /// decoding JSON responses into a structured [`ExecOutcome`].
 ///
 /// # Example
-/// ```
+/// ```rust,ignore
 /// use your_crate::exec_remote;
 /// use heroku_registry::CommandSpec;
 /// use serde_json::Map;

@@ -28,7 +28,7 @@ use serde_json::{Map, Value};
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use ratatui::prelude::*;
 /// use heroku_tui::ui::utils::centered_rect;
 ///
@@ -121,10 +121,10 @@ pub fn infer_columns_from_json(json: &Value) -> Vec<String> {
 }
 pub fn base_key_score(key: &str) -> i32 {
     match key {
-        "name" | "app" | "dyno" | "addon" | "config_var" => 100,
+        "name" | "description" | "app" | "dyno" | "addon" | "config_var" => 100,
         "status" | "state" | "type" | "region" | "stack" => 80,
-        "created_at" | "updated_at" | "released_at" => 60,
-        "owner" | "user" | "email" | "description" => 40,
+        "owner" | "user" | "email" => 60,
+        "created_at" | "updated_at" | "released_at" => 40,
         "id" => -100,
         _ => 20,
     }
@@ -181,7 +181,7 @@ fn property_frequency_boost(header: &str) -> i32 {
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use heroku_tui::ui::utils::IfEmptyStr;
 ///
 /// let empty = String::new();

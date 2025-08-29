@@ -6,6 +6,7 @@
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use heroku_util::redact_sensitive;
+use ratatui::style::{Modifier, Style};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -18,8 +19,9 @@ use super::{
     hint_bar::LogsHintBarComponent,
     state::{LogDetailView, LogEntry},
 };
+use crate::ui::theme::helpers as th;
 use crate::{
-    app, theme,
+    app,
     ui::{
         components::{component::Component, table::TableComponent},
         utils::{centered_rect, infer_columns_from_json},
@@ -231,13 +233,8 @@ impl Component for LogsComponent {
 
     fn render(&mut self, f: &mut Frame, rect: Rect, app: &mut app::App) {
         let focused = matches!(app.main_focus, app::MainFocus::Logs);
-        let block = Block::default()
-            .title(Span::styled(
-                format!("Logs ({})", app.logs.entries.len()),
-                theme::title_style(),
-            ))
-            .borders(Borders::ALL)
-            .border_style(theme::border_style(focused));
+        let title = format!("Logs ({})", app.logs.entries.len());
+        let block = th::block(&*app.ctx.theme, Some(&title), focused);
         let inner = block.inner(rect);
 
         // List items with redaction for safety
@@ -246,12 +243,12 @@ impl Component for LogsComponent {
             .logs
             .entries
             .iter()
-            .map(|l| ListItem::new(l.as_str()).style(theme::text_style()))
+            .map(|l| ListItem::new(l.as_str()).style(app.ctx.theme.text_primary_style()))
             .collect();
 
         let list = List::new(items)
             .block(block)
-            .highlight_style(theme::list_highlight_style())
+            .highlight_style(app.ctx.theme.selection_style().add_modifier(Modifier::BOLD))
             .highlight_symbol(if focused { "► " } else { "" });
         let mut list_state = ListState::default();
         if focused {
@@ -274,8 +271,8 @@ impl Component for LogsComponent {
                 let top = sel.min(max_top);
                 let mut sb_state = ScrollbarState::new(content_len).position(top);
                 let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                    .thumb_style(theme::title_style().fg(theme::ACCENT))
-                    .track_style(theme::text_muted());
+                    .thumb_style(Style::default().fg(app.ctx.theme.roles().scrollbar_thumb))
+                    .track_style(Style::default().fg(app.ctx.theme.roles().scrollbar_track));
                 f.render_stateful_widget(sb, rect, &mut sb_state);
             }
         }
@@ -292,10 +289,7 @@ impl Component for LogsComponent {
             let detail = app.logs.detail.unwrap();
             let area = centered_rect(90, 85, rect);
             let title = "Log Details";
-            let block = Block::default()
-                .title(Span::styled(title, theme::title_style().fg(theme::ACCENT)))
-                .borders(Borders::ALL)
-                .border_style(theme::border_style(true));
+            let block = th::block(&*app.ctx.theme, Some(title), true);
             f.render_widget(Clear, area);
             f.render_widget(&block, area);
             let inner = block.inner(area);
@@ -307,13 +301,13 @@ impl Component for LogsComponent {
             self.render_detail_content(f, splits[0], app, detail);
 
             let footer = Paragraph::new(Line::from(vec![
-                Span::styled("Hint: ", theme::text_muted()),
-                Span::styled("Esc", theme::title_style().fg(theme::ACCENT)),
-                Span::styled(" close  ", theme::text_muted()),
-                Span::styled("c", theme::title_style().fg(theme::ACCENT)),
-                Span::styled(" copy  ", theme::text_muted()),
+                Span::styled("Hint: ", app.ctx.theme.text_muted_style()),
+                Span::styled("Esc", app.ctx.theme.accent_emphasis_style()),
+                Span::styled(" close  ", app.ctx.theme.text_muted_style()),
+                Span::styled("c", app.ctx.theme.accent_emphasis_style()),
+                Span::styled(" copy  ", app.ctx.theme.text_muted_style()),
             ]))
-            .style(theme::text_muted());
+            .style(app.ctx.theme.text_muted_style());
             f.render_widget(footer, splits[1]);
         }
     }
@@ -336,9 +330,9 @@ impl LogsComponent {
                         _ => 0,
                     };
                     if let Some(cols) = app.logs.cached_columns.as_ref() {
-                        table.render_json_table_with_columns(f, area, red_ref, offset, cols);
+                        table.render_json_table_with_columns(f, area, red_ref, offset, cols, &*app.ctx.theme);
                     } else {
-                        table.render_json_table(f, area, red_ref, offset);
+                        table.render_json_table(f, area, red_ref, offset, &*app.ctx.theme);
                     }
                     return;
                 } else {
@@ -347,7 +341,7 @@ impl LogsComponent {
                         Some(i) if i == start => app.logs.cached_redacted_json.as_ref().unwrap_or(j),
                         _ => j,
                     };
-                    table.render_kv_or_text(f, area, red_ref);
+                    table.render_kv_or_text(f, area, red_ref, &*app.ctx.theme);
                     return;
                 }
             }
@@ -356,7 +350,7 @@ impl LogsComponent {
             let p = Paragraph::new(redact_sensitive(&s))
                 .block(Block::default().borders(Borders::NONE))
                 .wrap(Wrap { trim: false })
-                .style(theme::text_style());
+                .style(app.ctx.theme.text_primary_style());
             f.render_widget(p, area);
             return;
         }
@@ -373,7 +367,7 @@ impl LogsComponent {
         let p = Paragraph::new(redact_sensitive(&buf))
             .block(Block::default().borders(Borders::NONE))
             .wrap(Wrap { trim: false })
-            .style(theme::text_style());
+            .style(app.ctx.theme.text_primary_style());
         f.render_widget(p, area);
     }
 }

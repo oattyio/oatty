@@ -36,6 +36,7 @@ pub fn redact_sensitive(input: &str) -> String {
 /// Example:
 ///
 /// ```rust
+/// use heroku_util::fuzzy_score;
 /// assert!(fuzzy_score("applications", "app").unwrap() > 0);
 /// assert!(fuzzy_score("applications", "axp").is_none());
 /// ```
@@ -98,6 +99,7 @@ pub fn fuzzy_score(hay: &str, needle: &str) -> Option<i64> {
 /// Example:
 ///
 /// ```rust
+/// use heroku_util::lex_shell_like;
 /// let toks = lex_shell_like("cmd --flag 'some value'");
 /// assert_eq!(toks, vec!["cmd", "--flag", "'some value'"].iter().map(|s| s.to_string()).collect::<Vec<_>>());
 /// ```

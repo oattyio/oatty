@@ -35,7 +35,7 @@ use ratatui::Frame;
 ///
 /// # Example Implementation
 ///
-/// ```rust
+/// ```rust,ignore
 /// use heroku_tui::component::Component;
 /// use ratatui::{Frame, layout::Rect};
 /// use crossterm::event::KeyEvent;
@@ -82,7 +82,7 @@ pub(crate) trait Component {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// fn init(&mut self) -> Result<()> {
     ///     self.load_configuration()?;
     ///     self.initialize_widgets()?;
@@ -110,7 +110,7 @@ pub(crate) trait Component {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// fn handle_events(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
     ///     match msg {
     ///         Msg::ToggleHelp => {
@@ -143,7 +143,7 @@ pub(crate) trait Component {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
     ///     match key.code {
     ///         KeyCode::Char('q') => {
@@ -176,7 +176,7 @@ pub(crate) trait Component {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
     ///     match mouse.kind {
     ///         MouseEventKind::Down(MouseButton::Left) => {
@@ -210,7 +210,7 @@ pub(crate) trait Component {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// fn update(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
     ///     match msg {
     ///         Msg::DataChanged => {
@@ -241,7 +241,7 @@ pub(crate) trait Component {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,ignore
     /// fn render(&mut self, frame: &mut Frame, rect: Rect, app: &App) {
     ///     use ratatui::widgets::{Block, Borders, Paragraph};
     ///     

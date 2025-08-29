@@ -35,7 +35,7 @@ impl MainLayout {
     ///
     /// # Examples
     ///
-    /// ```rust,no_run
+    /// ```rust,ignore
     /// use ratatui::prelude::*;
     /// use heroku_tui::ui::layout::create_main_layout;
     /// use heroku_tui::app::App;

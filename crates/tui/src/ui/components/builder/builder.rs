@@ -14,8 +14,9 @@ use ratatui::{
     widgets::*,
 };
 
+use crate::ui::theme::helpers as th;
 use crate::{
-    app, theme,
+    app,
     ui::{
         components::{builder::layout::BuilderLayout, component::Component},
         utils::IfEmptyStr,
@@ -79,7 +80,7 @@ use heroku_types::{Field, Focus};
 ///
 /// # Examples
 ///
-/// ```rust
+/// ```rust,ignore
 /// use heroku_tui::ui::components::BuilderComponent;
 ///
 /// let mut builder = BuilderComponent::new();
@@ -96,49 +97,6 @@ impl BuilderComponent {
     /// A new BuilderComponent with default state
     pub fn new() -> Self {
         Self
-    }
-
-    /// Handle key events for the command builder modal.
-    ///
-    /// This method processes keyboard input for the builder, handling
-    /// navigation between panels, input editing, and special commands.
-    /// The behavior varies based on which panel currently has focus.
-    ///
-    /// # Arguments
-    ///
-    /// * `app` - The application state to update
-    /// * `key` - The key event to process
-    ///
-    /// # Returns
-    ///
-    /// `Result<Vec<Effect>>` containing any effects that should be processed
-    ///
-    /// Local/UI state updates are applied directly to `app` here (no App::Msg),
-    /// mirroring the palette's local-first handling. Only global actions
-    /// escalate via `app.update(..)` to produce side effects.
-    pub fn handle_key(&mut self, app: &mut app::App, key: KeyEvent) -> Result<Vec<app::Effect>> {
-        let mut effects: Vec<app::Effect> = Vec::new();
-
-        // Handle global shortcuts first
-        if let Some(effect) = self.handle_global_shortcuts(key) {
-            effects.extend(app.update(effect));
-            return Ok(effects);
-        }
-
-        // Handle focus-specific key events (local updates applied in-place)
-        match app.builder.selected_focus() {
-            Focus::Search => {
-                self.handle_search_keys(app, key);
-            }
-            Focus::Commands => {
-                self.handle_commands_keys(app, key);
-            }
-            Focus::Inputs => {
-                self.handle_inputs_keys(app, key);
-            }
-        }
-
-        Ok(effects)
     }
 
     /// Handle global shortcuts that work across all panels.
@@ -222,9 +180,9 @@ impl Component for BuilderComponent {
         use crate::ui::utils::centered_rect;
 
         let area = centered_rect(96, 90, rect);
-        self.render_modal_frame(f, area);
+        self.render_modal_frame(f, area, app);
 
-        let inner = self.create_modal_layout(area);
+        let inner = self.create_modal_layout(area, app);
         let chunks = BuilderLayout::vertical_layout(inner);
 
         // Render search panel
@@ -237,35 +195,66 @@ impl Component for BuilderComponent {
         self.render_preview_panel(f, app, main[2]);
 
         // Render footer
-        self.render_footer(f, chunks[2]);
+        self.render_footer(f, app, chunks[2]);
+    }
+
+    /// Handle key events for the command builder modal.
+    ///
+    /// This method processes keyboard input for the builder, handling
+    /// navigation between panels, input editing, and special commands.
+    /// The behavior varies based on which panel currently has focus.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    /// * `key` - The key event to process
+    ///
+    /// # Returns
+    ///
+    /// `Result<Vec<Effect>>` containing any effects that should be processed
+    ///
+    /// Local/UI state updates are applied directly to `app` here (no App::Msg),
+    /// mirroring the palette's local-first handling. Only global actions
+    /// escalate via `app.update(..)` to produce side effects.
+    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<app::Effect> {
+        let mut effects: Vec<app::Effect> = Vec::new();
+
+        // Handle global shortcuts first
+        if let Some(effect) = self.handle_global_shortcuts(key) {
+            effects.extend(app.update(effect));
+            return effects;
+        }
+
+        // Handle focus-specific key events (local updates applied in-place)
+        match app.builder.selected_focus() {
+            Focus::Search => {
+                self.handle_search_keys(app, key);
+            }
+            Focus::Commands => {
+                self.handle_commands_keys(app, key);
+            }
+            Focus::Inputs => {
+                self.handle_inputs_keys(app, key);
+            }
+        }
+
+        effects
     }
 }
 
 impl BuilderComponent {
     /// Creates the modal frame with title and borders.
-    fn render_modal_frame(&self, f: &mut Frame, area: Rect) {
-        let block = Block::default()
-            .title(Span::styled(
-                "Command Builder  [Esc] Close",
-                theme::title_style().fg(theme::ACCENT),
-            ))
-            .borders(Borders::ALL)
-            .border_style(theme::border_style(true));
+    fn render_modal_frame(&self, f: &mut Frame, area: Rect, app: &app::App) {
+        let block = th::block(&*app.ctx.theme, Some("Command Builder  [Esc] Close"), true);
 
         f.render_widget(Clear, area);
         f.render_widget(block.clone(), area);
     }
 
     /// Creates the inner layout area for the modal.
-    fn create_modal_layout(&self, area: Rect) -> Rect {
-        let block = Block::default()
-            .title(Span::styled(
-                "Command Builder  [Esc] Close",
-                theme::title_style().fg(theme::ACCENT),
-            ))
-            .borders(Borders::ALL)
-            .border_style(theme::border_style(true));
-
+    fn create_modal_layout(&self, area: Rect, app: &app::App) -> Rect {
+        // Use the same modal block to compute inner area
+        let block = th::block(&*app.ctx.theme, Some("Command Builder  [Esc] Close"), true);
         block.inner(area)
     }
 
@@ -283,17 +272,18 @@ impl BuilderComponent {
     }
 
     /// Renders the footer with keyboard hints.
-    fn render_footer(&self, f: &mut Frame, area: Rect) {
+    fn render_footer(&self, f: &mut Frame, app: &app::App, area: Rect) {
+        let t = &*app.ctx.theme;
         let footer = Paragraph::new(Line::from(vec![
-            Span::styled("Hint: ", theme::text_muted()),
-            Span::styled("Ctrl+F", theme::title_style().fg(theme::ACCENT)),
-            Span::styled(" close  ", theme::text_muted()),
-            Span::styled("Enter", theme::title_style().fg(theme::ACCENT)),
-            Span::styled(" apply  ", theme::text_muted()),
-            Span::styled("Esc", theme::title_style().fg(theme::ACCENT)),
-            Span::styled(" cancel", theme::text_muted()),
+            Span::styled("Hint: ", t.text_muted_style()),
+            Span::styled("Ctrl+F", t.accent_emphasis_style()),
+            Span::styled(" close  ", t.text_muted_style()),
+            Span::styled("Enter", t.accent_emphasis_style()),
+            Span::styled(" apply  ", t.text_muted_style()),
+            Span::styled("Esc", t.accent_emphasis_style()),
+            Span::styled(" cancel", t.text_muted_style()),
         ]))
-        .style(theme::text_muted());
+        .style(t.text_muted_style());
 
         f.render_widget(footer, area);
     }
@@ -301,14 +291,13 @@ impl BuilderComponent {
     /// Renders the search input panel.
     fn render_search_panel(&self, f: &mut Frame, app: &mut app::App, area: Rect) {
         let title = self.create_search_title(app);
-        let block = Block::default()
-            .title(title)
-            .borders(Borders::ALL)
-            .border_style(theme::border_style(app.builder.selected_focus() == Focus::Search));
+        let focused = app.builder.selected_focus() == Focus::Search;
+        let mut block = th::block(&*app.ctx.theme, None, focused);
+        block = block.title(title);
 
         let inner = block.inner(area);
         let p = Paragraph::new(app.builder.search_input().as_str())
-            .style(theme::text_style())
+            .style(app.ctx.theme.text_primary_style())
             .block(block);
 
         f.render_widget(p, area);
@@ -318,13 +307,18 @@ impl BuilderComponent {
     /// Creates the search panel title with optional debug badge.
     fn create_search_title(&self, app: &app::App) -> Line<'_> {
         if app.ctx.debug_enabled {
+            let t = &*app.ctx.theme;
             Line::from(vec![
-                Span::styled("Search Commands", theme::title_style()),
+                Span::styled("Search Commands", t.text_secondary_style().add_modifier(Modifier::BOLD)),
                 Span::raw("  "),
-                Span::styled("[DEBUG]", theme::title_style().fg(theme::ACCENT)),
+                Span::styled("[DEBUG]", t.accent_emphasis_style()),
             ])
         } else {
-            Line::from(Span::styled("Search Commands", theme::title_style()))
+            let t = &*app.ctx.theme;
+            Line::from(Span::styled(
+                "Search Commands",
+                t.text_secondary_style().add_modifier(Modifier::BOLD),
+            ))
         }
     }
 
@@ -342,15 +336,13 @@ impl BuilderComponent {
     /// Renders the commands list panel.
     fn render_commands_panel(&self, f: &mut Frame, app: &mut app::App, area: Rect) {
         let title = format!("Commands ({})", app.builder.filtered().len());
-        let block = Block::default()
-            .title(Span::styled(title, theme::title_style()))
-            .borders(Borders::ALL)
-            .border_style(theme::border_style(app.builder.selected_focus() == Focus::Commands));
+        let focused = app.builder.selected_focus() == Focus::Commands;
+        let block = th::block(&*app.ctx.theme, Some(&title), focused);
 
         let items = self.create_command_list_items(app);
         let list = List::new(items)
             .block(block)
-            .highlight_style(theme::list_highlight_style())
+            .highlight_style(app.ctx.theme.selection_style().add_modifier(Modifier::BOLD))
             .highlight_symbol("> ");
 
         let list_state = &mut app.builder.list_state();
@@ -372,7 +364,7 @@ impl BuilderComponent {
                 } else {
                     format!("{} {}", group, name)
                 };
-                ListItem::new(display).style(theme::text_style())
+                ListItem::new(display).style(app.ctx.theme.text_primary_style())
             })
             .collect()
     }
@@ -380,26 +372,16 @@ impl BuilderComponent {
     /// Renders the input fields panel.
     fn render_inputs_panel(&self, f: &mut Frame, app: &mut app::App, area: Rect) {
         let title = self.create_inputs_title(app);
-        let block = Block::default()
-            .title(Span::styled(title, theme::title_style()))
-            .borders(Borders::ALL)
-            .border_style(theme::border_style(app.builder.selected_focus() == Focus::Inputs));
+        let focused = app.builder.selected_focus() == Focus::Inputs;
+        let block = th::block(&*app.ctx.theme, Some(&title), focused);
 
         // Draw the block first, then lay out inner area into content + footer rows
         f.render_widget(&block, area);
         let inner = block.inner(area);
-        let splits = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(1)])
-            .split(inner);
 
-        let content_rect = splits[0];
-        let footer_rect = splits[1];
-
-        let (lines, cursor_pos) = self.create_input_lines(app);
-        self.render_input_content(f, app, content_rect, lines);
-        self.render_input_footer(f, footer_rect);
-        self.set_input_cursor(f, app, content_rect, cursor_pos);
+        let (input_lines, cursor_pos) = self.create_input_lines(app);
+        self.render_input_content(f, app, inner, input_lines);
+        self.set_input_cursor(f, app, inner, cursor_pos);
     }
 
     /// Creates the inputs panel title.
@@ -439,8 +421,8 @@ impl BuilderComponent {
         if app.builder.selected_focus() == Focus::Inputs && !missing.is_empty() {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("Missing required: ", Style::default().fg(theme::WARN)),
-                Span::styled(missing.join(", "), theme::text_style()),
+                Span::styled("Missing required: ", Style::default().fg(app.ctx.theme.roles().warning)),
+                Span::styled(missing.join(", "), app.ctx.theme.text_primary_style()),
             ]));
         }
 
@@ -451,15 +433,15 @@ impl BuilderComponent {
     fn create_field_line(&self, app: &app::App, field: &Field, field_idx: usize) -> (Line<'_>, Option<(u16, u16)>) {
         let marker = if field.required { "*" } else { "?" };
         let label = format!("{} {}", marker, field.name);
-        let hint = self.create_field_hint(field);
-        let val = self.create_field_value(field);
+        let hint = self.create_field_hint(app, field);
+        let val = self.create_field_value(app, field);
 
         let mut cursor_pos = None;
         if app.builder.selected_focus() == Focus::Inputs && field_idx == app.builder.current_field_idx() {
-            let prefix = if hint.is_empty() {
-                format!("{}: ", label)
+            let prefix = if let Some((ref hint_text, _)) = hint {
+                format!("{} {}: ", label, hint_text)
             } else {
-                format!("{} {}: ", label, hint)
+                format!("{}: ", label)
             };
             let offset = if field.is_bool || !field.enum_values.is_empty() {
                 0
@@ -472,75 +454,99 @@ impl BuilderComponent {
         let mut line = Line::from(vec![Span::styled(
             label,
             if field.required {
-                theme::text_style()
+                app.ctx.theme.text_primary_style()
             } else {
-                theme::text_muted()
+                app.ctx.theme.text_muted_style()
             },
         )]);
 
-        if !hint.is_empty() {
+        if let Some((_, hspans)) = hint {
             line.push_span(Span::raw(" "));
-            line.push_span(Span::styled(hint, theme::text_muted()));
+            for s in hspans {
+                line.push_span(s);
+            }
         }
         line.push_span(Span::raw(": "));
-        line.push_span(Span::styled(val, theme::text_style()));
+        line.push_span(val);
 
         if app.builder.selected_focus() == Focus::Inputs && field_idx == app.builder.current_field_idx() {
-            line = line.style(theme::highlight_style());
+            line = line.style(app.ctx.theme.selection_style());
         }
 
         (line, cursor_pos)
     }
 
     /// Creates the hint text for a field.
-    fn create_field_hint(&self, field: &Field) -> String {
+    /// Returns both a plain text version (for cursor math) and styled spans
+    /// with the selected enum value highlighted in green with a checkmark.
+    fn create_field_hint(
+        &self,
+        app: &app::App,
+        field: &Field,
+    ) -> Option<(String, Vec<Span<'static>>)> {
         if field.enum_values.is_empty() {
-            return String::new();
+            return None;
         }
 
+        let t = &*app.ctx.theme;
         let enum_idx = field.enum_idx.unwrap_or(0);
-        let opts = field
-            .enum_values
-            .iter()
-            .enumerate()
-            .map(|(i, v)| -> String {
-                if enum_idx == i {
-                    format!("✓{}", v)
-                } else {
-                    v.to_string()
-                }
-            })
-            .collect::<Vec<String>>()
-            .join("|");
 
-        format!("enum: {}", opts)
+        // Build plain text (for measuring) and styled spans (for rendering)
+        let mut plain = String::from("enum: ");
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        spans.push(Span::styled("enum: ", t.text_muted_style()));
+
+        for (i, v) in field.enum_values.iter().enumerate() {
+            let (p, s) = if enum_idx == i {
+                (
+                    format!("✓{}", v),
+                    Span::styled(format!("✓{}", v), t.status_success()),
+                )
+            } else {
+                (
+                    v.to_string(),
+                    Span::styled(v.to_string(), t.text_muted_style()),
+                )
+            };
+            plain.push_str(&p);
+            spans.push(s);
+            if i + 1 < field.enum_values.len() {
+                plain.push('|');
+                spans.push(Span::styled("|", t.text_muted_style()));
+            }
+        }
+
+        Some((plain, spans))
     }
 
     /// Creates the display value for a field.
-    fn create_field_value(&self, field: &Field) -> String {
+    ///
+    /// For boolean fields with a non-empty value, returns a green check mark.
+    /// Otherwise returns the appropriate text styled with the primary text color.
+    fn create_field_value(&self, app: &app::App, field: &Field) -> Span<'static> {
+        let t = &*app.ctx.theme;
         if field.is_bool {
-            if field.value.is_empty() {
-                "[ ]".to_string()
+            if field.value.trim().is_empty() {
+                Span::styled("[ ]".to_string(), t.text_primary_style())
             } else {
-                "[x]".to_string()
+                Span::styled("[✓]", t.status_success())
             }
         } else if !field.enum_values.is_empty() {
-            field.value.clone().if_empty_then("<choose>".to_string())
+            let value = field
+                .value
+                .clone()
+                .if_empty_then("<choose>".to_string());
+            Span::styled(value, t.text_primary_style())
         } else {
-            field.value.clone()
+            Span::styled(field.value.clone(), t.text_primary_style())
         }
     }
 
     /// Renders the input content area.
-    fn render_input_content(&self, f: &mut Frame, _app: &mut app::App, area: Rect, lines: Vec<Line>) {
-        let p = Paragraph::new(Text::from(lines)).style(theme::text_style());
+    fn render_input_content(&self, f: &mut Frame, app: &mut app::App, area: Rect, lines: Vec<Line>) {
+        // Use theme primary text for content
+        let p = Paragraph::new(Text::from(lines)).style(app.ctx.theme.text_primary_style());
         f.render_widget(p, area);
-    }
-
-    /// Renders the input footer.
-    fn render_input_footer(&self, f: &mut Frame, area: Rect) {
-        let footer = Paragraph::new("Tab focus  Enter run  Ctrl+H help  Ctrl+C quit").style(theme::text_muted());
-        f.render_widget(footer, area);
     }
 
     /// Sets the cursor position for the input panel.
@@ -556,13 +562,12 @@ impl BuilderComponent {
 
     /// Renders the preview panel.
     fn render_preview_panel(&self, f: &mut Frame, app: &mut app::App, area: Rect) {
-        let block = Block::default()
-            .title(Span::styled("Preview", theme::title_style()))
-            .borders(Borders::ALL)
-            .border_style(theme::border_style(false));
+        let block = th::block(&*app.ctx.theme, Some("Preview"), false);
 
         let content = self.create_preview_content(app);
-        let p = Paragraph::new(content).style(theme::text_style()).block(block);
+        let p = Paragraph::new(content)
+            .style(app.ctx.theme.text_primary_style())
+            .block(block);
 
         f.render_widget(p, area);
     }

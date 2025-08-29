@@ -18,18 +18,21 @@ use crate::{
 };
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers},
+    event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEvent, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use futures_util::StreamExt;
 use heroku_types::{CommandSpec, Field};
 use heroku_util::lex_shell_like;
 use ratatui::{Terminal, prelude::*};
 use serde_json::{Map, Value};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 use std::{collections::HashMap, io};
+use tokio::signal;
+use tokio::time::interval;
 
-pub fn run(registry: heroku_registry::Registry) -> Result<()> {
+pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
     let mut app = app::App::new(registry);
     let mut palette_component = PaletteComponent::new();
     let _ = palette_component.init();
@@ -52,7 +55,11 @@ pub fn run(registry: heroku_registry::Registry) -> Result<()> {
     let mut terminal = Terminal::new(backend)?;
 
     let tick_rate = Duration::from_millis(250);
-    let mut last_tick = Instant::now();
+    let mut tick = interval(tick_rate);
+    // first tick fires immediately; advance once so the first wait is ~tick_rate
+    tick.tick().await;
+    let mut events = EventStream::new();
+    let mut last_frame_area = crossterm::terminal::size().unwrap_or((0, 0));
 
     // Initial render so UI is visible before any events
     terminal.draw(|frame| {
@@ -71,50 +78,57 @@ pub fn run(registry: heroku_registry::Registry) -> Result<()> {
     loop {
         let mut should_render = false;
 
-        // Check for async execution completion and route through TEA message
-        if let Some(rx) = app.exec_receiver.as_ref()
-            && let Ok(out) = rx.try_recv()
-        {
-            let _ = app.update(app::Msg::ExecCompleted(out));
-            should_render = true;
-        }
-
-        // Poll for terminal events; when executing, use tick rate, otherwise a longer wait
-        let poll_timeout = if app.executing {
-            tick_rate
-        } else {
-            Duration::from_secs(1)
-        };
-        if event::poll(poll_timeout)? {
-            match event::read()? {
-                Event::Key(key) => {
-                    if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                        break;
+        tokio::select! {
+            maybe_event = events.next() => {
+                if let Some(Ok(event)) = maybe_event {
+                    match event {
+                        Event::Key(key) => {
+                            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                                break;
+                            }
+                            if handle_key(
+                                &mut app,
+                                &mut palette_component,
+                                &mut builder_component,
+                                &mut table_component,
+                                key,
+                            )? {
+                                break;
+                            }
+                            should_render = true;
+                        }
+                        Event::Resize(w, h) => {
+                            last_frame_area = (w, h);
+                            let _ = app.update(app::Msg::Resize(w, h));
+                            should_render = true;
+                        }
+                        _ => {}
                     }
-                    if handle_key(
-                        &mut app,
-                        &mut palette_component,
-                        &mut builder_component,
-                        &mut table_component,
-                        key,
-                    )? {
-                        break;
-                    }
-                    should_render = true;
                 }
-                Event::Resize(w, h) => {
-                    let _ = app.update(app::Msg::Resize(w, h));
-                    should_render = true;
-                }
-                _ => {}
             }
-        }
-
-        // Drive periodic animations (e.g., throbber) only when executing
-        if app.executing && last_tick.elapsed() >= tick_rate {
-            last_tick = Instant::now();
-            let _ = app.update(app::Msg::Tick);
-            should_render = true;
+            maybe_out = app.exec_receiver.recv() => {
+                if let Some(out) = maybe_out {
+                    let _ = app.update(app::Msg::ExecCompleted(out));
+                    should_render = true;
+                }
+            }
+            _ = tick.tick() => {
+                if app.executing {
+                    let _ = app.update(app::Msg::Tick);
+                    should_render = true;
+                }
+                // Fallback: detect area changes even if resize events are missed (macOS robustness)
+                if let Ok(area) = crossterm::terminal::size()
+                    && area != last_frame_area
+                {
+                    last_frame_area = area;
+                    let _ = app.update(app::Msg::Resize(area.0, area.1));
+                    should_render = true;
+                }
+            }
+            _ = signal::ctrl_c() => {
+                break;
+            }
         }
 
         if should_render {
@@ -152,9 +166,7 @@ fn handle_key(
         return Ok(false);
     }
     // When table modal is visible, route keys to the table component (local-first handling)
-    if app.table.is_visible()
-        && table.handle_key(app, key)?
-    {
+    if app.table.is_visible() && table.handle_key(app, key)? {
         return Ok(false);
     }
     // If builder modal open, Enter should close builder and populate palette with constructed command
@@ -212,7 +224,7 @@ fn handle_key(
         }
     }
 
-    let effects = builder.handle_key(app, key)?;
+    let effects = builder.handle_key_events(app, key);
     let cmds = crate::cmd::from_effects(app, effects);
     crate::cmd::run_cmds(app, cmds);
     Ok(false)
@@ -355,7 +367,7 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<CommandSpec, String
                 match user_flags.get(&flag.name) {
                     Some(Some(v)) if !v.is_empty() => {}
                     _ => {
-                        return Err(format!("Missing required flag value: --{} <VALUE>", flag.name));
+                        return Err(format!("Missing required flag value: --{} <value>", flag.name));
                     }
                 }
             }
