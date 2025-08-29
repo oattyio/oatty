@@ -23,8 +23,8 @@ use crate::ui::theme::helpers as th;
 use crate::{
     app,
     ui::{
-        components::{component::Component, table::TableComponent},
-        utils::{centered_rect, infer_columns_from_json},
+        components::component::Component,
+        utils::centered_rect,
     },
 };
 
@@ -74,37 +74,37 @@ impl LogsComponent {
     }
 
     fn choose_detail(&self, app: &mut app::App) {
-        let detail = if let Some(LogEntry::Api { json: Some(j), .. }) = self.is_single_api(app) {
-            if self.json_has_array(&j) {
-                LogDetailView::Table { offset: 0 }
-            } else {
-                LogDetailView::Text
-            }
-        } else {
-            LogDetailView::Text
-        };
-        app.logs.detail = Some(detail);
-
-        // Prepare cached redacted JSON when opening details
-        if app.logs.selection.is_single() {
-            let idx = app.logs.selection.cursor;
-            match app.logs.rich_entries.get(idx) {
-                Some(LogEntry::Api { json: Some(j), .. }) => {
-                    app.logs.cached_detail_index = Some(idx);
-                    app.logs.cached_redacted_json = Some(Self::redact_json(j));
-                    // Cache inferred columns for table view
-                    app.logs.cached_columns = Some(infer_columns_from_json(j));
-                }
-                _ => {
-                    app.logs.cached_detail_index = None;
-                    app.logs.cached_redacted_json = None;
-                    app.logs.cached_columns = None;
-                }
-            }
-        } else {
+        // Single selection logic only
+        if !app.logs.selection.is_single() {
+            app.logs.detail = Some(LogDetailView::Text);
             app.logs.cached_detail_index = None;
             app.logs.cached_redacted_json = None;
-            app.logs.cached_columns = None;
+            return;
+        }
+
+        let idx = app.logs.selection.cursor;
+        match app.logs.rich_entries.get(idx) {
+            Some(LogEntry::Api { json: Some(j), .. }) => {
+                if self.json_has_array(j) {
+                    // Route array JSON to the global Table modal
+                    let red = Self::redact_json(j);
+                    app.table.apply_result_json(Some(red));
+                    app.table.apply_show(true);
+                    // Do not open a Logs detail modal in this case
+                    app.logs.detail = None;
+                    app.logs.cached_detail_index = None;
+                    app.logs.cached_redacted_json = None;
+                } else {
+                    app.logs.detail = Some(LogDetailView::Text);
+                    app.logs.cached_detail_index = Some(idx);
+                    app.logs.cached_redacted_json = Some(Self::redact_json(j));
+                }
+            }
+            _ => {
+                app.logs.detail = Some(LogDetailView::Text);
+                app.logs.cached_detail_index = None;
+                app.logs.cached_redacted_json = None;
+            }
         }
     }
 
@@ -231,7 +231,7 @@ impl Component for LogsComponent {
         effects
     }
 
-    fn render(&mut self, f: &mut Frame, rect: Rect, app: &mut app::App) {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
         let focused = matches!(app.main_focus, app::MainFocus::Logs);
         let title = format!("Logs ({})", app.logs.entries.len());
         let block = th::block(&*app.ctx.theme, Some(&title), focused);
@@ -258,7 +258,7 @@ impl Component for LogsComponent {
         } else {
             list_state.select(None);
         }
-        f.render_stateful_widget(list, rect, &mut list_state);
+        frame.render_stateful_widget(list, rect, &mut list_state);
 
         // Draw a vertical scrollbar to indicate position when focused
         if focused {
@@ -273,7 +273,7 @@ impl Component for LogsComponent {
                 let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                     .thumb_style(Style::default().fg(app.ctx.theme.roles().scrollbar_thumb))
                     .track_style(Style::default().fg(app.ctx.theme.roles().scrollbar_track));
-                f.render_stateful_widget(sb, rect, &mut sb_state);
+                frame.render_stateful_widget(sb, rect, &mut sb_state);
             }
         }
 
@@ -281,7 +281,7 @@ impl Component for LogsComponent {
         if focused && inner.height >= 1 {
             let hint_area = Rect::new(inner.x, inner.y + inner.height.saturating_sub(1), inner.width, 1);
             let mut hints_comp = LogsHintBarComponent::new();
-            hints_comp.render(f, hint_area, app);
+            hints_comp.render(frame, hint_area, app);
         }
 
         // Detail modal if open
@@ -290,15 +290,15 @@ impl Component for LogsComponent {
             let area = centered_rect(90, 85, rect);
             let title = "Log Details";
             let block = th::block(&*app.ctx.theme, Some(title), true);
-            f.render_widget(Clear, area);
-            f.render_widget(&block, area);
+            frame.render_widget(Clear, area);
+            frame.render_widget(&block, area);
             let inner = block.inner(area);
             let splits = Layout::default()
                 .direction(Direction::Vertical)
                 .constraints([Constraint::Min(1), Constraint::Length(1)])
                 .split(inner);
 
-            self.render_detail_content(f, splits[0], app, detail);
+            self.render_detail_content(frame, splits[0], app, detail);
 
             let footer = Paragraph::new(Line::from(vec![
                 Span::styled("Hint: ", app.ctx.theme.text_muted_style()),
@@ -308,7 +308,7 @@ impl Component for LogsComponent {
                 Span::styled(" copy  ", app.ctx.theme.text_muted_style()),
             ]))
             .style(app.ctx.theme.text_muted_style());
-            f.render_widget(footer, splits[1]);
+            frame.render_widget(footer, splits[1]);
         }
     }
 }
@@ -319,31 +319,15 @@ impl LogsComponent {
         // Single API with JSON and array → table
         if start == end {
             if let Some(LogEntry::Api { json: Some(j), .. }) = app.logs.rich_entries.get(start) {
-                let table = TableComponent;
-                if self.json_has_array(j) {
-                    let red_ref: &Value = match app.logs.cached_detail_index {
-                        Some(i) if i == start => app.logs.cached_redacted_json.as_ref().unwrap_or(j),
-                        _ => j,
-                    };
-                    let offset = match detail {
-                        LogDetailView::Table { offset } => offset,
-                        _ => 0,
-                    };
-                    if let Some(cols) = app.logs.cached_columns.as_ref() {
-                        table.render_json_table_with_columns(f, area, red_ref, offset, cols, &*app.ctx.theme);
-                    } else {
-                        table.render_json_table(f, area, red_ref, offset, &*app.ctx.theme);
-                    }
-                    return;
-                } else {
-                    // Render KV or text
-                    let red_ref: &Value = match app.logs.cached_detail_index {
-                        Some(i) if i == start => app.logs.cached_redacted_json.as_ref().unwrap_or(j),
-                        _ => j,
-                    };
-                    table.render_kv_or_text(f, area, red_ref, &*app.ctx.theme);
-                    return;
-                }
+                // Only non-array JSON renders here; arrays are routed to the global table modal
+                let red_ref: &Value = match app.logs.cached_detail_index {
+                    Some(i) if i == start => app.logs.cached_redacted_json.as_ref().unwrap_or(j),
+                    _ => j,
+                };
+                // Render KV or text for non-array JSON
+                let table = crate::ui::components::table::TableComponent;
+                table.render_kv_or_text(f, area, red_ref, &*app.ctx.theme);
+                return;
             }
             // Single non-API or API without JSON → text
             let s = app.logs.entries.get(start).cloned().unwrap_or_default();

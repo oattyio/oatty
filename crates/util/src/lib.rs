@@ -1,5 +1,6 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
+use chrono::{DateTime, NaiveDate, Datelike};
 
 /// Redacts values that look like secrets in a string.
 pub fn redact_sensitive(input: &str) -> String {
@@ -159,4 +160,35 @@ pub fn lex_shell_like_ranged(input: &str) -> Vec<LexTok<'_>> {
         });
     }
     out
+}
+
+// Generated at build-time from schemas/heroku-schema.json
+pub mod generated_date_fields {
+    include!(concat!(env!("OUT_DIR"), "/date_fields.rs"));
+}
+
+/// Returns true if a JSON key looks like a date field.
+/// Uses generated schema-derived keys with fallback heuristics.
+pub fn is_date_like_key(key: &str) -> bool {
+    let k = key.to_ascii_lowercase().replace([' ', '-'], "_");
+    if generated_date_fields::DATE_FIELD_KEYS.contains(&k.as_str()) {
+        return true;
+    }
+    k.ends_with("_at") || k.ends_with("_on") || k.ends_with("_date")
+        || k == "created" || k == "updated" || k == "released"
+}
+
+/// Formats common date strings into MM/DD/YYYY if parsable.
+pub fn format_date_mmddyyyy(s: &str) -> Option<String> {
+    if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
+        let d = dt.date_naive();
+        return Some(format!("{:02}/{:02}/{}", d.month(), d.day(), d.year()));
+    }
+    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return Some(format!("{:02}/{:02}/{}", d.month(), d.day(), d.year()));
+    }
+    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y/%m/%d") {
+        return Some(format!("{:02}/{:02}/{}", d.month(), d.day(), d.year()));
+    }
+    None
 }

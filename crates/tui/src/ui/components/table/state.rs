@@ -1,13 +1,13 @@
 use serde_json::Value;
 
-use crate::ui::utils::infer_columns_from_json;
+use crate::ui::utils::{infer_columns_with_sizes_from_json, ColumnWithSize};
 
 #[derive(Debug, Default)]
 pub struct TableState {
     show: bool,
     offset: usize,
     result_json: Option<serde_json::Value>,
-    cached_columns: Option<Vec<String>>,
+    cached_columns: Option<Vec<ColumnWithSize>>,
 }
 
 // Default derived above
@@ -23,7 +23,7 @@ impl TableState {
     pub fn selected_result_json(&self) -> Option<&serde_json::Value> {
         self.result_json.as_ref()
     }
-    pub fn cached_columns(&mut self) -> Option<&Vec<String>> {
+    pub fn cached_columns(&mut self) -> Option<&Vec<ColumnWithSize>> {
         self.result_json.as_ref()?;
         if self.cached_columns.is_some() {
             return self.cached_columns.as_ref();
@@ -36,7 +36,7 @@ impl TableState {
             _ => false,
         };
         let cols = if has_array {
-            Some(infer_columns_from_json(json))
+            Some(infer_columns_with_sizes_from_json(json, 200))
         } else {
             None
         };

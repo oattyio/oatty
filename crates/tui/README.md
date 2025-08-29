@@ -41,7 +41,7 @@ Keybindings
   - Up/Down/PgUp/PgDn/Home/End: scroll; Esc close.
 
 Providers (Value Suggestions)
-- Synchronous provider hook for flags/positionals:
+- Asynchronous provider hook for flags/positionals:
   - Implement `ValueProvider` to return suggestion items for a given `command_key` and `field`.
   - Example: suggest app names for `apps info <app>` and `--app` values.
 

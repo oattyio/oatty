@@ -235,6 +235,7 @@ impl App {
                 // always execute from palette
                 if !self.palette.is_input_empty() {
                     match start_palette_execution(self) {
+                        // Execution started successfully
                         Ok(_) => {
                             let input = &self.palette.input();
                             self.logs.entries.push(format!("Running: {}", input));
@@ -242,7 +243,6 @@ impl App {
                                 level: Some("info".into()),
                                 msg: format!("Running: {}", input),
                             });
-                            // Execution started successfully
                         }
                         Err(e) => {
                             self.palette.apply_error(e);

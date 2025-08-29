@@ -5,6 +5,7 @@
 //! navigation capabilities.
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
+use heck::ToTitleCase;
 use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
 use ratatui::{
     Frame,
@@ -14,21 +15,23 @@ use ratatui::{
     widgets::*,
 };
 use serde_json::Value;
-use heck::ToTitleCase;
-use chrono::{DateTime, NaiveDate, Datelike};
 
 use crate::ui::theme::helpers as th;
 use crate::ui::theme::roles::Theme as UiTheme;
-use crate::ui::utils::{get_scored_keys, infer_columns_from_json};
+use crate::ui::utils::{
+    get_scored_keys,
+    infer_columns_from_json,
+    infer_columns_with_sizes_from_json,
+    ColumnWithSize,
+    normalize_header,
+};
+use heroku_util::{format_date_mmddyyyy, is_date_like_key};
 use crate::{
     app,
     ui::{components::component::Component, utils::centered_rect},
 };
 
-// Generated at build-time from schemas/heroku-schema.json
-mod generated_date_fields {
-    include!(concat!(env!("OUT_DIR"), "/date_fields.rs"));
-}
+// Date field keys and formatting are provided by heroku-util.
 
 /// Results table modal component for displaying JSON data.
 ///
@@ -124,7 +127,7 @@ impl TableComponent {
         area: Rect,
         json: &Value,
         offset: usize,
-        columns: &[String],
+        columns: &[ColumnWithSize],
         theme: &dyn UiTheme,
     ) {
         // Find the array to render: either the value itself, or the first array field of an object
@@ -150,18 +153,18 @@ impl TableComponent {
 
         let headers: Vec<_> = columns
             .iter()
-            .map(|header| Cell::from(self.normalize_header(header)).style(th::table_header_style(theme)))
+            .map(|col| Cell::from(col.name.clone()).style(th::table_header_style(theme)))
             .collect();
 
         // Column widths: split area width evenly with a floor
-        let col_count = columns.len() as u16;
         let mut widths: Vec<Constraint> = Vec::new();
-        if col_count == 0 {
+        if columns.is_empty() {
             widths.push(Constraint::Percentage(100));
         } else {
-            let per = (100 / col_count.max(1)).max(1);
-            for _ in 0..col_count {
-                widths.push(Constraint::Percentage(per));
+            for col in columns.iter() {
+                // Use measured max length with a small padding, with a sensible floor/ceiling
+                let w = (col.max_len + 2).clamp(4, 60) as u16;
+                widths.push(Constraint::Min(w));
             }
         }
 
@@ -176,7 +179,8 @@ impl TableComponent {
         if start < end {
             for (idx, item) in arr[start..end].iter().enumerate() {
                 let mut cells: Vec<Cell> = Vec::with_capacity(columns.len());
-                for key in columns.iter() {
+                for col in columns.iter() {
+                    let key = &col.key;
                     let val = item.get(key).unwrap_or(&Value::Null);
                     let txt = self.render_value(key, val);
                     let mut style = theme.text_primary_style();
@@ -215,16 +219,26 @@ impl TableComponent {
     }
 
     /// Renders a JSON array as a table with offset support.
+    /// Retrieves columns from `app.table` state (lazily computed + cached).
     pub fn render_json_table(
         &self,
         frame: &mut Frame,
         area: Rect,
+        app: &mut app::App,
         json: &Value,
         offset: usize,
         theme: &dyn UiTheme,
     ) {
-        let cols = infer_columns_from_json(json);
-        self.render_json_table_with_columns(frame, area, json, offset, &cols, theme);
+        // Ensure table state knows about this JSON so it can lazily compute columns
+        app.table.apply_result_json(Some(json.clone()));
+        let cols_opt = app.table.cached_columns();
+        if let Some(cols) = cols_opt {
+            self.render_json_table_with_columns(frame, area, json, offset, cols, theme);
+            return;
+        }
+        // Fallback: infer directly if state could not determine columns
+        let cols_sized: Vec<ColumnWithSize> = infer_columns_with_sizes_from_json(json, 200);
+        self.render_json_table_with_columns(frame, area, json, offset, &cols_sized, theme);
     }
 
     /// Renders JSON as key-value pairs or plain text.
@@ -237,7 +251,7 @@ impl TableComponent {
                 for header in keys.iter().take(24) {
                     let val = self.render_value(header, map.get(header).unwrap_or(&Value::Null));
                     lines.push(Line::from(vec![
-                        Span::styled(self.normalize_header(header), theme.text_secondary_style().add_modifier(Modifier::BOLD)),
+                        Span::styled(normalize_header(header), theme.text_secondary_style().add_modifier(Modifier::BOLD)),
                         Span::raw(": "),
                         Span::styled(val, theme.text_primary_style()),
                     ]));
@@ -250,7 +264,7 @@ impl TableComponent {
             }
             other => {
                 let s = match other {
-                    Value::String(s) => self.format_date_mmddyyyy(s).unwrap_or_else(|| s.clone()),
+                    Value::String(s) => format_date_mmddyyyy(s).unwrap_or_else(|| s.clone()),
                     _ => other.to_string(),
                 };
                 let p = Paragraph::new(s)
@@ -260,10 +274,6 @@ impl TableComponent {
                 frame.render_widget(p, area);
             }
         }
-    }
-
-    fn normalize_header(&self, key: &str) -> String {
-        key.replace('_', " ").to_string().to_title_case()
     }
 
     fn is_status_like(&self, key: &str) -> bool {
@@ -286,8 +296,8 @@ impl TableComponent {
             Value::String(s) => {
                 if self.is_sensitive_key(key) {
                     self.ellipsize_middle_if_sha_like(s, 12)
-                } else if self.is_date_like_key(key) {
-                    self.format_date_mmddyyyy(s).unwrap_or_else(|| s.clone())
+                } else if is_date_like_key(key) {
+                    format_date_mmddyyyy(s).unwrap_or_else(|| s.clone())
                 } else {
                     s.clone()
                 }
@@ -314,32 +324,6 @@ impl TableComponent {
 
     fn is_sensitive_key(&self, key: &str) -> bool {
         matches!(key, "token" | "key" | "secret" | "password" | "api_key" | "auth_token")
-    }
-
-    fn is_date_like_key(&self, key: &str) -> bool {
-        let k = key.to_ascii_lowercase().replace([' ', '-'], "_");
-        // Prefer schema-derived keys; fall back to heuristics
-        if generated_date_fields::DATE_FIELD_KEYS.contains(&k.as_str()) {
-            return true;
-        }
-        k.ends_with("_at") || k.ends_with("_on") || k.ends_with("_date")
-            || k == "created" || k == "updated" || k == "released"
-    }
-
-    fn format_date_mmddyyyy(&self, s: &str) -> Option<String> {
-        // Try RFC3339/ISO8601 with timezone (e.g., 2024-01-01T12:00:00Z)
-        if let Ok(dt) = DateTime::parse_from_rfc3339(s) {
-            let d = dt.date_naive();
-            return Some(format!("{:02}/{:02}/{}", d.month(), d.day(), d.year()));
-        }
-        // Try common date-only forms
-        if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-            return Some(format!("{:02}/{:02}/{}", d.month(), d.day(), d.year()));
-        }
-        if let Ok(d) = NaiveDate::parse_from_str(s, "%Y/%m/%d") {
-            return Some(format!("{:02}/{:02}/{}", d.month(), d.day(), d.year()));
-        }
-        None
     }
 
     fn ellipsize_middle_if_sha_like(&self, s: &str, keep_total: usize) -> String {

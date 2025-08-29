@@ -295,7 +295,7 @@ impl PaletteState {
     }
 
     /// Set the popup open state
-    pub(crate) fn set_popup_open(&mut self, open: bool) {
+    pub(crate) fn set_is_suggestions_open(&mut self, open: bool) {
         self.is_suggestions_open = open;
     }
 

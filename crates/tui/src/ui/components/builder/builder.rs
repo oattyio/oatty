@@ -4,7 +4,6 @@
 //! which allows users to interactively build Heroku commands through a
 //! multi-panel interface with search, command selection, and parameter input.
 
-use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,

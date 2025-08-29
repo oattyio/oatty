@@ -7,6 +7,8 @@
 use std::collections::{BTreeSet, HashMap};
 
 use ratatui::prelude::*;
+use heck::ToTitleCase;
+use heroku_util::{format_date_mmddyyyy, is_date_like_key};
 use serde_json::{Map, Value};
 
 /// Creates a centered rectangular area within a given rectangle.
@@ -56,7 +58,6 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     area[1]
 }
 
-// Helper methods moved from tables.rs
 pub fn infer_columns(arr: &[Value]) -> Vec<String> {
     let mut score: HashMap<String, i32> = HashMap::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -209,4 +210,92 @@ impl IfEmptyStr for String {
     fn if_empty_then(self, alt: String) -> String {
         if self.is_empty() { alt } else { self }
     }
+}
+
+/// Formatter kinds that influence header/value display.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ColumnFormatter {
+    /// Apply Title Case to header labels (from snake_case keys).
+    TitleCaseHeader,
+    /// Format string values that look like dates into MM/DD/YYYY.
+    DateValue,
+}
+
+/// Column metadata with measured maximum string length for rendering.
+#[derive(Debug, Clone)]
+pub struct ColumnWithSize {
+    /// Display name (header label), typically Title Case of the key.
+    pub name: String,
+    /// JSON key to extract values from each row object.
+    pub key: String,
+    /// Applied formatters for this column (header/value specific semantics).
+    pub formatters: Vec<ColumnFormatter>,
+    /// Maximum string length among header and sampled, formatted cell values.
+    pub max_len: usize,
+}
+
+/// Normalize a header for display: replace '_' with ' ' and title case.
+pub fn normalize_header(key: &str) -> String {
+    key.replace('_', " ").to_string().to_title_case()
+}
+
+/// Infer columns and compute their maximum formatted string lengths from JSON.
+/// - Uses `infer_columns_from_json` to determine keys.
+/// - Applies light formatting (date for date-like keys) before measuring.
+/// - Includes the header label length in the max.
+/// - Samples up to `sample` rows for performance.
+pub fn infer_columns_with_sizes_from_json(json: &Value, sample: usize) -> Vec<ColumnWithSize> {
+    let keys = infer_columns_from_json(json);
+    if keys.is_empty() {
+        return Vec::new();
+    }
+
+    // Resolve the array of rows
+    let arr_opt = match json {
+        Value::Array(a) => Some(a.as_slice()),
+        Value::Object(m) => m.values().find_map(|v| match v {
+            Value::Array(a) => Some(a.as_slice()),
+            _ => None,
+        }),
+        _ => None,
+    };
+
+    let rows = match arr_opt { Some(a) => a, None => &[] };
+    let sample_rows = rows.iter().take(sample);
+
+    let mut out: Vec<ColumnWithSize> = Vec::with_capacity(keys.len());
+    for key in keys.iter() {
+        let mut formatters = vec![ColumnFormatter::TitleCaseHeader];
+        if is_date_like_key(key) {
+            formatters.push(ColumnFormatter::DateValue);
+        }
+        let header = normalize_header(key);
+        let mut max_len = header.len();
+        for row in sample_rows.clone() {
+            let formatted = match row.get(key) {
+                Some(Value::String(s)) => {
+                    if formatters.contains(&ColumnFormatter::DateValue) {
+                        format_date_mmddyyyy(s).unwrap_or_else(|| s.clone())
+                    } else {
+                        s.clone()
+                    }
+                }
+                Some(Value::Number(n)) => n.to_string(),
+                Some(Value::Bool(b)) => b.to_string(),
+                Some(Value::Null) => "null".to_string(),
+                Some(Value::Object(map)) => {
+                    // Fall back to highest-scoring key as a string
+                    if let Some(best) = get_scored_keys(map).first() {
+                        map.get(best).map(|v| v.as_str().unwrap_or(&v.to_string()).to_string()).unwrap_or_else(|| "".to_string())
+                    } else { "".to_string() }
+                }
+                Some(other) => other.to_string(),
+                None => String::new(),
+            };
+            let l = formatted.len();
+            if l > max_len { max_len = l; }
+        }
+        out.push(ColumnWithSize { name: header, key: key.clone(), formatters, max_len });
+    }
+    out
 }

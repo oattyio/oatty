@@ -3,6 +3,7 @@
 /// This struct serves as the central state container for the entire TUI
 /// application, managing user interactions, data flow, and UI state.
 use serde_json::Value;
+use crate::ui::utils::ColumnWithSize;
 
 /// Structured log entry supporting API responses and plain text.
 #[derive(Debug, Clone)]
@@ -65,7 +66,7 @@ pub struct LogsState {
     /// Cached redacted JSON for currently opened single API detail (by index).
     pub cached_detail_index: Option<usize>,
     pub cached_redacted_json: Option<Value>,
-    pub cached_columns: Option<Vec<String>>,
+    pub cached_columns: Option<Vec<ColumnWithSize>>,
 }
 
 impl Default for LogsState {

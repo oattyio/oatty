@@ -104,7 +104,7 @@ impl PaletteComponent {
                 app.palette.apply_insert_char(c);
                 app.palette
                     .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
-                app.palette.set_popup_open(true);
+                app.palette.set_is_suggestions_open(app.palette.suggestions_len() > 0);
                 app.palette.reduce_clear_error();
                 Ok(true)
             }
@@ -158,7 +158,7 @@ impl PaletteComponent {
                             ItemKind::Command => {
                                 // Replace input with command exec
                                 app.palette.apply_accept_command_suggestion(&item.insert_text);
-                                app.palette.set_popup_open(false);
+                                app.palette.set_is_suggestions_open(false);
                                 app.palette.reduce_clear_suggestions();
                             }
                             ItemKind::Positional => {
@@ -178,7 +178,7 @@ impl PaletteComponent {
 
                         // Keep popup open unless we accepted a command
                         if !matches!(item.kind, ItemKind::Command) {
-                            app.palette.set_popup_open(!app.palette.is_suggestions_open());
+                            app.palette.set_is_suggestions_open(!app.palette.is_suggestions_open());
                         }
                     }
                 } else if key.code == KeyCode::Enter {
