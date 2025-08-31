@@ -150,11 +150,10 @@ impl<'a> TableState<'_> {
                     let val = item.get(key).unwrap_or(&Value::Null);
                     let txt = render_value(key, val);
                     let mut style = theme.text_primary_style();
-                    if is_status_like(key) {
-                        if let Some(color) = status_color_for_value(&txt, theme) {
+                    if is_status_like(key)
+                        && let Some(color) = status_color_for_value(&txt, theme) {
                             style = Style::default().fg(color);
                         }
-                    }
                     cells.push(Cell::from(txt).style(style));
                 }
                 // Alternating row backgrounds using theme helper (no dim modifier).

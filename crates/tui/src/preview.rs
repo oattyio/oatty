@@ -92,7 +92,7 @@ pub fn cli_preview(spec: &CommandSpec, fields: &[Field]) -> String {
         parts.push(rest.to_string());
     }
     for p in &spec.positional_args {
-        if let Some(f) = fields.iter().find(|f| &f.name == p) {
+        if let Some(f) = fields.iter().find(|f| f.name == p.name) {
             parts.push(if f.value.is_empty() {
                 format!("<{}>", f.name)
             } else {
@@ -102,7 +102,7 @@ pub fn cli_preview(spec: &CommandSpec, fields: &[Field]) -> String {
     }
     for f in fields
         .iter()
-        .filter(|f| !spec.positional_args.iter().any(|p| p == &f.name))
+        .filter(|f| !spec.positional_args.iter().any(|p| p.name == f.name))
     {
         if f.is_bool {
             if !f.value.is_empty() {

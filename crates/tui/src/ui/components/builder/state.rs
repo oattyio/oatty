@@ -182,7 +182,7 @@ impl BuilderState {
 
         positional_args.iter().for_each(|a| {
             fields.push(Field {
-                name: a.clone(),
+                name: a.name.clone(),
                 required: true,
                 is_bool: false,
                 value: String::new(),

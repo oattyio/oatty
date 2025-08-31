@@ -148,7 +148,7 @@ pub enum MainFocus {
     Logs,
 }
 
-impl<'a> App<'_> {
+impl App<'_> {
     /// Creates a new application instance with the given registry.
     ///
     /// This constructor initializes the application state with default values

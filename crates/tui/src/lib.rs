@@ -288,21 +288,21 @@ fn palette_line_from_spec(spec: &CommandSpec, fields: &[Field]) -> String {
     }
     // positionals in order
     for p in &spec.positional_args {
-        if let Some(field) = fields.iter().find(|f| &f.name == p) {
+        if let Some(field) = fields.iter().find(|f| f.name == p.name) {
             let v = field.value.trim();
             if v.is_empty() {
-                parts.push(format!("<{}>", p));
+                parts.push(format!("<{}>", p.name));
             } else {
                 parts.push(v.to_string());
             }
         } else {
-            parts.push(format!("<{}>", p));
+            parts.push(format!("<{}>", p.name));
         }
     }
     // flags
     for f in fields
         .iter()
-        .filter(|f| !spec.positional_args.iter().any(|p| p == &f.name))
+        .filter(|f| !spec.positional_args.iter().any(|p| p.name == f.name))
     {
         if f.is_bool {
             if !f.value.is_empty() {
@@ -379,7 +379,7 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<CommandSpec, String
     if user_args.len() < spec.positional_args.len() {
         let missing: Vec<String> = spec.positional_args[user_args.len()..]
             .iter()
-            .map(|s| s.to_string())
+            .map(|p| p.name.to_string())
             .collect();
         return Err(format!("Missing required argument(s): {}", missing.join(", ")));
     }
@@ -403,8 +403,8 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<CommandSpec, String
 
     // Build positional map and body
     let mut pos_map: HashMap<String, String> = HashMap::new();
-    for (i, name) in spec.positional_args.iter().enumerate() {
-        pos_map.insert(name.clone(), user_args.get(i).cloned().unwrap_or_default());
+    for (i, pa) in spec.positional_args.iter().enumerate() {
+        pos_map.insert(pa.name.clone(), user_args.get(i).cloned().unwrap_or_default());
     }
     let mut body = Map::new();
     for (name, maybe_val) in user_flags.into_iter() {

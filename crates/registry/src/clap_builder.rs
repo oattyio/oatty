@@ -220,8 +220,13 @@ fn build_subcommand(cmd: &CommandSpec) -> ClapCommand {
 /// ```
 fn add_positional_arguments(mut subcommand: ClapCommand, cmd: &CommandSpec) -> ClapCommand {
     for (i, pa) in cmd.positional_args.iter().enumerate() {
-        let arg: &'static str = Box::leak(pa.clone().into_boxed_str());
-        subcommand = subcommand.arg(Arg::new(arg).required(true).index(i + 1));
+        let name_static: &'static str = Box::leak(pa.name.clone().into_boxed_str());
+        let mut arg = Arg::new(name_static).required(true).index(i + 1);
+        if let Some(help) = &pa.help {
+            let help_static: &'static str = Box::leak(help.clone().into_boxed_str());
+            arg = arg.help(help_static);
+        }
+        subcommand = subcommand.arg(arg);
     }
     subcommand
 }

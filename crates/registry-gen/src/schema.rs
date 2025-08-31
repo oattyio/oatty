@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use heck::ToKebabCase;
-use heroku_types::{CommandFlag, CommandSpec};
+use heroku_types::{CommandFlag, CommandSpec, PositionalArgument};
 use percent_encoding::percent_decode_str;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -93,7 +93,7 @@ pub fn derive_commands_from_schema(v: &Value) -> Result<Vec<CommandSpec>> {
                 .to_string();
 
             if let Some((_, action)) = classify_command(href, method) {
-                let (path_tmpl, positional_args, positional_help) = path_and_vars_with_help(href, v);
+                let (path_tmpl, positional_args) = path_and_vars_with_help(href, v);
                 let (flags, _required_names) = extract_flags_resolved(link, v);
 
                 if path_tmpl.is_empty() {
@@ -108,7 +108,6 @@ pub fn derive_commands_from_schema(v: &Value) -> Result<Vec<CommandSpec>> {
                     name,
                     summary: desc.clone(),
                     positional_args,
-                    positional_help,
                     flags,
                     method: method.to_string(),
                     path: path_tmpl,
@@ -249,16 +248,14 @@ fn derive_command_group_and_name(href: &str, action: &str) -> (String, String) {
 /// # Returns
 ///
 /// A tuple of path template, vector of positional args, and hashmap of help.
-fn path_and_vars_with_help(href: &str, root: &Value) -> (String, Vec<String>, HashMap<String, String>) {
-    let mut args: Vec<String> = Vec::new();
+fn path_and_vars_with_help(href: &str, root: &Value) -> (String, Vec<PositionalArgument>) {
+    let mut args: Vec<PositionalArgument> = Vec::new();
     let mut out_segs: Vec<String> = Vec::new();
-    let mut help: HashMap<String, String> = HashMap::new();
     let mut prev: Option<&str> = None;
     for seg in href.trim_start_matches('/').split('/') {
         if seg.starts_with('{') {
             let name = prev.map(singularize).unwrap_or_else(|| "id".to_string());
-            args.push(name.clone());
-            out_segs.push(format!("{{{}}}", name));
+            let mut help_text: Option<String> = None;
 
             if let Some(ptr_enc) = extract_placeholder_ptr(seg) {
                 let decoded = percent_decode_str(&ptr_enc).decode_utf8_lossy().to_string();
@@ -266,15 +263,17 @@ fn path_and_vars_with_help(href: &str, root: &Value) -> (String, Vec<String>, Ha
                 if let Some(val) = root.pointer(ptr)
                     && let Some(desc) = get_description(val, root)
                 {
-                    help.insert(name.clone(), desc);
+                    help_text = Some(desc);
                 }
             }
+            args.push(PositionalArgument { name: name.clone(), help: help_text });
+            out_segs.push(format!("{{{}}}", name));
         } else {
             out_segs.push(seg.to_string());
         }
         prev = Some(seg);
     }
-    (format!("/{}", out_segs.join("/")), args, help)
+    (format!("/{}", out_segs.join("/")), args)
 }
 
 /// Singularizes a segment name.

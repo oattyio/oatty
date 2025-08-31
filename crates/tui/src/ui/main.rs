@@ -105,7 +105,7 @@ fn render_modals(
         let buf = f.buffer_mut();
         for y in area.y..area.y + area.height {
             for x in area.x..area.x + area.width {
-                let cell = buf.get_mut(x, y);
+                let cell = buf.cell_mut(Position::new(x, y)).expect("Position not found");
                 let current = cell.style();
                 cell.set_style(current.add_modifier(Modifier::DIM));
             }

@@ -137,9 +137,9 @@ async fn run_command(registry: &Registry, matches: &ArgMatches) -> Result<()> {
 
     // Collect positional values
     let mut pos_values: HashMap<String, String> = HashMap::new();
-    for key in &cmd_spec.positional_args {
-        if let Some(val) = cmd_matches.get_one::<String>(key) {
-            pos_values.insert(key.clone(), val.to_string());
+    for pa in &cmd_spec.positional_args {
+        if let Some(val) = cmd_matches.get_one::<String>(&pa.name) {
+            pos_values.insert(pa.name.clone(), val.to_string());
         }
     }
 

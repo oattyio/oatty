@@ -621,16 +621,16 @@ impl PaletteState {
 
             // 5) If still empty and there are remaining positionals, offer placeholder for the next one
             if items.is_empty() && user_args.len() < spec.positional_args.len() {
-                let pos_name = &spec.positional_args[user_args.len()];
+                let pa = &spec.positional_args[user_args.len()];
                 items.push(SuggestionItem {
                     display: format!(
                         "<{:<15}> [ARG] {}",
-                        pos_name,
-                        spec.positional_help.get(pos_name).unwrap_or(pos_name)
+                        pa.name,
+                        pa.help.as_deref().unwrap_or(&pa.name)
                     ),
                     insert_text: current.to_string(),
                     kind: ItemKind::Positional,
-                    meta: spec.positional_help.get(pos_name).cloned(),
+                    meta: pa.help.clone(),
                     score: 0,
                 });
             }
@@ -891,21 +891,21 @@ fn suggest_positionals(
     providers: &[Box<dyn ValueProvider>],
 ) -> Vec<SuggestionItem> {
     let mut items: Vec<SuggestionItem> = Vec::new();
-    if let Some(pos_name) = spec.positional_args.get(arg_count) {
+    if let Some(pa) = spec.positional_args.get(arg_count) {
         for p in providers {
-            let mut vals = p.suggest(&spec.name, pos_name, current);
+            let mut vals = p.suggest(&spec.name, &pa.name, current);
             items.append(&mut vals);
         }
         if items.is_empty() {
             items.push(SuggestionItem {
                 display: format!(
                     "<{}> [ARG] {}",
-                    pos_name,
-                    spec.positional_help.get(pos_name).unwrap_or(pos_name)
+                    pa.name,
+                    pa.help.as_deref().unwrap_or(&pa.name)
                 ),
-                insert_text: format!("<{}>", pos_name),
+                insert_text: format!("<{}>", pa.name),
                 kind: ItemKind::Positional,
-                meta: spec.positional_help.get(pos_name).cloned(),
+                meta: pa.help.clone(),
                 score: 0,
             });
         }

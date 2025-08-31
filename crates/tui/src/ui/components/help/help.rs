@@ -123,7 +123,7 @@ impl HelpComponent {
 
         // Positional args as muted placeholders
         for arg in &spec.positional_args {
-            usage_spans.push(Span::styled(format!(" <{}>", arg), theme.text_muted_style()));
+            usage_spans.push(Span::styled(format!(" <{}>", arg.name), theme.text_muted_style()));
         }
 
         let mut flags_sorted: Vec<_> = spec.flags.iter().collect();
@@ -177,10 +177,10 @@ impl HelpComponent {
                     .text_secondary_style()
                     .add_modifier(ratatui::style::Modifier::BOLD),
             ));
-            for p in &spec.positional_args {
-                if let Some(desc) = spec.positional_help.get(p) {
+            for pa in &spec.positional_args {
+                if let Some(desc) = &pa.help {
                     let mut arg_line = Line::styled(
-                        format!("  {} ", p.to_uppercase()),
+                        format!("  {} ", pa.name.to_uppercase()),
                         theme
                             .text_secondary_style()
                             .add_modifier(ratatui::style::Modifier::BOLD),
@@ -190,7 +190,7 @@ impl HelpComponent {
                 } else {
                     lines.push(Line::raw(format!(
                         "  {}: Path parameter derived from the endpoint URL.\n",
-                        p
+                        pa.name
                     )));
                 }
             }

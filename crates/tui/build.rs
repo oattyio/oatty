@@ -50,12 +50,11 @@ fn collect_date_like_keys(v: &serde_json::Value, out: &mut BTreeSet<String>) {
     match v {
         Object(map) => {
             // If this object itself is a field schema, check its format/example
-            if is_date_schema_obj(map) {
-                if let Some(name) = map.get("title").and_then(|t| t.as_str()) {
+            if is_date_schema_obj(map)
+                && let Some(name) = map.get("title").and_then(|t| t.as_str()) {
                     // Titles are not reliable field names; ignore.
                     let _ = name; // placeholder to avoid unused warnings
                 }
-            }
 
             // Look for properties/definitions
             if let Some(Object(props)) = map.get("properties") {
@@ -120,11 +119,10 @@ fn has_date_indicator(v: &serde_json::Value) -> bool {
             }
 
             // Examples look like ISO8601
-            if let Some(example) = map.get("example").and_then(|e| e.as_str()) {
-                if looks_like_iso_date(example) {
+            if let Some(example) = map.get("example").and_then(|e| e.as_str())
+                && looks_like_iso_date(example) {
                     return true;
                 }
-            }
 
             // Otherwise, dig into nested composition
             if let Some(Array(arr)) = map.get("anyOf") {
@@ -158,7 +156,8 @@ fn looks_like_iso_date(s: &str) -> bool {
         return false;
     }
     let b = s.as_bytes();
-    let ok = b
+    
+    b
         .get(0..4)
         .map(|r| r.iter().all(|c| c.is_ascii_digit()))
         .unwrap_or(false)
@@ -169,6 +168,5 @@ fn looks_like_iso_date(s: &str) -> bool {
         && matches!(b.get(7), Some(b'-' | b'/'))
         && b.get(8..10)
             .map(|r| r.iter().all(|c| c.is_ascii_digit()))
-            .unwrap_or(false);
-    ok
+            .unwrap_or(false)
 }

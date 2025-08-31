@@ -62,6 +62,7 @@ use heroku_util::format_date_mmddyyyy;
 /// let mut table = TableComponent::new();
 /// table.init()?;
 /// ```
+#[derive(Default)]
 pub struct TableComponent<'a> {
     table: Table<'a>,
     table_state: TableState,
@@ -70,18 +71,8 @@ pub struct TableComponent<'a> {
     footer: TableFooter<'a>,
 }
 
-impl Default for TableComponent<'_> {
-    fn default() -> Self {
-        TableComponent { 
-            table: Table::default(), 
-            table_state: TableState::default(), 
-            scrollbar: Scrollbar::default(), 
-            scrollbar_state: ScrollbarState::default(), 
-            footer: TableFooter::default() }
-    }
-}
 
-impl<'a> TableComponent<'_> {
+impl TableComponent<'_> {
     /// Renders a JSON array as a table with offset support using known columns.
     pub fn render_json_table_with_columns(
         &mut self,
@@ -91,7 +82,7 @@ impl<'a> TableComponent<'_> {
         selected: usize,
         rows: &[Row],
         widths: &[Constraint],
-        headers: &Vec<Cell>,
+        headers: &[Cell],
         theme: &dyn UiTheme,
     ) {
         if rows.is_empty() {
@@ -108,9 +99,9 @@ impl<'a> TableComponent<'_> {
         let table = self
             .table
             .clone()
-            .rows(rows[start..end].iter().cloned())
+            .rows(rows[start..end].to_owned())
             .widths(widths)
-            .header(Row::new(headers.clone()).style(th::table_header_row_style(theme)))
+            .header(Row::new(headers.to_owned()).style(th::table_header_row_style(theme)))
             .block(th::block(theme, None, false))
             .column_spacing(1)
             .row_highlight_style(th::table_selected_style(theme))
@@ -123,7 +114,7 @@ impl<'a> TableComponent<'_> {
         frame.render_stateful_widget(table, area, &mut self.table_state);
 
         // Scrollbar indicating vertical position within table rows
-        if rows.len() > 0 {
+        if !rows.is_empty() {
             let mut sb_state = self
                 .scrollbar_state
                 .content_length(max_start)
@@ -214,7 +205,7 @@ impl Component for TableComponent<'_> {
                     splits[0],
                     app.table.count_offset(),
                     app.table.selected_index(),
-                    &rows,
+                    rows,
                     widths.unwrap(),
                     headers.unwrap(),
                     &*app.ctx.theme,

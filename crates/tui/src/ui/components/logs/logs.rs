@@ -176,15 +176,14 @@ impl LogsComponent {
         let mut spans: Vec<Span> = Vec::new();
         let mut i = 0usize;
         // Timestamp at start
-        if let Some(m) = TS_RE.find(line) {
-            if m.start() == 0 && m.end() > 0 {
+        if let Some(m) = TS_RE.find(line)
+            && m.start() == 0 && m.end() > 0 {
                 spans.push(Span::styled(
                     &line[m.start()..m.end()],
                     Style::default().fg(theme.roles().accent_secondary),
                 ));
                 i = m.end();
             }
-        }
         // Remaining text; color UUID/hex IDs subtly
         let rest = &line[i..];
         let mut last = 0usize;

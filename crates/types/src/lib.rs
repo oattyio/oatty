@@ -1,7 +1,6 @@
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
 
 /// Represents a command-line flag or option for a Heroku CLI command.
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -36,12 +35,9 @@ pub struct CommandSpec {
     pub name: String,
     /// Brief description of what the command does
     pub summary: String,
-    /// Ordered list of positional argument names
+    /// Ordered list of positional arguments with inline help
     #[serde(default)]
-    pub positional_args: Vec<String>,
-    /// Help text for each positional argument, keyed by argument name
-    #[serde(default)]
-    pub positional_help: HashMap<String, String>,
+    pub positional_args: Vec<PositionalArgument>,
     /// List of optional and required flags for this command
     #[serde(default)]
     pub flags: Vec<CommandFlag>,
@@ -49,6 +45,16 @@ pub struct CommandSpec {
     pub method: String,
     /// API endpoint path (e.g., "/apps" or "/apps/{app}/dynos")
     pub path: String,
+}
+
+/// Represents a positional argument for a command, including its name and help text.
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+pub struct PositionalArgument {
+    /// The name of the positional argument (e.g., "app")
+    pub name: String,
+    /// Optional help/description for this positional argument
+    #[serde(default)]
+    pub help: Option<String>,
 }
 
 /// Represents a single input field for a command parameter.
@@ -133,7 +139,6 @@ mod tests {
         assert_eq!(spec.name, "apps:list");
         assert_eq!(spec.summary, "List apps");
         assert!(spec.positional_args.is_empty());
-        assert!(spec.positional_help.is_empty());
         assert!(spec.flags.is_empty());
         assert_eq!(spec.method, "GET");
         assert_eq!(spec.path, "/apps");
@@ -143,7 +148,7 @@ mod tests {
         assert_eq!(spec2.name, spec.name);
         assert_eq!(spec2.method, spec.method);
         assert_eq!(spec2.path, spec.path);
-        assert_eq!(spec2.positional_args, spec.positional_args);
+        assert_eq!(spec2.positional_args.len(), spec.positional_args.len());
         assert_eq!(spec2.flags.len(), 0);
     }
 
