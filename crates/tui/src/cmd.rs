@@ -239,6 +239,16 @@ async fn exec_remote(
     if !body.is_empty() {
         builder = builder.json(&serde_json::Value::Object(body.clone()));
     }
+    
+    // Add Range header if range parameters are provided
+    if let (Some(field), Some(start), Some(end)) = (
+        body.get("range-field").and_then(|v| v.as_str()),
+        body.get("range-start").and_then(|v| v.as_str()),
+        body.get("range-end").and_then(|v| v.as_str()),
+    ) {
+        let range_header = format!("{} {}..{}", field, start, end);
+        builder = builder.header("Range", range_header);
+    }
     let resp = builder.send().await.map_err(|e| {
         format!(
             "Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY or ~/.netrc is set",

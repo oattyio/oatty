@@ -95,6 +95,7 @@ pub fn derive_commands_from_schema(v: &Value) -> Result<Vec<CommandSpec>> {
             if let Some((_, action)) = classify_command(href, method) {
                 let (path_tmpl, positional_args) = path_and_vars_with_help(href, v);
                 let (flags, _required_names) = extract_flags_resolved(link, v);
+                let ranges = extract_ranges(link);
 
                 if path_tmpl.is_empty() {
                     continue;
@@ -111,6 +112,7 @@ pub fn derive_commands_from_schema(v: &Value) -> Result<Vec<CommandSpec>> {
                     flags,
                     method: method.to_string(),
                     path: path_tmpl,
+                    ranges,
                 };
                 cmds.push(spec);
             }
@@ -317,10 +319,29 @@ fn extract_placeholder_ptr(seg: &str) -> Option<String> {
     if ptr.is_empty() { None } else { Some(ptr) }
 }
 
+/// Extracts range fields from a link schema.
+///
+/// # Arguments
+///
+/// * `link` - The link JSON Value.
+///
+/// # Returns
+///
+/// A vector of range field names.
+fn extract_ranges(link: &Value) -> Vec<String> {
+    link.get("ranges")
+        .and_then(|r| r.as_array())
+        .map(|arr| arr.iter()
+            .filter_map(|v| v.as_str().map(|s| s.to_string()))
+            .collect())
+        .unwrap_or_default()
+}
+
 /// Extracts flags and required names from a link schema.
 ///
 /// Resolves properties recursively, handling $ref, anyOf, etc., for type, description,
 /// enum values, and defaults. Generates short flags as the first letter of the long name.
+/// Also adds range-related flags if ranges are supported.
 ///
 /// # Arguments
 ///
@@ -395,6 +416,41 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
             }
         }
     }
+    
+    // Add range-related flags if ranges are supported
+    let ranges = extract_ranges(link);
+    if !ranges.is_empty() {
+        flags.push(CommandFlag {
+            name: "range-field".to_string(),
+            short_name: Some("r".to_string()),
+            required: false,
+            r#type: "string".to_string(),
+            enum_values: ranges.clone(),
+            default_value: None,
+            description: Some("Field to use for range-based pagination".to_string()),
+        });
+        
+        flags.push(CommandFlag {
+            name: "range-start".to_string(),
+            short_name: Some("s".to_string()),
+            required: false,
+            r#type: "string".to_string(),
+            enum_values: vec![],
+            default_value: None,
+            description: Some("Start value for range (inclusive)".to_string()),
+        });
+        
+        flags.push(CommandFlag {
+            name: "range-end".to_string(),
+            short_name: Some("e".to_string()),
+            required: false,
+            r#type: "string".to_string(),
+            enum_values: vec![],
+            default_value: None,
+            description: Some("End value for range (inclusive)".to_string()),
+        });
+    }
+    
     (flags, required_names)
 }
 

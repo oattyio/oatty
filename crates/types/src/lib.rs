@@ -45,6 +45,9 @@ pub struct CommandSpec {
     pub method: String,
     /// API endpoint path (e.g., "/apps" or "/apps/{app}/dynos")
     pub path: String,
+    /// Supported range fields for pagination/sorting (e.g., ["id", "name", "updated_at"])
+    #[serde(default)]
+    pub ranges: Vec<String>,
 }
 
 /// Represents a positional argument for a command, including its name and help text.
