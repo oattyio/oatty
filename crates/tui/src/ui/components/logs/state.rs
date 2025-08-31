@@ -1,9 +1,9 @@
+use crate::ui::utils::ColumnWithSize;
 /// The main application state containing all UI data and business logic.
 ///
 /// This struct serves as the central state container for the entire TUI
 /// application, managing user interactions, data flow, and UI state.
 use serde_json::Value;
-use crate::ui::utils::ColumnWithSize;
 
 /// Structured log entry supporting API responses and plain text.
 #[derive(Debug, Clone)]

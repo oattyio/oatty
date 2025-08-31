@@ -15,3 +15,4 @@ percent-encoding = { workspace = true }
 heck = { workspace = true }
 heroku-types = { path = "../types" }
 bincode = { workspace = true }
+clap = { workspace = true }

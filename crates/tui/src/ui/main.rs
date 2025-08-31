@@ -4,6 +4,8 @@ use crate::ui::components::component::Component;
 use crate::ui::components::palette::{HintBarComponent, PaletteComponent};
 use crate::ui::layout::MainLayout;
 use ratatui::prelude::*;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::Paragraph;
 
 /// Renders the main user interface layout and coordinates all UI components.
 ///
@@ -27,6 +29,10 @@ pub fn draw(
     table: &mut TableComponent,
 ) {
     let size = frame.area();
+
+    // Fill the entire background with the theme's background color for consistency
+    let bg_fill = Paragraph::new("").style(Style::default().bg(app.ctx.theme.roles().background));
+    frame.render_widget(bg_fill, size);
 
     // Create main layout with vertical sections
     let chunks = MainLayout::vertical_layout(size, app);
@@ -90,6 +96,39 @@ fn render_modals(
     help: &mut HelpComponent,
     table: &mut TableComponent,
 ) {
+    // Draw a dim overlay when any modal is visible
+    let any_modal = app.help.is_visible() || app.table.is_visible() || app.builder.is_visible();
+    if any_modal {
+        use ratatui::widgets::Paragraph;
+        // Dim the entire existing buffer so all underlying text appears subdued
+        let area = f.area();
+        let buf = f.buffer_mut();
+        for y in area.y..area.y + area.height {
+            for x in area.x..area.x + area.width {
+                let cell = buf.get_mut(x, y);
+                let current = cell.style();
+                cell.set_style(current.add_modifier(Modifier::DIM));
+            }
+        }
+        // Darken the background for the backdrop (avoid lighter overlays)
+        fn darken_rgb(color: Color, factor: f32) -> Color {
+            match color {
+                Color::Rgb(r, g, b) => {
+                    let f = factor.clamp(0.0, 1.0);
+                    let dr = (r as f32 * f).round().clamp(0.0, 255.0) as u8;
+                    let dg = (g as f32 * f).round().clamp(0.0, 255.0) as u8;
+                    let db = (b as f32 * f).round().clamp(0.0, 255.0) as u8;
+                    Color::Rgb(dr, dg, db)
+                }
+                other => other,
+            }
+        }
+        let bg = app.ctx.theme.roles().background;
+        let darker = darken_rgb(bg, 0.60);
+        let overlay = Paragraph::new("").style(Style::default().bg(darker));
+        f.render_widget(overlay, f.area());
+    }
+
     if app.help.is_visible() {
         help.render(f, f.area(), app);
     }

@@ -22,6 +22,9 @@ use crate::app::{self, Effect};
 use heroku_registry::CommandSpec;
 use heroku_types::ExecOutcome;
 use serde_json::Value;
+use std::sync::{
+    atomic::{Ordering},
+};
 use tokio::task::spawn;
 
 /// Represents side-effectful system commands executed outside of pure state updates.
@@ -170,6 +173,8 @@ fn execute_http(app: &mut app::App, spec: CommandSpec, path: String, body: serde
     app.executing = true;
     app.throbber_idx = 0;
     let tx = app.exec_sender.clone();
+    let active = app.active_exec_count.clone();
+    active.fetch_add(1, Ordering::Relaxed);
     spawn(async move {
         let outcome = exec_remote(spec, path, body).await;
         match outcome {
@@ -184,6 +189,8 @@ fn execute_http(app: &mut app::App, spec: CommandSpec, path: String, body: serde
                 });
             }
         }
+        // Mark one execution completed
+        active.fetch_sub(1, Ordering::Relaxed);
     });
 }
 

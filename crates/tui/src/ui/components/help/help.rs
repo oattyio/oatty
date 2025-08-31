@@ -118,19 +118,12 @@ impl HelpComponent {
                 .add_modifier(ratatui::style::Modifier::BOLD),
         ));
 
-        let mut usage_spans: Vec<Span<'_>> = vec![Span::styled(
-            format!("  heroku {}", cmd),
-            theme.text_primary_style(),
-        )];
+        let mut usage_spans: Vec<Span<'_>> =
+            vec![Span::styled(format!("  heroku {}", cmd), theme.text_primary_style())];
 
         // Positional args as muted placeholders
         for arg in &spec.positional_args {
-            usage_spans.push(Span::styled(
-                format!(" <{}>", arg),
-                theme
-                    .text_muted_style()
-                    .add_modifier(ratatui::style::Modifier::ITALIC),
-            ));
+            usage_spans.push(Span::styled(format!(" <{}>", arg), theme.text_muted_style()));
         }
 
         let mut flags_sorted: Vec<_> = spec.flags.iter().collect();
@@ -144,12 +137,7 @@ impl HelpComponent {
                         .add_modifier(ratatui::style::Modifier::BOLD),
                 ));
                 if flag.r#type != "boolean" {
-                    usage_spans.push(Span::styled(
-                        " <value>",
-                        theme
-                            .text_muted_style()
-                            .add_modifier(ratatui::style::Modifier::ITALIC),
-                    ));
+                    usage_spans.push(Span::styled(" <value>", theme.text_muted_style()));
                 }
             } else {
                 // Optional flags enclosed in muted brackets
@@ -161,12 +149,7 @@ impl HelpComponent {
                         .add_modifier(ratatui::style::Modifier::BOLD),
                 ));
                 if flag.r#type != "boolean" {
-                    usage_spans.push(Span::styled(
-                        " <value>",
-                        theme
-                            .text_muted_style()
-                            .add_modifier(ratatui::style::Modifier::ITALIC),
-                    ));
+                    usage_spans.push(Span::styled(" <value>", theme.text_muted_style()));
                 }
                 usage_spans.push(Span::styled("]", theme.text_muted_style()));
             }
@@ -239,12 +222,7 @@ impl HelpComponent {
                 };
 
                 if f.r#type != "boolean" {
-                    flag_line.push_span(Span::styled(
-                        " <value>",
-                        theme
-                            .text_muted_style()
-                            .add_modifier(ratatui::style::Modifier::ITALIC),
-                    ));
+                    flag_line.push_span(Span::styled(" <value>", theme.text_muted_style()));
                 }
                 if f.required {
                     flag_line.push_span(Span::styled("  (required)", theme.text_muted_style()));

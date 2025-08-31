@@ -1,6 +1,6 @@
+use chrono::{DateTime, Datelike, NaiveDate};
 use once_cell::sync::Lazy;
 use regex::Regex;
-use chrono::{DateTime, NaiveDate, Datelike};
 
 /// Redacts values that look like secrets in a string.
 pub fn redact_sensitive(input: &str) -> String {
@@ -174,8 +174,12 @@ pub fn is_date_like_key(key: &str) -> bool {
     if generated_date_fields::DATE_FIELD_KEYS.contains(&k.as_str()) {
         return true;
     }
-    k.ends_with("_at") || k.ends_with("_on") || k.ends_with("_date")
-        || k == "created" || k == "updated" || k == "released"
+    k.ends_with("_at")
+        || k.ends_with("_on")
+        || k.ends_with("_date")
+        || k == "created"
+        || k == "updated"
+        || k == "released"
 }
 
 /// Formats common date strings into MM/DD/YYYY if parsable.

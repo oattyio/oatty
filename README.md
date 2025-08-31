@@ -30,7 +30,7 @@ A schema-driven Heroku CLI with both non-interactive and interactive TUI modes. 
 ## Architecture
 - Registry (manifest → commands): at build time, the schema is converted into a compact JSON manifest; at runtime, the registry deserializes this manifest to expose commands (e.g., `apps:list`, `users:apps:list`).
 - CLI: loads registry and builds Clap tree; parses inputs; builds and sends requests (or ``).
-- TUI: Ratatui + Crossterm; state (app.rs), rendering (ui.rs), CLI preview (preview.rs), theme (theme.rs).
+- TUI: Ratatui + Crossterm; state (app.rs), rendering (ui.rs), CLI preview (preview.rs), theme (ui/theme).
 - API: minimal reqwest client with headers, timeouts, and auth precedence.
 - Util: redaction helpers.
 
@@ -49,6 +49,76 @@ A schema-driven Heroku CLI with both non-interactive and interactive TUI modes. 
 - Source schema: `schemas/heroku-schema.json`
 - Generator crate: `crates/registry-gen` (library + bin)
 - Build script: `crates/registry/build.rs` writes `OUT_DIR/heroku-manifest.json`
+
+## Registry Generator (Library + CLI)
+
+The registry is derived from the Heroku JSON Hyper-Schema using the `registry-gen` crate. You can use it both as a standalone CLI and as a Rust library.
+
+### CLI Usage
+
+- Binary (bincode) manifest:
+
+```
+cargo run -p heroku-registry-gen -- schemas/heroku-schema.json target/manifest.bin
+```
+
+- JSON manifest with `--json` flag:
+
+```
+cargo run -p heroku-registry-gen -- --json schemas/heroku-schema.json target/manifest.json
+```
+
+Notes:
+- The CLI creates parent directories for the output path if needed.
+- By default, it writes a compact bincode file for fast loading.
+
+### Library Usage
+
+Add a dependency on the generator crate from within the workspace:
+
+```toml
+[dependencies]
+heroku-registry-gen = { path = "crates/registry-gen" }
+```
+
+Generate a manifest file (bincode):
+
+```rust
+use std::path::PathBuf;
+use heroku_registry_gen::write_manifest;
+
+fn main() -> anyhow::Result<()> {
+    let input = PathBuf::from("schemas/heroku-schema.json");
+    let output = PathBuf::from("target/manifest.bin");
+    write_manifest(input, output)?;
+    Ok(())
+}
+```
+
+Generate a manifest file (JSON):
+
+```rust
+use std::path::PathBuf;
+use heroku_registry_gen::write_manifest_json;
+
+fn main() -> anyhow::Result<()> {
+    let input = PathBuf::from("schemas/heroku-schema.json");
+    let output = PathBuf::from("target/manifest.json");
+    write_manifest_json(input, output)?;
+    Ok(())
+}
+```
+
+Derive commands in-memory from a schema string:
+
+```rust
+use heroku_registry_gen::generate_commands;
+
+fn load_commands(schema_json: &str) -> anyhow::Result<Vec<heroku_types::CommandSpec>> {
+    let cmds = generate_commands(schema_json)?;
+    Ok(cmds)
+}
+```
 
 
 ## Flow
@@ -90,3 +160,11 @@ flowchart LR
 
 ## Status
 - Schema-driven registry, CLI router, and TUI are implemented. Engine (workflows) is a placeholder. Some HTTP client behaviors (retries/backoff) are minimal.
+
+## Theme Architecture
+- Location: `crates/tui/src/ui/theme` (roles, helpers, Dracula/Nord themes)
+- Docs: `plans/THEME.md` (Dracula mapping, usage, and guidelines)
+- Select theme via env var `TUI_THEME`:
+  - `dracula` (default), `dracula_hc`
+  - `nord`, `nord_hc`
+  - Example: `TUI_THEME=dracula cargo run -p heroku-cli`

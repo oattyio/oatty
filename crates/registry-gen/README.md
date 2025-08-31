@@ -34,7 +34,25 @@ serde_json = "1.0"
 
 ## Usage
 
-### Generating a Command Manifest
+### CLI
+
+This crate can be invoked as a CLI to generate a manifest from a JSON Hyper-Schema.
+
+- Binary (bincode) output:
+
+```bash
+cargo run -p heroku-registry-gen -- path/to/schema.json target/manifest.bin
+```
+
+- JSON output via `--json` flag:
+
+```bash
+cargo run -p heroku-registry-gen -- --json path/to/schema.json target/manifest.json
+```
+
+The CLI will create parent directories for the output path if needed.
+
+### Generating a Command Manifest (library)
 
 The primary function, `write_manifest`, reads a JSON hyper-schema file, generates command specifications, and writes them to a binary manifest file.
 
@@ -153,10 +171,6 @@ cargo test
 - `heck`: For kebab-case conversion of command names.
 - `percent-encoding`: For decoding URL-encoded placeholders.
 - `serde` and `serde_json`: For JSON hyper-schema serialization/deserialization.
-
-### Environment Variables
-
-- `FEATURE_WORKFLOWS`: When set, enables synthetic workflow commands.
 
 ## Contributing
 

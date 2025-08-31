@@ -1,38 +1,53 @@
-# ASSISTANT_INSTRUCTIONS_NORD_THEME.md
+# ASSISTANT_INSTRUCTIONS_DRACULA_THEME.md
 
-You are implementing the Heroku TUI using the **Nord theme**. Follow these rules exactly to ensure a cohesive, accessible, and professional look.
+You are implementing the Heroku TUI using the **Dracula theme**. Follow these rules exactly to ensure a cohesive, accessible, and professional look.
 
 ---
 
 ## 1) Palette Assignment (authoritative)
 
-**Polar Night (backgrounds & structure)**
-- BG_MAIN:        `#2E3440`  ← use for app background
-- BG_PANEL:       `#3B4252`  ← use for secondary panels/cards, inputs
-- UI_BORDER:      `#434C5E`  ← use for borders/dividers/scrollbars
-- TEXT_MUTED:     `#4C566A`  ← use for ghost text, hints, placeholders
+Based on official Dracula (https://spec.draculatheme.com)
 
-**Snow Storm (foreground text)**
-- TEXT_PRIMARY:   `#D8DEE9`  ← default text
-- TEXT_SECONDARY: `#E5E9F0`  ← titles, headers, labels
-- TEXT_SELECTED:  `#ECEFF4`  ← highlighted text
+**Core**
+- BG_MAIN:        `#282a36`  ← app/root background
+- BG_PANEL:       `#282a36`  ← secondary panels/cards/inputs
+- UI_BORDER:      `#44475a`  ← borders/dividers/scrollbars; also Current Line
+- TEXT_MUTED:     `#6272a4`  ← ghost text, hints, placeholders (Comment)
 
-**Frost (navigation & non-semantic accents)**
-- ACCENT_CYAN:    `#8FBCBB`
-- ACCENT_TEAL:    `#88C0D0`  ← fuzzy-match highlights, input focus underline
-- ACCENT_BLUE:    `#81A1C1`  ← timestamps, secondary accents
-- ACCENT_DARK:    `#5E81AC`  ← selected-row bg, IDs
+**Foreground**
+- TEXT_PRIMARY:   `#f8f8f2`  ← default text (Foreground)
+- TEXT_SECONDARY: `#6272a4`  ← titles/headers/labels (Comment)
+- TEXT_SELECTED:  `#f8f8f2`  ← highlighted text
 
-**Aurora (semantic status colors)**
-- STATUS_ERROR:   `#BF616A`
-- STATUS_WARN:    `#D08770`
-- STATUS_PENDING: `#EBCB8B`
-- STATUS_OK:      `#A3BE8C`
-- STATUS_NOTE:    `#B48EAD`  ← plugin badges or “special”
+**Accents**
+- ACCENT_PRIMARY:   `#ff79c6` (Pink)  ← interactive elements/prompts
+- ACCENT_SECONDARY: `#8be9fd` (Cyan)  ← focus, progress, keywords
+- ACCENT_SUBTLE:    `#6272a4` (Comment) ← subtle accents
+
+**Status (semantic)**
+- STATUS_ERROR:   `#ff5555`
+- STATUS_WARN:    `#ffb86c`  ← warnings/modified
+- STATUS_OK:      `#50fa7b`
+- STATUS_INFO:    `#8be9fd`
 
 ---
 
 ## 2) Global Styling Rules
+
+| Color Name | Hex Code   | Typical TUI Use Case                                    | Example Applications                     | Recommended Widget Use (Tables & Panels)                     |
+|------------|------------|---------------------------------------------------------|------------------------------------------|-------------------------------------------------------------|
+| Background | #282A36    | Main canvas/background for terminals and TUIs           | Terminal background, htop background     | Table/panel background for consistent dark base             |
+| Foreground | #F8F8F2    | Primary text (commands, file names, main content)       | Neovim text, lazygit commit messages     | Table cell text, panel content text for readability         |
+| Current Line | #44475A  | Highlighting selected lines or items                    | Neovim cursor line, htop selected process| Selected table row/column or active panel background        |
+| Comment    | #6272A4    | Secondary text (logs, comments, non-interactive labels) | Neovim comments, ranger file metadata    | Table headers or panel labels for non-interactive text      |
+| Cyan       | #8BE9FD    | Keywords, progress bars, status indicators              | htop CPU bars, Neovim keywords           | Table borders or panel accents for active/focused elements  |
+| Green      | #50FA7B    | Success states, additions, active indicators            | lazygit Git additions, htop memory bars  | Table row highlights for positive states (e.g., completed)  |
+| Orange     | #FFB86C    | Warnings, modified states, secondary highlights         | lazygit staged changes, Neovim functions | Panel borders for warning states or modified table rows     |
+| Pink       | #FF79C6    | Interactive elements (buttons, prompts, selections)     | lazygit branch selection, fzf prompts    | Table selection highlights or panel borders for interactive elements |
+| Purple     | #BD93F9    | Navigation cues, constants, special keywords            | ranger directories, Neovim constants     | Table column separators or panel titles for navigation cues |
+| Red        | #FF5555    | Errors, deletions, critical alerts                      | htop high CPU alerts, lazygit deletions  | Table row highlights for errors or panel error indicators   |
+| Yellow     | #F1FA8C    | Search results, important notifications, active cursors | fzf search matches, Neovim search highlight | Table cell highlights for search results or panel alerts    |
+
 
 - **Backgrounds**
   - App/root bg = BG_MAIN.
@@ -45,20 +60,20 @@ You are implementing the Heroku TUI using the **Nord theme**. Follow these rules
   - Muted/ghost/hints/placeholders = TEXT_MUTED (dim).
 
 - **Selection**
-  - Selected row: foreground = TEXT_SELECTED; background = ACCENT_DARK.
-  - Focused input underline = ACCENT_TEAL.
+  - Selected row: fg = TEXT_SELECTED; bg = UI_BORDER (Current Line).
+  - Focus/borders = ACCENT_SECONDARY (cyan); interactive emphasis uses ACCENT_PRIMARY (pink).
 
 - **Highlights**
-  - Fuzzy-match spans: ACCENT_TEAL (bold+underline).
-  - IDs/Request IDs: ACCENT_DARK (bold), ellipsize middle (e.g., `1d2c…9a7b`).
-  - Timestamps: ACCENT_BLUE (dim).
+  - Search/fuzzy spans: Yellow `#f1fa8c` (bold/underline) for high contrast.
+  - IDs/Request IDs: ACCENT_PRIMARY (bold) or ACCENT_SUBTLE; ellipsize middle (e.g., `1d2c…9a7b`).
+  - Timestamps: ACCENT_SECONDARY (cyan; subtle).
 
 - **Status/Badges**
   - Success ✓ = STATUS_OK.
-  - Warning ! = STATUS_PENDING (amber) or STATUS_WARN (orange) for stronger attention.
+  - Warning ! = STATUS_WARN (Orange).
   - Error ✖ = STATUS_ERROR.
-  - Running/Progress … = STATUS_WARN or STATUS_PENDING (spinner).
-  - Plugin badge / special = STATUS_NOTE.
+  - Info ℹ = STATUS_INFO (Cyan).
+  - Running/Progress … = STATUS_WARN (e.g., spinner while pending).
 
 - **Secrets**
   - Masked by default with bullets `•••••` in TEXT_MUTED.
@@ -72,35 +87,35 @@ You are implementing the Heroku TUI using the **Nord theme**. Follow these rules
 - Background: BG_PANEL; border: UI_BORDER.
 - Text: TEXT_PRIMARY; caret: TEXT_SELECTED.
 - Ghost text: TEXT_MUTED (dim).
-- Focus underline: ACCENT_TEAL (1px/line).
+ - Focus underline: ACCENT_PRIMARY (1px/line).
 
 **Suggestions Popup**
 - Item text: TEXT_PRIMARY.
-- Matched spans: ACCENT_TEAL (bold+underline).
+ - Matched spans: ACCENT_PRIMARY (bold+underline).
 - Type badges: `[CMD]` `[WF]` `[PLG]`
-  - CMD badge = ACCENT_BLUE outline
-  - WF badge  = ACCENT_TEAL outline
-  - PLG badge = STATUS_NOTE outline
-- Hover/selected row bg: ACCENT_DARK; fg: TEXT_SELECTED.
+  - CMD badge = ACCENT_SECONDARY outline
+  - WF badge  = ACCENT_PRIMARY outline
+  - PLG badge = ACCENT_PRIMARY outline
+- Hover/selected row bg: UI_BORDER; fg: TEXT_SELECTED.
 
 **Tables**
-- Header row: TEXT_SECONDARY (bold) on BG_PANEL; bottom border UI_BORDER.
-- Body rows: TEXT_PRIMARY; stripe optional (BG_MAIN ↔ BG_PANEL*0.95).
+- Header row: TEXT_SECONDARY (bold); apply header bg via Row style (surface_muted) to avoid gaps.
+- Body rows: TEXT_PRIMARY; zebra by darkening `surface` and `surface_muted` (no DIM modifiers).
 - Truncation ellipsis, no wrap by default.
-- Sorting arrow uses ACCENT_BLUE.
-- State chips use Aurora colors (OK/WARN/ERROR/PENDING).
-- Hidden-columns chip uses ACCENT_CYAN.
+- Sorting arrow uses ACCENT_SECONDARY.
+- State chips use status colors (OK/WARN/ERROR/INFO).
+- Hidden-columns chip uses ACCENT_SECONDARY.
 
 **Workflow Steps**
-- Icons: ✓ STATUS_OK, ✖ STATUS_ERROR, … STATUS_PENDING, ◻ neutral (TEXT_MUTED).
+- Icons: ✓ STATUS_OK, ✖ STATUS_ERROR, … STATUS_WARN, ◻ neutral (TEXT_MUTED).
 - Expanded preview borders: UI_BORDER; titles TEXT_SECONDARY.
-- Dep/phase labels: ACCENT_BLUE.
+ - Dep/phase labels: ACCENT_SECONDARY.
 
 **Logs**
 - Default text: TEXT_PRIMARY.
-- Timestamps: ACCENT_BLUE (dim).
-- Request IDs & short SHAs: ACCENT_DARK (bold).
-- Status inline tags: Aurora mapping (see above).
+- Timestamps: ACCENT_SECONDARY (cyan; subtle).
+- Request IDs & short SHAs: ACCENT_PRIMARY (bold) or ACCENT_SUBTLE.
+ - Status inline tags: use status mapping (OK/WARN/ERROR/INFO).
 - Copy/toast messages:
   - Success toast bg: STATUS_OK; fg: BG_MAIN.
   - Failure toast bg: STATUS_ERROR; fg: TEXT_SELECTED.
@@ -108,13 +123,14 @@ You are implementing the Heroku TUI using the **Nord theme**. Follow these rules
 **Toasts/Modals**
 - Modal bg: BG_PANEL; border: UI_BORDER; title: TEXT_SECONDARY.
 - Toast bg: darkened BG_PANEL; accent by status color.
+- When any modal is open: dim entire view (DIM modifier) and draw a darkened backdrop from BG_MAIN.
 
 ---
 
 ## 4) Accessibility & Fallbacks
 
 - Never rely on color alone: pair color with **icons/symbols** (`✓ ✖ ! …`) and variations (bold/underline).
-- Ensure contrast ratio is comfortable (Nord is muted—use **bold/underline** to reinforce).
+- Ensure contrast ratio is comfortable (Dracula uses high contrast—prefer clean emphasis, avoid overuse of DIM).
 - Provide a **monochrome mode**: drop color, keep emphasis via bold/underline and symbols.
 
 ---
@@ -122,14 +138,14 @@ You are implementing the Heroku TUI using the **Nord theme**. Follow these rules
 ## 5) Do / Don’t
 
 **Do**
-- Use Frost colors only for **non-semantic guidance** (matches, focus, timestamps).
-- Use Aurora colors **only** for semantic statuses.
-- Keep the palette restrained—Nord is about calm clarity.
+- Use accent colors for **non-semantic guidance** (matches, focus, timestamps).
+- Use status colors **only** for semantic statuses.
+- Keep the palette restrained—Dracula is about high-contrast clarity, not neon everywhere.
 
 **Don’t**
-- Mix multiple Aurora colors in the same element.
-- Use saturated accent colors for large backgrounds.
-- Overuse dim text; only for hints/ghost/secondary.
+- Mix multiple status colors in the same element.
+- Use bright accents for large backgrounds.
+- Overuse dim text; reserve for hints/ghost/secondary.
 
 ---
 
@@ -140,44 +156,42 @@ Define constants once and import everywhere.
 ```rust
 use ratatui::style::Color;
 
-pub mod nord {
-    pub const BG_MAIN:        Color = Color::Rgb(0x2E,0x34,0x40);
-    pub const BG_PANEL:       Color = Color::Rgb(0x3B,0x42,0x52);
-    pub const UI_BORDER:      Color = Color::Rgb(0x43,0x4C,0x5E);
-    pub const TEXT_MUTED:     Color = Color::Rgb(0x4C,0x56,0x6A);
+pub mod dracula {
+    pub const BG_MAIN:        Color = Color::Rgb(0x28,0x2A,0x36);
+    pub const BG_PANEL:       Color = Color::Rgb(0x28,0x2A,0x36);
+    pub const UI_BORDER:      Color = Color::Rgb(0x44,0x47,0x5A);
+    pub const TEXT_MUTED:     Color = Color::Rgb(0x62,0x72,0xA4);
 
-    pub const TEXT_PRIMARY:   Color = Color::Rgb(0xD8,0xDE,0xE9);
-    pub const TEXT_SECONDARY: Color = Color::Rgb(0xE5,0xE9,0xF0);
-    pub const TEXT_SELECTED:  Color = Color::Rgb(0xEC,0xEF,0xF4);
+    pub const TEXT_PRIMARY:   Color = Color::Rgb(0xF8,0xF8,0xF2);
+    pub const TEXT_SECONDARY: Color = Color::Rgb(0x62,0x72,0xA4);
+    pub const TEXT_SELECTED:  Color = Color::Rgb(0xF8,0xF8,0xF2);
 
-    pub const ACCENT_CYAN:    Color = Color::Rgb(0x8F,0xBC,0xBB);
-    pub const ACCENT_TEAL:    Color = Color::Rgb(0x88,0xC0,0xD0);
-    pub const ACCENT_BLUE:    Color = Color::Rgb(0x81,0xA1,0xC1);
-    pub const ACCENT_DARK:    Color = Color::Rgb(0x5E,0x81,0xAC);
+    pub const ACCENT_PRIMARY:   Color = Color::Rgb(0xFF,0x79,0xC6);
+    pub const ACCENT_SECONDARY: Color = Color::Rgb(0x8B,0xE9,0xFD);
+    pub const ACCENT_SUBTLE:    Color = Color::Rgb(0x62,0x72,0xA4);
 
-    pub const STATUS_ERROR:   Color = Color::Rgb(0xBF,0x61,0x6A);
-    pub const STATUS_WARN:    Color = Color::Rgb(0xD0,0x87,0x70);
-    pub const STATUS_PENDING: Color = Color::Rgb(0xEB,0xCB,0x8B);
-    pub const STATUS_OK:      Color = Color::Rgb(0xA3,0xBE,0x8C);
-    pub const STATUS_NOTE:    Color = Color::Rgb(0xB4,0x8E,0xAD);
+    pub const STATUS_ERROR:   Color = Color::Rgb(0xFF,0x55,0x55);
+    pub const STATUS_WARN:    Color = Color::Rgb(0xFF,0xB8,0x6C);
+    pub const STATUS_OK:      Color = Color::Rgb(0x50,0xFA,0x7B);
+    pub const STATUS_INFO:    Color = Color::Rgb(0x8B,0xE9,0xFD);
 }
 ```
 
 Example: **selected row style** in a table
 ```rust
 use ratatui::style::{Style, Modifier};
-use crate::theme::nord;
+use crate::ui::theme::dracula;
 
 let selected = Style::default()
-    .bg(nord::ACCENT_DARK)
-    .fg(nord::TEXT_SELECTED)
+    .bg(dracula::UI_BORDER) // Current Line
+    .fg(dracula::TEXT_SELECTED)
     .add_modifier(Modifier::BOLD);
 ```
 
 Example: **fuzzy match highlight**
 ```rust
 let highlight = Style::default()
-    .fg(nord::ACCENT_TEAL)
+    .fg(Color::Rgb(0xF1,0xFA,0x8C)) // Yellow for search
     .add_modifier(Modifier::BOLD | Modifier::UNDERLINED);
 ```
 
@@ -185,11 +199,11 @@ Example: **status chip**
 ```rust
 fn status_color(s: &str) -> Color {
     match s {
-        "succeeded" | "ok" => nord::STATUS_OK,
-        "failed" | "error" => nord::STATUS_ERROR,
-        "pending" | "running" => nord::STATUS_PENDING,
-        "warning" | "unstable" => nord::STATUS_WARN,
-        _ => nord::ACCENT_BLUE,
+        "succeeded" | "ok" => dracula::STATUS_OK,
+        "failed" | "error" => dracula::STATUS_ERROR,
+        "pending" | "running" => dracula::STATUS_WARN,
+        "warning" | "unstable" => dracula::STATUS_WARN,
+        _ => dracula::STATUS_INFO,
     }
 }
 ```
@@ -198,12 +212,12 @@ fn status_color(s: &str) -> Color {
 
 ## 7) Verification Checklist (blockers to ship)
 
-- [ ] Selected row uses ACCENT_DARK/TEXT_SELECTED (not STATUS colors).
-- [ ] Fuzzy highlight spans use ACCENT_TEAL + bold/underline.
-- [ ] Logs: timestamps in ACCENT_BLUE (dim), request IDs in ACCENT_DARK (bold).
-- [ ] Status chips map to Aurora colors consistently across views.
+- [ ] Selected row uses UI_BORDER/TEXT_SELECTED (not STATUS colors).
+- [ ] Fuzzy highlight spans use ACCENT_PRIMARY + bold/underline.
+- [ ] Logs: timestamps in ACCENT_SECONDARY (dim), request IDs in ACCENT_SUBTLE or ACCENT_PRIMARY (bold).
+- [ ] Status chips map to Dracula status colors consistently across views.
 - [ ] Ghost text/hints use TEXT_MUTED (dim), not lowered opacity of primary.
-- [ ] Borders/dividers are UI_BORDER, not a random Frost/Aurora tone.
+- [ ] Borders/dividers are UI_BORDER, not a random accent or status tone.
 - [ ] Monochrome mode renders with bold/underline + symbols correctly.
 
 ---
@@ -240,12 +254,45 @@ State chips: Aurora colors
 
 ---
 
-## 9) Non-Goals (avoid)
+## 9) Theme Switching (Contributors)
+
+The TUI selects a theme via the `TUI_THEME` environment variable. Default is `dracula` when unset.
+
+Supported values
+- `dracula` (default)
+- `dracula_hc`, `dracula-high-contrast`, `dracula-hc`, `draculahc`
+- `nord`
+- `nord_hc`, `nord-high-contrast`, `nord-hc`, `nordhc`
+
+Examples
+```bash
+# Run TUI (no args) with Dracula (default)
+cargo run -p heroku-cli
+
+# Explicit Dracula
+TUI_THEME=dracula cargo run -p heroku-cli
+
+# Dracula High Contrast
+TUI_THEME=dracula_hc cargo run -p heroku-cli
+
+# Nord
+TUI_THEME=nord cargo run -p heroku-cli
+
+# Nord High Contrast
+TUI_THEME=nord_hc cargo run -p heroku-cli
+```
+
+Implementation notes
+- Loader: `crates/tui/src/ui/theme/mod.rs::load_from_env()` maps env to theme types.
+- Theme role usage: prefer semantic roles in `ThemeRoles` over hard-coded colors.
+- Hot-switching at runtime is not supported; change `TUI_THEME` and restart.
+
+## 10) Non-Goals (avoid)
 
 - No gradient or multi-colored borders.
-- No bright/saturated ANSI defaults; always map to Nord constants.
+- No bright/saturated ANSI defaults; always map to Dracula constants.
 - No semantic misuse (e.g., using red for selection).
 
 ---
 
-Following these instructions ensures a consistent, accessible **Nord** experience across the entire TUI, balancing clarity, calm aesthetics, and strong semantic signaling.
+Following these instructions ensures a consistent, accessible **Dracula** experience across the entire TUI, balancing clarity, high-contrast readability, and strong semantic signaling.

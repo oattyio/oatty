@@ -1,6 +1,6 @@
 # Workflow ValueProviders — Detailed Design Document
 
-This document describes the **ValueProvider** system for workflows and command execution in the modernized Heroku CLI TUI. It consolidates earlier discussion threads into a refined technical spec that can be used as the basis for design, prototyping, and further refinement.
+This document describes the **ValueProvider** system for workflows and command execution in the modernized Heroku CLI TUI.
 
 ---
 

@@ -2,8 +2,7 @@ use std::{collections::BTreeSet, env, fs, path::PathBuf};
 
 fn main() {
     // Path to the repo root schemas directory from crates/tui
-    let schema_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap())
-        .join("../../schemas/heroku-schema.json");
+    let schema_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../schemas/heroku-schema.json");
 
     // Re-run build script if schema changes
     println!("cargo:rerun-if-changed={}", schema_path.display());
@@ -78,9 +77,18 @@ fn collect_date_like_keys(v: &serde_json::Value, out: &mut BTreeSet<String>) {
 
             // Recurse common schema containers
             let keys = [
-                "items", "anyOf", "oneOf", "allOf", "not", "additionalProperties", "patternProperties",
+                "items",
+                "anyOf",
+                "oneOf",
+                "allOf",
+                "not",
+                "additionalProperties",
+                "patternProperties",
                 // nested structures
-                "targetSchema", "schema", "properties", "definitions",
+                "targetSchema",
+                "schema",
+                "properties",
+                "definitions",
             ];
             for key in keys {
                 if let Some(val) = map.get(key) {
@@ -107,7 +115,9 @@ fn has_date_indicator(v: &serde_json::Value) -> bool {
                 .and_then(|f| f.as_str())
                 .map(|s| matches!(s, "date-time" | "date"))
                 .unwrap_or(false);
-            if fmt_is_date { return true; }
+            if fmt_is_date {
+                return true;
+            }
 
             // Examples look like ISO8601
             if let Some(example) = map.get("example").and_then(|e| e.as_str()) {
@@ -144,13 +154,21 @@ fn is_date_schema_obj(map: &serde_json::Map<String, serde_json::Value>) -> bool 
 
 fn looks_like_iso_date(s: &str) -> bool {
     // Simple check for YYYY-MM-DD with optional time suffix
-    if s.len() < 10 { return false; }
+    if s.len() < 10 {
+        return false;
+    }
     let b = s.as_bytes();
-    let ok = b.get(0..4).map(|r| r.iter().all(|c| c.is_ascii_digit())).unwrap_or(false)
+    let ok = b
+        .get(0..4)
+        .map(|r| r.iter().all(|c| c.is_ascii_digit()))
+        .unwrap_or(false)
         && matches!(b.get(4), Some(b'-' | b'/'))
-        && b.get(5..7).map(|r| r.iter().all(|c| c.is_ascii_digit())).unwrap_or(false)
+        && b.get(5..7)
+            .map(|r| r.iter().all(|c| c.is_ascii_digit()))
+            .unwrap_or(false)
         && matches!(b.get(7), Some(b'-' | b'/'))
-        && b.get(8..10).map(|r| r.iter().all(|c| c.is_ascii_digit())).unwrap_or(false);
+        && b.get(8..10)
+            .map(|r| r.iter().all(|c| c.is_ascii_digit()))
+            .unwrap_or(false);
     ok
 }
-

@@ -27,19 +27,19 @@ pub const A_GREEN: Color = Color::Rgb(0xA3, 0xBE, 0x8C); // #A3BE8C
 pub const A_PURPLE: Color = Color::Rgb(0xB4, 0x8E, 0xAD); // #B48EAD
 
 // THEME.md authoritative aliases
-pub const BG_MAIN: Color = N0;          // App/root background
-pub const BG_PANEL: Color = N1;         // Secondary panels/cards/inputs
-pub const UI_BORDER: Color = N2;        // Borders/dividers/scrollbars
-pub const TEXT_MUTED: Color = N3;       // Ghost text/hints/placeholders
+pub const BG_MAIN: Color = N0; // App/root background
+pub const BG_PANEL: Color = N1; // Secondary panels/cards/inputs
+pub const UI_BORDER: Color = N2; // Borders/dividers/scrollbars
+pub const TEXT_MUTED: Color = N3; // Ghost text/hints/placeholders
 
-pub const TEXT_PRIMARY: Color = S0;     // Default text
-pub const TEXT_SECONDARY: Color = S1;   // Titles/headers/labels
-pub const TEXT_SELECTED: Color = S2;    // Highlighted text
+pub const TEXT_PRIMARY: Color = S0; // Default text
+pub const TEXT_SECONDARY: Color = S1; // Titles/headers/labels
+pub const TEXT_SELECTED: Color = S2; // Highlighted text
 
 pub const ACCENT_CYAN: Color = F0;
-pub const ACCENT_TEAL: Color = F1;      // Fuzzy-match highlight, input focus underline
-pub const ACCENT_BLUE: Color = F2;      // Timestamps, secondary accents
-pub const ACCENT_DARK: Color = F3;      // Selected row background, IDs
+pub const ACCENT_TEAL: Color = F1; // Fuzzy-match highlight, input focus underline
+pub const ACCENT_BLUE: Color = F2; // Timestamps, secondary accents
+pub const ACCENT_DARK: Color = F3; // Selected row background, IDs
 
 pub const STATUS_ERROR: Color = A_RED;
 pub const STATUS_WARN: Color = A_ORANGE;

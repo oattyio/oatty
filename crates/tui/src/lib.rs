@@ -1,7 +1,6 @@
 mod app;
 mod cmd;
 mod preview;
-mod theme;
 mod ui;
 
 use crate::{
@@ -18,19 +17,25 @@ use crate::{
 };
 use anyhow::Result;
 use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEvent, KeyModifiers},
+    event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use futures_util::StreamExt;
 use heroku_types::{CommandSpec, Field};
 use heroku_util::lex_shell_like;
 use ratatui::{Terminal, prelude::*};
 use serde_json::{Map, Value};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 use std::{collections::HashMap, io};
 use tokio::signal;
-use tokio::time::interval;
+use tokio::sync::mpsc;
+use tokio::task;
+
+enum UiEvent {
+    Input(Event),
+    Animate,
+}
 
 pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
     let mut app = app::App::new(registry);
@@ -45,7 +50,7 @@ pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
     let _ = builder_component.init();
     let mut help_component = HelpComponent::new();
     let _ = help_component.init();
-    let mut table_component = TableComponent::new();
+    let mut table_component = TableComponent::default();
     let _ = table_component.init();
 
     enable_raw_mode()?;
@@ -54,12 +59,40 @@ pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let tick_rate = Duration::from_millis(250);
-    let mut tick = interval(tick_rate);
-    // first tick fires immediately; advance once so the first wait is ~tick_rate
-    tick.tick().await;
-    let mut events = EventStream::new();
-    let mut last_frame_area = crossterm::terminal::size().unwrap_or((0, 0));
+    let animate_rate = Duration::from_millis(200);
+    let (ui_tx, mut ui_rx) = mpsc::unbounded_channel::<UiEvent>();
+    let active = app.active_exec_count.clone();
+    task::spawn_blocking(move || {
+        loop {
+            if active.load(Ordering::Relaxed) > 0 {
+                match crossterm::event::poll(animate_rate) {
+                    Ok(true) => match crossterm::event::read() {
+                        Ok(ev) => {
+                            if ui_tx.send(UiEvent::Input(ev)).is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                    },
+                    Ok(false) => {
+                        if ui_tx.send(UiEvent::Animate).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            } else {
+                match crossterm::event::read() {
+                    Ok(ev) => {
+                        if ui_tx.send(UiEvent::Input(ev)).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+            }
+        }
+    });
 
     // Initial render so UI is visible before any events
     terminal.draw(|frame| {
@@ -79,9 +112,10 @@ pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
         let mut should_render = false;
 
         tokio::select! {
-            maybe_event = events.next() => {
-                if let Some(Ok(event)) = maybe_event {
+            maybe_event = ui_rx.recv() => {
+                if let Some(event) = maybe_event {
                     match event {
+                        UiEvent::Input(event) => match event {
                         Event::Key(key) => {
                             if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                                 break;
@@ -98,31 +132,21 @@ pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
                             should_render = true;
                         }
                         Event::Resize(w, h) => {
-                            last_frame_area = (w, h);
                             let _ = app.update(app::Msg::Resize(w, h));
                             should_render = true;
                         }
                         _ => {}
+                        },
+                        UiEvent::Animate => {
+                            let _ = app.update(app::Msg::Tick);
+                            should_render = true;
+                        }
                     }
                 }
             }
             maybe_out = app.exec_receiver.recv() => {
                 if let Some(out) = maybe_out {
                     let _ = app.update(app::Msg::ExecCompleted(out));
-                    should_render = true;
-                }
-            }
-            _ = tick.tick() => {
-                if app.executing {
-                    let _ = app.update(app::Msg::Tick);
-                    should_render = true;
-                }
-                // Fallback: detect area changes even if resize events are missed (macOS robustness)
-                if let Ok(area) = crossterm::terminal::size()
-                    && area != last_frame_area
-                {
-                    last_frame_area = area;
-                    let _ = app.update(app::Msg::Resize(area.0, area.1));
                     should_render = true;
                 }
             }
@@ -166,7 +190,10 @@ fn handle_key(
         return Ok(false);
     }
     // When table modal is visible, route keys to the table component (local-first handling)
-    if app.table.is_visible() && table.handle_key(app, key)? {
+    if app.table.is_visible() {
+        let effects = table.handle_key_events(app, key);
+        let cmds = crate::cmd::from_effects(app, effects);
+        crate::cmd::run_cmds(app, cmds);
         return Ok(false);
     }
     // If builder modal open, Enter should close builder and populate palette with constructed command
@@ -216,9 +243,9 @@ fn handle_key(
                 return Ok(false);
             }
             app::MainFocus::Palette => {
-                if palette.handle_key(app, key)? {
-                    return Ok(false);
-                }
+                let effects = palette.handle_key_events(app, key);
+                let cmds = crate::cmd::from_effects(app, effects);
+                crate::cmd::run_cmds(app, cmds);
                 return Ok(false);
             }
         }

@@ -23,8 +23,7 @@ use std::collections::HashMap;
 /// A vector of `CommandSpec` on success.
 pub fn generate_commands(schema_json: &str) -> Result<Vec<CommandSpec>> {
     let v: Value = serde_json::from_str(schema_json).context("parse schema json")?;
-    let mut commands = derive_commands_from_schema(&v)?;
-    crate::workflow::add_workflow_commands(&mut commands);
+    let commands = derive_commands_from_schema(&v)?;
     Ok(commands)
 }
 
@@ -476,10 +475,8 @@ fn get_type(schema: &Value, root: &Value) -> String {
     }
     // Handle JSON Schema where type can be an array of strings (union), e.g. ["boolean"], ["string","null"]
     if let Some(arr) = schema.get("type").and_then(|x| x.as_array()) {
-        let mut types: std::collections::HashSet<String> = arr
-            .iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect();
+        let mut types: std::collections::HashSet<String> =
+            arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();
         // Prefer non-null concrete type when present
         types.retain(|t| t != "null");
         if types.len() == 1 {

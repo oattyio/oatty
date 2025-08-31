@@ -6,6 +6,7 @@
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use heroku_util::redact_sensitive;
+use once_cell::sync::Lazy;
 use ratatui::style::{Modifier, Style};
 use ratatui::{
     Frame,
@@ -13,19 +14,19 @@ use ratatui::{
     text::{Line, Span},
     widgets::*,
 };
+use regex::Regex;
 use serde_json::Value;
 
 use super::{
     hint_bar::LogsHintBarComponent,
     state::{LogDetailView, LogEntry},
 };
+use crate::ui::components::TableComponent;
 use crate::ui::theme::helpers as th;
+use crate::ui::theme::roles::Theme as UiTheme;
 use crate::{
     app,
-    ui::{
-        components::component::Component,
-        utils::centered_rect,
-    },
+    ui::{components::component::Component, utils::centered_rect},
 };
 
 #[derive(Default)]
@@ -87,8 +88,8 @@ impl LogsComponent {
             Some(LogEntry::Api { json: Some(j), .. }) => {
                 if self.json_has_array(j) {
                     // Route array JSON to the global Table modal
-                    let red = Self::redact_json(j);
-                    app.table.apply_result_json(Some(red));
+                    let redacted = Self::redact_json(j);
+                    app.table.apply_result_json(Some(redacted), &*app.ctx.theme);
                     app.table.apply_show(true);
                     // Do not open a Logs detail modal in this case
                     app.logs.detail = None;
@@ -161,6 +162,43 @@ impl LogsComponent {
             buf.push_str(&line);
         }
         redact_sensitive(&buf)
+    }
+
+    fn styled_line<'a>(&self, theme: &dyn UiTheme, line: &'a str) -> Line<'a> {
+        static TS_RE: Lazy<Regex> =
+            Lazy::new(|| Regex::new(r"^\[?\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?\]?").unwrap());
+        static UUID_RE: Lazy<Regex> = Lazy::new(|| {
+            Regex::new(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b")
+                .unwrap()
+        });
+        static HEXID_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b[0-9a-fA-F]{12,}\b").unwrap());
+
+        let mut spans: Vec<Span> = Vec::new();
+        let mut i = 0usize;
+        // Timestamp at start
+        if let Some(m) = TS_RE.find(line) {
+            if m.start() == 0 && m.end() > 0 {
+                spans.push(Span::styled(
+                    &line[m.start()..m.end()],
+                    Style::default().fg(theme.roles().accent_secondary),
+                ));
+                i = m.end();
+            }
+        }
+        // Remaining text; color UUID/hex IDs subtly
+        let rest = &line[i..];
+        let mut last = 0usize;
+        for m in UUID_RE.find_iter(rest).chain(HEXID_RE.find_iter(rest)) {
+            if m.start() > last {
+                spans.push(Span::styled(&rest[last..m.start()], theme.text_primary_style()));
+            }
+            spans.push(Span::styled(&rest[m.start()..m.end()], theme.accent_emphasis_style()));
+            last = m.end();
+        }
+        if last < rest.len() {
+            spans.push(Span::styled(&rest[last..], theme.text_primary_style()));
+        }
+        Line::from(spans)
     }
 }
 
@@ -243,12 +281,13 @@ impl Component for LogsComponent {
             .logs
             .entries
             .iter()
-            .map(|l| ListItem::new(l.as_str()).style(app.ctx.theme.text_primary_style()))
+            .map(|l| ListItem::new(self.styled_line(&*app.ctx.theme, l)))
             .collect();
 
         let list = List::new(items)
             .block(block)
             .highlight_style(app.ctx.theme.selection_style().add_modifier(Modifier::BOLD))
+            .style(th::panel_style(&*app.ctx.theme))
             .highlight_symbol(if focused { "► " } else { "" });
         let mut list_state = ListState::default();
         if focused {
@@ -286,7 +325,6 @@ impl Component for LogsComponent {
 
         // Detail modal if open
         if focused && app.logs.detail.is_some() {
-            let detail = app.logs.detail.unwrap();
             let area = centered_rect(90, 85, rect);
             let title = "Log Details";
             let block = th::block(&*app.ctx.theme, Some(title), true);
@@ -298,7 +336,7 @@ impl Component for LogsComponent {
                 .constraints([Constraint::Min(1), Constraint::Length(1)])
                 .split(inner);
 
-            self.render_detail_content(frame, splits[0], app, detail);
+            self.render_detail_content(frame, splits[0], app);
 
             let footer = Paragraph::new(Line::from(vec![
                 Span::styled("Hint: ", app.ctx.theme.text_muted_style()),
@@ -314,7 +352,7 @@ impl Component for LogsComponent {
 }
 
 impl LogsComponent {
-    fn render_detail_content(&self, f: &mut Frame, area: Rect, app: &mut app::App, detail: LogDetailView) {
+    fn render_detail_content(&self, f: &mut Frame, area: Rect, app: &mut app::App) {
         let (start, end) = app.logs.selection.range();
         // Single API with JSON and array → table
         if start == end {
@@ -325,7 +363,7 @@ impl LogsComponent {
                     _ => j,
                 };
                 // Render KV or text for non-array JSON
-                let table = crate::ui::components::table::TableComponent;
+                let table = TableComponent::default();
                 table.render_kv_or_text(f, area, red_ref, &*app.ctx.theme);
                 return;
             }

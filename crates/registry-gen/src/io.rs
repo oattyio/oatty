@@ -33,3 +33,31 @@ pub fn write_manifest(input: PathBuf, output: PathBuf) -> Result<()> {
     println!("wrote {} bytes to {}", bytes.len(), output.display());
     Ok(())
 }
+
+/// Writes the command manifest as JSON to a file.
+///
+/// This function mirrors `write_manifest` but serializes the generated commands
+/// as JSON instead of bincode.
+///
+/// # Arguments
+///
+/// * `input` - Path to the input JSON schema file.
+/// * `output` - Path to write the JSON manifest.
+///
+/// # Errors
+///
+/// Returns an error if file reading, directory creation, command generation,
+/// encoding, or writing fails.
+pub fn write_manifest_json(input: PathBuf, output: PathBuf) -> Result<()> {
+    let schema = fs::read_to_string(&input).with_context(|| format!("read {}", input.display()))?;
+    let commands = generate_commands(&schema)?;
+    if let Some(parent) = output.parent()
+        && !parent.exists()
+    {
+        fs::create_dir_all(parent).with_context(|| format!("create dir {}", parent.display()))?;
+    }
+    let json = serde_json::to_vec_pretty(&commands).context("serialize commands to json")?;
+    fs::write(&output, &json)?;
+    println!("wrote {} bytes (json) to {}", json.len(), output.display());
+    Ok(())
+}

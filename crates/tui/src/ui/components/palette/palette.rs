@@ -4,7 +4,6 @@
 //! handles text input, command suggestions, and user interactions for
 //! building Heroku CLI commands.
 
-use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::{
     Frame,
@@ -15,9 +14,15 @@ use ratatui::{
 };
 
 use crate::{
+    app::Effect,
+    ui::theme::{Theme, helpers as th},
+};
+
+use crate::{
     app,
     ui::components::{component::Component, palette::state::ItemKind},
 };
+use heroku_util::lex_shell_like_ranged;
 
 /// Command palette component for input and suggestions.
 ///
@@ -54,7 +59,10 @@ use crate::{
 /// palette.init()?;
 /// ```
 #[derive(Default)]
-pub struct PaletteComponent;
+pub struct PaletteComponent {
+    // Throbber animation frames
+    throbber_frames: [&'static str; 10],
+}
 
 impl PaletteComponent {
     /// Creates a new palette component instance.
@@ -63,7 +71,485 @@ impl PaletteComponent {
     ///
     /// A new PaletteComponent with default state
     pub fn new() -> Self {
-        Self
+        Self {
+            throbber_frames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
+        }
+    }
+
+    /// Creates the input paragraph widget with current state.
+    ///
+    /// This function creates the input paragraph with throbber, input text, and ghost text.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state containing palette data
+    /// * `theme` - The current theme for styling
+    ///
+    /// # Returns
+    ///
+    /// The input paragraph widget
+    fn create_input_paragraph(&'_ self, app: &app::App, theme: &dyn Theme) -> Paragraph<'_> {
+        let dimmed = app.builder.is_visible() || app.help.is_visible();
+        let base_style = if dimmed {
+            theme.text_muted_style()
+        } else {
+            theme.text_primary_style()
+        };
+
+        let mut spans: Vec<Span> = Vec::new();
+
+        // Add throbber if executing
+        if app.executing {
+            let sym = self.throbber_frames[app.throbber_idx % self.throbber_frames.len()];
+            spans.push(Span::styled(format!("{} ", sym), theme.accent_emphasis_style()));
+        }
+
+        // Add main input text
+        spans.push(Span::styled(app.palette.input().to_string(), base_style));
+
+        // Add ghost text if available
+        if let Some(ghost) = app.palette.ghost_text()
+            && !ghost.is_empty()
+        {
+            spans.push(Span::styled(ghost.to_string(), theme.text_muted_style()));
+        }
+
+        Paragraph::new(Line::from(spans)).block(Block::default())
+    }
+
+    /// Creates the error paragraph widget if an error exists.
+    ///
+    /// This function creates the error paragraph with appropriate styling.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state containing palette data
+    /// * `theme` - The current theme for styling
+    ///
+    /// # Returns
+    ///
+    /// The error paragraph widget, or None if no error
+    fn create_error_paragraph(&'_ self, app: &app::App, theme: &dyn Theme) -> Option<Paragraph<'_>> {
+        if let Some(err) = app.palette.error_message() {
+            let line = Line::from(vec![
+                Span::styled("✖ ".to_string(), Style::default().fg(theme.roles().error)),
+                Span::styled(err.to_string(), theme.text_primary_style()),
+            ]);
+            Some(Paragraph::new(line))
+        } else {
+            None
+        }
+    }
+
+    /// Creates the suggestions list widget.
+    ///
+    /// This function creates the suggestions list with highlighting and styling.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state containing palette data
+    /// * `theme` - The current theme for styling
+    ///
+    /// # Returns
+    ///
+    /// The suggestions list widget
+    fn create_suggestions_list(&'_ self, app: &app::App, theme: &dyn Theme) -> List<'_> {
+        let current_token = Self::get_current_token(app.palette.input(), app.palette.selected_cursor_position());
+        let needle = current_token.trim();
+
+        let items_all: Vec<ListItem> = app
+            .palette
+            .suggestions()
+            .iter()
+            .map(|s| {
+                let display = s.display.clone();
+                if needle.is_empty() {
+                    return ListItem::new(Line::from(Span::styled(display, theme.text_primary_style())));
+                }
+
+                let mut spans: Vec<Span> = Vec::new();
+                let hay = display.as_str();
+                let mut i = 0usize;
+                let needle_lower = needle.to_ascii_lowercase();
+                let hay_lower = hay.to_ascii_lowercase();
+
+                // Find and highlight all matches
+                while let Some(pos) = hay_lower[i..].find(&needle_lower) {
+                    let start = i + pos;
+
+                    // Add text before the match
+                    if start > i {
+                        spans.push(Span::styled(hay[i..start].to_string(), theme.text_primary_style()));
+                    }
+
+                    // Add highlighted match
+                    let end = start + needle.len();
+                    spans.push(Span::styled(
+                        hay[start..end].to_string(),
+                        theme.accent_emphasis_style().add_modifier(Modifier::BOLD),
+                    ));
+
+                    i = end;
+                    if i >= hay.len() {
+                        break;
+                    }
+                }
+
+                // Add remaining text after last match
+                if i < hay.len() {
+                    spans.push(Span::styled(hay[i..].to_string(), theme.text_primary_style()));
+                }
+
+                ListItem::new(Line::from(spans))
+            })
+            .collect();
+
+        // Create popup with border
+        let popup_block = Block::default()
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(theme.roles().focus))
+            .border_type(BorderType::Plain);
+
+        List::new(items_all)
+            .block(popup_block)
+            .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
+            .style(th::panel_style(theme))
+            .highlight_symbol("► ")
+    }
+
+    /// Renders the main palette border and returns the inner layout areas.
+    ///
+    /// This function creates the visual border around the palette and sets up
+    /// the internal layout constraints for the input line, content area, and
+    /// footer area.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - The frame to render to
+    /// * `rect` - The rectangular area to render in
+    /// * `theme` - The current theme for styling
+    ///
+    /// # Returns
+    ///
+    /// The split layout areas
+    fn render_palette_border(&mut self, frame: &mut Frame, rect: Rect, theme: &dyn Theme) -> Vec<Rect> {
+        let block = Block::default()
+            .borders(Borders::LEFT)
+            .border_style(theme.border_style(true))
+            .border_type(BorderType::Thick)
+            .style(th::panel_style(theme));
+
+        frame.render_widget(block.clone(), rect);
+
+        let inner = block.inner(rect);
+        let splits = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1), // Input line
+                Constraint::Min(1),    // Content area (error messages, suggestions)
+                Constraint::Length(1), // Footer area
+            ])
+            .split(inner);
+
+        splits.to_vec()
+    }
+
+    /// Positions the cursor in the input line.
+    ///
+    /// This function calculates the correct cursor position based on the
+    /// current cursor position in the palette input, accounting for
+    /// character count rather than byte count. The cursor is hidden when
+    /// modals are open.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - The frame to set cursor position on
+    /// * `input_area` - The rectangular area of the input line
+    /// * `app` - The application state containing palette data
+    fn position_cursor(frame: &mut Frame, input_area: Rect, app: &app::App) {
+        let dimmed = app.builder.is_visible() || app.help.is_visible();
+        if dimmed {
+            return;
+        }
+
+        let col = app
+            .palette
+            .input()
+            .get(..app.palette.selected_cursor_position())
+            .map(|s| s.chars().count() as u16)
+            .unwrap_or(0);
+
+        let x = input_area.x.saturating_add(col);
+        let y = input_area.y;
+        frame.set_cursor_position((x, y));
+    }
+
+    /// Extracts the current token at the cursor position for suggestion matching.
+    ///
+    /// This function parses the input string to find the token that contains
+    /// the current cursor position, which is used for highlighting matches
+    /// in the suggestion list.
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - The current input string
+    /// * `cursor_position` - The current cursor position
+    ///
+    /// # Returns
+    ///
+    /// The current token text, trimmed of whitespace
+    fn get_current_token(input: &str, cursor_position: usize) -> String {
+        let tokens = lex_shell_like_ranged(input);
+        let token = tokens
+            .iter()
+            .find(|t| t.start <= cursor_position && cursor_position <= t.end)
+            .or_else(|| tokens.last());
+
+        token.map(|t| t.text.to_string()).unwrap_or_default()
+    }
+
+    /// Handles character input in the command palette.
+    ///
+    /// This function processes regular character input (with or without Shift modifier)
+    /// by inserting the character at the current cursor position, rebuilding suggestions,
+    /// opening the suggestions popup if suggestions are available, and clearing any
+    /// previous error messages.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    /// * `character` - The character to insert
+    fn handle_character_input(&self, app: &mut app::App, character: char) {
+        app.palette.apply_insert_char(character);
+        app.palette
+            .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
+        app.palette.set_is_suggestions_open(app.palette.suggestions_len() > 0);
+        app.palette.reduce_clear_error();
+    }
+
+    /// Handles the Ctrl+H key combination to open help for the current command.
+    ///
+    /// This function ensures suggestions are up to date, retrieves the currently
+    /// selected command specification, and opens the help modal if a valid command
+    /// is found. The help system provides detailed information about command usage,
+    /// flags, and examples.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    fn handle_help_request(&self, app: &mut app::App) {
+        // Ensure suggestions are up to date, then fetch effective command
+        app.palette
+            .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
+        let spec = app.palette.selected_command();
+        if spec.is_some() {
+            app.help.set_spec(spec.cloned());
+            let _ = app.update(app::Msg::ToggleHelp);
+        }
+    }
+
+    /// Handles backspace key press in the command palette.
+    ///
+    /// This function removes the character before the current cursor position,
+    /// rebuilds suggestions based on the updated input, and clears any previous
+    /// error messages. The suggestions popup state is automatically managed
+    /// based on whether suggestions are available.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    fn handle_backspace(&self, app: &mut app::App) {
+        app.palette.reduce_backspace();
+        app.palette
+            .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
+        app.palette.reduce_clear_error();
+    }
+
+    /// Handles left arrow key press to move cursor left.
+    ///
+    /// This function moves the cursor one position to the left within the input
+    /// text, allowing users to navigate and edit their command input.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    fn handle_cursor_left(&self, app: &mut app::App) {
+        app.palette.reduce_move_cursor_left();
+    }
+
+    /// Handles right arrow key press to move cursor right.
+    ///
+    /// This function moves the cursor one position to the right within the input
+    /// text, allowing users to navigate and edit their command input.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    fn handle_cursor_right(&self, app: &mut app::App) {
+        app.palette.reduce_move_cursor_right();
+    }
+
+    /// Handles up/down arrow key presses to navigate through suggestions.
+    ///
+    /// This function allows users to navigate through the suggestion list using
+    /// arrow keys. The selection wraps around at the top and bottom of the list
+    /// for a seamless navigation experience. When a suggestion is selected, ghost
+    /// text is applied to show what the completed command would look like.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    /// * `direction` - The direction to navigate (Up or Down)
+    fn handle_suggestion_navigation(&self, app: &mut app::App, direction: KeyCode) {
+        let len = app.palette.suggestions().len();
+        if len > 0 {
+            let selected = app.palette.suggestion_index() as isize;
+            let delta = if direction == KeyCode::Down { 1isize } else { -1isize };
+            // Wrap around using modulus with length as isize
+            let new_selected = (selected + delta).rem_euclid(len as isize) as usize;
+            app.palette.set_selected(new_selected);
+            app.palette.apply_ghost_text();
+        }
+    }
+
+    /// Handles suggestion acceptance via Tab or Enter key.
+    ///
+    /// This function processes suggestion acceptance when the suggestions popup
+    /// is open. It handles different types of suggestions (commands, positionals,
+    /// flags, values) appropriately and rebuilds suggestions after acceptance.
+    /// If no suggestions are open and Enter is pressed, it executes the command.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    /// * `key_code` - The key that triggered the action (Tab or Enter)
+    fn handle_suggestion_acceptance(&self, app: &mut app::App, key_code: KeyCode) {
+        // Accept suggestion on tab or enter if the suggestions are open
+        if app.palette.is_suggestions_open() {
+            if let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index()).cloned() {
+                match item.kind {
+                    ItemKind::Command => {
+                        // Replace input with command exec
+                        app.palette.apply_accept_command_suggestion(&item.insert_text);
+                        app.palette.set_is_suggestions_open(false);
+                        app.palette.reduce_clear_suggestions();
+                    }
+                    ItemKind::Positional => {
+                        // Accept positional suggestion
+                        app.palette.apply_accept_positional_suggestion(&item.insert_text);
+                    }
+                    _ => {
+                        // Accept flag or value suggestion
+                        app.palette.apply_accept_non_command_suggestion(&item.insert_text);
+                    }
+                }
+
+                // Rebuild suggestions after accepting
+                app.palette
+                    .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
+                app.palette.set_selected(0);
+
+                // Keep popup open unless we accepted a command
+                if !matches!(item.kind, ItemKind::Command) {
+                    app.palette.set_is_suggestions_open(!app.palette.is_suggestions_open());
+                }
+            }
+        } else if key_code == KeyCode::Enter {
+            let _ = app.update(app::Msg::Run);
+        }
+    }
+
+    /// Handles the Ctrl+F key combination to open the command builder modal.
+    ///
+    /// This function opens the interactive command builder modal, which provides
+    /// a more structured way to build complex commands with guided input for
+    /// flags, arguments, and options.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    fn handle_builder_request(&self, app: &mut app::App) {
+        let _ = app.update(app::Msg::ToggleBuilder);
+    }
+
+    /// Handles the Escape key to clear input and close suggestions.
+    ///
+    /// This function provides a quick way to reset the command palette by clearing
+    /// all input text and closing the suggestions popup. This is useful when users
+    /// want to start over with a fresh command input.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    fn handle_escape(&self, app: &mut app::App) {
+        app.palette.reduce_clear_all();
+    }
+}
+
+impl Component for PaletteComponent {
+    /// Renders the command palette with input and suggestions.
+    ///
+    /// This method orchestrates the rendering of all palette components:
+    /// - Main border and layout
+    /// - Input line with throbber and ghost text
+    /// - Cursor positioning
+    /// - Error message display
+    /// - Suggestions popup with highlighting
+    ///
+    /// The rendering is optimized to handle different states (executing,
+    /// error, suggestions open) and provides a smooth user experience
+    /// with appropriate visual feedback.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - The frame to render to
+    /// * `rect` - The rectangular area to render in
+    /// * `app` - The application state containing palette data
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
+        let theme = &*app.ctx.theme;
+
+        // Render main border and get layout areas
+        let splits = self.render_palette_border(frame, rect, theme);
+
+        // Render input line with throbber and ghost text
+        let input_para = self.create_input_paragraph(app, theme);
+        frame.render_widget(input_para, splits[0]);
+
+        // Position cursor in input line
+        Self::position_cursor(frame, splits[0], app);
+
+        // Render error message if present
+        if let Some(error_para) = self.create_error_paragraph(app, theme) {
+            frame.render_widget(error_para, splits[1]);
+        }
+
+        // Render suggestions popup
+        let should_show_suggestions = app.palette.error_message().is_none()
+            && app.palette.is_suggestions_open()
+            && !app.builder.is_visible()
+            && !app.help.is_visible()
+            && !app.palette.suggestions().is_empty();
+
+        if should_show_suggestions {
+            let suggestions_list = self.create_suggestions_list(app, theme);
+
+            // Calculate popup dimensions
+            let max_rows = 10usize;
+            let rows = app.palette.suggestions().len().min(max_rows);
+            let popup_height = rows as u16 + 3;
+            let popup_area = Rect::new(rect.x, rect.y + 1, rect.width, popup_height);
+
+            // Update list state
+            let sel = if app.palette.suggestions().is_empty() {
+                None
+            } else {
+                Some(app.palette.suggestion_index().min(app.palette.suggestions().len() - 1))
+            };
+            let mut list_state = ListState::default();
+            list_state.select(sel);
+
+            frame.render_stateful_widget(suggestions_list, popup_area, &mut list_state);
+        }
     }
 
     /// Handle key events for the command palette when the builder is not open.
@@ -79,7 +565,7 @@ impl PaletteComponent {
     ///
     /// # Returns
     ///
-    /// `Result<bool>` where `true` indicates the key was handled by the palette
+    /// `Vec<Effect>` containing any effects that should be processed
     ///
     /// # Key Bindings
     ///
@@ -97,214 +583,47 @@ impl PaletteComponent {
     /// ```rust,ignore
     /// // Example requires constructing full App and Registry; ignored in doctests.
     /// ```
-    pub fn handle_key(&self, app: &mut app::App, key: KeyEvent) -> Result<bool> {
+    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
+        let effects: Vec<Effect> = vec![];
         match key.code {
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
                 // Handle character input
-                app.palette.apply_insert_char(c);
-                app.palette
-                    .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
-                app.palette.set_is_suggestions_open(app.palette.suggestions_len() > 0);
-                app.palette.reduce_clear_error();
-                Ok(true)
+                self.handle_character_input(app, c);
             }
             KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // Ensure suggestions are up to date, then fetch effective command
-                app.palette
-                    .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
-                let spec = app.palette.selected_command();
-                if spec.is_some() {
-                    app.help.set_spec(spec.cloned());
-                    let _ = app.update(app::Msg::ToggleHelp);
-                }
-                Ok(true)
+                // Handle help request
+                self.handle_help_request(app);
             }
             KeyCode::Backspace => {
                 // Handle backspace
-                app.palette.reduce_backspace();
-                app.palette
-                    .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
-                app.palette.reduce_clear_error();
-                Ok(true)
+                self.handle_backspace(app);
             }
             KeyCode::Left => {
-                // Move cursor left
-                app.palette.reduce_move_cursor_left();
-                Ok(true)
+                // Handle cursor left
+                self.handle_cursor_left(app);
             }
             KeyCode::Right => {
-                // Move cursor right
-                app.palette.reduce_move_cursor_right();
-                Ok(true)
+                // Handle cursor right
+                self.handle_cursor_right(app);
             }
             KeyCode::Down | KeyCode::Up => {
-                // Navigate down/up through suggestions
-                let len = app.palette.suggestions().len();
-                if len > 0 {
-                    let selected = app.palette.suggestion_index() as isize;
-                    let delta = if key.code == KeyCode::Down { 1isize } else { -1isize };
-                    // Wrap around using modulus with length as isize
-                    let new_selected = (selected + delta).rem_euclid(len as isize) as usize;
-                    app.palette.set_selected(new_selected);
-                    app.palette.apply_ghost_text();
-                }
-                Ok(true)
+                // Handle suggestion navigation
+                self.handle_suggestion_navigation(app, key.code);
             }
             KeyCode::Tab | KeyCode::Enter => {
-                // Accept suggestion on tab or enter if the suggestions are open
-                if app.palette.is_suggestions_open() {
-                    if let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index()).cloned() {
-                        match item.kind {
-                            ItemKind::Command => {
-                                // Replace input with command exec
-                                app.palette.apply_accept_command_suggestion(&item.insert_text);
-                                app.palette.set_is_suggestions_open(false);
-                                app.palette.reduce_clear_suggestions();
-                            }
-                            ItemKind::Positional => {
-                                // Accept positional suggestion
-                                app.palette.apply_accept_positional_suggestion(&item.insert_text);
-                            }
-                            _ => {
-                                // Accept flag or value suggestion
-                                app.palette.apply_accept_non_command_suggestion(&item.insert_text);
-                            }
-                        }
-
-                        // Rebuild suggestions after accepting
-                        app.palette
-                            .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
-                        app.palette.set_selected(0);
-
-                        // Keep popup open unless we accepted a command
-                        if !matches!(item.kind, ItemKind::Command) {
-                            app.palette.set_is_suggestions_open(!app.palette.is_suggestions_open());
-                        }
-                    }
-                } else if key.code == KeyCode::Enter {
-                    let _ = app.update(app::Msg::Run);
-                }
-                Ok(true)
+                // Handle suggestion acceptance
+                self.handle_suggestion_acceptance(app, key.code);
             }
             KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // Open command builder
-                let _ = app.update(app::Msg::ToggleBuilder);
-                Ok(true)
+                // Handle builder request
+                self.handle_builder_request(app);
             }
             KeyCode::Esc => {
-                // Clear input and close suggestions
-                app.palette.reduce_clear_all();
-                Ok(true)
+                // Handle escape
+                self.handle_escape(app);
             }
-            _ => Ok(false),
+            _ => {}
         }
-    }
-}
-
-impl Component for PaletteComponent {
-    /// Renders the command palette with input and suggestions.
-    ///
-    /// This method handles the input display, suggestion popup, and cursor positioning.
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - The frame to render to
-    /// * `rect` - The rectangular area to render in
-    /// * `app` - The application state containing palette data
-    fn render(&mut self, f: &mut Frame, rect: Rect, app: &mut app::App) {
-        let block = Block::default()
-            .borders(Borders::LEFT)
-            .border_style(app.ctx.theme.border_style(true))
-            .border_type(BorderType::Thick);
-        f.render_widget(block.clone(), rect);
-        let inner = block.inner(rect);
-        let splits = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)])
-            .split(inner);
-
-        // Input line with ghost text; dim when a modal is open. Show throbber if executing.
-        let dimmed = app.builder.is_visible() || app.help.is_visible();
-        let t = &*app.ctx.theme;
-        let base_style = if dimmed {
-            t.text_muted_style()
-        } else {
-            t.text_primary_style()
-        };
-        let mut spans: Vec<Span> = Vec::new();
-        if app.executing {
-            let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-            let sym = frames[app.throbber_idx % frames.len()];
-            spans.push(Span::styled(format!("{} ", sym), t.accent_emphasis_style()));
-        }
-        spans.push(Span::styled(app.palette.input(), base_style));
-        if let Some(ghost) = app.palette.ghost_text()
-            && !ghost.is_empty()
-        {
-            spans.push(Span::styled(ghost.as_str(), t.text_muted_style()));
-        }
-        let p = Paragraph::new(Line::from(spans)).block(Block::default());
-        f.render_widget(p, splits[0]);
-
-        // Cursor placement (count characters, not bytes); hide when a modal is open
-        if !dimmed {
-            let col = app
-                .palette
-                .input()
-                .get(..app.palette.selected_cursor_position())
-                .map(|s| s.chars().count() as u16)
-                .unwrap_or(0);
-            let x = splits[0].x.saturating_add(col);
-            let y = splits[0].y;
-            f.set_cursor_position((x, y));
-        }
-
-        // Error line below input when present
-        if let Some(err) = app.palette.error_message() {
-            let line = Line::from(vec![
-                Span::styled("✖ ", Style::default().fg(t.roles().error)),
-                Span::styled(err.as_str(), t.text_primary_style()),
-            ]);
-            f.render_widget(Paragraph::new(line), splits[1]);
-        }
-
-        // Popup suggestions (separate popup under the input; no overlap with input text).
-        // Hidden if error is present or no suggestions exist.
-        if app.palette.error_message().is_none()
-            && app.palette.is_suggestions_open()
-            && !app.builder.is_visible()
-            && !app.help.is_visible()
-            && !app.palette.suggestions().is_empty()
-        {
-            let items_all: Vec<ListItem> = app
-                .palette
-                .suggestions()
-                .iter()
-                .map(|s| ListItem::new(s.display.clone()).style(t.text_primary_style()))
-                .collect();
-            let max_rows = 10usize;
-            let rows = items_all.len().min(max_rows);
-            if rows == 0 {
-                return;
-            }
-            let popup_height = rows as u16 + 3;
-            let popup_area = Rect::new(rect.x, rect.y + 1, rect.width, popup_height);
-            let popup_block = Block::default()
-                .borders(Borders::NONE)
-                .border_style(t.border_style(false))
-                .border_type(BorderType::Thick);
-            let list = List::new(items_all)
-                .block(popup_block)
-                .highlight_style(t.selection_style().add_modifier(Modifier::BOLD))
-                .highlight_symbol("► ");
-            let mut list_state = ListState::default();
-            let sel = if app.palette.suggestions().is_empty() {
-                None
-            } else {
-                Some(app.palette.suggestion_index().min(app.palette.suggestions().len() - 1))
-            };
-            list_state.select(sel);
-            f.render_stateful_widget(list, popup_area, &mut list_state);
-        }
+        effects
     }
 }

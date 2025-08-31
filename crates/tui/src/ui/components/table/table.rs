@@ -3,10 +3,8 @@
 //! This module provides a component for rendering the table modal, which displays
 //! JSON results from command execution in a tabular format with scrolling and
 //! navigation capabilities.
-use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
-use heck::ToTitleCase;
-use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{Scrollbar, ScrollbarState};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -16,20 +14,16 @@ use ratatui::{
 };
 use serde_json::Value;
 
+use crate::app::Effect;
+use crate::ui::components::table::TableFooter;
 use crate::ui::theme::helpers as th;
 use crate::ui::theme::roles::Theme as UiTheme;
-use crate::ui::utils::{
-    get_scored_keys,
-    infer_columns_from_json,
-    infer_columns_with_sizes_from_json,
-    ColumnWithSize,
-    normalize_header,
-};
-use heroku_util::{format_date_mmddyyyy, is_date_like_key};
+use crate::ui::utils::{get_scored_keys, normalize_header, render_value};
 use crate::{
     app,
     ui::{components::component::Component, utils::centered_rect},
 };
+use heroku_util::format_date_mmddyyyy;
 
 // Date field keys and formatting are provided by heroku-util.
 
@@ -68,177 +62,80 @@ use crate::{
 /// let mut table = TableComponent::new();
 /// table.init()?;
 /// ```
-#[derive(Default)]
-pub struct TableComponent;
+pub struct TableComponent<'a> {
+    table: Table<'a>,
+    table_state: TableState,
+    scrollbar: Scrollbar<'a>,
+    scrollbar_state: ScrollbarState,
+    footer: TableFooter<'a>,
+}
 
-impl TableComponent {
-    /// Creates a new table component instance.
-    ///
-    /// # Returns
-    ///
-    /// A new TableComponent with default state
-    pub fn new() -> Self {
-        Self
+impl Default for TableComponent<'_> {
+    fn default() -> Self {
+        TableComponent { 
+            table: Table::default(), 
+            table_state: TableState::default(), 
+            scrollbar: Scrollbar::default(), 
+            scrollbar_state: ScrollbarState::default(), 
+            footer: TableFooter::default() }
     }
+}
 
-    /// Handle key events for the results table modal.
-    ///
-    /// Applies local state updates directly to `app.table` for scrolling and navigation.
-    /// Returns `Ok(true)` if the key was handled by the table, otherwise `Ok(false)`.
-    pub fn handle_key(&self, app: &mut app::App, key: KeyEvent) -> Result<bool> {
-        match key.code {
-            KeyCode::Up => {
-                app.table.reduce_scroll(-1);
-                Ok(true)
-            }
-            KeyCode::Down => {
-                app.table.reduce_scroll(1);
-                Ok(true)
-            }
-            KeyCode::PageUp => {
-                app.table.reduce_scroll(-10);
-                Ok(true)
-            }
-            KeyCode::PageDown => {
-                app.table.reduce_scroll(10);
-                Ok(true)
-            }
-            KeyCode::Home => {
-                app.table.reduce_home();
-                Ok(true)
-            }
-            KeyCode::End => {
-                app.table.reduce_end();
-                Ok(true)
-            }
-            // Toggle handled via App message; keep consistent with global actions
-            KeyCode::Char('t') => {
-                let _ = app.update(app::Msg::ToggleTable);
-                Ok(true)
-            }
-            _ => Ok(false),
-        }
-    }
-
+impl<'a> TableComponent<'_> {
     /// Renders a JSON array as a table with offset support using known columns.
     pub fn render_json_table_with_columns(
-        &self,
+        &mut self,
         frame: &mut Frame,
         area: Rect,
-        json: &Value,
         offset: usize,
-        columns: &[ColumnWithSize],
+        selected: usize,
+        rows: &[Row],
+        widths: &[Constraint],
+        headers: &Vec<Cell>,
         theme: &dyn UiTheme,
     ) {
-        // Find the array to render: either the value itself, or the first array field of an object
-        let arr = match json {
-            Value::Array(a) => Some(a.as_slice()),
-            Value::Object(m) => m.values().find_map(|v| match v {
-                Value::Array(a) => Some(a.as_slice()),
-                _ => None,
-            }),
-            _ => None,
-        };
-        if arr.is_none() {
-            let p = Paragraph::new("No tabular data in JSON").style(theme.text_muted_style());
+        if rows.is_empty() {
+            let p = Paragraph::new("No results to display").style(theme.text_muted_style());
             frame.render_widget(p, area);
             return;
         }
-        let arr = arr.unwrap();
-        if arr.is_empty() {
-            let p = Paragraph::new("No rows").style(theme.text_muted_style());
-            frame.render_widget(p, area);
-            return;
-        }
-
-        let headers: Vec<_> = columns
-            .iter()
-            .map(|col| Cell::from(col.name.clone()).style(th::table_header_style(theme)))
-            .collect();
-
-        // Column widths: split area width evenly with a floor
-        let mut widths: Vec<Constraint> = Vec::new();
-        if columns.is_empty() {
-            widths.push(Constraint::Percentage(100));
-        } else {
-            for col in columns.iter() {
-                // Use measured max length with a small padding, with a sensible floor/ceiling
-                let w = (col.max_len + 2).clamp(4, 60) as u16;
-                widths.push(Constraint::Min(w));
-            }
-        }
-
-        // Determine visible height to slice rows for scrolling (account for borders + header)
-        let inner_height = area.height.saturating_sub(2); // block borders
-        let header_rows = 1u16;
-        let visible = inner_height.saturating_sub(header_rows).max(1) as usize;
-        let total_rows = arr.len();
-        let start = offset.min(total_rows.saturating_sub(1));
-        let end = (start + visible).min(total_rows);
-        let mut rows_slice: Vec<Row> = Vec::with_capacity(end.saturating_sub(start));
-        if start < end {
-            for (idx, item) in arr[start..end].iter().enumerate() {
-                let mut cells: Vec<Cell> = Vec::with_capacity(columns.len());
-                for col in columns.iter() {
-                    let key = &col.key;
-                    let val = item.get(key).unwrap_or(&Value::Null);
-                    let txt = self.render_value(key, val);
-                    let mut style = theme.text_primary_style();
-                    if self.is_status_like(key) {
-                        if let Some(color) = self.status_color_for_value(&txt, theme) {
-                            style = Style::default().fg(color);
-                        }
-                    }
-                    cells.push(Cell::from(txt).style(style));
-                }
-                // Alternating row backgrounds using theme helper (no dim modifier).
-                let absolute_index = start + idx;
-                let row_style = th::table_row_style(theme, absolute_index);
-                rows_slice.push(Row::new(cells).style(row_style));
-            }
-        }
-
-        let table = Table::new(rows_slice, widths)
-            .header(Row::new(headers))
+        // Compute visible rows
+        let visible = area.height as usize;
+        let max_start = rows.len().saturating_sub(visible.max(1));
+        let start = offset.min(max_start);
+        // Render only the visible window of rows
+        let end = (start + visible).min(rows.len());
+        let table = self
+            .table
+            .clone()
+            .rows(rows[start..end].iter().cloned())
+            .widths(widths)
+            .header(Row::new(headers.clone()).style(th::table_header_row_style(theme)))
             .block(th::block(theme, None, false))
             .column_spacing(1)
             .row_highlight_style(th::table_selected_style(theme))
-            // Ensure table fills with background main and body text color
-            .style(Style::default().fg(theme.roles().text));
+            // Ensure table fills with background surface and text color
+            .style(th::panel_style(theme));
 
-        frame.render_widget(table, area);
+        // Highlight the selected row relative to the visible window
+        let sel = selected.saturating_sub(start);
+        self.table_state.select(Some(sel));
+        frame.render_stateful_widget(table, area, &mut self.table_state);
 
         // Scrollbar indicating vertical position within table rows
-        if total_rows > 0 {
-            let mut sb_state = ScrollbarState::new(total_rows).position(start);
-            let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        if rows.len() > 0 {
+            let mut sb_state = self
+                .scrollbar_state
+                .content_length(max_start)
+                .position(start);
+            let scrollbar = self
+                .scrollbar
+                .clone()
                 .thumb_style(Style::default().fg(theme.roles().scrollbar_thumb))
                 .track_style(Style::default().fg(theme.roles().scrollbar_track));
-            frame.render_stateful_widget(sb, area, &mut sb_state);
+            frame.render_stateful_widget(scrollbar, area, &mut sb_state);
+            self.scrollbar_state = sb_state;
         }
-    }
-
-    /// Renders a JSON array as a table with offset support.
-    /// Retrieves columns from `app.table` state (lazily computed + cached).
-    pub fn render_json_table(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        app: &mut app::App,
-        json: &Value,
-        offset: usize,
-        theme: &dyn UiTheme,
-    ) {
-        // Ensure table state knows about this JSON so it can lazily compute columns
-        app.table.apply_result_json(Some(json.clone()));
-        let cols_opt = app.table.cached_columns();
-        if let Some(cols) = cols_opt {
-            self.render_json_table_with_columns(frame, area, json, offset, cols, theme);
-            return;
-        }
-        // Fallback: infer directly if state could not determine columns
-        let cols_sized: Vec<ColumnWithSize> = infer_columns_with_sizes_from_json(json, 200);
-        self.render_json_table_with_columns(frame, area, json, offset, &cols_sized, theme);
     }
 
     /// Renders JSON as key-value pairs or plain text.
@@ -249,9 +146,12 @@ impl TableComponent {
                 let keys: Vec<String> = get_scored_keys(map);
                 let mut lines: Vec<Line> = Vec::new();
                 for header in keys.iter().take(24) {
-                    let val = self.render_value(header, map.get(header).unwrap_or(&Value::Null));
+                    let val = render_value(header, map.get(header).unwrap_or(&Value::Null));
                     lines.push(Line::from(vec![
-                        Span::styled(normalize_header(header), theme.text_secondary_style().add_modifier(Modifier::BOLD)),
+                        Span::styled(
+                            normalize_header(header),
+                            theme.text_secondary_style().add_modifier(Modifier::BOLD),
+                        ),
                         Span::raw(": "),
                         Span::styled(val, theme.text_primary_style()),
                     ]));
@@ -275,70 +175,9 @@ impl TableComponent {
             }
         }
     }
-
-    fn is_status_like(&self, key: &str) -> bool {
-        matches!(key.to_ascii_lowercase().as_str(), "status" | "state")
-    }
-
-    fn status_color_for_value(&self, value: &str, theme: &dyn UiTheme) -> Option<ratatui::style::Color> {
-        let v = value.to_ascii_lowercase();
-        if matches!(v.as_str(), "ok" | "succeeded" | "success" | "passed") {
-            Some(theme.roles().success)
-        } else if matches!(v.as_str(), "error" | "failed" | "fail") {
-            Some(theme.roles().error)
-        } else {
-            None
-        }
-    }
-
-    fn render_value(&self, key: &str, value: &Value) -> String {
-        match value {
-            Value::String(s) => {
-                if self.is_sensitive_key(key) {
-                    self.ellipsize_middle_if_sha_like(s, 12)
-                } else if is_date_like_key(key) {
-                    format_date_mmddyyyy(s).unwrap_or_else(|| s.clone())
-                } else {
-                    s.clone()
-                }
-            }
-            Value::Number(n) => n.to_string(),
-            Value::Bool(b) => b.to_string(),
-            Value::Null => "null".to_string(),
-            // Take the highest scoring key from the object as a string
-            Value::Object(map) => {
-                if let Some(key) = get_scored_keys(map).first() {
-                    let value = map.get(key).unwrap();
-                    if let Some(s) = value.as_str() {
-                        s.to_string()
-                    } else {
-                        value.to_string()
-                    }
-                } else {
-                    value.to_string()
-                }
-            }
-            _ => value.to_string(),
-        }
-    }
-
-    fn is_sensitive_key(&self, key: &str) -> bool {
-        matches!(key, "token" | "key" | "secret" | "password" | "api_key" | "auth_token")
-    }
-
-    fn ellipsize_middle_if_sha_like(&self, s: &str, keep_total: usize) -> String {
-        // Heuristic: hex-looking and long → compress
-        let is_hexish = s.len() >= 16 && s.chars().all(|c| c.is_ascii_hexdigit());
-        if !is_hexish || s.len() <= keep_total {
-            return s.to_string();
-        }
-        let head = keep_total / 2;
-        let tail = keep_total - head;
-        format!("{}…{}", &s[..head], &s[s.len() - tail..])
-    }
 }
 
-impl Component for TableComponent {
+impl Component for TableComponent<'_> {
     /// Renders the table modal with JSON results.
     ///
     /// This method handles the layout, styling, and table generation for the results display.
@@ -363,11 +202,23 @@ impl Component for TableComponent {
             .constraints([Constraint::Min(1), Constraint::Length(1)])
             .split(inner);
 
-        let cols = app.table.cached_columns().cloned();
+        app.table.set_visible_rows(splits[0].height as usize);
         let json = app.table.selected_result_json();
+        let widths = app.table.column_constraints();
+        let headers = app.table.headers();
+        let maybe_rows = app.table.rows();
         if let Some(json) = json {
-            if let Some(cols) = cols {
-                self.render_json_table_with_columns(frame, splits[0], json, app.table.count_offset(), &cols, &*app.ctx.theme);
+            if let Some(rows) = maybe_rows {                
+                self.render_json_table_with_columns(
+                    frame,
+                    splits[0],
+                    app.table.count_offset(),
+                    app.table.selected_index(),
+                    &rows,
+                    widths.unwrap(),
+                    headers.unwrap(),
+                    &*app.ctx.theme,
+                );
             } else {
                 self.render_kv_or_text(frame, splits[0], json, &*app.ctx.theme);
             }
@@ -375,20 +226,50 @@ impl Component for TableComponent {
             let p = Paragraph::new("No results to display").style(app.ctx.theme.text_muted_style());
             frame.render_widget(p, splits[0]);
         }
+        self.footer.render(frame, splits[1], app);
+    }
 
-        // Footer hint for table modal
-        let footer = Paragraph::new(Line::from(vec![
-            Span::styled("Hint: ", app.ctx.theme.text_muted_style()),
-            Span::styled("Esc", app.ctx.theme.accent_emphasis_style()),
-            Span::styled(" close  ", app.ctx.theme.text_muted_style()),
-            Span::styled("↑/↓", app.ctx.theme.accent_emphasis_style()),
-            Span::styled(" scroll  ", app.ctx.theme.text_muted_style()),
-            Span::styled("PgUp/PgDn", app.ctx.theme.accent_emphasis_style()),
-            Span::styled(" faster  ", app.ctx.theme.text_muted_style()),
-            Span::styled("Home/End", app.ctx.theme.accent_emphasis_style()),
-            Span::styled(" jump", app.ctx.theme.text_muted_style()),
-        ]))
-        .style(app.ctx.theme.text_muted_style());
-        frame.render_widget(footer, splits[1]);
+    /// Handle key events for the results table modal.
+    ///
+    /// Applies local state updates directly to `app.table` for scrolling and navigation.
+    /// Returns `Ok(true)` if the key was handled by the table, otherwise `Ok(false)`.
+    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
+        let effects: Vec<Effect> = vec![];
+        match key.code {
+            KeyCode::Up => {
+                app.table.reduce_scroll(-1);
+            }
+            KeyCode::Down => {
+                app.table.reduce_scroll(1);
+            }
+            KeyCode::PageUp => {
+                let step = app
+                    .table
+                    .visible_rows()
+                    .saturating_sub(1);
+                let step = if step == 0 { 10 } else { step } as isize;
+                app.table.reduce_scroll(-step);
+            }
+            KeyCode::PageDown => {
+                let step = app
+                    .table
+                    .visible_rows()
+                    .saturating_sub(1);
+                let step = if step == 0 { 10 } else { step } as isize;
+                app.table.reduce_scroll(step);
+            }
+            KeyCode::Home => {
+                app.table.reduce_home();
+            }
+            KeyCode::End => {
+                app.table.reduce_end();
+            }
+            // Toggle handled via App message; keep consistent with global actions
+            KeyCode::Char('t') => {
+                let _ = app.update(app::Msg::ToggleTable);
+            }
+            _ => {}
+        }
+        effects
     }
 }

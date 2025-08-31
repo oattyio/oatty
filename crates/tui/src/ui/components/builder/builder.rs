@@ -333,7 +333,7 @@ impl BuilderComponent {
     }
 
     /// Renders the commands list panel.
-    fn render_commands_panel(&self, f: &mut Frame, app: &mut app::App, area: Rect) {
+    fn render_commands_panel(&self, frame: &mut Frame, app: &mut app::App, area: Rect) {
         let title = format!("Commands ({})", app.builder.filtered().len());
         let focused = app.builder.selected_focus() == Focus::Commands;
         let block = th::block(&*app.ctx.theme, Some(&title), focused);
@@ -345,7 +345,7 @@ impl BuilderComponent {
             .highlight_symbol("> ");
 
         let list_state = &mut app.builder.list_state();
-        f.render_stateful_widget(list, area, list_state);
+        frame.render_stateful_widget(list, area, list_state);
     }
 
     /// Creates list items for the commands panel.
@@ -478,11 +478,7 @@ impl BuilderComponent {
     /// Creates the hint text for a field.
     /// Returns both a plain text version (for cursor math) and styled spans
     /// with the selected enum value highlighted in green with a checkmark.
-    fn create_field_hint(
-        &self,
-        app: &app::App,
-        field: &Field,
-    ) -> Option<(String, Vec<Span<'static>>)> {
+    fn create_field_hint(&self, app: &app::App, field: &Field) -> Option<(String, Vec<Span<'static>>)> {
         if field.enum_values.is_empty() {
             return None;
         }
@@ -497,15 +493,9 @@ impl BuilderComponent {
 
         for (i, v) in field.enum_values.iter().enumerate() {
             let (p, s) = if enum_idx == i {
-                (
-                    format!("✓{}", v),
-                    Span::styled(format!("✓{}", v), t.status_success()),
-                )
+                (format!("✓{}", v), Span::styled(format!("✓{}", v), t.status_success()))
             } else {
-                (
-                    v.to_string(),
-                    Span::styled(v.to_string(), t.text_muted_style()),
-                )
+                (v.to_string(), Span::styled(v.to_string(), t.text_muted_style()))
             };
             plain.push_str(&p);
             spans.push(s);
@@ -531,10 +521,7 @@ impl BuilderComponent {
                 Span::styled("[✓]", t.status_success())
             }
         } else if !field.enum_values.is_empty() {
-            let value = field
-                .value
-                .clone()
-                .if_empty_then("<choose>".to_string());
+            let value = field.value.clone().if_empty_then("<choose>".to_string());
             Span::styled(value, t.text_primary_style())
         } else {
             Span::styled(field.value.clone(), t.text_primary_style())

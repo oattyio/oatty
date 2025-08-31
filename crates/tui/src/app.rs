@@ -4,6 +4,10 @@
 //! logic for the TUI interface. It manages the application lifecycle, user
 //! interactions, and coordinates between different UI components.
 
+use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use heroku_registry::Registry;
@@ -34,7 +38,7 @@ pub struct SharedCtx {
     pub debug_enabled: bool,
     /// Value providers for suggestions
     pub providers: Vec<Box<dyn ValueProvider>>,
-    /// Active UI theme (Nord-based) loaded from env
+    /// Active UI theme (Dracula by default) loaded from env
     pub theme: Box<dyn theme::Theme>,
 }
 
@@ -52,7 +56,7 @@ impl SharedCtx {
     }
 }
 
-pub struct App {
+pub struct App<'a> {
     /// Current primary route
     pub route: Screen,
     /// Shared, cross-cutting context (registry, config)
@@ -62,7 +66,7 @@ pub struct App {
     /// Builder modal state
     pub builder: BuilderState,
     /// Table modal state
-    pub table: TableState,
+    pub table: TableState<'a>,
     /// Help modal state
     pub help: HelpState,
     /// Application logs and status messages
@@ -78,6 +82,8 @@ pub struct App {
     pub exec_receiver: UnboundedReceiver<ExecOutcome>,
     /// Top-level focus between palette and logs
     pub main_focus: MainFocus,
+    /// Active execution count used by the event pump to decide whether to animate
+    pub active_exec_count: Arc<AtomicUsize>,
 }
 
 /// Messages that can be sent to update the application state.
@@ -142,7 +148,7 @@ pub enum MainFocus {
     Logs,
 }
 
-impl App {
+impl<'a> App<'_> {
     /// Creates a new application instance with the given registry.
     ///
     /// This constructor initializes the application state with default values
@@ -176,6 +182,7 @@ impl App {
             exec_sender,
             exec_receiver,
             main_focus: MainFocus::Palette,
+            active_exec_count: Arc::new(AtomicUsize::new(0)),
         };
         app.builder.set_all_commands(app.ctx.registry.commands.clone());
         app.palette.set_all_commands(app.ctx.registry.commands.clone());
@@ -255,7 +262,9 @@ impl App {
             }
             Msg::ExecCompleted(out) => {
                 let raw = out.log;
-                self.executing = false;
+                // Keep executing=true if other executions are still active
+                let still_active = self.active_exec_count.load(Ordering::Relaxed) > 0;
+                self.executing = still_active;
                 // Pre-redact for list display to avoid per-frame redaction
                 self.logs.entries.push(heroku_util::redact_sensitive(&raw));
                 self.logs.rich_entries.push(LogEntry::Api {
@@ -271,7 +280,7 @@ impl App {
                 if rich_len > 500 {
                     let _ = self.logs.rich_entries.drain(0..rich_len - 500);
                 }
-                self.table.apply_result_json(out.result_json);
+                self.table.apply_result_json(out.result_json, &*self.ctx.theme);
                 self.table.apply_show(out.open_table);
                 // Clear palette input and suggestion state
                 self.palette.reduce_clear_all();

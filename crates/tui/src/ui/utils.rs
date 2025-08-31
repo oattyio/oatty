@@ -6,9 +6,10 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use ratatui::prelude::*;
+use crate::ui::theme::roles::Theme as UiTheme;
 use heck::ToTitleCase;
 use heroku_util::{format_date_mmddyyyy, is_date_like_key};
+use ratatui::prelude::*;
 use serde_json::{Map, Value};
 
 /// Creates a centered rectangular area within a given rectangle.
@@ -105,21 +106,24 @@ pub fn infer_columns(arr: &[Value]) -> Vec<String> {
     }
     cols
 }
-/// Infer columns from a JSON value (array or object containing array).
-pub fn infer_columns_from_json(json: &Value) -> Vec<String> {
-    let arr = match json {
-        Value::Array(a) => Some(a.as_slice()),
-        Value::Object(m) => m.values().find_map(|v| match v {
-            Value::Array(a) => Some(a.as_slice()),
-            _ => None,
-        }),
-        _ => None,
-    };
-    match arr {
-        Some(a) => infer_columns(a),
-        None => vec![],
+
+pub fn is_status_like(key: &str) -> bool {
+    matches!(key.to_ascii_lowercase().as_str(), "status" | "state")
+}
+
+pub fn status_color_for_value(value: &str, theme: &dyn UiTheme) -> Option<ratatui::style::Color> {
+    let v = value.to_ascii_lowercase();
+    if matches!(v.as_str(), "ok" | "succeeded" | "success" | "passed") {
+        Some(theme.roles().success)
+    } else if matches!(v.as_str(), "error" | "failed" | "fail") {
+        Some(theme.roles().error)
+    } else if matches!(v.as_str(), "warning" | "warn" | "unstable" | "modified" | "change") {
+        Some(theme.roles().warning)
+    } else {
+        None
     }
 }
+
 pub fn base_key_score(key: &str) -> i32 {
     match key {
         "name" | "description" | "app" | "dyno" | "addon" | "config_var" => 100,
@@ -244,24 +248,12 @@ pub fn normalize_header(key: &str) -> String {
 /// - Applies light formatting (date for date-like keys) before measuring.
 /// - Includes the header label length in the max.
 /// - Samples up to `sample` rows for performance.
-pub fn infer_columns_with_sizes_from_json(json: &Value, sample: usize) -> Vec<ColumnWithSize> {
-    let keys = infer_columns_from_json(json);
+pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize) -> Vec<ColumnWithSize> {
+    let keys = infer_columns(array);
     if keys.is_empty() {
         return Vec::new();
     }
-
-    // Resolve the array of rows
-    let arr_opt = match json {
-        Value::Array(a) => Some(a.as_slice()),
-        Value::Object(m) => m.values().find_map(|v| match v {
-            Value::Array(a) => Some(a.as_slice()),
-            _ => None,
-        }),
-        _ => None,
-    };
-
-    let rows = match arr_opt { Some(a) => a, None => &[] };
-    let sample_rows = rows.iter().take(sample);
+    let sample_rows = array.iter().take(sample);
 
     let mut out: Vec<ColumnWithSize> = Vec::with_capacity(keys.len());
     for key in keys.iter() {
@@ -286,16 +278,73 @@ pub fn infer_columns_with_sizes_from_json(json: &Value, sample: usize) -> Vec<Co
                 Some(Value::Object(map)) => {
                     // Fall back to highest-scoring key as a string
                     if let Some(best) = get_scored_keys(map).first() {
-                        map.get(best).map(|v| v.as_str().unwrap_or(&v.to_string()).to_string()).unwrap_or_else(|| "".to_string())
-                    } else { "".to_string() }
+                        map.get(best)
+                            .map(|v| v.as_str().unwrap_or(&v.to_string()).to_string())
+                            .unwrap_or_else(|| "".to_string())
+                    } else {
+                        "".to_string()
+                    }
                 }
                 Some(other) => other.to_string(),
                 None => String::new(),
             };
             let l = formatted.len();
-            if l > max_len { max_len = l; }
+            if l > max_len {
+                max_len = l;
+            }
         }
-        out.push(ColumnWithSize { name: header, key: key.clone(), formatters, max_len });
+        out.push(ColumnWithSize {
+            name: header,
+            key: key.clone(),
+            formatters,
+            max_len,
+        });
     }
     out
+}
+
+pub fn render_value(key: &str, value: &Value) -> String {
+    match value {
+        Value::String(s) => {
+            if is_sensitive_key(key) {
+                ellipsize_middle_if_sha_like(s, 12)
+            } else if is_date_like_key(key) {
+                format_date_mmddyyyy(s).unwrap_or_else(|| s.clone())
+            } else {
+                s.clone()
+            }
+        }
+        Value::Number(n) => n.to_string(),
+        Value::Bool(b) => b.to_string(),
+        Value::Null => "null".to_string(),
+        // Take the highest scoring key from the object as a string
+        Value::Object(map) => {
+            if let Some(key) = get_scored_keys(map).first() {
+                let value = map.get(key).unwrap();
+                if let Some(s) = value.as_str() {
+                    s.to_string()
+                } else {
+                    value.to_string()
+                }
+            } else {
+                value.to_string()
+            }
+        }
+        _ => value.to_string(),
+    }
+}
+
+pub fn is_sensitive_key(key: &str) -> bool {
+    matches!(key, "token" | "key" | "secret" | "password" | "api_key" | "auth_token")
+}
+
+fn ellipsize_middle_if_sha_like(s: &str, keep_total: usize) -> String {
+    // Heuristic: hex-looking and long → compress
+    let is_hexish = s.len() >= 16 && s.chars().all(|c| c.is_ascii_hexdigit());
+    if !is_hexish || s.len() <= keep_total {
+        return s.to_string();
+    }
+    let head = keep_total / 2;
+    let tail = keep_total - head;
+    format!("{}…{}", &s[..head], &s[s.len() - tail..])
 }
