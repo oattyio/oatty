@@ -13,10 +13,12 @@ pub use models::Registry;
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::HashSet;
 
-    /// Tests that the embedded manifest loads successfully and contains valid commands.
+    use super::*;
+
+    /// Tests that the embedded manifest loads successfully and contains valid
+    /// commands.
     ///
     /// This test verifies that:
     /// 1. The registry can be loaded from the embedded schema

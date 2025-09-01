@@ -1,8 +1,9 @@
 /// Checks if the workflows feature is enabled via environment variable.
 ///
-/// This function checks the `FEATURE_WORKFLOWS` environment variable to determine
-/// whether workflow-related functionality should be enabled. The feature is enabled
-/// if the variable is set to "1" or "true" (case-insensitive).
+/// This function checks the `FEATURE_WORKFLOWS` environment variable to
+/// determine whether workflow-related functionality should be enabled. The
+/// feature is enabled if the variable is set to "1" or "true"
+/// (case-insensitive).
 ///
 /// # Returns
 ///

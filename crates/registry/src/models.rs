@@ -12,11 +12,12 @@ pub struct Registry {
 }
 
 impl Registry {
-    /// Creates a new Registry instance by loading command definitions from the embedded schema.
+    /// Creates a new Registry instance by loading command definitions from the
+    /// embedded schema.
     ///
-    /// This method reads the Heroku API manifest that was embedded during the build process
-    /// and deserializes it into a Registry. If the workflows feature is enabled, it also
-    /// adds synthetic workflow commands.
+    /// This method reads the Heroku API manifest that was embedded during the
+    /// build process and deserializes it into a Registry. If the workflows
+    /// feature is enabled, it also adds synthetic workflow commands.
     ///
     /// # Returns
     ///
@@ -47,9 +48,9 @@ impl Registry {
 
     /// Finds a specific command by its group and command name.
     ///
-    /// This method searches for a command using the format "group:command" where
-    /// group is the resource type (e.g., "apps", "dynos") and command is the action
-    /// (e.g., "list", "create").
+    /// This method searches for a command using the format "group:command"
+    /// where group is the resource type (e.g., "apps", "dynos") and command
+    /// is the action (e.g., "list", "create").
     ///
     /// # Arguments
     ///

@@ -201,6 +201,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3995eaeebcdf32f91f980d360f78732ddc061097ab4e39991ae7a6ace9194677"
 
 [[package]]
+name = "byteorder"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
+
+[[package]]
 name = "byteorder-lite"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -621,6 +627,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "fxhash"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c31b6d751ae2c7f11320402d34e41349dd1016f8d5d45e48c4312bc8625af50c"
+dependencies = [
+ "byteorder",
+]
+
+[[package]]
 name = "gethostname"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -764,6 +779,7 @@ dependencies = [
  "heroku-types",
  "heroku-util",
  "once_cell",
+ "rat-focus",
  "ratatui",
  "regex",
  "reqwest",
@@ -1547,6 +1563,41 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "99d9a13982dcf210057a8a78572b2217b667c3beacbf3a0d8b454f6f82837d38"
 dependencies = [
  "getrandom 0.3.3",
+]
+
+[[package]]
+name = "rat-event"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "26e333b72bcd23f28ac85ba6441c5e75600ace55947e71930e7cb327e6716286"
+dependencies = [
+ "crossterm 0.28.1",
+ "log",
+ "ratatui",
+]
+
+[[package]]
+name = "rat-focus"
+version = "1.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b4866c2abcc7b8c8744548b4849c67b654d2dd28ee118fcc9b65979c96247cb"
+dependencies = [
+ "crossterm 0.28.1",
+ "fxhash",
+ "log",
+ "rat-event",
+ "rat-reloc",
+ "ratatui",
+]
+
+[[package]]
+name = "rat-reloc"
+version = "1.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "fbddcf2d92aae0efb227180c07d8fbbb4480cd30318e4e6f5825aae8f6dc5ba5"
+dependencies = [
+ "log",
+ "ratatui",
 ]
 
 [[package]]

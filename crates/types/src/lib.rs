@@ -45,12 +45,14 @@ pub struct CommandSpec {
     pub method: String,
     /// API endpoint path (e.g., "/apps" or "/apps/{app}/dynos")
     pub path: String,
-    /// Supported range fields for pagination/sorting (e.g., ["id", "name", "updated_at"])
+    /// Supported range fields for pagination/sorting (e.g., ["id", "name",
+    /// "updated_at"])
     #[serde(default)]
     pub ranges: Vec<String>,
 }
 
-/// Represents a positional argument for a command, including its name and help text.
+/// Represents a positional argument for a command, including its name and help
+/// text.
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct PositionalArgument {
     /// The name of the positional argument (e.g., "app")
@@ -78,21 +80,6 @@ pub struct Field {
     pub enum_values: Vec<String>,
     /// Current selection index for enum fields
     pub enum_idx: Option<usize>,
-}
-
-/// Represents the current focus area in the UI.
-///
-/// This enum tracks which part of the interface currently has focus,
-/// allowing for proper keyboard navigation and input handling.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum Focus {
-    /// Search input field in the command palette
-    #[default]
-    Search,
-    /// Command list in the builder modal
-    Commands,
-    /// Input fields form in the builder modal
-    Inputs,
 }
 
 /// Top-level screens available for the application to display.
@@ -123,7 +110,7 @@ pub struct ExecOutcome {
     /// Whether to automatically open the table modal
     pub open_table: bool,
     /// Pagination info from the response header when available
-    pub pagination: Option<Pagination>
+    pub pagination: Option<Pagination>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Pagination {

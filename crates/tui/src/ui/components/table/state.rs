@@ -1,21 +1,19 @@
-use crate::ui::theme::helpers::table_row_style;
-use crate::ui::theme::roles::Theme as UiTheme;
-use crate::ui::utils::{is_status_like, render_value, status_color_for_value};
-use crate::ui::{
-    theme::helpers::table_header_style,
-    utils::{ColumnWithSize, infer_columns_with_sizes_from_json},
+use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
+use ratatui::{
+    layout::{Constraint, Rect},
+    style::Style,
+    widgets::{Cell, Row},
 };
-use ratatui::style::Style;
-use ratatui::widgets::Row;
-use ratatui::{layout::Constraint, widgets::Cell};
 use serde_json::Value;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
-pub enum TableFocus {
-    #[default]
-    Table,
-    Pagination
-}
+use crate::ui::{
+    theme::{
+        helpers::{table_header_style, table_row_style},
+        roles::Theme as UiTheme,
+    },
+    utils::{ColumnWithSize, infer_columns_with_sizes_from_json, is_status_like, render_value, status_color_for_value},
+};
+
 #[derive(Debug, Default)]
 pub struct TableState<'a> {
     visible: bool,
@@ -27,7 +25,7 @@ pub struct TableState<'a> {
     columns: Option<Vec<ColumnWithSize>>,
     column_constraints: Option<Vec<Constraint>>,
     headers: Option<Vec<Cell<'a>>>,
-    focus: TableFocus,
+    pub grid_f: FocusFlag,
 }
 
 // Default derived above
@@ -36,9 +34,6 @@ impl<'a> TableState<'_> {
     // Selectors
     pub fn is_visible(&self) -> bool {
         self.visible
-    }
-    pub fn focus(&self) -> TableFocus {
-        self.focus
     }
     pub fn count_offset(&self) -> usize {
         self.offset
@@ -67,9 +62,8 @@ impl<'a> TableState<'_> {
     pub fn headers(&self) -> Option<&Vec<Cell<'_>>> {
         self.headers.as_ref()
     }
-
-    pub fn set_focus(&mut self, focus: TableFocus) {
-        self.focus = focus;
+    pub fn grid_focus(&self) -> &FocusFlag {
+        &self.grid_f
     }
 
     // Reducers
@@ -78,6 +72,7 @@ impl<'a> TableState<'_> {
         if self.visible {
             self.offset = 0;
             self.selected = 0;
+            self.grid_f.set(true);
         }
     }
 
@@ -86,6 +81,7 @@ impl<'a> TableState<'_> {
         if show {
             self.offset = 0;
             self.selected = 0;
+            self.grid_f.set(true);
         }
     }
 
@@ -109,9 +105,7 @@ impl<'a> TableState<'_> {
                 return;
             }
             let new_selected = if delta >= 0 {
-                self.selected
-                    .saturating_add(delta as usize)
-                    .min(len.saturating_sub(1))
+                self.selected.saturating_add(delta as usize).min(len.saturating_sub(1))
             } else {
                 self.selected.saturating_sub((-delta) as usize)
             };
@@ -165,9 +159,10 @@ impl<'a> TableState<'_> {
                     let txt = render_value(key, val);
                     let mut style = theme.text_primary_style();
                     if is_status_like(key)
-                        && let Some(color) = status_color_for_value(&txt, theme) {
-                            style = Style::default().fg(color);
-                        }
+                        && let Some(color) = status_color_for_value(&txt, theme)
+                    {
+                        style = Style::default().fg(color);
+                    }
                     cells.push(Cell::from(txt).style(style));
                 }
                 // Alternating row backgrounds using theme helper (no dim modifier).

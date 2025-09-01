@@ -1,10 +1,11 @@
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
-use ratatui::{text::Span, widgets::Tabs};
-
-use crate::ui::theme::roles::ThemeRoles;
+use ratatui::{
+    style::{Color, Modifier, Style},
+    text::Span,
+    widgets::{Block, BorderType, Borders, Paragraph, Tabs},
+};
 
 use super::roles::Theme;
+use crate::ui::theme::roles::ThemeRoles;
 
 /// Build a standard Block with theme surfaces and borders.
 pub fn block<'a, T: Theme + ?Sized>(theme: &'a T, title: Option<&'a str>, focused: bool) -> Block<'a> {
@@ -51,7 +52,7 @@ fn darken_rgb(color: Color, factor: f32) -> Color {
             let dg = (g as f32 * f).round().clamp(0.0, 255.0) as u8;
             let db = (b as f32 * f).round().clamp(0.0, 255.0) as u8;
             Color::Rgb(dr, dg, db)
-        }
+        },
         other => other,
     }
 }
@@ -74,8 +75,9 @@ pub fn table_row_styles<T: Theme + ?Sized>(theme: &T) -> (Style, Style) {
     (even, odd)
 }
 
-/// Row style for a given row index, alternating between darker background/surface.
-/// This avoids using dim/other modifiers to ensure text brightness is unaffected.
+/// Row style for a given row index, alternating between darker
+/// background/surface. This avoids using dim/other modifiers to ensure text
+/// brightness is unaffected.
 pub fn table_row_style<T: Theme + ?Sized>(theme: &T, row_index: usize) -> Style {
     let (even, odd) = table_row_styles(theme);
     if row_index % 2 == 0 { even } else { odd }

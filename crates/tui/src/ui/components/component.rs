@@ -1,16 +1,15 @@
 //! Component system for the Heroku TUI application.
 //!
 //! This module defines the Component trait and related abstractions that enable
-//! modular UI development. Components are self-contained UI elements that handle
-//! their own state, events, and rendering while integrating with the main
-//! application through a consistent interface.
+//! modular UI development. Components are self-contained UI elements that
+//! handle their own state, events, and rendering while integrating with the
+//! main application through a consistent interface.
 
 use anyhow::Result;
 use crossterm::event::{KeyEvent, MouseEvent};
-use ratatui::layout::Rect;
+use ratatui::{Frame, layout::Rect};
 
 use crate::app::{Effect, Msg};
-use ratatui::Frame;
 
 /// A trait representing a UI component with its own state and behavior.
 ///
@@ -20,18 +19,26 @@ use ratatui::Frame;
 ///
 /// # Design Principles
 ///
-/// - **Separation of concerns**: Components own only local UI behavior and state
-/// - **Single responsibility**: Each component handles one specific area (e.g., palette, builder, help)
-/// - **Consistent patterns**: All components expose `init`, event handlers, `update`, and `render`
-/// - **Event-driven**: Components respond to application messages and user input
-/// - **Side-effect reporting**: Components report effects rather than directly modifying global state
+/// - **Separation of concerns**: Components own only local UI behavior and
+///   state
+/// - **Single responsibility**: Each component handles one specific area (e.g.,
+///   palette, builder, help)
+/// - **Consistent patterns**: All components expose `init`, event handlers,
+///   `update`, and `render`
+/// - **Event-driven**: Components respond to application messages and user
+///   input
+/// - **Side-effect reporting**: Components report effects rather than directly
+///   modifying global state
 ///
 /// # Component Lifecycle
 ///
 /// 1. **Initialization**: `init()` is called once when the component is created
-/// 2. **Event Handling**: Components receive events through `handle_events()`, `handle_key_events()`, etc.
-/// 3. **State Updates**: `update()` processes application messages and updates internal state
-/// 4. **Rendering**: `render()` draws the component into the provided frame area
+/// 2. **Event Handling**: Components receive events through `handle_events()`,
+///    `handle_key_events()`, etc.
+/// 3. **State Updates**: `update()` processes application messages and updates
+///    internal state
+/// 4. **Rendering**: `render()` draws the component into the provided frame
+///    area
 ///
 /// # Example Implementation
 ///

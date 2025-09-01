@@ -18,17 +18,18 @@
 //!
 //! This design follows a **functional core, imperative shell** pattern:
 //! state updates are pure, but commands handle side effects.
-use crate::{app::{self, Effect}};
+use std::sync::atomic::Ordering;
+
 use heroku_registry::CommandSpec;
 use heroku_types::{ExecOutcome, Pagination};
+use reqwest::header::{CONTENT_RANGE, HeaderMap, HeaderName};
 use serde_json::Value;
-use std::sync::{
-    atomic::{Ordering},
-};
 use tokio::task::spawn;
-use reqwest::header::{HeaderMap, HeaderName, CONTENT_RANGE};
 
-/// Represents side-effectful system commands executed outside of pure state updates.
+use crate::app::{self, Effect};
+
+/// Represents side-effectful system commands executed outside of pure state
+/// updates.
 ///
 /// These commands bridge between the application's functional state model
 /// and imperative actions (I/O, networking, system integration).
@@ -96,17 +97,17 @@ pub enum Cmd {
 /// ```
 pub fn from_effects(app: &mut app::App, effects: Vec<Effect>) -> Vec<Cmd> {
     let mut out = Vec::new();
-    for eff in effects {
-        match eff {
+    for effect in effects {
+        match effect {
             Effect::CopyCommandRequested => {
                 if let Some(spec) = app.builder.selected_command() {
                     let cmd = crate::preview::cli_preview(spec, app.builder.input_fields());
                     out.push(Cmd::ClipboardSet(cmd));
                 }
-            }
+            },
             Effect::CopyLogsRequested(text) => {
                 out.push(Cmd::ClipboardSet(text));
-            }
+            },
         }
     }
     out
@@ -143,10 +144,10 @@ pub fn run_cmds(app: &mut app::App, commands: Vec<Cmd>) {
                 if log_len > 500 {
                     let _ = app.logs.entries.drain(0..log_len - 500);
                 }
-            }
+            },
             Cmd::ExecuteHttp(spec, path, body) => {
                 execute_http(app, *spec, path, body);
-            }
+            },
         }
     }
 }
@@ -181,15 +182,15 @@ fn execute_http(app: &mut app::App, spec: CommandSpec, path: String, body: serde
         match outcome {
             Ok(out) => {
                 let _ = tx.send(out);
-            }
+            },
             Err(err) => {
                 let _ = tx.send(heroku_types::ExecOutcome {
                     log: format!("Error: {}", err),
                     result_json: None,
                     open_table: false,
-                    pagination: None
+                    pagination: None,
                 });
-            }
+            },
         }
         // Mark one execution completed
         active.fetch_sub(1, Ordering::Relaxed);
@@ -239,25 +240,43 @@ async fn exec_remote(
     };
     let mut builder = client.request(method, &path);
     // Build Range header from special range fields if provided via inputs
-    let field = body.get("range-field").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty());
+    let field = body
+        .get("range-field")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     let start = body.get("range-start").and_then(|v| v.as_str()).unwrap_or("").trim();
     let end = body.get("range-end").and_then(|v| v.as_str()).unwrap_or("").trim();
-    let order = body.get("order").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty());
-    let max = body.get("max").and_then(|v| v.as_str()).and_then(|s| s.parse::<usize>().ok());
+    let order = body
+        .get("order")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let max = body
+        .get("max")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<usize>().ok());
 
     if let Some(field) = field {
-        // Compose range segment like "start..end" (allow one side empty as per API semantics)
+        // Compose range segment like "start..end" (allow one side empty as per API
+        // semantics)
         let range_seg = format!("{}..{}", start, end);
         let mut range_header = format!("{} {}", field, range_seg);
         // Append optional order/max parameters
-        if let Some(ord) = order { range_header.push_str(&format!("; order={};", ord)); }
-        if let Some(m) = max { range_header.push_str(&format!(" max={};", m)); }
+        if let Some(ord) = order {
+            range_header.push_str(&format!("; order={};", ord));
+        }
+        if let Some(m) = max {
+            range_header.push_str(&format!(" max={};", m));
+        }
         builder = builder.header("Range", range_header);
     }
 
     // Filter out special range-only fields from JSON body
     let mut body_filtered = body.clone();
-    for k in ["range-field", "range-start", "range-end", "order", "max"] { let _ = body_filtered.remove(k); }
+    for k in ["range-field", "range-start", "range-end", "order", "max"] {
+        let _ = body_filtered.remove(k);
+    }
     if !body_filtered.is_empty() {
         builder = builder.json(&serde_json::Value::Object(body_filtered));
     }
@@ -267,20 +286,27 @@ async fn exec_remote(
             e
         )
     })?;
-    
+
     let status = resp.status();
     let headers = resp.headers().clone();
     let mut pagination = parse_content_range(&headers);
     // Attach Next-Range if present for client iteration
     if let Some(ref mut p) = pagination
-        && let Some(nr) = parse_next_range(&headers) {
+        && let Some(nr) = parse_next_range(&headers)
+    {
         p.next_range = Some(nr.0);
-        if let Some(order) = nr.1 { p.order = Some(order); }
+        if let Some(order) = nr.1 {
+            p.order = Some(order);
+        }
         // If max present in Next-Range and not in Content-Range, prefer it
-        if let Some(max) = nr.2 && p.max == 0 { p.max = max; }
+        if let Some(max) = nr.2
+            && p.max == 0
+        {
+            p.max = max;
+        }
     }
     let text = resp.text().await.unwrap_or_default();
-    
+
     if status.as_u16() == 401 {
         return Err(
             "Unauthorized (401). Hint: set HEROKU_API_KEY=... or configure ~/.netrc with machine api.heroku.com".into(),
@@ -301,7 +327,7 @@ async fn exec_remote(
         log,
         result_json,
         open_table,
-        pagination
+        pagination,
     })
 }
 
@@ -310,7 +336,8 @@ fn parse_content_range(headers: &HeaderMap) -> Option<Pagination> {
     // Get header value as string
     let value = headers.get(CONTENT_RANGE).and_then(|v| v.to_str().ok())?;
 
-    // Split into tokens separated by ';' (e.g., "name app7a..app9x; max=200; order=desc;")
+    // Split into tokens separated by ';' (e.g., "name app7a..app9x; max=200;
+    // order=desc;")
     let parts: Vec<&str> = value.split(';').map(str::trim).filter(|s| !s.is_empty()).collect();
     let range_part = parts.first()?;
 
@@ -328,8 +355,10 @@ fn parse_content_range(headers: &HeaderMap) -> Option<Pagination> {
     let mut order: Option<String> = None;
     for kv in parts.iter().skip(1) {
         if let Some(v) = kv.strip_prefix("max=")
-            && let Ok(n) = v.trim_end_matches(';').parse::<usize>() { max = Some(n); }
-        else if let Some(v) = kv.strip_prefix("order=") {
+            && let Ok(n) = v.trim_end_matches(';').parse::<usize>()
+        {
+            max = Some(n);
+        } else if let Some(v) = kv.strip_prefix("order=") {
             order = Some(v.trim_end_matches(';').to_lowercase());
         }
     }
@@ -355,7 +384,9 @@ fn parse_next_range(headers: &HeaderMap) -> Option<(String, Option<String>, Opti
         if let Some(v) = kv.strip_prefix("order=") {
             order = Some(v.trim_end_matches(';').to_lowercase());
         } else if let Some(v) = kv.strip_prefix("max=") {
-            if let Ok(n) = v.trim_end_matches(';').parse::<usize>() { max = Some(n); }
+            if let Ok(n) = v.trim_end_matches(';').parse::<usize>() {
+                max = Some(n);
+            }
         }
     }
     Some((raw, order, max))

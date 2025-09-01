@@ -1,11 +1,20 @@
+use ratatui::{
+    prelude::*,
+    style::{Color, Modifier, Style},
+    widgets::Paragraph,
+};
+
 use super::components::{BuilderComponent, HelpComponent, LogsComponent, TableComponent};
-use crate::app::App;
-use crate::ui::components::component::Component;
-use crate::ui::components::palette::{HintBarComponent, PaletteComponent};
-use crate::ui::layout::MainLayout;
-use ratatui::prelude::*;
-use ratatui::style::{Color, Modifier, Style};
-use ratatui::widgets::Paragraph;
+use crate::{
+    app::App,
+    ui::{
+        components::{
+            component::Component,
+            palette::{HintBarComponent, PaletteComponent},
+        },
+        layout::MainLayout,
+    },
+};
 
 /// Renders the main user interface layout and coordinates all UI components.
 ///
@@ -74,7 +83,8 @@ fn render_command_palette(f: &mut Frame, app: &mut App, palette: &mut PaletteCom
 /// * `app` - The application state
 /// * `area` - The area to render hints in
 fn render_hints(f: &mut Frame, app: &mut App, hints: &mut HintBarComponent, area: Rect) {
-    // Always render palette hints here; logs hints are drawn inside the logs block now.
+    // Always render palette hints here; logs hints are drawn inside the logs block
+    // now.
     hints.render(f, area, app);
 }
 
@@ -119,7 +129,7 @@ fn render_modals(
                     let dg = (g as f32 * f).round().clamp(0.0, 255.0) as u8;
                     let db = (b as f32 * f).round().clamp(0.0, 255.0) as u8;
                     Color::Rgb(dr, dg, db)
-                }
+                },
                 other => other,
             }
         }

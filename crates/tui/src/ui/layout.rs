@@ -4,17 +4,18 @@
 //! components in a consistent and maintainable way. It defines the main
 //! application layout structure and provides reusable layout functions.
 
-use crate::app::App;
 use ratatui::prelude::*;
+
+use crate::app::App;
 pub(super) struct MainLayout;
 
 impl MainLayout {
     /// Creates the main vertical layout for the application.
     ///
-    /// This function defines the primary layout structure of the TUI application,
-    /// dividing the screen into logical sections for different UI components.
-    /// The layout follows a vertical arrangement with specific constraints for
-    /// each area.
+    /// This function defines the primary layout structure of the TUI
+    /// application, dividing the screen into logical sections for different
+    /// UI components. The layout follows a vertical arrangement with
+    /// specific constraints for each area.
     ///
     /// # Layout Structure
     ///
@@ -31,7 +32,8 @@ impl MainLayout {
     ///
     /// # Returns
     ///
-    /// Vector of rectangular areas for each UI section, ordered from top to bottom
+    /// Vector of rectangular areas for each UI section, ordered from top to
+    /// bottom
     ///
     /// # Examples
     ///

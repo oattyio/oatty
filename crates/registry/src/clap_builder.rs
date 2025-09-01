@@ -1,12 +1,16 @@
-use crate::{CommandFlag, CommandSpec, Registry};
-use clap::{Arg, ArgAction, Command as ClapCommand};
 use std::collections::BTreeMap;
 
-/// Builds a complete Clap command tree from the registry's command specifications.
+use clap::{Arg, ArgAction, Command as ClapCommand};
+
+use crate::{CommandFlag, CommandSpec, Registry};
+
+/// Builds a complete Clap command tree from the registry's command
+/// specifications.
 ///
-/// This function transforms the registry's command definitions into a hierarchical
-/// Clap command structure. Commands are grouped by their resource prefix (before ':'),
-/// and each command includes its flags, positional arguments, and help text.
+/// This function transforms the registry's command definitions into a
+/// hierarchical Clap command structure. Commands are grouped by their resource
+/// prefix (before ':'), and each command includes its flags, positional
+/// arguments, and help text.
 ///
 /// The generated command tree includes global flags for JSON output,
 /// and verbose logging that apply to all commands.
@@ -17,13 +21,14 @@ use std::collections::BTreeMap;
 ///
 /// # Returns
 ///
-/// A configured ClapCommand that can be used for argument parsing and help generation.
+/// A configured ClapCommand that can be used for argument parsing and help
+/// generation.
 ///
 /// # Examples
 ///
 /// ```rust
-/// use registry::{Registry, build_clap};
 /// use clap::Parser;
+/// use registry::{Registry, build_clap};
 ///
 /// let registry = Registry::from_embedded_schema()?;
 /// let clap_command = build_clap(&registry);
@@ -102,8 +107,7 @@ fn create_root_command() -> ClapCommand {
 /// # Examples
 ///
 /// ```rust
-/// use registry::clap_builder::group_commands_by_resource;
-/// use registry::Registry;
+/// use registry::{Registry, clap_builder::group_commands_by_resource};
 ///
 /// let registry = Registry::from_embedded_schema()?;
 /// let groups = group_commands_by_resource(&registry);
@@ -125,9 +129,10 @@ fn group_commands_by_resource(registry: &Registry) -> BTreeMap<String, Vec<&Comm
 
 /// Builds a group command containing all subcommands for a specific resource.
 ///
-/// This function creates a Clap command group (e.g., "apps", "dynos") that contains
-/// all the subcommands for that resource. The group command itself doesn't have
-/// any functionality but serves as a container for related subcommands.
+/// This function creates a Clap command group (e.g., "apps", "dynos") that
+/// contains all the subcommands for that resource. The group command itself
+/// doesn't have any functionality but serves as a container for related
+/// subcommands.
 ///
 /// # Arguments
 ///
@@ -160,13 +165,14 @@ fn build_group_command(group: &str, cmds: Vec<&CommandSpec>) -> ClapCommand {
 
 /// Builds a single subcommand with its arguments and flags.
 ///
-/// This function creates a complete subcommand (e.g., "list", "create") with all
-/// its associated arguments, flags, and help text. The subcommand name is extracted
-/// from the command specification by taking the part after the colon.
+/// This function creates a complete subcommand (e.g., "list", "create") with
+/// all its associated arguments, flags, and help text. The subcommand name is
+/// extracted from the command specification by taking the part after the colon.
 ///
 /// # Arguments
 ///
-/// * `cmd` - The command specification containing all metadata for the subcommand
+/// * `cmd` - The command specification containing all metadata for the
+///   subcommand
 ///
 /// # Returns
 ///
@@ -196,14 +202,15 @@ fn build_subcommand(cmd: &CommandSpec) -> ClapCommand {
 
 /// Adds positional arguments to a subcommand.
 ///
-/// This function processes all positional arguments defined in the command specification
-/// and adds them to the Clap subcommand. Positional arguments are required and are
-/// assigned sequential indices starting from 1.
+/// This function processes all positional arguments defined in the command
+/// specification and adds them to the Clap subcommand. Positional arguments are
+/// required and are assigned sequential indices starting from 1.
 ///
 /// # Arguments
 ///
 /// * `subcommand` - The ClapCommand to add positional arguments to
-/// * `cmd` - The command specification containing positional argument definitions
+/// * `cmd` - The command specification containing positional argument
+///   definitions
 ///
 /// # Returns
 ///
@@ -233,9 +240,9 @@ fn add_positional_arguments(mut subcommand: ClapCommand, cmd: &CommandSpec) -> C
 
 /// Adds flags to a subcommand.
 ///
-/// This function processes all flags defined in the command specification and adds
-/// them to the Clap subcommand. Each flag is converted to a Clap argument with
-/// appropriate properties based on its type and configuration.
+/// This function processes all flags defined in the command specification and
+/// adds them to the Clap subcommand. Each flag is converted to a Clap argument
+/// with appropriate properties based on its type and configuration.
 ///
 /// # Arguments
 ///
@@ -264,9 +271,10 @@ fn add_flags(mut subcommand: ClapCommand, cmd: &CommandSpec) -> ClapCommand {
 
 /// Builds a single flag argument with all its properties.
 ///
-/// This function creates a complete Clap argument from a CommandFlag specification.
-/// It handles all the different flag types (boolean, string, enum) and sets up
-/// appropriate actions, validators, default values, and help text.
+/// This function creates a complete Clap argument from a CommandFlag
+/// specification. It handles all the different flag types (boolean, string,
+/// enum) and sets up appropriate actions, validators, default values, and help
+/// text.
 ///
 /// # Arguments
 ///
@@ -317,8 +325,8 @@ fn build_flag_argument(flag: &CommandFlag) -> Arg {
 /// the flag to only accept the specified enum values.
 ///
 /// Note: This function leaks memory by converting enum values to static strings
-/// to satisfy Clap's lifetime requirements. This is acceptable since the command
-/// tree is typically built once during program startup.
+/// to satisfy Clap's lifetime requirements. This is acceptable since the
+/// command tree is typically built once during program startup.
 ///
 /// # Arguments
 ///

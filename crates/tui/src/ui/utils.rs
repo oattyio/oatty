@@ -6,11 +6,12 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use crate::ui::theme::roles::Theme as UiTheme;
 use heck::ToTitleCase;
 use heroku_util::{format_date_mmddyyyy, is_date_like_key};
 use ratatui::prelude::*;
 use serde_json::{Map, Value};
+
+use crate::ui::theme::roles::Theme as UiTheme;
 
 /// Creates a centered rectangular area within a given rectangle.
 ///
@@ -73,7 +74,7 @@ pub fn infer_columns(arr: &[Value]) -> Vec<String> {
                     Value::Array(a) => s -= (a.len() as i32).min(3) + 3,
                     Value::Object(_) => s -= 5,
                     Value::String(sv) if sv.len() > 80 => s -= 3,
-                    _ => {}
+                    _ => {},
                 }
                 *score.entry(header.clone()).or_insert(0) += s;
             }
@@ -86,7 +87,8 @@ pub fn infer_columns(arr: &[Value]) -> Vec<String> {
     keys.sort_by(|a, b| b.1.cmp(&a.1));
     let mut cols: Vec<String> = keys.into_iter().take(6).map(|(header, _)| header).collect();
     if cols.len() < 4 {
-        // Ensure at least 4 columns by adding additional keys by frequency of appearance
+        // Ensure at least 4 columns by adding additional keys by frequency of
+        // appearance
         let mut freq: HashMap<String, usize> = HashMap::new();
         for item in arr.iter().take(100) {
             if let Value::Object(map) = item {
@@ -198,7 +200,8 @@ fn property_frequency_boost(header: &str) -> i32 {
 /// assert_eq!(result, "hello");
 /// ```
 pub trait IfEmptyStr {
-    /// Returns the string if non-empty, otherwise returns the alternative value.
+    /// Returns the string if non-empty, otherwise returns the alternative
+    /// value.
     ///
     /// # Arguments
     ///
@@ -271,7 +274,7 @@ pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize) -> Vec
                     } else {
                         s.clone()
                     }
-                }
+                },
                 Some(Value::Number(n)) => n.to_string(),
                 Some(Value::Bool(b)) => b.to_string(),
                 Some(Value::Null) => "null".to_string(),
@@ -284,7 +287,7 @@ pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize) -> Vec
                     } else {
                         "".to_string()
                     }
-                }
+                },
                 Some(other) => other.to_string(),
                 None => String::new(),
             };
@@ -313,7 +316,7 @@ pub fn render_value(key: &str, value: &Value) -> String {
             } else {
                 s.clone()
             }
-        }
+        },
         Value::Number(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Null => "null".to_string(),
@@ -329,7 +332,7 @@ pub fn render_value(key: &str, value: &Value) -> String {
             } else {
                 value.to_string()
             }
-        }
+        },
         _ => value.to_string(),
     }
 }

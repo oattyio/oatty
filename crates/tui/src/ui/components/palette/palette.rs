@@ -5,6 +5,7 @@
 //! building Heroku CLI commands.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use heroku_util::lex_shell_like_ranged;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -14,15 +15,13 @@ use ratatui::{
 };
 
 use crate::{
-    app::Effect,
-    ui::theme::{Theme, helpers as th},
-};
-
-use crate::{
     app,
-    ui::components::{component::Component, palette::state::ItemKind},
+    app::Effect,
+    ui::{
+        components::{component::Component, palette::state::ItemKind},
+        theme::{Theme, helpers as th},
+    },
 };
-use heroku_util::lex_shell_like_ranged;
 
 /// Command palette component for input and suggestions.
 ///
@@ -78,7 +77,8 @@ impl PaletteComponent {
 
     /// Creates the input paragraph widget with current state.
     ///
-    /// This function creates the input paragraph with throbber, input text, and ghost text.
+    /// This function creates the input paragraph with throbber, input text, and
+    /// ghost text.
     ///
     /// # Arguments
     ///
@@ -143,7 +143,8 @@ impl PaletteComponent {
 
     /// Creates the suggestions list widget.
     ///
-    /// This function creates the suggestions list with highlighting and styling.
+    /// This function creates the suggestions list with highlighting and
+    /// styling.
     ///
     /// # Arguments
     ///
@@ -284,7 +285,8 @@ impl PaletteComponent {
         frame.set_cursor_position((x, y));
     }
 
-    /// Extracts the current token at the cursor position for suggestion matching.
+    /// Extracts the current token at the cursor position for suggestion
+    /// matching.
     ///
     /// This function parses the input string to find the token that contains
     /// the current cursor position, which is used for highlighting matches
@@ -310,10 +312,10 @@ impl PaletteComponent {
 
     /// Handles character input in the command palette.
     ///
-    /// This function processes regular character input (with or without Shift modifier)
-    /// by inserting the character at the current cursor position, rebuilding suggestions,
-    /// opening the suggestions popup if suggestions are available, and clearing any
-    /// previous error messages.
+    /// This function processes regular character input (with or without Shift
+    /// modifier) by inserting the character at the current cursor position,
+    /// rebuilding suggestions, opening the suggestions popup if suggestions
+    /// are available, and clearing any previous error messages.
     ///
     /// # Arguments
     ///
@@ -329,10 +331,10 @@ impl PaletteComponent {
 
     /// Handles the Ctrl+H key combination to open help for the current command.
     ///
-    /// This function ensures suggestions are up to date, retrieves the currently
-    /// selected command specification, and opens the help modal if a valid command
-    /// is found. The help system provides detailed information about command usage,
-    /// flags, and examples.
+    /// This function ensures suggestions are up to date, retrieves the
+    /// currently selected command specification, and opens the help modal
+    /// if a valid command is found. The help system provides detailed
+    /// information about command usage, flags, and examples.
     ///
     /// # Arguments
     ///
@@ -379,8 +381,8 @@ impl PaletteComponent {
 
     /// Handles right arrow key press to move cursor right.
     ///
-    /// This function moves the cursor one position to the right within the input
-    /// text, allowing users to navigate and edit their command input.
+    /// This function moves the cursor one position to the right within the
+    /// input text, allowing users to navigate and edit their command input.
     ///
     /// # Arguments
     ///
@@ -393,8 +395,9 @@ impl PaletteComponent {
     ///
     /// This function allows users to navigate through the suggestion list using
     /// arrow keys. The selection wraps around at the top and bottom of the list
-    /// for a seamless navigation experience. When a suggestion is selected, ghost
-    /// text is applied to show what the completed command would look like.
+    /// for a seamless navigation experience. When a suggestion is selected,
+    /// ghost text is applied to show what the completed command would look
+    /// like.
     ///
     /// # Arguments
     ///
@@ -415,9 +418,10 @@ impl PaletteComponent {
     /// Handles suggestion acceptance via Tab or Enter key.
     ///
     /// This function processes suggestion acceptance when the suggestions popup
-    /// is open. It handles different types of suggestions (commands, positionals,
-    /// flags, values) appropriately and rebuilds suggestions after acceptance.
-    /// If no suggestions are open and Enter is pressed, it executes the command.
+    /// is open. It handles different types of suggestions (commands,
+    /// positionals, flags, values) appropriately and rebuilds suggestions
+    /// after acceptance. If no suggestions are open and Enter is pressed,
+    /// it executes the command.
     ///
     /// # Arguments
     ///
@@ -433,15 +437,15 @@ impl PaletteComponent {
                         app.palette.apply_accept_command_suggestion(&item.insert_text);
                         app.palette.set_is_suggestions_open(false);
                         app.palette.reduce_clear_suggestions();
-                    }
+                    },
                     ItemKind::Positional => {
                         // Accept positional suggestion
                         app.palette.apply_accept_positional_suggestion(&item.insert_text);
-                    }
+                    },
                     _ => {
                         // Accept flag or value suggestion
                         app.palette.apply_accept_non_command_suggestion(&item.insert_text);
-                    }
+                    },
                 }
 
                 // Rebuild suggestions after accepting
@@ -461,9 +465,9 @@ impl PaletteComponent {
 
     /// Handles the Ctrl+F key combination to open the command builder modal.
     ///
-    /// This function opens the interactive command builder modal, which provides
-    /// a more structured way to build complex commands with guided input for
-    /// flags, arguments, and options.
+    /// This function opens the interactive command builder modal, which
+    /// provides a more structured way to build complex commands with guided
+    /// input for flags, arguments, and options.
     ///
     /// # Arguments
     ///
@@ -474,9 +478,9 @@ impl PaletteComponent {
 
     /// Handles the Escape key to clear input and close suggestions.
     ///
-    /// This function provides a quick way to reset the command palette by clearing
-    /// all input text and closing the suggestions popup. This is useful when users
-    /// want to start over with a fresh command input.
+    /// This function provides a quick way to reset the command palette by
+    /// clearing all input text and closing the suggestions popup. This is
+    /// useful when users want to start over with a fresh command input.
     ///
     /// # Arguments
     ///
@@ -575,7 +579,8 @@ impl Component for PaletteComponent {
     ///
     /// - **Character input**: Adds characters to the palette input
     /// - **Backspace**: Removes the character before the cursor
-    /// - **Arrow keys**: Navigate through suggestions (Up/Down) or move cursor (Left/Right)
+    /// - **Arrow keys**: Navigate through suggestions (Up/Down) or move cursor
+    ///   (Left/Right)
     /// - **Tab**: Accept the currently selected suggestion
     /// - **Ctrl+H**: Open help for the current command or top suggestion
     /// - **Ctrl+F**: Open the command builder modal
@@ -593,41 +598,44 @@ impl Component for PaletteComponent {
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
                 // Handle character input
                 self.handle_character_input(app, c);
-            }
+            },
             KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Handle help request
                 self.handle_help_request(app);
-            }
+            },
             KeyCode::Backspace => {
                 // Handle backspace
                 self.handle_backspace(app);
-            }
+            },
             KeyCode::Left => {
                 // Handle cursor left
                 self.handle_cursor_left(app);
-            }
+            },
             KeyCode::Right => {
                 // Handle cursor right
                 self.handle_cursor_right(app);
-            }
+            },
             KeyCode::Down | KeyCode::Up => {
                 // Handle suggestion navigation
                 self.handle_suggestion_navigation(app, key.code);
-            }
+            },
             KeyCode::Tab | KeyCode::Enter => {
                 // Handle suggestion acceptance
                 self.handle_suggestion_acceptance(app, key.code);
-            }
+            },
             KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Handle builder request
                 self.handle_builder_request(app);
-            }
+            },
             KeyCode::Esc => {
                 // Handle escape
                 self.handle_escape(app);
-            }
-            _ => {}
+            },
+            _ => {},
         }
         effects
     }
 }
+
+// rat-focus integration uses PaletteState.focus; component-level HasFocus not
+// needed

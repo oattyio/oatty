@@ -3,6 +3,21 @@ mod cmd;
 mod preview;
 mod ui;
 
+use std::{collections::HashMap, io, sync::atomic::Ordering, time::Duration};
+
+use anyhow::Result;
+use crossterm::{
+    event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+use heroku_types::{CommandSpec, Field};
+use heroku_util::lex_shell_like;
+use rat_focus::{Focus as RatFocus, FocusBuilder, HasFocus};
+use ratatui::{Terminal, prelude::*};
+use serde_json::{Map, Value};
+use tokio::{signal, sync::mpsc, task};
+
 use crate::{
     cmd::{Cmd, run_cmds},
     preview::resolve_path,
@@ -12,25 +27,9 @@ use crate::{
             component::Component,
             palette::{HintBarComponent, PaletteComponent},
         },
-        main,
+        focus, main,
     },
 };
-use anyhow::Result;
-use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers},
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
-use heroku_types::{CommandSpec, Field};
-use heroku_util::lex_shell_like;
-use ratatui::{Terminal, prelude::*};
-use serde_json::{Map, Value};
-use std::sync::atomic::Ordering;
-use std::time::Duration;
-use std::{collections::HashMap, io};
-use tokio::signal;
-use tokio::sync::mpsc;
-use tokio::task;
 
 enum UiEvent {
     Input(Event),
@@ -71,14 +70,14 @@ pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
                             if ui_tx.send(UiEvent::Input(ev)).is_err() {
                                 break;
                             }
-                        }
+                        },
                         Err(_) => std::thread::sleep(Duration::from_millis(10)),
                     },
                     Ok(false) => {
                         if ui_tx.send(UiEvent::Animate).is_err() {
                             break;
                         }
-                    }
+                    },
                     Err(_) => std::thread::sleep(Duration::from_millis(10)),
                 }
             } else {
@@ -87,7 +86,7 @@ pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
                         if ui_tx.send(UiEvent::Input(ev)).is_err() {
                             break;
                         }
-                    }
+                    },
                     Err(_) => std::thread::sleep(Duration::from_millis(10)),
                 }
             }
@@ -189,14 +188,16 @@ fn handle_key(
         let _ = app.update(msg);
         return Ok(false);
     }
-    // When table modal is visible, route keys to the table component (local-first handling)
+    // When table modal is visible, route keys to the table component (local-first
+    // handling)
     if app.table.is_visible() {
         let effects = table.handle_key_events(app, key);
         let cmds = crate::cmd::from_effects(app, effects);
         crate::cmd::run_cmds(app, cmds);
         return Ok(false);
     }
-    // If builder modal open, Enter should close builder and populate palette with constructed command
+    // If builder modal open, Enter should close builder and populate palette with
+    // constructed command
     if app.builder.is_visible() && key.code == KeyCode::Enter {
         if let Some(spec) = app.builder.selected_command() {
             let line = palette_line_from_spec(spec, app.builder.input_fields());
@@ -219,35 +220,37 @@ fn handle_key(
 
     // Default palette/logs interaction when not in builder
     if !app.builder.is_visible() {
-        // Top-level focus toggle with Tab / Shift+Tab
-        if key.code == KeyCode::Tab && !key.modifiers.contains(KeyModifiers::CONTROL) {
-            // Only toggle focus with Tab when not interacting with palette suggestions
+        // Top-level focus toggle with Tab / Shift+Tab using rat-focus for root
+        if (key.code == KeyCode::Tab || key.code == KeyCode::BackTab) && !key.modifiers.contains(KeyModifiers::CONTROL)
+        {
             let palette_busy = app.palette.is_suggestions_open() || !app.palette.input().is_empty();
-            if palette_busy && matches!(app.main_focus, app::MainFocus::Palette) {
+            if palette_busy && app.palette.focus.get() && key.code == KeyCode::Tab {
                 // Let palette handle Tab for suggestions/accept
             } else {
-                app.main_focus = match app.main_focus {
-                    app::MainFocus::Palette => app::MainFocus::Logs,
-                    app::MainFocus::Logs => app::MainFocus::Palette,
+                let mut b = FocusBuilder::new(None);
+                b.widget(&app.palette);
+                b.widget(&app.logs);
+                let focus = b.build();
+                let _ = if key.code == KeyCode::Tab {
+                    focus.next()
+                } else {
+                    focus.prev()
                 };
                 return Ok(false);
             }
         }
 
-        match app.main_focus {
-            app::MainFocus::Logs => {
-                let mut logs = LogsComponent::new();
-                let effects = logs.handle_key_events(app, key);
-                let cmds = crate::cmd::from_effects(app, effects);
-                crate::cmd::run_cmds(app, cmds);
-                return Ok(false);
-            }
-            app::MainFocus::Palette => {
-                let effects = palette.handle_key_events(app, key);
-                let cmds = crate::cmd::from_effects(app, effects);
-                crate::cmd::run_cmds(app, cmds);
-                return Ok(false);
-            }
+        if app.logs.focus.get() {
+            let mut logs = LogsComponent::new();
+            let effects = logs.handle_key_events(app, key);
+            let cmds = crate::cmd::from_effects(app, effects);
+            crate::cmd::run_cmds(app, cmds);
+            return Ok(false);
+        } else {
+            let effects = palette.handle_key_events(app, key);
+            let cmds = crate::cmd::from_effects(app, effects);
+            crate::cmd::run_cmds(app, cmds);
+            return Ok(false);
         }
     }
 
@@ -257,7 +260,8 @@ fn handle_key(
     Ok(false)
 }
 
-// Map common/global keys to simple messages so the main loop stays TEA-friendly.
+// Map common/global keys to simple messages so the main loop stays
+// TEA-friendly.
 fn map_key_to_msg(app: &app::App, key: &KeyEvent) -> Option<app::Msg> {
     // Close any modal on Esc
     if (app.help.is_visible() || app.table.is_visible() || app.builder.is_visible()) && key.code == KeyCode::Esc {
@@ -271,11 +275,14 @@ fn map_key_to_msg(app: &app::App, key: &KeyEvent) -> Option<app::Msg> {
     None
 }
 
-// Accept a non-command suggestion (flag/value) without clobbering the resolved command (group sub).
-// Rules:
-// - If cursor is at a new token position (ends with space), insert suggestion + trailing space.
-// - If current token starts with '-' or previous token is a flag expecting a value → replace token.
-// - Otherwise (we're on the command tokens or a positional token) → append suggestion separated by space.
+// Accept a non-command suggestion (flag/value) without clobbering the resolved
+// command (group sub). Rules:
+// - If cursor is at a new token position (ends with space), insert suggestion +
+//   trailing space.
+// - If current token starts with '-' or previous token is a flag expecting a
+//   value → replace token.
+// - Otherwise (we're on the command tokens or a positional token) → append
+//   suggestion separated by space.
 // moved palette suggestion helpers to crate::palette
 fn palette_line_from_spec(spec: &CommandSpec, fields: &[Field]) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -287,30 +294,30 @@ fn palette_line_from_spec(spec: &CommandSpec, fields: &[Field]) -> String {
         parts.push(rest.to_string());
     }
     // positionals in order
-    for p in &spec.positional_args {
-        if let Some(field) = fields.iter().find(|f| f.name == p.name) {
+    for positional_arg in &spec.positional_args {
+        if let Some(field) = fields.iter().find(|f| f.name == positional_arg.name) {
             let v = field.value.trim();
             if v.is_empty() {
-                parts.push(format!("<{}>", p.name));
+                parts.push(format!("<{}>", positional_arg.name));
             } else {
                 parts.push(v.to_string());
             }
         } else {
-            parts.push(format!("<{}>", p.name));
+            parts.push(format!("<{}>", positional_arg.name));
         }
     }
     // flags
-    for f in fields
+    for field in fields
         .iter()
         .filter(|f| !spec.positional_args.iter().any(|p| p.name == f.name))
     {
-        if f.is_bool {
-            if !f.value.is_empty() {
-                parts.push(format!("--{}", f.name));
+        if field.is_bool {
+            if !field.value.is_empty() {
+                parts.push(format!("--{}", field.name));
             }
-        } else if !f.value.trim().is_empty() {
-            parts.push(format!("--{}", f.name));
-            parts.push(f.value.trim().to_string());
+        } else if !field.value.trim().is_empty() {
+            parts.push(format!("--{}", field.name));
+            parts.push(field.value.trim().to_string());
         }
     }
     parts.join(" ")
@@ -353,8 +360,8 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<CommandSpec, String
                 user_flags.insert(name.to_string(), Some(val.to_string()));
             } else {
                 // Boolean or expects a value
-                if let Some(fspec) = spec.flags.iter().find(|f| f.name == long) {
-                    if fspec.r#type == "boolean" {
+                if let Some(flag) = spec.flags.iter().find(|f| f.name == long) {
+                    if flag.r#type == "boolean" {
                         user_flags.insert(long.to_string(), None);
                     } else {
                         // Next token is value if present and not another flag
@@ -392,10 +399,10 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<CommandSpec, String
                 }
             } else {
                 match user_flags.get(&flag.name) {
-                    Some(Some(v)) if !v.is_empty() => {}
+                    Some(Some(v)) if !v.is_empty() => {},
                     _ => {
                         return Err(format!("Missing required flag value: --{} <value>", flag.name));
-                    }
+                    },
                 }
             }
         }

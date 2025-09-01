@@ -13,7 +13,7 @@ fn main() {
             // If schema missing in this environment, still generate an empty list
             write_output(&[]);
             return;
-        }
+        },
     };
 
     let value: serde_json::Value = match serde_json::from_str(&data) {
@@ -21,7 +21,7 @@ fn main() {
         Err(_) => {
             write_output(&[]);
             return;
-        }
+        },
     };
 
     let mut keys = BTreeSet::new();
@@ -51,10 +51,11 @@ fn collect_date_like_keys(v: &serde_json::Value, out: &mut BTreeSet<String>) {
         Object(map) => {
             // If this object itself is a field schema, check its format/example
             if is_date_schema_obj(map)
-                && let Some(name) = map.get("title").and_then(|t| t.as_str()) {
-                    // Titles are not reliable field names; ignore.
-                    let _ = name; // placeholder to avoid unused warnings
-                }
+                && let Some(name) = map.get("title").and_then(|t| t.as_str())
+            {
+                // Titles are not reliable field names; ignore.
+                let _ = name; // placeholder to avoid unused warnings
+            }
 
             // Look for properties/definitions
             if let Some(Object(props)) = map.get("properties") {
@@ -94,13 +95,13 @@ fn collect_date_like_keys(v: &serde_json::Value, out: &mut BTreeSet<String>) {
                     collect_date_like_keys(val, out);
                 }
             }
-        }
+        },
         Array(arr) => {
             for item in arr {
                 collect_date_like_keys(item, out);
             }
-        }
-        _ => {}
+        },
+        _ => {},
     }
 }
 
@@ -120,9 +121,10 @@ fn has_date_indicator(v: &serde_json::Value) -> bool {
 
             // Examples look like ISO8601
             if let Some(example) = map.get("example").and_then(|e| e.as_str())
-                && looks_like_iso_date(example) {
-                    return true;
-                }
+                && looks_like_iso_date(example)
+            {
+                return true;
+            }
 
             // Otherwise, dig into nested composition
             if let Some(Array(arr)) = map.get("anyOf") {
@@ -138,7 +140,7 @@ fn has_date_indicator(v: &serde_json::Value) -> bool {
                 return has_date_indicator(val);
             }
             false
-        }
+        },
         _ => false,
     }
 }
@@ -156,9 +158,8 @@ fn looks_like_iso_date(s: &str) -> bool {
         return false;
     }
     let b = s.as_bytes();
-    
-    b
-        .get(0..4)
+
+    b.get(0..4)
         .map(|r| r.iter().all(|c| c.is_ascii_digit()))
         .unwrap_or(false)
         && matches!(b.get(4), Some(b'-' | b'/'))

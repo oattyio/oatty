@@ -4,8 +4,7 @@ use heroku_types::CommandSpec;
 pub mod io;
 pub mod schema;
 
-pub use io::write_manifest;
-pub use io::write_manifest_json;
+pub use io::{write_manifest, write_manifest_json};
 pub use schema::generate_commands;
 
 /// A registry containing a list of command specifications.

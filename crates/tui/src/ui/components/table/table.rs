@@ -1,32 +1,30 @@
 //! Results table modal component for displaying JSON data.
 //!
-//! This module provides a component for rendering the table modal, which displays
-//! JSON results from command execution in a tabular format with scrolling and
-//! navigation capabilities.
+//! This module provides a component for rendering the table modal, which
+//! displays JSON results from command execution in a tabular format with
+//! scrolling and navigation capabilities.
 use crossterm::event::{KeyCode, KeyEvent};
 use heroku_types::Pagination;
-use ratatui::widgets::{Scrollbar, ScrollbarState};
+use heroku_util::format_date_mmddyyyy;
+use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     prelude::*,
     text::{Line, Span},
-    widgets::*,
+    widgets::{Scrollbar, ScrollbarState, *},
 };
 use serde_json::Value;
 
-use crate::app::Effect;
-use crate::ui::components::table::state::TableFocus;
-use crate::ui::components::table::TableFooter;
-use crate::ui::components::PaginationComponent;
-use crate::ui::theme::helpers as th;
-use crate::ui::theme::roles::Theme as UiTheme;
-use crate::ui::utils::{get_scored_keys, normalize_header, render_value};
 use crate::{
     app,
-    ui::{components::component::Component, utils::centered_rect},
+    app::Effect,
+    ui::{
+        components::{PaginationComponent, component::Component, table::TableFooter},
+        theme::{helpers as th, roles::Theme as UiTheme},
+        utils::{centered_rect, get_scored_keys, normalize_header, render_value},
+    },
 };
-use heroku_util::format_date_mmddyyyy;
 
 /// Results table modal component for displaying JSON data.
 ///
@@ -73,23 +71,22 @@ pub struct TableComponent<'a> {
     pagination: PaginationComponent,
 }
 
-
 impl TableComponent<'_> {
     /// Sets the available range fields for pagination
     pub fn set_pagination(&mut self, pagination: Pagination) {
         self.pagination.set_pagination(pagination);
     }
-    
+
     /// Shows the pagination controls
     pub fn show_pagination(&mut self) {
         self.pagination.show();
     }
-    
+
     /// Hides the pagination controls
     pub fn hide_pagination(&mut self) {
         self.pagination.hide();
     }
-    
+
     /// Renders a JSON array as a table with offset support using known columns.
     pub fn render_json_table_with_columns(
         &mut self,
@@ -134,10 +131,7 @@ impl TableComponent<'_> {
 
         // Scrollbar indicating vertical position within table rows
         if !rows.is_empty() {
-            let mut sb_state = self
-                .scrollbar_state
-                .content_length(max_start)
-                .position(start);
+            let mut sb_state = self.scrollbar_state.content_length(max_start).position(start);
             let scrollbar = self
                 .scrollbar
                 .clone()
@@ -171,18 +165,18 @@ impl TableComponent<'_> {
                     .wrap(Wrap { trim: false })
                     .style(theme.text_primary_style());
                 frame.render_widget(p, area);
-            }
+            },
             other => {
-                let s = match other {
+                let date = match other {
                     Value::String(s) => format_date_mmddyyyy(s).unwrap_or_else(|| s.clone()),
                     _ => other.to_string(),
                 };
-                let p = Paragraph::new(s)
+                let paragraph = Paragraph::new(date)
                     .block(th::block(theme, Some("Result"), false))
                     .wrap(Wrap { trim: false })
                     .style(theme.text_primary_style());
-                frame.render_widget(p, area);
-            }
+                frame.render_widget(paragraph, area);
+            },
         }
     }
 }
@@ -190,7 +184,8 @@ impl TableComponent<'_> {
 impl Component for TableComponent<'_> {
     /// Renders the table modal with JSON results.
     ///
-    /// This method handles the layout, styling, and table generation for the results display.
+    /// This method handles the layout, styling, and table generation for the
+    /// results display.
     ///
     /// # Arguments
     ///
@@ -219,9 +214,9 @@ impl Component for TableComponent<'_> {
         let splits = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Min(1),           // Table content
-                Constraint::Length(if self.pagination.state().is_visible {7} else {0}),        // Pagination controls
-                Constraint::Length(1),        // Footer
+                Constraint::Min(1),                                                         // Table content
+                Constraint::Length(if self.pagination.state().is_visible { 7 } else { 0 }), // Pagination controls
+                Constraint::Length(1),                                                      // Footer
             ])
             .split(inner);
 
@@ -231,7 +226,7 @@ impl Component for TableComponent<'_> {
         let headers = app.table.headers();
         let maybe_rows = app.table.rows();
         if let Some(json) = json {
-            if let Some(rows) = maybe_rows {                
+            if let Some(rows) = maybe_rows {
                 self.render_json_table_with_columns(
                     frame,
                     splits[0],
@@ -240,7 +235,7 @@ impl Component for TableComponent<'_> {
                     rows,
                     widths.unwrap(),
                     headers.unwrap(),
-                    app.table.focus() == TableFocus::Table,
+                    app.table.grid_f.get(),
                     &*app.ctx.theme,
                 );
             } else {
@@ -250,65 +245,89 @@ impl Component for TableComponent<'_> {
             let p = Paragraph::new("No results to display").style(app.ctx.theme.text_muted_style());
             frame.render_widget(p, splits[0]);
         }
-        
+
         // Render pagination controls
-        self.pagination.render(frame, splits[1], &*app.ctx.theme);
+        self.pagination.render(frame, splits[1], app);
         self.footer.render(frame, splits[2], app);
     }
 
     /// Handle key events for the results table modal.
     ///
-    /// Applies local state updates directly to `app.table` for scrolling and navigation.
-    /// Returns `Ok(true)` if the key was handled by the table, otherwise `Ok(false)`.
+    /// Applies local state updates directly to `app.table` for scrolling and
+    /// navigation. Returns `Ok(true)` if the key was handled by the table,
+    /// otherwise `Ok(false)`.
     fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
         let mut effects: Vec<Effect> = vec![];
 
-        // Stop here and delegate to pagination if we're not focused.
-        if app.table.focus() != TableFocus::Table {
+        // Delegate to pagination when pagination subcontrols are focused
+        let p = self.pagination.state();
+        let focus_on_grid = app.table.grid_f.get();
+        let focus_on_pagination =
+            p.range_field_f.get() || p.range_start_f.get() || p.range_end_f.get() || p.nav_f.get();
+        if !focus_on_grid && focus_on_pagination {
             effects.extend(self.pagination.handle_key_events(app, key));
+            return effects;
         }
 
         match key.code {
             KeyCode::Tab | KeyCode::BackTab => {
-                match app.table.focus() {
-                    TableFocus::Pagination => app.table.set_focus(TableFocus::Table),
-                    TableFocus::Table => app.table.set_focus(TableFocus::Pagination),
+                // Cycle grid + pagination subcontrols
+                let p = self.pagination.state();
+                let mut b = rat_focus::FocusBuilder::new(None);
+                b.widget(&PanelLeaf(app.table.grid_f.clone()));
+                b.widget(&PanelLeaf(p.range_field_f.clone()));
+                b.widget(&PanelLeaf(p.range_start_f.clone()));
+                b.widget(&PanelLeaf(p.range_end_f.clone()));
+                b.widget(&PanelLeaf(p.nav_f.clone()));
+                let f = b.build();
+                if key.code == KeyCode::Tab {
+                    let _ = f.next();
+                } else {
+                    let _ = f.prev();
                 }
-            }
+            },
             KeyCode::Up => {
                 app.table.reduce_scroll(-1);
-            }
+            },
             KeyCode::Down => {
                 app.table.reduce_scroll(1);
-            }
+            },
             KeyCode::PageUp => {
-                let step = app
-                    .table
-                    .visible_rows()
-                    .saturating_sub(1);
+                let step = app.table.visible_rows().saturating_sub(1);
                 let step = if step == 0 { 10 } else { step } as isize;
                 app.table.reduce_scroll(-step);
-            }
+            },
             KeyCode::PageDown => {
-                let step = app
-                    .table
-                    .visible_rows()
-                    .saturating_sub(1);
+                let step = app.table.visible_rows().saturating_sub(1);
                 let step = if step == 0 { 10 } else { step } as isize;
                 app.table.reduce_scroll(step);
-            }
+            },
             KeyCode::Home => {
                 app.table.reduce_home();
-            }
+            },
             KeyCode::End => {
                 app.table.reduce_end();
-            }
+            },
             // Toggle handled via App message; keep consistent with global actions
             KeyCode::Char('t') => {
                 let _ = app.update(app::Msg::ToggleTable);
-            }
-            _ => {}
+            },
+            _ => {},
         }
         effects
+    }
+}
+
+// Local leaf wrapper used for table grid and pagination focus items
+struct PanelLeaf(FocusFlag);
+impl HasFocus for PanelLeaf {
+    fn build(&self, builder: &mut FocusBuilder) {
+        builder.leaf_widget(self);
+    }
+    fn focus(&self) -> FocusFlag {
+        self.0.clone()
+    }
+    fn area(&self) -> ratatui::layout::Rect {
+        ratatui::layout::Rect::default()
     }
 }

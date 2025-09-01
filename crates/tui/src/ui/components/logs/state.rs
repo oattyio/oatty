@@ -1,14 +1,18 @@
-use crate::ui::utils::ColumnWithSize;
+use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
+use ratatui::layout::Rect;
 /// The main application state containing all UI data and business logic.
 ///
 /// This struct serves as the central state container for the entire TUI
 /// application, managing user interactions, data flow, and UI state.
 use serde_json::Value;
 
+use crate::ui::utils::ColumnWithSize;
+
 /// Structured log entry supporting API responses and plain text.
 #[derive(Debug, Clone)]
 pub enum LogEntry {
-    /// API response entry: keeps HTTP status, raw text, and optional parsed JSON.
+    /// API response entry: keeps HTTP status, raw text, and optional parsed
+    /// JSON.
     Api {
         status: u16,
         raw: String,
@@ -45,7 +49,8 @@ impl Selection {
 /// Detail view mode for an opened log entry.
 #[derive(Debug, Clone, Copy)]
 pub enum LogDetailView {
-    /// Use table view for API responses with tabular JSON; carries scroll offset.
+    /// Use table view for API responses with tabular JSON; carries scroll
+    /// offset.
     Table { offset: usize },
     /// Use simple text viewer for plain or multi-line selections.
     Text,
@@ -67,6 +72,8 @@ pub struct LogsState {
     pub cached_detail_index: Option<usize>,
     pub cached_redacted_json: Option<Value>,
     pub cached_columns: Option<Vec<ColumnWithSize>>,
+    /// Focus flag for rat-focus integration
+    pub focus: FocusFlag,
 }
 
 impl Default for LogsState {
@@ -80,6 +87,21 @@ impl Default for LogsState {
             cached_detail_index: None,
             cached_redacted_json: None,
             cached_columns: None,
+            focus: FocusFlag::named("root.logs"),
         }
+    }
+}
+
+impl HasFocus for LogsState {
+    fn build(&self, builder: &mut FocusBuilder) {
+        builder.leaf_widget(self);
+    }
+
+    fn focus(&self) -> FocusFlag {
+        self.focus.clone()
+    }
+
+    fn area(&self) -> Rect {
+        Rect::default()
     }
 }

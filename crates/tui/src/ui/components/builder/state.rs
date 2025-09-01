@@ -1,16 +1,20 @@
 use std::sync::Arc;
 
-use heroku_types::{CommandSpec, Field, Focus};
+use heroku_types::{CommandSpec, Field};
 use heroku_util::fuzzy_score;
-use ratatui::widgets::ListState;
+use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
+use ratatui::{layout::Rect, widgets::ListState};
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct BuilderState {
     is_visible: bool,
-    current_focus: Focus,
     selected_command: Option<CommandSpec>,
     input_fields: Vec<Field>,
     current_field_idx: usize,
+    // rat-focus flags for panels
+    pub search_flag: FocusFlag,
+    pub commands_flag: FocusFlag,
+    pub inputs_flag: FocusFlag,
 
     search_input: String,
     all_commands: Arc<[CommandSpec]>,
@@ -19,9 +23,28 @@ pub struct BuilderState {
     list_state: ListState,
 }
 
+impl Default for BuilderState {
+    fn default() -> Self {
+        Self {
+            is_visible: false,
+            selected_command: None,
+            input_fields: vec![],
+            current_field_idx: 0,
+            search_flag: FocusFlag::named("builder.search"),
+            commands_flag: FocusFlag::named("builder.commands"),
+            inputs_flag: FocusFlag::named("builder.inputs"),
+            search_input: String::new(),
+            all_commands: Arc::from([]),
+            filtered: vec![],
+            selected: 0,
+            list_state: ListState::default(),
+        }
+    }
+}
+
 impl BuilderState {
     // =======================
-    // Visibility & Focus API
+    // Visibility API
     // =======================
     pub fn is_visible(&self) -> bool {
         self.is_visible
@@ -31,27 +54,6 @@ impl BuilderState {
     }
     pub fn apply_visibility(&mut self, visible: bool) {
         self.is_visible = visible;
-    }
-
-    pub fn selected_focus(&self) -> Focus {
-        self.current_focus
-    }
-    pub fn apply_focus(&mut self, focus: Focus) {
-        self.current_focus = focus;
-    }
-    pub fn apply_next_focus(&mut self) {
-        self.current_focus = match self.current_focus {
-            Focus::Search => Focus::Commands,
-            Focus::Commands => Focus::Inputs,
-            Focus::Inputs => Focus::Search,
-        };
-    }
-    pub fn apply_previous_focus(&mut self) {
-        self.current_focus = match self.current_focus {
-            Focus::Search => Focus::Inputs,
-            Focus::Commands => Focus::Search,
-            Focus::Inputs => Focus::Commands,
-        };
     }
 
     // ========================
@@ -165,7 +167,7 @@ impl BuilderState {
     pub fn has_selected_command(&self) -> bool {
         self.selected_command.is_some()
     }
-    
+
     /// Gets the available range fields for the selected command
     pub fn available_ranges(&self) -> Vec<String> {
         self.selected_command
@@ -174,17 +176,17 @@ impl BuilderState {
             .unwrap_or_default()
     }
 
-    /// Handle Enter within the builder context: focus Inputs when a selection exists.
-    pub fn apply_enter(&mut self) {
-        if !self.filtered.is_empty() {
-            self.apply_focus(Focus::Inputs);
-        }
-    }
+    /// Handle Enter within the builder context: focus Inputs when a selection
+    /// exists.
+    pub fn apply_enter(&mut self) {}
 
     // Internal helpers for managing field/selection state
     fn apply_command_selection(&mut self, command: CommandSpec) {
         let CommandSpec {
-            flags, positional_args, ranges, ..
+            flags,
+            positional_args,
+            ranges,
+            ..
         } = &command;
         let mut fields: Vec<Field> = Vec::with_capacity(flags.len() + positional_args.len());
 
@@ -209,7 +211,7 @@ impl BuilderState {
                 enum_idx: None,
             });
         });
-        
+
         // Add range fields if available
         if !ranges.is_empty() {
             // Add range field selection
@@ -221,7 +223,7 @@ impl BuilderState {
                 enum_values: ranges.clone(),
                 enum_idx: Some(0),
             });
-            
+
             // Add range start field
             fields.push(Field {
                 name: "range-start".to_string(),
@@ -231,7 +233,7 @@ impl BuilderState {
                 enum_values: vec![],
                 enum_idx: None,
             });
-            
+
             // Add range end field
             fields.push(Field {
                 name: "range-end".to_string(),
@@ -242,7 +244,7 @@ impl BuilderState {
                 enum_idx: None,
             });
         }
-        
+
         self.set_input_fields(fields);
         self.apply_field_idx(0);
         self.selected_command = Some(command);
@@ -262,7 +264,6 @@ impl BuilderState {
         self.selected_command = None;
         self.input_fields.clear();
         self.current_field_idx = 0;
-        self.current_focus = Focus::Search;
     }
 
     pub fn reduce_move_field_up(&mut self, debug_enabled: bool) {
@@ -360,5 +361,29 @@ impl BuilderState {
     }
     fn can_move_down(&self) -> bool {
         self.current_field_idx < self.input_fields.len().saturating_sub(1)
+    }
+}
+
+// Lightweight leaf wrapper for rat-focus
+struct PanelLeaf(FocusFlag);
+impl HasFocus for PanelLeaf {
+    fn build(&self, builder: &mut FocusBuilder) {
+        builder.leaf_widget(self);
+    }
+    fn focus(&self) -> FocusFlag {
+        self.0.clone()
+    }
+    fn area(&self) -> Rect {
+        Rect::default()
+    }
+}
+
+impl BuilderState {
+    pub fn focus_ring(&self) -> rat_focus::Focus {
+        let mut b = FocusBuilder::new(None);
+        b.widget(&PanelLeaf(self.search_flag.clone()));
+        b.widget(&PanelLeaf(self.commands_flag.clone()));
+        b.widget(&PanelLeaf(self.inputs_flag.clone()));
+        b.build()
     }
 }

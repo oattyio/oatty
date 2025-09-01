@@ -1,6 +1,7 @@
+use std::time::Duration;
+
 use anyhow::{Context, Result};
 use reqwest::{Client, RequestBuilder};
-use std::time::Duration;
 use tracing::debug;
 
 const DEFAULT_BASE_URL: &str = "https://api.heroku.com";
@@ -64,7 +65,7 @@ fn parse_netrc_for_heroku(content: &str) -> Option<String> {
             "machine" => {
                 machine_is_heroku = false;
                 login_is_api = false;
-            }
+            },
             "api.heroku.com" => machine_is_heroku = true,
             "login" if machine_is_heroku => login_is_api = true,
             val if login_is_api => {
@@ -72,19 +73,19 @@ fn parse_netrc_for_heroku(content: &str) -> Option<String> {
                 } else {
                     login_is_api = false
                 }
-            }
+            },
             "password" if machine_is_heroku => {
                 // Next token should be the token
                 // This is simplistic: in real code we should iterate properly
-            }
+            },
             other if machine_is_heroku => {
                 // Capture token after "password"
                 // For placeholder, accept any long token-looking value
                 if other.len() > 20 {
                     return Some(other.to_string());
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
     None

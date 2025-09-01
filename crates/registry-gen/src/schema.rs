@@ -1,14 +1,15 @@
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use heck::ToKebabCase;
 use heroku_types::{CommandFlag, CommandSpec, PositionalArgument};
 use percent_encoding::percent_decode_str;
 use serde_json::Value;
-use std::collections::HashMap;
 
 /// Generates command specifications from a JSON schema string.
 ///
-/// This function parses the provided JSON schema, derives command specifications
-/// from it, and adds synthetic workflow commands.
+/// This function parses the provided JSON schema, derives command
+/// specifications from it, and adds synthetic workflow commands.
 ///
 /// # Arguments
 ///
@@ -16,7 +17,8 @@ use std::collections::HashMap;
 ///
 /// # Errors
 ///
-/// Returns an error if the JSON parsing fails or if command derivation encounters issues.
+/// Returns an error if the JSON parsing fails or if command derivation
+/// encounters issues.
 ///
 /// # Returns
 ///
@@ -29,9 +31,9 @@ pub fn generate_commands(schema_json: &str) -> Result<Vec<CommandSpec>> {
 
 /// Derives command specifications from a JSON schema Value.
 ///
-/// This function traverses the schema to find "links" sections, extracts command
-/// details such as href, method, title, description, positional arguments, flags,
-/// and constructs `CommandSpec` instances.
+/// This function traverses the schema to find "links" sections, extracts
+/// command details such as href, method, title, description, positional
+/// arguments, flags, and constructs `CommandSpec` instances.
 ///
 /// Commands are sorted and deduplicated by name, method, and path.
 ///
@@ -59,13 +61,13 @@ pub fn derive_commands_from_schema(v: &Value) -> Result<Vec<CommandSpec>> {
                 for v in map.values() {
                     walk(v, out);
                 }
-            }
+            },
             Value::Array(arr) => {
                 for v in arr {
                     walk(v, out);
                 }
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 
@@ -126,8 +128,8 @@ pub fn derive_commands_from_schema(v: &Value) -> Result<Vec<CommandSpec>> {
 
 /// Classifies a command based on its href and HTTP method.
 ///
-/// Determines the group and action (e.g., "info", "list", "create") based on the path structure
-/// and method.
+/// Determines the group and action (e.g., "info", "list", "create") based on
+/// the path structure and method.
 ///
 /// # Arguments
 ///
@@ -239,8 +241,8 @@ fn derive_command_group_and_name(href: &str, action: &str) -> (String, String) {
 
 /// Extracts the path template, positional arguments, and help descriptions.
 ///
-/// Processes the href to identify placeholders, singularizes names, and resolves
-/// descriptions recursively from the schema.
+/// Processes the href to identify placeholders, singularizes names, and
+/// resolves descriptions recursively from the schema.
 ///
 /// # Arguments
 ///
@@ -268,7 +270,10 @@ fn path_and_vars_with_help(href: &str, root: &Value) -> (String, Vec<PositionalA
                     help_text = Some(desc);
                 }
             }
-            args.push(PositionalArgument { name: name.clone(), help: help_text });
+            args.push(PositionalArgument {
+                name: name.clone(),
+                help: help_text,
+            });
             out_segs.push(format!("{{{}}}", name));
         } else {
             out_segs.push(seg.to_string());
@@ -331,17 +336,16 @@ fn extract_placeholder_ptr(seg: &str) -> Option<String> {
 fn extract_ranges(link: &Value) -> Vec<String> {
     link.get("ranges")
         .and_then(|r| r.as_array())
-        .map(|arr| arr.iter()
-            .filter_map(|v| v.as_str().map(|s| s.to_string()))
-            .collect())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
         .unwrap_or_default()
 }
 
 /// Extracts flags and required names from a link schema.
 ///
-/// Resolves properties recursively, handling $ref, anyOf, etc., for type, description,
-/// enum values, and defaults. Generates short flags as the first letter of the long name.
-/// Also adds range-related flags if ranges are supported.
+/// Resolves properties recursively, handling $ref, anyOf, etc., for type,
+/// description, enum values, and defaults. Generates short flags as the first
+/// letter of the long name. Also adds range-related flags if ranges are
+/// supported.
 ///
 /// # Arguments
 ///
@@ -416,7 +420,7 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
             }
         }
     }
-    
+
     // Add range-related flags if ranges are supported
     let ranges = extract_ranges(link);
     if !ranges.is_empty() {
@@ -429,7 +433,7 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
             default_value: None,
             description: Some("Field to use for range-based pagination".to_string()),
         });
-        
+
         flags.push(CommandFlag {
             name: "range-start".to_string(),
             short_name: Some("s".to_string()),
@@ -439,7 +443,7 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
             default_value: None,
             description: Some("Start value for range (inclusive)".to_string()),
         });
-        
+
         flags.push(CommandFlag {
             name: "range-end".to_string(),
             short_name: Some("e".to_string()),
@@ -450,14 +454,14 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
             description: Some("End value for range (inclusive)".to_string()),
         });
     }
-    
+
     (flags, required_names)
 }
 
 /// Recursively resolves the description from a schema.
 ///
-/// Follows $ref, uses direct description, or concatenates from anyOf/oneOf with " or ",
-/// from allOf with " and ".
+/// Follows $ref, uses direct description, or concatenates from anyOf/oneOf with
+/// " or ", from allOf with " and ".
 ///
 /// # Arguments
 ///
@@ -528,7 +532,8 @@ fn get_type(schema: &Value, root: &Value) -> String {
     if let Some(ty) = schema.get("type").and_then(|x| x.as_str()) {
         return ty.to_string();
     }
-    // Handle JSON Schema where type can be an array of strings (union), e.g. ["boolean"], ["string","null"]
+    // Handle JSON Schema where type can be an array of strings (union), e.g.
+    // ["boolean"], ["string","null"]
     if let Some(arr) = schema.get("type").and_then(|x| x.as_array()) {
         let mut types: std::collections::HashSet<String> =
             arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect();

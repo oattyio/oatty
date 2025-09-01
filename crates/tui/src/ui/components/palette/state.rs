@@ -8,17 +8,18 @@
 //!   <required flags> <optional flags>
 //!
 //! Key behaviors:
-//! - Positionals are suggested before flags unless the user explicitly starts
-//!   a flag token ("-"/"--").
+//! - Positionals are suggested before flags unless the user explicitly starts a
+//!   flag token ("-"/"--").
 //! - For non-boolean flags whose value is pending, only values are suggested
 //!   (enums and provider values) until the value is complete.
 //! - Suggestions never render an empty popup.
-//!
 use std::{fmt::Debug, sync::Arc};
 
 use heroku_registry::Registry;
 use heroku_types::CommandSpec;
 use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
+use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
+use ratatui::layout::Rect;
 
 /// Maximum number of suggestions to display in the popup.
 const MAX_SUGGESTIONS: usize = 20;
@@ -85,6 +86,8 @@ pub struct SuggestionItem {
 /// input text, cursor position, suggestions, and error states.
 #[derive(Clone, Debug, Default)]
 pub struct PaletteState {
+    /// Focus flag for rat-focus integration
+    pub focus: FocusFlag,
     /// Every command available
     all_commands: Arc<[CommandSpec]>,
     /// The current input text
@@ -145,7 +148,8 @@ impl PaletteState {
         self.all_commands.iter().find(|c| &c.group == group && &c.name == name)
     }
 
-    /// Derive the command spec from the currently selected suggestion when it is a command.
+    /// Derive the command spec from the currently selected suggestion when it
+    /// is a command.
     pub fn selected_command_from_suggestion(&self) -> Option<&CommandSpec> {
         let item = self.selected_suggestion()?;
         if !matches!(item.kind, ItemKind::Command) {
@@ -157,7 +161,8 @@ impl PaletteState {
         self.all_commands.iter().find(|c| c.group == group && c.name == name)
     }
 
-    /// Selected command for help: prefer highlighted suggestion if open, else parse input.
+    /// Selected command for help: prefer highlighted suggestion if open, else
+    /// parse input.
     pub fn selected_command(&self) -> Option<&CommandSpec> {
         let selected_command = self.selected_command_from_suggestion();
         if self.is_suggestions_open && selected_command.is_some() {
@@ -305,14 +310,16 @@ impl PaletteState {
         self.apply_ghost_text();
     }
 
-    /// Insert text at the end of the input with a separating space and advance the cursor.
+    /// Insert text at the end of the input with a separating space and advance
+    /// the cursor.
     ///
-    /// Appends a space before `text` if the current input is non-empty and does not
-    /// already end with a space, then appends `text` and a trailing space. The cursor
-    /// is moved to the end of the input.
+    /// Appends a space before `text` if the current input is non-empty and does
+    /// not already end with a space, then appends `text` and a trailing
+    /// space. The cursor is moved to the end of the input.
     ///
-    /// This helper centralizes the common pattern used when accepting suggestions so
-    /// individual handlers remain focused on their control flow rather than spacing.
+    /// This helper centralizes the common pattern used when accepting
+    /// suggestions so individual handlers remain focused on their control
+    /// flow rather than spacing.
     fn insert_with_space(&mut self, text: &str) {
         if !self.input.ends_with(' ') && !self.input.is_empty() {
             self.input.push(' ');
@@ -368,7 +375,8 @@ impl PaletteState {
     /// and advances the cursor by the character's UTF-8 length.
     ///
     /// Arguments:
-    /// - `c`: The character to insert. UTF-8 length is respected for cursor advance.
+    /// - `c`: The character to insert. UTF-8 length is respected for cursor
+    ///   advance.
     ///
     /// Returns: nothing; mutates `self.input` and `self.cursor`.
     pub fn apply_insert_char(&mut self, c: char) {
@@ -400,7 +408,8 @@ impl PaletteState {
         self.cursor_position = start;
     }
 
-    /// Finalize suggestion list for the UI: rank, truncate, ghost text, and state flags.
+    /// Finalize suggestion list for the UI: rank, truncate, ghost text, and
+    /// state flags.
     fn finalize_suggestions(&mut self, items: &mut Vec<SuggestionItem>) {
         items.sort_by(|a, b| b.score.cmp(&a.score));
         if items.len() > MAX_SUGGESTIONS {
@@ -418,8 +427,9 @@ impl PaletteState {
             .get(self.suggestion_index)
             .map(|top| ghost_remainder(&self.input, self.cursor_position, &top.insert_text));
     }
-    /// Accept a positional suggestion/value: fill the next positional slot after "group sub".
-    /// If the last existing positional is a placeholder like "<app>", replace it; otherwise append before any flags.
+    /// Accept a positional suggestion/value: fill the next positional slot
+    /// after "group sub". If the last existing positional is a placeholder
+    /// like "<app>", replace it; otherwise append before any flags.
     pub fn apply_accept_positional_suggestion(&mut self, value: &str) {
         let tokens: Vec<&str> = self.input.split_whitespace().collect();
         if tokens.len() < 2 {
@@ -451,9 +461,9 @@ impl PaletteState {
         self.input = out.join(" ") + " ";
         self.cursor_position = self.input.len();
     }
-    /// Accept a command suggestion by replacing the input with the execution form
-    /// (e.g., "group sub") followed by a trailing space, and moving the cursor to
-    /// the end.
+    /// Accept a command suggestion by replacing the input with the execution
+    /// form (e.g., "group sub") followed by a trailing space, and moving
+    /// the cursor to the end.
     ///
     /// This does not modify popup state or suggestions list; callers remain in
     /// control of those aspects of the interaction.
@@ -468,22 +478,28 @@ impl PaletteState {
 
     // Renders the palette UI components.
     //
-    // This function used to render the complete command palette including the input line,
-    // optional ghost text, error messages, and the suggestions popup. Rendering responsibility
-    // has been migrated to PaletteComponent::render(), and this legacy documentation remains
-    // here only as historical context for future refactors.
+    // This function used to render the complete command palette including the input
+    // line, optional ghost text, error messages, and the suggestions popup.
+    // Rendering responsibility has been migrated to PaletteComponent::render(),
+    // and this legacy documentation remains here only as historical context for
+    // future refactors.
 
-    /// Accept a non-command suggestion (flag/value) without clobbering the resolved command (group sub).
+    /// Accept a non-command suggestion (flag/value) without clobbering the
+    /// resolved command (group sub).
     ///
     /// Rules:
-    /// - If cursor is at a new token position (ends with space), insert suggestion + trailing space.
-    /// - If current token starts with '-' or previous token is a flag expecting a value → replace token.
-    /// - Otherwise (we're on the command tokens or a positional token) → append suggestion separated by space.
+    /// - If cursor is at a new token position (ends with space), insert
+    ///   suggestion + trailing space.
+    /// - If current token starts with '-' or previous token is a flag expecting
+    ///   a value → replace token.
+    /// - Otherwise (we're on the command tokens or a positional token) → append
+    ///   suggestion separated by space.
     pub fn apply_accept_non_command_suggestion(&mut self, text: &str) {
         let at_new_token = self.input.ends_with(' ');
         let toks = lex_shell_like_ranged(&self.input);
 
-        // New token position or empty input: just insert suggestion, but clean up stray '-'/'--'.
+        // New token position or empty input: just insert suggestion, but clean up stray
+        // '-'/'--'.
         if at_new_token || toks.is_empty() {
             // Avoid borrowing across mutation by computing range first
             let remove_from: Option<usize> = toks
@@ -509,7 +525,8 @@ impl PaletteState {
         let prev_is_flag = prev_token.map(|t| t.starts_with("--")).unwrap_or(false);
         let inserting_is_flag = text.starts_with("--");
 
-        // If previous token is a flag and user picked another flag, append instead of replacing the value.
+        // If previous token is a flag and user picked another flag, append instead of
+        // replacing the value.
         if prev_is_flag && !current_token.starts_with('-') && inserting_is_flag {
             self.cursor_position = self.input.len();
             self.insert_with_space(text);
@@ -538,15 +555,18 @@ impl PaletteState {
     /// 4. Optional flags
     /// 5. End-of-line hint for starting flags
     ///
-    /// If a non-boolean flag value is pending and incomplete, only values (enums
-    /// and provider-derived) are suggested for that flag.
+    /// If a non-boolean flag value is pending and incomplete, only values
+    /// (enums and provider-derived) are suggested for that flag.
     ///
     /// Arguments:
-    /// - `st`: Mutable palette state; suggestions and ghost text are written here.
+    /// - `st`: Mutable palette state; suggestions and ghost text are written
+    ///   here.
     /// - `reg`: Command registry providing command/flag/positional specs.
-    /// - `providers`: Value providers consulted for flags and positional arguments.
+    /// - `providers`: Value providers consulted for flags and positional
+    ///   arguments.
     ///
-    /// Returns: nothing; updates `st.suggestions`, `st.ghost`, and related fields.
+    /// Returns: nothing; updates `st.suggestions`, `st.ghost`, and related
+    /// fields.
     ///
     /// Example:
     ///
@@ -563,7 +583,8 @@ impl PaletteState {
         let input = &self.input;
         let tokens: Vec<String> = lex_shell_like(input);
 
-        // No command yet (need group + sub) or unresolved -> suggest commands in execution format: "group sub"
+        // No command yet (need group + sub) or unresolved -> suggest commands in
+        // execution format: "group sub"
         if !is_command_resolved(reg, &tokens) {
             let mut items = suggest_commands(reg, &compute_command_prefix(&tokens));
             self.finalize_suggestions(&mut items);
@@ -579,7 +600,7 @@ impl PaletteState {
                 self.suggestions.clear();
                 self.is_suggestions_open = false;
                 return;
-            }
+            },
         };
 
         // Build user flags and args from parts
@@ -593,7 +614,8 @@ impl PaletteState {
         // Determine if current editing token looks like a flag
         let current_is_flag = current.starts_with('-');
 
-        // 1) If a non-boolean flag value is pending and not complete, only suggest values for it
+        // 1) If a non-boolean flag value is pending and not complete, only suggest
+        //    values for it
         if let Some(flag_name) = pending_flag.clone() {
             let value_partial = flag_value_partial(parts);
             let mut items = suggest_values_for_flag(&spec, &flag_name, &value_partial, providers);
@@ -606,7 +628,8 @@ impl PaletteState {
                 Vec::new()
             };
 
-            // 3) If no positional needed (or user explicitly typed a flag), suggest required flags
+            // 3) If no positional needed (or user explicitly typed a flag), suggest
+            //    required flags
             if items.is_empty() {
                 let required_remaining = required_flags_remaining(&spec, &user_flags);
                 if required_remaining || current_is_flag {
@@ -619,15 +642,12 @@ impl PaletteState {
                 items.extend(collect_flag_candidates(&spec, &user_flags, current, false));
             }
 
-            // 5) If still empty and there are remaining positionals, offer placeholder for the next one
+            // 5) If still empty and there are remaining positionals, offer placeholder for
+            //    the next one
             if items.is_empty() && user_args.len() < spec.positional_args.len() {
                 let pa = &spec.positional_args[user_args.len()];
                 items.push(SuggestionItem {
-                    display: format!(
-                        "<{:<15}> [ARG] {}",
-                        pa.name,
-                        pa.help.as_deref().unwrap_or(&pa.name)
-                    ),
+                    display: format!("<{:<15}> [ARG] {}", pa.name, pa.help.as_deref().unwrap_or(&pa.name)),
                     insert_text: current.to_string(),
                     kind: ItemKind::Positional,
                     meta: pa.help.clone(),
@@ -660,6 +680,20 @@ impl PaletteState {
             });
         }
         None
+    }
+}
+
+impl HasFocus for PaletteState {
+    fn build(&self, builder: &mut FocusBuilder) {
+        builder.leaf_widget(self);
+    }
+
+    fn focus(&self) -> FocusFlag {
+        self.focus.clone()
+    }
+
+    fn area(&self) -> Rect {
+        Rect::default()
     }
 }
 /// Trait for providing dynamic values for command suggestions.
@@ -697,7 +731,8 @@ pub struct StaticValuesProvider {
 }
 
 impl ValueProvider for StaticValuesProvider {
-    /// Suggest values that fuzzy-match `partial` for the configured (command, field).
+    /// Suggest values that fuzzy-match `partial` for the configured (command,
+    /// field).
     fn suggest(&self, command_key: &str, field: &str, partial: &str) -> Vec<SuggestionItem> {
         if command_key != self.command_key || field != self.field {
             return vec![];
@@ -773,8 +808,8 @@ fn suggest_commands(reg: &Registry, prefix: &str) -> Vec<SuggestionItem> {
     items
 }
 
-/// Parse user-provided flags and positional arguments from the portion of tokens
-/// after the resolved (group, sub) command.
+/// Parse user-provided flags and positional arguments from the portion of
+/// tokens after the resolved (group, sub) command.
 ///
 /// long flags are collected without the leading dashes; values immediately
 /// following non-boolean flags are consumed. Returns `(user_flags, user_args)`.
@@ -898,11 +933,7 @@ fn suggest_positionals(
         }
         if items.is_empty() {
             items.push(SuggestionItem {
-                display: format!(
-                    "<{}> [ARG] {}",
-                    pa.name,
-                    pa.help.as_deref().unwrap_or(&pa.name)
-                ),
+                display: format!("<{}> [ARG] {}", pa.name, pa.help.as_deref().unwrap_or(&pa.name)),
                 insert_text: format!("<{}>", pa.name),
                 kind: ItemKind::Positional,
                 meta: pa.help.clone(),
@@ -944,7 +975,8 @@ fn required_flags_remaining(spec: &CommandSpec, user_flags: &[String]) -> bool {
 /// assert!(is_flag_value_complete("--app my "));
 /// ```
 pub fn is_flag_value_complete(input: &str) -> bool {
-    // Preserve EOL whitespace semantics; only trim for tokenization via ranged lexer
+    // Preserve EOL whitespace semantics; only trim for tokenization via ranged
+    // lexer
     let tokens_r = lex_shell_like_ranged(input);
     let tokens: Vec<&str> = tokens_r.iter().map(|t| t.text).collect();
     let len = tokens.len();
@@ -977,15 +1009,17 @@ pub fn is_flag_value_complete(input: &str) -> bool {
 
 /// Collect candidate flag suggestions for a command specification.
 ///
-/// Generates suggestions for either required or optional flags that have not yet
-/// been provided by the user. When `current` starts with a dash, only flags whose
-/// long form starts with `current` are included (prefix filtering).
+/// Generates suggestions for either required or optional flags that have not
+/// yet been provided by the user. When `current` starts with a dash, only flags
+/// whose long form starts with `current` are included (prefix filtering).
 ///
 /// Arguments:
 /// - `spec`: The command specification whose flags are considered.
 /// - `user_flags`: Long flag names already present in the input (without `--`).
-/// - `current`: The current token text (used for prefix filtering when typing a flag).
-/// - `required_only`: When `true`, include only required flags; when `false`, only optional flags.
+/// - `current`: The current token text (used for prefix filtering when typing a
+///   flag).
+/// - `required_only`: When `true`, include only required flags; when `false`,
+///   only optional flags.
 fn collect_flag_candidates(
     spec: &CommandSpec,
     user_flags: &[String],

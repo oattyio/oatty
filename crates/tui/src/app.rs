@@ -1,28 +1,30 @@
 //! Application state and logic for the Heroku TUI.
 //!
-//! This module contains the main application state, data structures, and business
-//! logic for the TUI interface. It manages the application lifecycle, user
-//! interactions, and coordinates between different UI components.
+//! This module contains the main application state, data structures, and
+//! business logic for the TUI interface. It manages the application lifecycle,
+//! user interactions, and coordinates between different UI components.
 
 use std::sync::{
     Arc,
     atomic::{AtomicUsize, Ordering},
 };
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use heroku_registry::Registry;
 use heroku_types::{ExecOutcome, Screen};
+use rat_focus::{Focus as RatFocus, FocusBuilder, HasFocus};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
-use crate::ui::components::logs::state::LogEntry;
-use crate::ui::theme;
 use crate::{
     start_palette_execution,
-    ui::components::{
-        builder::BuilderState,
-        help::HelpState,
-        logs::LogsState,
-        palette::{PaletteState, state::ValueProvider},
-        table::TableState,
+    ui::{
+        components::{
+            builder::BuilderState,
+            help::HelpState,
+            logs::{LogsState, state::LogEntry},
+            palette::{PaletteState, state::ValueProvider},
+            table::TableState,
+        },
+        focus, theme,
     },
 };
 
@@ -80,9 +82,8 @@ pub struct App<'a> {
     pub exec_sender: UnboundedSender<ExecOutcome>,
     /// Receiver for async execution results
     pub exec_receiver: UnboundedReceiver<ExecOutcome>,
-    /// Top-level focus between palette and logs
-    pub main_focus: MainFocus,
-    /// Active execution count used by the event pump to decide whether to animate
+    /// Active execution count used by the event pump to decide whether to
+    /// animate
     pub active_exec_count: Arc<AtomicUsize>,
     /// Last pagination info returned by an execution (if any)
     pub last_pagination: Option<heroku_types::Pagination>,
@@ -157,12 +158,7 @@ pub enum Effect {
     CopyLogsRequested(String),
 }
 
-/// Top-level focus for main screen interactions
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MainFocus {
-    Palette,
-    Logs,
-}
+// Legacy MainFocus removed; focus is handled via ui::focus::FocusStore
 
 impl App<'_> {
     /// Creates a new application instance with the given registry.
@@ -172,7 +168,8 @@ impl App<'_> {
     ///
     /// # Arguments
     ///
-    /// * `registry` - The Heroku command registry containing all available commands
+    /// * `registry` - The Heroku command registry containing all available
+    ///   commands
     ///
     /// # Returns
     ///
@@ -197,7 +194,6 @@ impl App<'_> {
             throbber_idx: 0,
             exec_sender,
             exec_receiver,
-            main_focus: MainFocus::Palette,
             active_exec_count: Arc::new(AtomicUsize::new(0)),
             last_pagination: None,
             last_command_ranges: None,
@@ -205,13 +201,22 @@ impl App<'_> {
         app.builder.set_all_commands(app.ctx.registry.commands.clone());
         app.palette.set_all_commands(app.ctx.registry.commands.clone());
         app.builder.update_browser_filtered();
+        // Initialize rat-focus: start with the palette focused at root
+        {
+            let mut focus_builder = FocusBuilder::new(None);
+            focus_builder.widget(&app.palette);
+            focus_builder.widget(&app.logs);
+            let f = focus_builder.build();
+            f.focus(&app.palette);
+        }
         app
     }
 
     /// Updates the application state based on a message.
     ///
     /// This method processes messages and updates the application state
-    /// accordingly. It handles user interactions, navigation, and state changes.
+    /// accordingly. It handles user interactions, navigation, and state
+    /// changes.
     ///
     /// # Arguments
     ///
@@ -233,10 +238,10 @@ impl App<'_> {
                 if self.executing {
                     self.throbber_idx = (self.throbber_idx + 1) % 10;
                 }
-            }
-            Msg::Resize(_, _) => {
+            },
+            Msg::Resize(..) => {
                 // No-op for now; placeholder to enable TEA-style event
-            }
+            },
             Msg::ToggleHelp => {
                 let spec = if self.builder.is_visible() {
                     self.builder.selected_command()
@@ -244,18 +249,18 @@ impl App<'_> {
                     self.palette.selected_command()
                 };
                 self.help.toggle_visibility(spec.cloned());
-            }
+            },
             Msg::ToggleTable => {
                 self.table.toggle_show();
-            }
+            },
             Msg::ToggleBuilder => {
                 self.builder.toggle_visibility();
-            }
+            },
             Msg::CloseModal => {
                 self.help.set_visibility(false);
                 self.table.apply_visible(false);
                 self.builder.apply_visibility(false);
-            }
+            },
             Msg::Run => {
                 // always execute from palette
                 if !self.palette.is_input_empty() {
@@ -268,16 +273,16 @@ impl App<'_> {
                                 level: Some("info".into()),
                                 msg: format!("Running: {}", input),
                             });
-                        }
+                        },
                         Err(e) => {
                             self.palette.apply_error(e);
-                        }
+                        },
                     }
                 }
-            }
+            },
             Msg::CopyCommand => {
                 effects.push(Effect::CopyCommandRequested);
-            }
+            },
             Msg::ExecCompleted(out) => {
                 let raw = out.log;
                 // Keep executing=true if other executions are still active
@@ -304,10 +309,10 @@ impl App<'_> {
                 self.last_pagination = out.pagination;
                 // Clear palette input and suggestion state
                 self.palette.reduce_clear_all();
-            }
+            },
             // Placeholder handlers for upcoming logs features
-            Msg::LogsUp | Msg::LogsDown | Msg::LogsExtendUp | Msg::LogsExtendDown => {}
-            Msg::LogsOpenDetail | Msg::LogsCloseDetail | Msg::LogsCopy | Msg::LogsTogglePretty => {}
+            Msg::LogsUp | Msg::LogsDown | Msg::LogsExtendUp | Msg::LogsExtendDown => {},
+            Msg::LogsOpenDetail | Msg::LogsCloseDetail | Msg::LogsCopy | Msg::LogsTogglePretty => {},
         }
         effects
     }

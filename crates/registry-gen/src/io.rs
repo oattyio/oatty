@@ -1,7 +1,7 @@
+use std::{fs, path::PathBuf};
+
 use anyhow::{Context, Result};
 use bincode::config;
-use std::fs;
-use std::path::PathBuf;
 
 use crate::schema::generate_commands;
 

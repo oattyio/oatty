@@ -1,27 +1,29 @@
+use std::collections::HashMap;
+
 use anyhow::{Context, Result};
 use clap::ArgMatches;
 use heroku_api::HerokuClient;
 use heroku_registry::{Registry, build_clap};
 use reqwest::Method;
 use serde_json::{Map, Value};
-use std::collections::HashMap;
 use tracing_subscriber::fmt;
 
 #[tokio::main]
 /// Entrypoint for the CLI application.
 ///
-/// This function serves as the main entry point for the Heroku CLI tool. It handles
-/// command-line argument parsing and routes execution to either the TUI interface
-/// or command execution mode.
+/// This function serves as the main entry point for the Heroku CLI tool. It
+/// handles command-line argument parsing and routes execution to either the TUI
+/// interface or command execution mode.
 ///
 /// # Behavior
 /// - If no subcommands are provided, launches the TUI interface
-/// - If workflow subcommands are provided (when FEATURE_WORKFLOWS=1), handles workflow operations
+/// - If workflow subcommands are provided (when FEATURE_WORKFLOWS=1), handles
+///   workflow operations
 /// - Otherwise, executes the specified Heroku API command
 ///
 /// # Returns
-/// Returns `Result<()>` where `Ok(())` indicates successful execution and `Err` contains
-/// any error that occurred during execution.
+/// Returns `Result<()>` where `Ok(())` indicates successful execution and `Err`
+/// contains any error that occurred during execution.
 ///
 /// # Examples
 /// ```bash
@@ -52,8 +54,8 @@ async fn main() -> Result<()> {
 /// Initializes the tracing system for logging and diagnostics.
 ///
 /// This function sets up the tracing subscriber with configuration based on the
-/// `HEROKU_LOG` environment variable. It configures log levels and output formatting
-/// for the application's diagnostic system.
+/// `HEROKU_LOG` environment variable. It configures log levels and output
+/// formatting for the application's diagnostic system.
 ///
 /// # Environment Variables
 /// - `HEROKU_LOG`: Controls the logging level. Valid values are:
@@ -86,19 +88,20 @@ fn init_tracing() {
 
 /// Executes a Heroku API command in CLI mode.
 ///
-/// This function handles the execution of Heroku API commands when the CLI is run
-/// with specific command arguments. It parses the command structure, builds the
-/// appropriate HTTP request, and executes it against the Heroku API.
+/// This function handles the execution of Heroku API commands when the CLI is
+/// run with specific command arguments. It parses the command structure, builds
+/// the appropriate HTTP request, and executes it against the Heroku API.
 ///
 /// # Arguments
 /// - `registry`: The command registry containing API endpoint specifications
 /// - `matches`: Parsed command-line arguments from clap
 ///
 /// # Command Structure
-/// Commands follow the format: `<group> <qualified_subcommand>` (e.g., `apps app:create`)
-/// where:
+/// Commands follow the format: `<group> <qualified_subcommand>` (e.g., `apps
+/// app:create`) where:
 /// - `group`: The resource group (e.g., "apps", "dynos", "config")
-/// - `qualified_subcommand`: The specific command within the group (e.g., "app:create", "list")
+/// - `qualified_subcommand`: The specific command within the group (e.g.,
+///   "app:create", "list")
 ///
 /// # Behavior
 /// 1. Extracts the command group and subcommand from parsed arguments
@@ -177,16 +180,18 @@ async fn run_command(registry: &Registry, matches: &ArgMatches) -> Result<()> {
 /// The path template follow the same format as JSON hyper-schema URI
 /// templates. See https://json-schema.org/draft/2019-09/json-schema-hypermedia#uriTemplating
 ///
-/// This function takes a path template containing placeholders in the format `{key}`
-/// and replaces them with corresponding values from the provided HashMap.
+/// This function takes a path template containing placeholders in the format
+/// `{key}` and replaces them with corresponding values from the provided
+/// HashMap.
 ///
 /// # Arguments
 /// - `template`: A string containing path placeholders in the format `{key}`
 /// - `pos`: A HashMap mapping placeholder keys to their replacement values
 ///
 /// # Returns
-/// Returns a `String` with all placeholders replaced by their corresponding values.
-/// If a placeholder key is not found in the HashMap, it remains unchanged in the output.
+/// Returns a `String` with all placeholders replaced by their corresponding
+/// values. If a placeholder key is not found in the HashMap, it remains
+/// unchanged in the output.
 ///
 /// # Examples
 /// ```

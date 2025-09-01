@@ -42,7 +42,8 @@ pub fn resolve_path(template: &str, pos: &std::collections::HashMap<String, Stri
     out
 }
 
-/// Generates a CLI command preview from a command specification and field values.
+/// Generates a CLI command preview from a command specification and field
+/// values.
 ///
 /// This function creates a human-readable representation of the command that
 /// would be executed, including all arguments and flags with their values.

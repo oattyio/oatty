@@ -5,6 +5,8 @@
 //! multi-panel interface with search, command selection, and parameter input.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use heroku_types::Field;
+use rat_focus::{FocusBuilder, HasFocus};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -13,15 +15,15 @@ use ratatui::{
     widgets::*,
 };
 
-use crate::ui::theme::helpers as th;
 use crate::{
     app,
     ui::{
         components::{builder::layout::BuilderLayout, component::Component},
+        focus,
+        theme::helpers as th,
         utils::IfEmptyStr,
     },
 };
-use heroku_types::{Field, Focus};
 
 /// Command builder component for interactive command construction.
 ///
@@ -116,15 +118,27 @@ impl BuilderComponent {
         match key.code {
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
                 app.builder.search_input_push(c);
-            }
+            },
             KeyCode::Backspace => app.builder.search_input_pop(),
             KeyCode::Esc => app.builder.search_input_clear(),
-            KeyCode::Tab => app.builder.apply_next_focus(),
-            KeyCode::BackTab => app.builder.apply_previous_focus(),
+            KeyCode::Tab | KeyCode::BackTab => {
+                let focus_ring = app.builder.focus_ring();
+                let _ = if key.code == KeyCode::Tab {
+                    focus_ring.next();
+                } else {
+                    focus_ring.prev();
+                };
+            },
             KeyCode::Down => app.builder.move_selection(1),
             KeyCode::Up => app.builder.move_selection(-1),
-            KeyCode::Enter => app.builder.apply_enter(),
-            _ => {}
+            KeyCode::Enter => {
+                app.builder.apply_enter();
+                // move focus to inputs via rat-focus ring
+                app.builder.inputs_flag.set(true);
+                app.builder.search_flag.set(false);
+                app.builder.commands_flag.set(false);
+            },
+            _ => {},
         }
     }
 
@@ -135,10 +149,21 @@ impl BuilderComponent {
         match key.code {
             KeyCode::Down => app.builder.move_selection(1),
             KeyCode::Up => app.builder.move_selection(-1),
-            KeyCode::Enter => app.builder.apply_enter(),
-            KeyCode::Tab => app.builder.apply_next_focus(),
-            KeyCode::BackTab => app.builder.apply_previous_focus(),
-            _ => {}
+            KeyCode::Enter => {
+                app.builder.apply_enter();
+                app.builder.inputs_flag.set(true);
+                app.builder.search_flag.set(false);
+                app.builder.commands_flag.set(false);
+            },
+            KeyCode::Tab | KeyCode::BackTab => {
+                let f = app.builder.focus_ring();
+                if key.code == KeyCode::Tab {
+                    let _ = f.next();
+                } else {
+                    let _ = f.prev();
+                }
+            },
+            _ => {},
         }
     }
 
@@ -147,8 +172,14 @@ impl BuilderComponent {
     /// Applies local state updates directly to `app.builder`.
     fn handle_inputs_keys(&self, app: &mut app::App, key: KeyEvent) {
         match key.code {
-            KeyCode::Tab => app.builder.apply_next_focus(),
-            KeyCode::BackTab => app.builder.apply_previous_focus(),
+            KeyCode::Tab | KeyCode::BackTab => {
+                let f = app.builder.focus_ring();
+                if key.code == KeyCode::Tab {
+                    let _ = f.next();
+                } else {
+                    let _ = f.prev();
+                }
+            },
             KeyCode::Up => app.builder.reduce_move_field_up(app.ctx.debug_enabled),
             KeyCode::Down => app.builder.reduce_move_field_down(app.ctx.debug_enabled),
             // Note: Enter in builder is handled at the top-level input loop to
@@ -159,8 +190,8 @@ impl BuilderComponent {
             KeyCode::Char(' ') => app.builder.reduce_toggle_boolean_field(),
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
                 app.builder.reduce_add_char_to_field(c);
-            }
-            _ => {}
+            },
+            _ => {},
         }
     }
 }
@@ -168,7 +199,8 @@ impl BuilderComponent {
 impl Component for BuilderComponent {
     /// Renders the command builder modal with all panels.
     ///
-    /// This method handles the layout, styling, and content generation for the builder interface.
+    /// This method handles the layout, styling, and content generation for the
+    /// builder interface.
     ///
     /// # Arguments
     ///
@@ -225,16 +257,12 @@ impl Component for BuilderComponent {
         }
 
         // Handle focus-specific key events (local updates applied in-place)
-        match app.builder.selected_focus() {
-            Focus::Search => {
-                self.handle_search_keys(app, key);
-            }
-            Focus::Commands => {
-                self.handle_commands_keys(app, key);
-            }
-            Focus::Inputs => {
-                self.handle_inputs_keys(app, key);
-            }
+        if app.builder.search_flag.get() {
+            self.handle_search_keys(app, key);
+        } else if app.builder.commands_flag.get() {
+            self.handle_commands_keys(app, key);
+        } else if app.builder.inputs_flag.get() {
+            self.handle_inputs_keys(app, key);
         }
 
         effects
@@ -271,26 +299,26 @@ impl BuilderComponent {
     }
 
     /// Renders the footer with keyboard hints.
-    fn render_footer(&self, f: &mut Frame, app: &app::App, area: Rect) {
-        let t = &*app.ctx.theme;
+    fn render_footer(&self, frame: &mut Frame, app: &app::App, area: Rect) {
+        let theme = &*app.ctx.theme;
         let footer = Paragraph::new(Line::from(vec![
-            Span::styled("Hint: ", t.text_muted_style()),
-            Span::styled("Ctrl+F", t.accent_emphasis_style()),
-            Span::styled(" close  ", t.text_muted_style()),
-            Span::styled("Enter", t.accent_emphasis_style()),
-            Span::styled(" apply  ", t.text_muted_style()),
-            Span::styled("Esc", t.accent_emphasis_style()),
-            Span::styled(" cancel", t.text_muted_style()),
+            Span::styled("Hint: ", theme.text_muted_style()),
+            Span::styled("Ctrl+F", theme.accent_emphasis_style()),
+            Span::styled(" close  ", theme.text_muted_style()),
+            Span::styled("Enter", theme.accent_emphasis_style()),
+            Span::styled(" apply  ", theme.text_muted_style()),
+            Span::styled("Esc", theme.accent_emphasis_style()),
+            Span::styled(" cancel", theme.text_muted_style()),
         ]))
-        .style(t.text_muted_style());
+        .style(theme.text_muted_style());
 
-        f.render_widget(footer, area);
+        frame.render_widget(footer, area);
     }
 
     /// Renders the search input panel.
     fn render_search_panel(&self, f: &mut Frame, app: &mut app::App, area: Rect) {
         let title = self.create_search_title(app);
-        let focused = app.builder.selected_focus() == Focus::Search;
+        let focused = app.builder.search_flag.get();
         let mut block = th::block(&*app.ctx.theme, None, focused);
         block = block.title(title);
 
@@ -323,7 +351,7 @@ impl BuilderComponent {
 
     /// Sets the cursor position for the search input.
     fn set_search_cursor(&self, f: &mut Frame, app: &app::App, inner: Rect) {
-        if app.builder.selected_focus() == Focus::Search {
+        if app.builder.search_flag.get() {
             let x = inner
                 .x
                 .saturating_add(app.builder.search_input().chars().count() as u16);
@@ -335,7 +363,7 @@ impl BuilderComponent {
     /// Renders the commands list panel.
     fn render_commands_panel(&self, frame: &mut Frame, app: &mut app::App, area: Rect) {
         let title = format!("Commands ({})", app.builder.filtered().len());
-        let focused = app.builder.selected_focus() == Focus::Commands;
+        let focused = app.builder.commands_flag.get();
         let block = th::block(&*app.ctx.theme, Some(&title), focused);
 
         let items = self.create_command_list_items(app);
@@ -371,7 +399,7 @@ impl BuilderComponent {
     /// Renders the input fields panel.
     fn render_inputs_panel(&self, f: &mut Frame, app: &mut app::App, area: Rect) {
         let title = self.create_inputs_title(app);
-        let focused = app.builder.selected_focus() == Focus::Inputs;
+        let focused = app.builder.inputs_flag.get();
         let block = th::block(&*app.ctx.theme, Some(&title), focused);
 
         // Draw the block first, then lay out inner area into content + footer rows
@@ -396,7 +424,7 @@ impl BuilderComponent {
                     format!("{} {}", group, rest)
                 };
                 format!("Inputs: {}", title)
-            }
+            },
             None => "Inputs".into(),
         }
     }
@@ -417,7 +445,7 @@ impl BuilderComponent {
 
         // Add missing required fields warning
         let missing: Vec<String> = app.builder.missing_required_fields();
-        if app.builder.selected_focus() == Focus::Inputs && !missing.is_empty() {
+        if app.builder.inputs_flag.get() && !missing.is_empty() {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
                 Span::styled("Missing required: ", Style::default().fg(app.ctx.theme.roles().warning)),
@@ -436,7 +464,7 @@ impl BuilderComponent {
         let val = self.create_field_value(app, field);
 
         let mut cursor_pos = None;
-        if app.builder.selected_focus() == Focus::Inputs && field_idx == app.builder.current_field_idx() {
+        if app.builder.inputs_flag.get() && field_idx == app.builder.current_field_idx() {
             let prefix = if let Some((ref hint_text, _)) = hint {
                 format!("{} {}: ", label, hint_text)
             } else {
@@ -468,7 +496,7 @@ impl BuilderComponent {
         line.push_span(Span::raw(": "));
         line.push_span(val);
 
-        if app.builder.selected_focus() == Focus::Inputs && field_idx == app.builder.current_field_idx() {
+        if app.builder.inputs_flag.get() && field_idx == app.builder.current_field_idx() {
             line = line.style(app.ctx.theme.selection_style());
         }
 
@@ -511,7 +539,8 @@ impl BuilderComponent {
     /// Creates the display value for a field.
     ///
     /// For boolean fields with a non-empty value, returns a green check mark.
-    /// Otherwise returns the appropriate text styled with the primary text color.
+    /// Otherwise returns the appropriate text styled with the primary text
+    /// color.
     fn create_field_value(&self, app: &app::App, field: &Field) -> Span<'static> {
         let t = &*app.ctx.theme;
         if field.is_bool {
@@ -537,7 +566,7 @@ impl BuilderComponent {
 
     /// Sets the cursor position for the input panel.
     fn set_input_cursor(&self, f: &mut Frame, app: &mut app::App, area: Rect, cursor_pos: Option<(u16, u16)>) {
-        if app.builder.selected_focus() == Focus::Inputs
+        if app.builder.inputs_flag.get()
             && let Some((col, row)) = cursor_pos
         {
             let x = area.x.saturating_add(col);

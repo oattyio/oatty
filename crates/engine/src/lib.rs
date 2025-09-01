@@ -1,9 +1,8 @@
+use std::{collections::HashMap, fs, path::Path};
+
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashMap;
-use std::fs;
-use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct WorkflowFile {
@@ -63,7 +62,7 @@ pub fn interpolate_value(v: &Value, ctx: &ContextState) -> Value {
                 out.insert(k.clone(), interpolate_value(val, ctx));
             }
             Value::Object(out)
-        }
+        },
         _ => v.clone(),
     }
 }
@@ -95,7 +94,8 @@ fn interpolate_string(s: &str, ctx: &ContextState) -> String {
 }
 
 fn resolve_expr(expr: &str, ctx: &ContextState) -> Option<String> {
-    // Support tasks.<name>.output.<path>, env.<VAR>, or simple equality in if (a == b)
+    // Support tasks.<name>.output.<path>, env.<VAR>, or simple equality in if (a ==
+    // b)
     if let Some(eq_pos) = expr.find("==") {
         let left = expr[..eq_pos].trim();
         let right = expr[eq_pos + 2..].trim().trim_matches('"');
@@ -116,7 +116,7 @@ fn resolve_expr(expr: &str, ctx: &ContextState) -> Option<String> {
             match cur {
                 Value::Object(map) => {
                     cur = map.get(p)?;
-                }
+                },
                 _ => return None,
             }
         }

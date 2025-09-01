@@ -1,21 +1,20 @@
 //! Help modal component for displaying command documentation.
 //!
-//! This module provides a component for rendering the help modal, which displays
-//! comprehensive documentation for Heroku commands including usage syntax,
-//! arguments, options, and examples.
+//! This module provides a component for rendering the help modal, which
+//! displays comprehensive documentation for Heroku commands including usage
+//! syntax, arguments, options, and examples.
 use heroku_types::CommandSpec;
-use ratatui::style::Modifier;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
+    style::Modifier,
     text::{Line, Span, Text},
     widgets::{Clear, Paragraph, Wrap},
 };
 
-use crate::ui::theme::helpers as th;
 use crate::{
     app,
-    ui::{components::component::Component, utils::centered_rect},
+    ui::{components::component::Component, theme::helpers as th, utils::centered_rect},
 };
 
 /// Help modal component for displaying command documentation.

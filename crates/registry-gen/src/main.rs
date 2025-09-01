@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
-
 use heroku_registry_gen::{write_manifest, write_manifest_json};
 
 /// Generate the Heroku command registry from a JSON Hyper-Schema.
@@ -28,4 +27,3 @@ fn main() -> Result<()> {
         write_manifest(args.input, args.output)
     }
 }
-
