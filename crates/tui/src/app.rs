@@ -84,6 +84,22 @@ pub struct App<'a> {
     pub main_focus: MainFocus,
     /// Active execution count used by the event pump to decide whether to animate
     pub active_exec_count: Arc<AtomicUsize>,
+    /// Last pagination info returned by an execution (if any)
+    pub last_pagination: Option<heroku_types::Pagination>,
+    /// Ranges supported by the last executed command (for pagination UI)
+    pub last_command_ranges: Option<Vec<String>>,
+}
+
+impl<'a> App<'a> {
+    /// Gets the available range fields for the currently selected command
+    pub fn available_ranges(&self) -> Vec<String> {
+        if let Some(r) = &self.last_command_ranges {
+            if !r.is_empty() {
+                return r.clone();
+            }
+        }
+        self.builder.available_ranges()
+    }
 }
 
 /// Messages that can be sent to update the application state.
@@ -183,6 +199,8 @@ impl App<'_> {
             exec_receiver,
             main_focus: MainFocus::Palette,
             active_exec_count: Arc::new(AtomicUsize::new(0)),
+            last_pagination: None,
+            last_command_ranges: None,
         };
         app.builder.set_all_commands(app.ctx.registry.commands.clone());
         app.palette.set_all_commands(app.ctx.registry.commands.clone());
@@ -235,7 +253,7 @@ impl App<'_> {
             }
             Msg::CloseModal => {
                 self.help.set_visibility(false);
-                self.table.apply_show(false);
+                self.table.apply_visible(false);
                 self.builder.apply_visibility(false);
             }
             Msg::Run => {
@@ -281,7 +299,9 @@ impl App<'_> {
                     let _ = self.logs.rich_entries.drain(0..rich_len - 500);
                 }
                 self.table.apply_result_json(out.result_json, &*self.ctx.theme);
-                self.table.apply_show(out.open_table);
+                self.table.apply_visible(out.open_table);
+                // Update last seen pagination info for the table/pagination component
+                self.last_pagination = out.pagination;
                 // Clear palette input and suggestion state
                 self.palette.reduce_clear_all();
             }

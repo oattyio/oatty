@@ -4,6 +4,7 @@
 //! JSON results from command execution in a tabular format with scrolling and
 //! navigation capabilities.
 use crossterm::event::{KeyCode, KeyEvent};
+use heroku_types::Pagination;
 use ratatui::widgets::{Scrollbar, ScrollbarState};
 use ratatui::{
     Frame,
@@ -15,7 +16,9 @@ use ratatui::{
 use serde_json::Value;
 
 use crate::app::Effect;
+use crate::ui::components::table::state::TableFocus;
 use crate::ui::components::table::TableFooter;
+use crate::ui::components::PaginationComponent;
 use crate::ui::theme::helpers as th;
 use crate::ui::theme::roles::Theme as UiTheme;
 use crate::ui::utils::{get_scored_keys, normalize_header, render_value};
@@ -24,8 +27,6 @@ use crate::{
     ui::{components::component::Component, utils::centered_rect},
 };
 use heroku_util::format_date_mmddyyyy;
-
-// Date field keys and formatting are provided by heroku-util.
 
 /// Results table modal component for displaying JSON data.
 ///
@@ -69,10 +70,26 @@ pub struct TableComponent<'a> {
     scrollbar: Scrollbar<'a>,
     scrollbar_state: ScrollbarState,
     footer: TableFooter<'a>,
+    pagination: PaginationComponent,
 }
 
 
 impl TableComponent<'_> {
+    /// Sets the available range fields for pagination
+    pub fn set_pagination(&mut self, pagination: Pagination) {
+        self.pagination.set_pagination(pagination);
+    }
+    
+    /// Shows the pagination controls
+    pub fn show_pagination(&mut self) {
+        self.pagination.show();
+    }
+    
+    /// Hides the pagination controls
+    pub fn hide_pagination(&mut self) {
+        self.pagination.hide();
+    }
+    
     /// Renders a JSON array as a table with offset support using known columns.
     pub fn render_json_table_with_columns(
         &mut self,
@@ -83,6 +100,7 @@ impl TableComponent<'_> {
         rows: &[Row],
         widths: &[Constraint],
         headers: &[Cell],
+        focused: bool,
         theme: &dyn UiTheme,
     ) {
         if rows.is_empty() {
@@ -102,7 +120,8 @@ impl TableComponent<'_> {
             .rows(rows[start..end].to_owned())
             .widths(widths)
             .header(Row::new(headers.to_owned()).style(th::table_header_row_style(theme)))
-            .block(th::block(theme, None, false))
+            .block(th::block(theme, None, false).borders(Borders::ALL)
+            .border_style(theme.border_style(focused)))
             .column_spacing(1)
             .row_highlight_style(th::table_selected_style(theme))
             // Ensure table fills with background surface and text color
@@ -179,6 +198,15 @@ impl Component for TableComponent<'_> {
     /// * `rect` - The rectangular area to render in
     /// * `app` - The application state containing result data
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
+        // Set up pagination if the command has range support
+        if let Some(pagination) = app.last_pagination.clone() {
+            self.set_pagination(pagination);
+            // Keep the available ranges list in sync with last executed command
+            self.pagination.set_available_ranges(app.available_ranges());
+            self.show_pagination();
+        } else {
+            self.hide_pagination();
+        }
         // Large modal to maximize space for tables
         let area = centered_rect(96, 90, rect);
         let title = "Results  [Esc] Close  ↑/↓ Scroll";
@@ -187,10 +215,14 @@ impl Component for TableComponent<'_> {
         frame.render_widget(Clear, area);
         frame.render_widget(&block, area);
         let inner = block.inner(area);
-        // Split for content + footer
+        // Split for content + pagination + footer
         let splits = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .constraints([
+                Constraint::Min(1),           // Table content
+                Constraint::Length(if self.pagination.state().is_visible {7} else {0}),        // Pagination controls
+                Constraint::Length(1),        // Footer
+            ])
             .split(inner);
 
         app.table.set_visible_rows(splits[0].height as usize);
@@ -208,6 +240,7 @@ impl Component for TableComponent<'_> {
                     rows,
                     widths.unwrap(),
                     headers.unwrap(),
+                    app.table.focus() == TableFocus::Table,
                     &*app.ctx.theme,
                 );
             } else {
@@ -217,7 +250,10 @@ impl Component for TableComponent<'_> {
             let p = Paragraph::new("No results to display").style(app.ctx.theme.text_muted_style());
             frame.render_widget(p, splits[0]);
         }
-        self.footer.render(frame, splits[1], app);
+        
+        // Render pagination controls
+        self.pagination.render(frame, splits[1], &*app.ctx.theme);
+        self.footer.render(frame, splits[2], app);
     }
 
     /// Handle key events for the results table modal.
@@ -225,8 +261,20 @@ impl Component for TableComponent<'_> {
     /// Applies local state updates directly to `app.table` for scrolling and navigation.
     /// Returns `Ok(true)` if the key was handled by the table, otherwise `Ok(false)`.
     fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
-        let effects: Vec<Effect> = vec![];
+        let mut effects: Vec<Effect> = vec![];
+
+        // Stop here and delegate to pagination if we're not focused.
+        if app.table.focus() != TableFocus::Table {
+            effects.extend(self.pagination.handle_key_events(app, key));
+        }
+
         match key.code {
+            KeyCode::Tab | KeyCode::BackTab => {
+                match app.table.focus() {
+                    TableFocus::Pagination => app.table.set_focus(TableFocus::Table),
+                    TableFocus::Table => app.table.set_focus(TableFocus::Pagination),
+                }
+            }
             KeyCode::Up => {
                 app.table.reduce_scroll(-1);
             }

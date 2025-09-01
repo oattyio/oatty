@@ -165,6 +165,14 @@ impl BuilderState {
     pub fn has_selected_command(&self) -> bool {
         self.selected_command.is_some()
     }
+    
+    /// Gets the available range fields for the selected command
+    pub fn available_ranges(&self) -> Vec<String> {
+        self.selected_command
+            .as_ref()
+            .map(|cmd| cmd.ranges.clone())
+            .unwrap_or_default()
+    }
 
     /// Handle Enter within the builder context: focus Inputs when a selection exists.
     pub fn apply_enter(&mut self) {
@@ -176,7 +184,7 @@ impl BuilderState {
     // Internal helpers for managing field/selection state
     fn apply_command_selection(&mut self, command: CommandSpec) {
         let CommandSpec {
-            flags, positional_args, ..
+            flags, positional_args, ranges, ..
         } = &command;
         let mut fields: Vec<Field> = Vec::with_capacity(flags.len() + positional_args.len());
 
@@ -201,6 +209,40 @@ impl BuilderState {
                 enum_idx: None,
             });
         });
+        
+        // Add range fields if available
+        if !ranges.is_empty() {
+            // Add range field selection
+            fields.push(Field {
+                name: "range-field".to_string(),
+                required: false,
+                is_bool: false,
+                value: ranges.first().unwrap_or(&String::new()).clone(),
+                enum_values: ranges.clone(),
+                enum_idx: Some(0),
+            });
+            
+            // Add range start field
+            fields.push(Field {
+                name: "range-start".to_string(),
+                required: false,
+                is_bool: false,
+                value: String::new(),
+                enum_values: vec![],
+                enum_idx: None,
+            });
+            
+            // Add range end field
+            fields.push(Field {
+                name: "range-end".to_string(),
+                required: false,
+                is_bool: false,
+                value: String::new(),
+                enum_values: vec![],
+                enum_idx: None,
+            });
+        }
+        
         self.set_input_fields(fields);
         self.apply_field_idx(0);
         self.selected_command = Some(command);

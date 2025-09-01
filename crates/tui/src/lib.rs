@@ -418,6 +418,8 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<CommandSpec, String
     }
 
     let path = resolve_path(&spec.path, &pos_map);
+    // Persist ranges for pagination UI
+    app.last_command_ranges = Some(spec.ranges.clone());
     // Live request: enqueue background HTTP execution via Cmd system
     run_cmds(app, vec![Cmd::ExecuteHttp(Box::new(spec.clone()), path, body)]);
     Ok(spec)

@@ -90,7 +90,7 @@ impl LogsComponent {
                     // Route array JSON to the global Table modal
                     let redacted = Self::redact_json(j);
                     app.table.apply_result_json(Some(redacted), &*app.ctx.theme);
-                    app.table.apply_show(true);
+                    app.table.apply_visible(true);
                     // Do not open a Logs detail modal in this case
                     app.logs.detail = None;
                     app.logs.cached_detail_index = None;

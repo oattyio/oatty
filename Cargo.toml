@@ -13,6 +13,7 @@ resolver = "2"
 
 [workspace.package]
 edition = "2024"
+rust-version = "1.89"
 license = "MIT OR Apache-2.0"
 authors = ["Heroku CLI Team <devnull@example.com>"]
 repository = "https://example.com/heroku"
@@ -45,3 +46,4 @@ http = "1"
 hyper = { version = "1", features = ["http1", "http2", "client"] }
 dirs-next = "2"
 heck = "0.5.0"
+rat-focus = "1.0.2"

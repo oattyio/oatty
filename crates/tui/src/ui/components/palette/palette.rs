@@ -482,7 +482,11 @@ impl PaletteComponent {
     ///
     /// * `app` - The application state to update
     fn handle_escape(&self, app: &mut app::App) {
-        app.palette.reduce_clear_all();
+        if app.palette.is_suggestions_open() {
+            app.palette.set_is_suggestions_open(false);
+        } else {
+            app.palette.reduce_clear_all();
+        }
     }
 }
 

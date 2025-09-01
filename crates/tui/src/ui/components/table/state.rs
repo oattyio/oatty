@@ -10,9 +10,15 @@ use ratatui::widgets::Row;
 use ratatui::{layout::Constraint, widgets::Cell};
 use serde_json::Value;
 
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+pub enum TableFocus {
+    #[default]
+    Table,
+    Pagination
+}
 #[derive(Debug, Default)]
 pub struct TableState<'a> {
-    show: bool,
+    visible: bool,
     offset: usize,
     selected: usize,
     visible_rows: usize,
@@ -21,6 +27,7 @@ pub struct TableState<'a> {
     columns: Option<Vec<ColumnWithSize>>,
     column_constraints: Option<Vec<Constraint>>,
     headers: Option<Vec<Cell<'a>>>,
+    focus: TableFocus,
 }
 
 // Default derived above
@@ -28,7 +35,10 @@ pub struct TableState<'a> {
 impl<'a> TableState<'_> {
     // Selectors
     pub fn is_visible(&self) -> bool {
-        self.show
+        self.visible
+    }
+    pub fn focus(&self) -> TableFocus {
+        self.focus
     }
     pub fn count_offset(&self) -> usize {
         self.offset
@@ -58,17 +68,21 @@ impl<'a> TableState<'_> {
         self.headers.as_ref()
     }
 
+    pub fn set_focus(&mut self, focus: TableFocus) {
+        self.focus = focus;
+    }
+
     // Reducers
     pub fn toggle_show(&mut self) {
-        self.show = !self.show;
-        if self.show {
+        self.visible = !self.visible;
+        if self.visible {
             self.offset = 0;
             self.selected = 0;
         }
     }
 
-    pub fn apply_show(&mut self, show: bool) {
-        self.show = show;
+    pub fn apply_visible(&mut self, show: bool) {
+        self.visible = show;
         if show {
             self.offset = 0;
             self.selected = 0;

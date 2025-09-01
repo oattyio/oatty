@@ -18,14 +18,15 @@
 //!
 //! This design follows a **functional core, imperative shell** pattern:
 //! state updates are pure, but commands handle side effects.
-use crate::app::{self, Effect};
+use crate::{app::{self, Effect}};
 use heroku_registry::CommandSpec;
-use heroku_types::ExecOutcome;
+use heroku_types::{ExecOutcome, Pagination};
 use serde_json::Value;
 use std::sync::{
     atomic::{Ordering},
 };
 use tokio::task::spawn;
+use reqwest::header::{HeaderMap, HeaderName, CONTENT_RANGE};
 
 /// Represents side-effectful system commands executed outside of pure state updates.
 ///
@@ -186,6 +187,7 @@ fn execute_http(app: &mut app::App, spec: CommandSpec, path: String, body: serde
                     log: format!("Error: {}", err),
                     result_json: None,
                     open_table: false,
+                    pagination: None
                 });
             }
         }
@@ -236,18 +238,28 @@ async fn exec_remote(
         other => return Err(format!("unsupported method: {}", other)),
     };
     let mut builder = client.request(method, &path);
-    if !body.is_empty() {
-        builder = builder.json(&serde_json::Value::Object(body.clone()));
-    }
-    
-    // Add Range header if range parameters are provided
-    if let (Some(field), Some(start), Some(end)) = (
-        body.get("range-field").and_then(|v| v.as_str()),
-        body.get("range-start").and_then(|v| v.as_str()),
-        body.get("range-end").and_then(|v| v.as_str()),
-    ) {
-        let range_header = format!("{} {}..{}", field, start, end);
+    // Build Range header from special range fields if provided via inputs
+    let field = body.get("range-field").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty());
+    let start = body.get("range-start").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let end = body.get("range-end").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let order = body.get("order").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty());
+    let max = body.get("max").and_then(|v| v.as_str()).and_then(|s| s.parse::<usize>().ok());
+
+    if let Some(field) = field {
+        // Compose range segment like "start..end" (allow one side empty as per API semantics)
+        let range_seg = format!("{}..{}", start, end);
+        let mut range_header = format!("{} {}", field, range_seg);
+        // Append optional order/max parameters
+        if let Some(ord) = order { range_header.push_str(&format!("; order={};", ord)); }
+        if let Some(m) = max { range_header.push_str(&format!(" max={};", m)); }
         builder = builder.header("Range", range_header);
+    }
+
+    // Filter out special range-only fields from JSON body
+    let mut body_filtered = body.clone();
+    for k in ["range-field", "range-start", "range-end", "order", "max"] { let _ = body_filtered.remove(k); }
+    if !body_filtered.is_empty() {
+        builder = builder.json(&serde_json::Value::Object(body_filtered));
     }
     let resp = builder.send().await.map_err(|e| {
         format!(
@@ -255,8 +267,20 @@ async fn exec_remote(
             e
         )
     })?;
+    
     let status = resp.status();
+    let headers = resp.headers().clone();
+    let mut pagination = parse_content_range(&headers);
+    // Attach Next-Range if present for client iteration
+    if let Some(ref mut p) = pagination
+        && let Some(nr) = parse_next_range(&headers) {
+        p.next_range = Some(nr.0);
+        if let Some(order) = nr.1 { p.order = Some(order); }
+        // If max present in Next-Range and not in Content-Range, prefer it
+        if let Some(max) = nr.2 && p.max == 0 { p.max = max; }
+    }
     let text = resp.text().await.unwrap_or_default();
+    
     if status.as_u16() == 401 {
         return Err(
             "Unauthorized (401). Hint: set HEROKU_API_KEY=... or configure ~/.netrc with machine api.heroku.com".into(),
@@ -272,9 +296,67 @@ async fn exec_remote(
         open_table = true;
         result_json = Some(json);
     }
+
     Ok(heroku_types::ExecOutcome {
         log,
         result_json,
         open_table,
+        pagination
     })
+}
+
+// Parse Content-Range header into Pagination struct, returning None on failure
+fn parse_content_range(headers: &HeaderMap) -> Option<Pagination> {
+    // Get header value as string
+    let value = headers.get(CONTENT_RANGE).and_then(|v| v.to_str().ok())?;
+
+    // Split into tokens separated by ';' (e.g., "name app7a..app9x; max=200; order=desc;")
+    let parts: Vec<&str> = value.split(';').map(str::trim).filter(|s| !s.is_empty()).collect();
+    let range_part = parts.first()?;
+
+    // Extract field and range (e.g., "name app7a..app9x" -> "name", "app7a..app9x")
+    let (field, range) = range_part.split_once(' ')?;
+    let field = field.to_lowercase(); // Normalize "NAME" to "name"
+
+    // Split range into start and end (e.g., "app7a..app9x" -> ["app7a", "app9x"])
+    let range_parts: Vec<&str> = range.split("..").collect();
+    let range_start = range_parts.first().filter(|s| !s.is_empty())?.to_string();
+    let range_end = range_parts.get(1).filter(|s| !s.is_empty())?.to_string();
+
+    // Parse optional k=v params like max=200, order=desc
+    let mut max: Option<usize> = None;
+    let mut order: Option<String> = None;
+    for kv in parts.iter().skip(1) {
+        if let Some(v) = kv.strip_prefix("max=")
+            && let Ok(n) = v.trim_end_matches(';').parse::<usize>() { max = Some(n); }
+        else if let Some(v) = kv.strip_prefix("order=") {
+            order = Some(v.trim_end_matches(';').to_lowercase());
+        }
+    }
+
+    Some(Pagination {
+        range_start,
+        range_end,
+        field,
+        max: max.unwrap_or(200),
+        order,
+        next_range: None,
+    })
+}
+
+// Parse Next-Range header. Returns (raw, order, max)
+fn parse_next_range(headers: &HeaderMap) -> Option<(String, Option<String>, Option<usize>)> {
+    let name = HeaderName::from_static("next-range");
+    let raw = headers.get(name).and_then(|v| v.to_str().ok())?.to_string();
+    // Best-effort parse order/max for UI hints
+    let mut order: Option<String> = None;
+    let mut max: Option<usize> = None;
+    for kv in raw.split(';').map(str::trim) {
+        if let Some(v) = kv.strip_prefix("order=") {
+            order = Some(v.trim_end_matches(';').to_lowercase());
+        } else if let Some(v) = kv.strip_prefix("max=") {
+            if let Ok(n) = v.trim_end_matches(';').parse::<usize>() { max = Some(n); }
+        }
+    }
+    Some((raw, order, max))
 }

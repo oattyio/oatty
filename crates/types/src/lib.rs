@@ -122,6 +122,25 @@ pub struct ExecOutcome {
     pub result_json: Option<Value>,
     /// Whether to automatically open the table modal
     pub open_table: bool,
+    /// Pagination info from the response header when available
+    pub pagination: Option<Pagination>
+}
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Pagination {
+    /// The start value of the returned range
+    pub range_start: String,
+    /// The end value of the returned range
+    pub range_end: String,
+    /// The property used to sort (e.g., "id", "name")
+    pub field: String,
+    /// The server page size limit used for this response (defaults to 200)
+    pub max: usize,
+    /// The sort order for the range ("asc" or "desc") if known
+    #[serde(default)]
+    pub order: Option<String>,
+    /// Raw value of the Next-Range header for requesting the next page
+    #[serde(default)]
+    pub next_range: Option<String>,
 }
 
 #[cfg(test)]
