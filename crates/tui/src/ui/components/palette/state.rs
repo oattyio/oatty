@@ -600,7 +600,7 @@ impl PaletteState {
                 self.suggestions.clear();
                 self.is_suggestions_open = false;
                 return;
-            },
+            }
         };
 
         // Build user flags and args from parts

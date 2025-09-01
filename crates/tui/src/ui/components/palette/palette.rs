@@ -437,15 +437,15 @@ impl PaletteComponent {
                         app.palette.apply_accept_command_suggestion(&item.insert_text);
                         app.palette.set_is_suggestions_open(false);
                         app.palette.reduce_clear_suggestions();
-                    },
+                    }
                     ItemKind::Positional => {
                         // Accept positional suggestion
                         app.palette.apply_accept_positional_suggestion(&item.insert_text);
-                    },
+                    }
                     _ => {
                         // Accept flag or value suggestion
                         app.palette.apply_accept_non_command_suggestion(&item.insert_text);
-                    },
+                    }
                 }
 
                 // Rebuild suggestions after accepting
@@ -598,40 +598,40 @@ impl Component for PaletteComponent {
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
                 // Handle character input
                 self.handle_character_input(app, c);
-            },
+            }
             KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Handle help request
                 self.handle_help_request(app);
-            },
+            }
             KeyCode::Backspace => {
                 // Handle backspace
                 self.handle_backspace(app);
-            },
+            }
             KeyCode::Left => {
                 // Handle cursor left
                 self.handle_cursor_left(app);
-            },
+            }
             KeyCode::Right => {
                 // Handle cursor right
                 self.handle_cursor_right(app);
-            },
+            }
             KeyCode::Down | KeyCode::Up => {
                 // Handle suggestion navigation
                 self.handle_suggestion_navigation(app, key.code);
-            },
+            }
             KeyCode::Tab | KeyCode::Enter => {
                 // Handle suggestion acceptance
                 self.handle_suggestion_acceptance(app, key.code);
-            },
+            }
             KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Handle builder request
                 self.handle_builder_request(app);
-            },
+            }
             KeyCode::Esc => {
                 // Handle escape
                 self.handle_escape(app);
-            },
-            _ => {},
+            }
+            _ => {}
         }
         effects
     }

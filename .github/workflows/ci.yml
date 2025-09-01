@@ -31,9 +31,10 @@ jobs:
           cargo test --workspace --locked
       - name: Clippy
         run: |
-          cargo +nightly clippy --workspace --all-targets -- -D warnings
-      - name: Format
-        run: cargo +nightly fmt -- --check
+          cargo clippy --workspace --all-targets -- -D warnings
+      - name: Fmt
+        run: |
+          cargo fmt --all -- --check
       - name: Docs
         run: |
           cargo doc --workspace --no-deps

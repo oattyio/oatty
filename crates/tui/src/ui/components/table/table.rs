@@ -117,8 +117,11 @@ impl TableComponent<'_> {
             .rows(rows[start..end].to_owned())
             .widths(widths)
             .header(Row::new(headers.to_owned()).style(th::table_header_row_style(theme)))
-            .block(th::block(theme, None, false).borders(Borders::ALL)
-            .border_style(theme.border_style(focused)))
+            .block(
+                th::block(theme, None, false)
+                    .borders(Borders::ALL)
+                    .border_style(theme.border_style(focused)),
+            )
             .column_spacing(1)
             .row_highlight_style(th::table_selected_style(theme))
             // Ensure table fills with background surface and text color
@@ -165,7 +168,7 @@ impl TableComponent<'_> {
                     .wrap(Wrap { trim: false })
                     .style(theme.text_primary_style());
                 frame.render_widget(p, area);
-            },
+            }
             other => {
                 let date = match other {
                     Value::String(s) => format_date_mmddyyyy(s).unwrap_or_else(|| s.clone()),
@@ -176,7 +179,7 @@ impl TableComponent<'_> {
                     .wrap(Wrap { trim: false })
                     .style(theme.text_primary_style());
                 frame.render_widget(paragraph, area);
-            },
+            }
         }
     }
 }
@@ -196,8 +199,6 @@ impl Component for TableComponent<'_> {
         // Set up pagination if the command has range support
         if let Some(pagination) = app.last_pagination.clone() {
             self.set_pagination(pagination);
-            // Keep the available ranges list in sync with last executed command
-            self.pagination.set_available_ranges(app.available_ranges());
             self.show_pagination();
         } else {
             self.hide_pagination();
@@ -259,12 +260,20 @@ impl Component for TableComponent<'_> {
     fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
         let mut effects: Vec<Effect> = vec![];
 
+        // Keep pagination focus in sync with enabled state
+        self.pagination.normalize_focus();
+
         // Delegate to pagination when pagination subcontrols are focused
         let p = self.pagination.state();
         let focus_on_grid = app.table.grid_f.get();
         let focus_on_pagination =
-            p.range_field_f.get() || p.range_start_f.get() || p.range_end_f.get() || p.nav_f.get();
-        if !focus_on_grid && focus_on_pagination {
+            p.nav_first_f.get() || p.nav_prev_f.get() || p.nav_next_f.get() || p.nav_last_f.get();
+        // Let table handle Tab/BackTab to cycle grid <-> pagination; otherwise delegate
+        if !focus_on_grid
+            && focus_on_pagination
+            && key.code != KeyCode::Tab
+            && key.code != KeyCode::BackTab
+        {
             effects.extend(self.pagination.handle_key_events(app, key));
             return effects;
         }
@@ -275,44 +284,49 @@ impl Component for TableComponent<'_> {
                 let p = self.pagination.state();
                 let mut b = rat_focus::FocusBuilder::new(None);
                 b.widget(&PanelLeaf(app.table.grid_f.clone()));
-                b.widget(&PanelLeaf(p.range_field_f.clone()));
-                b.widget(&PanelLeaf(p.range_start_f.clone()));
-                b.widget(&PanelLeaf(p.range_end_f.clone()));
-                b.widget(&PanelLeaf(p.nav_f.clone()));
+                // Only include enabled nav buttons
+                if p.has_prev_page() {
+                    b.widget(&PanelLeaf(p.nav_first_f.clone()));
+                    b.widget(&PanelLeaf(p.nav_prev_f.clone()));
+                }
+                if p.has_next_page() {
+                    b.widget(&PanelLeaf(p.nav_next_f.clone()));
+                    b.widget(&PanelLeaf(p.nav_last_f.clone()));
+                }
                 let f = b.build();
                 if key.code == KeyCode::Tab {
                     let _ = f.next();
                 } else {
                     let _ = f.prev();
                 }
-            },
+            }
             KeyCode::Up => {
                 app.table.reduce_scroll(-1);
-            },
+            }
             KeyCode::Down => {
                 app.table.reduce_scroll(1);
-            },
+            }
             KeyCode::PageUp => {
                 let step = app.table.visible_rows().saturating_sub(1);
                 let step = if step == 0 { 10 } else { step } as isize;
                 app.table.reduce_scroll(-step);
-            },
+            }
             KeyCode::PageDown => {
                 let step = app.table.visible_rows().saturating_sub(1);
                 let step = if step == 0 { 10 } else { step } as isize;
                 app.table.reduce_scroll(step);
-            },
+            }
             KeyCode::Home => {
                 app.table.reduce_home();
-            },
+            }
             KeyCode::End => {
                 app.table.reduce_end();
-            },
+            }
             // Toggle handled via App message; keep consistent with global actions
             KeyCode::Char('t') => {
                 let _ = app.update(app::Msg::ToggleTable);
-            },
-            _ => {},
+            }
+            _ => {}
         }
         effects
     }

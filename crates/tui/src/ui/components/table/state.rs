@@ -1,6 +1,6 @@
-use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
+use rat_focus::FocusFlag;
 use ratatui::{
-    layout::{Constraint, Rect},
+    layout::Constraint,
     style::Style,
     widgets::{Cell, Row},
 };
@@ -77,11 +77,16 @@ impl<'a> TableState<'_> {
     }
 
     pub fn apply_visible(&mut self, show: bool) {
-        self.visible = show;
+        // Only reset and focus grid when transitioning from hidden -> visible.
         if show {
-            self.offset = 0;
-            self.selected = 0;
-            self.grid_f.set(true);
+            if !self.visible {
+                self.visible = true;
+                self.offset = 0;
+                self.selected = 0;
+                self.grid_f.set(true);
+            }
+        } else {
+            self.visible = false;
         }
     }
 

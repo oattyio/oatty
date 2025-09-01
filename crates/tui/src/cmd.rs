@@ -104,10 +104,66 @@ pub fn from_effects(app: &mut app::App, effects: Vec<Effect>) -> Vec<Cmd> {
                     let cmd = crate::preview::cli_preview(spec, app.builder.input_fields());
                     out.push(Cmd::ClipboardSet(cmd));
                 }
-            },
+            }
             Effect::CopyLogsRequested(text) => {
                 out.push(Cmd::ClipboardSet(text));
-            },
+            }
+            Effect::NextPageRequested(next_raw) => {
+                if let (Some(spec), Some(path), Some(mut body)) =
+                    (app.last_spec.clone(), app.last_path.clone(), app.last_body.clone())
+                {
+                    // Inject raw next-range override for Range header
+                    body.insert("next-range".into(), serde_json::Value::String(next_raw.clone()));
+                    // Append to history for Prev/First navigation
+                    app.pagination_history.push(Some(next_raw));
+                    out.push(Cmd::ExecuteHttp(Box::new(spec), path, body));
+                } else {
+                    app.logs
+                        .entries
+                        .push("Cannot request next page: no prior command context".into());
+                }
+            }
+            Effect::PrevPageRequested => {
+                if let (Some(spec), Some(path), Some(mut body)) =
+                    (app.last_spec.clone(), app.last_path.clone(), app.last_body.clone())
+                {
+                    if app.pagination_history.len() <= 1 {
+                        // No previous page to go to
+                    } else {
+                        let _ = app.pagination_history.pop();
+                        if let Some(prev) = app.pagination_history.last().cloned().flatten() {
+                            body.insert("next-range".into(), serde_json::Value::String(prev));
+                        } else {
+                            let _ = body.remove("next-range");
+                        }
+                        out.push(Cmd::ExecuteHttp(Box::new(spec), path, body));
+                    }
+                } else {
+                    app.logs
+                        .entries
+                        .push("Cannot request previous page: no prior command context".into());
+                }
+            }
+            Effect::FirstPageRequested => {
+                if let (Some(spec), Some(path), Some(mut body)) =
+                    (app.last_spec.clone(), app.last_path.clone(), app.last_body.clone())
+                {
+                    if let Some(first) = app.pagination_history.first().cloned().flatten() {
+                        body.insert("next-range".into(), serde_json::Value::String(first));
+                    } else {
+                        let _ = body.remove("next-range");
+                    }
+                    // Reset history to the first entry
+                    let first_opt = app.pagination_history.first().cloned().flatten();
+                    app.pagination_history.clear();
+                    app.pagination_history.push(first_opt);
+                    out.push(Cmd::ExecuteHttp(Box::new(spec), path, body));
+                } else {
+                    app.logs
+                        .entries
+                        .push("Cannot request first page: no prior command context".into());
+                }
+            }
         }
     }
     out
@@ -144,10 +200,10 @@ pub fn run_cmds(app: &mut app::App, commands: Vec<Cmd>) {
                 if log_len > 500 {
                     let _ = app.logs.entries.drain(0..log_len - 500);
                 }
-            },
+            }
             Cmd::ExecuteHttp(spec, path, body) => {
                 execute_http(app, *spec, path, body);
-            },
+            }
         }
     }
 }
@@ -182,7 +238,7 @@ fn execute_http(app: &mut app::App, spec: CommandSpec, path: String, body: serde
         match outcome {
             Ok(out) => {
                 let _ = tx.send(out);
-            },
+            }
             Err(err) => {
                 let _ = tx.send(heroku_types::ExecOutcome {
                     log: format!("Error: {}", err),
@@ -190,7 +246,7 @@ fn execute_http(app: &mut app::App, spec: CommandSpec, path: String, body: serde
                     open_table: false,
                     pagination: None,
                 });
-            },
+            }
         }
         // Mark one execution completed
         active.fetch_sub(1, Ordering::Relaxed);
@@ -239,7 +295,7 @@ async fn exec_remote(
         other => return Err(format!("unsupported method: {}", other)),
     };
     let mut builder = client.request(method, &path);
-    // Build Range header from special range fields if provided via inputs
+    // Build Range header. Prefer raw Next-Range override if provided.
     let field = body
         .get("range-field")
         .and_then(|v| v.as_str())
@@ -257,24 +313,26 @@ async fn exec_remote(
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse::<usize>().ok());
 
-    if let Some(field) = field {
-        // Compose range segment like "start..end" (allow one side empty as per API
-        // semantics)
+    // Raw Next-Range override
+    if let Some(next_raw) = body.get("next-range").and_then(|v| v.as_str()) {
+        builder = builder.header("Range", next_raw);
+    } else if let Some(field) = field {
+        // Compose range segment like "start..end" (allow one side empty as per API semantics)
         let range_seg = format!("{}..{}", start, end);
         let mut range_header = format!("{} {}", field, range_seg);
-        // Append optional order/max parameters
-        if let Some(ord) = order {
-            range_header.push_str(&format!("; order={};", ord));
-        }
+        // Append optional max/order parameters
         if let Some(m) = max {
-            range_header.push_str(&format!(" max={};", m));
+            range_header.push_str(&format!("; max={}", m));
+        }
+        if let Some(ord) = order {
+            range_header.push_str(&format!(", order={};", ord));
         }
         builder = builder.header("Range", range_header);
     }
 
     // Filter out special range-only fields from JSON body
     let mut body_filtered = body.clone();
-    for k in ["range-field", "range-start", "range-end", "order", "max"] {
+    for k in ["range-field", "range-start", "range-end", "order", "max", "next-range"] {
         let _ = body_filtered.remove(k);
     }
     if !body_filtered.is_empty() {
@@ -290,20 +348,13 @@ async fn exec_remote(
     let status = resp.status();
     let headers = resp.headers().clone();
     let mut pagination = parse_content_range(&headers);
-    // Attach Next-Range if present for client iteration
-    if let Some(ref mut p) = pagination
-        && let Some(nr) = parse_next_range(&headers)
+    let next_range_header = HeaderName::from_static("next-range");
+    // if 206, attach Next-Range if present for client iteration
+    if status.as_u16() == 206
+        && let Some(ref mut p) = pagination
+        && let Some(value) = headers.get(next_range_header)
     {
-        p.next_range = Some(nr.0);
-        if let Some(order) = nr.1 {
-            p.order = Some(order);
-        }
-        // If max present in Next-Range and not in Content-Range, prefer it
-        if let Some(max) = nr.2
-            && p.max == 0
-        {
-            p.max = max;
-        }
+        p.next_range = value.to_str().ok().and_then(|s| Some(s.to_string()));
     }
     let text = resp.text().await.unwrap_or_default();
 
@@ -371,23 +422,4 @@ fn parse_content_range(headers: &HeaderMap) -> Option<Pagination> {
         order,
         next_range: None,
     })
-}
-
-// Parse Next-Range header. Returns (raw, order, max)
-fn parse_next_range(headers: &HeaderMap) -> Option<(String, Option<String>, Option<usize>)> {
-    let name = HeaderName::from_static("next-range");
-    let raw = headers.get(name).and_then(|v| v.to_str().ok())?.to_string();
-    // Best-effort parse order/max for UI hints
-    let mut order: Option<String> = None;
-    let mut max: Option<usize> = None;
-    for kv in raw.split(';').map(str::trim) {
-        if let Some(v) = kv.strip_prefix("order=") {
-            order = Some(v.trim_end_matches(';').to_lowercase());
-        } else if let Some(v) = kv.strip_prefix("max=") {
-            if let Ok(n) = v.trim_end_matches(';').parse::<usize>() {
-                max = Some(n);
-            }
-        }
-    }
-    Some((raw, order, max))
 }

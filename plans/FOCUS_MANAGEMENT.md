@@ -25,7 +25,7 @@ We migrated off custom focus enums and adopted rat-focus flags across the root s
   - `LogsState`: `focus: FocusFlag` (leaf)
   - `BuilderState`: `search_f`, `commands_f`, `inputs_f` flags + a local focus ring
   - `TableState`: `grid_f` flag
-  - `PaginationState`: `range_field_f`, `range_start_f`, `range_end_f`, `nav_f` flags + a local focus ring
+  - `PaginationState`: `nav_first_f`, `nav_prev_f`, `nav_next_f`, `nav_last_f` flags (buttons are focusable)
 
 The app builds small focus rings (via `FocusBuilder`) at the places where traversal is needed (root, builder, table/pagination). This keeps code localized and avoids a single global focus graph.
 
@@ -65,14 +65,14 @@ The app builds small focus rings (via `FocusBuilder`) at the places where traver
   - `crates/tui/src/ui/components/table/state.rs`
     - Flag: `grid_f` (table grid focus).
   - `crates/tui/src/ui/components/pagination/state.rs`
-    - Flags: `range_field_f`, `range_start_f`, `range_end_f`, `nav_f`.
+    - Flags: `nav_first_f`, `nav_prev_f`, `nav_next_f`, `nav_last_f`.
   - `crates/tui/src/ui/components/table/table.rs`
-    - Tab/Shift-Tab builds a ring over: `grid_f`, then pagination flags.
-    - If any pagination flag is focused, key handling delegates to `PaginationComponent`.
+    - Tab/Shift-Tab builds a ring over: `grid_f`, then pagination nav flags in order: First → Prev → Next → Last.
+    - If any pagination nav flag is focused, non-Tab keys delegate to `PaginationComponent`.
     - Styling uses `grid_f.get()`.
   - `crates/tui/src/ui/components/pagination/pagination.rs`
-    - Tab/Shift-Tab builds a ring over its four flags and calls `next()/prev()`.
-    - Styling and input focus checks read the relevant flags.
+    - Tab/Shift-Tab is handled by the table-level ring. Pagination handles Enter and arrows for the active nav button.
+    - Styling uses individual nav button focus flags to render highlights.
 
 ## Traversal & Event Handling
 
@@ -86,10 +86,10 @@ The app builds small focus rings (via `FocusBuilder`) at the places where traver
   - On Tab/Shift-Tab: `focus.next()/prev()`.
   - Enter sets `inputs_f = true` to jump into Inputs.
 
-- Table traversal (grid ↔ pagination children)
-  - Build a `Focus` with `(grid_f, range_field_f, range_start_f, range_end_f, nav_f)`.
-  - On Tab/Shift-Tab: `next()/prev()`.
-  - If any pagination flag is focused, route keys to `PaginationComponent`.
+- Table traversal (grid ↔ pagination nav buttons)
+  - Build a `Focus` with `(grid_f, nav_first_f, nav_prev_f, nav_next_f, nav_last_f)`.
+  - On Tab/Shift-Tab: `next()/prev()` handled in `table.rs`.
+  - If any pagination nav flag is focused, route non-Tab keys to `PaginationComponent`.
 
 ## Focus-Driven Styling
 
@@ -97,7 +97,7 @@ The app builds small focus rings (via `FocusBuilder`) at the places where traver
   - Logs panel: `app.logs.focus.get()`
   - Builder panels: `app.builder.search_f.get()`, etc.
   - Table grid: `app.table.grid_f.get()`
-  - Pagination sub-panels: `state.range_start_f.get()`, etc.
+- Pagination buttons: `state.nav_first_f.get()`, `state.nav_prev_f.get()`, etc.
 - Pass `focused` into theme helpers like `theme.border_style(focused)` and conditional rendering (e.g., cursor placement, highlight symbols).
 
 ## Implementation Notes and Rationale
@@ -145,7 +145,7 @@ let _ = ring.next();
 - Manual checks:
   - Root: Tab/Shift-Tab moves focus Palette ↔ Logs (Palette Tab still accepts suggestions).
   - Builder: Tab cycles Search → Commands → Inputs; Enter jumps to Inputs.
-  - Table: Tab cycles Grid ↔ RangeField → Start → End → Nav; when any pagination control is focused, arrow/typing control those inputs.
+  - Table: Tab cycles Grid ↔ First → Prev → Next → Last; when any pagination button is focused, Enter/arrow keys activate navigation (Left/Home = Prev/First, Right/End = Next when available).
 
 ## Future Enhancements
 

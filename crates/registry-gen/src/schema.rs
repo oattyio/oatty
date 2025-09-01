@@ -61,13 +61,13 @@ pub fn derive_commands_from_schema(v: &Value) -> Result<Vec<CommandSpec>> {
                 for v in map.values() {
                     walk(v, out);
                 }
-            },
+            }
             Value::Array(arr) => {
                 for v in arr {
                     walk(v, out);
                 }
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
 
@@ -430,7 +430,7 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
             required: false,
             r#type: "string".to_string(),
             enum_values: ranges.clone(),
-            default_value: None,
+            default_value: Some(ranges[0].clone()),
             description: Some("Field to use for range-based pagination".to_string()),
         });
 
@@ -452,6 +452,26 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
             enum_values: vec![],
             default_value: None,
             description: Some("End value for range (inclusive)".to_string()),
+        });
+        
+        flags.push(CommandFlag {
+            name: "max".to_string(),
+            short_name: Some("m".to_string()),
+            required: false,
+            r#type: "number".to_string(),
+            enum_values: vec![],
+            default_value: Some("25".into()),
+            description: Some("Max number of items to retrieve".to_string()),
+        });
+
+        flags.push(CommandFlag {
+            name: "order".to_string(),
+            short_name: Some("e".to_string()),
+            required: false,
+            r#type: "enum".to_string(),
+            enum_values: vec!["asc".into(), "desc".into()],
+            default_value: Some("desc".into()),
+            description: Some("Sort order of the results".to_string()),
         });
     }
 

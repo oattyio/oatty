@@ -13,7 +13,7 @@ fn main() {
             // If schema missing in this environment, still generate an empty list
             write_output(&[]);
             return;
-        },
+        }
     };
 
     let value: serde_json::Value = match serde_json::from_str(&data) {
@@ -21,7 +21,7 @@ fn main() {
         Err(_) => {
             write_output(&[]);
             return;
-        },
+        }
     };
 
     let mut keys = BTreeSet::new();
@@ -95,13 +95,13 @@ fn collect_date_like_keys(v: &serde_json::Value, out: &mut BTreeSet<String>) {
                     collect_date_like_keys(val, out);
                 }
             }
-        },
+        }
         Array(arr) => {
             for item in arr {
                 collect_date_like_keys(item, out);
             }
-        },
-        _ => {},
+        }
+        _ => {}
     }
 }
 
@@ -140,7 +140,7 @@ fn has_date_indicator(v: &serde_json::Value) -> bool {
                 return has_date_indicator(val);
             }
             false
-        },
+        }
         _ => false,
     }
 }

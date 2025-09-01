@@ -52,7 +52,7 @@ fn darken_rgb(color: Color, factor: f32) -> Color {
             let dg = (g as f32 * f).round().clamp(0.0, 255.0) as u8;
             let db = (b as f32 * f).round().clamp(0.0, 255.0) as u8;
             Color::Rgb(dr, dg, db)
-        },
+        }
         other => other,
     }
 }
@@ -89,6 +89,7 @@ pub fn table_selected_style<T: Theme + ?Sized>(theme: &T) -> Style {
 }
 
 /// Build tabs with active/inactive styles.
+#[allow(dead_code)]
 pub fn tabs<'a, T: Theme + ?Sized>(theme: &T, titles: Vec<Span<'a>>, index: usize) -> Tabs<'a> {
     Tabs::new(titles)
         .select(index)
@@ -102,6 +103,7 @@ pub fn tabs<'a, T: Theme + ?Sized>(theme: &T, titles: Vec<Span<'a>>, index: usiz
 }
 
 /// Style for input fields; caller sets the block border based on focus.
+#[allow(dead_code)]
 pub fn input_style<T: Theme + ?Sized>(theme: &T, valid: bool, focused: bool) -> Style {
     let ThemeRoles {
         surface, text, error, ..
@@ -147,12 +149,14 @@ pub fn button_secondary_style<T: Theme + ?Sized>(theme: &T, enabled: bool) -> St
 }
 
 /// Badge/tag style (filled accent, readable text).
+#[allow(dead_code)]
 pub fn badge_style<T: Theme + ?Sized>(theme: &T) -> Style {
     let ThemeRoles { accent_secondary, .. } = theme.roles().clone();
     Style::default().bg(accent_secondary).fg(Color::Black)
 }
 
 /// Build a standard paragraph styled with primary text.
+#[allow(dead_code)]
 pub fn paragraph<'a, T: Theme + ?Sized>(theme: &T, text: impl Into<Span<'a>>) -> Paragraph<'a> {
     Paragraph::new(text.into()).style(theme.text_primary_style())
 }

@@ -62,7 +62,7 @@ pub fn interpolate_value(v: &Value, ctx: &ContextState) -> Value {
                 out.insert(k.clone(), interpolate_value(val, ctx));
             }
             Value::Object(out)
-        },
+        }
         _ => v.clone(),
     }
 }
@@ -116,7 +116,7 @@ fn resolve_expr(expr: &str, ctx: &ContextState) -> Option<String> {
             match cur {
                 Value::Object(map) => {
                     cur = map.get(p)?;
-                },
+                }
                 _ => return None,
             }
         }

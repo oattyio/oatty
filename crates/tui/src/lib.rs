@@ -13,7 +13,7 @@ use crossterm::{
 };
 use heroku_types::{CommandSpec, Field};
 use heroku_util::lex_shell_like;
-use rat_focus::{Focus as RatFocus, FocusBuilder, HasFocus};
+use rat_focus::FocusBuilder;
 use ratatui::{Terminal, prelude::*};
 use serde_json::{Map, Value};
 use tokio::{signal, sync::mpsc, task};
@@ -27,7 +27,7 @@ use crate::{
             component::Component,
             palette::{HintBarComponent, PaletteComponent},
         },
-        focus, main,
+        main,
     },
 };
 
@@ -70,14 +70,14 @@ pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
                             if ui_tx.send(UiEvent::Input(ev)).is_err() {
                                 break;
                             }
-                        },
+                        }
                         Err(_) => std::thread::sleep(Duration::from_millis(10)),
                     },
                     Ok(false) => {
                         if ui_tx.send(UiEvent::Animate).is_err() {
                             break;
                         }
-                    },
+                    }
                     Err(_) => std::thread::sleep(Duration::from_millis(10)),
                 }
             } else {
@@ -86,7 +86,7 @@ pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
                         if ui_tx.send(UiEvent::Input(ev)).is_err() {
                             break;
                         }
-                    },
+                    }
                     Err(_) => std::thread::sleep(Duration::from_millis(10)),
                 }
             }
@@ -399,10 +399,10 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<CommandSpec, String
                 }
             } else {
                 match user_flags.get(&flag.name) {
-                    Some(Some(v)) if !v.is_empty() => {},
+                    Some(Some(v)) if !v.is_empty() => {}
                     _ => {
                         return Err(format!("Missing required flag value: --{} <value>", flag.name));
-                    },
+                    }
                 }
             }
         }
@@ -425,8 +425,37 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<CommandSpec, String
     }
 
     let path = resolve_path(&spec.path, &pos_map);
-    // Persist ranges for pagination UI
+    // Persist ranges and last-execution context for pagination UI and replay
     app.last_command_ranges = Some(spec.ranges.clone());
+    app.last_spec = Some(spec.clone());
+    app.last_path = Some(path.clone());
+    app.last_body = Some(body.clone());
+    // Compute and persist initial Range header used (if any)
+    let init_field = body
+        .get("range-field")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let init_start = body.get("range-start").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let init_end = body.get("range-end").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let init_order = body
+        .get("order")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let init_max = body
+        .get("max")
+        .and_then(|v| v.as_str())
+        .and_then(|s| s.parse::<usize>().ok());
+    let initial_range = init_field.map(|field| {
+        let mut h = format!("{} {}..{}", field, init_start, init_end);
+        if let Some(ord) = init_order { h.push_str(&format!("; order={};", ord)); }
+        if let Some(m) = init_max { h.push_str(&format!("; max={};", m)); }
+        h
+    });
+    app.initial_range = initial_range.clone();
+    app.pagination_history.clear();
+    app.pagination_history.push(initial_range);
     // Live request: enqueue background HTTP execution via Cmd system
     run_cmds(app, vec![Cmd::ExecuteHttp(Box::new(spec.clone()), path, body)]);
     Ok(spec)

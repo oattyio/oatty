@@ -4,7 +4,7 @@
 //! including main layout, modals, components, and utilities.
 
 pub mod components;
-pub mod focus;
+
 pub mod layout;
 pub mod main;
 pub mod theme;

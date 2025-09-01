@@ -195,13 +195,13 @@ impl LogsComponent {
                     app.logs.cached_detail_index = Some(idx);
                     app.logs.cached_redacted_json = Some(Self::redact_json(j));
                 }
-            },
+            }
             _ => {
                 // Non-API entries or API without JSON show as text
                 app.logs.detail = Some(LogDetailView::Text);
                 app.logs.cached_detail_index = None;
                 app.logs.cached_redacted_json = None;
-            },
+            }
         }
     }
 
@@ -249,7 +249,7 @@ impl LogsComponent {
                     out.insert(k.clone(), Self::redact_json(val));
                 }
                 Value::Object(out)
-            },
+            }
             other => other.clone(),
         }
     }
@@ -427,7 +427,7 @@ impl Component for LogsComponent {
                     // Close detail modal
                     app.logs.detail = None;
                     return effects;
-                },
+                }
                 KeyCode::Up => {
                     // Scroll up in table detail view
                     if let LogDetailView::Table { offset } = detail {
@@ -436,7 +436,7 @@ impl Component for LogsComponent {
                         });
                     }
                     return effects;
-                },
+                }
                 KeyCode::Down => {
                     // Scroll down in table detail view
                     if let LogDetailView::Table { offset } = detail {
@@ -445,8 +445,8 @@ impl Component for LogsComponent {
                         });
                     }
                     return effects;
-                },
-                _ => {},
+                }
+                _ => {}
             }
         }
 
@@ -460,7 +460,7 @@ impl Component for LogsComponent {
                     // Move cursor up
                     self.move_cursor(app, -1);
                 }
-            },
+            }
             KeyCode::Down => {
                 if key.modifiers.contains(KeyModifiers::SHIFT) {
                     // Extend selection downward
@@ -469,24 +469,24 @@ impl Component for LogsComponent {
                     // Move cursor down
                     self.move_cursor(app, 1);
                 }
-            },
+            }
             KeyCode::Enter => {
                 // Open detail view for selected entry
                 self.choose_detail(app);
-            },
+            }
             KeyCode::Char('c') => {
                 // Copy selected content to clipboard
                 let text = self.build_copy_text(app);
                 effects.push(app::Effect::CopyLogsRequested(text));
-            },
+            }
             KeyCode::Char('v') => {
                 // Toggle JSON pretty-printing (API entries only)
                 if matches!(self.is_single_api(app), Some(LogEntry::Api { .. })) {
                     app.logs.pretty_json = !app.logs.pretty_json;
                 }
                 return effects;
-            },
-            _ => {},
+            }
+            _ => {}
         }
         effects
     }

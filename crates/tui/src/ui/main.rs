@@ -129,7 +129,7 @@ fn render_modals(
                     let dg = (g as f32 * f).round().clamp(0.0, 255.0) as u8;
                     let db = (b as f32 * f).round().clamp(0.0, 255.0) as u8;
                     Color::Rgb(dr, dg, db)
-                },
+                }
                 other => other,
             }
         }

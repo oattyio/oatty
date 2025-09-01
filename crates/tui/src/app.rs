@@ -11,7 +11,8 @@ use std::sync::{
 
 use heroku_registry::Registry;
 use heroku_types::{ExecOutcome, Screen};
-use rat_focus::{Focus as RatFocus, FocusBuilder, HasFocus};
+use rat_focus::FocusBuilder;
+use serde_json::{Map as JsonMap, Value as JsonValue};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
 use crate::{
@@ -24,7 +25,7 @@ use crate::{
             palette::{PaletteState, state::ValueProvider},
             table::TableState,
         },
-        focus, theme,
+        theme,
     },
 };
 
@@ -89,6 +90,16 @@ pub struct App<'a> {
     pub last_pagination: Option<heroku_types::Pagination>,
     /// Ranges supported by the last executed command (for pagination UI)
     pub last_command_ranges: Option<Vec<String>>,
+    /// Last executed CommandSpec (for pagination replays)
+    pub last_spec: Option<heroku_registry::CommandSpec>,
+    /// Last resolved path for the executed command
+    pub last_path: Option<String>,
+    /// Last request body used for the executed command
+    pub last_body: Option<JsonMap<String, JsonValue>>,
+    /// History of Range headers used per page request (None means no Range header)
+    pub pagination_history: Vec<Option<String>>,
+    /// Initial Range header used (if any)
+    pub initial_range: Option<String>,
 }
 
 impl<'a> App<'a> {
@@ -156,6 +167,12 @@ pub enum Effect {
     CopyCommandRequested,
     /// Request to copy the current logs selection (already rendered/redacted)
     CopyLogsRequested(String),
+    /// Request the next page using the Raw Next-Range header
+    NextPageRequested(String),
+    /// Request the previous page using the prior Range header, if any
+    PrevPageRequested,
+    /// Request the first page using the initial Range header (or none)
+    FirstPageRequested,
 }
 
 // Legacy MainFocus removed; focus is handled via ui::focus::FocusStore
@@ -197,6 +214,11 @@ impl App<'_> {
             active_exec_count: Arc::new(AtomicUsize::new(0)),
             last_pagination: None,
             last_command_ranges: None,
+            last_spec: None,
+            last_path: None,
+            last_body: None,
+            pagination_history: Vec::new(),
+            initial_range: None,
         };
         app.builder.set_all_commands(app.ctx.registry.commands.clone());
         app.palette.set_all_commands(app.ctx.registry.commands.clone());
@@ -238,10 +260,10 @@ impl App<'_> {
                 if self.executing {
                     self.throbber_idx = (self.throbber_idx + 1) % 10;
                 }
-            },
+            }
             Msg::Resize(..) => {
                 // No-op for now; placeholder to enable TEA-style event
-            },
+            }
             Msg::ToggleHelp => {
                 let spec = if self.builder.is_visible() {
                     self.builder.selected_command()
@@ -249,18 +271,18 @@ impl App<'_> {
                     self.palette.selected_command()
                 };
                 self.help.toggle_visibility(spec.cloned());
-            },
+            }
             Msg::ToggleTable => {
                 self.table.toggle_show();
-            },
+            }
             Msg::ToggleBuilder => {
                 self.builder.toggle_visibility();
-            },
+            }
             Msg::CloseModal => {
                 self.help.set_visibility(false);
                 self.table.apply_visible(false);
                 self.builder.apply_visibility(false);
-            },
+            }
             Msg::Run => {
                 // always execute from palette
                 if !self.palette.is_input_empty() {
@@ -273,16 +295,16 @@ impl App<'_> {
                                 level: Some("info".into()),
                                 msg: format!("Running: {}", input),
                             });
-                        },
+                        }
                         Err(e) => {
                             self.palette.apply_error(e);
-                        },
+                        }
                     }
                 }
-            },
+            }
             Msg::CopyCommand => {
                 effects.push(Effect::CopyCommandRequested);
-            },
+            }
             Msg::ExecCompleted(out) => {
                 let raw = out.log;
                 // Keep executing=true if other executions are still active
@@ -309,10 +331,10 @@ impl App<'_> {
                 self.last_pagination = out.pagination;
                 // Clear palette input and suggestion state
                 self.palette.reduce_clear_all();
-            },
+            }
             // Placeholder handlers for upcoming logs features
-            Msg::LogsUp | Msg::LogsDown | Msg::LogsExtendUp | Msg::LogsExtendDown => {},
-            Msg::LogsOpenDetail | Msg::LogsCloseDetail | Msg::LogsCopy | Msg::LogsTogglePretty => {},
+            Msg::LogsUp | Msg::LogsDown | Msg::LogsExtendUp | Msg::LogsExtendDown => {}
+            Msg::LogsOpenDetail | Msg::LogsCloseDetail | Msg::LogsCopy | Msg::LogsTogglePretty => {}
         }
         effects
     }

@@ -74,7 +74,7 @@ pub fn infer_columns(arr: &[Value]) -> Vec<String> {
                     Value::Array(a) => s -= (a.len() as i32).min(3) + 3,
                     Value::Object(_) => s -= 5,
                     Value::String(sv) if sv.len() > 80 => s -= 3,
-                    _ => {},
+                    _ => {}
                 }
                 *score.entry(header.clone()).or_insert(0) += s;
             }
@@ -274,7 +274,7 @@ pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize) -> Vec
                     } else {
                         s.clone()
                     }
-                },
+                }
                 Some(Value::Number(n)) => n.to_string(),
                 Some(Value::Bool(b)) => b.to_string(),
                 Some(Value::Null) => "null".to_string(),
@@ -287,7 +287,7 @@ pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize) -> Vec
                     } else {
                         "".to_string()
                     }
-                },
+                }
                 Some(other) => other.to_string(),
                 None => String::new(),
             };
@@ -316,7 +316,7 @@ pub fn render_value(key: &str, value: &Value) -> String {
             } else {
                 s.clone()
             }
-        },
+        }
         Value::Number(n) => n.to_string(),
         Value::Bool(b) => b.to_string(),
         Value::Null => "null".to_string(),
@@ -332,7 +332,7 @@ pub fn render_value(key: &str, value: &Value) -> String {
             } else {
                 value.to_string()
             }
-        },
+        }
         _ => value.to_string(),
     }
 }

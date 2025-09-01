@@ -6,7 +6,6 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use heroku_types::Field;
-use rat_focus::{FocusBuilder, HasFocus};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -19,7 +18,6 @@ use crate::{
     app,
     ui::{
         components::{builder::layout::BuilderLayout, component::Component},
-        focus,
         theme::helpers as th,
         utils::IfEmptyStr,
     },
@@ -118,7 +116,7 @@ impl BuilderComponent {
         match key.code {
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
                 app.builder.search_input_push(c);
-            },
+            }
             KeyCode::Backspace => app.builder.search_input_pop(),
             KeyCode::Esc => app.builder.search_input_clear(),
             KeyCode::Tab | KeyCode::BackTab => {
@@ -128,7 +126,7 @@ impl BuilderComponent {
                 } else {
                     focus_ring.prev();
                 };
-            },
+            }
             KeyCode::Down => app.builder.move_selection(1),
             KeyCode::Up => app.builder.move_selection(-1),
             KeyCode::Enter => {
@@ -137,8 +135,8 @@ impl BuilderComponent {
                 app.builder.inputs_flag.set(true);
                 app.builder.search_flag.set(false);
                 app.builder.commands_flag.set(false);
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
 
@@ -154,7 +152,7 @@ impl BuilderComponent {
                 app.builder.inputs_flag.set(true);
                 app.builder.search_flag.set(false);
                 app.builder.commands_flag.set(false);
-            },
+            }
             KeyCode::Tab | KeyCode::BackTab => {
                 let f = app.builder.focus_ring();
                 if key.code == KeyCode::Tab {
@@ -162,8 +160,8 @@ impl BuilderComponent {
                 } else {
                     let _ = f.prev();
                 }
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
 
@@ -179,7 +177,7 @@ impl BuilderComponent {
                 } else {
                     let _ = f.prev();
                 }
-            },
+            }
             KeyCode::Up => app.builder.reduce_move_field_up(app.ctx.debug_enabled),
             KeyCode::Down => app.builder.reduce_move_field_down(app.ctx.debug_enabled),
             // Note: Enter in builder is handled at the top-level input loop to
@@ -190,8 +188,8 @@ impl BuilderComponent {
             KeyCode::Char(' ') => app.builder.reduce_toggle_boolean_field(),
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
                 app.builder.reduce_add_char_to_field(c);
-            },
-            _ => {},
+            }
+            _ => {}
         }
     }
 }
@@ -424,7 +422,7 @@ impl BuilderComponent {
                     format!("{} {}", group, rest)
                 };
                 format!("Inputs: {}", title)
-            },
+            }
             None => "Inputs".into(),
         }
     }

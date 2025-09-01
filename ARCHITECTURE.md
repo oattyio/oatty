@@ -15,6 +15,10 @@
 
 - **TUI Layer:** Guided/Power modes, autocomplete surfaces provider results, focus management for forms/tables, theming from `plans/THEME.md`, accessibility + UX patterns from `plans/FOCUS_MANAGEMENT.md` and `plans/UX_GUIDELINES.md`.
 
+## Focus Management
+
+See plans/FOCUS_MANAGEMENT.md for details on the rat-focus model (flags, local focus rings, and traversal rules). It documents the root ring (palette/logs), builder rings, and the table ↔ pagination navigation flow (Grid ↔ First ↔ Prev ↔ Next ↔ Last buttons). 
+
 - **API & Security:** `reqwest` + TLS; auth via `HEROKU_API_KEY`. Redaction patterns (`token`, `password`, `secret`, etc.) applied to logs. Caching uses TTL; defaults configurable in the registry.
 
 - **Example:** `enterprise-accounts members:create` maps `enterprise_account` → `enterprise:accounts`, `--user` → `accounts:lookup`, `--permissions` → `enterprise:permissions` with `enterprise_account` templated into the provider args.

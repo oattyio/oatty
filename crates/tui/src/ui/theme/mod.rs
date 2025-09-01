@@ -24,11 +24,11 @@ pub fn load_from_env() -> Box<dyn Theme> {
     match std::env::var("TUI_THEME").ok().as_deref() {
         Some("dracula_hc") | Some("dracula-high-contrast") | Some("dracula-hc") | Some("draculahc") => {
             Box::new(DraculaThemeHighContrast::new())
-        },
+        }
         Some("dracula") => Box::new(DraculaTheme::new()),
         Some("nord_hc") | Some("nord-high-contrast") | Some("nord-hc") | Some("nordhc") => {
             Box::new(NordThemeHighContrast::new())
-        },
+        }
         Some("nord") => Box::new(NordTheme::new()),
         _ => Box::new(DraculaTheme::new()),
     }

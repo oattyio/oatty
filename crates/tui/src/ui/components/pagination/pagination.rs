@@ -17,154 +17,134 @@ use crate::ui::{
 
 /// Pagination component for range-based navigation and controls.
 ///
-/// This component provides:
+/// This component provides a comprehensive pagination interface with:
 /// - Range field selection using a List widget
-/// - Range start/end input fields
-/// - Navigation controls (prev/next/first/last)
+/// - Range start/end input fields for filtering
+/// - Navigation controls (first/prev/next/last)
 /// - Page information display
 /// - Integration with the existing theme system
+/// - Keyboard navigation and focus management
+///
+/// The component supports both traditional page-based pagination and
+/// range-based pagination for API endpoints that support cursor-based
+/// navigation.
 #[derive(Default)]
 pub struct PaginationComponent {
+    /// Internal state managing pagination data and UI state
     state: PaginationState,
 }
 
 impl PaginationComponent {
-    /// Creates a new pagination component
-    pub fn new() -> Self {
-        Self {
-            state: PaginationState::new(),
-        }
-    }
-
-    /// Gets a mutable reference to the pagination state
-    pub fn state_mut(&mut self) -> &mut PaginationState {
-        &mut self.state
-    }
-
-    /// Gets a reference to the pagination state
+    /// Gets a reference to the pagination state.
+    ///
+    /// Returns a reference to the internal state that can be used to
+    /// query current pagination information.
     pub fn state(&self) -> &PaginationState {
         &self.state
     }
 
-    /// Sets the available range fields for the current command
+    /// Sets the pagination configuration from a Pagination object.
+    ///
+    /// This method updates the component's state with pagination data
+    /// from the API response, including range fields, current values,
+    /// and navigation metadata.
+    ///
+    /// # Arguments
+    /// * `pagination` - The pagination data from the API response
     pub fn set_pagination(&mut self, pagination: Pagination) {
         self.state.set_pagination(pagination);
     }
 
-    /// Sets the available range fields list
-    pub fn set_available_ranges(&mut self, ranges: Vec<String>) {
-        self.state.set_available_ranges(ranges);
-    }
+    // Removed: interactive range fields; no longer configurable by user
 
-    /// Shows the pagination controls
+    /// Shows the pagination controls.
+    ///
+    /// Makes the pagination component visible in the UI.
     pub fn show(&mut self) {
         self.state.is_visible = true;
     }
 
-    /// Hides the pagination controls
+    /// Hides the pagination controls.
+    ///
+    /// Makes the pagination component invisible in the UI.
     pub fn hide(&mut self) {
         self.state.is_visible = false;
     }
 
-    /// Renders the pagination controls (uses app focus to style focused parts)
-    pub fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
-        if !self.state.is_visible {
-            return;
+    /// Ensure focus is not set on disabled nav buttons.
+    pub fn normalize_focus(&mut self) {
+        let prev_enabled = self.state.has_prev_page();
+        let next_enabled = self.state.has_next_page();
+        if self.state.nav_first_f.get() && !prev_enabled {
+            self.state.nav_first_f.set(false);
         }
-
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Range controls
-                Constraint::Length(1), // Divider
-                Constraint::Length(3), // Navigation controls
-            ])
-            .split(area);
-
-        self.render_range_controls(frame, chunks[0], app);
-        self.render_divider(frame, chunks[1], &*app.ctx.theme);
-        self.render_navigation_controls(frame, chunks[2], app);
+        if self.state.nav_prev_f.get() && !prev_enabled {
+            self.state.nav_prev_f.set(false);
+        }
+        if self.state.nav_next_f.get() && !next_enabled {
+            self.state.nav_next_f.set(false);
+        }
+        if self.state.nav_last_f.get() && !next_enabled {
+            self.state.nav_last_f.set(false);
+        }
     }
 
-    /// Renders the range field selection and input controls
+    /// Renders the range display (read-only) values.
+    ///
+    /// Shows the current range field and start/end values as display-only
+    /// widgets without any interactive input.
     fn render_range_controls(&mut self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
         if !self.state.range_mode {
             return;
         }
+
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([
-                Constraint::Length(15), // Range field list
+                Constraint::Length(25), // Field
                 Constraint::Length(1),  // Spacer
-                Constraint::Length(20), // Range start input
+                Constraint::Length(25), // Start
                 Constraint::Length(1),  // Spacer
-                Constraint::Length(20), // Range end input
+                Constraint::Length(25), // End
             ])
             .split(area);
 
-        // Range field selection list
-        self.render_range_field_list(frame, chunks[0], app);
-
         let theme = &*app.ctx.theme;
-
-        // Range start input
-        self.render_range_input(
-            frame,
-            chunks[2],
-            "Start",
-            &self.state.range_start,
-            self.state.range_start_f.get(),
-            theme,
-        );
-
-        // Range end input
-        self.render_range_input(
-            frame,
-            chunks[4],
-            "End",
-            &self.state.range_end,
-            self.state.range_end_f.get(),
-            theme,
-        );
-    }
-
-    /// Renders the range field selection list
-    fn render_range_field_list(&mut self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
-        let theme = &*app.ctx.theme;
-        let title = "Range Field";
-        let title_style = if self.state.range_field_f.get() {
-            theme.accent_emphasis_style()
-        } else {
-            theme.text_secondary_style()
-        };
-
-        let items: Vec<ListItem> = self
-            .state
-            .available_ranges
-            .iter()
-            .map(|field| {
-                let style = if self.state.selected_range_field.as_ref() == Some(field) {
-                    theme.selection_style()
-                } else {
-                    theme.text_primary_style()
-                };
-                ListItem::new(field.clone()).style(style)
-            })
-            .collect();
-
-        let list = List::new(items)
+        // Field (display-only)
+        let field_label = "Field";
+        let field = Paragraph::new(self.state.field.as_str())
             .block(
                 Block::default()
-                    .title(Line::from(vec![Span::styled(title, title_style)]))
+                    .title(Line::from(vec![Span::styled(
+                        field_label,
+                        theme.text_secondary_style(),
+                    )]))
                     .borders(Borders::ALL)
-                    .border_style(theme.border_style(self.state.range_field_f.get())),
+                    .border_style(theme.border_style(false)),
             )
             .style(theme.text_primary_style());
+        frame.render_widget(field, chunks[0]);
 
-        frame.render_stateful_widget(list, area, &mut self.state.range_field_list_state);
+        // Start (display-only)
+        self.render_range_input(frame, chunks[2], "Start", &self.state.range_start, false, theme);
+        // End (display-only)
+        self.render_range_input(frame, chunks[4], "End", &self.state.range_end, false, theme);
     }
 
-    /// Renders a range input field
+    // Removed: interactive range field selection list (now display-only)
+
+    /// Renders a range input field with label and value.
+    ///
+    /// Creates a bordered input field showing the current range value
+    /// with proper focus styling.
+    ///
+    /// # Arguments
+    /// * `frame` - The ratatui frame to render into
+    /// * `area` - The rectangular area to render within
+    /// * `label` - The label to display above the input field
+    /// * `value` - The current value to display in the input field
+    /// * `focused` - Whether this input field currently has focus
+    /// * `theme` - The theme to use for styling
     fn render_range_input(
         &self,
         frame: &mut Frame,
@@ -192,7 +172,15 @@ impl PaginationComponent {
         frame.render_widget(input, area);
     }
 
-    /// Renders a divider line
+    /// Renders a horizontal divider line.
+    ///
+    /// Creates a simple horizontal line using the muted text style
+    /// to separate different sections of the pagination interface.
+    ///
+    /// # Arguments
+    /// * `frame` - The ratatui frame to render into
+    /// * `area` - The rectangular area to render within
+    /// * `theme` - The theme to use for styling
     fn render_divider(&self, frame: &mut Frame, area: Rect, theme: &dyn UiTheme) {
         let divider = Line::from(vec![Span::styled(
             "─".repeat(area.width as usize),
@@ -202,7 +190,18 @@ impl PaginationComponent {
         frame.render_widget(paragraph, area);
     }
 
-    /// Renders the navigation controls
+    /// Renders the navigation controls with page information.
+    ///
+    /// Creates the bottom navigation bar with:
+    /// - First/Previous/Next/Last navigation buttons
+    /// - Current page information display
+    /// - Range information when in range mode
+    /// - Proper button styling based on availability and focus state
+    ///
+    /// # Arguments
+    /// * `frame` - The ratatui frame to render into
+    /// * `area` - The rectangular area to render within
+    /// * `app` - The application state for theme and focus information
     fn render_navigation_controls(&self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
         let theme = &*app.ctx.theme;
         let chunks = Layout::default()
@@ -226,7 +225,7 @@ impl PaginationComponent {
             chunks[0],
             "First",
             self.state.has_prev_page(),
-            self.state.nav_f.get(),
+            self.state.nav_first_f.get(),
             theme,
         );
 
@@ -236,11 +235,43 @@ impl PaginationComponent {
             chunks[2],
             "Prev",
             self.state.has_prev_page(),
-            self.state.nav_f.get(),
+            self.state.nav_prev_f.get(),
             theme,
         );
 
         // Page info
+        self.render_page_info(frame, chunks[4], theme);
+
+        // Next page button
+        self.render_nav_button(
+            frame,
+            chunks[6],
+            "Next",
+            self.state.has_next_page(),
+            self.state.nav_next_f.get(),
+            theme,
+        );
+
+        // Last page button
+        self.render_nav_button(
+            frame,
+            chunks[8],
+            "Last",
+            self.state.has_next_page(),
+            self.state.nav_last_f.get(),
+            theme,
+        );
+    }
+
+    /// Renders the page information display.
+    ///
+    /// Shows current page information and range details when applicable.
+    ///
+    /// # Arguments
+    /// * `frame` - The ratatui frame to render into
+    /// * `area` - The rectangular area to render within
+    /// * `theme` - The theme to use for styling
+    fn render_page_info(&self, frame: &mut Frame, area: Rect, theme: &dyn UiTheme) {
         let page_info = self.state.page_info();
         let range_info = if self.state.range_mode {
             format!(" | {}", self.state.range_info())
@@ -252,30 +283,21 @@ impl PaginationComponent {
         let info_paragraph = Paragraph::new(info_text)
             .style(theme.text_secondary_style())
             .alignment(Alignment::Center);
-        frame.render_widget(info_paragraph, chunks[4]);
-
-        // Next page button
-        self.render_nav_button(
-            frame,
-            chunks[6],
-            "Next",
-            self.state.has_next_page(),
-            self.state.nav_f.get(),
-            theme,
-        );
-
-        // Last page button
-        self.render_nav_button(
-            frame,
-            chunks[8],
-            "Last",
-            self.state.has_next_page(),
-            self.state.nav_f.get(),
-            theme,
-        );
+        frame.render_widget(info_paragraph, area);
     }
 
-    /// Renders a navigation button
+    /// Renders a navigation button with proper styling.
+    ///
+    /// Creates a bordered button with appropriate styling based on
+    /// whether it's enabled, focused, or disabled.
+    ///
+    /// # Arguments
+    /// * `frame` - The ratatui frame to render into
+    /// * `area` - The rectangular area to render within
+    /// * `label` - The text to display on the button
+    /// * `enabled` - Whether the button should be enabled
+    /// * `focused` - Whether the button currently has focus
+    /// * `theme` - The theme to use for styling
     fn render_nav_button(
         &self,
         frame: &mut Frame,
@@ -286,114 +308,174 @@ impl PaginationComponent {
         theme: &dyn UiTheme,
     ) {
         let button_style = if enabled {
-            if focused {
-                th::button_primary_style(theme, true)
-            } else {
-                th::button_secondary_style(theme, true)
-            }
+            // Keep size stable on focus by avoiding bold; rely on border color
+            // for focus indication.
+            th::button_secondary_style(theme, true)
         } else {
-            th::button_secondary_style(theme, false)
+            // Stronger disabled styling: muted text + dim
+            theme
+                .text_muted_style()
+                .add_modifier(Modifier::DIM)
+        };
+
+        let border_style = if enabled {
+            theme.border_style(focused)
+        } else {
+            // Muted border for disabled state
+            theme.text_muted_style()
         };
 
         let button = Paragraph::new(label)
-            .block(Block::default().borders(Borders::ALL))
+            .block(Block::default().borders(Borders::ALL).border_style(border_style))
             .style(button_style)
             .alignment(Alignment::Center);
 
         frame.render_widget(button, area);
     }
+
+    /// Handles focus navigation between pagination controls.
+    ///
+    /// Manages tab navigation between the different focusable elements
+    /// in the pagination component.
+    ///
+    /// # Arguments
+    /// * `event` - The key event that triggered the focus change
+    /// * `forward` - Whether to move focus forward (true) or backward (false)
+    // Removed: focus navigation handled by table-level ring across grid and nav buttons
+
+    // Removed: interactive range field navigation (no longer applicable)
+
+    /// Handles navigation button actions.
+    ///
+    /// Processes left/right arrow keys and home/end keys for
+    /// page navigation when the navigation area has focus.
+    ///
+    /// # Arguments
+    /// * `event` - The key event that triggered the navigation
+    fn handle_navigation_actions(&mut self, event: &KeyEvent) -> Option<crate::app::Effect> {
+        match event.code {
+            KeyCode::Left => {
+                if self.state.has_prev_page() {
+                    self.state.prev_page();
+                    Some(crate::app::Effect::PrevPageRequested)
+                } else {
+                    None
+                }
+            }
+            KeyCode::Right | KeyCode::End => {
+                // Use Raw Next-Range header to request the next page when available
+                if self.state.has_next_page() {
+                    self.state
+                        .next_range
+                        .clone()
+                        .map(|next_range| {
+                            self.state.current_page = self.state.current_page.saturating_add(1);
+                            crate::app::Effect::NextPageRequested(next_range)
+                        })
+                } else {
+                    None
+                }
+                
+            }
+            KeyCode::Home => {
+                if self.state.has_prev_page() {
+                    self.state.first_page();
+                    Some(crate::app::Effect::FirstPageRequested)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    // Removed: text input handling for range values (now display-only)
 }
 
 impl Component for PaginationComponent {
-    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut crate::app::App) {
-        self.render(frame, rect, app);
+    /// Renders the pagination controls using the app's focus system for styling.
+    ///
+    /// This method renders the complete pagination interface including:
+    /// - Range controls (field selection and input fields)
+    /// - Visual divider
+    /// - Navigation controls with page information
+    ///
+    /// The rendering uses the app's focus system to style focused elements
+    /// appropriately based on the current focus state.
+    ///
+    /// # Arguments
+    /// * `frame` - The ratatui frame to render into
+    /// * `area` - The rectangular area to render within
+    /// * `app` - The application state for theme and focus information
+    fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
+        if !self.state.is_visible {
+            return;
+        }
+
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Range display
+                Constraint::Length(1), // Divider
+                Constraint::Length(3), // Navigation controls
+            ])
+            .split(area);
+
+        self.render_range_controls(frame, chunks[0], app);
+        self.render_divider(frame, chunks[1], &*app.ctx.theme);
+        self.render_navigation_controls(frame, chunks[2], app);
     }
 
-    fn handle_key_events(&mut self, app: &mut crate::app::App, event: KeyEvent) -> Vec<crate::app::Effect> {
+    /// Handles keyboard events for the pagination component.
+    ///
+    /// Processes keyboard input to manage:
+    /// - Focus navigation between controls
+    /// - Range field list navigation
+    /// - Navigation button actions
+    /// - Text input for range values
+    ///
+    /// # Arguments
+    /// * `_app` - The application state (unused in current implementation)
+    /// * `event` - The keyboard event to process
+    ///
+    /// # Returns
+    /// Vector of effects to be processed by the application
+    fn handle_key_events(&mut self, _app: &mut crate::app::App, event: KeyEvent) -> Vec<crate::app::Effect> {
         if !self.state.is_visible {
             return vec![];
         }
 
         match event.code {
-            KeyCode::Tab | KeyCode::BackTab => {
-                let mut b = FocusBuilder::new(None);
-                b.widget(&PanelLeaf(self.state.range_field_f.clone()));
-                b.widget(&PanelLeaf(self.state.range_start_f.clone()));
-                b.widget(&PanelLeaf(self.state.range_end_f.clone()));
-                b.widget(&PanelLeaf(self.state.nav_f.clone()));
-                let f = b.build();
-                if event.code == KeyCode::Tab {
-                    let _ = f.next();
-                } else {
-                    let _ = f.prev();
-                }
-            },
-            KeyCode::Up | KeyCode::Down => {
-                if self.state.range_field_f.get() {
-                    // Handle range field list navigation
-                    let current_index = self.state.selected_range_field_index().unwrap_or(0);
-                    let new_index = match event.code {
-                        KeyCode::Up => current_index.saturating_sub(1),
-                        KeyCode::Down => (current_index + 1).min(self.state.available_ranges.len().saturating_sub(1)),
-                        _ => current_index,
-                    };
-                    self.state.set_selected_range_field_index(new_index);
-                    self.state.range_field_list_state.select(Some(new_index));
-                }
-            },
-            KeyCode::Left | KeyCode::Right => {
-                if self.state.nav_f.get() {
-                    // Handle navigation button selection (could be extended for button
-                    // highlighting)
-                    match event.code {
-                        KeyCode::Left => self.state.prev_page(),
-                        KeyCode::Right => self.state.next_page(),
-                        _ => {},
+            KeyCode::Tab | KeyCode::BackTab => { /* Tab handled at table level */ }
+            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
+                if self.state.nav_first_f.get() || self.state.nav_prev_f.get() || self.state.nav_next_f.get() || self.state.nav_last_f.get() {
+                    if let Some(effect) = self.handle_navigation_actions(&event) {
+                        return vec![effect];
                     }
                 }
-            },
-            KeyCode::Home => {
-                if self.state.nav_f.get() {
+            }
+            KeyCode::Enter => {
+                // Activate the focused nav button
+                if self.state.nav_first_f.get() && self.state.has_prev_page() {
                     self.state.first_page();
+                    return vec![crate::app::Effect::FirstPageRequested];
                 }
-            },
-            KeyCode::End => {
-                if self.state.nav_f.get() {
-                    self.state.last_page();
+                if self.state.nav_prev_f.get() && self.state.has_prev_page() {
+                    self.state.prev_page();
+                    return vec![crate::app::Effect::PrevPageRequested];
                 }
-            },
-            KeyCode::Char(ch) => {
-                // Handle text input for range values
-                if self.state.range_start_f.get() {
-                    self.state.range_start.push(ch);
-                } else if self.state.range_end_f.get() {
-                    self.state.range_end.push(ch);
+                if (self.state.nav_next_f.get() || self.state.nav_last_f.get())
+                    && self.state.has_next_page()
+                {
+                    if let Some(next_range) = self.state.next_range.clone() {
+                        self.state.current_page = self.state.current_page.saturating_add(1);
+                        return vec![crate::app::Effect::NextPageRequested(next_range)];
+                    }
                 }
-            },
-            KeyCode::Backspace => {
-                // Handle backspace for range values
-                if self.state.range_start_f.get() {
-                    self.state.range_start.pop();
-                } else if self.state.range_end_f.get() {
-                    self.state.range_end.pop();
-                }
-            },
-            _ => {},
+            }
+            _ => {}
         }
-        vec![]
-    }
-}
 
-// Local leaf wrapper used for pagination focus items
-struct PanelLeaf(FocusFlag);
-impl HasFocus for PanelLeaf {
-    fn build(&self, builder: &mut FocusBuilder) {
-        builder.leaf_widget(self);
-    }
-    fn focus(&self) -> FocusFlag {
-        self.0.clone()
-    }
-    fn area(&self) -> ratatui::layout::Rect {
-        ratatui::layout::Rect::default()
+        vec![]
     }
 }
