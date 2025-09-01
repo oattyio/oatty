@@ -277,6 +277,9 @@ impl App<'_> {
             }
             Msg::ToggleBuilder => {
                 self.builder.toggle_visibility();
+                if self.builder.is_visible() {
+                    self.builder.normalize_focus();
+                }
             }
             Msg::CloseModal => {
                 self.help.set_visibility(false);

@@ -104,6 +104,13 @@ pub struct PaletteState {
     suggestions: Vec<SuggestionItem>,
     /// Optional error message to display
     error_message: Option<String>,
+
+    /// History of executed palette inputs (most recent last)
+    history: Vec<String>,
+    /// Current index into history when browsing (0..history.len()-1), None when not browsing
+    history_index: Option<usize>,
+    /// Draft input captured when entering history browse mode, restored when exiting
+    draft_input: Option<String>,
 }
 
 impl PaletteState {
@@ -222,6 +229,9 @@ impl PaletteState {
         self.error_message = None;
         self.ghost_text = None;
         self.suggestion_index = 0;
+        // Preserve history; exit browsing mode
+        self.history_index = None;
+        self.draft_input = None;
     }
 
     /// Apply an error message to the palette
@@ -328,6 +338,7 @@ impl PaletteState {
         self.input.push(' ');
         self.cursor_position = self.input.len();
     }
+
     /// Move the cursor one character to the left.
     ///
     /// This method handles UTF-8 character boundaries correctly,
@@ -380,6 +391,11 @@ impl PaletteState {
     ///
     /// Returns: nothing; mutates `self.input` and `self.cursor`.
     pub fn apply_insert_char(&mut self, c: char) {
+        // Editing cancels history browsing
+        if self.history_index.is_some() {
+            self.history_index = None;
+            self.draft_input = None;
+        }
         self.input.insert(self.cursor_position, c);
         self.cursor_position += c.len_utf8();
     }
@@ -395,6 +411,11 @@ impl PaletteState {
     ///
     /// Returns: nothing; mutates `self.input` and `self.cursor`.
     pub fn reduce_backspace(&mut self) {
+        // Editing cancels history browsing
+        if self.history_index.is_some() {
+            self.history_index = None;
+            self.draft_input = None;
+        }
         if self.cursor_position == 0 {
             return;
         }
@@ -427,6 +448,83 @@ impl PaletteState {
             .get(self.suggestion_index)
             .map(|top| ghost_remainder(&self.input, self.cursor_position, &top.insert_text));
     }
+
+    // ===== HISTORY =====
+    /// Append the given input to history, trimming and deduping adjacent entries.
+    pub fn push_history_if_needed(&mut self, s: &str) {
+        let value = s.trim();
+        if value.is_empty() {
+            return;
+        }
+        if self.history.last().map(|h| h.as_str()) == Some(value) {
+            return;
+        }
+        self.history.push(value.to_string());
+        const HISTORY_CAP: usize = 200;
+        if self.history.len() > HISTORY_CAP {
+            let overflow = self.history.len() - HISTORY_CAP;
+            self.history.drain(0..overflow);
+        }
+    }
+
+    /// Move up in history: enter browsing on first Up.
+    pub fn history_up(&mut self) -> bool {
+        if self.is_suggestions_open {
+            return false;
+        }
+        if self.history.is_empty() {
+            return false;
+        }
+        match self.history_index {
+            None => {
+                self.draft_input = Some(self.input.clone());
+                let idx = self.history.len() - 1;
+                self.history_index = Some(idx);
+                self.input = self.history[idx].clone();
+                self.cursor_position = self.input.len();
+                self.is_suggestions_open = false;
+                true
+            }
+            Some(0) => false,
+            Some(i) => {
+                let ni = i - 1;
+                self.history_index = Some(ni);
+                self.input = self.history[ni].clone();
+                self.cursor_position = self.input.len();
+                self.is_suggestions_open = false;
+                true
+            }
+        }
+    }
+
+    /// Move down in history; on past-last, restore draft and exit browsing.
+    pub fn history_down(&mut self) -> bool {
+        if self.is_suggestions_open {
+            return false;
+        }
+        match self.history_index {
+            None => false,
+            Some(i) => {
+                if i + 1 < self.history.len() {
+                    let ni = i + 1;
+                    self.history_index = Some(ni);
+                    self.input = self.history[ni].clone();
+                    self.cursor_position = self.input.len();
+                    self.is_suggestions_open = false;
+                    true
+                } else {
+                    if let Some(draft) = self.draft_input.take() {
+                        self.input = draft;
+                        self.cursor_position = self.input.len();
+                    }
+                    self.history_index = None;
+                    self.is_suggestions_open = false;
+                    true
+                }
+            }
+        }
+    }
+
     /// Accept a positional suggestion/value: fill the next positional slot
     /// after "group sub". If the last existing positional is a placeholder
     /// like "<app>", replace it; otherwise append before any flags.
@@ -461,6 +559,7 @@ impl PaletteState {
         self.input = out.join(" ") + " ";
         self.cursor_position = self.input.len();
     }
+
     /// Accept a command suggestion by replacing the input with the execution
     /// form (e.g., "group sub") followed by a trailing space, and moving
     /// the cursor to the end.
@@ -491,18 +590,18 @@ impl PaletteState {
     /// - If cursor is at a new token position (ends with space), insert
     ///   suggestion + trailing space.
     /// - If current token starts with '-' or previous token is a flag expecting
-    ///   a value → replace token.
+    ///   a value or the current token is a partial flag starter ('-' or '--') → replace token.
     /// - Otherwise (we're on the command tokens or a positional token) → append
     ///   suggestion separated by space.
     pub fn apply_accept_non_command_suggestion(&mut self, text: &str) {
         let at_new_token = self.input.ends_with(' ');
-        let toks = lex_shell_like_ranged(&self.input);
+        let tokens = lex_shell_like_ranged(&self.input);
 
         // New token position or empty input: just insert suggestion, but clean up stray
         // '-'/'--'.
-        if at_new_token || toks.is_empty() {
-            // Avoid borrowing across mutation by computing range first
-            let remove_from: Option<usize> = toks
+        if at_new_token || tokens.is_empty() {
+            // Clean up stray '-' or '--' if present
+            let remove_from: Option<usize> = tokens
                 .last()
                 .and_then(|t| (t.text == "-" || t.text == "--").then_some(t.start));
             if let Some(start) = remove_from {
@@ -514,12 +613,12 @@ impl PaletteState {
         }
 
         // Identify the token under the cursor and its predecessor (if any)
-        let token_index = token_index_at_cursor(&self.input, self.cursor_position).unwrap_or(toks.len() - 1);
-        let (start, end) = (toks[token_index].start, toks[token_index].end);
+        let token_index = token_index_at_cursor(&self.input, self.cursor_position).unwrap_or(tokens.len() - 1);
+        let (start, end) = (tokens[token_index].start, tokens[token_index].end);
         let current_token = self.input[start..end].to_string();
         let prev_token: Option<String> = token_index
             .checked_sub(1)
-            .map(|i| (toks[i].start, toks[i].end))
+            .map(|i| (tokens[i].start, tokens[i].end))
             .map(|(s, e)| self.input[s..e].to_string());
 
         let prev_is_flag = prev_token.map(|t| t.starts_with("--")).unwrap_or(false);
@@ -546,6 +645,7 @@ impl PaletteState {
             self.insert_with_space(text);
         }
     }
+
     /// Build suggestions based on input, registry, and value providers.
     ///
     /// Precedence:
@@ -608,7 +708,7 @@ impl PaletteState {
         let (user_flags, user_args) = parse_user_flags_args(&spec, parts);
         let current = parts.last().map(|s| s.as_str()).unwrap_or("");
 
-        // Determine if expecting a flag value (last used flag without value)
+        // Determine if if expecting a flag value (last used flag without value)
         let pending_flag = find_pending_flag(&spec, parts, input);
 
         // Determine if current editing token looks like a flag
@@ -665,6 +765,7 @@ impl PaletteState {
             self.finalize_suggestions(&mut items);
         }
     }
+
     /// Suggest an end-of-line hint for starting flags when any remain.
     fn eol_flag_hint(&mut self, spec: &CommandSpec, user_flags: &[String]) -> Option<SuggestionItem> {
         let total_flags = spec.flags.len();
@@ -696,6 +797,7 @@ impl HasFocus for PaletteState {
         Rect::default()
     }
 }
+
 /// Trait for providing dynamic values for command suggestions.
 ///
 /// This trait allows external systems to provide dynamic values
@@ -958,7 +1060,7 @@ fn required_flags_remaining(spec: &CommandSpec, user_flags: &[String]) -> bool {
 /// - If no flag token is found when scanning backward, it is complete.
 /// - If the last token is the flag itself (no value yet), it is not complete.
 /// - If the last token is the value immediately after the flag, it is complete
-///   only if the input ends in whitespace (typing may continue otherwise).
+/// only if the input ends in whitespace (typing may continue otherwise).
 ///
 /// Arguments:
 /// - `input`: The full input line.
@@ -1060,7 +1162,7 @@ fn collect_flag_candidates(
     out
 }
 
-/// Compute the remainder of the current token toward a target insert text.
+/// Compute the remainder of the current token toward a target insert text toward end.
 ///
 /// If the token under the cursor is a prefix of `insert`, returns the suffix
 /// that would be inserted to complete it. Used to render subtle ghost text to

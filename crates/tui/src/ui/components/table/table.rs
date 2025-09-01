@@ -266,14 +266,9 @@ impl Component for TableComponent<'_> {
         // Delegate to pagination when pagination subcontrols are focused
         let p = self.pagination.state();
         let focus_on_grid = app.table.grid_f.get();
-        let focus_on_pagination =
-            p.nav_first_f.get() || p.nav_prev_f.get() || p.nav_next_f.get() || p.nav_last_f.get();
+        let focus_on_pagination = p.nav_first_f.get() || p.nav_prev_f.get() || p.nav_next_f.get() || p.nav_last_f.get();
         // Let table handle Tab/BackTab to cycle grid <-> pagination; otherwise delegate
-        if !focus_on_grid
-            && focus_on_pagination
-            && key.code != KeyCode::Tab
-            && key.code != KeyCode::BackTab
-        {
+        if !focus_on_grid && focus_on_pagination && key.code != KeyCode::Tab && key.code != KeyCode::BackTab {
             effects.extend(self.pagination.handle_key_events(app, key));
             return effects;
         }

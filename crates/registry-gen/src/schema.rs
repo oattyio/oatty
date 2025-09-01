@@ -453,7 +453,7 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
             default_value: None,
             description: Some("End value for range (inclusive)".to_string()),
         });
-        
+
         flags.push(CommandFlag {
             name: "max".to_string(),
             short_name: Some("m".to_string()),

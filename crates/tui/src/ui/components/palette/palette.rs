@@ -15,8 +15,7 @@ use ratatui::{
 };
 
 use crate::{
-    app,
-    app::Effect,
+    app::{self, Effect, SharedCtx},
     ui::{
         components::{component::Component, palette::state::ItemKind},
         theme::{Theme, helpers as th},
@@ -43,10 +42,10 @@ use crate::{
 /// - **Character input**: Add characters to the input
 /// - **Backspace**: Remove character before cursor
 /// - **Arrow keys**: Navigate suggestions (Up/Down) or move cursor (Left/Right)
-/// - **Tab**: Accept current suggestion
+/// - **Tab**: Trigger suggestions list
 /// - **Ctrl+H**: Open help for current command
 /// - **Ctrl+F**: Open command builder modal
-/// - **Enter**: Execute command
+/// - **Enter**: Execute command or insert selected suggestion
 /// - **Escape**: Clear input and close suggestions
 ///
 /// # Examples
@@ -314,8 +313,7 @@ impl PaletteComponent {
     ///
     /// This function processes regular character input (with or without Shift
     /// modifier) by inserting the character at the current cursor position,
-    /// rebuilding suggestions, opening the suggestions popup if suggestions
-    /// are available, and clearing any previous error messages.
+    /// closing the suggestions popup, and clearing any previous error messages.
     ///
     /// # Arguments
     ///
@@ -323,9 +321,7 @@ impl PaletteComponent {
     /// * `character` - The character to insert
     fn handle_character_input(&self, app: &mut app::App, character: char) {
         app.palette.apply_insert_char(character);
-        app.palette
-            .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
-        app.palette.set_is_suggestions_open(app.palette.suggestions_len() > 0);
+        app.palette.set_is_suggestions_open(false);
         app.palette.reduce_clear_error();
     }
 
@@ -341,8 +337,10 @@ impl PaletteComponent {
     /// * `app` - The application state to update
     fn handle_help_request(&self, app: &mut app::App) {
         // Ensure suggestions are up to date, then fetch effective command
-        app.palette
-            .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
+        let SharedCtx {
+            registry, providers, ..
+        } = &app.ctx;
+        app.palette.apply_build_suggestions(registry, providers);
         let spec = app.palette.selected_command();
         if spec.is_some() {
             app.help.set_spec(spec.cloned());
@@ -353,17 +351,14 @@ impl PaletteComponent {
     /// Handles backspace key press in the command palette.
     ///
     /// This function removes the character before the current cursor position,
-    /// rebuilds suggestions based on the updated input, and clears any previous
-    /// error messages. The suggestions popup state is automatically managed
-    /// based on whether suggestions are available.
+    /// closes the suggestions popup, and clears any previous error messages.
     ///
     /// # Arguments
     ///
     /// * `app` - The application state to update
     fn handle_backspace(&self, app: &mut app::App) {
         app.palette.reduce_backspace();
-        app.palette
-            .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
+        app.palette.set_is_suggestions_open(false);
         app.palette.reduce_clear_error();
     }
 
@@ -415,21 +410,29 @@ impl PaletteComponent {
         }
     }
 
-    /// Handles suggestion acceptance via Tab or Enter key.
+    /// Handles tab keypress to trigger or refresh the suggestions list.
     ///
-    /// This function processes suggestion acceptance when the suggestions popup
-    /// is open. It handles different types of suggestions (commands,
-    /// positionals, flags, values) appropriately and rebuilds suggestions
-    /// after acceptance. If no suggestions are open and Enter is pressed,
-    /// it executes the command.
+    /// This function triggers building the suggestions list and opens the popup
+    /// if suggestions are available.
     ///
     /// # Arguments
     ///
     /// * `app` - The application state to update
-    /// * `key_code` - The key that triggered the action (Tab or Enter)
-    fn handle_suggestion_acceptance(&self, app: &mut app::App, key_code: KeyCode) {
-        // Accept suggestion on tab or enter if the suggestions are open
-        if app.palette.is_suggestions_open() {
+    fn handle_tab_press(&self, app: &mut app::App) {
+        let SharedCtx {
+            registry, providers, ..
+        } = &app.ctx;
+        app.palette.apply_build_suggestions(registry, providers);
+        app.palette.set_is_suggestions_open(app.palette.suggestions_len() > 0);
+    }
+
+    /// Handles the Enter keypress.
+    fn handle_enter(&self, app: &mut app::App) {
+        // Execute the command
+        if !app.palette.is_suggestions_open() {
+            let _ = app.update(app::Msg::Run);
+        } else {
+            // otherwise, select from the list
             if let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index()).cloned() {
                 match item.kind {
                     ItemKind::Command => {
@@ -447,19 +450,16 @@ impl PaletteComponent {
                         app.palette.apply_accept_non_command_suggestion(&item.insert_text);
                     }
                 }
-
+                let SharedCtx {
+                    registry, providers, ..
+                } = &app.ctx;
                 // Rebuild suggestions after accepting
-                app.palette
-                    .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
+                app.palette.apply_build_suggestions(registry, providers);
                 app.palette.set_selected(0);
 
-                // Keep popup open unless we accepted a command
-                if !matches!(item.kind, ItemKind::Command) {
-                    app.palette.set_is_suggestions_open(!app.palette.is_suggestions_open());
-                }
+                // Close popup after accepting
+                app.palette.set_is_suggestions_open(false);
             }
-        } else if key_code == KeyCode::Enter {
-            let _ = app.update(app::Msg::Run);
         }
     }
 
@@ -581,10 +581,10 @@ impl Component for PaletteComponent {
     /// - **Backspace**: Removes the character before the cursor
     /// - **Arrow keys**: Navigate through suggestions (Up/Down) or move cursor
     ///   (Left/Right)
-    /// - **Tab**: Accept the currently selected suggestion
+    /// - **Tab**: Trigger the suggestions list
     /// - **Ctrl+H**: Open help for the current command or top suggestion
     /// - **Ctrl+F**: Open the command builder modal
-    /// - **Enter**: Execute the current command (if complete)
+    /// - **Enter**: Execute the current command (if complete) or insert selected suggestion
     /// - **Escape**: Clear the palette input and close suggestions
     ///
     /// # Examples
@@ -616,12 +616,30 @@ impl Component for PaletteComponent {
                 self.handle_cursor_right(app);
             }
             KeyCode::Down | KeyCode::Up => {
-                // Handle suggestion navigation
-                self.handle_suggestion_navigation(app, key.code);
+                if app.palette.is_suggestions_open() {
+                    // Navigate suggestions when popup is open
+                    self.handle_suggestion_navigation(app, key.code);
+                } else {
+                    // Navigate command history when popup is closed
+                    let changed = if key.code == KeyCode::Up {
+                        app.palette.history_up()
+                    } else {
+                        app.palette.history_down()
+                    };
+                    if changed {
+                        // Clear errors/suggestions while browsing history
+                        app.palette.reduce_clear_error();
+                        app.palette.set_is_suggestions_open(false);
+                    }
+                }
             }
-            KeyCode::Tab | KeyCode::Enter => {
-                // Handle suggestion acceptance
-                self.handle_suggestion_acceptance(app, key.code);
+            KeyCode::Tab => {
+                // Handle suggestions trigger
+                self.handle_tab_press(app);
+            }
+            KeyCode::Enter => {
+                // Handle enter keypress
+                self.handle_enter(app);
             }
             KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Handle builder request

@@ -1,6 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use heroku_types::Pagination;
-use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -313,9 +312,7 @@ impl PaginationComponent {
             th::button_secondary_style(theme, true)
         } else {
             // Stronger disabled styling: muted text + dim
-            theme
-                .text_muted_style()
-                .add_modifier(Modifier::DIM)
+            theme.text_muted_style().add_modifier(Modifier::DIM)
         };
 
         let border_style = if enabled {
@@ -365,17 +362,13 @@ impl PaginationComponent {
             KeyCode::Right | KeyCode::End => {
                 // Use Raw Next-Range header to request the next page when available
                 if self.state.has_next_page() {
-                    self.state
-                        .next_range
-                        .clone()
-                        .map(|next_range| {
-                            self.state.current_page = self.state.current_page.saturating_add(1);
-                            crate::app::Effect::NextPageRequested(next_range)
-                        })
+                    self.state.next_range.clone().map(|next_range| {
+                        self.state.current_page = self.state.current_page.saturating_add(1);
+                        crate::app::Effect::NextPageRequested(next_range)
+                    })
                 } else {
                     None
                 }
-                
             }
             KeyCode::Home => {
                 if self.state.has_prev_page() {
@@ -448,7 +441,11 @@ impl Component for PaginationComponent {
         match event.code {
             KeyCode::Tab | KeyCode::BackTab => { /* Tab handled at table level */ }
             KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
-                if self.state.nav_first_f.get() || self.state.nav_prev_f.get() || self.state.nav_next_f.get() || self.state.nav_last_f.get() {
+                if self.state.nav_first_f.get()
+                    || self.state.nav_prev_f.get()
+                    || self.state.nav_next_f.get()
+                    || self.state.nav_last_f.get()
+                {
                     if let Some(effect) = self.handle_navigation_actions(&event) {
                         return vec![effect];
                     }
@@ -464,9 +461,7 @@ impl Component for PaginationComponent {
                     self.state.prev_page();
                     return vec![crate::app::Effect::PrevPageRequested];
                 }
-                if (self.state.nav_next_f.get() || self.state.nav_last_f.get())
-                    && self.state.has_next_page()
-                {
+                if (self.state.nav_next_f.get() || self.state.nav_last_f.get()) && self.state.has_next_page() {
                     if let Some(next_range) = self.state.next_range.clone() {
                         self.state.current_page = self.state.current_page.saturating_add(1);
                         return vec![crate::app::Effect::NextPageRequested(next_range)];

@@ -325,12 +325,13 @@ fn palette_line_from_spec(spec: &CommandSpec, fields: &[Field]) -> String {
 
 pub fn start_palette_execution(app: &mut app::App) -> Result<CommandSpec, String> {
     // Parse input into tokens: expect "group sub [args...]"
-    let input = app.palette.input().trim();
+    let input_owned = app.palette.input().to_string();
+    let input = input_owned.trim().to_string();
     if input.is_empty() {
         return Err("Type a command (e.g., apps info)".into());
     }
     // Use palette tokenizer to keep quoting behavior consistent across modules
-    let tokens = lex_shell_like(input);
+    let tokens = lex_shell_like(&input);
     if tokens.len() < 2 {
         return Err("Incomplete command. Use '<group> <sub>' (e.g., apps info)".into());
     }
@@ -449,13 +450,19 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<CommandSpec, String
         .and_then(|s| s.parse::<usize>().ok());
     let initial_range = init_field.map(|field| {
         let mut h = format!("{} {}..{}", field, init_start, init_end);
-        if let Some(ord) = init_order { h.push_str(&format!("; order={};", ord)); }
-        if let Some(m) = init_max { h.push_str(&format!("; max={};", m)); }
+        if let Some(ord) = init_order {
+            h.push_str(&format!("; order={};", ord));
+        }
+        if let Some(m) = init_max {
+            h.push_str(&format!("; max={};", m));
+        }
         h
     });
     app.initial_range = initial_range.clone();
     app.pagination_history.clear();
     app.pagination_history.push(initial_range);
+    // Add to palette history before executing
+    app.palette.push_history_if_needed(&input);
     // Live request: enqueue background HTTP execution via Cmd system
     run_cmds(app, vec![Cmd::ExecuteHttp(Box::new(spec.clone()), path, body)]);
     Ok(spec)

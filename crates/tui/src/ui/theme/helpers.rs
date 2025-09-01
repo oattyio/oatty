@@ -119,6 +119,7 @@ pub fn input_style<T: Theme + ?Sized>(theme: &T, valid: bool, focused: bool) -> 
 }
 
 /// Primary button style (filled accent background).
+#[allow(dead_code)]
 pub fn button_primary_style<T: Theme + ?Sized>(theme: &T, enabled: bool) -> Style {
     if enabled {
         let ThemeRoles {

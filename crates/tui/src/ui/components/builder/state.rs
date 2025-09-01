@@ -56,6 +56,20 @@ impl BuilderState {
         self.is_visible = visible;
     }
 
+    /// Ensure an initial focused panel is set when the builder is visible.
+    ///
+    /// If no panel focus flag is currently active, default focus to the
+    /// search panel. This prevents key handling from becoming a no-op when
+    /// the modal is first opened.
+    pub fn normalize_focus(&mut self) {
+        let any = self.search_flag.get() || self.commands_flag.get() || self.inputs_flag.get();
+        if !any {
+            self.search_flag.set(true);
+            self.commands_flag.set(false);
+            self.inputs_flag.set(false);
+        }
+    }
+
     // ========================
     // Search & Filtered List
     // ========================

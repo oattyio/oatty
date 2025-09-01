@@ -29,9 +29,11 @@ impl HintBarComponent<'_> {
             let _ = self.hints.insert(
                 Paragraph::new(Line::from(vec![
                     Span::styled("Hints: ", theme.text_muted_style()),
+                    Span::styled("Tab", theme.accent_emphasis_style()),
+                    Span::styled(" completions ", theme.text_muted_style()),
                     Span::styled("↑/↓", theme.accent_emphasis_style()),
                     Span::styled(" cycle  ", theme.text_muted_style()),
-                    Span::styled("Tab", theme.accent_emphasis_style()),
+                    Span::styled("Enter", theme.accent_emphasis_style()),
                     Span::styled(" accept  ", theme.text_muted_style()),
                     Span::styled("Ctrl-F", theme.accent_emphasis_style()),
                     Span::styled(" builder  ", theme.text_muted_style()),
