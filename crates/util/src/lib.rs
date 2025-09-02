@@ -22,69 +22,127 @@ pub fn redact_sensitive(input: &str) -> String {
     }
     redacted
 }
-/// Simple subsequence fuzzy matcher with a naive scoring heuristic.
+/// Fuzzy matcher for subsequence scoring, handling space-separated tokens.
 ///
-/// Returns `Some(score)` if all characters in `needle` appear in order within
-/// `hay`, otherwise returns `None`. Higher scores indicate better matches. The
-/// scoring favors consecutive matches, prefix matches, and shorter candidates.
+/// Returns `Some(score)` if all characters in each space-separated token of `needle`
+/// appear in order within `hay`, otherwise returns `None`. Higher scores indicate better
+/// matches. The scoring favors consecutive matches, word boundary matches, prefix matches,
+/// and shorter candidates. Spaces in `needle` are treated as token separators, not literal
+/// characters, unless the entire `needle` is a single space.
 ///
-/// Arguments:
-/// - `hay`: The candidate string to search within.
-/// - `needle`: The query to match as a subsequence.
+/// # Arguments
 ///
-/// Returns: `Option<i64>` where `Some(score)` indicates a match.
+/// * `hay` - The candidate string to search within.
+/// * `needle` - The query to match, with space-separated tokens.
 ///
-/// Example:
+/// # Returns
+///
+/// `Option<i64>` where `Some(score)` indicates a match.
+///
+/// # Example
 ///
 /// ```rust
 /// use heroku_util::fuzzy_score;
 /// assert!(fuzzy_score("applications", "app").unwrap() > 0);
+/// assert!(fuzzy_score("string1 string2", "string1 string2").unwrap() > 0);
+/// assert!(fuzzy_score("string1:string2", "string1 string2").unwrap() > 0);
 /// assert!(fuzzy_score("applications", "axp").is_none());
+/// assert!(fuzzy_score("", "app").is_none());
 /// ```
 pub fn fuzzy_score(hay: &str, needle: &str) -> Option<i64> {
+    if hay.is_empty() && !needle.is_empty() {
+        return None;
+    }
     if needle.is_empty() {
         return Some(0);
     }
-    let mut h_lower = String::with_capacity(hay.len());
-    for ch in hay.chars() {
-        h_lower.extend(ch.to_lowercase());
-    }
-    let mut n_lower = String::with_capacity(needle.len());
-    for ch in needle.chars() {
-        n_lower.extend(ch.to_lowercase());
+
+    // Handle space-only needle
+    if needle.trim().is_empty() {
+        return Some(0);
     }
 
-    let h = h_lower.as_str();
-    let n = n_lower.as_str();
+    // Convert hay to lowercase once, avoiding repeated allocations
+    let h_lower: String = hay.chars().flat_map(|c| c.to_lowercase()).collect();
+    let hay_chars: Vec<char> = h_lower.chars().collect();
 
-    let mut hi = 0usize;
-    let mut score: i64 = 0;
-    let mut consec = 0i64;
-    let mut first_match_idx: Option<usize> = None;
-    for ch in n.chars() {
-        if let Some(pos) = h[hi..].find(ch) {
-            let abs = hi + pos;
-            if first_match_idx.is_none() {
-                first_match_idx = Some(abs);
+    // Split needle into tokens and convert to lowercase
+    let needle_tokens: Vec<Vec<char>> = needle
+        .split_whitespace()
+        .map(|token| token.chars().flat_map(|c| c.to_lowercase()).collect())
+        .filter(|token: &Vec<char>| !token.is_empty())
+        .collect();
+
+    if needle_tokens.is_empty() {
+        return Some(0);
+    }
+
+    let mut total_score = 0;
+    let mut hay_idx = 0;
+
+    // Match each token independently
+    for token in needle_tokens {
+        let mut token_score = 0;
+        let mut consec = 0;
+        let mut first_match_idx = None;
+        let mut prev_idx = None;
+
+        for &n_char in &token {
+            // Find next matching character in hay starting from hay_idx
+            let found = hay_chars[hay_idx..]
+                .iter()
+                .enumerate()
+                .find(|(_, c)| **c == n_char);
+
+            if let Some((rel_idx, _)) = found {
+                let abs_idx = hay_idx + rel_idx;
+                if first_match_idx.is_none() {
+                    first_match_idx = Some(abs_idx);
+                }
+
+                // Reward consecutive matches
+                if let Some(prev) = prev_idx {
+                    if abs_idx == prev + 1 {
+                        consec += 1;
+                    } else {
+                        consec = 1; // Reset on non-consecutive match
+                    }
+                    // Penalize gaps
+                    let gap = (abs_idx - prev - 1) as i64;
+                    token_score -= gap / 2;
+                }
+                token_score += 6 * consec;
+
+                // Bonus for word boundary (start of hay or after space/punctuation)
+                if abs_idx == 0 || hay_chars.get(abs_idx - 1).map_or(false, |c| c.is_whitespace() || c.is_ascii_punctuation()) {
+                    token_score += 10;
+                }
+
+                hay_idx = abs_idx + 1;
+                prev_idx = Some(abs_idx);
+            } else {
+                return None; // No match for this character
             }
-            hi = abs + ch.len_utf8();
-            consec += 1;
-            score += 6 * consec; // stronger reward for consecutive matches
-        } else {
-            return None;
         }
+
+        // Prefix match bonus for this token
+        let token_str: String = token.iter().copied().collect();
+        if h_lower.starts_with(&token_str) {
+            token_score += 30;
+        }
+
+        // Early match bonus
+        if let Some(start) = first_match_idx {
+            token_score += i64::max(0, 20 - start as i64);
+        }
+
+        total_score += token_score;
     }
-    // Boost for prefix match
-    if h.starts_with(n) {
-        score += 30;
-    }
-    // Earlier start is better
-    if let Some(start) = first_match_idx {
-        score += i64::max(0, 20 - start as i64);
-    }
-    // Prefer shorter candidates when all else equal
-    score -= hay.len() as i64 / 8;
-    Some(score)
+
+    // Penalty for hay length (shorter candidates preferred)
+    total_score -= hay_chars.len() as i64 / 8;
+
+    Some(total_score)
 }
 
 /// Tokenize input using a simple, shell-like lexer.

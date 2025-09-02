@@ -97,12 +97,6 @@ impl PaletteComponent {
 
         let mut spans: Vec<Span> = Vec::new();
 
-        // Add throbber if executing
-        if app.executing {
-            let sym = self.throbber_frames[app.throbber_idx % self.throbber_frames.len()];
-            spans.push(Span::styled(format!("{} ", sym), theme.accent_emphasis_style()));
-        }
-
         // Add main input text
         spans.push(Span::styled(app.palette.input().to_string(), base_style));
 
@@ -111,6 +105,12 @@ impl PaletteComponent {
             && !ghost.is_empty()
         {
             spans.push(Span::styled(ghost.to_string(), theme.text_muted_style()));
+        }
+
+        // Add throbber at end if executing or provider-loading
+        if app.executing || app.palette.is_provider_loading() {
+            let sym = self.throbber_frames[app.throbber_idx % self.throbber_frames.len()];
+            spans.push(Span::styled(format!(" {}", sym), theme.accent_emphasis_style()));
         }
 
         Paragraph::new(Line::from(spans)).block(Block::default())

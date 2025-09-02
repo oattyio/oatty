@@ -226,39 +226,6 @@ impl BuilderState {
             });
         });
 
-        // Add range fields if available
-        if !ranges.is_empty() {
-            // Add range field selection
-            fields.push(Field {
-                name: "range-field".to_string(),
-                required: false,
-                is_bool: false,
-                value: ranges.first().unwrap_or(&String::new()).clone(),
-                enum_values: ranges.clone(),
-                enum_idx: Some(0),
-            });
-
-            // Add range start field
-            fields.push(Field {
-                name: "range-start".to_string(),
-                required: false,
-                is_bool: false,
-                value: String::new(),
-                enum_values: vec![],
-                enum_idx: None,
-            });
-
-            // Add range end field
-            fields.push(Field {
-                name: "range-end".to_string(),
-                required: false,
-                is_bool: false,
-                value: String::new(),
-                enum_values: vec![],
-                enum_idx: None,
-            });
-        }
-
         self.set_input_fields(fields);
         self.apply_field_idx(0);
         self.selected_command = Some(command);

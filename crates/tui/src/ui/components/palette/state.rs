@@ -105,6 +105,9 @@ pub struct PaletteState {
     /// Optional error message to display
     error_message: Option<String>,
 
+    /// Whether provider-backed suggestions are actively loading
+    provider_loading: bool,
+
     /// History of executed palette inputs (most recent last)
     history: Vec<String>,
     /// Current index into history when browsing (0..history.len()-1), None when not browsing
@@ -208,6 +211,11 @@ impl PaletteState {
         self.error_message.as_ref()
     }
 
+    /// Whether provider-backed suggestions are currently loading
+    pub fn is_provider_loading(&self) -> bool {
+        self.provider_loading
+    }
+
     /// Get the current suggestions list
     pub fn suggestions(&self) -> &[SuggestionItem] {
         &self.suggestions
@@ -291,6 +299,7 @@ impl PaletteState {
         self.is_suggestions_open = false;
         self.suggestion_index = 0;
         self.ghost_text = None;
+        self.provider_loading = false;
     }
 
     // ===== PRIVATE SETTERS =====
@@ -318,6 +327,11 @@ impl PaletteState {
     pub(crate) fn set_selected(&mut self, selected: usize) {
         self.suggestion_index = selected;
         self.apply_ghost_text();
+    }
+
+    /// Set provider loading indicator for UI
+    pub(crate) fn set_provider_loading(&mut self, loading: bool) {
+        self.provider_loading = loading;
     }
 
     /// Insert text at the end of the input with a separating space and advance
@@ -529,31 +543,57 @@ impl PaletteState {
     /// after "group sub". If the last existing positional is a placeholder
     /// like "<app>", replace it; otherwise append before any flags.
     pub fn apply_accept_positional_suggestion(&mut self, value: &str) {
-        let tokens: Vec<&str> = self.input.split_whitespace().collect();
-        if tokens.len() < 2 {
+        let tokens_r = lex_shell_like_ranged(&self.input);
+        if tokens_r.len() < 2 {
             // No command yet; just append with proper spacing
             self.insert_with_space(value);
             return;
         }
         // Identify first flag position after command tokens
-        let mut first_flag_idx = tokens.len();
-        for (i, t) in tokens.iter().enumerate().skip(2) {
-            if t.starts_with("--") {
+        let mut first_flag_idx = tokens_r.len();
+        for (i, t) in tokens_r.iter().enumerate().skip(2) {
+            if t.text.starts_with("--") {
                 first_flag_idx = i;
                 break;
             }
         }
-        // Existing positionals are tokens[2..first_flag_idx]
+        // Determine if the cursor is currently within a positional token
+        let token_index = token_index_at_cursor(&self.input, self.cursor_position).unwrap_or(tokens_r.len() - 1);
+        let editing_positional = token_index >= 2 && token_index < first_flag_idx;
+        if editing_positional {
+            // Replace the positional token under the cursor with the selected value
+            let start = tokens_r[token_index].start;
+            let end = tokens_r[token_index].end;
+            self.input.replace_range(start..end, value);
+            let mut new_cursor = start + value.len();
+            // Ensure a space after the replaced token
+            if self.input.len() == new_cursor {
+                self.input.push(' ');
+                new_cursor += 1;
+            } else if !self.input[new_cursor..].starts_with(' ') {
+                self.input.insert(new_cursor, ' ');
+                new_cursor += 1;
+            }
+            self.cursor_position = new_cursor;
+            return;
+        }
+        // Otherwise, append as the next positional value before any flags
+        let tokens: Vec<&str> = self.input.split_whitespace().collect();
+        let mut first_flag_idx2 = tokens.len();
+        for (i, t) in tokens.iter().enumerate().skip(2) {
+            if t.starts_with("--") {
+                first_flag_idx2 = i;
+                break;
+            }
+        }
         let mut out: Vec<String> = Vec::new();
         out.push(tokens[0].to_string());
-        out.push(tokens[1].to_string());
-        // Copy existing positionals as-is, then append new positional value
-        for t in tokens[2..first_flag_idx].iter() {
+        if tokens.len() > 1 { out.push(tokens[1].to_string()); }
+        for t in tokens[2..first_flag_idx2].iter() {
             out.push((*t).to_string());
         }
         out.push(value.to_string());
-        // Append the rest (flags and any trailing tokens) in original order
-        for t in tokens.iter().skip(first_flag_idx) {
+        for t in tokens.iter().skip(first_flag_idx2) {
             out.push((*t).to_string());
         }
         self.input = out.join(" ") + " ";
@@ -597,17 +637,56 @@ impl PaletteState {
         let at_new_token = self.input.ends_with(' ');
         let tokens = lex_shell_like_ranged(&self.input);
 
-        // New token position or empty input: just insert suggestion, but clean up stray
-        // '-'/'--'.
+        // New token position or empty input: replace a trailing positional placeholder
+        // if present; otherwise insert suggestion. Also clean up stray '-'/'--'.
         if at_new_token || tokens.is_empty() {
-            // Clean up stray '-' or '--' if present
+            // Precompute cleanup range and optional placeholder range before mutating input
             let remove_from: Option<usize> = tokens
                 .last()
                 .and_then(|t| (t.text == "-" || t.text == "--").then_some(t.start));
+            let placeholder_range: Option<(usize, usize)> = if tokens.len() >= 3 {
+                let mut first_flag_idx = tokens.len();
+                for (i, t) in tokens.iter().enumerate().skip(2) {
+                    if t.text.starts_with("--") {
+                        first_flag_idx = i;
+                        break;
+                    }
+                }
+                if first_flag_idx > 2 {
+                    let last_positional_idx = first_flag_idx - 1;
+                    let last_tok = &tokens[last_positional_idx];
+                    let is_placeholder = last_tok.text.starts_with('<') && last_tok.text.ends_with('>');
+                    if is_placeholder {
+                        Some((last_tok.start, last_tok.end))
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
             if let Some(start) = remove_from {
                 self.input.replace_range(start..self.input.len(), "");
                 self.cursor_position = self.input.len();
             }
+            if let Some((start, end)) = placeholder_range {
+                self.input.replace_range(start..end, text);
+                // Ensure exactly one space after replaced token
+                let mut new_cursor = start + text.len();
+                if self.input.len() == new_cursor {
+                    self.input.push(' ');
+                    new_cursor += 1;
+                } else if !self.input[new_cursor..].starts_with(' ') {
+                    self.input.insert(new_cursor, ' ');
+                    new_cursor += 1;
+                }
+                self.cursor_position = new_cursor;
+                return;
+            }
+
             self.insert_with_space(text);
             return;
         }
@@ -632,10 +711,28 @@ impl PaletteState {
             return;
         }
 
-        // Replace flag token or its value, otherwise append to the end as a new token
+        // Replace flag token or its value, or replace positional under edit; otherwise append.
+        // Replace when current token is a flag OR when editing a positional token.
+        let mut replace_range: Option<(usize, usize)> = None;
         if current_token.starts_with("--") || prev_is_flag {
-            self.input.replace_range(start..end, text);
-            self.cursor_position = start + text.len();
+            replace_range = Some((start, end));
+        } else {
+            // Determine if the token under the cursor is a positional (between command and first flag)
+            let mut first_flag_idx = tokens.len();
+            for (i, t) in tokens.iter().enumerate().skip(2) {
+                if t.text.starts_with("--") {
+                    first_flag_idx = i;
+                    break;
+                }
+            }
+            if token_index >= 2 && token_index < first_flag_idx {
+                replace_range = Some((start, end));
+            }
+        }
+
+        if let Some((rs, re)) = replace_range {
+            self.input.replace_range(rs..re, text);
+            self.cursor_position = rs + text.len();
             if !self.input.ends_with(' ') {
                 self.input.push(' ');
                 self.cursor_position += 1;
@@ -680,89 +777,50 @@ impl PaletteState {
     /// assert!(!st.selected_suggestions().is_empty());
     /// ```
     pub fn apply_build_suggestions(&mut self, reg: &Registry, providers: &[Box<dyn ValueProvider>]) {
-        let input = &self.input;
-        let tokens: Vec<String> = lex_shell_like(input);
+        let result = super::suggest::SuggestionEngine::build(reg, providers, &self.input);
+        let mut items = result.items;
+        self.provider_loading = result.provider_loading;
 
-        // No command yet (need group + sub) or unresolved -> suggest commands in
-        // execution format: "group sub"
-        if !is_command_resolved(reg, &tokens) {
-            let mut items = suggest_commands(reg, &compute_command_prefix(&tokens));
-            self.finalize_suggestions(&mut items);
-            return;
-        }
-
-        // Resolve command key from first two tokens: "group sub"
-        let group = tokens.first().unwrap_or(&String::new()).to_owned();
-        let name = tokens.get(1).unwrap_or(&String::new()).to_owned();
-        let spec = match reg.commands.iter().find(|c| c.group == group && c.name == name) {
-            Some(s) => s.clone(),
-            None => {
-                self.suggestions.clear();
-                self.is_suggestions_open = false;
-                return;
-            }
-        };
-
-        // Build user flags and args from parts
-        let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
-        let (user_flags, user_args) = parse_user_flags_args(&spec, parts);
-        let current = parts.last().map(|s| s.as_str()).unwrap_or("");
-
-        // Determine if if expecting a flag value (last used flag without value)
-        let pending_flag = find_pending_flag(&spec, parts, input);
-
-        // Determine if current editing token looks like a flag
-        let current_is_flag = current.starts_with('-');
-
-        // 1) If a non-boolean flag value is pending and not complete, only suggest
-        //    values for it
-        if let Some(flag_name) = pending_flag.clone() {
-            let value_partial = flag_value_partial(parts);
-            let mut items = suggest_values_for_flag(&spec, &flag_name, &value_partial, providers);
-            self.finalize_suggestions(&mut items);
-        } else {
-            // 2) Next expected item: positional arguments first
-            let mut items: Vec<SuggestionItem> = if user_args.len() < spec.positional_args.len() && !current_is_flag {
-                suggest_positionals(&spec, user_args.len(), current, providers)
-            } else {
-                Vec::new()
-            };
-
-            // 3) If no positional needed (or user explicitly typed a flag), suggest
-            //    required flags
-            if items.is_empty() {
-                let required_remaining = required_flags_remaining(&spec, &user_flags);
-                if required_remaining || current_is_flag {
-                    items.extend(collect_flag_candidates(&spec, &user_flags, current, true));
+        // Offer end-of-line flag hint if still empty
+        if items.is_empty() {
+            let tokens: Vec<String> = lex_shell_like(&self.input);
+            if tokens.len() >= 2 {
+                let group = tokens[0].clone();
+                let name = tokens[1].clone();
+                if let Some(spec) = reg.commands.iter().find(|c| c.group == group && c.name == name) {
+                    let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
+                    let (user_flags, user_args) = parse_user_flags_args(spec, parts);
+                    if let Some(hint) = self.eol_flag_hint(spec, &user_flags) {
+                        items.push(hint);
+                    } else {
+                        // If command is complete (all positionals filled, no required flags), show run hint
+                        let positionals_complete = user_args.len() >= spec.positional_args.len();
+                        let required_remaining = required_flags_remaining(spec, &user_flags);
+                        if positionals_complete && !required_remaining {
+                            self.ghost_text = Some(" press Enter to run".to_string());
+                        }
+                    }
                 }
             }
+        }
 
-            // 4) Optional flags when required are satisfied
-            if items.is_empty() {
-                items.extend(collect_flag_candidates(&spec, &user_flags, current, false));
+        self.finalize_suggestions(&mut items);
+        // Preserve run hint ghost when suggestions are empty
+        if self.suggestions.is_empty() && self.ghost_text.is_none() {
+            let tokens: Vec<String> = lex_shell_like(&self.input);
+            if tokens.len() >= 2 {
+                let group = tokens[0].clone();
+                let name = tokens[1].clone();
+                if let Some(spec) = reg.commands.iter().find(|c| c.group == group && c.name == name) {
+                    let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
+                    let (user_flags, user_args) = parse_user_flags_args(spec, parts);
+                    let positionals_complete = user_args.len() >= spec.positional_args.len();
+                    let required_remaining = required_flags_remaining(spec, &user_flags);
+                    if positionals_complete && !required_remaining {
+                        self.ghost_text = Some(" press Enter to run".to_string());
+                    }
+                }
             }
-
-            // 5) If still empty and there are remaining positionals, offer placeholder for
-            //    the next one
-            if items.is_empty() && user_args.len() < spec.positional_args.len() {
-                let pa = &spec.positional_args[user_args.len()];
-                items.push(SuggestionItem {
-                    display: format!("<{:<15}> [ARG] {}", pa.name, pa.help.as_deref().unwrap_or(&pa.name)),
-                    insert_text: current.to_string(),
-                    kind: ItemKind::Positional,
-                    meta: pa.help.clone(),
-                    score: 0,
-                });
-            }
-
-            // 6) End of line hint for starting flags if any remain
-            if items.is_empty()
-                && let Some(hint) = self.eol_flag_hint(&spec, &user_flags)
-            {
-                items.push(hint);
-            }
-
-            self.finalize_suggestions(&mut items);
         }
     }
 
@@ -795,6 +853,31 @@ impl HasFocus for PaletteState {
 
     fn area(&self) -> Rect {
         Rect::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replace_partial_positional_on_accept() {
+        let mut st = PaletteState::default();
+        st.set_input("apps info hero".into());
+        st.set_cursor(st.input().len());
+        st.apply_accept_positional_suggestion("heroku-prod");
+        assert_eq!(st.input(), "apps info heroku-prod ");
+    }
+
+    #[test]
+    fn replace_placeholder_positional_on_accept_value() {
+        let mut st = PaletteState::default();
+        // Placeholder for positional arg
+        st.set_input("apps info <app> ".into());
+        st.set_cursor(st.input().len());
+        // Selecting a provider value (non-flag) should replace placeholder
+        st.apply_accept_non_command_suggestion("heroku-prod");
+        assert_eq!(st.input(), "apps info heroku-prod ");
     }
 }
 
@@ -1011,8 +1094,9 @@ fn suggest_values_for_flag(
             }
         }
     }
+    let command_key = format!("{}:{}", spec.group, spec.name);
     for p in providers {
-        let mut vals = p.suggest(&spec.name, flag_name, partial);
+        let mut vals = p.suggest(&command_key, flag_name, partial);
         items.append(&mut vals);
     }
     items
@@ -1029,8 +1113,9 @@ fn suggest_positionals(
 ) -> Vec<SuggestionItem> {
     let mut items: Vec<SuggestionItem> = Vec::new();
     if let Some(pa) = spec.positional_args.get(arg_count) {
+        let command_key = format!("{}:{}", spec.group, spec.name);
         for p in providers {
-            let mut vals = p.suggest(&spec.name, &pa.name, current);
+            let mut vals = p.suggest(&command_key, &pa.name, current);
             items.append(&mut vals);
         }
         if items.is_empty() {

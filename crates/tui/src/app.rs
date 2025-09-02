@@ -22,7 +22,7 @@ use crate::{
             builder::BuilderState,
             help::HelpState,
             logs::{LogsState, state::LogEntry},
-            palette::{PaletteState, state::ValueProvider},
+            palette::{PaletteState, state::ValueProvider, providers::RegistryBackedProvider},
             table::TableState,
         },
         theme,
@@ -50,12 +50,13 @@ impl SharedCtx {
         let debug_enabled = std::env::var("DEBUG")
             .map(|v| !v.is_empty() && v != "0" && v.to_lowercase() != "false")
             .unwrap_or(false);
-        Self {
-            registry,
-            debug_enabled,
-            providers: vec![],
-            theme: theme::load_from_env(),
-        }
+        let mut providers: Vec<Box<dyn ValueProvider>> = Vec::new();
+        // Add registry-backed provider with a small TTL cache
+        providers.push(Box::new(RegistryBackedProvider::new(
+            std::sync::Arc::new(registry.clone()),
+            std::time::Duration::from_secs(45),
+        )));
+        Self { registry, debug_enabled, providers, theme: theme::load_from_env() }
     }
 }
 
@@ -257,8 +258,16 @@ impl App<'_> {
         let mut effects = Vec::new();
         match msg {
             Msg::Tick => {
-                if self.executing {
+                // Animate spinner while executing or while provider-backed suggestions are loading
+                if self.executing || self.palette.is_provider_loading() {
                     self.throbber_idx = (self.throbber_idx + 1) % 10;
+                }
+                // If provider-backed suggestions are loading and the popup is open,
+                // rebuild suggestions to pick up newly cached results without requiring
+                // another keypress.
+                if self.palette.is_suggestions_open() && self.palette.is_provider_loading() {
+                    let SharedCtx { registry, providers, .. } = &self.ctx;
+                    self.palette.apply_build_suggestions(registry, providers);
                 }
             }
             Msg::Resize(..) => {

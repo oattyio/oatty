@@ -1,36 +1,18 @@
-# Heroku CLI Command Registry
+# Heroku CLI Command Registry (Generator)
 
-This Rust crate generates and manages a registry of commands for a Heroku CLI by processing JSON hyper-schemas (conforming to the JSON Hyper-Schema specification) and augmenting them with synthetic workflow commands. It produces a compact binary manifest using `bincode` to reduce storage and runtime overhead, ensuring efficient command loading for terminal user interfaces (TUIs) or CLI frontends. The crate automates command derivation, supports extensible workflow functionality, and provides structured, type-safe command specifications with robust error handling.
+This crate parses the Heroku JSON Hyper‑Schema and generates a compact command registry used by the CLI/TUI. It outputs a binary manifest via `bincode` (and optionally JSON) so frontends can load commands quickly, render help, autocomplete flags/args, and now infer ValueProviders for dynamic value completion.
 
 ## Features
 
-- **JSON Hyper-Schema Parsing**: Generates command specifications (`CommandSpec`) from a JSON hyper-schema, leveraging `links` arrays and schema references.
-- **Workflow Commands**: Adds synthetic commands (`workflow:list`, `workflow:preview`, `workflow:run`) when the `FEATURE_WORKFLOWS` environment variable is enabled.
-- **Compact Binary Serialization**: Uses `bincode` to encode commands into a binary manifest file.
-- **Reduced Runtime Overhead**: Pre-processes hyper-schemas to minimize runtime parsing, improving CLI startup and responsiveness.
-- **Structured and Extensible Command Model**: Supports command groups, positional arguments, flags, and help text for rich CLI features.
-- **Error Handling**: Leverages `anyhow` for clear, contextual error messages.
-- **Flexible CLI Integration**: Outputs a binary manifest optimized for TUI or CLI frontends, enabling autocompletion and help documentation.
+- JSON Hyper‑Schema → `CommandSpec` generation (walks `links`, `$ref`, `anyOf/oneOf/allOf`).
+- Compact binary manifest with `bincode`; optional pretty JSON output.
+- Structured flags, positional args (with help), ranges (for pagination), and summaries.
+- ValueProvider inference: maps flags/positionals to provider commands like `apps:list`.
+- Clear errors via `anyhow`; small surface area for consumers.
 
 ## Installation
 
-Add the following to your `Cargo.toml`:
-
-```toml
-[dependencies]
-heroku-cli-registry = { path = "./path/to/this/crate" }
-```
-
-Ensure the following dependencies are included in your project:
-
-```toml
-anyhow = "1.0"
-bincode = "2.0.0-rc.3"
-heck = "0.5"
-percent-encoding = "2.3"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-```
+This crate is internal to the workspace; consumers generally depend on the generated manifest via `heroku-registry`.
 
 ## Usage
 
@@ -57,7 +39,7 @@ The CLI will create parent directories for the output path if needed.
 The primary function, `write_manifest`, reads a JSON hyper-schema file, generates command specifications, and writes them to a binary manifest file.
 
 ```rust
-use heroku_cli_registry::write_manifest;
+use heroku_registry_gen::write_manifest;
 use std::path::PathBuf;
 
 fn main() -> anyhow::Result<()> {
@@ -77,43 +59,61 @@ This will:
 
 ### Command Specification Structure
 
-The `CommandSpec` struct defines a command with the following fields:
+Types live in `crates/types`. The important ones are shown here (trimmed):
 
 ```rust
 pub struct CommandSpec {
-    pub group: String,                    // Command group (e.g., "config", "workflow")
-    pub name: String,                     // Command name (e.g., "config:list", "workflow:run")
-    pub summary: String,                  // Short description of the command
-    pub positional_args: Vec<String>,     // List of positional argument names
-    pub positional_help: HashMap<String, String>, // Help text for positional arguments
-    pub flags: Vec<CommandFlag>,          // Command flags/options
-    pub method: String,                   // HTTP method (e.g., "GET", "POST", or "INTERNAL")
-    pub path: String,                     // API path or internal placeholder
+    pub group: String,                  // e.g., "apps"
+    pub name: String,                   // e.g., "list", "config:update"
+    pub summary: String,                // human summary
+    pub positional_args: Vec<PositionalArgument>,
+    pub flags: Vec<CommandFlag>,
+    pub method: String,                 // e.g., "GET", "POST"
+    pub path: String,                   // e.g., "/apps", "/addons/{addon}/config"
+    pub ranges: Vec<String>,            // supported range fields
+    pub providers: Vec<ProviderBinding> // inferred ValueProviders (see below)
 }
-```
 
-The `CommandFlag` struct defines command flags:
+pub struct PositionalArgument { pub name: String, pub help: Option<String> }
 
-```rust
 pub struct CommandFlag {
-    pub name: String,                     // Flag name (e.g., "--file")
-    pub required: bool,                   // Whether the flag is required
-    pub r#type: String,                   // Data type (e.g., "string", "boolean")
-    pub enum_values: Vec<String>,         // Allowed values for enum flags
-    pub default_value: Option<String>,    // Default value, if any
-    pub description: Option<String>,      // Description of the flag
+    pub name: String,
+    pub short_name: Option<String>,
+    pub required: bool,
+    pub r#type: String,
+    pub enum_values: Vec<String>,
+    pub default_value: Option<String>,
+    pub description: Option<String>,
+}
+
+pub enum ProviderParamKind { Flag, Positional }
+pub enum ProviderConfidence { High, Medium, Low }
+
+pub struct ProviderBinding {
+    pub kind: ProviderParamKind,        // flag or positional
+    pub name: String,                   // e.g., "app"
+    pub provider_id: String,            // e.g., "apps:list"
+    pub confidence: ProviderConfidence, // High/Medium/Low
 }
 ```
 
-### Workflow Commands
+### ValueProvider Inference
 
-When the `FEATURE_WORKFLOWS` environment variable is set, the crate adds the following synthetic commands:
+The generator performs a second pass to infer providers for flags/positionals:
 
-- **`workflow:list`**: Lists workflows in the `workflows/` directory.
-- **`workflow:preview`**: Previews a workflow plan. Supports optional `--file` and `--name` flags.
-- **`workflow:run`**: Executes a workflow. Supports optional `--file` and `--name` flags.
+- Build an index of available list commands by inspecting every `CommandSpec`’s `method+path` (classified into group+action where action == `list`).
+- Positional args: Walk `spec.path` and, for each `{arg}`, bind a provider from the immediately preceding concrete segment, e.g. `/addons/{addon}/config` → `{addon}` → `addons:list` (confidence: High), if that list command exists.
+- Flags: Map flag name using a conservative synonyms table (e.g., `app→apps`, `pipeline→pipelines`). If the group has a list command, attach `provider_id = "<group>:list"` (confidence: Medium). If only careful pluralization is used, confidence is Low.
+- Only attach providers when a matching list command exists.
 
-These commands use placeholder `method` ("INTERNAL") and `path` ("__internal__") as they do not correspond to HTTP API calls.
+Examples:
+
+- `addons config:update` (path `/addons/{addon}/config`) → positional `addon` → `addons:list` (High)
+- Any command with `--app` flag and a known `apps:list` → flag `app` → `apps:list` (Medium)
+
+### Notes on Workflows
+
+This generator focuses on API-derived commands. If workflow features are enabled elsewhere, they may be added as synthetic commands by the caller or a feature module.
 
 ### JSON Hyper-Schema Requirements
 
@@ -146,7 +146,7 @@ The crate processes these to generate commands with appropriate groups, names, a
 }
 ```
 
-This generates a `config:list` command with a required `app_id` positional argument.
+This generates a `config:list` command with a positional argument and the usual flags. If a matching list provider exists (e.g., `apps:list`), a `ProviderBinding` is attached.
 
 ## Development
 

@@ -2,6 +2,34 @@ use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Identifies what kind of parameter a provider binds to.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Encode, Decode)]
+pub enum ProviderParamKind {
+    Flag,
+    Positional,
+}
+
+/// Confidence score for an inferred provider mapping.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Encode, Decode)]
+pub enum ProviderConfidence {
+    High,
+    Medium,
+    Low,
+}
+
+/// Maps a parameter (flag or positional) to a provider command (e.g., "apps:list").
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+pub struct ProviderBinding {
+    /// The parameter kind this provider applies to.
+    pub kind: ProviderParamKind,
+    /// The parameter name (e.g., "app", "addon").
+    pub name: String,
+    /// Provider identifier in the form "<group>:list" (e.g., "apps:list").
+    pub provider_id: String,
+    /// Confidence for this mapping.
+    pub confidence: ProviderConfidence,
+}
+
 /// Represents a command-line flag or option for a Heroku CLI command.
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub struct CommandFlag {
@@ -49,6 +77,9 @@ pub struct CommandSpec {
     /// "updated_at"])
     #[serde(default)]
     pub ranges: Vec<String>,
+    /// Provider bindings inferred for flags and positional arguments
+    #[serde(default)]
+    pub providers: Vec<ProviderBinding>,
 }
 
 /// Represents a positional argument for a command, including its name and help

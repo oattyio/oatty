@@ -67,4 +67,23 @@ Troubleshooting
 - 401 Unauthorized — Set `HEROKU_API_KEY` or configure `~/.netrc` for `api.heroku.com`.
 - 403 Forbidden — Check team/app access and role membership.
 - Network error — Check connectivity/proxy; `RUST_LOG=info` for more details.
+### Provider-backed Suggestions
 
+The palette integrates ValueProviders inferred in the registry:
+
+- Registry generation attaches `providers: Vec<ProviderBinding>` to each `CommandSpec`.
+- The palette uses a `RegistryBackedProvider` that resolves provider IDs (e.g., `apps:list`) and fetches live values via the same HTTP client logic (`fetch_json_array`).
+- Results are cached in-memory with a short TTL and merged with enum values and history in the suggestion list.
+
+### SuggestionEngine (Encapsulated Suggestions)
+
+- The palette delegates suggestion building to `SuggestionEngine` (module: `ui/components/palette/suggest.rs`).
+- Engine inputs: the `Registry`, a list of `ValueProvider`s, and the raw input string.
+- Engine outputs: a list of `SuggestionItem`s and a `provider_loading` flag used to toggle the spinner at the end of the input.
+- Engine responsibilities:
+  - Resolve commands or suggest command names when unresolved.
+  - Parse positionals and flags from the input.
+  - Suggest flag values combining enums and provider results.
+  - Suggest positional values via providers, with placeholder fallback.
+  - Signal loading when a provider binding exists but no provider results are available yet.
+- Palette keeps UI concerns (ghost text, popup state, cursor) and merges an end-of-line `--` hint when appropriate.

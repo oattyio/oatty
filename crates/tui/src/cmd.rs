@@ -423,3 +423,36 @@ fn parse_content_range(headers: &HeaderMap) -> Option<Pagination> {
         next_range: None,
     })
 }
+/// Fetch a JSON array from the Heroku API at the given path.
+///
+/// Returns Ok(Vec<Value>) when the response body parses to a JSON array.
+/// On error or non-array response, returns Err with a user-friendly message.
+pub(crate) async fn fetch_json_array(path: &str) -> Result<Vec<Value>, String> {
+    let client = heroku_api::HerokuClient::new_from_env().map_err(|e| {
+        format!(
+            "Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc",
+            e
+        )
+    })?;
+    let resp = client
+        .request(reqwest::Method::GET, path)
+        .send()
+        .await
+        .map_err(|e| format!(
+            "Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY or ~/.netrc is set",
+            e
+        ))?;
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .unwrap_or_else(|_| String::from("<no body>"));
+    if !status.is_success() {
+        return Err(format!("{}\n{}", status, text));
+    }
+    match serde_json::from_str::<Value>(&text) {
+        Ok(Value::Array(arr)) => Ok(arr),
+        Ok(_) => Err("Response is not a JSON array".into()),
+        Err(e) => Err(format!("Invalid JSON: {}", e)),
+    }
+}
