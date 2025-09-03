@@ -20,6 +20,7 @@ use heroku_types::CommandSpec;
 use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
+use super::suggest::{parse_user_flags_args, required_flags_remaining};
 
 /// Maximum number of suggestions to display in the popup.
 const MAX_SUGGESTIONS: usize = 20;
@@ -50,7 +51,7 @@ fn token_index_at_cursor(input: &str, cursor: usize) -> Option<usize> {
 ///
 /// This enum categorizes different types of suggestions that can be
 /// provided to the user in the command palette.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ItemKind {
     /// A command name (e.g., "apps:list")
     Command,
@@ -327,11 +328,6 @@ impl PaletteState {
     pub(crate) fn set_selected(&mut self, selected: usize) {
         self.suggestion_index = selected;
         self.apply_ghost_text();
-    }
-
-    /// Set provider loading indicator for UI
-    pub(crate) fn set_provider_loading(&mut self, loading: bool) {
-        self.provider_loading = loading;
     }
 
     /// Insert text at the end of the input with a separating space and advance
@@ -942,201 +938,52 @@ impl ValueProvider for StaticValuesProvider {
 ///
 /// A command is considered resolved when at least two tokens exist and they
 /// match a `(group, name)` pair in the registry.
-fn is_command_resolved(reg: &Registry, tokens: &[String]) -> bool {
-    if tokens.len() < 2 {
-        return false;
-    }
-    let (group, name) = (&tokens[0], &tokens[1]);
-    reg.commands.iter().any(|c| &c.group == group && &c.name == name)
-}
+// is_command_resolved is implemented in suggest.rs
 
 /// Compute the prefix used to rank command suggestions.
 ///
 /// When two or more tokens exist, uses "group sub"; otherwise uses the first
 /// token or empty string.
-fn compute_command_prefix(tokens: &[String]) -> String {
-    if tokens.len() >= 2 {
-        format!("{} {}", tokens[0], tokens[1])
-    } else {
-        tokens.first().map(|s| s.as_str()).unwrap_or("").to_string()
-    }
-}
+// compute_command_prefix is implemented in suggest.rs
 
 /// Build command suggestions in execution form ("group sub").
 ///
 /// Uses `fuzzy_score` against the computed prefix to rank candidates and embeds
 /// the command summary in the display text.
-fn suggest_commands(reg: &Registry, prefix: &str) -> Vec<SuggestionItem> {
-    let mut items = Vec::new();
-    if prefix.is_empty() {
-        return items;
-    }
-
-    for command in &*reg.commands {
-        let group = &command.group;
-        let name = &command.name;
-        let exec = if name.is_empty() {
-            group.to_string()
-        } else {
-            format!("{} {}", group, name)
-        };
-        if let Some(s) = fuzzy_score(&exec, prefix) {
-            items.push(SuggestionItem {
-                display: format!("{:<28} [CMD] {}", exec, command.summary),
-                insert_text: exec,
-                kind: ItemKind::Command,
-                meta: None,
-                score: s,
-            });
-        }
-    }
-    items
-}
+// suggest_commands is implemented in suggest.rs
 
 /// Parse user-provided flags and positional arguments from the portion of
 /// tokens after the resolved (group, sub) command.
 ///
 /// long flags are collected without the leading dashes; values immediately
 /// following non-boolean flags are consumed. Returns `(user_flags, user_args)`.
-fn parse_user_flags_args(spec: &CommandSpec, parts: &[String]) -> (Vec<String>, Vec<String>) {
-    let mut user_flags: Vec<String> = Vec::new();
-    let mut user_args: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i < parts.len() {
-        let t = parts[i].as_str();
-        if t.starts_with("--") {
-            let name = t.trim_start_matches('-');
-            user_flags.push(name.to_string());
-            if let Some(f) = spec.flags.iter().find(|f| f.name == name)
-                && f.r#type != "boolean"
-                && i + 1 < parts.len()
-                && !parts[i + 1].starts_with('-')
-            {
-                i += 1; // consume value
-            }
-        } else if t.contains('=') && t.starts_with("--") {
-            let name = t.split('=').next().unwrap_or("").trim_start_matches('-');
-            user_flags.push(name.to_string());
-        } else {
-            user_args.push(t.to_string());
-        }
-        i += 1;
-    }
-    (user_flags, user_args)
-}
+// parse_user_flags_args is implemented in suggest.rs
 
 /// Find the last pending non-boolean flag that expects a value.
 ///
 /// Scans tokens from the end to find the most recent flag and checks whether
 /// its value has been supplied. If a value is already complete (per
 /// `is_flag_value_complete`), returns `None`.
-fn find_pending_flag(spec: &CommandSpec, parts: &[String], input: &str) -> Option<String> {
-    let mut j = (parts.len() as isize) - 1;
-    while j >= 0 {
-        let t = parts[j as usize].as_str();
-        if t.starts_with("--") {
-            let name = t.trim_start_matches('-');
-            if let Some(f) = spec.flags.iter().find(|f| f.name == name)
-                && f.r#type != "boolean"
-            {
-                // if the token after this flag is not a value, we are pending
-                if ((j as usize) == parts.len() - 1 || parts[(j as usize) + 1].starts_with('-'))
-                    && !is_flag_value_complete(input)
-                {
-                    return Some(name.to_string());
-                }
-            }
-            break;
-        }
-        j -= 1;
-    }
-    None
-}
+// find_pending_flag is implemented in suggest.rs
 
 /// Derive the value fragment currently being typed for the last flag.
 ///
 /// If the last token is a flag containing an equals sign (e.g., `--app=pa`),
 /// returns the suffix after `=`; otherwise returns the last token itself (or an
 /// empty string when no tokens exist in `parts`).
-fn flag_value_partial(parts: &[String]) -> String {
-    if let Some(last) = parts.last() {
-        let s = last.as_str();
-        if s.starts_with("--") {
-            if let Some(eq) = s.find('=') {
-                return s[eq + 1..].to_string();
-            }
-            return String::new();
-        }
-        return s.to_string();
-    }
-    String::new()
-}
+// flag_value_partial is implemented in suggest.rs
 
 /// Suggest values for a specific non-boolean flag, combining enum values with
 /// provider-derived suggestions.
-fn suggest_values_for_flag(
-    spec: &CommandSpec,
-    flag_name: &str,
-    partial: &str,
-    providers: &[Box<dyn ValueProvider>],
-) -> Vec<SuggestionItem> {
-    let mut items: Vec<SuggestionItem> = Vec::new();
-    if let Some(f) = spec.flags.iter().find(|f| f.name == flag_name) {
-        for value in &f.enum_values {
-            if let Some(s) = fuzzy_score(value, partial) {
-                items.push(SuggestionItem {
-                    display: value.clone(),
-                    insert_text: value.clone(),
-                    kind: ItemKind::Value,
-                    meta: Some("enum".into()),
-                    score: s,
-                });
-            }
-        }
-    }
-    let command_key = format!("{}:{}", spec.group, spec.name);
-    for p in providers {
-        let mut vals = p.suggest(&command_key, flag_name, partial);
-        items.append(&mut vals);
-    }
-    items
-}
+// suggest_values_for_flag is implemented in suggest.rs
 
 /// Suggest positional values for the next expected positional parameter using
 /// providers; when no provider values are available, suggest a placeholder
 /// formatted as `<name>`.
-fn suggest_positionals(
-    spec: &CommandSpec,
-    arg_count: usize,
-    current: &str,
-    providers: &[Box<dyn ValueProvider>],
-) -> Vec<SuggestionItem> {
-    let mut items: Vec<SuggestionItem> = Vec::new();
-    if let Some(pa) = spec.positional_args.get(arg_count) {
-        let command_key = format!("{}:{}", spec.group, spec.name);
-        for p in providers {
-            let mut vals = p.suggest(&command_key, &pa.name, current);
-            items.append(&mut vals);
-        }
-        if items.is_empty() {
-            items.push(SuggestionItem {
-                display: format!("<{}> [ARG] {}", pa.name, pa.help.as_deref().unwrap_or(&pa.name)),
-                insert_text: format!("<{}>", pa.name),
-                kind: ItemKind::Positional,
-                meta: pa.help.clone(),
-                score: 0,
-            });
-        }
-    }
-    items
-}
+// suggest_positionals is implemented in suggest.rs
 
 /// Whether any required flags are not yet supplied by the user.
-fn required_flags_remaining(spec: &CommandSpec, user_flags: &[String]) -> bool {
-    spec.flags
-        .iter()
-        .any(|f| f.required && !user_flags.iter().any(|u| u == &f.name))
-}
+// required_flags_remaining is implemented in suggest.rs
 
 /// Determine whether the last flag's value is complete according to REPL rules.
 ///
@@ -1161,38 +1008,7 @@ fn required_flags_remaining(spec: &CommandSpec, user_flags: &[String]) -> bool {
 /// assert!(!is_flag_value_complete("--app my"));
 /// assert!(is_flag_value_complete("--app my "));
 /// ```
-pub fn is_flag_value_complete(input: &str) -> bool {
-    // Preserve EOL whitespace semantics; only trim for tokenization via ranged
-    // lexer
-    let tokens_r = lex_shell_like_ranged(input);
-    let tokens: Vec<&str> = tokens_r.iter().map(|t| t.text).collect();
-    let len = tokens.len();
-    if len == 0 {
-        return false;
-    }
-    let last = tokens[len - 1];
-    if last == "-" || last == "--" {
-        return false;
-    }
-    // find last flag index
-    let mut last_flag_idx: isize = -1;
-    for i in (0..len).rev() {
-        if tokens[i].starts_with('-') {
-            last_flag_idx = i as isize;
-            break;
-        }
-    }
-    if last_flag_idx == -1 {
-        return true;
-    }
-    if last_flag_idx as usize == len - 1 {
-        return false;
-    }
-    if last_flag_idx as usize == len - 2 {
-        return input.ends_with(' ') || input.ends_with('\t') || input.ends_with('\n') || input.ends_with('\r');
-    }
-    true
-}
+// is_flag_value_complete is implemented in suggest.rs and re-exported above
 
 /// Collect candidate flag suggestions for a command specification.
 ///
@@ -1207,45 +1023,7 @@ pub fn is_flag_value_complete(input: &str) -> bool {
 ///   flag).
 /// - `required_only`: When `true`, include only required flags; when `false`,
 ///   only optional flags.
-fn collect_flag_candidates(
-    spec: &CommandSpec,
-    user_flags: &[String],
-    current: &str,
-    required_only: bool,
-) -> Vec<SuggestionItem> {
-    let mut out: Vec<SuggestionItem> = Vec::new();
-    for f in &spec.flags {
-        if required_only && !f.required {
-            continue;
-        }
-        if !required_only && f.required {
-            continue;
-        }
-        if user_flags.iter().any(|u| u == &f.name) {
-            continue;
-        }
-        let long = format!(
-            "--{:<15} [FLAG] {}",
-            f.name,
-            f.description.as_ref().unwrap_or(&"".to_string())
-        );
-        let include = if current.starts_with('-') {
-            long.starts_with(current)
-        } else {
-            true
-        };
-        if include {
-            out.push(SuggestionItem {
-                display: format!("{:<22}{}", long, if f.required { "  [required]" } else { "" }),
-                insert_text: format!("--{}", f.name),
-                kind: ItemKind::Flag,
-                meta: f.description.clone(),
-                score: 0,
-            });
-        }
-    }
-    out
-}
+// collect_flag_candidates is implemented in suggest.rs
 
 /// Compute the remainder of the current token toward a target insert text toward end.
 ///

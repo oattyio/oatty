@@ -1,0 +1,2158 @@
+---
+openapi: 3.0.1
+info:
+  title: Heroku Data API V1
+  version: v1
+tags:
+- name: PG2.0
+  description: PG2.0 operations (pre GA, breaking changes are expected)
+- name: PG2.0 (To Implement)
+  description: PG2.0 operations that have yet to be implemented
+- name: PG2.0 (Deprecated)
+  description: PG2.0 operations that are deprecated and will be removed in the future
+paths:
+  "/data/postgres/v1/levels/{tier}":
+    get:
+      tags:
+      - PG2.0
+      summary: Retrieves available PostgreSQL levels
+      parameters:
+      - name: tier
+        in: path
+        required: true
+        schema:
+          type: string
+          enum:
+          - performance
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of available PostgreSQL levels
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  levels:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                          description: Performance level name containing '{size}G'
+                            where size is the memory allocation
+                          example: 32G-Performance
+                      required:
+                      - name
+                required:
+                - levels
+              example:
+                levels:
+                - name: 4G-Performance
+                - name: 8G-Performance
+                - name: 16G-Performance
+                - name: 32G-Performance
+                - name: 64G-Performance
+                - name: 128G-Performance
+                - name: 256G-Performance
+                - name: 384G-Performance
+                - name: 512G-Performance
+                - name: 768G-Performance
+                - name: 1024G-Performance
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+  "/data/postgres/v1/{addon}/pools":
+    post:
+      tags:
+      - PG2.0
+      summary: Creates a new Instance Pool on a Next-Gen PostgreSQL addon.
+      parameters:
+      - name: addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - name
+              - level
+              - count
+              properties:
+                name:
+                  type: string
+                  description: Name of the pool
+                  example: analytics
+                level:
+                  type: string
+                  description: Level name
+                  example: 32G-Performance
+                count:
+                  type: integer
+                  description: Number of instances in the pool
+                  example: 1
+      responses:
+        '201':
+          description: Instance pool created successfully
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ComputePool"
+        '404':
+          description: Addon not found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              example:
+                id: not_found
+                message: Addon not found
+        '409':
+          description: An instance pool with the same name already exists.
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              example:
+                id: conflict
+                message: An instance pool with the same name already exists.
+  "/data/postgres/v1/{addon}/pools/{uuid}":
+    get:
+      tags:
+      - PG2.0
+      summary: Retrieves an Instance Pool on a Next-Gen PostgreSQL addon.
+      parameters:
+      - name: addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Instance pool retrieved successfully
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ComputePool"
+        '404':
+          description: Instance pool not found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              example:
+                id: not_found
+                message: An instance pool with this name does not exist.
+    patch:
+      tags:
+      - PG2.0
+      summary: Updates an Instance Pool on a Next-Gen PostgreSQL addon.
+      parameters:
+      - name: addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Name of the pool
+                  example: analytics
+                level:
+                  type: string
+                  description: Level name
+                  example: 32G-Performance
+                count:
+                  type: integer
+                  description: Number of instances in the pool
+                  example: 1
+      responses:
+        '200':
+          description: Instance pool updated successfully
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ComputePool"
+        '404':
+          description: Instance pool not found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              example:
+                id: not_found
+                message: An instance pool with this name does not exist.
+    delete:
+      tags:
+      - PG2.0
+      summary: Deletes an Instance Pool on a Next-Gen PostgreSQL addon.
+      parameters:
+      - name: addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Instance pool deleted successfully
+        '404':
+          description: Instance pool not found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              example:
+                id: not_found
+                message: An instance pool with this name does not exist.
+  "/data/postgres/v1/{addon}/scale":
+    put:
+      deprecated: true
+      tags:
+      - PG2.0 (Deprecated)
+      summary: Scales a PostgreSQL database pool. To create a new pool, pass a new
+        name along with followers and level. To remove a pool, set its followers to
+        0.
+      parameters:
+      - name: addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+              - followers
+              - level
+              properties:
+                followers:
+                  type: integer
+                  description: Number of followers (follower pools only)
+                level:
+                  type: string
+                  description: Level name
+                  example: 32G-Performance
+                pool:
+                  type: string
+                  description: Target pool
+                  default: writer
+                high_availability:
+                  type: boolean
+                  description: Enable/disable high availability (writer pool only)
+                confirmed:
+                  type: boolean
+                  description: Confirmation flag for the scaling operation
+      responses:
+        '200':
+          description: Scale operation successful
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - changes
+                properties:
+                  changes:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - name
+                      - previous
+                      - current
+                      - pool
+                      properties:
+                        name:
+                          type: string
+                        previous:
+                          oneOf:
+                          - type: string
+                          - type: number
+                          - type: boolean
+                          nullable: true
+                        current:
+                          oneOf:
+                          - type: string
+                          - type: number
+                          - type: boolean
+                          nullable: true
+                        pool:
+                          type: string
+              example:
+                changes:
+                - name: level
+                  previous: 4G-Performance
+                  current: 8G-Performance
+                  pool: default
+                - name: followers
+                  previous: 1
+                  current: 2
+                  pool: default
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+        '404':
+          description: Database not found
+  "/data/postgres/v1/{addon}/settings":
+    get:
+      tags:
+      - PG2.0
+      summary: Retrieve PostgreSQL settings
+      parameters:
+      - name: addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Current PostgreSQL settings
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  oneOf:
+                  - type: string
+                  - type: number
+                  nullable: true
+              example:
+                log_connections: '1'
+                log_lock_waits: '1'
+                log_min_duration_statement: '500'
+                log_min_error_statement: info
+                log_statement: ddl
+                track_functions: pl
+                auto_explain.log_analyze:
+                auto_explain.log_buffers:
+                auto_explain.log_format:
+                auto_explain.log_min_duration:
+                auto_explain.log_nested_statements:
+                auto_explain.log_triggers:
+                auto_explain.log_verbose:
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+        '404':
+          description: Addon not found
+    put:
+      tags:
+      - PG2.0
+      summary: Update PostgreSQL settings
+      parameters:
+      - name: addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                settings:
+                  type: string
+                  description: Comma-separated list of setting name-value pairs
+                  example: log_min_duration_statement:500,idle_in_transaction_session_timeout:864000
+              required:
+              - settings
+      responses:
+        '200':
+          description: Settings updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  changes:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        name:
+                          type: string
+                          description: Name of the setting that was changed
+                        previous:
+                          oneOf:
+                          - type: string
+                          - type: number
+                          - type: boolean
+                          nullable: true
+                          description: Previous value of the setting
+                        current:
+                          oneOf:
+                          - type: string
+                          - type: number
+                          - type: boolean
+                          nullable: true
+                          description: New value of the setting
+                      required:
+                      - name
+                      - previous
+                      - current
+                example:
+                  changes:
+                  - name: log_min_duration_statement
+                    previous: '550'
+                    current: '500'
+                  - name: idle_in_transaction_session_timeout
+                    previous: '80000'
+                    current: '864000'
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+        '404':
+          description: Addon not found
+  "/data/postgres/v1/{addon}/info":
+    get:
+      tags:
+      - PG2.0
+      summary: Retrieves information about a Performance-Tier PostgreSQL database.
+      description: |
+        This is a replacement for the currently deprecated /data/postgres/v1/{addon} endpoint.
+        This endpoint may redirect to /data/postgres/v1/{addon} in the future once beta customers have migrated.
+        This endpoint is only available for Performance-Tier databases.
+      parameters:
+      - name: addon
+        in: path
+        required: true
+        schema:
+          type: string
+          format: uuid
+          example: 01234567-89ab-cdef-0123-456789abcdef
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: PostgreSQL info
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/PostgresTenant"
+        '404':
+          description: Database not found
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+              example:
+                id: not_found
+                message: Database not found
+  "/data/postgres/v1/{addon}":
+    get:
+      deprecated: true
+      tags:
+      - PG2.0 (Deprecated)
+      summary: Retrieves PostgreSQL addon information
+      parameters:
+      - name: addon
+        in: path
+        required: true
+        description: The addon identifier
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: PostgreSQL addon information
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - addon_id
+                - addon_name
+                - app_name
+                - version
+                - attachment_name
+                - highly_available
+                - created_at
+                - tier
+                - wait
+                - status
+                - pools
+                - data
+                - tables
+                properties:
+                  addon_id:
+                    type: string
+                  addon_name:
+                    type: string
+                  app_name:
+                    type: string
+                  version:
+                    type: string
+                  attachment_name:
+                    type: string
+                  highly_available:
+                    type: boolean
+                  created_at:
+                    type: string
+                    format: date-time
+                  tier:
+                    type: string
+                    enum:
+                    - performance
+                  wait:
+                    type: boolean
+                  status:
+                    type: string
+                  pools:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - name
+                      - level
+                      - count
+                      - status
+                      - attachment_name
+                      - instances
+                      properties:
+                        name:
+                          type: string
+                        level:
+                          type: string
+                        count:
+                          type: integer
+                        status:
+                          type: string
+                        attachment_name:
+                          type: string
+                        instances:
+                          type: array
+                          items:
+                            type: object
+                            required:
+                            - id
+                            - name
+                            - status
+                            - role
+                            - updated_at
+                            properties:
+                              id:
+                                type: string
+                              name:
+                                type: string
+                              status:
+                                type: string
+                              role:
+                                type: string
+                              updated_at:
+                                type: string
+                                format: date-time
+                  data:
+                    type: object
+                    required:
+                    - used_message
+                    - compliance_message
+                    properties:
+                      used_message:
+                        type: string
+                      compliance_message:
+                        type: string
+                  tables:
+                    type: object
+                    required:
+                    - used_message
+                    - compliance_message
+                    properties:
+                      used_message:
+                        type: string
+                      compliance_message:
+                        type: string
+              example:
+                addon_id: 01234567-89ab-cdef-0123-456789abcdef
+                addon_name: test-addon
+                app_name: test-app
+                version: '1'
+                attachment_name: DATABASE
+                highly_available: true
+                created_at: '2024-10-31T01:30:00.000-05:00'
+                tier: performance
+                wait: false
+                status: Available
+                pools:
+                - attachment_name: DATABASE
+                  count: 1
+                  instances:
+                  - id: '1'
+                    name: writer.1
+                    role: writer
+                    status: Available
+                    updated_at: '2024-09-31T01:30:00.000-05:00'
+                  - id: '2'
+                    name: standby.1
+                    role: standby_writer
+                    status: Available
+                    updated_at: '2024-09-31T01:30:00.000-05:00'
+                  level: 4G-Performance
+                  name: writer
+                  status: Available
+                - attachment_name: READERS
+                  count: 2
+                  instances:
+                  - id: '1'
+                    name: readers.1
+                    role: reader
+                    status: Available
+                    updated_at: '2024-09-31T01:30:00.000-05:00'
+                  - id: '2'
+                    name: readers.2
+                    role: reader
+                    status: Available
+                    updated_at: '2024-09-31T01:30:00.000-05:00'
+                  level: 4G-Performance
+                  name: readers
+                  status: Available
+                data:
+                  used_message: 1/100MB
+                  compliance_message: In compliance
+                tables:
+                  used_message: 1/100MB
+                  compliance_message: In compliance
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+        '404':
+          description: Not found
+  "/data/postgres/v1/{addon}/quotas":
+    get:
+      tags:
+      - PG2.0
+      summary: Retrieve PostgreSQL quotas
+      description: Retrieves a list of all quotas for a PostgreSQL database
+      parameters:
+      - name: addon
+        description: Name or id of database addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of database quotas
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Quotas"
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+        '404':
+          description: Database not found
+  "/data/postgres/v1/{addon}/quotas/storage":
+    get:
+      tags:
+      - PG2.0
+      summary: Retrieve PostgreSQL storage quotas
+      description: Retrieves a list of all storage quotas for a PostgreSQL database
+      parameters:
+      - name: addon
+        description: Name or id of database addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of database storage quotas
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/StorageQuota"
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+        '404':
+          description: Database not found
+    patch:
+      tags:
+      - PG2.0
+      summary: Updates database storage quota
+      description: Updates the storage quota settings for a PostgreSQL database. Only
+        provided fields will be updated. Passing null for a value will unset that
+        quota setting.
+      parameters:
+      - name: addon
+        description: Name or id of database addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                warning_gb:
+                  type: integer
+                  nullable: true
+                  description: Warning threshold for storage quota in gigabytes. Pass
+                    null to unset this value.
+                  example: 50
+                critical_gb:
+                  type: integer
+                  nullable: true
+                  description: Critical threshold for storage quota in gigabytes.
+                    Pass null to unset this value.
+                  example: 100
+                enforcement_action:
+                  type: string
+                  enum:
+                  - restrict
+                  - notify
+                  - none
+                  description: |
+                    Action to take when quota is exceeded.
+
+                    * **restrict** - Revokes CREATE/INSERT privileges and limits connections to 1.
+                      Data can still be read and deleted to bring your database into compliance.
+                    * **notify** - Notify the customer that their database has exceeded its critical threshold and take no further action.
+                    * **none** - Do nothing and incur additional costs.
+                  example: restrict
+      responses:
+        '200':
+          description: Storage quota updated successfully
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/StorageQuota"
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+        '404':
+          description: Database not found
+  "/data/postgres/v1/{addon}/diagnose":
+    get:
+      tags:
+      - PG2.0 (To Implement)
+      summary: Get database diagnostic information
+      description: Retrieves comprehensive diagnostic information about a PostgreSQL
+        database including connection counts, long queries, transactions, indexes,
+        bloat, hit rates, blocking queries, sequences, unlogged tables, and wraparound
+        checks.
+      parameters:
+      - name: addon
+        description: Name or id of database addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Database diagnostic information
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/PostgresDiagnosticReport"
+        '400':
+          description: Bad Request
+        '401':
+          description: Unauthorized
+        '404':
+          description: Database not found
+  "/data/postgres/v1/{addon}/expensive-queries":
+    get:
+      tags:
+      - PG2.0 (To Implement)
+      summary: Get a list of expensive queries.
+      description: Retrieves a list of expensive queries with hourly observation data
+        over the last week. Queries are sorted by total execution time descending.
+        Query text is truncated to 4,000 chars. If no data is available, an empty
+        array may be returned.
+      parameters:
+      - name: addon
+        description: Name or id of database addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: limit
+        description: Number of queries to return
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 10
+          minimum: 1
+          maximum: 25
+      responses:
+        '200':
+          description: A JSON array of expensive queries
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ExpensiveQueriesResponse"
+              example:
+                queries:
+                - query_id: '01234'
+                  text: SELECT * FROM users
+                  observations:
+                  - time: '2025-02-13T15:00:00.000Z'
+                    time_spent: 1
+                    calls: 10
+                    read_time: 50
+                    write_time: 70
+                  - time: '2025-02-13T16:00:00.000Z'
+                    time_spent: 1
+                    calls: 10
+                    read_time: 50
+                    write_time: 70
+                - query_id: '56789'
+                  text: SELECT * FROM accounts
+                  observations:
+                  - time: '2025-02-13T15:00:00.000Z'
+                    time_spent: 1
+                    calls: 10
+                    read_time: 50
+                    write_time: 70
+                  - time: '2025-02-13T16:00:00.000Z'
+                    time_spent: 1
+                    calls: 10
+                    read_time: 50
+                    write_time: 70
+        '400':
+          description: Bad Request
+        '403':
+          description: Forbidden
+        '404':
+          description: Resource not found
+  "/data/postgres/v1/{addon}/reset":
+    post:
+      tags:
+      - PG2.0 (To Implement)
+      summary: Reset the database.
+      description: Delete all data in the database. This operation is synchronous
+        and will return immediately upon completion. Optionally pass extensions to
+        be installed after reset.
+      parameters:
+      - name: addon
+        description: Name or id of database addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                extensions:
+                  type: array
+                  items:
+                    type: string
+                  description: Array of extension names to install
+      responses:
+        '200':
+          description: Database reset successfully
+        '400':
+          description: Bad Request
+        '403':
+          description: Forbidden
+        '404':
+          description: Resource not found
+  "/object-stores/{uuid}":
+    get:
+      summary: Retrieves an Object Store
+      parameters:
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Object Store Retrieved
+          content:
+            application/json:
+              examples:
+                object_store:
+                  value:
+                    addon_id: 81a1cd0c-a986-4780-b402-7a95c5ecaf30
+                    addon_name: object-store-crystalline-32342
+                    plan: dev
+                    region: virginia
+                    status: Available
+                    created_at: '2024-06-27T19:04:58.210+00:00'
+        '401':
+          description: Unauthorized when given invalid authorization information
+  "/object-stores/{uuid}/credential/rotate":
+    post:
+      summary: Rotates the credentials for an Object Store
+      parameters:
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: uuid
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Credentials Rotated
+        '401':
+          description: Unauthorized when given invalid authorization information
+  "/addons/heroku-postgresql/heroku/resources":
+    post:
+      summary: Creates a new Heroku PostgreSQL Addon
+      parameters:
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '202':
+          description: Heroku PostgreSQL Database Created
+        '400':
+          description: Bad Request when authorization is not present
+        '401':
+          description: Unauthorized when given invalid authorization information
+      requestBody:
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/CreateAddon"
+  "/addons/heroku-postgresql/heroku/resources/{id}":
+    put:
+      summary: Updates an existing Heroku PostgreSQL Addon
+      parameters:
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '202':
+          description: Heroku PostgreSQL Database Plan Modified
+        '400':
+          description: Bad Request when authorization is not present
+        '401':
+          description: Unauthorized when given invalid authorization information
+      requestBody:
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/UpdateAddon"
+    delete:
+      summary: Deprovisions an existing Heroku PostgreSQL Addon
+      parameters:
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '204':
+          description: Heroku PostgreSQL Database Deleted
+        '400':
+          description: Bad Request when authorization is not present
+        '401':
+          description: Unauthorized when given invalid authorization information
+  "/addons/heroku-postgresql/heroku/resources/{id}/namespaces":
+    post:
+      summary: Creates a new attachment for an existing Heroku PostgreSQL Addon
+      parameters:
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Heroku PostgreSQL Database Attached
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/AttachmentResponse"
+        '400':
+          description: Bad Request when authorization is not present
+        '401':
+          description: Unauthorized when given invalid authorization information
+        '404':
+          description: Not Found when the database, credential or instance pool is
+            not found
+        '422':
+          description: Unprocessable Entity when the request is invalid
+      requestBody:
+        content:
+          application/json:
+            schema:
+              "$ref": "#/components/schemas/Attachment"
+  "/client/v11/database/{name}/expensive-queries":
+    get:
+      summary: Returns a list of expensive queries.
+      description: Returns a list of expensive queries with hourly observation data
+        over the last week. Queries are sorted by total execution time descending.
+        Query text is truncated to 4,000 chars. If no data is available, an empty
+        array may be returned.
+      parameters:
+      - name: name
+        description: Name or id of database addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      - name: limit
+        description: Number of queries to return
+        in: query
+        required: false
+        schema:
+          type: integer
+          default: 10
+          minimum: 1
+          maximum: 25
+      responses:
+        '200':
+          description: A JSON array of expensive queries
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/ExpensiveQueriesResponse"
+              example:
+                queries:
+                - query_id: '01234'
+                  text: SELECT * FROM users
+                  observations:
+                  - time: '2025-02-13T15:00:00.000Z'
+                    time_spent: 1
+                    calls: 10
+                    read_time: 50
+                    write_time: 70
+                  - time: '2025-02-13T16:00:00.000Z'
+                    time_spent: 1
+                    calls: 10
+                    read_time: 50
+                    write_time: 70
+                - query_id: '56789'
+                  text: SELECT * FROM accounts
+                  observations:
+                  - time: '2025-02-13T15:00:00.000Z'
+                    time_spent: 1
+                    calls: 10
+                    read_time: 50
+                    write_time: 70
+                  - time: '2025-02-13T16:00:00.000Z'
+                    time_spent: 1
+                    calls: 10
+                    read_time: 50
+                    write_time: 70
+        '400':
+          description: Bad Request
+        '403':
+          description: Forbidden
+        '404':
+          description: Resource not found
+  "/data/postgres/v1/{addon}/rotate_credentials":
+    post:
+      tags:
+      - PG2.0 (To Implement)
+      summary: Rotate all database credentials
+      description: Rotates all credentials for a PostgreSQL database. This operation
+        will invalidate all current passwords and generate new ones for all credentials
+        associated with the database.
+      parameters:
+      - name: addon
+        description: Name or id of database addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                forced:
+                  type: boolean
+                  description: Immediately kills all connections and performs rotations
+                    on all credentials.
+      responses:
+        '200':
+          description: All credentials rotated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - message
+                properties:
+                  message:
+                    type: string
+                    description: Confirmation message of the rotation
+              example:
+                message: All credentials have been rotated within {database_name}.
+        '401':
+          description: Unauthorized
+        '404':
+          description: Database not found
+        '400':
+          description: Bad Request - Returned when the request parameters are invalid
+            or malformed
+  "/data/postgres/v1/{addon}/credentials":
+    get:
+      tags:
+      - PG2.0 (To Implement)
+      summary: List database credentials
+      description: Retrieves a list of all credentials for a PostgreSQL database
+      parameters:
+      - name: addon
+        description: Name or id of database addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: List of database credentials
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  "$ref": "#/components/schemas/CredentialsResponse"
+              example:
+              - uuid: 01234567-89ab-cdef-0123-456789abcdef
+                name: default
+                state: active
+                database: d1234567890
+                host: example.cluster-1234567890.region.rds.amazonaws.com
+                port: 5432
+                roles: []
+        '401':
+          description: Unauthorized
+        '404':
+          description: Database not found
+    post:
+      tags:
+      - PG2.0 (To Implement)
+      summary: Create database credential
+      description: Creates a new credential for a PostgreSQL database
+      parameters:
+      - name: addon
+        description: Name or id of database addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                  description: Name of the credential to create
+              required:
+              - name
+      responses:
+        '200':
+          description: Credential created successfully
+        '401':
+          description: Unauthorized
+        '404':
+          description: Database not found
+        '400':
+          description: Bad Request - Returned when the request parameters are invalid
+            or malformed
+  "/data/postgres/v1/{addon}/credentials/{cred_name}":
+    get:
+      tags:
+      - PG2.0 (To Implement)
+      summary: Get database credential
+      description: Retrieves a specific credential for a PostgreSQL database
+      parameters:
+      - name: addon
+        description: Name or id of database addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: cred_name
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Credential details
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - uuid
+                - name
+                - state
+                - database
+                - host
+                - port
+                - roles
+                properties:
+                  uuid:
+                    type: string
+                    format: uuid
+                    description: Unique identifier for the credential
+                  name:
+                    type: string
+                    description: Name of the credential
+                  state:
+                    type: string
+                    enum:
+                    - active
+                    - inactive
+                    description: Current state of the credential
+                  database:
+                    type: string
+                    description: Database name
+                  host:
+                    type: string
+                    description: Database host
+                  port:
+                    type: integer
+                    description: Database port
+                  roles:
+                    type: array
+                    items:
+                      type: object
+                      required:
+                      - user
+                      - password
+                      - state
+                      properties:
+                        user:
+                          type: string
+                          description: Database user name
+                        password:
+                          type: string
+                          description: Database password
+                        state:
+                          type: string
+                          enum:
+                          - active
+                          - inactive
+                          description: State of the role
+              example:
+                uuid: 01234567-89ab-cdef-0123-456789abcdef
+                name: credential-name
+                state: active
+                database: database-name
+                host: cluster-name.region.rds.amazonaws.com
+                port: 5432
+                roles:
+                - user: credential-name
+                  password: password123
+                  state: active
+        '401':
+          description: Unauthorized
+        '404':
+          description: Credential not found
+    delete:
+      tags:
+      - PG2.0 (To Implement)
+      summary: Delete database credential
+      description: Deletes a specific credential for a PostgreSQL database
+      parameters:
+      - name: addon
+        description: Name or id of database addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: cred_name
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: Credential deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - message
+                properties:
+                  message:
+                    type: string
+                    description: Confirmation message of the deletion
+              example:
+                message: The credential {credential_name} has been destroyed within
+                  {database_name} and detached from all apps.
+        '401':
+          description: Unauthorized
+        '404':
+          description: Credential not found
+  "/data/postgres/v1/{addon}/credentials/{cred_name}/rotate":
+    post:
+      tags:
+      - PG2.0 (To Implement)
+      summary: Rotate database credential
+      description: Rotates a specific credential for a PostgreSQL database. This operation
+        will invalidate the current password and generate a new one.
+      parameters:
+      - name: addon
+        description: Name or id of database addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: cred_name
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                forced:
+                  type: boolean
+                  description: Immediately kills all connections to the credential
+                    and performs the rotation.
+      responses:
+        '200':
+          description: Credential rotated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                - message
+                properties:
+                  message:
+                    type: string
+                    description: Confirmation message of the rotation
+              example:
+                message: The credential {credential_name} has been rotated within
+                  {database_name}.
+        '401':
+          description: Unauthorized
+        '404':
+          description: Credential not found
+        '400':
+          description: Bad Request - Returned when the request parameters are invalid
+            or malformed
+  "/data/postgres/v1/{addon}/attach":
+    put:
+      tags:
+      - PG2.0 (To Implement)
+      summary: Placeholder - we may need for attachments. We are currently working
+        on GA scope for attachments.
+      parameters:
+      - name: addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Unauthorized
+  "/data/postgres/v1/{addon}/capabilities":
+    get:
+      tags:
+      - PG2.0 (To Implement)
+      summary: Placeholder - we may need to dashboard to determine what actions are
+        allowed.
+      parameters:
+      - name: addon
+        description: Name or id of database addon
+        in: path
+        required: true
+        schema:
+          type: string
+      - name: Authorization
+        in: header
+        required: true
+        schema:
+          type: string
+      responses:
+        '401':
+          description: Unauthorized
+servers:
+- url: https://{defaultHost}
+  variables:
+    defaultHost:
+      default: www.example.com
+components:
+  schemas:
+    Error:
+      type: object
+      properties:
+        id:
+          type: string
+          example: rate_limit
+        message:
+          type: string
+          example: Your account reached the API limit. Please wait a few minutes before
+            making new requests
+        url:
+          type: string
+          example: https://devcenter.heroku.com/articles/platform-api-reference#rate-limits
+      required:
+      - id
+      - message
+    App:
+      description: The associated Heroku app for a database cluster.
+      type: object
+      required:
+      - uuid
+      - name
+      properties:
+        uuid:
+          type: string
+          format: uuid
+          example: 01234567-89ab-cdef-0123-456789abcdef
+        name:
+          type: string
+          example: example
+    Addon:
+      description: The associated Heroku addon for a database cluster.
+      type: object
+      required:
+      - uuid
+      - name
+      properties:
+        uuid:
+          type: string
+          format: uuid
+          example: 01234567-89ab-cdef-0123-456789abcdef
+        name:
+          type: string
+          example: acme-inc-primary-database
+    PostgresTenant:
+      description: A Heroku PostgreSQL Performance Tier database.
+      type: object
+      required:
+      - app
+      - addon
+      - version
+      - tier
+      - status
+      - created_at
+      - quotas
+      - pools
+      properties:
+        app:
+          "$ref": "#/components/schemas/App"
+        addon:
+          "$ref": "#/components/schemas/Addon"
+        version:
+          type: string
+          example: '17.3'
+        tier:
+          type: string
+          enum:
+          - performance
+        status:
+          type: string
+          enum:
+          - provisioning
+          - available
+          - modifying
+          - unavailable
+          example: available
+        created_at:
+          type: string
+          format: date-time
+          example: '2024-09-31T01:30:00.000-05:00'
+        quotas:
+          type: array
+          items:
+            oneOf:
+            - "$ref": "#/components/schemas/StorageQuota"
+        plan_limits:
+          type: array
+          items:
+            oneOf:
+            - "$ref": "#/components/schemas/TableLimit"
+          example:
+          - name: table-limit
+            current: 100
+            limit: 4000
+          - name: connection-limit
+            current: 100
+            limit: 500
+        pools:
+          type: array
+          items:
+            "$ref": "#/components/schemas/ComputePool"
+    ComputeInstance:
+      description: Represents a unit of compute for a database cluster.
+      type: object
+      properties:
+        name:
+          type: string
+          example: writer.1
+        level:
+          type: string
+          example: 16G-Performance
+        role:
+          type: string
+          example: writer
+        status:
+          type: string
+          example: available
+        updated_at:
+          type: string
+          format: date-time
+          example: '2024-09-31T01:30:00.000-05:00'
+    ConnectionEndpoint:
+      description: Represents a means of connecting to a database pool.
+      type: object
+      required:
+      - host
+      - port
+      - status
+      properties:
+        host:
+          type: string
+          example: c1n66rbai40pl3.cluster-czrs8kj4isg7.us-east-1.rds.amazonaws.com
+        port:
+          type: integer
+          example: 5432
+        status:
+          type: string
+          enum:
+          - available
+          - modifying
+          - degraded
+          - deprovisioning
+          example: modifying
+    ComputePool:
+      description: |
+        A collection of compute instances that are part of a database cluster and
+        behind similar connection endpoints.
+      type: object
+      properties:
+        uuid:
+          type: string
+          format: uuid
+          example: 01234567-89ab-cdef-0123-456789abcdef
+        name:
+          type: string
+          example: analytics
+        expected_level:
+          type: string
+          example: 32G-Performance
+        expected_count:
+          type: integer
+          example: 1
+        status:
+          type: string
+          enum:
+          - available
+          - modifying
+          example: modifying
+        endpoints:
+          type: array
+          items:
+            "$ref": "#/components/schemas/ConnectionEndpoint"
+        compute_instances:
+          type: array
+          items:
+            "$ref": "#/components/schemas/ComputeInstance"
+      required:
+      - name
+      - expected_level
+      - expected_count
+      - compute_instances
+    PostgresDiagnostic:
+      type: object
+      required:
+      - name
+      - summary
+      - status
+      - results
+      properties:
+        name:
+          type: string
+          description: Field name of the check
+        summary:
+          type: string
+          description: Human-readable summary of the check
+        status:
+          type: string
+          enum:
+          - skipped
+          - green
+          - yellow
+          - red
+          description: Status of the check
+          example: green
+        results:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            description: Check-specific results
+      example:
+        name: connection_count
+        summary: Connection Count
+        status: green
+        results:
+        - count: 100
+    PostgresDiagnosticReport:
+      type: object
+      required:
+      - created_at
+      - items
+      properties:
+        created_at:
+          type: string
+          format: date-time
+        items:
+          type: array
+          items:
+            "$ref": "#/components/schemas/PostgresDiagnostic"
+      example:
+        created_at: '2024-09-31T01:30:00.000-05:00'
+        items:
+        - name: connection_count
+          summary: Connection Count
+          status: green
+          results:
+          - count: 100
+        - name: long_queries
+          summary: Long Queries
+          status: green
+          results:
+          - pid: 12345
+            duration: 100
+            query: SELECT * FROM public.jobs
+          - pid: 12346
+            duration: 100
+            query: SELECT * FROM public.logs
+        - name: long_transactions
+          summary: Long Transactions
+          status: green
+          results:
+          - pid: 12345
+            duration: 100
+            state: active
+            query: SELECT * FROM public.jobs
+          - pid: 12346
+            duration: 100
+            state: active
+            query: SELECT * FROM public.logs
+        - name: idle_in_transaction
+          summary: Idle in Transaction
+          status: green
+          results:
+          - pid: 12345
+            duration: 100
+            query: SELECT * FROM public.jobs
+          - pid: 12346
+            duration: 100
+            query: SELECT * FROM public.logs
+        - name: indexes
+          status: yellow
+          results:
+          - reason: Never Used Indexes
+            index: idx_users_email
+            index_scan_pct: 100
+            scans_per_write: 100
+            index_size: 10 GB
+            table_size: 100 GB
+        - name: bloat
+          summary: Bloat
+          status: green
+          results:
+          - type: index
+            object: public.jobs::id_idx
+            bloat: 100
+            waste: 100
+        - name: hit_rate
+          summary: Hit Rate
+          status: green
+          results:
+          - name: public.jobs
+            percentage: 98.407
+          - name: public.logs
+            percentage: 96.34
+        - name: blocking_queries
+          summary: Blocking Queries
+          status: green
+          results:
+          - blocked_pid: 12345
+            blocking_statement: SELECT * FROM public.jobs
+            blocking_duration: 100
+            blocking_pid: 12346
+            blocked_statement: SELECT * FROM public.logs
+            blocked_duration: 100
+        - name: int4_sequence_usage
+          summary: Int4 Sequence Usage
+          status: green
+          results:
+          - col: public.jobs(id)
+            seq: public.jobs_id_seq
+          - col: public.logs(id)
+            seq: public.logs_id_seq
+        - name: unlogged_tables
+          summary: Unlogged Tables
+          status: green
+          results:
+          - schema: public
+            table: users
+            owner: uafndf8hhid2kh
+          - schema: public
+            table: logs
+            owner: uafndf8hhid2kh
+        - name: table_transaction_id_wraparound
+          summary: Table Transaction ID Wraparound
+          status: green
+          results:
+          - schema: public
+            table: users
+            percentage: 50
+        - name: database_transaction_id_wraparound
+          summary: Database Transaction ID Wraparound
+          status: green
+          results:
+          - name: databasename
+            percentage: 50
+        - name: schema_check
+          summary: Schema Check
+          status: green
+          results:
+          - count: 4
+    CreateAddon:
+      type: object
+      properties:
+        callback_url:
+          type: string
+          format: uri
+        heroku_id:
+          type: string
+          format: email
+        name:
+          type: string
+        region:
+          type: string
+        uuid:
+          type: string
+          format: uuid
+        oauth_grant:
+          type: object
+          properties:
+            code:
+              type: string
+            expires_at:
+              type: string
+            type:
+              type: string
+              enum:
+              - authorization_code
+        logplex_token:
+          type: string
+        log_input_url:
+          type: string
+          format: uri
+      required:
+      - callback_url
+      - heroku_id
+      - name
+      - region
+      - uuid
+      - logplex_token
+      - log_input_url
+    CreateAddonResponse:
+      type: object
+      required:
+      - id
+      properties:
+        id:
+          oneOf:
+          - type: string
+            format: uuid
+          - type: integer
+        message:
+          type: string
+        config:
+          type: object
+        value:
+          type: string
+    UpdateAddon:
+      type: object
+      properties:
+        plan:
+          type: string
+    UpdateAddonResponse:
+      type: object
+      required:
+      - message
+      properties:
+        config:
+          type: object
+        message:
+          type: string
+    ExpensiveQueriesResponse:
+      type: object
+      properties:
+        queries:
+          type: array
+          items:
+            type: object
+            properties:
+              query_id:
+                type: string
+              text:
+                type: string
+              observations:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    time:
+                      type: string
+                    time_spent:
+                      type: number
+                    calls:
+                      type: number
+                    read_time:
+                      type: number
+                    write_time:
+                      type: number
+    CredentialsResponse:
+      type: object
+      required:
+      - uuid
+      - name
+      - state
+      - database
+      - host
+      - port
+      - roles
+      properties:
+        uuid:
+          type: string
+          format: uuid
+          description: Unique identifier for the credential
+        name:
+          type: string
+          description: Name of the credential
+        state:
+          type: string
+          enum:
+          - active
+          - inactive
+          description: Current state of the credential
+        database:
+          type: string
+          description: Database name
+        host:
+          type: string
+          description: Database host
+        port:
+          type: integer
+          description: Database port
+        roles:
+          type: array
+          items:
+            type: object
+            description: Role information
+      example:
+        uuid: 01234567-89ab-cdef-0123-456789abcdef
+        name: credential-name
+        state: active
+        database: database-name
+        host: cluster-name.region.rds.amazonaws.com
+        port: 5432
+        roles:
+        - user: credential-name
+          password: password123
+          state: active
+    Quotas:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            oneOf:
+            - "$ref": "#/components/schemas/StorageQuota"
+    TableLimit:
+      description: The limit for the number of supported tables in a database.
+      type: object
+      properties:
+        name:
+          type: string
+          description: Name of plan limit
+        current:
+          type: integer
+          description: Current number of tables
+        limit:
+          type: integer
+          description: Limit threshold for number of tables
+      example:
+        name: table-limit
+        current: 100
+        limit: 4000
+    StorageQuota:
+      type: object
+      required:
+      - type
+      - current_gb
+      - warning_gb
+      - critical_gb
+      - enforcement_action
+      - enforcement_active
+      properties:
+        type:
+          type: string
+          enum:
+          - storage
+          description: Type of quota
+        current_gb:
+          type: number
+          format: float
+          nullable: true
+          description: Current storage usage in gigabytes
+        warning_gb:
+          type: integer
+          nullable: true
+          description: Warning threshold in gigabytes
+        critical_gb:
+          type: integer
+          nullable: true
+          description: Critical threshold in gigabytes
+        enforcement_action:
+          "$ref": "#/components/schemas/EnforcementAction"
+        enforcement_active:
+          type: boolean
+          description: Whether enforcement is currently active
+      example:
+        type: storage
+        current_gb: 100.0
+        warning_gb: 50
+        critical_gb: 100
+        enforcement_action: notify
+        enforcement_active: true
+    EnforcementAction:
+      type: string
+      enum:
+      - restrict
+      - notify
+      - none
+      description: |
+        Action taken when quota is exceeded.
+        * **restrict** - Revokes CREATE/INSERT privileges and limits connections to 1.
+          Data can still be read and deleted to bring your database into compliance.
+        * **notify** - Notify the customer that their database has exceeded its critical threshold and take no further action.
+        * **none** - Do nothing and incur additional costs.
+    Attachment:
+      type: object
+      properties:
+        name:
+          type: string
+        config:
+          type: object
+          properties:
+            pool:
+              type: string
+            credential:
+              type: string
+            proxy:
+              type: boolean
+    AttachmentResponse:
+      type: object
+      properties:
+        config:
+          type: object
+        name:
+          type: string
+host: heroku-data-api-staging.herokuapp.com

@@ -4,6 +4,8 @@ use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
 
 use super::state::{ItemKind, SuggestionItem, ValueProvider};
 
+// ===== Types =====
+
 /// Result of a suggestion build operation containing suggestion items and loading state.
 ///
 /// This struct encapsulates the output of the suggestion engine, providing both
@@ -20,9 +22,130 @@ pub(crate) struct SuggestionResult {
 ///
 /// The suggestion engine analyzes user input tokens and generates contextually relevant
 /// suggestions including commands, flags, positional arguments, and values from providers.
+// ===== Engine =====
 pub(crate) struct SuggestionEngine;
 
 impl SuggestionEngine {
+    // Breakout: if command is not yet resolved, return command suggestions
+    fn suggest_when_unresolved(registry: &Registry, tokens: &[String]) -> Option<SuggestionResult> {
+        if !is_command_resolved(registry, tokens) {
+            let items = suggest_commands(registry, &compute_command_prefix(tokens));
+            return Some(SuggestionResult { items, provider_loading: false });
+        }
+        None
+    }
+
+    // Breakout: resolve spec reference from tokens
+    fn resolve_spec<'a>(registry: &'a Registry, tokens: &[String]) -> Option<&'a CommandSpec> {
+        let group: &str = tokens.get(0).map(|s| s.as_str()).unwrap_or("");
+        let name: &str = tokens.get(1).map(|s| s.as_str()).unwrap_or("");
+        registry.commands.iter().find(|c| c.group == group && c.name == name)
+    }
+
+    // Breakout: handle case where a non-boolean flag value is pending
+    fn suggest_for_pending_flag(
+        spec: &CommandSpec,
+        remaining_parts: &[String],
+        input: &str,
+        providers: &[Box<dyn ValueProvider>],
+    ) -> Option<SuggestionResult> {
+        let pending_flag = find_pending_flag(spec, remaining_parts, input);
+        if let Some(flag_name) = pending_flag {
+            let value_partial = flag_value_partial(remaining_parts);
+            let items = suggest_values_for_flag(spec, &flag_name, &value_partial, providers);
+            // Signal loading when there is a binding for this flag but no non-enum provider values yet
+            let has_binding = spec
+                .providers
+                .iter()
+                .any(|p| matches!(p.kind, heroku_types::ProviderParamKind::Flag) && p.name == flag_name);
+            let provider_found = items
+                .iter()
+                .any(|it| matches!(it.kind, ItemKind::Value) && it.meta.as_deref() != Some("enum"));
+            let provider_loading = has_binding && !provider_found;
+            return Some(SuggestionResult { items, provider_loading });
+        }
+        None
+    }
+
+    // Breakout: build positional suggestions and compute provider loading
+    fn build_positional_suggestions(
+        spec: &CommandSpec,
+        remaining_parts: &[String],
+        current_input: &str,
+        ends_with_space: bool,
+        current_is_flag: bool,
+        providers: &[Box<dyn ValueProvider>],
+        user_args_len: usize,
+    ) -> (Vec<SuggestionItem>, bool) {
+        // Helper: build values for a specific positional index and determine loading
+        fn build_for_index(
+            spec: &CommandSpec,
+            index: usize,
+            current: &str,
+            providers: &[Box<dyn ValueProvider>],
+        ) -> (Vec<SuggestionItem>, bool) {
+            let mut values = suggest_positionals(spec, index, current, providers);
+            let mut loading = false;
+            if let Some(positional_arg) = spec.positional_args.get(index) {
+                // Keep provider suggestions only different from the current echo
+                if !current.is_empty() {
+                    values.retain(|item| item.insert_text != current);
+                }
+                let has_binding = spec
+                    .providers
+                    .iter()
+                    .any(|p| matches!(p.kind, heroku_types::ProviderParamKind::Positional)
+                        && p.name == positional_arg.name);
+                let provider_found = values
+                    .iter()
+                    .any(|item| matches!(item.kind, ItemKind::Value) && item.meta.as_deref() != Some("enum"));
+                if has_binding && !provider_found {
+                    loading = true;
+                }
+            }
+            (values, loading)
+        }
+
+        let first_flag_idx = remaining_parts
+            .iter()
+            .position(|t| t.starts_with("--"))
+            .unwrap_or(remaining_parts.len());
+        let editing_positional = !current_is_flag
+            && !remaining_parts.is_empty()
+            && (remaining_parts.len() - 1) < first_flag_idx
+            && !spec.positional_args.is_empty()
+            && !ends_with_space;
+
+        if editing_positional {
+            let arg_index = (remaining_parts.len() - 1)
+                .min(spec.positional_args.len().saturating_sub(1));
+            return build_for_index(spec, arg_index, current_input, providers);
+        }
+        if user_args_len < spec.positional_args.len() && !current_is_flag {
+            return build_for_index(spec, user_args_len, "", providers);
+        }
+        (Vec::new(), false)
+    }
+
+    // Breakout: extend with required/optional flags depending on context
+    fn extend_flag_suggestions(
+        spec: &CommandSpec,
+        user_flags: &[String],
+        current_input: &str,
+        current_is_flag: bool,
+        items: &mut Vec<SuggestionItem>,
+    ) {
+        if items.is_empty() {
+            let required_remaining = required_flags_remaining(spec, user_flags);
+            if required_remaining || current_is_flag {
+                items.extend(collect_flag_candidates(spec, user_flags, current_input, true));
+            }
+        }
+        if items.is_empty() {
+            items.extend(collect_flag_candidates(spec, user_flags, current_input, false));
+        }
+    }
+
     /// Builds suggestions based on the current input, command registry, and value providers.
     ///
     /// This is the main entry point for generating suggestions. It analyzes the input
@@ -51,122 +174,41 @@ impl SuggestionEngine {
     ) -> SuggestionResult {
         let input_tokens: Vec<String> = lex_shell_like(input);
 
-        // Suggest commands until a valid command is resolved
-        if !is_command_resolved(registry, &input_tokens) {
-            let items = suggest_commands(registry, &compute_command_prefix(&input_tokens));
-            return SuggestionResult { items, provider_loading: false };
+        if let Some(out) = Self::suggest_when_unresolved(registry, &input_tokens) {
+            return out;
         }
 
-        // Resolve command specification
-        let group = input_tokens.first().unwrap_or(&String::new()).to_owned();
-        let name = input_tokens.get(1).unwrap_or(&String::new()).to_owned();
-        let Some(spec) = registry.commands.iter().find(|command| command.group == group && command.name == name).cloned() else {
+        let Some(spec) = Self::resolve_spec(registry, &input_tokens) else {
             return SuggestionResult { items: vec![], provider_loading: false };
         };
 
         // Extract remaining parts after command
         let remaining_parts: &[String] = if input_tokens.len() >= 2 { &input_tokens[2..] } else { &input_tokens[0..0] };
-        let (user_flags, user_args) = parse_user_flags_args(&spec, remaining_parts);
+        let (user_flags, user_args) = parse_user_flags_args(spec, remaining_parts);
         let current_input = remaining_parts.last().map(|s| s.as_str()).unwrap_or("");
         let ends_with_space = input.ends_with(' ') || input.ends_with('\t') || input.ends_with('\n') || input.ends_with('\r');
         let current_is_flag = current_input.starts_with('-');
-        let pending_flag = find_pending_flag(&spec, remaining_parts, input);
 
-        let mut provider_loading = false;
-
-        // If a non-boolean flag value is pending, only suggest values for it
-        if let Some(flag_name) = pending_flag.clone() {
-            let value_partial = flag_value_partial(remaining_parts);
-            let mut items = suggest_values_for_flag(&spec, &flag_name, &value_partial, providers);
-            
-            // Check if provider binding exists but no provider items yet, signal loading
-            let has_binding = spec
-                .providers
-                .iter()
-                .any(|p| matches!(p.kind, heroku_types::ProviderParamKind::Flag) && p.name == flag_name);
-            let provider_found = items
-                .iter()
-                .any(|it| matches!(it.kind, ItemKind::Value) && it.meta.as_deref() != Some("enum"));
-            if has_binding && !provider_found {
-                provider_loading = true;
-            }
-            return SuggestionResult { items, provider_loading };
+        if let Some(out) = Self::suggest_for_pending_flag(spec, remaining_parts, input, providers) {
+            return out;
         }
 
         // Positionals:
         // - If the user is currently typing a positional token (no trailing space),
         //   suggest values for that positional index.
         // - Otherwise, suggest for the next positional if any remain.
-        let mut items: Vec<SuggestionItem> = {
-            let first_flag_idx = remaining_parts
-                .iter()
-                .position(|t| t.starts_with("--"))
-                .unwrap_or(remaining_parts.len());
-            let editing_positional = !current_is_flag
-                && !remaining_parts.is_empty()
-                && (remaining_parts.len() - 1) < first_flag_idx
-                && !spec.positional_args.is_empty();
-            let editing_positional = editing_positional && !ends_with_space;
-            if editing_positional {
-                // The positional index under edit is the index of the last non-flag token
-                let arg_index = (remaining_parts.len() - 1)
-                    .min(spec.positional_args.len().saturating_sub(1));
-                let mut values = suggest_positionals(&spec, arg_index, current_input, providers);
-                // Suppress echoing the exact same value back; retain only different values
-                values.retain(|item| item.insert_text != current_input);
-                if let Some(positional_arg) = spec.positional_args.get(arg_index) {
-                    let has_binding = spec
-                        .providers
-                        .iter()
-                        .any(|provider| matches!(provider.kind, heroku_types::ProviderParamKind::Positional)
-                            && provider.name == positional_arg.name);
-                    let provider_found = values
-                        .iter()
-                        .any(|item| matches!(item.kind, ItemKind::Value) && item.meta.as_deref() != Some("enum"));
-                    if has_binding && !provider_found {
-                        provider_loading = true;
-                    }
-                }
-                values
-            } else if user_args.len() < spec.positional_args.len() && !current_is_flag {
-                // Suggest for the next positional (no partial yet)
-                let mut values = suggest_positionals(&spec, user_args.len(), "", providers);
-                // For the next positional, if the current token is empty, keep all; otherwise
-                // suppress identical echo (should not happen here since current is for last token).
-                if !current_input.is_empty() {
-                    values.retain(|item| item.insert_text != current_input);
-                }
-                if let Some(positional_arg) = spec.positional_args.get(user_args.len()) {
-                    let has_binding = spec
-                        .providers
-                        .iter()
-                        .any(|provider| matches!(provider.kind, heroku_types::ProviderParamKind::Positional)
-                            && provider.name == positional_arg.name);
-                    let provider_found = values
-                        .iter()
-                        .any(|item| matches!(item.kind, ItemKind::Value) && item.meta.as_deref() != Some("enum"));
-                    if has_binding && !provider_found {
-                        provider_loading = true;
-                    }
-                }
-                values
-            } else {
-                Vec::new()
-            }
-        };
+        let (mut items, provider_loading) = Self::build_positional_suggestions(
+            spec,
+            remaining_parts,
+            current_input,
+            ends_with_space,
+            current_is_flag,
+            providers,
+            user_args.len(),
+        );
 
         // Suggest required flags if needed (or if user is typing a flag)
-        if items.is_empty() {
-            let required_remaining = required_flags_remaining(&spec, &user_flags);
-            if required_remaining || current_is_flag {
-                items.extend(collect_flag_candidates(&spec, &user_flags, current_input, true));
-            }
-        }
-
-        // Suggest optional flags when required flags are satisfied
-        if items.is_empty() {
-            items.extend(collect_flag_candidates(&spec, &user_flags, current_input, false));
-        }
+        Self::extend_flag_suggestions(spec, &user_flags, current_input, current_is_flag, &mut items);
 
         SuggestionResult { items, provider_loading }
     }
@@ -185,6 +227,7 @@ impl SuggestionEngine {
 /// # Returns
 ///
 /// `true` if the command is resolved, `false` otherwise.
+// ===== Command resolution helpers =====
 fn is_command_resolved(registry: &Registry, tokens: &[String]) -> bool {
     if tokens.len() < 2 {
         return false;
@@ -264,7 +307,8 @@ fn suggest_commands(registry: &Registry, prefix: &str) -> Vec<SuggestionItem> {
 /// # Returns
 ///
 /// A tuple of (user_flags, user_args) where both are vectors of strings.
-fn parse_user_flags_args(spec: &CommandSpec, parts: &[String]) -> (Vec<String>, Vec<String>) {
+// ===== Parsing helpers =====
+pub(crate) fn parse_user_flags_args(spec: &CommandSpec, parts: &[String]) -> (Vec<String>, Vec<String>) {
     let mut user_flags: Vec<String> = Vec::new();
     let mut user_args: Vec<String> = Vec::new();
     let mut i = 0;
@@ -374,6 +418,7 @@ fn flag_value_partial(parts: &[String]) -> String {
 /// # Returns
 ///
 /// A vector of suggestion items for the flag values.
+// ===== Suggestion builders =====
 fn suggest_values_for_flag(
     spec: &CommandSpec,
     flag_name: &str,
@@ -467,7 +512,8 @@ fn suggest_positionals(
 /// # Returns
 ///
 /// `true` if required flags are missing, `false` if all required flags are present.
-fn required_flags_remaining(spec: &CommandSpec, user_flags: &[String]) -> bool {
+// ===== Validation and checks =====
+pub(crate) fn required_flags_remaining(spec: &CommandSpec, user_flags: &[String]) -> bool {
     spec.flags
         .iter()
         .any(|flag| flag.required && !user_flags.iter().any(|user_flag| user_flag == &flag.name))
@@ -549,7 +595,7 @@ fn collect_flag_candidates(
 /// # Returns
 ///
 /// `true` if the flag value is complete, `false` if it's still being typed.
-fn is_flag_value_complete(input: &str) -> bool {
+pub(crate) fn is_flag_value_complete(input: &str) -> bool {
     let tokens_ranged = lex_shell_like_ranged(input);
     let tokens: Vec<&str> = tokens_ranged.iter().map(|token| token.text).collect();
     let token_count = tokens.len();
@@ -586,6 +632,7 @@ fn is_flag_value_complete(input: &str) -> bool {
     true
 }
 
+// ===== Tests =====
 #[cfg(test)]
 mod tests {
     use super::*;

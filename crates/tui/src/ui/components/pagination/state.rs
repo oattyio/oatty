@@ -10,9 +10,6 @@ pub struct PaginationState {
     /// Current page number (0-based)
     pub current_page: usize,
 
-    /// Total number of pages
-    pub total_pages: usize,
-
     /// The field used for pagination (e.g. id, name)
     pub field: String,
 
@@ -43,7 +40,6 @@ impl Default for PaginationState {
         Self {
             is_visible: false,
             current_page: 0,
-            total_pages: 0,
             field: String::new(),
             range_start: String::new(),
             range_end: String::new(),
@@ -82,15 +78,6 @@ impl PaginationState {
     /// Moves to the first page
     pub fn first_page(&mut self) {
         self.current_page = 0;
-    }
-
-    /// Gets the current page info as a string
-    pub fn page_info(&self) -> String {
-        if self.total_pages == 0 {
-            "No pages".to_string()
-        } else {
-            format!("Page {} of {}", self.current_page + 1, self.total_pages)
-        }
     }
 
     /// Gets the current range info as a string

@@ -271,14 +271,12 @@ impl PaginationComponent {
     /// * `area` - The rectangular area to render within
     /// * `theme` - The theme to use for styling
     fn render_page_info(&self, frame: &mut Frame, area: Rect, theme: &dyn UiTheme) {
-        let page_info = self.state.page_info();
-        let range_info = if self.state.range_mode {
+        let info_text = if self.state.range_mode {
             format!(" | {}", self.state.range_info())
         } else {
             String::new()
         };
 
-        let info_text = format!("{}{}", page_info, range_info);
         let info_paragraph = Paragraph::new(info_text)
             .style(theme.text_secondary_style())
             .alignment(Alignment::Center);

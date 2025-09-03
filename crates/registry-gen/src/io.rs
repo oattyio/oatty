@@ -3,7 +3,8 @@ use std::{fs, path::PathBuf};
 use anyhow::{Context, Result};
 use bincode::config;
 
-use crate::schema::generate_commands;
+use crate::schema::{derive_commands_from_schema, generate_commands};
+use crate::openapi::transform_openapi_to_links;
 
 /// Writes the command manifest to a file.
 ///
@@ -20,8 +21,22 @@ use crate::schema::generate_commands;
 /// Returns an error if file reading, directory creation, command generation,
 /// encoding, or writing fails.
 pub fn write_manifest(input: PathBuf, output: PathBuf) -> Result<()> {
-    let schema = fs::read_to_string(&input).with_context(|| format!("read {}", input.display()))?;
-    let commands = generate_commands(&schema)?;
+    let commands = if is_yaml(&input) {
+        let text = fs::read_to_string(&input).with_context(|| format!("read {}", input.display()))?;
+        let doc: serde_json::Value = serde_yaml::from_str(&text).context("parse yaml as json value")?;
+        let transformed = transform_to_links_if_openapi(&doc)?;
+        derive_commands_from_schema(&transformed)?
+    } else {
+        let schema = fs::read_to_string(&input).with_context(|| format!("read {}", input.display()))?;
+        // If JSON OpenAPI, transform; else assume hyper-schema JSON
+        if looks_like_openapi_json(&schema) {
+            let doc: serde_json::Value = serde_json::from_str(&schema).context("parse json")?;
+            let transformed = transform_to_links_if_openapi(&doc)?;
+            derive_commands_from_schema(&transformed)?
+        } else {
+            generate_commands(&schema)?
+        }
+    };
     if let Some(parent) = output.parent()
         && !parent.exists()
     {
@@ -49,8 +64,21 @@ pub fn write_manifest(input: PathBuf, output: PathBuf) -> Result<()> {
 /// Returns an error if file reading, directory creation, command generation,
 /// encoding, or writing fails.
 pub fn write_manifest_json(input: PathBuf, output: PathBuf) -> Result<()> {
-    let schema = fs::read_to_string(&input).with_context(|| format!("read {}", input.display()))?;
-    let commands = generate_commands(&schema)?;
+    let commands = if is_yaml(&input) {
+        let text = fs::read_to_string(&input).with_context(|| format!("read {}", input.display()))?;
+        let doc: serde_json::Value = serde_yaml::from_str(&text).context("parse yaml as json value")?;
+        let transformed = transform_to_links_if_openapi(&doc)?;
+        derive_commands_from_schema(&transformed)?
+    } else {
+        let schema = fs::read_to_string(&input).with_context(|| format!("read {}", input.display()))?;
+        if looks_like_openapi_json(&schema) {
+            let doc: serde_json::Value = serde_json::from_str(&schema).context("parse json")?;
+            let transformed = transform_to_links_if_openapi(&doc)?;
+            derive_commands_from_schema(&transformed)?
+        } else {
+            generate_commands(&schema)?
+        }
+    };
     if let Some(parent) = output.parent()
         && !parent.exists()
     {
@@ -60,4 +88,26 @@ pub fn write_manifest_json(input: PathBuf, output: PathBuf) -> Result<()> {
     fs::write(&output, &json)?;
     println!("wrote {} bytes (json) to {}", json.len(), output.display());
     Ok(())
+}
+
+fn is_yaml(path: &PathBuf) -> bool {
+    match path.extension().and_then(|s| s.to_str()) {
+        Some(ext) => matches!(ext, "yaml" | "yml"),
+        None => false,
+    }
+}
+
+fn looks_like_openapi_json(s: &str) -> bool {
+    // Lightweight detection to avoid parsing twice
+    s.contains("\"openapi\"") || s.contains("\"swagger\"")
+}
+
+fn transform_to_links_if_openapi(doc: &serde_json::Value) -> Result<serde_json::Value> {
+    // For now we support OpenAPI v3 only; v2 can be added later
+    if doc.get("openapi").is_some() {
+        transform_openapi_to_links(doc)
+    } else {
+        // Not OpenAPI; assume it's already hyper-schema-like
+        Ok(doc.clone())
+    }
 }

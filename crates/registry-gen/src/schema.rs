@@ -92,10 +92,9 @@ pub fn derive_commands_from_schema(value: &Value) -> Result<Vec<CommandSpec>> {
                 if path_template.is_empty() {
                     continue;
                 }
-
-                let (mut group, mut name) = derive_command_group_and_name(href, &title.to_kebab_case());
+                let (mut group, mut name) = derive_command_group_and_name(href, &action);
                 if command_names.insert(name.clone(), true).is_some() {
-                    (group, name) = derive_command_group_and_name(href, &action);
+                    (group, name) = derive_command_group_and_name(href, &title.to_kebab_case());
                 }
 
                 commands.push(CommandSpec {
@@ -340,14 +339,13 @@ fn extract_ranges(link: &Value) -> Vec<String> {
 /// A tuple of vector of `CommandFlag` and vector of required names.
 fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<String>) {
     let mut flags = Vec::new();
-    let mut required_names = Vec::new();
 
     // Extract required names and properties from schema
     let Some(schema) = link.get("schema") else {
         return (add_range_flags(&extract_ranges(link)), Vec::new());
     };
 
-    required_names = schema
+    let required_names: Vec<String> = schema
         .get("required")
         .and_then(Value::as_array)
         .map(|req| req.iter().filter_map(|r| r.as_str().map(str::to_string)).collect())
