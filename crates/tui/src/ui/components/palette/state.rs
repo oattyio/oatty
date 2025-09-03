@@ -15,12 +15,12 @@
 //! - Suggestions never render an empty popup.
 use std::{fmt::Debug, sync::Arc};
 
+use super::suggest::{parse_user_flags_args, required_flags_remaining};
 use heroku_registry::Registry;
 use heroku_types::CommandSpec;
 use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
-use super::suggest::{parse_user_flags_args, required_flags_remaining};
 
 /// Maximum number of suggestions to display in the popup.
 const MAX_SUGGESTIONS: usize = 20;
@@ -584,7 +584,9 @@ impl PaletteState {
         }
         let mut out: Vec<String> = Vec::new();
         out.push(tokens[0].to_string());
-        if tokens.len() > 1 { out.push(tokens[1].to_string()); }
+        if tokens.len() > 1 {
+            out.push(tokens[1].to_string());
+        }
         for t in tokens[2..first_flag_idx2].iter() {
             out.push((*t).to_string());
         }

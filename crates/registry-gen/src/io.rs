@@ -3,8 +3,8 @@ use std::{fs, path::PathBuf};
 use anyhow::{Context, Result};
 use bincode::config;
 
-use crate::schema::{derive_commands_from_schema, generate_commands};
 use crate::openapi::transform_openapi_to_links;
+use crate::schema::{derive_commands_from_schema, generate_commands};
 
 /// Writes the command manifest to a file.
 ///

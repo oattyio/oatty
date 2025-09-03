@@ -65,6 +65,12 @@ impl<'a> TableState<'_> {
     pub fn grid_focus(&self) -> &FocusFlag {
         &self.grid_f
     }
+    pub fn selected_data(&self) -> Option<&Value> {
+        if let Some(json_array) = Self::array_from_json(self.result_json.as_ref()) {
+            return json_array.get(self.selected);
+        }
+        None
+    }
 
     // Reducers
     pub fn toggle_show(&mut self) {
@@ -91,7 +97,7 @@ impl<'a> TableState<'_> {
     }
 
     pub fn apply_result_json(&mut self, value: Option<Value>, theme: &dyn UiTheme) {
-        let json_array = TableState::array_from_json(value.as_ref());
+        let json_array = Self::array_from_json(value.as_ref());
         self.columns = self.create_columns(json_array);
         self.rows = self.create_rows(json_array, theme);
         self.headers = self.create_headers(theme);

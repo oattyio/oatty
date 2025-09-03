@@ -226,7 +226,7 @@ impl Component for TableComponent<'_> {
         let widths = app.table.column_constraints();
         let headers = app.table.headers();
         let maybe_rows = app.table.rows();
-        if let Some(json) = json {
+        let is_table = if let Some(json) = json {
             if let Some(rows) = maybe_rows {
                 self.render_json_table_with_columns(
                     frame,
@@ -239,17 +239,22 @@ impl Component for TableComponent<'_> {
                     app.table.grid_f.get(),
                     &*app.ctx.theme,
                 );
+                true
             } else {
                 self.render_kv_or_text(frame, splits[0], json, &*app.ctx.theme);
+                false
             }
         } else {
             let p = Paragraph::new("No results to display").style(app.ctx.theme.text_muted_style());
             frame.render_widget(p, splits[0]);
-        }
+            false
+        };
 
-        // Render pagination controls
-        self.pagination.render(frame, splits[1], app);
-        self.footer.render(frame, splits[2], app);
+        if is_table {
+            // Render pagination controls
+            self.pagination.render(frame, splits[1], app);
+            self.footer.render(frame, splits[2], app);
+        }
     }
 
     /// Handle key events for the results table modal.
@@ -320,6 +325,9 @@ impl Component for TableComponent<'_> {
             // Toggle handled via App message; keep consistent with global actions
             KeyCode::Char('t') => {
                 let _ = app.update(app::Msg::ToggleTable);
+            }
+            KeyCode::Char('c') => {
+                effects.extend(app.update(app::Msg::CopyCommand));
             }
             _ => {}
         }

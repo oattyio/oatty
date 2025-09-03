@@ -2,8 +2,8 @@ use heroku_types::CommandSpec;
 
 // Re-export public items from modules
 pub mod io;
-pub mod schema;
 pub mod openapi;
+pub mod schema;
 
 pub use io::{write_manifest, write_manifest_json};
 pub use schema::generate_commands;

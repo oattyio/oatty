@@ -1,383 +1,378 @@
-# ValueProvider Registry — Adapted for the New Command Spec
+# Value Provider Registry Architecture
 
-This document defines a **portable registry format** (YAML/JSON) to map **commands/flags/positionals** to **ValueProviders**. It lets the CLI/TUI discover which parameters can source **dynamic suggestions** (apps, addons, regions, etc.) from **core providers**, **workflow outputs**, or **MCP plugins**.
+## Overview
 
-**manifest entry**
-```json
-{
-  "group": "enterprise-accounts",
-  "name": "members:create",
-  "summary": "Create a member in an enterprise account.",
-  "positional_args": ["enterprise_account"],
-  "positional_help": {
-    "enterprise_account": "unique identifier of the enterprise account or unique name of the enterprise account"
-  },
-  "flags": [
-    { "name": "federated", "short_name": "f", "required": false, "type": "boolean", "enum_values": [], "default_value": null, "description": "whether membership is being created as part of SSO JIT" },
-    { "name": "permissions", "short_name": "p", "required": true, "type": "array", "enum_values": [], "default_value": null, "description": "permissions for enterprise account" },
-    { "name": "user", "short_name": "u", "required": true, "type": "string", "enum_values": [], "default_value": null, "description": "unique email address of account or unique identifier of an account" }
-  ],
-  "method": "POST",
-  "path": "/enterprise-accounts/{enterprise_account}/members"
+The Value Provider Registry is a sophisticated system that enables dynamic, context-aware suggestions for Heroku CLI commands. It bridges the gap between static command definitions and dynamic runtime data by providing intelligent autocomplete suggestions for flags, positional arguments, and command values.
+
+## Purpose
+
+The Value Provider Registry serves several key purposes:
+
+1. **Dynamic Autocomplete**: Provides real-time suggestions based on actual Heroku API data
+2. **Context Awareness**: Understands command relationships and suggests relevant values
+3. **Intelligent Binding**: Automatically maps command parameters to appropriate data sources
+4. **Performance Optimization**: Implements caching and background fetching to maintain responsiveness
+5. **User Experience Enhancement**: Reduces typing and prevents errors in command construction
+
+## Core Components
+
+### 1. Schema-Driven Provider Binding (`schema.rs`)
+
+The schema system automatically infers provider bindings by analyzing OpenAPI/JSON schema definitions and command structures.
+
+#### Key Functions
+
+- **`infer_provider_bindings()`**: Main entry point that analyzes commands and assigns providers
+- **`infer_positionals_from_path()`**: Maps path parameters to list-based providers
+- **`map_flag_to_group()`**: Associates flag names with appropriate data sources
+
+#### Provider Binding Logic
+
+```rust
+// Example of how providers are inferred
+fn infer_provider_bindings(commands: &mut [CommandSpec]) {
+    // Identify groups that have list commands
+    let list_groups: HashSet<String> = commands
+        .iter()
+        .filter_map(|c| {
+            classify_command(&c.path, &c.method).and_then(|(grp, action)| {
+                (action == "list").then(|| normalize_group(&grp))
+            })
+        })
+        .collect();
+
+    // Map flags and positionals to appropriate providers
+    for cmd in commands.iter_mut() {
+        let mut providers = infer_positionals_from_path(&cmd.path, &list_groups);
+        
+        for flag in &cmd.flags {
+            if let Some((group, confidence)) = map_flag_to_group(&flag.name, &synonyms) {
+                if list_groups.contains(&group) {
+                    providers.push(ProviderBinding {
+                        kind: ProviderParamKind::Flag,
+                        name: flag.name.clone(),
+                        provider_id: format!("{}:{}", group, "list"),
+                        confidence,
+                    });
+                }
+            }
+        }
+        cmd.providers = providers;
+    }
 }
 ```
 
----
+### 2. Registry-Backed Provider (`mod.rs`)
 
-## 0) Versioning
+The `RegistryBackedProvider` implements the actual value fetching and caching logic.
 
-- **Format id:** `vp-registry@1` (unchanged)
-- **Registry semver:** `version: 1.1.0` (new minor to reflect the mapping layer)
-- Backward-compatible with prior provider definitions; only **`commands`** mapping changed.
+#### Architecture Features
 
----
+- **Asynchronous Fetching**: Background API calls to prevent UI blocking
+- **Intelligent Caching**: TTL-based caching with deduplication
+- **Concurrent Request Management**: Prevents duplicate API calls for the same provider
+- **Fuzzy Matching**: Provides scored suggestions based on partial input
 
-## 1) Field Addressing Model
+#### Core Implementation
 
-With the new command spec, fields are addressed as:
+```rust
+pub struct RegistryBackedProvider {
+    registry: Arc<Registry>,
+    ttl: Duration,
+    cache: Arc<Mutex<HashMap<String, CacheEntry>>>,
+    active_fetches: Arc<Mutex<HashSet<String>>>,
+}
 
-- **Command identity:** `group` + `name` 
-  - Example key → `enterprise-accounts members:create`
-- **Positionals:** by name from `positional_args`, e.g., `enterprise_account`
-- **Flags:** by **long name** (from `flags[].name`) rendered as `--<name>` in CLI; short names (e.g., `-u`) are aliases
-- **Types:** from `flags[].type` (`string|boolean|array|int|json|…`)
+impl ValueProvider for RegistryBackedProvider {
+    fn suggest(&self, command_key: &str, field: &str, partial: &str) -> Vec<SuggestionItem> {
+        let (group, name) = command_key.split_once(':').unwrap_or(("", ""));
+        let provider_id = self.provider_for_field(group, name, field)?;
+        let values = self.list_values_for_provider(&provider_id);
+        
+        // Apply fuzzy matching and scoring
+        values.into_iter()
+            .filter_map(|value| {
+                fuzzy_score(&value, partial).map(|score| SuggestionItem {
+                    display: value.clone(),
+                    insert_text: value,
+                    kind: ItemKind::Value,
+                    meta: Some(provider_id.clone()),
+                    score,
+                })
+            })
+            .collect()
+    }
+}
+```
 
-**Registry rule:** Always reference a field by:
-- `kind: "positional"` + `name: "<positional_name>"`, or  
-- `kind: "flag"` + `flag: "--<flag_name>"` (short names are optional metadata)
+### 3. Palette Integration (`palette.rs`)
 
----
+The command palette component integrates the provider system with the user interface.
 
-## 2) Registry Structure (YAML)
+#### Key Features
+
+- **Real-time Suggestions**: Updates suggestions as users type
+- **Contextual Help**: Integrates with help system for command guidance
+- **Smart Navigation**: Handles suggestion selection and command completion
+- **Error Handling**: Displays validation errors and provider status
+
+#### Suggestion Flow
+
+```rust
+fn handle_tab_press(&self, app: &mut app::App) {
+    let SharedCtx { registry, providers, .. } = &app.ctx;
+    app.palette.apply_build_suggestions(registry, providers);
+    app.palette.set_is_suggestions_open(app.palette.suggestions_len() > 0);
+}
+```
+
+## Data Flow Architecture
+
+### 1. Command Registration Flow
+
+```mermaid
+graph TD
+    A[OpenAPI Schema] --> B[Schema Parser]
+    B --> C[Command Derivation]
+    C --> D[Provider Binding Inference]
+    D --> E[Registry Population]
+    E --> F[Command Registry]
+    
+    subgraph "Provider Binding Logic"
+        G[Path Analysis] --> H[Flag Mapping]
+        H --> I[Group Identification]
+        I --> J[Provider Assignment]
+    end
+    
+    D --> G
+```
+
+### 2. Runtime Suggestion Flow
+
+```mermaid
+sequenceDiagram
+    participant U as User
+    participant P as Palette
+    participant R as Registry
+    participant V as ValueProvider
+    participant C as Cache
+    participant A as API
+    
+    U->>P: Type in field
+    P->>R: Get command spec
+    R->>P: Return with provider bindings
+    P->>V: Request suggestions
+    V->>C: Check cache
+    alt Cache hit
+        C->>V: Return cached values
+    else Cache miss
+        V->>A: Fetch from API
+        A->>V: Return data
+        V->>C: Update cache
+    end
+    V->>P: Return suggestions
+    P->>U: Display suggestions
+```
+
+### 3. Provider Binding Resolution
+
+```mermaid
+graph LR
+    A[Command Path] --> B[Segment Analysis]
+    B --> C{Has Placeholders?}
+    C -->|Yes| D[Extract Parameter Names]
+    C -->|No| E[No Positional Providers]
+    
+    D --> F[Identify Resource Group]
+    F --> G{Group Has List Command?}
+    G -->|Yes| H[Create Positional Provider]
+    G -->|No| I[No Provider Binding]
+    
+    J[Command Flags] --> K[Flag Name Analysis]
+    K --> L[Map to Resource Group]
+    L --> M{Group Has List Command?}
+    M -->|Yes| N[Create Flag Provider]
+    M -->|No| O[No Provider Binding]
+    
+    H --> P[Provider Registry]
+    N --> P
+    I --> P
+    O --> P
+```
+
+## Implementation Details
+
+### Provider Binding Types
+
+The system supports two main types of provider bindings:
+
+1. **Positional Arguments**: Automatically inferred from URL path parameters
+2. **Flag Values**: Mapped based on naming conventions and synonyms
+
+### Confidence Levels
+
+Provider bindings include confidence levels to handle ambiguous cases:
+
+- **High**: Direct path-based inference (e.g., `/apps/{app}/config` → `app` parameter)
+- **Medium**: Synonym-based mapping (e.g., `app` flag → `apps:list` provider)
+- **Low**: Conservative pluralization (e.g., `region` → `regions:list`)
+
+### Caching Strategy
+
+The caching system implements several optimizations:
+
+- **TTL-based Expiration**: Configurable cache lifetime
+- **Background Refresh**: Non-blocking API updates
+- **Deduplication**: Prevents concurrent fetches for the same provider
+- **Memory Efficiency**: Automatic cleanup of expired entries
+
+### Error Handling
+
+The system gracefully handles various failure scenarios:
+
+- **API Failures**: Falls back to cached data or empty suggestions
+- **Network Issues**: Continues operation with existing cache
+- **Schema Errors**: Logs issues without breaking the UI
+- **Provider Mismatches**: Graceful degradation to basic autocomplete
+
+## Usage Examples
+
+### 1. Basic Provider Usage
+
+```rust
+// Create a provider with 60-second cache TTL
+let provider = RegistryBackedProvider::new(
+    Arc::new(registry), 
+    Duration::from_secs(60)
+);
+
+// Get suggestions for an app field
+let suggestions = provider.suggest("config:update", "app", "my");
+// Returns: ["my-app-1", "my-app-2", "my-app-production"]
+```
+
+### 2. Custom Provider Integration
+
+```rust
+// Implement custom ValueProvider trait
+impl ValueProvider for CustomProvider {
+    fn suggest(&self, command_key: &str, field: &str, partial: &str) -> Vec<SuggestionItem> {
+        // Custom suggestion logic
+        vec![]
+    }
+}
+
+// Register with the system
+let providers = vec![
+    Box::new(RegistryBackedProvider::new(registry, ttl)),
+    Box::new(CustomProvider::new()),
+];
+```
+
+### 3. Schema-Driven Binding
 
 ```yaml
-format: vp-registry@1
-version: 1.1.0
-
-defaults:
-  ttl_seconds: 60
-  debounce_ms: 180
-  max_items: 50
-  security:
-    redact_patterns: ["token", "password", "secret", "authorization", "database_url"]
-  behaviors:
-    partial_required: true
-    incremental: true
-    cache_scope: "session"
-
-providers:
-  # Core dynamic providers
-  - id: enterprise:accounts
-    kind: core
-    description: List enterprise accounts accessible to the user
-    input:
-      params: []
-    output:
-      item:
-        label: "$.name"         # visible label
-        value: "$.id"           # what to insert (or "$.slug"/"$.name" depending on API)
-        meta:  "owner: $.owner.email"
-    ttl_seconds: 120
-    endpoint: "GET /enterprise-accounts"
-    requires_auth: true
-
-  - id: enterprise:permissions
-    kind: core
-    description: List valid enterprise permissions
-    input:
-      params:
-        - name: enterprise_account
-          from: "argOrFlag"     # from positional or flag (if mirrored)
-    output:
-      item:
-        label: "$.name"
-        value: "$.name"
-        meta:  "$.description"
-    ttl_seconds: 300
-    endpoint: "GET /enterprise-accounts/{enterprise_account}/permissions"
-    requires_auth: true
-
-  - id: accounts:lookup
-    kind: core
-    description: Suggest user accounts by email or id
-    input:
-      params:
-        - name: partial
-          from: "partial"       # user-typed prefix
-    output:
-      item:
-        label: "$.email"
-        value: "$.id"
-        meta:  "name: $.name"
-    ttl_seconds: 45
-    endpoint: "GET /accounts?query={partial}"
-    requires_auth: true
-
-  # Workflow outputs (virtual)
-  - id: workflow:from
-    kind: workflow
-    description: Read a value from a prior task's JSON output
-    input:
-      params:
-        - name: task
-        - name: jsonpath
-    output:
-      item: { label: "$", value: "$" }
-    ttl_seconds: 0
-    requires_auth: false
-
-commands:
-  # Command key = "<group> <name>"
-  - key: "enterprise-accounts members:create"
-    fields:
-      # positional: enterprise_account
-      - name: enterprise_account
-        kind: positional
-        provider: enterprise:accounts
-        behavior:
-          partial_required: true
-          debounce_ms: 120
-        # If the API accepts either id or slug, choose insertion:
-        output_value: "$.id"          # override provider default for this field (optional)
-
-      # flag: --user (string; required)
-      - name: user
-        kind: flag
-        flag: --user
-        provider: accounts:lookup
-        behavior:
-          partial_required: true
-          incremental: true
-
-      # flag: --permissions (array; required)
-      - name: permissions
-        kind: flag
-        flag: --permissions
-        provider: enterprise:permissions
-        args:
-          enterprise_account: "${{ field.enterprise_account || context.enterprise_account }}"
-        behavior:
-          partial_required: false      # show full list; filter locally
-          max_items: 200
+# OpenAPI schema automatically generates bindings
+paths:
+  /apps/{app}/config:
+    get:
+      parameters:
+        - name: app
+          in: path
+          required: true
+          schema:
+            type: string
+      # Automatically infers: app parameter → apps:list provider
 ```
 
-### Notes
-- `output_value` (optional) lets you override what from the provider item is inserted: e.g., insert `id` while displaying `name`.
-- For **array flags** like `--permissions`, suggestions return one value at a time; the input accumulates multiple values (`--permissions admin --permissions read`), or a CSV if your parser supports it.
-- `args.enterprise_account` demonstrates **templating** pulling from the positional `enterprise_account` or a global context.
+## Performance Considerations
 
----
+### Optimization Strategies
 
-## 3) JSON Equivalent (compact)
+1. **Lazy Loading**: Providers only fetch data when needed
+2. **Background Processing**: API calls don't block the UI
+3. **Smart Caching**: TTL-based expiration with background refresh
+4. **Request Deduplication**: Prevents redundant API calls
+5. **Fuzzy Matching**: Efficient suggestion filtering
 
-```json
-{
-  "format": "vp-registry@1",
-  "version": "1.1.0",
-  "providers": [
-    {
-      "id": "enterprise-accounts list",
-      "kind": "core",
-      "description": "List enterprise accounts accessible to the user",
-      "input": { "params": [] },
-      "output": { "item": { "label": "$.name", "value": "$.id", "meta": "owner: $.owner.email" } },
-      "ttl_seconds": 120,
-      "endpoint": "GET /enterprise-accounts",
-      "requires_auth": true
-    },
-    {
-      "id": "enterprise-permissions list",
-      "kind": "core",
-      "description": "List valid enterprise permissions",
-      "input": { "params": [ { "name": "enterprise_account", "from": "argOrFlag" } ] },
-      "output": { "item": { "label": "$.name", "value": "$.name", "meta": "$.description" } },
-      "ttl_seconds": 300,
-      "endpoint": "GET /enterprise-accounts/{enterprise_account}/permissions",
-      "requires_auth": true
-    },
-    {
-      "id": "accounts:lookup",
-      "kind": "core",
-      "description": "Suggest user accounts by email or id",
-      "input": { "params": [ { "name": "partial", "from": "partial" } ] },
-      "output": { "item": { "label": "$.email", "value": "$.id", "meta": "name: $.name" } },
-      "ttl_seconds": 45,
-      "endpoint": "GET /accounts?query={partial}",
-      "requires_auth": true
-    },
-    { "id": "workflow:from", "kind": "workflow", "description": "Read a value from a prior task's JSON output",
-      "input": { "params": [ { "name": "task" }, { "name": "jsonpath" } ] },
-      "output": { "item": { "label": "$", "value": "$" } },
-      "ttl_seconds": 0, "requires_auth": false }
-  ],
-  "commands": [
-    {
-      "key": "enterprise-accounts:members:create",
-      "fields": [
-        { "name": "enterprise_account", "kind": "positional",
-          "provider": "enterprise:accounts",
-          "behavior": { "partial_required": true, "debounce_ms": 120 },
-          "output_value": "$.id" },
-        { "name": "user", "kind": "flag", "flag": "--user",
-          "provider": "accounts:lookup",
-          "behavior": { "partial_required": true, "incremental": true } },
-        { "name": "permissions", "kind": "flag", "flag": "--permissions",
-          "provider": "enterprise:permissions",
-          "args": { "enterprise_account": "${{ field.enterprise_account || context.enterprise_account }}" },
-          "behavior": { "partial_required": false, "max_items": 200 } }
-      ]
-    }
-  ]
+### Memory Management
+
+- **Cache Size Limits**: Configurable maximum cache entries
+- **Automatic Cleanup**: Expired entries are removed
+- **Arc-based Sharing**: Efficient memory sharing across components
+- **Lazy Initialization**: Providers are created on-demand
+
+## Security Considerations
+
+### Data Protection
+
+- **API Key Management**: Secure handling of Heroku API credentials
+- **Request Validation**: Input sanitization and validation
+- **Rate Limiting**: Respects API rate limits
+- **Error Masking**: Sensitive information is not exposed in logs
+
+### Access Control
+
+- **Provider Isolation**: Each provider operates independently
+- **Permission Checking**: Respects user's Heroku account permissions
+- **Audit Logging**: Tracks provider usage for debugging
+
+## Testing Strategy
+
+### Unit Tests
+
+- **Provider Logic**: Individual provider behavior testing
+- **Binding Inference**: Schema parsing and provider assignment
+- **Cache Operations**: Cache hit/miss scenarios
+- **Error Handling**: Various failure modes
+
+### Integration Tests
+
+- **End-to-End Flows**: Complete suggestion workflows
+- **API Integration**: Real Heroku API interactions
+- **Performance Testing**: Cache efficiency and response times
+- **Concurrency Testing**: Multiple simultaneous requests
+
+### Test Data
+
+```rust
+#[test]
+fn test_provider_binding_inference() {
+    let json = r#"{
+        "links": [
+            { "href": "/apps", "method": "GET", "title": "List apps" },
+            { "href": "/apps/{app}/config", "method": "PATCH", "title": "Update config" }
+        ]
+    }"#;
+    
+    let commands = derive_commands_from_schema(&json).unwrap();
+    let config_cmd = commands.iter().find(|c| c.path.contains("config")).unwrap();
+    
+    assert!(config_cmd.providers.iter().any(|p| 
+        p.name == "app" && p.provider_id == "apps:list"
+    ));
 }
 ```
 
----
+## Future Enhancements
 
-## 4) Resolution & Templating (with the new spec)
+### Planned Features
 
-**Resolution precedence for arguments passed to providers:**
-1. `field.<positional_or_flag>` — current values entered by the user  
-   - Positionals: `field.enterprise_account`  
-   - Flags: `field.--user`, `field.--permissions`  
-2. `context.*` — host-provided (e.g., default enterprise)  
-3. `tasks.<name>.output.*` — workflow outputs (when executing a workflow)  
-4. Explicit `args` in the registry mapping (templated strings)
+1. **Multi-Provider Support**: Combine suggestions from multiple sources
+2. **Context-Aware Suggestions**: Consider command history and user preferences
+3. **Intelligent Ranking**: Machine learning-based suggestion ordering
+4. **Offline Mode**: Local caching for offline operation
+5. **Provider Plugins**: Extensible provider system for third-party integrations
 
-**Templating examples:**
-- `"${{ field.enterprise_account || context.enterprise_account }}"`
-- `"${{ tasks.bootstrap.output.owner_email }}"`
+### Scalability Improvements
 
----
+1. **Distributed Caching**: Redis-based shared cache
+2. **Provider Load Balancing**: Multiple provider instances
+3. **Async Streaming**: Real-time suggestion updates
+4. **Batch Processing**: Efficient bulk data fetching
 
-## 5) UX Behavior (Power & Guided Modes)
+## Conclusion
 
-- **Power Mode (command line)**
-  - When cursor is on `enterprise_account` (positional #1), popup suggests from `enterprise:accounts`.
-  - On `--user` value, popup suggests from `accounts:lookup` as you type (debounced prefix).
-  - On `--permissions`, shows a list from `enterprise:permissions`; selection appends into the array value.
+The Value Provider Registry represents a sophisticated approach to command-line autocomplete that goes beyond simple text matching. By combining schema analysis, intelligent binding inference, and efficient caching, it provides a seamless user experience while maintaining performance and reliability.
 
-- **Guided Mode (form)**
-  - `enterprise_account`: searchable dropdown.
-  - `user`: autocomplete text field with email → id mapping.
-  - `permissions`: multi-select chips or checklist; validation ensures at least one.
-
-- **Insertion policies**
-  - `enterprise_account` inserts the **id** (per `output_value: "$.id"`), even if label shows `name`.
-  - `--user` inserts account **id** though label shows email (auditability + uniqueness).
-  - `--permissions` inserts selected permission names one-by-one.
-
----
-
-## 6) JSON Schema Updates (commands mapping only)
-
-> This extends the previous registry schema; only the command mapping is shown here.
-
-```json
-{
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://example.com/schemas/vp-registry@1.commands-v2.json",
-  "type": "object",
-  "required": ["format","version","providers","commands"],
-  "properties": {
-    "format": { "const": "vp-registry@1" },
-    "version": { "type": "string" },
-    "providers": { "type": "array" },
-    "commands": {
-      "type": "array",
-      "items": {
-        "type": "object",
-        "required": ["key","fields"],
-        "properties": {
-          "key": { "type": "string", "description": "group:name e.g., enterprise-accounts:members:create" },
-          "fields": {
-            "type": "array",
-            "items": {
-              "type": "object",
-              "required": ["name","kind"],
-              "properties": {
-                "name": { "type": "string" },
-                "kind": { "enum": ["flag","positional"] },
-                "flag": { "type": "string", "pattern": "^--[a-z0-9][a-z0-9-]*$" },
-                "required": { "type": "boolean" },
-                "provider": { "type": "string" },
-                "args": { "type": "object", "additionalProperties": {} },
-                "behavior": {
-                  "type": "object",
-                  "properties": {
-                    "debounce_ms": { "type": "integer", "minimum": 0 },
-                    "max_items": { "type": "integer", "minimum": 1 },
-                    "partial_required": { "type": "boolean" },
-                    "incremental": { "type": "boolean" }
-                  }
-                },
-                "output_value": { "type": "string", "description": "JSONPath for value to insert" }
-              },
-              "allOf": [
-                { "if": { "properties": { "kind": { "const": "flag" } } }, "then": { "required": ["flag"] } }
-              ],
-              "additionalProperties": true
-            }
-          }
-        }
-      }
-    }
-  }
-}
-```
-
----
-
-## 7) Provider Kinds & Invocation (unchanged)
-
-- **core**: host HTTP clients, obey TTLs and debounce.
-- **workflow**: read from in-memory task outputs (no I/O).
-- **mcp**: delegate to plugin autocomplete; cache + timeouts.
-- **static**: schema enums / literals (implied providers).
-
----
-
-## 8) Edge Cases & Policies
-
-- **Array flags (`--permissions`)**:
-  - Each acceptance inserts a single item; users can select multiple times.
-  - In Guided mode, use a multi-select UI; in Power mode, accumulate multiple `--permissions` occurrences.
-- **Boolean flags (`--federated`)**:
-  - No provider. Optionally support `--no-federated` if you expose negation.
-- **Enterprise account identifier**:
-  - If API supports **name or id**, decide insertion via `output_value`.
-  - If you need **both** (display name, send id), registry handles it via label/value mapping.
-
----
-
-## 9) Example: End-to-End Flow
-
-1. User starts typing:
-   ```
-   enterprise-accounts:members:create <cursor>
-   ```
-   Popup shows enterprise accounts from `enterprise:accounts`.
-
-2. User selects “Acme Corp” (id: `ea_123`):  
-   The positional `enterprise_account` inserts `ea_123`.
-
-3. User types `--user` and partial `jus` → suggestions from `accounts:lookup` return `justin@acme.com (id acc_42)`; acceptance inserts `acc_42`.
-
-4. User adds `--permissions` → list appears from `enterprise:permissions` for `ea_123`. They pick `admin` and `read`.
-
-5. Final command line (Power Mode):
-   ```
-   enterprise-accounts:members:create ea_123 --user acc_42 --permissions admin --permissions read
-   ```
-
----
-
-## 10) Migration & Authoring Tips
-
-- **Key normalization**: Always compute command key as `group:name`.
-- **Short flags**: Short names (`-u`) are derived from command spec; registry always references long form (`--user`).
-- **Display vs value**: Prefer labels for humans (`name`, `email`) but **insert stable identifiers** (`id`) using `output_value`.
-- **Performance**: Use `partial_required: true` for large lists (accounts, users); leave it `false` for constrained enums (permissions).
-
----
-
-This adaptation aligns the ValueProvider system with your new **command spec** while preserving all prior capabilities (async providers, caching, templating, workflows, and MCP extensibility). Use this as a working spec to wire up dynamic suggestions for `enterprise-accounts:members:create` and beyond.
+The architecture's modular design allows for easy extension and customization, making it suitable for both current needs and future enhancements. The integration with the command palette creates a cohesive user experience that significantly improves CLI usability.

@@ -1,11 +1,11 @@
+use crate::ui::components::palette::state::{ItemKind, SuggestionItem, ValueProvider};
+use heroku_registry::Registry;
+use heroku_util::fuzzy_score;
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use heroku_registry::Registry;
-use heroku_util::fuzzy_score;
-use crate::ui::components::palette::state::{ItemKind, SuggestionItem, ValueProvider};
 
 /// Cache entry for provider results, storing fetched items and timestamp.
 #[derive(Debug)]
@@ -97,12 +97,7 @@ impl RegistryBackedProvider {
                 Ok(rt) => rt.block_on(async {
                     crate::cmd::fetch_json_array(&path)
                         .await
-                        .map(|values| {
-                            values
-                                .into_iter()
-                                .filter_map(label_from_value)
-                                .collect::<Vec<String>>()
-                        })
+                        .map(|values| values.into_iter().filter_map(label_from_value).collect::<Vec<String>>())
                         .unwrap_or_default()
                 }),
                 Err(_) => Vec::new(),
@@ -171,17 +166,14 @@ fn label_from_value(value: serde_json::Value) -> Option<String> {
             .get("name")
             .or_else(|| map.get("id"))
             .and_then(|v| v.as_str().map(str::to_string))
-            .or_else(|| {
-                map.into_iter()
-                    .find_map(|(_, v)| v.as_str().map(str::to_string))
-            }),
+            .or_else(|| map.into_iter().find_map(|(_, v)| v.as_str().map(str::to_string))),
         _ => None,
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
-    use heroku_registry::{Registry};
+    use heroku_registry::Registry;
     use std::time::Duration;
 
     #[test]
@@ -192,8 +184,14 @@ mod tests {
         // Mock fetch_json_array to return sample data
         let suggestions = provider.suggest("apps:list", "app", "ap");
         assert!(!suggestions.is_empty(), "Should return suggestions");
-        assert!(suggestions.iter().all(|s| s.score > 0), "Suggestions should have positive scores");
-        assert!(suggestions.iter().all(|s| s.kind == ItemKind::Value), "Suggestions should be Value kind");
+        assert!(
+            suggestions.iter().all(|s| s.score > 0),
+            "Suggestions should have positive scores"
+        );
+        assert!(
+            suggestions.iter().all(|s| s.kind == ItemKind::Value),
+            "Suggestions should be Value kind"
+        );
     }
 
     #[test]
@@ -225,13 +223,21 @@ mod tests {
             (serde_json::json!("simple"), Some("simple".to_string())),
             (serde_json::json!({"name": "app1"}), Some("app1".to_string())),
             (serde_json::json!({"id": "123"}), Some("123".to_string())),
-            (serde_json::json!({"other": "val", "str": "fallback"}), Some("fallback".to_string())),
+            (
+                serde_json::json!({"other": "val", "str": "fallback"}),
+                Some("fallback".to_string()),
+            ),
             (serde_json::json!({"num": 42}), None),
             (serde_json::json!([]), None),
         ];
 
         for (value, expected) in tests {
-            assert_eq!(label_from_value(value.clone()), expected, "Failed for value: {:?}", &value);
+            assert_eq!(
+                label_from_value(value.clone()),
+                expected,
+                "Failed for value: {:?}",
+                &value
+            );
         }
     }
 }

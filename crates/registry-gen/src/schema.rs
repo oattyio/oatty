@@ -1,12 +1,14 @@
 use anyhow::{Context, Result};
 use heck::ToKebabCase;
 use heroku_types::{
-    CommandFlag, CommandSpec, PositionalArgument, ProviderBinding, ProviderConfidence,
-    ProviderParamKind,
+    CommandFlag, CommandSpec, PositionalArgument, ProviderBinding, ProviderConfidence, ProviderParamKind,
 };
 use percent_encoding::percent_decode_str;
 use serde_json::Value;
-use std::{cmp::Ordering, collections::{HashMap, HashSet}};
+use std::{
+    cmp::Ordering,
+    collections::{HashMap, HashSet},
+};
 
 /// Generates command specifications from a JSON schema string.
 ///
@@ -118,7 +120,7 @@ pub fn derive_commands_from_schema(value: &Value) -> Result<Vec<CommandSpec>> {
             a.group.cmp(&b.group)
         } else {
             a.name.cmp(&b.name)
-        }
+        };
     });
     commands.dedup_by(|a, b| a.name == b.name && a.method == b.method && a.path == b.path);
     infer_provider_bindings(&mut commands);
@@ -249,12 +251,11 @@ fn path_and_vars_with_help(href: &str, root: &Value) -> (String, Vec<PositionalA
     for seg in href.trim_start_matches('/').split('/') {
         if seg.starts_with('{') {
             let name = prev.map_or("id".to_string(), singularize);
-            let help_text = extract_placeholder_ptr(seg)
-                .and_then(|ptr| {
-                    let decoded = percent_decode_str(&ptr).decode_utf8_lossy().to_string();
-                    let ptr = decoded.strip_prefix('#').unwrap_or(&decoded);
-                    root.pointer(ptr).and_then(|val| get_description(val, root))
-                });
+            let help_text = extract_placeholder_ptr(seg).and_then(|ptr| {
+                let decoded = percent_decode_str(&ptr).decode_utf8_lossy().to_string();
+                let ptr = decoded.strip_prefix('#').unwrap_or(&decoded);
+                root.pointer(ptr).and_then(|val| get_description(val, root))
+            });
 
             args.push(PositionalArgument {
                 name: name.clone(),
@@ -359,17 +360,12 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
                 let ty = get_type(&merged, root);
                 let required = required_names.contains(name);
                 let enum_values = get_enum_values(&merged, root);
-                let default_value = get_default(&merged, root)
-                    .or_else(|| enum_values.first().cloned());
+                let default_value = get_default(&merged, root).or_else(|| enum_values.first().cloned());
                 let description = get_description(&merged, root);
 
                 CommandFlag {
                     name: name.clone(),
-                    short_name: name
-                        .chars()
-                        .next()
-                        .filter(|c| c.is_alphabetic())
-                        .map(|c| c.to_string()),
+                    short_name: name.chars().next().filter(|c| c.is_alphabetic()).map(|c| c.to_string()),
                     required,
                     r#type: ty,
                     enum_values,
@@ -396,7 +392,7 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
             return Ordering::Less;
         }
         if b.required {
-            return Ordering::Greater
+            return Ordering::Greater;
         }
         return Ordering::Equal;
     });
@@ -501,9 +497,8 @@ fn infer_provider_bindings(commands: &mut [CommandSpec]) {
     let list_groups: HashSet<String> = commands
         .iter()
         .filter_map(|c| {
-            classify_command(&c.path, &c.method).and_then(|(grp, action)| {
-                (action == "list").then(|| normalize_group(&grp))
-            })
+            classify_command(&c.path, &c.method)
+                .and_then(|(grp, action)| (action == "list").then(|| normalize_group(&grp)))
         })
         .collect();
 
@@ -814,6 +809,9 @@ mod tests {
             .find(|p| p.kind == ProviderParamKind::Flag && p.name == "app")
             .expect("flag provider for app exists");
         assert_eq!(binding.provider_id, "apps:list");
-        assert!(matches!(binding.confidence, ProviderConfidence::Medium | ProviderConfidence::High));
+        assert!(matches!(
+            binding.confidence,
+            ProviderConfidence::Medium | ProviderConfidence::High
+        ));
     }
 }

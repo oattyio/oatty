@@ -22,7 +22,7 @@ use crate::{
             builder::BuilderState,
             help::HelpState,
             logs::{LogsState, state::LogEntry},
-            palette::{PaletteState, state::ValueProvider, providers::RegistryBackedProvider},
+            palette::{PaletteState, providers::RegistryBackedProvider, state::ValueProvider},
             table::TableState,
         },
         theme,
@@ -56,7 +56,12 @@ impl SharedCtx {
             std::sync::Arc::new(registry.clone()),
             std::time::Duration::from_secs(45),
         )));
-        Self { registry, debug_enabled, providers, theme: theme::load_from_env() }
+        Self {
+            registry,
+            debug_enabled,
+            providers,
+            theme: theme::load_from_env(),
+        }
     }
 }
 
@@ -266,7 +271,9 @@ impl App<'_> {
                 // rebuild suggestions to pick up newly cached results without requiring
                 // another keypress.
                 if self.palette.is_suggestions_open() && self.palette.is_provider_loading() {
-                    let SharedCtx { registry, providers, .. } = &self.ctx;
+                    let SharedCtx {
+                        registry, providers, ..
+                    } = &self.ctx;
                     self.palette.apply_build_suggestions(registry, providers);
                 }
             }

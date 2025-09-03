@@ -197,10 +197,7 @@ impl BuilderState {
     // Internal helpers for managing field/selection state
     fn apply_command_selection(&mut self, command: CommandSpec) {
         let CommandSpec {
-            flags,
-            positional_args,
-            ranges,
-            ..
+            flags, positional_args, ..
         } = &command;
         let mut fields: Vec<Field> = Vec::with_capacity(flags.len() + positional_args.len());
 

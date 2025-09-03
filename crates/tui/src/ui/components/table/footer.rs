@@ -19,7 +19,9 @@ impl TableFooter<'_> {
                 Paragraph::new(Line::from(vec![
                     Span::styled("Hint: ", app.ctx.theme.text_muted_style()),
                     Span::styled("Esc", app.ctx.theme.accent_emphasis_style()),
-                    Span::styled(" close  ", app.ctx.theme.text_muted_style()),
+                    Span::styled(" close ", app.ctx.theme.text_muted_style()),
+                    Span::styled("c", app.ctx.theme.accent_emphasis_style()),
+                    Span::styled(" copy ", app.ctx.theme.text_muted_style()),
                     Span::styled("↑/↓", app.ctx.theme.accent_emphasis_style()),
                     Span::styled(" scroll  ", app.ctx.theme.text_muted_style()),
                     Span::styled("PgUp/PgDn", app.ctx.theme.accent_emphasis_style()),
