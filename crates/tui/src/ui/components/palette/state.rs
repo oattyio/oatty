@@ -618,8 +618,7 @@ impl PaletteState {
     // This function used to render the complete command palette including the input
     // line, optional ghost text, error messages, and the suggestions popup.
     // Rendering responsibility has been migrated to PaletteComponent::render(),
-    // and this legacy documentation remains here only as historical context for
-    // future refactors.
+    // and this comment remains for historical context for future refactors.
 
     /// Accept a non-command suggestion (flag/value) without clobbering the
     /// resolved command (group sub).
@@ -936,118 +935,118 @@ impl ValueProvider for StaticValuesProvider {
     }
 }
 
-/// Determine if the first two tokens resolve to a known command.
-///
-/// A command is considered resolved when at least two tokens exist and they
-/// match a `(group, name)` pair in the registry.
+// Determine if the first two tokens resolve to a known command.
+//
+// A command is considered resolved when at least two tokens exist and they
+// match a `(group, name)` pair in the registry.
 // is_command_resolved is implemented in suggest.rs
 
-/// Compute the prefix used to rank command suggestions.
-///
-/// When two or more tokens exist, uses "group sub"; otherwise uses the first
-/// token or empty string.
+// Compute the prefix used to rank command suggestions.
+//
+// When two or more tokens exist, uses "group sub"; otherwise uses the first
+// token or empty string.
 // compute_command_prefix is implemented in suggest.rs
 
-/// Build command suggestions in execution form ("group sub").
-///
-/// Uses `fuzzy_score` against the computed prefix to rank candidates and embeds
-/// the command summary in the display text.
+// Build command suggestions in execution form ("group sub").
+//
+// Uses `fuzzy_score` against the computed prefix to rank candidates and embeds
+// the command summary in the display text.
 // suggest_commands is implemented in suggest.rs
 
-/// Parse user-provided flags and positional arguments from the portion of
-/// tokens after the resolved (group, sub) command.
-///
-/// long flags are collected without the leading dashes; values immediately
-/// following non-boolean flags are consumed. Returns `(user_flags, user_args)`.
+// Parse user-provided flags and positional arguments from the portion of
+// tokens after the resolved (group, sub) command.
+//
+// long flags are collected without the leading dashes; values immediately
+// following non-boolean flags are consumed. Returns `(user_flags, user_args)`.
 // parse_user_flags_args is implemented in suggest.rs
 
-/// Find the last pending non-boolean flag that expects a value.
-///
-/// Scans tokens from the end to find the most recent flag and checks whether
-/// its value has been supplied. If a value is already complete (per
-/// `is_flag_value_complete`), returns `None`.
+// Find the last pending non-boolean flag that expects a value.
+//
+// Scans tokens from the end to find the most recent flag and checks whether
+// its value has been supplied. If a value is already complete (per
+// `is_flag_value_complete`), returns `None`.
 // find_pending_flag is implemented in suggest.rs
 
-/// Derive the value fragment currently being typed for the last flag.
-///
-/// If the last token is a flag containing an equals sign (e.g., `--app=pa`),
-/// returns the suffix after `=`; otherwise returns the last token itself (or an
-/// empty string when no tokens exist in `parts`).
+// Derive the value fragment currently being typed for the last flag.
+//
+// If the last token is a flag containing an equals sign (e.g., `--app=pa`),
+// returns the suffix after `=`; otherwise returns the last token itself (or an
+// empty string when no tokens exist in `parts`).
 // flag_value_partial is implemented in suggest.rs
 
-/// Suggest values for a specific non-boolean flag, combining enum values with
-/// provider-derived suggestions.
+// Suggest values for a specific non-boolean flag, combining enum values with
+// provider-derived suggestions.
 // suggest_values_for_flag is implemented in suggest.rs
 
-/// Suggest positional values for the next expected positional parameter using
-/// providers; when no provider values are available, suggest a placeholder
-/// formatted as `<name>`.
+// Suggest positional values for the next expected positional parameter using
+// providers; when no provider values are available, suggest a placeholder
+// formatted as `<name>`.
 // suggest_positionals is implemented in suggest.rs
 
-/// Whether any required flags are not yet supplied by the user.
+// Whether any required flags are not yet supplied by the user.
 // required_flags_remaining is implemented in suggest.rs
 
-/// Determine whether the last flag's value is complete according to REPL rules.
-///
-/// Rules:
-/// - If the last token is `-` or `--`, it is not complete.
-/// - If no flag token is found when scanning backward, it is complete.
-/// - If the last token is the flag itself (no value yet), it is not complete.
-/// - If the last token is the value immediately after the flag, it is complete
-/// only if the input ends in whitespace (typing may continue otherwise).
-///
-/// Arguments:
-/// - `input`: The full input line.
-///
-/// Returns: `true` if the last flag value is considered complete.
-///
-/// Example:
-///
-/// ```rust,ignore
-/// use heroku_tui::ui::components::palette::state::is_flag_value_complete;
-///
-/// assert!(!is_flag_value_complete("--app"));
-/// assert!(!is_flag_value_complete("--app my"));
-/// assert!(is_flag_value_complete("--app my "));
-/// ```
+// Determine whether the last flag's value is complete according to REPL rules.
+//
+// Rules:
+// - If the last token is `-` or `--`, it is not complete.
+// - If no flag token is found when scanning backward, it is complete.
+// - If the last token is the flag itself (no value yet), it is not complete.
+// - If the last token is the value immediately after the flag, it is complete
+//   only if the input ends in whitespace (typing may continue otherwise).
+//
+// Arguments:
+// - `input`: The full input line.
+//
+// Returns: `true` if the last flag value is considered complete.
+//
+// Example:
+//
+// ```rust,ignore
+// use heroku_tui::ui::components::palette::state::is_flag_value_complete;
+//
+// assert!(!is_flag_value_complete("--app"));
+// assert!(!is_flag_value_complete("--app my"));
+// assert!(is_flag_value_complete("--app my "));
+// ```
 // is_flag_value_complete is implemented in suggest.rs and re-exported above
 
-/// Collect candidate flag suggestions for a command specification.
-///
-/// Generates suggestions for either required or optional flags that have not
-/// yet been provided by the user. When `current` starts with a dash, only flags
-/// whose long form starts with `current` are included (prefix filtering).
-///
-/// Arguments:
-/// - `spec`: The command specification whose flags are considered.
-/// - `user_flags`: Long flag names already present in the input (without `--`).
-/// - `current`: The current token text (used for prefix filtering when typing a
-///   flag).
-/// - `required_only`: When `true`, include only required flags; when `false`,
-///   only optional flags.
+// Collect candidate flag suggestions for a command specification.
+//
+// Generates suggestions for either required or optional flags that have not
+// yet been provided by the user. When `current` starts with a dash, only flags
+// whose long form starts with `current` are included (prefix filtering).
+//
+// Arguments:
+// - `spec`: The command specification whose flags are considered.
+// - `user_flags`: Long flag names already present in the input (without `--`).
+// - `current`: The current token text (used for prefix filtering when typing a
+//   flag).
+// - `required_only`: When `true`, include only required flags; when `false`,
+//   only optional flags.
 // collect_flag_candidates is implemented in suggest.rs
 
-/// Compute the remainder of the current token toward a target insert text toward end.
-///
-/// If the token under the cursor is a prefix of `insert`, returns the suffix
-/// that would be inserted to complete it. Used to render subtle ghost text to
-/// the right of the cursor previewing acceptance of the top suggestion.
-///
-/// Arguments:
-/// - `input`: Full input line.
-/// - `cursor`: Cursor position (byte index) into `input`.
-/// - `insert`: The prospective full text to insert for the current token.
-///
-/// Returns: The suffix of `insert` beyond the current token, or empty string.
-///
-/// Example:
-///
-/// ```rust,ignore
-/// use heroku_tui::ui::components::palette::state::ghost_remainder;
-///
-/// assert_eq!(ghost_remainder("ap", 2, "apps"), "ps");
-/// assert_eq!(ghost_remainder("foo", 3, "bar"), "");
-/// ```
+// Compute the remainder of the current token toward a target insert text toward end.
+//
+// If the token under the cursor is a prefix of `insert`, returns the suffix
+// that would be inserted to complete it. Used to render subtle ghost text to
+// the right of the cursor previewing acceptance of the top suggestion.
+//
+// Arguments:
+// - `input`: Full input line.
+// - `cursor`: Cursor position (byte index) into `input`.
+// - `insert`: The prospective full text to insert for the current token.
+//
+// Returns: The suffix of `insert` beyond the current token, or empty string.
+//
+// Example:
+//
+// ```rust,ignore
+// use heroku_tui::ui::components::palette::state::ghost_remainder;
+//
+// assert_eq!(ghost_remainder("ap", 2, "apps"), "ps");
+// assert_eq!(ghost_remainder("foo", 3, "bar"), "");
+// ```
 pub fn ghost_remainder(input: &str, cursor: usize, insert: &str) -> String {
     let tokens = lex_shell_like_ranged(input);
     // Find the token that contains the cursor, otherwise take the last token

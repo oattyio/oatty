@@ -1,131 +1,196 @@
+//! # Heroku Engine
+//!
+//! The Heroku Engine parses, validates, and (eventually) executes modern workflow specifications.
+//! It provides a robust framework for defining and running multi-step automation workflows
+//! with support for conditional execution, input validation, and dynamic value resolution.
+//!
+//! ## Key Features
+//!
+//! - **Workflow Parsing**: Parses modern YAML/JSON workflow specs (single or multi-workflow)
+//! - **Template Interpolation**: Dynamic value substitution using `${{ ... }}` syntax
+//! - **Conditional Execution**: Step-level conditional logic with expression evaluation
+//! - **Input Validation**: Declarative input specifications with provider integration
+//!
+//! ## Usage
+//!
+//! ```rust
+//! use heroku_engine::{parse_workflow_file, WorkflowBundle};
+//!
+//! // Create a temporary workflow file for testing
+//! let temp_dir = tempfile::tempdir()?;
+//! let workflow_path = temp_dir.path().join("workflow.yaml");
+//! std::fs::write(&workflow_path, r#"
+//! workflow: "test-workflow"
+//! steps: []
+//! "#)?;
+//!
+//! let workflow_bundle = parse_workflow_file(&workflow_path)?;
+//! for (name, spec) in &workflow_bundle.workflows {
+//!     println!("Workflow: {}", name);
+//!     println!("Steps: {}", spec.steps.len());
+//! }
+//! # Ok::<(), Box<dyn std::error::Error>>(())
+//! ```
+//!
+//! ## Architecture
+//!
+//! The engine is organized into several key modules:
+//!
+//! - **`model`**: Core data structures for workflows, steps, and inputs
+//! - **`resolve`**: Template interpolation and expression evaluation
+//! - **`provider`**: Provider registry and value fetching abstractions
+//! - **`executor`**: Workflow execution engine (planned)
+//! - **`validator`**: Workflow validation and schema checking (planned)
+
 use std::{collections::HashMap, fs, path::Path};
 
 use anyhow::{Context, Result};
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde::Deserialize;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct WorkflowFile {
-    #[serde(default)]
-    pub workflows: HashMap<String, Workflow>,
-}
+pub mod executor;
+pub mod model;
+pub mod provider;
+pub mod resolve;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Workflow {
-    #[serde(default)]
-    pub tasks: Vec<Task>,
-}
+// Re-export commonly used types for convenience
+pub use executor::{
+    CommandRunner, Plan, PreparedStep, RegistryCommandRunner, StepResult, StepStatus, execute_workflow,
+    execute_workflow_with_runner, prepare_plan, run_step,
+};
+pub use model::{InputSpec, StepSpec, WorkflowBundle, WorkflowSpec};
+pub use provider::{ProviderContract, ProviderRegistry};
+pub use resolve::RunContext;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Task {
-    pub name: String,
-    pub command: String,
-    #[serde(default)]
-    pub with: Value,
-    #[serde(default)]
-    pub r#if: Option<String>,
-}
+/// Loads a workflow file from the filesystem with automatic format detection.
+///
+/// This function attempts to parse the file as either YAML or JSON based on
+/// the file extension. For files without extensions, it defaults to YAML.
+///
+/// # Arguments
+///
+/// * `file_path` - Path to the workflow file to load
+///
+/// # Returns
+///
+/// Returns a `Result<WorkflowBundle>` containing the parsed workflows or an error
+/// if parsing fails.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// - The file cannot be read from the filesystem
+/// - The file content is not valid YAML or JSON
+/// - The file structure does not match expected workflow formats
+///
+/// # Examples
+///
+/// ```rust
+/// use heroku_engine::parse_workflow_file;
+///
+/// // Create a temporary workflow file for testing
+/// let temp_dir = tempfile::tempdir()?;
+/// let workflow_path = temp_dir.path().join("deploy.yaml");
+/// std::fs::write(&workflow_path, r#"
+/// workflow: "deploy-app"
+/// steps: []
+/// "#)?;
+///
+/// let workflow_bundle = parse_workflow_file(&workflow_path)?;
+/// println!("Loaded {} workflows", workflow_bundle.workflows.len());
+/// # Ok::<(), Box<dyn std::error::Error>>(())
+/// ```
+pub fn parse_workflow_file(file_path: impl AsRef<Path>) -> Result<WorkflowBundle> {
+    let file_path = file_path.as_ref();
+    let file_content =
+        fs::read(file_path).with_context(|| format!("Failed to read workflow file: {}", file_path.display()))?;
 
-#[derive(Debug, Default, Clone)]
-pub struct ContextState {
-    pub env: HashMap<String, String>,
-    pub tasks: HashMap<String, TaskResult>,
-}
+    let content_string = String::from_utf8_lossy(&file_content);
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct TaskResult {
-    pub status: String,
-    pub output: Value,
-    #[serde(default)]
-    pub logs: Vec<String>,
-}
-
-pub fn load_workflow_from_file(path: impl AsRef<Path>) -> Result<WorkflowFile> {
-    let bytes = fs::read(path.as_ref()).with_context(|| format!("read {}", path.as_ref().display()))?;
-    let s = String::from_utf8_lossy(&bytes);
-    if path.as_ref().extension().and_then(|x| x.to_str()) == Some("json") {
-        let wf: WorkflowFile = serde_json::from_str(&s).context("parse workflow json")?;
-        Ok(wf)
-    } else {
-        let wf: WorkflowFile = serde_yaml::from_str(&s).context("parse workflow yaml")?;
-        Ok(wf)
+    // Attempt to parse as multi-workflow document first to avoid accepting
+    // multi documents as single-workflow specs with ignored fields.
+    #[derive(Deserialize)]
+    struct MultiWorkflowDocument {
+        workflows: HashMap<String, WorkflowSpec>,
     }
-}
 
-pub fn interpolate_value(v: &Value, ctx: &ContextState) -> Value {
-    match v {
-        Value::String(s) => Value::String(interpolate_string(s, ctx)),
-        Value::Array(arr) => Value::Array(arr.iter().map(|x| interpolate_value(x, ctx)).collect()),
-        Value::Object(map) => {
-            let mut out = serde_json::Map::new();
-            for (k, val) in map.iter() {
-                out.insert(k.clone(), interpolate_value(val, ctx));
-            }
-            Value::Object(out)
-        }
-        _ => v.clone(),
-    }
-}
-
-fn interpolate_string(s: &str, ctx: &ContextState) -> String {
-    // Replace occurrences of ${{ path }} with looked-up values from ctx
-    let mut out = String::new();
-    let mut rest = s;
-    while let Some(start) = rest.find("${{") {
-        let (head, tail) = rest.split_at(start);
-        out.push_str(head);
-        if let Some(end_idx) = tail.find("}}") {
-            let expr = &tail[3..end_idx].trim();
-            let val = resolve_expr(expr, ctx).unwrap_or_default();
-            out.push_str(&val);
-            rest = &tail[end_idx + 2..];
-        } else {
-            // No closing, bail out
-            out.push_str(tail);
-            break;
-        }
-    }
-    if out.is_empty() {
-        s.to_string()
-    } else {
-        out.push_str(rest);
-        out
-    }
-}
-
-fn resolve_expr(expr: &str, ctx: &ContextState) -> Option<String> {
-    // Support tasks.<name>.output.<path>, env.<VAR>, or simple equality in if (a ==
-    // b)
-    if let Some(eq_pos) = expr.find("==") {
-        let left = expr[..eq_pos].trim();
-        let right = expr[eq_pos + 2..].trim().trim_matches('"');
-        let left_val = resolve_expr(left, ctx).unwrap_or_default();
-        return Some(((left_val == right) as i32).to_string());
-    }
-    if let Some(stripped) = expr.strip_prefix("env.") {
-        return ctx.env.get(stripped).cloned();
-    }
-    if let Some(rem) = expr.strip_prefix("tasks.") {
-        // tasks.<name>.output.path.to.leaf
-        let mut parts = rem.split('.');
-        let task_name = parts.next()?;
-        let rest: Vec<&str> = parts.collect();
-        let output = &ctx.tasks.get(task_name)?.output;
-        let mut cur = output;
-        for p in rest {
-            match cur {
-                Value::Object(map) => {
-                    cur = map.get(p)?;
-                }
-                _ => return None,
-            }
-        }
-        return Some(match cur {
-            Value::String(s) => s.clone(),
-            Value::Number(n) => n.to_string(),
-            Value::Bool(b) => b.to_string(),
-            other => other.to_string(),
+    if let Ok(multi_workflow_document) = serde_yaml::from_str::<MultiWorkflowDocument>(&content_string) {
+        return Ok(WorkflowBundle {
+            workflows: multi_workflow_document.workflows,
         });
     }
-    None
+
+    // Attempt to parse as single workflow specification
+    if let Ok(workflow_specification) = serde_yaml::from_str::<WorkflowSpec>(&content_string) {
+        let workflow_name = workflow_specification
+            .workflow
+            .clone()
+            .unwrap_or_else(|| "default".to_string());
+
+        let mut workflows = HashMap::new();
+        workflows.insert(workflow_name, workflow_specification);
+
+        return Ok(WorkflowBundle { workflows });
+    }
+
+    // If none of the parsing attempts succeeded, return a detailed error
+    anyhow::bail!(
+        "Unsupported workflow document format. Expected one of:\n\
+         - Single workflow specification with 'workflow', 'inputs', and 'steps' fields\n\
+         - Multi-workflow document with workflows under 'workflows' key\n\
+         "
+    );
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_workflow_file_single_workflow() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let workflow_path = temp_dir.path().join("workflow.yaml");
+
+        let workflow_content = r#"
+workflow: "test-workflow"
+inputs:
+  app_name:
+    description: "Application name"
+steps:
+  - id: "deploy"
+    run: "apps:deploy"
+"#;
+
+        std::fs::write(&workflow_path, workflow_content).unwrap();
+
+        let result = parse_workflow_file(&workflow_path);
+        assert!(result.is_ok());
+
+        let workflow_bundle = result.unwrap();
+        assert_eq!(workflow_bundle.workflows.len(), 1);
+        assert!(workflow_bundle.workflows.contains_key("test-workflow"));
+    }
+
+    #[test]
+    fn test_parse_workflow_file_multi_workflow() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let workflow_path = temp_dir.path().join("bundle.yaml");
+
+        let workflow_content = r#"
+workflows:
+  deploy:
+    workflow: "deploy-app"
+    steps: []
+  rollback:
+    workflow: "rollback-app"
+    steps: []
+"#;
+
+        std::fs::write(&workflow_path, workflow_content).unwrap();
+
+        let bundle = parse_workflow_file(&workflow_path).expect("parse multi-workflow bundle");
+        assert_eq!(bundle.workflows.len(), 2);
+        assert!(bundle.workflows.contains_key("deploy"));
+        assert!(bundle.workflows.contains_key("rollback"));
+        assert_eq!(bundle.workflows["deploy"].workflow.as_deref(), Some("deploy-app"));
+        assert_eq!(bundle.workflows["rollback"].workflow.as_deref(), Some("rollback-app"));
+    }
 }

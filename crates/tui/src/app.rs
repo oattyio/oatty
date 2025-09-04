@@ -50,12 +50,11 @@ impl SharedCtx {
         let debug_enabled = std::env::var("DEBUG")
             .map(|v| !v.is_empty() && v != "0" && v.to_lowercase() != "false")
             .unwrap_or(false);
-        let mut providers: Vec<Box<dyn ValueProvider>> = Vec::new();
         // Add registry-backed provider with a small TTL cache
-        providers.push(Box::new(RegistryBackedProvider::new(
+        let providers: Vec<Box<dyn ValueProvider>> = vec![Box::new(RegistryBackedProvider::new(
             std::sync::Arc::new(registry.clone()),
             std::time::Duration::from_secs(45),
-        )));
+        ))];
         Self {
             registry,
             debug_enabled,
@@ -111,10 +110,10 @@ pub struct App<'a> {
 impl<'a> App<'a> {
     /// Gets the available range fields for the currently selected command
     pub fn available_ranges(&self) -> Vec<String> {
-        if let Some(r) = &self.last_command_ranges {
-            if !r.is_empty() {
-                return r.clone();
-            }
+        if let Some(r) = &self.last_command_ranges
+            && !r.is_empty()
+        {
+            return r.clone();
         }
         self.builder.available_ranges()
     }
@@ -168,6 +167,7 @@ pub enum Msg {
 /// This enum defines actions that should be performed as a result
 /// of state changes, such as copying to clipboard or showing notifications.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum Effect {
     /// Request to copy the current command to clipboard
     CopyCommandRequested,

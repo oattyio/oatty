@@ -7,13 +7,14 @@
 - **Value Providers:** Pluggable sources for dynamic suggestions:
   - **core:** API-backed (apps, addons, permissions, users).
   - **workflow:** read prior step outputs (e.g., `workflow:from(task, jsonpath)`).
-  - **plugins (MCP):** external providers. Providers declare inputs (e.g., `partial`, `argOrFlag`), outputs (`label`, `value`, `meta`), TTL, and auth needs. See `plans/VALUE_PROVIDERS.md`
+  - **plugins (MCP):** external providers (planned). Today the implementation ships with a registry-backed provider and TTL caching; MCP plugins are described in `plans/PLUGINS.md` and may arrive later. Providers declare inputs (e.g., `partial`, `argOrFlag`), outputs (`label`, `value`, `meta`), TTL, and auth needs. See `plans/VALUE_PROVIDERS.md`.
 
-- **Execution Flow:** CLI/TUI loads schemas + registry, resolves providers per field, fetches suggestions async with caching and debouncing, and inserts `output_value` (overrideable). Array flags accumulate values; positionals/flags can template args from other fields or workflow context.
+- **Execution Flow:** CLI/TUI loads schemas + registry, resolves providers per field, and fetches suggestions via background tasks with TTL caching (refreshed on UI ticks). There is no explicit keystroke-level debounce at present. Inserted suggestion text uses provider `output_value` semantics where applicable. Today command execution supports a single value per flag; array-style accumulation is a future enhancement. Positionals/flags templating from workflow context is supported in the workflow engine and will be surfaced in the TUI incrementally.
 
 - **Workflow Engine:** Runs multi-step workflows, manages dependencies, passes step outputs into later steps/providers, and ensures deterministic, replayable runs. See `plans/WORKFLOWS.md`
 
-- **TUI Layer:** Guided/Power modes, autocomplete surfaces provider results, focus management for forms/tables, theming from `plans/THEME.md`, accessibility + UX patterns from `plans/FOCUS_MANAGEMENT.md`, general guidelines from `plans/UX_GUIDELINES.md`, autocomplete from `plans/AUTOCOMPLETE.md` and workflow 
+- **TUI Layer:** Guided/Power modes, autocomplete surfaces provider results, focus management for forms/tables, theming from `plans/THEME.md`, accessibility + UX patterns from `plans/FOCUS_MANAGEMENT.md`, general guidelines from `plans/UX_GUIDELINES.md`, autocomplete from `plans/AUTOCOMPLETE.md` and workflow.
+  - State ownership: top-level components (palette, builder, logs, help, table) keep their state on `app::App` for coordination; nested subcomponents (e.g., pagination inside the table) may keep private state and be composed by the parent. See AGENTS.md for the component cookbook.
 
 ## Focus Management
 

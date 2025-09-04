@@ -33,7 +33,7 @@ fn escape_json_pointer_token(s: &str) -> String {
 ///
 /// Handles references like "#/components/schemas/Foo" or "#/components/parameters/Bar"
 /// by stripping the '#' prefix and using JSON pointer resolution.
-fn resolve_local_ref<'a>(root: &'a Value, r: &str) -> Option<Value> {
+fn resolve_local_ref(root: &Value, r: &str) -> Option<Value> {
     let ptr = r.strip_prefix('#').unwrap_or(r);
     root.pointer(ptr).cloned()
 }
@@ -137,30 +137,26 @@ fn build_link_schema_from_oas3(root: &Value, path_item: &Value, op: &Value) -> O
             };
 
             // Mark as required if specified
-            if p.get("required").and_then(Value::as_bool) == Some(true) {
-                if !required.contains(&name) {
-                    required.push(name.clone());
-                }
+            if p.get("required").and_then(Value::as_bool) == Some(true) && !required.contains(&name) {
+                required.push(name.clone());
             }
 
             // Build parameter schema
             let mut schema = p.get("schema").cloned().unwrap_or_else(|| json!({}));
 
             // Promote description and default from parameter to schema
-            if let Some(desc) = p.get("description").cloned() {
-                if schema.get("description").is_none() {
-                    if let Some(obj) = schema.as_object_mut() {
-                        obj.insert("description".into(), desc);
-                    }
-                }
+            if schema.get("description").is_none()
+                && let Some(desc) = p.get("description").cloned()
+                && let Some(obj) = schema.as_object_mut()
+            {
+                obj.insert("description".into(), desc);
             }
 
-            if let Some(def) = p.get("default").cloned() {
-                if schema.get("default").is_none() {
-                    if let Some(obj) = schema.as_object_mut() {
-                        obj.insert("default".into(), def);
-                    }
-                }
+            if schema.get("default").is_none()
+                && let Some(def) = p.get("default").cloned()
+                && let Some(obj) = schema.as_object_mut()
+            {
+                obj.insert("default".into(), def);
             }
 
             props.insert(name, schema);
@@ -221,14 +217,14 @@ fn build_link_schema_from_oas3(root: &Value, path_item: &Value, op: &Value) -> O
 ///
 /// Converts path segments like `{id}` to `{(#/x-parameters/paths/.../id)}`
 /// to enable dynamic parameter resolution.
-fn rewrite_href_with_param_pointers(path: &str, params: &Vec<Value>) -> String {
+fn rewrite_href_with_param_pointers(path: &str, params: &[Value]) -> String {
     // Build name->schema map for path parameters
     let mut param_map: HashMap<String, Value> = HashMap::new();
     for p in params {
-        if p.get("in").and_then(Value::as_str) == Some("path") {
-            if let Some(name) = p.get("name").and_then(Value::as_str) {
-                param_map.insert(name.to_string(), p.get("schema").cloned().unwrap_or_else(|| p.clone()));
-            }
+        if p.get("in").and_then(Value::as_str) == Some("path")
+            && let Some(name) = p.get("name").and_then(Value::as_str)
+        {
+            param_map.insert(name.to_string(), p.get("schema").cloned().unwrap_or_else(|| p.clone()));
         }
     }
 
@@ -558,11 +554,11 @@ fn collect_path_parameters(params: &[Value]) -> Map<String, Value> {
     let mut path_params: Map<String, Value> = Map::new();
 
     for p in params {
-        if p.get("in").and_then(Value::as_str) == Some("path") {
-            if let Some(name) = p.get("name").and_then(Value::as_str) {
-                let schema = p.get("schema").cloned().unwrap_or_else(|| p.clone());
-                path_params.insert(name.to_string(), schema);
-            }
+        if p.get("in").and_then(Value::as_str) == Some("path")
+            && let Some(name) = p.get("name").and_then(Value::as_str)
+        {
+            let schema = p.get("schema").cloned().unwrap_or_else(|| p.clone());
+            path_params.insert(name.to_string(), schema);
         }
     }
 
@@ -579,10 +575,10 @@ fn build_swagger2_link_schema(root: &Value, params: &[Value]) -> Option<Value> {
             Some("query") => {
                 if let Some(name) = param.get("name").and_then(Value::as_str) {
                     // Mark as required if specified
-                    if param.get("required").and_then(Value::as_bool) == Some(true) {
-                        if !required.contains(&name.to_string()) {
-                            required.push(name.to_string());
-                        }
+                    if param.get("required").and_then(Value::as_bool) == Some(true)
+                        && !required.contains(&name.to_string())
+                    {
+                        required.push(name.to_string());
                     }
 
                     // Build parameter schema
@@ -606,19 +602,17 @@ fn build_swagger2_link_schema(root: &Value, params: &[Value]) -> Option<Value> {
                         schema = Value::Object(s);
                     } else {
                         // Ensure description and default are present
-                        if schema.get("description").is_none() {
-                            if let Some(desc) = param.get("description").cloned() {
-                                if let Some(obj) = schema.as_object_mut() {
-                                    obj.insert("description".into(), desc);
-                                }
-                            }
+                        if schema.get("description").is_none()
+                            && let Some(desc) = param.get("description").cloned()
+                            && let Some(obj) = schema.as_object_mut()
+                        {
+                            obj.insert("description".into(), desc);
                         }
-                        if schema.get("default").is_none() {
-                            if let Some(def) = param.get("default").cloned() {
-                                if let Some(obj) = schema.as_object_mut() {
-                                    obj.insert("default".into(), def);
-                                }
-                            }
+                        if schema.get("default").is_none()
+                            && let Some(def) = param.get("default").cloned()
+                            && let Some(obj) = schema.as_object_mut()
+                        {
+                            obj.insert("default".into(), def);
                         }
                     }
 

@@ -27,9 +27,9 @@ impl Registry {
     /// # Examples
     ///
     /// ```rust
-    /// use registry::Registry;
+    /// use heroku_registry::Registry;
     ///
-    /// let registry = Registry::from_embedded_schema()?;
+    /// let registry = Registry::from_embedded_schema().expect("load registry from schema");
     /// println!("Loaded {} commands", registry.commands.len());
     /// ```
     pub fn from_embedded_schema() -> Result<Self> {
@@ -65,10 +65,10 @@ impl Registry {
     /// # Examples
     ///
     /// ```rust
-    /// use registry::Registry;
+    /// use heroku_registry::Registry;
     ///
-    /// let registry = Registry::from_embedded_schema()?;
-    /// let apps_list = registry.find_by_group_and_cmd("apps", "list")?;
+    /// let registry = Registry::from_embedded_schema().expect("load registry from schema");
+    /// let apps_list = registry.find_by_group_and_cmd("apps", "list").expect("find by group and command");
     /// println!("Found command: {}", apps_list.name);
     /// ```
     pub fn find_by_group_and_cmd(&self, group: &str, cmd: &str) -> Result<&CommandSpec> {

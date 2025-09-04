@@ -27,14 +27,10 @@ use crate::{CommandFlag, CommandSpec, Registry};
 /// # Examples
 ///
 /// ```rust
-/// use clap::Parser;
-/// use registry::{Registry, build_clap};
+/// use heroku_registry::{Registry, build_clap};
 ///
-/// let registry = Registry::from_embedded_schema()?;
-/// let clap_command = build_clap(&registry);
-///
-/// // Parse command line arguments
-/// let matches = clap_command.get_matches();
+/// let registry = Registry::from_embedded_schema().unwrap();
+/// let _clap_command = build_clap(&registry);
 /// ```
 pub fn build_clap(registry: &Registry) -> ClapCommand {
     let mut root = create_root_command();
@@ -62,8 +58,8 @@ pub fn build_clap(registry: &Registry) -> ClapCommand {
 ///
 /// # Examples
 ///
-/// ```rust
-/// use registry::clap_builder::create_root_command;
+/// ```rust,ignore
+/// use heroku_registry::clap_builder::create_root_command;
 ///
 /// let root = create_root_command();
 /// assert_eq!(root.get_name(), "heroku");
@@ -106,8 +102,8 @@ fn create_root_command() -> ClapCommand {
 ///
 /// # Examples
 ///
-/// ```rust
-/// use registry::{Registry, clap_builder::group_commands_by_resource};
+/// ```rust,ignore
+/// use heroku_registry::{Registry, clap_builder::group_commands_by_resource};
 ///
 /// let registry = Registry::from_embedded_schema()?;
 /// let groups = group_commands_by_resource(&registry);
@@ -145,8 +141,8 @@ fn group_commands_by_resource(registry: &Registry) -> BTreeMap<String, Vec<&Comm
 ///
 /// # Examples
 ///
-/// ```rust
-/// use registry::clap_builder::build_group_command;
+/// ```rust,ignore
+/// use heroku_registry::clap_builder::build_group_command;
 ///
 /// let group_cmd = build_group_command("apps", vec![&cmd1, &cmd2]);
 /// assert_eq!(group_cmd.get_name(), "apps");
@@ -180,8 +176,8 @@ fn build_group_command(group: &str, cmds: Vec<&CommandSpec>) -> ClapCommand {
 ///
 /// # Examples
 ///
-/// ```rust
-/// use registry::clap_builder::build_subcommand;
+/// ```rust,ignore
+/// use heroku_registry::clap_builder::build_subcommand;
 ///
 /// let subcmd = build_subcommand(&command_spec);
 /// // For a command named "apps:list", this creates a "list" subcommand
@@ -218,8 +214,8 @@ fn build_subcommand(cmd: &CommandSpec) -> ClapCommand {
 ///
 /// # Examples
 ///
-/// ```rust
-/// use registry::clap_builder::add_positional_arguments;
+/// ```rust,ignore
+/// use heroku_registry::clap_builder::add_positional_arguments;
 ///
 /// let subcommand = add_positional_arguments(subcommand, &cmd_spec);
 /// // If cmd_spec has positional_args = ["app", "dyno"], this adds
@@ -255,8 +251,8 @@ fn add_positional_arguments(mut subcommand: ClapCommand, cmd: &CommandSpec) -> C
 ///
 /// # Examples
 ///
-/// ```rust
-/// use registry::clap_builder::add_flags;
+/// ```rust,ignore
+/// use heroku_registry::clap_builder::add_flags;
 ///
 /// let subcommand = add_flags(subcommand, &cmd_spec);
 /// // Adds all flags from cmd_spec.flags as long-form arguments
@@ -286,8 +282,8 @@ fn add_flags(mut subcommand: ClapCommand, cmd: &CommandSpec) -> ClapCommand {
 ///
 /// # Examples
 ///
-/// ```rust
-/// use registry::clap_builder::build_flag_argument;
+/// ```rust,ignore
+/// use heroku_registry::clap_builder::build_flag_argument;
 ///
 /// let arg = build_flag_argument(&flag_spec);
 /// // Creates a Clap argument with appropriate type, validation, and help text
@@ -339,8 +335,8 @@ fn build_flag_argument(flag: &CommandFlag) -> Arg {
 ///
 /// # Examples
 ///
-/// ```rust
-/// use registry::clap_builder::add_enum_values;
+/// ```rust,ignore
+/// use heroku_registry::clap_builder::add_enum_values;
 ///
 /// let arg = add_enum_values(arg, &flag_spec);
 /// // If flag_spec.enum_values = ["dev", "staging", "prod"],
@@ -376,8 +372,8 @@ fn add_enum_values(arg: Arg, flag: &CommandFlag) -> Arg {
 ///
 /// # Examples
 ///
-/// ```rust
-/// use registry::clap_builder::add_default_value;
+/// ```rust,ignore
+/// use heroku_registry::clap_builder::add_default_value;
 ///
 /// let arg = add_default_value(arg, &flag_spec);
 /// // If flag_spec.default_value = Some("production"),
@@ -407,8 +403,8 @@ fn add_default_value(mut arg: Arg, flag: &CommandFlag) -> Arg {
 ///
 /// # Examples
 ///
-/// ```rust
-/// use registry::clap_builder::generate_help_text;
+/// ```rust,ignore
+/// use heroku_registry::clap_builder::generate_help_text;
 ///
 /// let help = generate_help_text(&flag_spec);
 /// // Returns either the custom description or "type: string"

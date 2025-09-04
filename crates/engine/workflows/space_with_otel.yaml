@@ -1,0 +1,31 @@
+workflow: space_with_otel
+inputs:
+  team:
+    provider: teams:list
+    select: { value_field: id, display_field: name }
+  space_name:
+    description: "Name of new space"
+    type: string
+  region:
+    provider: regions:list
+    select: { value_field: name, display_field: name }
+  otlp_endpoint:
+    description: "OpenTelemetry collector endpoint URL"
+    type: string
+steps:
+  - id: create_space
+    run: spaces:create
+    body:
+      team: ${{ inputs.team }}
+      name: ${{ inputs.space_name }}
+      region: ${{ inputs.region }}
+
+  - id: add_drain
+    run: telemetry-drains:create
+    body:
+      owner: { space: { name: ${{ inputs.space_name }} } }
+      signals: ["traces", "metrics", "logs"]
+      exporter:
+        type: otlp_http
+        endpoint: ${{ inputs.otlp_endpoint }}
+

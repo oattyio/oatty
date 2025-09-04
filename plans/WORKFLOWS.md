@@ -1,6 +1,6 @@
 # WORKFLOWS — Comprehensive Specification
 
-This document defines reusable workflow patterns for the Heroku CLI TUI, based on the available commands in the current `manifest.json` and enhanced with **ValueProviders** for dynamic, schema‑aware parameter collection.citeturn1file028†source
+This document defines reusable workflow patterns for the Heroku CLI TUI, based on the available commands in the current `manifest.json` and enhanced with **ValueProviders** for dynamic, schema‑aware parameter. see `VALUE_PROVIDERS.md`
 
 ---
 
@@ -215,9 +215,7 @@ steps:
 
 ---
 
-## 3. Open Gaps (not in manifest.json)
-
-Based on the earlier workflow ideation, these common needs are **not covered by current commands**:
+## 3. Other candidate workflows ideas:
 
 * **Dyno/process management**: scale up/down, restart, resize
 * **Releases**: create new release, rollback, set description, list previous releases
@@ -225,13 +223,11 @@ Based on the earlier workflow ideation, these common needs are **not covered by 
 * **Database lifecycle**: backups, restores, followers, maintenance
 * **Classic log drains**: create/delete/tail beyond `telemetry-drains`
 
-These would be candidates for adding new schema entries or plugin‑provided ValueProviders.
-
 ---
 
 ## 4. TUI Integration with ValueProviders
 
-See [Workflow ValueProviders & TUI UX Spec (Heroku CLI TUI)](./Workflow%20ValueProviders%20%26%20TUI%20UX%20Spec%20%28heroku%20Cli%20Tui%29) for full widget examples.
+See [Workflow ValueProviders & TUI UX Spec (Heroku CLI TUI)](WORKFLOW_VALUE_PROVIDERS_UX.md) for full widget examples.
 
 Key points:
 
@@ -239,10 +235,6 @@ Key points:
 * Guided mode shows provider results in **Table selectors** with optional detail panes.
 * Power mode uses providers for **autocomplete suggestions**.
 * Fallbacks and cache status are visible inline (with icons/labels).
-
----
-
-✅ This rewrite gives you a **complete, provider‑aware `WORKFLOWS.md`** and ties it directly to the manifest commands. Next, we could extend this by **mapping every `manifest.json` command to at least one reference workflow** so authors have a full cookbook of ready‑to‑use recipes. Would you like me to generate that full mapping?
 
 ---
 

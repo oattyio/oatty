@@ -13,7 +13,7 @@ pub use models::Registry;
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::{collections::HashSet, vec};
 
     use super::*;
 
@@ -29,8 +29,18 @@ mod tests {
         let registry = Registry::from_embedded_schema().expect("load registry from manifest");
         assert!(!registry.commands.is_empty(), "registry commands should not be empty");
         let mut seen = HashSet::new();
+        let mut duplicates: Vec<String> = vec![];
         for c in &*registry.commands {
-            assert!(seen.insert(&c.name), "duplicate command name detected: {}", c.name);
+            let group_name = format!("{} {}", &c.group, &c.name);
+            if seen.contains(&group_name) {
+                duplicates.push(format!("{} {}", group_name.clone(), c.summary));
+            }
+            seen.insert(group_name);
         }
+        assert!(
+            duplicates.len() == 0,
+            "duplicates seen: {}",
+            duplicates.len().to_string()
+        );
     }
 }

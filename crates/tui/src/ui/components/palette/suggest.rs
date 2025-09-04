@@ -40,7 +40,7 @@ impl SuggestionEngine {
 
     // Breakout: resolve spec reference from tokens
     fn resolve_spec<'a>(registry: &'a Registry, tokens: &[String]) -> Option<&'a CommandSpec> {
-        let group: &str = tokens.get(0).map(|s| s.as_str()).unwrap_or("");
+        let group: &str = tokens.first().map(|s| s.as_str()).unwrap_or("");
         let name: &str = tokens.get(1).map(|s| s.as_str()).unwrap_or("");
         registry.commands.iter().find(|c| c.group == group && c.name == name)
     }
@@ -376,12 +376,10 @@ fn find_pending_flag(spec: &CommandSpec, parts: &[String], input: &str) -> Optio
             let name = token.trim_start_matches('-');
             if let Some(flag) = spec.flags.iter().find(|flag| flag.name == name)
                 && flag.r#type != "boolean"
+                && (((j as usize) == parts.len() - 1 || parts[(j as usize) + 1].starts_with('-'))
+                    && !is_flag_value_complete(input))
             {
-                if ((j as usize) == parts.len() - 1 || parts[(j as usize) + 1].starts_with('-'))
-                    && !is_flag_value_complete(input)
-                {
-                    return Some(name.to_string());
-                }
+                return Some(name.to_string());
             }
             break;
         }

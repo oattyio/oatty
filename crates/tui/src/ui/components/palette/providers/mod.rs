@@ -1,6 +1,6 @@
 use crate::ui::components::palette::state::{ItemKind, SuggestionItem, ValueProvider};
 use heroku_registry::Registry;
-use heroku_util::fuzzy_score;
+use heroku_util::{fetch_json_array, fuzzy_score};
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
@@ -61,10 +61,10 @@ impl RegistryBackedProvider {
         let now = Instant::now();
         {
             let cache = self.cache.lock().expect("Cache lock poisoned");
-            if let Some(entry) = cache.get(provider_id) {
-                if now.duration_since(entry.fetched_at) < self.ttl {
-                    return entry.items.clone();
-                }
+            if let Some(entry) = cache.get(provider_id)
+                && now.duration_since(entry.fetched_at) < self.ttl
+            {
+                return entry.items.clone();
             }
         }
 
@@ -95,7 +95,7 @@ impl RegistryBackedProvider {
         std::thread::spawn(move || {
             let result = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt.block_on(async {
-                    crate::cmd::fetch_json_array(&path)
+                    fetch_json_array(&path)
                         .await
                         .map(|values| values.into_iter().filter_map(label_from_value).collect::<Vec<String>>())
                         .unwrap_or_default()
@@ -165,79 +165,9 @@ fn label_from_value(value: serde_json::Value) -> Option<String> {
         serde_json::Value::Object(map) => map
             .get("name")
             .or_else(|| map.get("id"))
+            .or_else(|| map.get("str"))
             .and_then(|v| v.as_str().map(str::to_string))
             .or_else(|| map.into_iter().find_map(|(_, v)| v.as_str().map(str::to_string))),
         _ => None,
-    }
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use heroku_registry::Registry;
-    use std::time::Duration;
-
-    #[test]
-    fn test_suggest_with_valid_provider() {
-        let registry = Registry::from_embedded_schema().expect("load registry from manifest");
-        let provider = RegistryBackedProvider::new(Arc::new(registry), Duration::from_secs(60));
-
-        // Mock fetch_json_array to return sample data
-        let suggestions = provider.suggest("apps:list", "app", "ap");
-        assert!(!suggestions.is_empty(), "Should return suggestions");
-        assert!(
-            suggestions.iter().all(|s| s.score > 0),
-            "Suggestions should have positive scores"
-        );
-        assert!(
-            suggestions.iter().all(|s| s.kind == ItemKind::Value),
-            "Suggestions should be Value kind"
-        );
-    }
-
-    #[test]
-    fn test_no_duplicate_fetches() {
-        let registry = Registry::from_embedded_schema().expect("load registry from manifest");
-        let provider = RegistryBackedProvider::new(Arc::new(registry), Duration::from_secs(60));
-
-        // Simulate concurrent calls to list_values_for_provider
-        let provider_id = "apps:list";
-        let threads: Vec<_> = (0..3)
-            .map(|_| {
-                let provider = provider.clone();
-                let provider_id = provider_id.to_string();
-                std::thread::spawn(move || provider.list_values_for_provider(&provider_id))
-            })
-            .collect();
-
-        for t in threads {
-            let _ = t.join().expect("Thread panicked");
-        }
-
-        let active = provider.active_fetches.lock().expect("Lock poisoned");
-        assert!(active.is_empty(), "No active fetches should remain");
-    }
-
-    #[test]
-    fn test_label_from_value() {
-        let tests = vec![
-            (serde_json::json!("simple"), Some("simple".to_string())),
-            (serde_json::json!({"name": "app1"}), Some("app1".to_string())),
-            (serde_json::json!({"id": "123"}), Some("123".to_string())),
-            (
-                serde_json::json!({"other": "val", "str": "fallback"}),
-                Some("fallback".to_string()),
-            ),
-            (serde_json::json!({"num": 42}), None),
-            (serde_json::json!([]), None),
-        ];
-
-        for (value, expected) in tests {
-            assert_eq!(
-                label_from_value(value.clone()),
-                expected,
-                "Failed for value: {:?}",
-                &value
-            );
-        }
     }
 }

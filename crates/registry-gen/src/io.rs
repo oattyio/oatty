@@ -1,4 +1,7 @@
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{Context, Result};
 use bincode::config;
@@ -90,7 +93,7 @@ pub fn write_manifest_json(input: PathBuf, output: PathBuf) -> Result<()> {
     Ok(())
 }
 
-fn is_yaml(path: &PathBuf) -> bool {
+fn is_yaml(path: &Path) -> bool {
     match path.extension().and_then(|s| s.to_str()) {
         Some(ext) => matches!(ext, "yaml" | "yml"),
         None => false,

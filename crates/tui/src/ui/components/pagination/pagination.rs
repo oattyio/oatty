@@ -328,14 +328,14 @@ impl PaginationComponent {
         frame.render_widget(button, area);
     }
 
-    /// Handles focus navigation between pagination controls.
-    ///
-    /// Manages tab navigation between the different focusable elements
-    /// in the pagination component.
-    ///
-    /// # Arguments
-    /// * `event` - The key event that triggered the focus change
-    /// * `forward` - Whether to move focus forward (true) or backward (false)
+    // Handles focus navigation between pagination controls.
+    //
+    // Manages tab navigation between the different focusable elements
+    // in the pagination component.
+    //
+    // # Arguments
+    // * `event` - The key event that triggered the focus change
+    // * `forward` - Whether to move focus forward (true) or backward (false)
     // Removed: focus navigation handled by table-level ring across grid and nav buttons
 
     // Removed: interactive range field navigation (no longer applicable)
@@ -439,14 +439,13 @@ impl Component for PaginationComponent {
         match event.code {
             KeyCode::Tab | KeyCode::BackTab => { /* Tab handled at table level */ }
             KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
-                if self.state.nav_first_f.get()
+                if (self.state.nav_first_f.get()
                     || self.state.nav_prev_f.get()
                     || self.state.nav_next_f.get()
-                    || self.state.nav_last_f.get()
+                    || self.state.nav_last_f.get())
+                    && let Some(effect) = self.handle_navigation_actions(&event)
                 {
-                    if let Some(effect) = self.handle_navigation_actions(&event) {
-                        return vec![effect];
-                    }
+                    return vec![effect];
                 }
             }
             KeyCode::Enter => {
@@ -459,11 +458,12 @@ impl Component for PaginationComponent {
                     self.state.prev_page();
                     return vec![crate::app::Effect::PrevPageRequested];
                 }
-                if (self.state.nav_next_f.get() || self.state.nav_last_f.get()) && self.state.has_next_page() {
-                    if let Some(next_range) = self.state.next_range.clone() {
-                        self.state.current_page = self.state.current_page.saturating_add(1);
-                        return vec![crate::app::Effect::NextPageRequested(next_range)];
-                    }
+                if (self.state.nav_next_f.get() || self.state.nav_last_f.get())
+                    && self.state.has_next_page()
+                    && let Some(next_range) = self.state.next_range.clone()
+                {
+                    self.state.current_page = self.state.current_page.saturating_add(1);
+                    return vec![crate::app::Effect::NextPageRequested(next_range)];
                 }
             }
             _ => {}

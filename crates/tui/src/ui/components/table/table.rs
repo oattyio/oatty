@@ -88,6 +88,7 @@ impl TableComponent<'_> {
     }
 
     /// Renders a JSON array as a table with offset support using known columns.
+    #[allow(clippy::too_many_arguments)]
     pub fn render_json_table_with_columns(
         &mut self,
         frame: &mut Frame,

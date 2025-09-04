@@ -95,8 +95,11 @@ pub fn derive_commands_from_schema(value: &Value) -> Result<Vec<CommandSpec>> {
                     continue;
                 }
                 let (mut group, mut name) = derive_command_group_and_name(href, &action);
-                if command_names.insert(name.clone(), true).is_some() {
+                if command_names.insert(format!("{}{}", &group, &name), true).is_some() {
                     (group, name) = derive_command_group_and_name(href, &title.to_kebab_case());
+                    if command_names.contains_key(&format!("{}{}", &group, &name)) {
+                        (group, name) = derive_command_group_and_name(href, &method.to_lowercase());
+                    }
                 }
 
                 commands.push(CommandSpec {
@@ -116,11 +119,11 @@ pub fn derive_commands_from_schema(value: &Value) -> Result<Vec<CommandSpec>> {
 
     // multi-sort: group then name
     commands.sort_by(|a, b| {
-        return if a.group != b.group {
+        if a.group != b.group {
             a.group.cmp(&b.group)
         } else {
             a.name.cmp(&b.name)
-        };
+        }
     });
     commands.dedup_by(|a, b| a.name == b.name && a.method == b.method && a.path == b.path);
     infer_provider_bindings(&mut commands);
@@ -306,7 +309,7 @@ fn extract_placeholder_ptr(segment: &str) -> Option<String> {
     } else {
         inner.to_string()
     };
-    (!ptr.is_empty()).then(|| ptr)
+    (!ptr.is_empty()).then_some(ptr)
 }
 
 /// Extracts range fields from a link schema.
@@ -394,7 +397,7 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
         if b.required {
             return Ordering::Greater;
         }
-        return Ordering::Equal;
+        Ordering::Equal
     });
     (flags, required_names)
 }
@@ -519,15 +522,15 @@ fn infer_provider_bindings(commands: &mut [CommandSpec]) {
         let mut providers = infer_positionals_from_path(&cmd.path, &list_groups);
 
         for flag in &cmd.flags {
-            if let Some((group, confidence)) = map_flag_to_group(&flag.name, &synonyms) {
-                if list_groups.contains(&group) {
-                    providers.push(ProviderBinding {
-                        kind: ProviderParamKind::Flag,
-                        name: flag.name.clone(),
-                        provider_id: format!("{}:{}", group, "list"),
-                        confidence,
-                    });
-                }
+            if let Some((group, confidence)) = map_flag_to_group(&flag.name, &synonyms)
+                && list_groups.contains(&group)
+            {
+                providers.push(ProviderBinding {
+                    kind: ProviderParamKind::Flag,
+                    name: flag.name.clone(),
+                    provider_id: format!("{}:{}", group, "list"),
+                    confidence,
+                });
             }
         }
 

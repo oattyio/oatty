@@ -541,6 +541,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dea2df4cf52843e0452895c455a1a2cfbb842a1e7329671acf418fdc53ed4c59"
 
 [[package]]
+name = "fastrand"
+version = "2.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37909eebbb50d72f9059c3b6d82c0463f2ff062c9e95845c43a6c9c0355411be"
+
+[[package]]
 name = "fdeflate"
 version = "0.3.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -731,9 +737,13 @@ dependencies = [
  "heroku-api",
  "heroku-registry",
  "heroku-util",
+ "percent-encoding",
+ "reqwest",
  "serde",
  "serde_json",
  "serde_yaml",
+ "tempfile",
+ "tokio",
  "tracing",
 ]
 
@@ -804,8 +814,12 @@ name = "heroku-util"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "heroku-api",
+ "heroku-registry",
+ "heroku-types",
  "once_cell",
  "regex",
+ "reqwest",
  "serde_json",
 ]
 
@@ -2019,6 +2033,19 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "tempfile"
+version = "3.21.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15b61f8f20e3a6f7e0649d825294eaf317edce30f82cf6026e7e4cb9222a7d1e"
+dependencies = [
+ "fastrand",
+ "getrandom 0.3.3",
+ "once_cell",
+ "rustix 1.0.8",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]

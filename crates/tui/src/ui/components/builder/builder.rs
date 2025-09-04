@@ -121,7 +121,7 @@ impl BuilderComponent {
             KeyCode::Esc => app.builder.search_input_clear(),
             KeyCode::Tab | KeyCode::BackTab => {
                 let focus_ring = app.builder.focus_ring();
-                let _ = if key.code == KeyCode::Tab {
+                if key.code == KeyCode::Tab {
                     focus_ring.next();
                 } else {
                     focus_ring.prev();
