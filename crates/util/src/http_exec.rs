@@ -8,8 +8,8 @@ use crate::http;
 use heroku_api::HerokuClient;
 use heroku_types::CommandSpec;
 use heroku_types::ExecOutcome;
-use reqwest::header::{CONTENT_RANGE, HeaderMap, HeaderName};
 use reqwest::Method;
+use reqwest::header::{CONTENT_RANGE, HeaderMap, HeaderName};
 use serde_json::{Map as JsonMap, Value};
 
 /// Perform an asynchronous REST API call against the Heroku platform.
@@ -26,8 +26,8 @@ pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>) -> Re
         )
     })?;
 
-    let method = Method::from_bytes(&spec.method.as_bytes()).map_err(|e| e.to_string())?;
-    let mut builder = client.request(method, &spec.path);
+    let method = Method::from_bytes(spec.method.as_bytes()).map_err(|e| e.to_string())?;
+    let mut builder = client.request(method.clone(), &spec.path);
 
     // Build and apply Range header
     builder = apply_range_headers(builder, &body);
@@ -35,7 +35,22 @@ pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>) -> Re
     // Filter out special range-only fields from JSON body
     let filtered_body = http::strip_range_body_fields(body);
     if !filtered_body.is_empty() {
-        builder = builder.json(&Value::Object(filtered_body));
+        // For GET/DELETE, pass arguments as query parameters instead of a JSON body
+        if method == Method::GET || method == Method::DELETE {
+            let query: Vec<(String, String)> = filtered_body
+                .into_iter()
+                .map(|(k, v)| {
+                    let s = match v {
+                        Value::String(s) => s,
+                        other => other.to_string(),
+                    };
+                    (k, s)
+                })
+                .collect();
+            builder = builder.query(&query);
+        } else {
+            builder = builder.json(&Value::Object(filtered_body));
+        }
     }
 
     let resp = builder.send().await.map_err(|e| {

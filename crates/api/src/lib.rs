@@ -39,7 +39,13 @@ use tracing::debug;
 
 /// Allowed hostnames or base domains for non-local configurations of
 /// `HEROKU_API_BASE`. Subdomains of these domains are also allowed.
-const ALLOWED_HEROKU_DOMAINS: &[&str] = &["heroku.com", "herokai.com", "herokuspace.com", "herokudev.com", "heroku-data-api-staging.herokuapp.com"];
+const ALLOWED_HEROKU_DOMAINS: &[&str] = &[
+    "heroku.com",
+    "herokai.com",
+    "herokuspace.com",
+    "herokudev.com",
+    "heroku-data-api-staging.herokuapp.com",
+];
 /// Hostnames allowed for local development regardless of scheme.
 const LOCALHOST_DOMAINS: &[&str] = &["localhost", "127.0.0.1"];
 
@@ -77,10 +83,7 @@ impl HerokuClient {
             );
         }
         let accept_header = spec.accept_headers();
-        default_headers.insert(
-            header::ACCEPT,
-            header::HeaderValue::from_str(accept_header)?,
-        );
+        default_headers.insert(header::ACCEPT, header::HeaderValue::from_str(accept_header)?);
 
         let http = Client::builder()
             .default_headers(default_headers)
@@ -89,7 +92,7 @@ impl HerokuClient {
             .context("build http client")?;
 
         let base_url = env::var(spec.env_var()).unwrap_or_else(|_| spec.default_base_url().into());
-        
+
         validate_base_url(&base_url)?;
         Ok(Self {
             base_url,
@@ -105,7 +108,7 @@ impl HerokuClient {
     pub fn request(&self, method: reqwest::Method, path: &str) -> RequestBuilder {
         let url = format!("{}{}", self.base_url, path);
         debug!(%url, "building request");
-        
+
         self.http
             .request(method, url)
             .header(header::USER_AGENT, &self.user_agent)

@@ -13,10 +13,21 @@ use serde_json::Value;
 /// that treat this as opaque metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
 pub enum ValueProvider {
-    /// Use another command identified by `<group>:<name>` to supply values.
+    /// Use another command identified by `<group>:<name>` to supply values,
+    /// optionally binding required provider inputs to consumer inputs.
     ///
-    /// Example: `Command { command_id: "apps:list".into() }`
-    Command { command_id: String },
+    /// Example: `Command { command_id: "apps:list".into(), binds: vec![] }`
+    /// Example with bindings: `Command { command_id: "addons:list".into(), binds: vec![Bind { provider_key: "app".into(), from: "app".into() }] }`
+    Command { command_id: String, binds: Vec<Bind> },
+}
+
+/// Declares a mapping from a provider's required input to a consumer field name.
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+pub struct Bind {
+    /// The provider's input key (e.g., a path placeholder like `app`)
+    pub provider_key: String,
+    /// The consumer field name to source the value from (positional or flag name)
+    pub from: String,
 }
 
 /// Represents a command-line flag or option for a Heroku CLI command.
@@ -51,7 +62,7 @@ pub struct CommandFlag {
 pub enum ServiceId {
     #[default]
     CoreApi, // https://api.heroku.com
-    DataApi, // https://api.data.heroku.com
+    DataApi,        // https://api.data.heroku.com
     DataApiStaging, // https://heroku-data-api-staging.herokuapp.com
 }
 
@@ -72,7 +83,7 @@ impl ToServiceIdInfo for ServiceId {
     fn accept_headers(&self) -> &str {
         match self {
             Self::CoreApi => "application/vnd.heroku+json; version=3",
-            Self::DataApi | Self::DataApiStaging => "application/vnd.heroku+json; version=3"
+            Self::DataApi | Self::DataApiStaging => "application/vnd.heroku+json; version=3",
         }
     }
 }

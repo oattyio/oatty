@@ -225,10 +225,6 @@ impl<'a> TableState<'_> {
         if let Some(json) = value {
             let arr_opt = match json {
                 Value::Array(a) => Some(a.as_slice()),
-                Value::Object(m) => m.values().find_map(|v| match v {
-                    Value::Array(a) => Some(a.as_slice()),
-                    _ => None,
-                }),
                 _ => None,
             };
             return arr_opt;

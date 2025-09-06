@@ -31,7 +31,16 @@ fn main() -> Result<()> {
     }
 
     heroku_registry_gen::write_manifest(
-        vec![ManifestInput{input: heroku_schema_path, service_id: ServiceId::CoreApi}, ManifestInput{input: data_schema_path, service_id:ServiceId::DataApi} ],
+        vec![
+            ManifestInput {
+                input: heroku_schema_path,
+                service_id: ServiceId::CoreApi,
+            },
+            ManifestInput {
+                input: data_schema_path,
+                service_id: ServiceId::DataApi,
+            },
+        ],
         manifest_path,
     )
 }

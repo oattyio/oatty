@@ -4,7 +4,7 @@ use anyhow::{Context, Result, anyhow};
 use bincode::config;
 use heroku_types::CommandSpec;
 
-static MANIFEST: &'static [u8] = include_bytes!(concat!(env!("OUT_DIR"), "/heroku-manifest.bin"));
+static MANIFEST: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/heroku-manifest.bin"));
 /// The main registry containing all available Heroku CLI commands.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct Registry {
@@ -37,8 +37,8 @@ impl Registry {
         let config = config::standard();
 
         // Decode the CommandSpec struct from the bytes
-        let vec: Vec<CommandSpec> = bincode::decode_from_slice(&MANIFEST, config)
-            .with_context(|| format!("decoding manifest failed"))?
+        let vec: Vec<CommandSpec> = bincode::decode_from_slice(MANIFEST, config)
+            .context("decoding manifest failed")?
             .0;
         let commands: Arc<[CommandSpec]> = vec.into();
 

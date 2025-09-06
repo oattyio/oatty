@@ -265,7 +265,7 @@ fn path_and_vars_with_help(href: &str, root: &Value) -> (String, Vec<PositionalA
     fn ref_name_from_pointer(ptr: &str) -> Option<String> {
         // Expect formats like "#/definitions/team" or "#/definitions/team/definitions/identity"
         let trimmed = ptr.strip_prefix('#')?;
-        let parts: Vec<&str> = trimmed.trim_start_matches('/') .split('/') .collect();
+        let parts: Vec<&str> = trimmed.trim_start_matches('/').split('/').collect();
         // Find the first occurrence of "definitions" and take the next token as the canonical name
         for i in 0..parts.len() {
             if parts[i] == "definitions" && i + 1 < parts.len() {
@@ -755,7 +755,9 @@ mod tests {
             .expect("config:update command exists");
         let pos = spec.positional_args.iter().find(|a| a.name == "addon").unwrap();
         match &pos.provider {
-            Some(heroku_types::ValueProvider::Command { command_id }) => assert_eq!(command_id, "addons:list"),
+            Some(heroku_types::ValueProvider::Command { command_id, binds: _ }) => {
+                assert_eq!(command_id, "addons:list")
+            }
             _ => panic!("positional provider for addon missing"),
         }
     }
@@ -777,7 +779,7 @@ mod tests {
             .expect("GET /config command exists");
         let flag = spec.flags.iter().find(|f| f.name == "app").unwrap();
         match &flag.provider {
-            Some(heroku_types::ValueProvider::Command { command_id }) => assert_eq!(command_id, "apps:list"),
+            Some(heroku_types::ValueProvider::Command { command_id, binds: _ }) => assert_eq!(command_id, "apps:list"),
             _ => panic!("flag provider for app missing"),
         }
     }
@@ -864,10 +866,7 @@ mod tests {
         }"#;
         let value: Value = serde_json::from_str(json).unwrap();
         let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
-        let spec = commands
-            .iter()
-            .find(|c| c.method == "GET")
-            .expect("GET command exists");
+        let spec = commands.iter().find(|c| c.method == "GET").expect("GET command exists");
 
         // Path should be normalized to use the ref name for the placeholder
         assert_eq!(spec.path, "/teams/{team}/addons");

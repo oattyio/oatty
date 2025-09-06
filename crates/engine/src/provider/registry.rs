@@ -54,7 +54,7 @@ impl RegistryProvider {
 
     fn resolve_spec(&self, provider_id: &str) -> Option<&CommandSpec> {
         let (group, name) = provider_id.split_once(':')?;
-        self.registry.find_by_group_and_cmd(group, name).ok().map(|s| s)
+        self.registry.find_by_group_and_cmd(group, name).ok()
     }
 
     pub fn persist_choice(&self, provider_id: &str, selection: FieldSelection) {
@@ -81,8 +81,13 @@ impl crate::provider::ProviderRegistry for RegistryProvider {
             && let Ok(spec_ref) = self.registry.find_by_group_and_cmd(group, name)
         {
             let body = args.clone();
+            // Resolve path placeholders before exec
+            let mut spec_clone = spec_ref.clone();
+            if !args.is_empty() {
+                spec_clone.path = heroku_util::http_path_resolution::build_path(&spec_clone.path, &body);
+            }
             let result = match tokio::runtime::Runtime::new() {
-                Ok(rt) => rt.block_on(async move { heroku_util::http_exec::exec_remote(spec_ref, body).await }),
+                Ok(rt) => rt.block_on(async move { heroku_util::http_exec::exec_remote(&spec_clone, body).await }),
                 Err(e) => Err(format!("runtime init failed: {}", e)),
             };
             if let Ok(outcome) = result
@@ -103,7 +108,7 @@ impl crate::provider::ProviderRegistry for RegistryProvider {
         let resolved_spec = self
             .resolve_spec(provider_id)
             .ok_or_else(|| anyhow::anyhow!("unknown provider: {}", provider_id))?;
-        let items = self.fetcher.fetch_list(&resolved_spec, args)?;
+        let items = self.fetcher.fetch_list(resolved_spec, args)?;
         self.cache.lock().expect("cache lock").insert(
             key,
             CacheEntry {

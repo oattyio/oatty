@@ -4,7 +4,7 @@
 //! into a minimal hyper-schema-like format with a `links` array for command generation.
 
 use anyhow::{Result, anyhow};
-use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 // percent_encoding no longer needed here
 use serde_json::{Map, Value, json};
 // no longer requires HashMap
@@ -224,18 +224,16 @@ const PTR_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'/');
 
 /// Rewrites href path variables to encoded definition refs and collects path param definitions.
-fn rewrite_href_and_collect_definitions(
-    path: &str,
-    params: &[Value],
-    definitions: &mut Map<String, Value>,
-) -> String {
+fn rewrite_href_and_collect_definitions(path: &str, params: &[Value], definitions: &mut Map<String, Value>) -> String {
     let mut href = path.to_string();
 
     for p in params {
         if p.get("in").and_then(Value::as_str) != Some("path") {
             continue;
         }
-        let Some(name) = p.get("name").and_then(Value::as_str) else { continue };
+        let Some(name) = p.get("name").and_then(Value::as_str) else {
+            continue;
+        };
         // Build or merge definitions.<name>.definitions.identity
         let ty = p
             .get("schema")
@@ -246,12 +244,22 @@ fn rewrite_href_and_collect_definitions(
 
         let mut identity = Map::new();
         identity.insert("type".into(), ty);
-        if let Some(d) = desc { identity.insert("description".into(), d); }
+        if let Some(d) = desc {
+            identity.insert("description".into(), d);
+        }
 
-        let entry = definitions.entry(name.to_string()).or_insert_with(|| json!({"definitions": {}}));
+        let entry = definitions
+            .entry(name.to_string())
+            .or_insert_with(|| json!({"definitions": {}}));
         let obj = entry.as_object_mut().unwrap();
-        let defs_obj = obj.entry("definitions").or_insert_with(|| json!({})).as_object_mut().unwrap();
-        defs_obj.entry("identity").or_insert_with(|| Value::Object(identity.clone()));
+        let defs_obj = obj
+            .entry("definitions")
+            .or_insert_with(|| json!({}))
+            .as_object_mut()
+            .unwrap();
+        defs_obj
+            .entry("identity")
+            .or_insert_with(|| Value::Object(identity.clone()));
 
         // Rewrite {name} to {(%23%2Fdefinitions%2Fname%2Fdefinitions%2Fidentity)}
         let ptr = format!("#/definitions/{}/definitions/identity", name);
@@ -386,7 +394,8 @@ fn transform_swagger2(doc: &Value) -> Result<Value> {
         for (method, operation) in path_obj.iter() {
             match method.as_str() {
                 "get" | "post" | "put" | "patch" | "delete" => {
-                    let link = build_link_from_swagger2_operation(doc, path_item, operation, method, path, &mut definitions)?;
+                    let link =
+                        build_link_from_swagger2_operation(doc, path_item, operation, method, path, &mut definitions)?;
                     links.push(link);
                 }
                 _ => {} // Skip non-HTTP methods
@@ -801,10 +810,19 @@ mod tests {
 
         let out = transform_openapi_to_links(&doc).expect("transform should succeed");
         let links = out.get("links").and_then(|v| v.as_array()).expect("links array");
-        let schema = links[0].get("schema").and_then(|v| v.as_object()).expect("schema object");
-        let props = schema.get("properties").and_then(|v| v.as_object()).expect("properties object");
+        let schema = links[0]
+            .get("schema")
+            .and_then(|v| v.as_object())
+            .expect("schema object");
+        let props = schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("properties object");
         let owner = props.get("owner").and_then(|v| v.as_object()).expect("owner schema");
-        assert_eq!(owner.get("description").and_then(|v| v.as_str()), Some("Filter by owner"));
+        assert_eq!(
+            owner.get("description").and_then(|v| v.as_str()),
+            Some("Filter by owner")
+        );
         assert_eq!(owner.get("default").and_then(|v| v.as_str()), Some("me"));
     }
 
@@ -825,10 +843,19 @@ mod tests {
 
         let out = transform_openapi_to_links(&doc).expect("transform should succeed");
         let links = out.get("links").and_then(|v| v.as_array()).expect("links array");
-        let schema = links[0].get("schema").and_then(|v| v.as_object()).expect("schema object");
-        let props = schema.get("properties").and_then(|v| v.as_object()).expect("properties object");
+        let schema = links[0]
+            .get("schema")
+            .and_then(|v| v.as_object())
+            .expect("schema object");
+        let props = schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("properties object");
         let owner = props.get("owner").and_then(|v| v.as_object()).expect("owner schema");
-        assert_eq!(owner.get("description").and_then(|v| v.as_str()), Some("Filter by owner"));
+        assert_eq!(
+            owner.get("description").and_then(|v| v.as_str()),
+            Some("Filter by owner")
+        );
         assert_eq!(owner.get("default").and_then(|v| v.as_str()), Some("me"));
     }
 }

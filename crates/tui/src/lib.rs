@@ -582,6 +582,7 @@ fn build_palette_line_from_spec(command_spec: &CommandSpec, input_fields: &[Fiel
 /// - Boolean flags don't require values
 /// - Non-boolean flags require values (next token or after =)
 /// - Unknown flags are rejected
+#[allow(clippy::type_complexity)]
 fn parse_command_arguments(
     argument_tokens: &[String],
     command_spec: &CommandSpec,

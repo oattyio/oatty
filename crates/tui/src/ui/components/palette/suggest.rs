@@ -55,7 +55,7 @@ impl SuggestionEngine {
         let pending_flag = find_pending_flag(spec, remaining_parts, input);
         if let Some(flag_name) = pending_flag {
             let value_partial = flag_value_partial(remaining_parts);
-            let items = suggest_values_for_flag(spec, &flag_name, &value_partial, providers);
+            let items = suggest_values_for_flag(spec, &flag_name, &value_partial, providers, remaining_parts);
             // Signal loading when a provider is declared for this flag but no non-enum values yet
             let has_binding = spec
                 .flags
@@ -91,8 +91,9 @@ impl SuggestionEngine {
             index: usize,
             current: &str,
             providers: &[Box<dyn ValueProvider>],
+            remaining_parts: &[String],
         ) -> (Vec<SuggestionItem>, bool) {
-            let mut values = suggest_positionals(spec, index, current, providers);
+            let mut values = suggest_positionals(spec, index, current, providers, remaining_parts);
             let mut loading = false;
             if let Some(positional_arg) = spec.positional_args.get(index) {
                 // Keep provider suggestions only different from the current echo
@@ -122,10 +123,10 @@ impl SuggestionEngine {
 
         if editing_positional {
             let arg_index = (remaining_parts.len() - 1).min(spec.positional_args.len().saturating_sub(1));
-            return build_for_index(spec, arg_index, current_input, providers);
+            return build_for_index(spec, arg_index, current_input, providers, remaining_parts);
         }
         if user_args_len < spec.positional_args.len() && !current_is_flag {
-            return build_for_index(spec, user_args_len, "", providers);
+            return build_for_index(spec, user_args_len, "", providers, remaining_parts);
         }
         (Vec::new(), false)
     }
@@ -190,7 +191,7 @@ impl SuggestionEngine {
         } else {
             &input_tokens[0..0]
         };
-        let (user_flags, user_args) = parse_user_flags_args(spec, remaining_parts);
+        let (user_flags, user_args, _flag_values) = parse_user_flags_args(spec, remaining_parts);
         let current_input = remaining_parts.last().map(|s| s.as_str()).unwrap_or("");
         let ends_with_space =
             input.ends_with(' ') || input.ends_with('\t') || input.ends_with('\n') || input.ends_with('\r');
@@ -322,9 +323,13 @@ fn suggest_commands(registry: &Registry, prefix: &str) -> Vec<SuggestionItem> {
 ///
 /// A tuple of (user_flags, user_args) where both are vectors of strings.
 // ===== Parsing helpers =====
-pub(crate) fn parse_user_flags_args(spec: &CommandSpec, parts: &[String]) -> (Vec<String>, Vec<String>) {
+pub(crate) fn parse_user_flags_args(
+    spec: &CommandSpec,
+    parts: &[String],
+) -> (Vec<String>, Vec<String>, std::collections::HashMap<String, String>) {
     let mut user_flags: Vec<String> = Vec::new();
     let mut user_args: Vec<String> = Vec::new();
+    let mut flag_values: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut i = 0;
 
     while i < parts.len() {
@@ -340,17 +345,22 @@ pub(crate) fn parse_user_flags_args(spec: &CommandSpec, parts: &[String]) -> (Ve
                 && !parts[i + 1].starts_with('-')
             {
                 i += 1; // consume value
+                flag_values.insert(name.to_string(), parts[i].clone());
             }
         } else if token.contains('=') && token.starts_with("--") {
             let name = token.split('=').next().unwrap_or("").trim_start_matches('-');
             user_flags.push(name.to_string());
+            if let Some(eq) = token.find('=') {
+                let val = token[eq + 1..].to_string();
+                flag_values.insert(name.to_string(), val);
+            }
         } else {
             user_args.push(token.to_string());
         }
         i += 1;
     }
 
-    (user_flags, user_args)
+    (user_flags, user_args, flag_values)
 }
 
 /// Finds a pending flag that requires a value.
@@ -436,6 +446,7 @@ fn suggest_values_for_flag(
     flag_name: &str,
     partial: &str,
     providers: &[Box<dyn ValueProvider>],
+    remaining_parts: &[String],
 ) -> Vec<SuggestionItem> {
     let mut items: Vec<SuggestionItem> = Vec::new();
 
@@ -456,8 +467,9 @@ fn suggest_values_for_flag(
 
     // Add dynamic values from providers
     let command_key = format!("{}:{}", spec.group, spec.name);
+    let inputs_map = build_inputs_map_for_flag(spec, remaining_parts, flag_name);
     for provider in providers {
-        let mut values = provider.suggest(&command_key, flag_name, partial);
+        let mut values = provider.suggest(&command_key, flag_name, partial, &inputs_map);
         items.append(&mut values);
     }
 
@@ -484,6 +496,7 @@ fn suggest_positionals(
     arg_count: usize,
     current: &str,
     providers: &[Box<dyn ValueProvider>],
+    remaining_parts: &[String],
 ) -> Vec<SuggestionItem> {
     let mut items: Vec<SuggestionItem> = Vec::new();
 
@@ -491,8 +504,9 @@ fn suggest_positionals(
         let command_key = format!("{}:{}", spec.group, spec.name);
 
         // Query providers for dynamic suggestions
+        let inputs_map = build_inputs_map_for_positional(spec, arg_count, remaining_parts);
         for provider in providers {
-            let mut values = provider.suggest(&command_key, &positional_arg.name, current);
+            let mut values = provider.suggest(&command_key, &positional_arg.name, current, &inputs_map);
             items.append(&mut values);
         }
 
@@ -513,6 +527,48 @@ fn suggest_positionals(
     }
 
     items
+}
+
+fn build_inputs_map_for_positional(
+    spec: &CommandSpec,
+    arg_count: usize,
+    remaining_parts: &[String],
+) -> std::collections::HashMap<String, String> {
+    use std::collections::HashMap;
+    let mut map: HashMap<String, String> = HashMap::new();
+    let (_user_flags, user_args, flag_values) = parse_user_flags_args(spec, remaining_parts);
+    for (i, val) in user_args.into_iter().enumerate() {
+        if i < arg_count
+            && let Some(pa) = spec.positional_args.get(i)
+        {
+            map.insert(pa.name.clone(), val);
+        }
+    }
+    for (k, v) in flag_values.into_iter() {
+        map.insert(k, v);
+    }
+    map
+}
+
+fn build_inputs_map_for_flag(
+    spec: &CommandSpec,
+    remaining_parts: &[String],
+    current_flag: &str,
+) -> std::collections::HashMap<String, String> {
+    use std::collections::HashMap;
+    let mut map: HashMap<String, String> = HashMap::new();
+    let (_user_flags, user_args, flag_values) = parse_user_flags_args(spec, remaining_parts);
+    for (i, val) in user_args.into_iter().enumerate() {
+        if let Some(pa) = spec.positional_args.get(i) {
+            map.insert(pa.name.clone(), val);
+        }
+    }
+    for (k, v) in flag_values.into_iter() {
+        if k != current_flag {
+            map.insert(k, v);
+        }
+    }
+    map
 }
 
 /// Checks if any required flags are still missing from user input.
@@ -661,7 +717,13 @@ mod tests {
     }
 
     impl ValueProvider for TestProvider {
-        fn suggest(&self, command_key: &str, field: &str, _partial: &str) -> Vec<SuggestionItem> {
+        fn suggest(
+            &self,
+            command_key: &str,
+            field: &str,
+            _partial: &str,
+            _inputs: &std::collections::HashMap<String, String>,
+        ) -> Vec<SuggestionItem> {
             let mut out = Vec::new();
             if let Some(values) = self.map.get(&(command_key.to_string(), field.to_string())) {
                 for v in values {
@@ -743,7 +805,10 @@ mod tests {
                     enum_values: vec![],
                     default_value: None,
                     description: None,
-                    provider: Some(heroku_types::ValueProvider::Command { command_id: "apps:list".into() }),
+                    provider: Some(heroku_types::ValueProvider::Command {
+                        command_id: "apps:list".into(),
+                        binds: vec![],
+                    }),
                 },
             ],
             method: "GET".into(),
@@ -787,7 +852,14 @@ mod tests {
             group: "addons".into(),
             name: "config:update".into(),
             summary: "update".into(),
-            positional_args: vec![PositionalArgument { name: "addon".into(), help: None, provider: Some(heroku_types::ValueProvider::Command { command_id: "addons:list".into() }) }],
+            positional_args: vec![PositionalArgument {
+                name: "addon".into(),
+                help: None,
+                provider: Some(heroku_types::ValueProvider::Command {
+                    command_id: "addons:list".into(),
+                    binds: vec![],
+                }),
+            }],
             flags: vec![],
             method: "PATCH".into(),
             path: "/addons/{addon}/config".into(),
@@ -836,7 +908,10 @@ mod tests {
                 enum_values: vec![],
                 default_value: None,
                 description: None,
-                provider: Some(heroku_types::ValueProvider::Command { command_id: "apps:list".into() }),
+                provider: Some(heroku_types::ValueProvider::Command {
+                    command_id: "apps:list".into(),
+                    binds: vec![],
+                }),
             }],
             method: "GET".into(),
             path: "/apps/{app}".into(),
@@ -872,7 +947,14 @@ mod tests {
             group: "apps".into(),
             name: "info".into(),
             summary: "info".into(),
-            positional_args: vec![PositionalArgument { name: "app".into(), help: None, provider: Some(heroku_types::ValueProvider::Command { command_id: "apps:list".into() }) }],
+            positional_args: vec![PositionalArgument {
+                name: "app".into(),
+                help: None,
+                provider: Some(heroku_types::ValueProvider::Command {
+                    command_id: "apps:list".into(),
+                    binds: vec![],
+                }),
+            }],
             flags: vec![],
             method: "GET".into(),
             path: "/apps/{app}".into(),
@@ -912,8 +994,22 @@ mod tests {
             name: "ci:run".into(),
             summary: "run".into(),
             positional_args: vec![
-                PositionalArgument { name: "pipeline".into(), help: None, provider: Some(heroku_types::ValueProvider::Command { command_id: "pipelines:list".into() }) },
-                PositionalArgument { name: "branch".into(), help: None, provider: Some(heroku_types::ValueProvider::Command { command_id: "branches:list".into() }) },
+                PositionalArgument {
+                    name: "pipeline".into(),
+                    help: None,
+                    provider: Some(heroku_types::ValueProvider::Command {
+                        command_id: "pipelines:list".into(),
+                        binds: vec![],
+                    }),
+                },
+                PositionalArgument {
+                    name: "branch".into(),
+                    help: None,
+                    provider: Some(heroku_types::ValueProvider::Command {
+                        command_id: "branches:list".into(),
+                        binds: vec![],
+                    }),
+                },
             ],
             flags: vec![],
             method: "POST".into(),

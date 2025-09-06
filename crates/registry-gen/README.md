@@ -7,7 +7,8 @@ This crate parses the Heroku JSON Hyper‑Schema and generates a compact command
 - JSON Hyper‑Schema → `CommandSpec` generation (walks `links`, `$ref`, `anyOf/oneOf/allOf`).
 - Compact binary manifest with `bincode`; optional pretty JSON output.
 - Structured flags, positional args (with help), ranges (for pagination), and summaries.
-- ValueProvider inference: maps flags/positionals to provider commands like `apps:list`.
+- ValueProvider inference: maps flags/positionals to provider commands like `apps:list`,
+  attaching input bindings when the provider can be satisfied by earlier consumer inputs.
 - Clear errors via `anyhow`; small surface area for consumers.
 
 ## Installation
@@ -87,22 +88,28 @@ pub struct CommandFlag {
 }
 
 // Providers are now embedded directly on fields via:
-// pub enum ValueProvider { Command { command_id: String } }
+// pub enum ValueProvider { Command { command_id: String, binds: Vec<Bind> } }
+// pub struct Bind { provider_key: String, from: String }
 ```
 
-### ValueProvider Inference
+### ValueProvider Inference & Bindings
 
 The generator performs a second pass to infer providers and embeds them directly on fields:
 
 - Build an index of available list commands keyed by `<group>:<name>`.
 - Positional args: Walk `spec.path` and bind the provider from the immediately preceding concrete segment (e.g., `/addons/{addon}/config` → `{addon}` → `addons:list`) when that command exists.
 - Flags: Map flag names to plural resource groups via a small synonym map (and conservative pluralization) and bind `<group>:list` when present.
+- Input bindings (high-reliability only):
+  - Bind provider path placeholders to earlier consumer positionals of the same/synonym name.
+  - Bind required provider flags only when they are among a safe set (app/app_id, addon/addon_id, pipeline, team/team_name, space/space_id, region, stack), and only from consumer required flags (same/synonym name) or earlier consumer positionals.
+  - If any required provider placeholder/flag cannot be satisfied, the provider isn’t attached.
 - Only attach providers when the referenced command exists (verified at 100%).
 
 Examples:
 
-- `addons config:update` (path `/addons/{addon}/config`) → positional `addon` → provider `ValueProvider::Command { command_id: "addons:list" }`
-- Any command with `--app` and a known `apps:list` → flag `app` → provider `ValueProvider::Command { command_id: "apps:list" }`
+ - `addons config:update` (path `/addons/{addon}/config`) → positional `addon` → provider `ValueProvider::Command { command_id: "addons:list" }`
+ - Any command with `--app` and a known `apps:list` → flag `app` → provider `ValueProvider::Command { command_id: "apps:list" }`
+  - `addons info <app> <addon>` with provider `addons:list` at `/apps/{app}/addons` → positional `addon` → provider binds `{ app ← app }` so suggestions are app‑scoped.
 
 ### Notes on Workflows
 

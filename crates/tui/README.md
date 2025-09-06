@@ -43,7 +43,9 @@ Keybindings
 Providers (Value Suggestions)
 - Asynchronous provider hook for flags/positionals:
   - Implement `ValueProvider` to return suggestion items for a given `command_key` and `field`.
-  - Example: suggest app names for `apps info <app>` and `--app` values.
+  - Provider metadata now carries input bindings: `ValueProvider::Command { command_id, binds }`.
+  - The TUI passes an `inputs` map with earlier positionals and known flag values to providers.
+  - Example: `addons info <app> <addon>` binds provider `addons:list` at `/apps/{app}/addons` with `{ app ← app }` so addon suggestions are app-scoped.
 
 Dev Notes
 - Rendering split across:

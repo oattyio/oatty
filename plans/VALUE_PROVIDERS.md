@@ -14,6 +14,12 @@ ValueProviders enable **dynamic and context-aware completion of values** for com
 
 This makes commands more powerful and user-friendly in both Guided and Power modes, while also enabling **automated workflows** to be parameterized with live system data.
 
+Note on current implementation (embed + bindings):
+- Provider metadata is embedded directly in the generated `CommandSpec` for each field as `ValueProvider::Command { command_id, binds }`.
+- `binds: Vec<Bind>` specifies how provider inputs (e.g., path placeholders, required provider flags) are satisfied from consumer inputs already entered (earlier positionals, required flags with safe names).
+- The TUI’s runtime `ValueProvider` trait receives an additional `inputs` map derived from the user’s current command input to resolve provider paths and query params before fetching suggestions.
+- High-reliability strategy only: required provider flags are bound from a curated safe set (app/app_id, addon/addon_id, pipeline, team/team_name, space/space_id, region, stack), and only from consumer required flags or earlier positionals; otherwise the provider is omitted.
+
 ---
 
 ## 2. Design Principles

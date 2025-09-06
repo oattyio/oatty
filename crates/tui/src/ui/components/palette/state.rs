@@ -880,7 +880,7 @@ impl PaletteState {
                 let name = tokens[1].clone();
                 if let Some(spec) = reg.commands.iter().find(|c| c.group == group && c.name == name) {
                     let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
-                    let (user_flags, user_args) = parse_user_flags_args(spec, parts);
+                    let (user_flags, user_args, _flag_values) = parse_user_flags_args(spec, parts);
                     if let Some(hint) = self.eol_flag_hint(spec, &user_flags) {
                         items.push(hint);
                     } else {
@@ -904,7 +904,7 @@ impl PaletteState {
                 let name = tokens[1].clone();
                 if let Some(spec) = reg.commands.iter().find(|c| c.group == group && c.name == name) {
                     let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
-                    let (user_flags, user_args) = parse_user_flags_args(spec, parts);
+                    let (user_flags, user_args, _flag_values) = parse_user_flags_args(spec, parts);
                     let positionals_complete = user_args.len() >= spec.positional_args.len();
                     let required_remaining = required_flags_remaining(spec, &user_flags);
                     if positionals_complete && !required_remaining {
@@ -988,7 +988,13 @@ pub trait ValueProvider: Send + Sync + Debug {
     /// # Returns
     ///
     /// Vector of suggestion items that match the partial input.
-    fn suggest(&self, command_key: &str, field: &str, partial: &str) -> Vec<SuggestionItem>;
+    fn suggest(
+        &self,
+        command_key: &str,
+        field: &str,
+        partial: &str,
+        inputs: &std::collections::HashMap<String, String>,
+    ) -> Vec<SuggestionItem>;
 }
 
 /// A simple value provider that returns static values.
@@ -1009,7 +1015,13 @@ pub struct StaticValuesProvider {
 impl ValueProvider for StaticValuesProvider {
     /// Suggest values that fuzzy-match `partial` for the configured (command,
     /// field).
-    fn suggest(&self, command_key: &str, field: &str, partial: &str) -> Vec<SuggestionItem> {
+    fn suggest(
+        &self,
+        command_key: &str,
+        field: &str,
+        partial: &str,
+        _inputs: &std::collections::HashMap<String, String>,
+    ) -> Vec<SuggestionItem> {
         if command_key != self.command_key || field != self.field {
             return vec![];
         }

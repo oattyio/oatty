@@ -33,7 +33,7 @@ fn main() -> Result<()> {
         service,
     } = Args::parse();
     let service_id: ServiceId = ServiceId::from_str(&service).ok().unwrap_or(ServiceId::default());
-    let input = vec![ManifestInput{input, service_id}];
+    let input = vec![ManifestInput { input, service_id }];
     if json {
         write_manifest_json(input, output)
     } else {

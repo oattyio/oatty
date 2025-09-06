@@ -18,15 +18,16 @@ The Value Provider Registry serves several key purposes:
 
 ### 1. Schema-Driven Provider Resolution (two-pass)
 
-The generator infers and verifies providers in a second pass and embeds them directly on fields (`CommandFlag.provider` and `PositionalArgument.provider`).
+The generator infers and verifies providers in a second pass and embeds them directly on fields (`CommandFlag.provider` and `PositionalArgument.provider`). Providers include input bindings (`binds: Vec<Bind>`) so runtimes can resolve provider inputs from consumer inputs.
 
-#### Key Functions
+#### Key Functions (updated)
 
 - Build command index: `<group>:<name>` for all commands
 - Identify list-capable groups (presence of `<group>:list`)
 - Resolve providers:
-  - Positionals: previous concrete path segment → `<group>:list` when present
+  - Positionals: find best provider by checking both simple (`<group>:list`) and scoped (`<earlier_segment>:<group>:list`) providers, preferring those with successful bindings
   - Flags: map flag name to plural group via synonym/pluralization → `<group>:list` when present
+  - Bindings: bind provider path placeholders from earlier consumer positionals; bind required provider flags only from a safe set and only from consumer required flags or earlier positionals.
 
 #### Provider Resolution Logic
 
@@ -45,7 +46,7 @@ pub fn resolve_and_infer_providers(commands: &mut [CommandSpec]) {
 
 ### 2. Registry-Backed Provider (`providers/mod.rs`)
 
-The `RegistryBackedProvider` implements the actual value fetching and caching logic.
+The `RegistryBackedProvider` implements the actual value fetching and caching logic. Its `suggest` signature accepts an `inputs` map to satisfy provider bindings.
 
 #### Architecture Features
 
@@ -54,7 +55,7 @@ The `RegistryBackedProvider` implements the actual value fetching and caching lo
 - **Concurrent Request Management**: Prevents duplicate API calls for the same provider
 - **Fuzzy Matching**: Provides scored suggestions based on partial input
 
-#### Core Implementation
+#### Core Implementation (shape)
 
 ```rust
 pub struct RegistryBackedProvider {
@@ -65,24 +66,7 @@ pub struct RegistryBackedProvider {
 }
 
 impl ValueProvider for RegistryBackedProvider {
-    fn suggest(&self, command_key: &str, field: &str, partial: &str) -> Vec<SuggestionItem> {
-        let (group, name) = command_key.split_once(':').unwrap_or(("", ""));
-        let provider_id = self.provider_for_field(group, name, field)?;
-        let values = self.list_values_for_provider(&provider_id);
-        
-        // Apply fuzzy matching and scoring
-        values.into_iter()
-            .filter_map(|value| {
-                fuzzy_score(&value, partial).map(|score| SuggestionItem {
-                    display: value.clone(),
-                    insert_text: value,
-                    kind: ItemKind::Value,
-                    meta: Some(provider_id.clone()),
-                    score,
-                })
-            })
-            .collect()
-    }
+    fn suggest(&self, command_key: &str, field: &str, partial: &str, inputs: &HashMap<String, String>) -> Vec<SuggestionItem> { /* ... */ }
 }
 ```
 
@@ -158,28 +142,51 @@ sequenceDiagram
 ### 3. Provider Resolution Heuristics
 
 ```mermaid
-graph LR
+graph TD
     A[Command Path] --> B[Segment Analysis]
     B --> C{Has Placeholders?}
     C -->|Yes| D[Extract Parameter Names]
     C -->|No| E[No Positional Providers]
     
-    D --> F[Identify Resource Group]
-    F --> G{Group Has List Command?}
-    G -->|Yes| H[Create Positional Provider]
-    G -->|No| I[No Provider Binding]
+    D --> F[Collect All Concrete Segments]
+    F --> G[Find Provider Candidates]
+    G --> H[Simple Provider: group:list]
+    G --> I[Scoped Provider: earlier_segment:group:list]
     
-    J[Command Flags] --> K[Flag Name Analysis]
-    K --> L[Map to Resource Group]
-    L --> M{Group Has List Command?}
-    M -->|Yes| N[Create Flag Provider]
-    M -->|No| O[No Provider Binding]
+    H --> J{Can Bind?}
+    I --> K{Can Bind?}
     
-    H --> P[Field.provider]
+    J -->|Yes| L[Use Simple Provider with Bindings]
+    J -->|No| M[Use Simple Provider without Bindings]
+    K -->|Yes| N[Use Scoped Provider with Bindings]
+    K -->|No| O[Skip Scoped Provider]
+    
+    L --> P[Field.provider]
     N --> P
-    I --> P
+    M --> P
     O --> P
+    
+    Q[Command Flags] --> R[Flag Name Analysis]
+    R --> S[Map to Resource Group]
+    S --> T{Group Has List Command?}
+    T -->|Yes| U[Create Flag Provider]
+    T -->|No| V[No Provider Binding]
+    
+    U --> P
+    V --> P
 ```
+
+#### Scoped Provider Resolution
+
+The system now supports **scoped providers** that can use earlier path segments to create more contextually appropriate providers. For example:
+
+- Path: `/apps/{app}/addons/{addon}`
+- For `{addon}` placeholder:
+  - Simple provider: `addons:list` (no context)
+  - Scoped provider: `apps:addons:list` (scoped by app)
+  - **Preference**: Scoped provider with successful binding to earlier `app` argument
+
+This enables commands like `heroku apps addons:info <app> <addon>` to use the scoped `apps:addons:list` provider, which can filter addons by the specified app.
 
 ## Implementation Details
 
@@ -190,7 +197,7 @@ Providers are attached directly to fields:
 1. **Positional Arguments**: Inferred from URL path parameters and verified
 2. **Flag Values**: Inferred via naming conventions and verified
 
-Note: Confidence scoring and a separate providers vector are removed; providers are only attached when verifiably resolvable.
+Note: Confidence scoring and a separate providers vector are removed; providers are only attached when verifiably resolvable. Bindings are embedded on the field’s provider so runtimes can resolve provider inputs from consumer inputs.
 
 ### Caching Strategy
 
@@ -258,6 +265,60 @@ paths:
           schema:
             type: string
       # Automatically infers: app parameter → apps:list provider
+```
+
+### 4. Scoped Provider Resolution
+
+```yaml
+# OpenAPI schema automatically generates scoped providers with bindings
+paths:
+  /apps/{app}/addons/{addon}:
+    get:
+      parameters:
+        - name: app
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: addon
+          in: path
+          required: true
+          schema:
+            type: string
+      # Automatically infers:
+      # - app parameter → apps:list provider
+      # - addon parameter → apps:addons:list provider with binding: app → app
+```
+
+**Generated Provider Configuration:**
+```json
+{
+  "positional_args": [
+    {
+      "name": "app",
+      "provider": {
+        "Command": {
+          "command_id": "apps:list",
+          "binds": []
+        }
+      }
+    },
+    {
+      "name": "addon",
+      "provider": {
+        "Command": {
+          "command_id": "apps:addons:list",
+          "binds": [
+            {
+              "provider_key": "app",
+              "from": "app"
+            }
+          ]
+        }
+      }
+    }
+  ]
+}
 ```
 
 ## Performance Considerations

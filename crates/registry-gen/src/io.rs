@@ -31,7 +31,7 @@ pub struct ManifestInput {
 pub fn write_manifest(inputs: Vec<ManifestInput>, output: PathBuf) -> Result<()> {
     let mut all_commands = Vec::new();
     for input in inputs {
-        let ManifestInput {input,service_id} = input;
+        let ManifestInput { input, service_id } = input;
         let commands = if is_yaml(&input) {
             let text = fs::read_to_string(&input).with_context(|| format!("read {}", input.display()))?;
             let doc: serde_json::Value = serde_yaml::from_str(&text).context("parse yaml as json value")?;
@@ -81,7 +81,7 @@ pub fn write_manifest(inputs: Vec<ManifestInput>, output: PathBuf) -> Result<()>
 pub fn write_manifest_json(inputs: Vec<ManifestInput>, output: PathBuf) -> Result<()> {
     let mut all_commands = Vec::new();
     for input in inputs {
-        let ManifestInput{input, service_id} = input;
+        let ManifestInput { input, service_id } = input;
         let commands = if is_yaml(&input) {
             let text = fs::read_to_string(&input).with_context(|| format!("read {}", input.display()))?;
             let doc: serde_json::Value = serde_yaml::from_str(&text).context("parse yaml as json value")?;

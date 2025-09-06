@@ -39,7 +39,7 @@ mod tests {
         let info_after = commands.iter().find(|c| c.group == "apps" && c.name == "info").unwrap();
         assert!(matches!(
             info_after.positional_args[0].provider,
-            Some(ValueProvider::Command { ref command_id }) if command_id == "apps:list"
+            Some(ValueProvider::Command { ref command_id, binds: _ }) if command_id == "apps:list"
         ));
     }
 
@@ -78,6 +78,55 @@ mod tests {
         // Assert: flag provider is set on the flag
         let update_after = commands.iter().find(|c| c.group == "addons" && c.name == "config:update").unwrap();
         let flag = update_after.flags.iter().find(|f| f.name == "addon").unwrap();
-        assert!(matches!(flag.provider, Some(ValueProvider::Command { ref command_id }) if command_id == "addons:list"));
+        assert!(matches!(flag.provider, Some(ValueProvider::Command { ref command_id, binds: _ }) if command_id == "addons:list"));
+    }
+
+    #[test]
+    fn computes_bindings_from_earlier_positionals() {
+        // Provider list that is scoped by app
+        let scoped_list = CommandSpec {
+            group: "addons".into(),
+            name: "list".into(),
+            summary: "list".into(),
+            positional_args: vec![],
+            flags: vec![],
+            method: "GET".into(),
+            path: "/apps/{app}/addons".into(),
+            ranges: vec![],
+            providers: vec![],
+            service_id: ServiceId::CoreApi,
+        };
+
+        // Consumer that takes app then addon
+        let mut info = CommandSpec {
+            group: "addons".into(),
+            name: "info".into(),
+            summary: "info".into(),
+            positional_args: vec![
+                PositionalArgument { name: "app".into(), help: None, provider: None },
+                PositionalArgument { name: "addon".into(), help: None, provider: None },
+            ],
+            flags: vec![],
+            method: "GET".into(),
+            path: "/apps/{app}/addons/{addon}".into(),
+            ranges: vec![],
+            providers: vec![],
+            service_id: ServiceId::CoreApi,
+        };
+
+        let mut commands = vec![scoped_list, info.clone()];
+        resolve_and_infer_providers(&mut commands);
+
+        let info_after = commands.iter().find(|c| c.group == "addons" && c.name == "info").unwrap();
+        let addon_pos = &info_after.positional_args[1];
+        match &addon_pos.provider {
+            Some(ValueProvider::Command { command_id, binds }) => {
+                assert_eq!(command_id, "addons:list");
+                assert_eq!(binds.len(), 1);
+                assert_eq!(binds[0].provider_key, "app");
+                assert_eq!(binds[0].from, "app");
+            }
+            other => panic!("unexpected provider: {:?}", other),
+        }
     }
 }
