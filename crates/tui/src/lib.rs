@@ -276,6 +276,7 @@ pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
                                     &mut comps.palette,
                                     &mut comps.builder,
                                     &mut comps.table,
+                                    &mut comps.logs,
                                     key_event,
                                 )? {
                                     break;
@@ -350,6 +351,7 @@ fn handle_key_event(
     palette_component: &mut PaletteComponent,
     builder_component: &mut BuilderComponent,
     table_component: &mut TableComponent,
+    logs_component: &mut LogsComponent,
     key_event: KeyEvent,
 ) -> Result<bool> {
     // First, check for global key mappings (Esc, Ctrl+F, etc.)
@@ -374,7 +376,6 @@ fn handle_key_event(
 
     // Route to logs component when detail view is open
     if application.logs.detail.is_some() {
-        let mut logs_component = LogsComponent::new();
         let component_effects = logs_component.handle_key_events(application, key_event);
         let commands = crate::cmd::from_effects(application, component_effects);
         crate::cmd::run_cmds(application, commands);
@@ -390,7 +391,6 @@ fn handle_key_event(
 
         // Route to focused component
         if application.logs.focus.get() {
-            let mut logs_component = LogsComponent::new();
             let component_effects = logs_component.handle_key_events(application, key_event);
             let commands = crate::cmd::from_effects(application, component_effects);
             crate::cmd::run_cmds(application, commands);

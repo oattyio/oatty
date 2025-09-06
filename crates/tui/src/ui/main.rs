@@ -1,6 +1,6 @@
 use ratatui::{
     prelude::*,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::Paragraph,
 };
 
@@ -109,34 +109,9 @@ fn render_modals(
     // Draw a dim overlay when any modal is visible
     let any_modal = app.help.is_visible() || app.table.is_visible() || app.builder.is_visible();
     if any_modal {
-        use ratatui::widgets::Paragraph;
-        // Dim the entire existing buffer so all underlying text appears subdued
+        use ratatui::widgets::Block;
         let area = f.area();
-        let buf = f.buffer_mut();
-        for y in area.y..area.y + area.height {
-            for x in area.x..area.x + area.width {
-                let cell = buf.cell_mut(Position::new(x, y)).expect("Position not found");
-                let current = cell.style();
-                cell.set_style(current.add_modifier(Modifier::DIM));
-            }
-        }
-        // Darken the background for the backdrop (avoid lighter overlays)
-        fn darken_rgb(color: Color, factor: f32) -> Color {
-            match color {
-                Color::Rgb(r, g, b) => {
-                    let f = factor.clamp(0.0, 1.0);
-                    let dr = (r as f32 * f).round().clamp(0.0, 255.0) as u8;
-                    let dg = (g as f32 * f).round().clamp(0.0, 255.0) as u8;
-                    let db = (b as f32 * f).round().clamp(0.0, 255.0) as u8;
-                    Color::Rgb(dr, dg, db)
-                }
-                other => other,
-            }
-        }
-        let bg = app.ctx.theme.roles().background;
-        let darker = darken_rgb(bg, 0.60);
-        let overlay = Paragraph::new("").style(Style::default().bg(darker));
-        f.render_widget(overlay, f.area());
+        f.render_widget(Block::default().bg(app.ctx.theme.roles().background).add_modifier(Modifier::DIM), area);
     }
 
     if app.help.is_visible() {
