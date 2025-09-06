@@ -1,37 +1,10 @@
 #[cfg(test)]
 mod tests {
     use super::super::schema::*;
+    use heroku_types::ServiceId;
     use serde_json::json;
 
     #[test]
-    fn test_workflow_flags() {
-        let mut commands = Vec::new();
-        crate::workflow::add_workflow_commands(&mut commands);
-        
-        let run_cmd = commands
-            .iter()
-            .find(|cmd| cmd.name == "workflow:run")
-            .expect("workflow:run command not found");
-        
-        assert_eq!(run_cmd.flags.len(), 2);
-        
-        let file_flag = run_cmd
-            .flags
-            .iter()
-            .find(|f| f.name == "file")
-            .expect("file flag not found");
-        assert_eq!(file_flag.short_name, Some("f".to_string()));
-        assert_eq!(file_flag.description, Some("Path to workflow YAML/JSON".to_string()));
-        
-        let name_flag = run_cmd
-            .flags
-            .iter()
-            .find(|f| f.name == "name")
-            .expect("name flag not found");
-        assert_eq!(name_flag.short_name, Some("n".to_string()));
-        assert_eq!(name_flag.description, Some("Workflow name within the file".to_string()));
-    }
-
     #[test]
     fn test_schema_flags() {
         let schema_json = r#"
@@ -53,7 +26,7 @@ mod tests {
         }
         "#;
         let v: serde_json::Value = serde_json::from_str(schema_json).unwrap();
-        let cmds = derive_commands_from_schema(&v).unwrap();
+        let cmds = derive_commands_from_schema(&v, ServiceId::CoreApi).unwrap();
         
         assert_eq!(cmds.len(), 1);
         let cmd = &cmds[0];

@@ -2,6 +2,11 @@
 name = "heroku-tui"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.89"
+description = "Heroku CLI terminal user interface"
+license = "MIT OR Apache-2.0"
+authors = ["Heroku CLI Team <devnull@example.com>"]
+repository = "https://example.com/heroku"
 
 [dependencies]
 anyhow = { workspace = true }
@@ -9,20 +14,20 @@ ratatui = { workspace = true }
 crossterm = { workspace = true }
 tracing = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 reqwest = { workspace = true }
 heroku-registry = { path = "../registry" }
 heroku-util = { path = "../util" }
 heroku-types = { path = "../types" }
-arboard = "3"
+arboard = { workspace = true }
 heroku-api = { path = "../api" }
 tokio = { workspace = true }
-futures-util = "0.3"
+futures-util = { workspace = true }
 heck = { workspace = true }
-chrono = "0.4"
+chrono = { workspace = true }
 regex = { workspace = true }
 once_cell = { workspace = true }
 rat-focus = { workspace = true }
+serde_json = { workspace = true }
 
 [lib]
 doctest = false

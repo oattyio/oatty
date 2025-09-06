@@ -1,26 +1,52 @@
+//! # Heroku CLI TUI Library
+//!
+//! This library provides a terminal user interface (TUI) for the Heroku CLI.
+//! It implements a modern, interactive command-line interface using the Ratatui
+//! framework with support for command execution, real-time logs, and interactive
+//! command building.
+//!
+//! ## Key Features
+//!
+//! - Interactive command palette with autocomplete
+//! - Real-time command execution and log streaming
+//! - Command builder with field validation
+//! - Tabular data display with pagination
+//! - Focus management and keyboard navigation
+//! - Asynchronous command execution
+//!
+//! ## Architecture
+//!
+//! The TUI follows a component-based architecture where each UI element
+//! (palette, logs, builder, table, help) is implemented as a separate
+//! component that can handle events and render itself.
+
 mod app;
 mod cmd;
 mod preview;
 mod ui;
 
+// Standard library imports
 use std::{collections::HashMap, io, sync::atomic::Ordering, time::Duration};
 
+// Third-party imports
 use anyhow::Result;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use heroku_types::{CommandSpec, Field};
-use heroku_util::lex_shell_like;
 use rat_focus::FocusBuilder;
 use ratatui::{Terminal, prelude::*};
 use serde_json::{Map, Value};
 use tokio::{signal, sync::mpsc, task};
 
+// Heroku-specific imports
+use heroku_types::{CommandSpec, Field};
+use heroku_util::{lex_shell_like, resolve_path};
+
+// Local imports
 use crate::{
     cmd::{Cmd, run_cmds},
-    preview::resolve_path,
     ui::{
         components::{
             BuilderComponent, HelpComponent, LogsComponent, TableComponent,
@@ -31,50 +57,133 @@ use crate::{
     },
 };
 
+/// Events that can be sent to the UI event loop.
+///
+/// This enum represents the different types of events that the UI can process,
+/// including user input events and animation ticks for smooth UI updates.
 enum UiEvent {
+    /// User input event (keyboard, mouse, etc.)
     Input(Event),
+    /// Animation tick for periodic UI updates
     Animate,
 }
 
-pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
-    let mut app = app::App::new(registry);
-    let mut palette_component = PaletteComponent::new();
-    let _ = palette_component.init();
-    let mut hint_bar_component = HintBarComponent::new();
-    let _ = hint_bar_component.init();
+/// Convenience container for all top-level UI components.
+struct UiComponents<'a> {
+    palette: PaletteComponent,
+    hint_bar: HintBarComponent<'a>,
+    logs: LogsComponent,
+    builder: BuilderComponent,
+    help: HelpComponent,
+    table: TableComponent<'a>,
+}
 
-    let mut logs_component = LogsComponent::new();
-    let _ = logs_component.init();
-    let mut builder_component = BuilderComponent::new();
-    let _ = builder_component.init();
-    let mut help_component = HelpComponent::new();
-    let _ = help_component.init();
-    let mut table_component = TableComponent::default();
-    let _ = table_component.init();
+impl<'a> UiComponents<'a> {
+    fn new_initialized() -> Self {
+        let mut palette = PaletteComponent::new();
+        let _ = palette.init();
 
+        let mut hint_bar = HintBarComponent::new();
+        let _ = hint_bar.init();
+
+        let mut logs = LogsComponent::new();
+        let _ = logs.init();
+
+        let mut builder = BuilderComponent::new();
+        let _ = builder.init();
+
+        let mut help = HelpComponent::new();
+        let _ = help.init();
+
+        let mut table = TableComponent::default();
+        let _ = table.init();
+
+        Self {
+            palette,
+            hint_bar,
+            logs,
+            builder,
+            help,
+            table,
+        }
+    }
+}
+
+fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
+    let terminal = Terminal::new(backend)?;
+    Ok(terminal)
+}
 
-    let animate_rate = Duration::from_millis(200);
-    let (ui_tx, mut ui_rx) = mpsc::unbounded_channel::<UiEvent>();
-    let active = app.active_exec_count.clone();
+fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
+    terminal.show_cursor()?;
+    Ok(())
+}
+
+fn initial_render<'a>(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    application: &mut app::App,
+    comps: &mut UiComponents<'a>,
+) -> Result<()> {
+    terminal.draw(|frame| {
+        main::draw(
+            frame,
+            application,
+            &mut comps.palette,
+            &mut comps.hint_bar,
+            &mut comps.logs,
+            &mut comps.builder,
+            &mut comps.help,
+            &mut comps.table,
+        )
+    })?;
+    Ok(())
+}
+
+fn render<'a>(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    application: &mut app::App,
+    comps: &mut UiComponents<'a>,
+) -> Result<()> {
+    terminal.draw(|frame| {
+        main::draw(
+            frame,
+            application,
+            &mut comps.palette,
+            &mut comps.hint_bar,
+            &mut comps.logs,
+            &mut comps.builder,
+            &mut comps.help,
+            &mut comps.table,
+        )
+    })?;
+    Ok(())
+}
+
+fn spawn_ui_event_producer(
+    active_execution_count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ui_event_sender: mpsc::UnboundedSender<UiEvent>,
+    animation_interval: Duration,
+) {
     task::spawn_blocking(move || {
         loop {
-            if active.load(Ordering::Relaxed) > 0 {
-                match crossterm::event::poll(animate_rate) {
+            if active_execution_count.load(Ordering::Relaxed) > 0 {
+                match crossterm::event::poll(animation_interval) {
                     Ok(true) => match crossterm::event::read() {
-                        Ok(ev) => {
-                            if ui_tx.send(UiEvent::Input(ev)).is_err() {
+                        Ok(input_event) => {
+                            if ui_event_sender.send(UiEvent::Input(input_event)).is_err() {
                                 break;
                             }
                         }
                         Err(_) => std::thread::sleep(Duration::from_millis(10)),
                     },
                     Ok(false) => {
-                        if ui_tx.send(UiEvent::Animate).is_err() {
+                        if ui_event_sender.send(UiEvent::Animate).is_err() {
                             break;
                         }
                     }
@@ -82,8 +191,8 @@ pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
                 }
             } else {
                 match crossterm::event::read() {
-                    Ok(ev) => {
-                        if ui_tx.send(UiEvent::Input(ev)).is_err() {
+                    Ok(input_event) => {
+                        if ui_event_sender.send(UiEvent::Input(input_event)).is_err() {
                             break;
                         }
                     }
@@ -92,359 +201,641 @@ pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
             }
         }
     });
+}
 
-    // Initial render so UI is visible before any events
-    terminal.draw(|frame| {
-        main::draw(
-            frame,
-            &mut app,
-            &mut palette_component,
-            &mut hint_bar_component,
-            &mut logs_component,
-            &mut builder_component,
-            &mut help_component,
-            &mut table_component,
-        )
-    })?;
+/// Runs the main TUI application loop.
+///
+/// This function initializes the terminal interface, sets up all UI components,
+/// and runs the main event loop that handles user input, command execution,
+/// and UI rendering.
+///
+/// # Arguments
+///
+/// * `registry` - The Heroku command registry containing all available commands
+///
+/// # Returns
+///
+/// Returns `Ok(())` if the application exits cleanly, or an error if there's
+/// a terminal setup or runtime issue.
+///
+/// # Errors
+///
+/// This function can return errors for:
+/// - Terminal setup failures (raw mode, alternate screen)
+/// - Component initialization failures
+/// - Event loop runtime errors
+///
+/// # Example
+///
+/// ```no_run
+/// use heroku_registry::Registry;
+/// use heroku_tui::run;
+///
+/// #[tokio::main]
+/// async fn main() -> anyhow::Result<()> {
+///     let registry = Registry::new();
+///     run(registry).await
+/// }
+/// ```
+pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
+    // Initialize the main application state
+    let mut application = app::App::new(registry);
+    let mut comps = UiComponents::new_initialized();
 
+    // Terminal setup
+    let mut terminal = setup_terminal()?;
+
+    // Set up event handling
+    let animation_interval = Duration::from_millis(200);
+    let (ui_event_sender, mut ui_event_receiver) = mpsc::unbounded_channel::<UiEvent>();
+    let active_execution_count = application.active_exec_count.clone();
+    // Spawn a blocking task to handle input events and animation ticks
+    spawn_ui_event_producer(active_execution_count, ui_event_sender, animation_interval);
+
+    // Perform initial render so UI is visible before any events
+    initial_render(&mut terminal, &mut application, &mut comps)?;
+
+    // Main event loop
     loop {
-        let mut should_render = false;
+        let mut needs_rerender = false;
 
         tokio::select! {
-            maybe_event = ui_rx.recv() => {
-                if let Some(event) = maybe_event {
-                    match event {
-                        UiEvent::Input(event) => match event {
-                        Event::Key(key) => {
-                            if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                                break;
+            // Handle UI events (input, animation)
+            maybe_ui_event = ui_event_receiver.recv() => {
+                if let Some(ui_event) = maybe_ui_event {
+                    match ui_event {
+                        UiEvent::Input(input_event) => match input_event {
+                            Event::Key(key_event) => {
+                                // Handle Ctrl+C for graceful shutdown
+                                if key_event.code == KeyCode::Char('c') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                                    break;
+                                }
+                                // Process the key event and check if we should exit
+                                if handle_key_event(
+                                    &mut application,
+                                    &mut comps.palette,
+                                    &mut comps.builder,
+                                    &mut comps.table,
+                                    key_event,
+                                )? {
+                                    break;
+                                }
+                                needs_rerender = true;
                             }
-                            if handle_key(
-                                &mut app,
-                                &mut palette_component,
-                                &mut builder_component,
-                                &mut table_component,
-                                key,
-                            )? {
-                                break;
+                            Event::Resize(width, height) => {
+                                let _ = application.update(app::Msg::Resize(width, height));
+                                needs_rerender = true;
                             }
-                            should_render = true;
-                        }
-                        Event::Resize(w, h) => {
-                            let _ = app.update(app::Msg::Resize(w, h));
-                            should_render = true;
-                        }
-                        _ => {}
+                            _ => {}
                         },
                         UiEvent::Animate => {
-                            let _ = app.update(app::Msg::Tick);
-                            should_render = true;
+                            let _ = application.update(app::Msg::Tick);
+                            needs_rerender = true;
                         }
                     }
                 }
             }
-            maybe_out = app.exec_receiver.recv() => {
-                if let Some(out) = maybe_out {
-                    let _ = app.update(app::Msg::ExecCompleted(out));
-                    should_render = true;
+            // Handle command execution completion
+            maybe_execution_output = application.exec_receiver.recv() => {
+                if let Some(execution_output) = maybe_execution_output {
+                    let _ = application.update(app::Msg::ExecCompleted(execution_output));
+                    needs_rerender = true;
                 }
             }
+            // Handle Ctrl+C signal
             _ = signal::ctrl_c() => {
                 break;
             }
         }
 
-        if should_render {
-            terminal.draw(|frame| {
-                main::draw(
-                    frame,
-                    &mut app,
-                    &mut palette_component,
-                    &mut hint_bar_component,
-                    &mut logs_component,
-                    &mut builder_component,
-                    &mut help_component,
-                    &mut table_component,
-                )
-            })?;
+        // Render the UI if needed
+        if needs_rerender {
+            render(&mut terminal, &mut application, &mut comps)?;
         }
     }
 
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
-    terminal.show_cursor()?;
+    // Cleanup: restore terminal to normal mode
+    cleanup_terminal(&mut terminal)?;
     Ok(())
 }
 
-fn handle_key(
-    app: &mut app::App,
-    palette: &mut PaletteComponent,
-    builder: &mut BuilderComponent,
-    table: &mut TableComponent,
-    key: KeyEvent,
+/// Handles keyboard input events and routes them to the appropriate UI components.
+///
+/// This function implements the main keyboard event routing logic for the TUI.
+/// It determines which component should handle the key event based on the current
+/// application state (visible modals, focus, etc.) and delegates the event
+/// accordingly.
+///
+/// # Arguments
+///
+/// * `application` - The main application state
+/// * `palette_component` - The command palette component
+/// * `builder_component` - The command builder component
+/// * `table_component` - The data table component
+/// * `key_event` - The keyboard event to handle
+///
+/// # Returns
+///
+/// Returns `Ok(true)` if the application should exit, `Ok(false)` if it should
+/// continue running, or an error if there was a processing issue.
+///
+/// # Event Routing Logic
+///
+/// 1. Global keys (Esc, Ctrl+F) are handled first
+/// 2. Modal-specific routing (table, builder, logs detail)
+/// 3. Focus-based routing between palette and logs
+/// 4. Tab/Shift+Tab for focus cycling
+fn handle_key_event(
+    application: &mut app::App,
+    palette_component: &mut PaletteComponent,
+    builder_component: &mut BuilderComponent,
+    table_component: &mut TableComponent,
+    key_event: KeyEvent,
 ) -> Result<bool> {
-    // First, map common/global keys to messages and handle them uniformly
-    if let Some(msg) = map_key_to_msg(app, &key) {
-        let _ = app.update(msg);
-        return Ok(false);
-    }
-    // When table modal is visible, route keys to the table component (local-first
-    // handling)
-    if app.table.is_visible() {
-        let effects = table.handle_key_events(app, key);
-        let cmds = crate::cmd::from_effects(app, effects);
-        crate::cmd::run_cmds(app, cmds);
-        return Ok(false);
-    }
-    // If builder modal open, Enter should close builder and populate palette with
-    // constructed command
-    if app.builder.is_visible() && key.code == KeyCode::Enter {
-        if let Some(spec) = app.builder.selected_command() {
-            let line = palette_line_from_spec(spec, app.builder.input_fields());
-            app.palette.set_input(line);
-            app.palette.set_cursor(app.palette.input().len());
-            app.palette
-                .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers);
-        }
-        app.builder.apply_visibility(false);
-        return Ok(false);
-    }
-    // Logs detail takes precedence for navigation/copy while open
-    if app.logs.detail.is_some() {
-        let mut logs = LogsComponent::new();
-        let effects = logs.handle_key_events(app, key);
-        let cmds = crate::cmd::from_effects(app, effects);
-        crate::cmd::run_cmds(app, cmds);
+    // First, check for global key mappings (Esc, Ctrl+F, etc.)
+    if let Some(global_message) = map_key_to_global_message(application, &key_event) {
+        let _ = application.update(global_message);
         return Ok(false);
     }
 
-    // Default palette/logs interaction when not in builder
-    if !app.builder.is_visible() {
-        // Top-level focus toggle with Tab / Shift+Tab using rat-focus for root
-        if (key.code == KeyCode::Tab || key.code == KeyCode::BackTab) && !key.modifiers.contains(KeyModifiers::CONTROL)
-        {
-            let palette_busy = app.palette.is_suggestions_open() || !app.palette.input().is_empty();
-            if palette_busy && app.palette.focus.get() && key.code == KeyCode::Tab {
-                // Let palette handle Tab for suggestions/accept
-            } else {
-                let mut b = FocusBuilder::new(None);
-                b.widget(&app.palette);
-                b.widget(&app.logs);
-                let focus = b.build();
-                let _ = if key.code == KeyCode::Tab {
-                    focus.next()
-                } else {
-                    focus.prev()
-                };
-                return Ok(false);
-            }
+    // Route to table component when table modal is visible
+    if application.table.is_visible() {
+        let component_effects = table_component.handle_key_events(application, key_event);
+        let commands = crate::cmd::from_effects(application, component_effects);
+        crate::cmd::run_cmds(application, commands);
+        return Ok(false);
+    }
+
+    // Handle Enter key in builder modal to close and populate palette
+    if application.builder.is_visible() && key_event.code == KeyCode::Enter {
+        handle_builder_enter(application);
+        return Ok(false);
+    }
+
+    // Route to logs component when detail view is open
+    if application.logs.detail.is_some() {
+        let mut logs_component = LogsComponent::new();
+        let component_effects = logs_component.handle_key_events(application, key_event);
+        let commands = crate::cmd::from_effects(application, component_effects);
+        crate::cmd::run_cmds(application, commands);
+        return Ok(false);
+    }
+
+    // Handle focus management and component routing when not in builder
+    if !application.builder.is_visible() {
+        // Handle Tab/Shift+Tab for focus cycling between palette and logs
+        if handle_focus_cycle(application, &key_event) {
+            return Ok(false);
         }
 
-        if app.logs.focus.get() {
-            let mut logs = LogsComponent::new();
-            let effects = logs.handle_key_events(app, key);
-            let cmds = crate::cmd::from_effects(app, effects);
-            crate::cmd::run_cmds(app, cmds);
+        // Route to focused component
+        if application.logs.focus.get() {
+            let mut logs_component = LogsComponent::new();
+            let component_effects = logs_component.handle_key_events(application, key_event);
+            let commands = crate::cmd::from_effects(application, component_effects);
+            crate::cmd::run_cmds(application, commands);
             return Ok(false);
         } else {
-            let effects = palette.handle_key_events(app, key);
-            let cmds = crate::cmd::from_effects(app, effects);
-            crate::cmd::run_cmds(app, cmds);
+            let component_effects = palette_component.handle_key_events(application, key_event);
+            let commands = crate::cmd::from_effects(application, component_effects);
+            crate::cmd::run_cmds(application, commands);
             return Ok(false);
         }
     }
 
-    let effects = builder.handle_key_events(app, key);
-    let cmds = crate::cmd::from_effects(app, effects);
-    crate::cmd::run_cmds(app, cmds);
+    // Route to builder component when builder is visible
+    let component_effects = builder_component.handle_key_events(application, key_event);
+    let commands = crate::cmd::from_effects(application, component_effects);
+    crate::cmd::run_cmds(application, commands);
     Ok(false)
 }
 
-// Map common/global keys to simple messages so the main loop stays
-// TEA-friendly.
-fn map_key_to_msg(app: &app::App, key: &KeyEvent) -> Option<app::Msg> {
-    // Close any modal on Esc
-    if (app.help.is_visible() || app.table.is_visible() || app.builder.is_visible()) && key.code == KeyCode::Esc {
+/// Maps global keyboard shortcuts to application messages.
+///
+/// This function handles application-wide keyboard shortcuts that should be
+/// processed regardless of which component currently has focus. It maintains
+/// the TEA (The Elm Architecture) pattern by converting key events to messages.
+///
+/// # Arguments
+///
+/// * `application` - The current application state
+/// * `key_event` - The keyboard event to process
+///
+/// # Returns
+///
+/// Returns `Some(message)` if the key event maps to a global action,
+/// or `None` if the event should be handled by focused components.
+///
+/// # Global Shortcuts
+///
+/// - `Esc`: Close any visible modal (help, table, builder)
+/// - `Ctrl+F`: Toggle the command builder modal
+fn map_key_to_global_message(application: &app::App, key_event: &KeyEvent) -> Option<app::Msg> {
+    // Close any visible modal when Esc is pressed
+    if (application.help.is_visible() || application.table.is_visible() || application.builder.is_visible())
+        && key_event.code == KeyCode::Esc
+    {
         return Some(app::Msg::CloseModal);
     }
-    // Toggle builder with Ctrl+F
-    if key.code == KeyCode::Char('f') && key.modifiers.contains(KeyModifiers::CONTROL) {
+
+    // Toggle command builder with Ctrl+F
+    if key_event.code == KeyCode::Char('f') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
         return Some(app::Msg::ToggleBuilder);
     }
-    // Table modal keys are handled in TableComponent::handle_key
+
+    // No global mapping found - let focused components handle the event
     None
 }
 
-// Accept a non-command suggestion (flag/value) without clobbering the resolved
-// command (group sub). Rules:
-// - If cursor is at a new token position (ends with space), insert suggestion +
-//   trailing space.
-// - If current token starts with '-' or previous token is a flag expecting a
-//   value → replace token.
-// - Otherwise (we're on the command tokens or a positional token) → append
-//   suggestion separated by space.
-// moved palette suggestion helpers to crate::palette
-fn palette_line_from_spec(spec: &CommandSpec, fields: &[Field]) -> String {
-    let mut parts: Vec<String> = Vec::new();
-    // Convert spec.name (group:rest) to execution form: "group rest"
-    let group = &spec.group;
-    let rest = &spec.name;
-    parts.push(group.to_string());
-    if !rest.is_empty() {
-        parts.push(rest.to_string());
+fn handle_builder_enter(application: &mut app::App) {
+    if let Some(command_spec) = application.builder.selected_command() {
+        let command_line = build_palette_line_from_spec(command_spec, application.builder.input_fields());
+        application.palette.set_input(command_line);
+        application.palette.set_cursor(application.palette.input().len());
+        application
+            .palette
+            .apply_build_suggestions(&application.ctx.registry, &application.ctx.providers);
     }
-    // positionals in order
-    for positional_arg in &spec.positional_args {
-        if let Some(field) = fields.iter().find(|f| f.name == positional_arg.name) {
-            let v = field.value.trim();
-            if v.is_empty() {
-                parts.push(format!("<{}>", positional_arg.name));
-            } else {
-                parts.push(v.to_string());
-            }
-        } else {
-            parts.push(format!("<{}>", positional_arg.name));
-        }
-    }
-    // flags
-    for field in fields
-        .iter()
-        .filter(|f| !spec.positional_args.iter().any(|p| p.name == f.name))
-    {
-        if field.is_bool {
-            if !field.value.is_empty() {
-                parts.push(format!("--{}", field.name));
-            }
-        } else if !field.value.trim().is_empty() {
-            parts.push(format!("--{}", field.name));
-            parts.push(field.value.trim().to_string());
-        }
-    }
-    parts.join(" ")
+    application.builder.apply_visibility(false);
 }
 
-pub fn start_palette_execution(app: &mut app::App) -> Result<CommandSpec, String> {
-    // Parse input into tokens: expect "group sub [args...]"
-    let input_owned = app.palette.input().to_string();
-    let input = input_owned.trim().to_string();
-    if input.is_empty() {
-        return Err("Type a command (e.g., apps info)".into());
+fn handle_focus_cycle(application: &app::App, key_event: &KeyEvent) -> bool {
+    if (key_event.code == KeyCode::Tab || key_event.code == KeyCode::BackTab)
+        && !key_event.modifiers.contains(KeyModifiers::CONTROL)
+    {
+        let palette_has_suggestions =
+            application.palette.is_suggestions_open() || !application.palette.input().is_empty();
+
+        if palette_has_suggestions && application.palette.focus.get() && key_event.code == KeyCode::Tab {
+            // Let palette handle Tab for suggestion navigation/acceptance
+            return false;
+        }
+
+        let mut focus_builder = FocusBuilder::new(None);
+        focus_builder.widget(&application.palette);
+        focus_builder.widget(&application.logs);
+        let focus_ring = focus_builder.build();
+
+        let _ = if key_event.code == KeyCode::Tab {
+            focus_ring.next()
+        } else {
+            focus_ring.prev()
+        };
+        return true;
     }
-    // Use palette tokenizer to keep quoting behavior consistent across modules
-    let tokens = lex_shell_like(&input);
-    if tokens.len() < 2 {
-        return Err("Incomplete command. Use '<group> <sub>' (e.g., apps info)".into());
+    false
+}
+
+/// Builds a command line string from a command specification and input fields.
+///
+/// This function constructs a complete command line string that can be executed
+/// or displayed in the palette. It combines the command group/name with positional
+/// arguments and flags based on the provided field values.
+///
+/// # Arguments
+///
+/// * `command_spec` - The command specification containing group, name, and argument definitions
+/// * `input_fields` - The user-provided field values for arguments and flags
+///
+/// # Returns
+///
+/// Returns a formatted command line string ready for execution.
+///
+/// # Format Rules
+///
+/// - Command format: `<group> <subcommand> [positional_args...] [--flags...]`
+/// - Empty positional arguments are shown as `<arg_name>`
+/// - Boolean flags are included only if set to true
+/// - Non-boolean flags include their values
+///
+/// # Example
+///
+/// ```
+/// // For spec with group="apps", name="info", and fields with app_id="my-app"
+/// // Returns: "apps info my-app"
+/// ```
+fn build_palette_line_from_spec(command_spec: &CommandSpec, input_fields: &[Field]) -> String {
+    let mut command_parts: Vec<String> = Vec::new();
+
+    // Add command group and subcommand
+    let command_group = &command_spec.group;
+    let subcommand_name = &command_spec.name;
+    command_parts.push(command_group.to_string());
+    if !subcommand_name.is_empty() {
+        command_parts.push(subcommand_name.to_string());
     }
 
-    let spec = app
+    // Add positional arguments in order
+    for positional_argument in &command_spec.positional_args {
+        if let Some(input_field) = input_fields.iter().find(|field| field.name == positional_argument.name) {
+            let field_value = input_field.value.trim();
+            if field_value.is_empty() {
+                command_parts.push(format!("<{}>", positional_argument.name));
+            } else {
+                command_parts.push(field_value.to_string());
+            }
+        } else {
+            command_parts.push(format!("<{}>", positional_argument.name));
+        }
+    }
+
+    // Add flags (non-positional fields)
+    for input_field in input_fields.iter().filter(|field| {
+        !command_spec
+            .positional_args
+            .iter()
+            .any(|pos_arg| pos_arg.name == field.name)
+    }) {
+        if input_field.is_bool {
+            if !input_field.value.is_empty() {
+                command_parts.push(format!("--{}", input_field.name));
+            }
+        } else if !input_field.value.trim().is_empty() {
+            command_parts.push(format!("--{}", input_field.name));
+            command_parts.push(input_field.value.trim().to_string());
+        }
+    }
+
+    command_parts.join(" ")
+}
+
+/// Parses command arguments and flags from input tokens.
+///
+/// This function processes the command line tokens after the group and subcommand,
+/// separating positional arguments from flags and validating flag syntax.
+///
+/// # Arguments
+///
+/// * `argument_tokens` - The tokens after the group and subcommand
+/// * `command_spec` - The command specification for validation
+///
+/// # Returns
+///
+/// Returns `Ok((flags, args))` where flags is a map of flag names to values
+/// and args is a vector of positional arguments, or an error if parsing fails.
+///
+/// # Flag Parsing Rules
+///
+/// - `--flag=value` format is supported
+/// - Boolean flags don't require values
+/// - Non-boolean flags require values (next token or after =)
+/// - Unknown flags are rejected
+fn parse_command_arguments(
+    argument_tokens: &[String],
+    command_spec: &CommandSpec,
+) -> Result<(HashMap<String, Option<String>>, Vec<String>), String> {
+    let mut user_flags: HashMap<String, Option<String>> = HashMap::new();
+    let mut user_args: Vec<String> = Vec::new();
+    let mut index = 0;
+
+    while index < argument_tokens.len() {
+        let token = &argument_tokens[index];
+
+        if token.starts_with("--") {
+            let flag_name = token.trim_start_matches('-');
+
+            // Handle --flag=value format
+            if let Some(equals_pos) = flag_name.find('=') {
+                let name = &flag_name[..equals_pos];
+                let value = &flag_name[equals_pos + 1..];
+                user_flags.insert(name.to_string(), Some(value.to_string()));
+            } else {
+                // Handle --flag or --flag value format
+                if let Some(flag_spec) = command_spec.flags.iter().find(|f| f.name == flag_name) {
+                    if flag_spec.r#type == "boolean" {
+                        user_flags.insert(flag_name.to_string(), None);
+                    } else {
+                        // Non-boolean flag requires a value
+                        if index + 1 < argument_tokens.len() && !argument_tokens[index + 1].starts_with('-') {
+                            user_flags.insert(flag_name.to_string(), Some(argument_tokens[index + 1].to_string()));
+                            index += 1; // Skip the value token
+                        } else {
+                            return Err(format!("Flag '--{}' requires a value", flag_name));
+                        }
+                    }
+                } else {
+                    return Err(format!("Unknown flag '--{}'", flag_name));
+                }
+            }
+        } else {
+            // Positional argument
+            user_args.push(token.to_string());
+        }
+
+        index += 1;
+    }
+
+    Ok((user_flags, user_args))
+}
+
+/// Validates command arguments and flags against the command specification.
+///
+/// This function ensures that all required positional arguments and flags are
+/// provided with appropriate values.
+///
+/// # Arguments
+///
+/// * `positional_arguments` - The provided positional arguments
+/// * `user_flags` - The provided flags and their values
+/// * `command_spec` - The command specification to validate against
+///
+/// # Returns
+///
+/// Returns `Ok(())` if validation passes, or an error message if validation fails.
+///
+/// # Validation Rules
+///
+/// - All required positional arguments must be provided
+/// - All required flags must be present
+/// - Non-boolean required flags must have non-empty values
+fn validate_command_arguments(
+    positional_arguments: &[String],
+    user_flags: &HashMap<String, Option<String>>,
+    command_spec: &CommandSpec,
+) -> Result<(), String> {
+    // Validate required positional arguments
+    if positional_arguments.len() < command_spec.positional_args.len() {
+        let missing_arguments: Vec<String> = command_spec.positional_args[positional_arguments.len()..]
+            .iter()
+            .map(|arg| arg.name.to_string())
+            .collect();
+        return Err(format!(
+            "Missing required argument(s): {}",
+            missing_arguments.join(", ")
+        ));
+    }
+
+    // Validate required flags
+    for flag_spec in &command_spec.flags {
+        if flag_spec.required {
+            if flag_spec.r#type == "boolean" {
+                if !user_flags.contains_key(&flag_spec.name) {
+                    return Err(format!("Missing required flag: --{}", flag_spec.name));
+                }
+            } else {
+                match user_flags.get(&flag_spec.name) {
+                    Some(Some(value)) if !value.is_empty() => {}
+                    _ => {
+                        return Err(format!("Missing required flag value: --{} <value>", flag_spec.name));
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Builds a JSON request body from user-provided flags.
+///
+/// This function converts the parsed flags into a JSON object that can be sent
+/// as the request body for the HTTP command execution.
+///
+/// # Arguments
+///
+/// * `user_flags` - The flags provided by the user
+/// * `command_spec` - The command specification for type information
+///
+/// # Returns
+///
+/// Returns a JSON Map containing the flag values with appropriate types.
+///
+/// # Type Conversion
+///
+/// - Boolean flags are converted to `true` if present
+/// - String flags are converted to their string values
+/// - Flags not in the specification are ignored
+fn build_request_body(user_flags: HashMap<String, Option<String>>, command_spec: &CommandSpec) -> Map<String, Value> {
+    let mut request_body = Map::new();
+
+    for (flag_name, flag_value) in user_flags.into_iter() {
+        if let Some(flag_spec) = command_spec.flags.iter().find(|f| f.name == flag_name) {
+            if flag_spec.r#type == "boolean" {
+                request_body.insert(flag_name, Value::Bool(true));
+            } else if let Some(value) = flag_value {
+                request_body.insert(flag_name, Value::String(value));
+            }
+        }
+    }
+
+    request_body
+}
+
+/// Executes a command from the palette input.
+///
+/// This function parses the current palette input, validates the command and its
+/// arguments, and initiates the HTTP execution. It handles command parsing,
+/// argument validation, and sets up the execution context for the command.
+///
+/// # Arguments
+///
+/// * `application` - The application state containing the palette input and registry
+///
+/// # Returns
+///
+/// Returns `Ok(command_spec)` if the command is valid and execution is started,
+/// or `Err(error_message)` if there are validation errors.
+///
+/// # Validation
+///
+/// The function validates:
+/// - Command format (group subcommand)
+/// - Required positional arguments
+/// - Required flags and their values
+/// - Flag syntax and types
+///
+/// # Execution Context
+///
+/// After validation, the function:
+/// - Resolves the command path with positional arguments
+/// - Builds the request body with flag values
+/// - Stores execution context for pagination and replay
+/// - Initiates background HTTP execution
+///
+/// # Example
+///
+/// ```
+/// // For input "apps info my-app --verbose"
+/// // Validates command exists, app_id is provided, starts execution
+/// ```
+pub fn start_palette_execution(application: &mut app::App) -> Result<CommandSpec, String> {
+    // Step 1: Parse and validate the palette input
+    let input_owned = application.palette.input().to_string();
+    let input = input_owned.trim().to_string();
+    if input.is_empty() {
+        return Err("Empty command input. Type a command (e.g., apps info)".into());
+    }
+    // Tokenize the input using shell-like parsing for consistent behavior
+    let tokens = lex_shell_like(&input);
+    if tokens.len() < 2 {
+        return Err(format!(
+            "Incomplete command '{}'. Use '<group> <sub>' format (e.g., apps info)",
+            input
+        ));
+    }
+
+    // Step 2: Find the command specification in the registry
+    let command_spec = application
         .ctx
         .registry
         .commands
         .iter()
-        .find(|c| c.group == tokens[0] && c.name == tokens[1])
+        .find(|command| command.group == tokens[0] && command.name == tokens[1])
         .cloned()
-        .ok_or_else(|| format!("Unknown command '{} {}'", tokens[0], tokens[1]))?;
+        .ok_or_else(|| {
+            format!(
+                "Unknown command '{} {}'. Check available commands with help.",
+                tokens[0], tokens[1]
+            )
+        })?;
 
-    // Parse flags/args from tokens after first two
-    let parts = &tokens[2..];
-    let mut user_flags: HashMap<String, Option<String>> = HashMap::new();
-    let mut user_args: Vec<String> = Vec::new();
-    let mut i = 0;
-    while i < parts.len() {
-        let t = &parts[i];
-        if t.starts_with("--") {
-            let long = t.trim_start_matches('-');
-            // Equals form
-            if let Some(eq) = long.find('=') {
-                let name = &long[..eq];
-                let val = &long[eq + 1..];
-                user_flags.insert(name.to_string(), Some(val.to_string()));
-            } else {
-                // Boolean or expects a value
-                if let Some(flag) = spec.flags.iter().find(|f| f.name == long) {
-                    if flag.r#type == "boolean" {
-                        user_flags.insert(long.to_string(), None);
-                    } else {
-                        // Next token is value if present and not another flag
-                        if i + 1 < parts.len() && !parts[i + 1].starts_with('-') {
-                            user_flags.insert(long.to_string(), Some(parts[i + 1].to_string()));
-                            i += 1;
-                        } else {
-                            return Err(format!("Flag '--{}' requires a value", long));
-                        }
-                    }
-                } else {
-                    return Err(format!("Unknown flag '--{}'", long));
-                }
-            }
-        } else {
-            user_args.push(t.to_string());
-        }
-        i += 1;
-    }
+    // Step 3: Parse command arguments and flags from input tokens
+    let (user_flags, user_args) = parse_command_arguments(&tokens[2..], &command_spec)?;
 
-    // Validate required positionals
-    if user_args.len() < spec.positional_args.len() {
-        let missing: Vec<String> = spec.positional_args[user_args.len()..]
-            .iter()
-            .map(|p| p.name.to_string())
-            .collect();
-        return Err(format!("Missing required argument(s): {}", missing.join(", ")));
-    }
-    // Validate required flags
-    for flag in &spec.flags {
-        if flag.required {
-            if flag.r#type == "boolean" {
-                if !user_flags.contains_key(&flag.name) {
-                    return Err(format!("Missing required flag: --{}", flag.name));
-                }
-            } else {
-                match user_flags.get(&flag.name) {
-                    Some(Some(v)) if !v.is_empty() => {}
-                    _ => {
-                        return Err(format!("Missing required flag value: --{} <value>", flag.name));
-                    }
-                }
-            }
-        }
-    }
+    // Step 4: Validate command arguments and flags
+    validate_command_arguments(&user_args, &user_flags, &command_spec)?;
 
-    // Build positional map and body
-    let mut pos_map: HashMap<String, String> = HashMap::new();
-    for (i, pa) in spec.positional_args.iter().enumerate() {
-        pos_map.insert(pa.name.clone(), user_args.get(i).cloned().unwrap_or_default());
-    }
-    let mut body = Map::new();
-    for (name, maybe_val) in user_flags.into_iter() {
-        if let Some(flag) = spec.flags.iter().find(|f| f.name == name) {
-            if flag.r#type == "boolean" {
-                body.insert(name, Value::Bool(true));
-            } else if let Some(v) = maybe_val {
-                body.insert(name, Value::String(v));
-            }
-        }
-    }
+    // Step 5: Build request body from flags
+    let request_body = build_request_body(user_flags, &command_spec);
 
-    let path = resolve_path(&spec.path, &pos_map);
-    // Persist ranges and last-execution context for pagination UI and replay
-    app.last_command_ranges = Some(spec.ranges.clone());
-    app.last_spec = Some(spec.clone());
-    app.last_path = Some(path.clone());
-    app.last_body = Some(body.clone());
-    // Compute and persist initial Range header used (if any)
-    let init_field = body
+    // Step 6: Persist execution context for pagination UI and replay
+    persist_execution_context(application, &command_spec, &request_body, &input);
+    // Step 7: Execute the command via background HTTP request
+    execute_command(application, &command_spec, &request_body, &user_args);
+    Ok(command_spec)
+}
+
+fn persist_execution_context(
+    application: &mut app::App,
+    command_spec: &CommandSpec,
+    request_body: &Map<String, Value>,
+    input: &str,
+) {
+    application.last_command_ranges = Some(command_spec.ranges.clone());
+    application.last_spec = Some(command_spec.clone());
+    application.last_body = Some(request_body.clone());
+
+    let init_field = request_body
         .get("range-field")
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let init_start = body.get("range-start").and_then(|v| v.as_str()).unwrap_or("").trim();
-    let init_end = body.get("range-end").and_then(|v| v.as_str()).unwrap_or("").trim();
-    let init_order = body
+    let init_start = request_body
+        .get("range-start")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let init_end = request_body
+        .get("range-end")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .trim();
+    let init_order = request_body
         .get("order")
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let init_max = body
+    let init_max = request_body
         .get("max")
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse::<usize>().ok());
@@ -458,12 +849,31 @@ pub fn start_palette_execution(app: &mut app::App) -> Result<CommandSpec, String
         }
         h
     });
-    app.initial_range = initial_range.clone();
-    app.pagination_history.clear();
-    app.pagination_history.push(initial_range);
-    // Add to palette history before executing
-    app.palette.push_history_if_needed(&input);
-    // Live request: enqueue background HTTP execution via Cmd system
-    run_cmds(app, vec![Cmd::ExecuteHttp(Box::new(spec.clone()), path, body)]);
-    Ok(spec)
+
+    application.initial_range = initial_range.clone();
+    application.pagination_history.clear();
+    application.pagination_history.push(initial_range);
+    application.palette.push_history_if_needed(input);
+}
+
+fn execute_command(
+    application: &mut app::App,
+    command_spec: &CommandSpec,
+    request_body: &Map<String, Value>,
+    user_args: &[String],
+) {
+    let mut command_spec_to_run = command_spec.clone();
+    let mut positional_argument_map: HashMap<String, String> = HashMap::new();
+    for (index, positional_argument) in command_spec.positional_args.iter().enumerate() {
+        positional_argument_map.insert(
+            positional_argument.name.clone(),
+            user_args.get(index).cloned().unwrap_or_default(),
+        );
+    }
+
+    command_spec_to_run.path = resolve_path(&command_spec.path, &positional_argument_map);
+    run_cmds(
+        application,
+        vec![Cmd::ExecuteHttp(Box::new(command_spec_to_run), request_body.clone())],
+    );
 }

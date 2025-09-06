@@ -1,8 +1,6 @@
 use anyhow::{Context, Result};
 use heck::ToKebabCase;
-use heroku_types::{
-    CommandFlag, CommandSpec, PositionalArgument, ProviderBinding, ProviderConfidence, ProviderParamKind,
-};
+use heroku_types::{CommandFlag, CommandSpec, PositionalArgument, ServiceId};
 use percent_encoding::percent_decode_str;
 use serde_json::Value;
 use std::{
@@ -25,9 +23,9 @@ use std::{
 /// # Returns
 ///
 /// A vector of `CommandSpec` instances.
-pub fn generate_commands(schema_json: &str) -> Result<Vec<CommandSpec>> {
+pub fn generate_commands(schema_json: &str, service_id: ServiceId) -> Result<Vec<CommandSpec>> {
     let value: Value = serde_json::from_str(schema_json).context("Failed to parse schema JSON")?;
-    derive_commands_from_schema(&value)
+    derive_commands_from_schema(&value, service_id)
 }
 
 /// Derives command specifications from a JSON schema `Value`.
@@ -46,7 +44,7 @@ pub fn generate_commands(schema_json: &str) -> Result<Vec<CommandSpec>> {
 /// # Returns
 ///
 /// A sorted, deduplicated vector of `CommandSpec` instances.
-pub fn derive_commands_from_schema(value: &Value) -> Result<Vec<CommandSpec>> {
+pub fn derive_commands_from_schema(value: &Value, service_id: ServiceId) -> Result<Vec<CommandSpec>> {
     let mut commands = Vec::new();
     let mut command_names = HashMap::new();
 
@@ -111,7 +109,7 @@ pub fn derive_commands_from_schema(value: &Value) -> Result<Vec<CommandSpec>> {
                     method: method.to_string(),
                     path: path_template,
                     ranges,
-                    providers: Vec::new(),
+                    service_id,
                 });
             }
         }
@@ -126,7 +124,9 @@ pub fn derive_commands_from_schema(value: &Value) -> Result<Vec<CommandSpec>> {
         }
     });
     commands.dedup_by(|a, b| a.name == b.name && a.method == b.method && a.path == b.path);
-    infer_provider_bindings(&mut commands);
+    // Two-pass provider resolution: build all commands, then resolve providers.
+    // This enables 100% confidence verification using the constructed index.
+    super::provider_resolver::resolve_and_infer_providers(&mut commands);
     Ok(commands)
 }
 
@@ -185,9 +185,15 @@ fn classify_command(href: &str, method: &str) -> Option<(String, String)> {
 fn concrete_segments(href: &str) -> Vec<String> {
     href.trim_start_matches('/')
         .split('/')
-        .filter(|s| !s.is_empty() && !s.starts_with('{'))
+        .filter(|s| !s.is_empty() && !s.starts_with('{') && !is_version_segment(s))
         .map(str::to_string)
         .collect()
+}
+
+/// Detects simple API version path segments like `v1`, `v2`, etc.
+fn is_version_segment(s: &str) -> bool {
+    let s = s.trim();
+    s.len() > 1 && s.starts_with('v') && s[1..].chars().all(|c| c.is_ascii_digit())
 }
 
 /// Normalizes a group name, handling special cases like "config-vars".
@@ -247,31 +253,87 @@ fn derive_command_group_and_name(href: &str, action: &str) -> (String, String) {
 ///
 /// A tuple of path template and vector of positional arguments.
 fn path_and_vars_with_help(href: &str, root: &Value) -> (String, Vec<PositionalArgument>) {
-    let mut args = Vec::new();
-    let mut segments = Vec::new();
-    let mut prev = None;
-
-    for seg in href.trim_start_matches('/').split('/') {
-        if seg.starts_with('{') {
-            let name = prev.map_or("id".to_string(), singularize);
-            let help_text = extract_placeholder_ptr(seg).and_then(|ptr| {
-                let decoded = percent_decode_str(&ptr).decode_utf8_lossy().to_string();
-                let ptr = decoded.strip_prefix('#').unwrap_or(&decoded);
-                root.pointer(ptr).and_then(|val| get_description(val, root))
-            });
-
-            args.push(PositionalArgument {
-                name: name.clone(),
-                help: help_text,
-            });
-            segments.push(format!("{{{}}}", name));
-        } else {
-            segments.push(seg.to_string());
-        }
-        prev = Some(seg);
+    fn sanitize_placeholder_name(name: &str) -> String {
+        name.trim_matches(|c: char| matches!(c, '{' | '}' | ' ' | '(' | ')'))
+            .replace('-', "_")
     }
 
-    (format!("/{}", segments.join("/")), args)
+    fn decode_percent(s: &str) -> String {
+        percent_decode_str(s).decode_utf8_lossy().into_owned()
+    }
+
+    fn ref_name_from_pointer(ptr: &str) -> Option<String> {
+        // Expect formats like "#/definitions/team" or "#/definitions/team/definitions/identity"
+        let trimmed = ptr.strip_prefix('#')?;
+        let parts: Vec<&str> = trimmed.trim_start_matches('/') .split('/') .collect();
+        // Find the first occurrence of "definitions" and take the next token as the canonical name
+        for i in 0..parts.len() {
+            if parts[i] == "definitions" && i + 1 < parts.len() {
+                return Some(singularize(parts[i + 1]));
+            }
+        }
+        // Fallback: last token
+        parts.last().map(|s| singularize(s))
+    }
+
+    let mut args = Vec::new();
+    let mut segments_out = Vec::new();
+    let mut prev_concrete: Option<&str> = None; // last non-placeholder, non-version
+
+    for seg in href.trim_start_matches('/').split('/') {
+        if seg.starts_with('{') && seg.ends_with('}') {
+            // Extract inner placeholder content and try to decode percent-encoding
+            let inner = &seg[1..seg.len() - 1];
+            let decoded_inner = decode_percent(inner);
+            let decoded_inner_stripped = decoded_inner.trim();
+            let decoded_inner_stripped = decoded_inner_stripped
+                .strip_prefix('(')
+                .and_then(|s| s.strip_suffix(')'))
+                .unwrap_or(decoded_inner_stripped);
+
+            let (ref_based_name, ref_help) = if decoded_inner_stripped.starts_with('#') {
+                let rn = ref_name_from_pointer(decoded_inner_stripped);
+                // Try to resolve description from the referenced definition
+                let help = decoded_inner_stripped
+                    .strip_prefix('#')
+                    .and_then(|ptr| root.pointer(ptr))
+                    .and_then(|target| get_description(target, root));
+                (rn, help)
+            } else {
+                (None, None)
+            };
+
+            let placeholder = sanitize_placeholder_name(decoded_inner_stripped);
+            let arg_name = if let Some(rn) = ref_based_name {
+                rn
+            } else if placeholder == "id" {
+                // Prefer deriving a friendly name from the previous resource segment
+                // but skip version markers like v1, v2, etc.
+                prev_concrete
+                    .filter(|p| !is_version_segment(p))
+                    .map(singularize)
+                    .unwrap_or_else(|| "id".to_string())
+            } else {
+                placeholder
+            };
+
+            let arg_name_for_path = arg_name.clone();
+            args.push(PositionalArgument {
+                name: arg_name,
+                help: ref_help,
+                provider: None,
+            });
+            // Use the derived arg name for the path template to normalize encoded refs
+            segments_out.push(format!("{{{}}}", arg_name_for_path));
+        } else {
+            segments_out.push(seg.to_string());
+            if !is_version_segment(seg) && !seg.is_empty() {
+                prev_concrete = Some(seg);
+            }
+        }
+    }
+
+    (format!("/{}", segments_out.join("/")), args)
 }
 
 /// Singularizes a segment name by removing plural 's' and replacing '-' with '_'.
@@ -293,24 +355,7 @@ fn singularize(segment: &str) -> String {
     }
 }
 
-/// Extracts the JSON pointer from a placeholder segment.
-///
-/// # Arguments
-///
-/// * `segment` - The segment string (e.g., `{id}` or `{(pointer)}`).
-///
-/// # Returns
-///
-/// An optional extracted pointer string.
-fn extract_placeholder_ptr(segment: &str) -> Option<String> {
-    let inner = segment.trim_start_matches('{').trim_end_matches('}').trim();
-    let ptr = if inner.starts_with('(') && inner.ends_with(')') {
-        inner.trim_start_matches('(').trim_end_matches(')').to_string()
-    } else {
-        inner.to_string()
-    };
-    (!ptr.is_empty()).then_some(ptr)
-}
+// No pointer extraction in strict draft-04 mode.
 
 /// Extracts range fields from a link schema.
 ///
@@ -349,13 +394,11 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
         return (add_range_flags(&extract_ranges(link)), Vec::new());
     };
 
-    let required_names: Vec<String> = schema
-        .get("required")
-        .and_then(Value::as_array)
-        .map(|req| req.iter().filter_map(|r| r.as_str().map(str::to_string)).collect())
-        .unwrap_or_default();
+    // Resolve top-level $ref and flatten simple combinators for properties/required
+    let schema_merged = resolve_schema_properties(schema, root);
+    let required_names: Vec<String> = collect_required(&schema_merged);
 
-    if let Some(props) = schema.get("properties").and_then(Value::as_object) {
+    if let Some(props) = collect_properties(&schema_merged) {
         flags = props
             .iter()
             .map(|(name, val)| {
@@ -374,6 +417,7 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
                     enum_values,
                     default_value,
                     description,
+                    provider: None,
                 }
             })
             .collect();
@@ -429,6 +473,55 @@ fn resolve_schema_properties(schema: &Value, root: &Value) -> Value {
     merged
 }
 
+/// Collects properties from a schema, optionally flattening simple anyOf/oneOf/allOf.
+fn collect_properties(schema: &Value) -> Option<serde_json::Map<String, Value>> {
+    if let Some(props) = schema.get("properties").and_then(Value::as_object) {
+        return Some(props.clone());
+    }
+    // Flatten first-level combinators by merging properties
+    for key in ["allOf", "anyOf", "oneOf"] {
+        if let Some(arr) = schema.get(key).and_then(Value::as_array) {
+            let mut out = serde_json::Map::new();
+            for item in arr {
+                if let Some(props) = item.get("properties").and_then(Value::as_object) {
+                    for (k, v) in props {
+                        out.entry(k.clone()).or_insert_with(|| v.clone());
+                    }
+                }
+            }
+            if !out.is_empty() {
+                return Some(out);
+            }
+        }
+    }
+    None
+}
+
+/// Collects required fields, including from simple allOf/anyOf/oneOf.
+fn collect_required(schema: &Value) -> Vec<String> {
+    let mut out: Vec<String> = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|req| req.iter().filter_map(|r| r.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+
+    for key in ["allOf", "anyOf", "oneOf"] {
+        if let Some(arr) = schema.get(key).and_then(Value::as_array) {
+            for item in arr {
+                out.extend(
+                    item.get("required")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flat_map(|req| req.iter().filter_map(|r| r.as_str().map(str::to_string))),
+                );
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 /// Adds range-related flags if ranges are supported.
 ///
 /// # Arguments
@@ -451,6 +544,7 @@ fn add_range_flags(ranges: &[String]) -> Vec<CommandFlag> {
             enum_values: ranges.to_vec(),
             default_value: Some(ranges[0].clone()),
             description: Some("Field to use for range-based pagination".to_string()),
+            provider: None,
         },
         CommandFlag {
             name: "range-start".to_string(),
@@ -460,6 +554,7 @@ fn add_range_flags(ranges: &[String]) -> Vec<CommandFlag> {
             enum_values: vec![],
             default_value: None,
             description: Some("Start value for range (inclusive)".to_string()),
+            provider: None,
         },
         CommandFlag {
             name: "range-end".to_string(),
@@ -469,6 +564,7 @@ fn add_range_flags(ranges: &[String]) -> Vec<CommandFlag> {
             enum_values: vec![],
             default_value: None,
             description: Some("End value for range (inclusive)".to_string()),
+            provider: None,
         },
         CommandFlag {
             name: "max".to_string(),
@@ -478,6 +574,7 @@ fn add_range_flags(ranges: &[String]) -> Vec<CommandFlag> {
             enum_values: vec![],
             default_value: Some("25".to_string()),
             description: Some("Max number of items to retrieve".to_string()),
+            provider: None,
         },
         CommandFlag {
             name: "order".to_string(),
@@ -487,135 +584,9 @@ fn add_range_flags(ranges: &[String]) -> Vec<CommandFlag> {
             enum_values: vec!["asc".to_string(), "desc".to_string()],
             default_value: Some("desc".to_string()),
             description: Some("Sort order of the results".to_string()),
+            provider: None,
         },
     ]
-}
-
-/// Infers provider bindings for flags and positional arguments in commands.
-///
-/// # Arguments
-///
-/// * `commands` - A mutable slice of `CommandSpec` instances.
-fn infer_provider_bindings(commands: &mut [CommandSpec]) {
-    let list_groups: HashSet<String> = commands
-        .iter()
-        .filter_map(|c| {
-            classify_command(&c.path, &c.method)
-                .and_then(|(grp, action)| (action == "list").then(|| normalize_group(&grp)))
-        })
-        .collect();
-
-    let synonyms: HashMap<&str, &str> = HashMap::from([
-        ("app", "apps"),
-        ("addon", "addons"),
-        ("pipeline", "pipelines"),
-        ("team", "teams"),
-        ("space", "spaces"),
-        ("dyno", "dynos"),
-        ("release", "releases"),
-        ("collaborator", "collaborators"),
-        ("region", "regions"),
-        ("stack", "stacks"),
-    ]);
-
-    for cmd in commands.iter_mut() {
-        let mut providers = infer_positionals_from_path(&cmd.path, &list_groups);
-
-        for flag in &cmd.flags {
-            if let Some((group, confidence)) = map_flag_to_group(&flag.name, &synonyms)
-                && list_groups.contains(&group)
-            {
-                providers.push(ProviderBinding {
-                    kind: ProviderParamKind::Flag,
-                    name: flag.name.clone(),
-                    provider_id: format!("{}:{}", group, "list"),
-                    confidence,
-                });
-            }
-        }
-
-        providers.sort_by(|a, b| a.name.cmp(&b.name));
-        providers.dedup_by(|a, b| a.kind == b.kind && a.name == b.name);
-        cmd.providers = providers;
-    }
-}
-
-/// Infers provider bindings for positional arguments from a path.
-///
-/// # Arguments
-///
-/// * `path` - The API endpoint path.
-/// * `list_groups` - Set of groups with list commands.
-///
-/// # Returns
-///
-/// A vector of `ProviderBinding` instances.
-fn infer_positionals_from_path(path: &str, list_groups: &HashSet<String>) -> Vec<ProviderBinding> {
-    let mut providers = Vec::new();
-    let mut prev_concrete: Option<String> = None;
-
-    for seg in path.trim_start_matches('/').split('/') {
-        if seg.starts_with('{') && seg.ends_with('}') {
-            let name = seg.trim_start_matches('{').trim_end_matches('}').trim().to_string();
-            if let Some(prev) = &prev_concrete {
-                let group = normalize_group(prev);
-                if list_groups.contains(&group) {
-                    providers.push(ProviderBinding {
-                        kind: ProviderParamKind::Positional,
-                        name,
-                        provider_id: format!("{}:{}", group, "list"),
-                        confidence: ProviderConfidence::High,
-                    });
-                }
-            }
-        } else if !seg.is_empty() {
-            prev_concrete = Some(seg.to_string());
-        }
-    }
-    providers
-}
-
-/// Maps a flag name to a group, using synonyms or conservative pluralization.
-///
-/// # Arguments
-///
-/// * `flag` - The flag name.
-/// * `synonyms` - A map of singular to plural group names.
-///
-/// # Returns
-///
-/// An optional tuple of group name and confidence level.
-fn map_flag_to_group(flag: &str, synonyms: &HashMap<&str, &str>) -> Option<(String, ProviderConfidence)> {
-    let key = flag.to_lowercase();
-    synonyms
-        .get(key.as_str())
-        .map(|&g| (g.to_string(), ProviderConfidence::Medium))
-        .or_else(|| conservative_plural(&key).map(|p| (p, ProviderConfidence::Low)))
-}
-
-/// Conservatively pluralizes a string for group matching.
-///
-/// # Arguments
-///
-/// * `s` - The input string.
-///
-/// # Returns
-///
-/// An optional pluralized string.
-fn conservative_plural(s: &str) -> Option<String> {
-    if s.is_empty() {
-        return None;
-    }
-    if s.ends_with('s') {
-        return Some(s.to_string());
-    }
-    if s.ends_with('y') && s.len() > 1 && !matches!(s.chars().nth(s.len() - 2).unwrap(), 'a' | 'e' | 'i' | 'o' | 'u') {
-        return Some(format!("{}ies", &s[..s.len() - 1]));
-    }
-    if s.ends_with('x') || s.ends_with("ch") || s.ends_with("sh") {
-        return Some(format!("{}es", s));
-    }
-    Some(format!("{}s", s))
 }
 
 /// Recursively resolves the description from a schema, following `$ref` or combining `anyOf`/`oneOf`/`allOf`.
@@ -777,18 +748,16 @@ mod tests {
             ]
         }"#;
         let value: Value = serde_json::from_str(json).unwrap();
-        let commands = derive_commands_from_schema(&value).unwrap();
+        let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
         let spec = commands
             .iter()
             .find(|c| c.method == "PATCH" && c.path == "/addons/{addon}/config")
             .expect("config:update command exists");
-        let binding = spec
-            .providers
-            .iter()
-            .find(|p| p.kind == ProviderParamKind::Positional && p.name == "addon")
-            .expect("positional provider for addon exists");
-        assert_eq!(binding.provider_id, "addons:list");
-        assert_eq!(binding.confidence, ProviderConfidence::High);
+        let pos = spec.positional_args.iter().find(|a| a.name == "addon").unwrap();
+        match &pos.provider {
+            Some(heroku_types::ValueProvider::Command { command_id }) => assert_eq!(command_id, "addons:list"),
+            _ => panic!("positional provider for addon missing"),
+        }
     }
 
     #[test]
@@ -801,20 +770,110 @@ mod tests {
             ]
         }"#;
         let value: Value = serde_json::from_str(json).unwrap();
-        let commands = derive_commands_from_schema(&value).unwrap();
+        let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
         let spec = commands
             .iter()
             .find(|c| c.method == "GET" && c.path == "/config")
             .expect("GET /config command exists");
-        let binding = spec
-            .providers
+        let flag = spec.flags.iter().find(|f| f.name == "app").unwrap();
+        match &flag.provider {
+            Some(heroku_types::ValueProvider::Command { command_id }) => assert_eq!(command_id, "apps:list"),
+            _ => panic!("flag provider for app missing"),
+        }
+    }
+
+    #[test]
+    fn placeholder_names_ignore_version_segment() {
+        let json = r#"{
+            "links": [
+                { "href": "/data/postgres/v1/{addon}/credentials/{cred_name}/rotate", "method": "POST", "title": "Rotate credential" }
+            ]
+        }"#;
+        let value: Value = serde_json::from_str(json).unwrap();
+        let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
+        let spec = commands
             .iter()
-            .find(|p| p.kind == ProviderParamKind::Flag && p.name == "app")
-            .expect("flag provider for app exists");
-        assert_eq!(binding.provider_id, "apps:list");
-        assert!(matches!(
-            binding.confidence,
-            ProviderConfidence::Medium | ProviderConfidence::High
-        ));
+            .find(|c| c.method == "POST")
+            .expect("POST rotate command exists");
+
+        assert_eq!(spec.path, "/data/postgres/v1/{addon}/credentials/{cred_name}/rotate");
+
+        let arg_names: Vec<_> = spec.positional_args.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(
+            arg_names,
+            vec!["addon", "cred_name"],
+            "positional names derived from placeholders"
+        );
+
+        // Ensure command name does not include version segment
+        assert!(
+            !spec.name.contains(":v1:"),
+            "command name should ignore version segments"
+        );
+        assert!(
+            spec.name.starts_with("postgres:credentials:rotate:"),
+            "expected name to include resource path segments"
+        );
+    }
+
+    #[test]
+    fn resolves_ref_at_root_and_uses_property_descriptions() {
+        let json = r##"{
+            "definitions": {
+                "Body": {
+                    "type": "object",
+                    "required": ["name"],
+                    "properties": {
+                        "name": { "type": "string", "description": "Team name" },
+                        "force": { "type": "boolean", "description": "Force operation" }
+                    }
+                }
+            },
+            "links": [
+                {
+                    "href": "/teams/{team}/update",
+                    "method": "PATCH",
+                    "schema": { "$ref": "#/definitions/Body" }
+                }
+            ]
+        }"##;
+        let value: Value = serde_json::from_str(json).unwrap();
+        let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
+        let spec = commands
+            .iter()
+            .find(|c| c.method == "PATCH")
+            .expect("PATCH command exists");
+
+        // Should produce flags for name and force, with descriptions and required status
+        let mut fl_map: HashMap<&str, (&Option<String>, bool)> = HashMap::new();
+        for f in &spec.flags {
+            fl_map.insert(&f.name, (&f.description, f.required));
+        }
+        assert_eq!(fl_map.get("name").unwrap().0.as_deref(), Some("Team name"));
+        assert_eq!(fl_map.get("name").unwrap().1, true);
+        assert_eq!(fl_map.get("force").unwrap().0.as_deref(), Some("Force operation"));
+        assert_eq!(fl_map.get("force").unwrap().1, false);
+    }
+
+    #[test]
+    fn decode_ref_placeholder_and_use_ref_name() {
+        let json = r#"{
+            "links": [
+                { "href": "/teams/{(%23%2Fdefinitions%2Fteam%2Fdefinitions%2Fidentity)}/addons", "method": "GET", "title": "List team addons" }
+            ]
+        }"#;
+        let value: Value = serde_json::from_str(json).unwrap();
+        let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
+        let spec = commands
+            .iter()
+            .find(|c| c.method == "GET")
+            .expect("GET command exists");
+
+        // Path should be normalized to use the ref name for the placeholder
+        assert_eq!(spec.path, "/teams/{team}/addons");
+
+        // Positional should use the ref name
+        let arg_names: Vec<_> = spec.positional_args.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(arg_names, vec!["team"]);
     }
 }

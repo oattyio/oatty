@@ -1,5 +1,4 @@
 use anyhow::Result;
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use reqwest::Method;
 use serde_json::Value;
 use std::str::FromStr;
@@ -7,8 +6,11 @@ use std::str::FromStr;
 use crate::resolve::RunContext;
 
 use heroku_api::HerokuClient;
-use heroku_registry::Registry;
-use heroku_util::http::{build_range_header_from_body, strip_range_body_fields};
+use heroku_registry::{CommandSpec, Registry};
+use heroku_util::{
+    build_path,
+    http::{build_range_header_from_body, strip_range_body_fields},
+};
 
 /// Execute a single command.
 ///
@@ -54,23 +56,10 @@ impl RegistryCommandRunner {
 
     /// Create a new registry-backed runner by loading the embedded schema and
     /// constructing a `HerokuClient` from environment variables.
-    pub fn from_env() -> Result<Self> {
+    pub fn from_spec(spec: &CommandSpec) -> Result<Self> {
         let registry = Registry::from_embedded_schema()?;
-        let client = HerokuClient::new_from_env()?;
+        let client = HerokuClient::new_from_service_id(spec.service_id)?;
         Ok(Self { registry, client })
-    }
-
-    fn build_path(&self, template: &str, variables: &serde_json::Map<String, Value>) -> String {
-        let mut path = template.to_string();
-        for (k, v) in variables.iter() {
-            let val = match v {
-                Value::String(s) => s.clone(),
-                other => other.to_string(),
-            };
-            let enc = utf8_percent_encode(&val, NON_ALPHANUMERIC).to_string();
-            path = path.replace(&format!("{{{}}}", k), &enc);
-        }
-        path
     }
 }
 
@@ -99,7 +88,7 @@ impl CommandRunner for RegistryCommandRunner {
             }
         }
 
-        let path = self.build_path(&spec.path, &path_variables);
+        let path = build_path(&spec.path, &path_variables);
         let mut req = self.client.request(method.clone(), &path);
 
         match method {

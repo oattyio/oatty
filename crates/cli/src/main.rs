@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use clap::ArgMatches;
 use heroku_api::HerokuClient;
 use heroku_registry::{Registry, build_clap};
+use heroku_util::resolve_path;
 use reqwest::Method;
 use serde_json::{Map, Value};
 use tracing_subscriber::fmt;
@@ -160,7 +161,7 @@ async fn run_command(registry: &Registry, matches: &ArgMatches) -> Result<()> {
 
     let body_value = (!body.is_empty()).then_some(Value::Object(body));
 
-    let client = HerokuClient::new_from_env()?;
+    let client = HerokuClient::new_from_service_id(cmd_spec.service_id)?;
     let method = Method::from_bytes(cmd_spec.method.as_bytes())?;
     let path = resolve_path(&cmd_spec.path, &pos_values);
     let mut builder = client.request(method, &path);
@@ -174,50 +175,4 @@ async fn run_command(registry: &Registry, matches: &ArgMatches) -> Result<()> {
     let text = resp.text().await.unwrap_or_default();
     println!("{}\n{}", status, text);
     Ok(())
-}
-
-/// Resolves a path template by replacing placeholders with actual values.
-/// The path template follow the same format as JSON hyper-schema URI
-/// templates. See https://json-schema.org/draft/2019-09/json-schema-hypermedia#uriTemplating
-///
-/// This function takes a path template containing placeholders in the format
-/// `{key}` and replaces them with corresponding values from the provided
-/// HashMap.
-///
-/// # Arguments
-/// - `template`: A string containing path placeholders in the format `{key}`
-/// - `pos`: A HashMap mapping placeholder keys to their replacement values
-///
-/// # Returns
-/// Returns a `String` with all placeholders replaced by their corresponding
-/// values. If a placeholder key is not found in the HashMap, it remains
-/// unchanged in the output.
-///
-/// # Examples
-/// ```
-/// use std::collections::HashMap;
-///
-/// let template = "/apps/{app}/dynos/{dyno}";
-/// let mut pos = HashMap::new();
-/// pos.insert("app".to_string(), "my-app".to_string());
-/// pos.insert("dyno".to_string(), "web.1".to_string());
-///
-/// let result = resolve_path(template, &pos);
-/// assert_eq!(result, "/apps/my-app/dynos/web.1");
-///
-/// // Missing placeholder remains unchanged
-/// let template = "/apps/{app}/config/{missing}";
-/// let mut pos = HashMap::new();
-/// pos.insert("app".to_string(), "my-app".to_string());
-///
-/// let result = resolve_path(template, &pos);
-/// assert_eq!(result, "/apps/my-app/config/{missing}");
-/// ```
-fn resolve_path(template: &str, pos: &HashMap<String, String>) -> String {
-    let mut out = template.to_string();
-    for (k, v) in pos {
-        let needle = format!("{{{}}}", k);
-        out = out.replace(&needle, v);
-    }
-    out
 }

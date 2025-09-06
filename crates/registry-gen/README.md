@@ -71,10 +71,9 @@ pub struct CommandSpec {
     pub method: String,                 // e.g., "GET", "POST"
     pub path: String,                   // e.g., "/apps", "/addons/{addon}/config"
     pub ranges: Vec<String>,            // supported range fields
-    pub providers: Vec<ProviderBinding> // inferred ValueProviders (see below)
 }
 
-pub struct PositionalArgument { pub name: String, pub help: Option<String> }
+pub struct PositionalArgument { pub name: String, pub help: Option<String>, pub provider: Option<ValueProvider> }
 
 pub struct CommandFlag {
     pub name: String,
@@ -84,32 +83,26 @@ pub struct CommandFlag {
     pub enum_values: Vec<String>,
     pub default_value: Option<String>,
     pub description: Option<String>,
+    pub provider: Option<ValueProvider>,
 }
 
-pub enum ProviderParamKind { Flag, Positional }
-pub enum ProviderConfidence { High, Medium, Low }
-
-pub struct ProviderBinding {
-    pub kind: ProviderParamKind,        // flag or positional
-    pub name: String,                   // e.g., "app"
-    pub provider_id: String,            // e.g., "apps:list"
-    pub confidence: ProviderConfidence, // High/Medium/Low
-}
+// Providers are now embedded directly on fields via:
+// pub enum ValueProvider { Command { command_id: String } }
 ```
 
 ### ValueProvider Inference
 
-The generator performs a second pass to infer providers for flags/positionals:
+The generator performs a second pass to infer providers and embeds them directly on fields:
 
-- Build an index of available list commands by inspecting every `CommandSpec`’s `method+path` (classified into group+action where action == `list`).
-- Positional args: Walk `spec.path` and, for each `{arg}`, bind a provider from the immediately preceding concrete segment, e.g. `/addons/{addon}/config` → `{addon}` → `addons:list` (confidence: High), if that list command exists.
-- Flags: Map flag name using a conservative synonyms table (e.g., `app→apps`, `pipeline→pipelines`). If the group has a list command, attach `provider_id = "<group>:list"` (confidence: Medium). If only careful pluralization is used, confidence is Low.
-- Only attach providers when a matching list command exists.
+- Build an index of available list commands keyed by `<group>:<name>`.
+- Positional args: Walk `spec.path` and bind the provider from the immediately preceding concrete segment (e.g., `/addons/{addon}/config` → `{addon}` → `addons:list`) when that command exists.
+- Flags: Map flag names to plural resource groups via a small synonym map (and conservative pluralization) and bind `<group>:list` when present.
+- Only attach providers when the referenced command exists (verified at 100%).
 
 Examples:
 
-- `addons config:update` (path `/addons/{addon}/config`) → positional `addon` → `addons:list` (High)
-- Any command with `--app` flag and a known `apps:list` → flag `app` → `apps:list` (Medium)
+- `addons config:update` (path `/addons/{addon}/config`) → positional `addon` → provider `ValueProvider::Command { command_id: "addons:list" }`
+- Any command with `--app` and a known `apps:list` → flag `app` → provider `ValueProvider::Command { command_id: "apps:list" }`
 
 ### Notes on Workflows
 

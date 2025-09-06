@@ -1,9 +1,10 @@
-use std::{fs, sync::Arc};
+use std::sync::Arc;
 
 use anyhow::{Context, Result, anyhow};
 use bincode::config;
 use heroku_types::CommandSpec;
 
+static MANIFEST: &'static [u8] = include_bytes!(concat!(env!("OUT_DIR"), "/heroku-manifest.bin"));
 /// The main registry containing all available Heroku CLI commands.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct Registry {
@@ -33,13 +34,11 @@ impl Registry {
     /// println!("Loaded {} commands", registry.commands.len());
     /// ```
     pub fn from_embedded_schema() -> Result<Self> {
-        let path = concat!(env!("OUT_DIR"), "/heroku-manifest.bin");
-        let bytes = fs::read(path)?;
         let config = config::standard();
 
         // Decode the CommandSpec struct from the bytes
-        let vec: Vec<CommandSpec> = bincode::decode_from_slice(&bytes, config)
-            .with_context(|| format!("decoding manifest at {}", path))?
+        let vec: Vec<CommandSpec> = bincode::decode_from_slice(&MANIFEST, config)
+            .with_context(|| format!("decoding manifest failed"))?
             .0;
         let commands: Arc<[CommandSpec]> = vec.into();
 

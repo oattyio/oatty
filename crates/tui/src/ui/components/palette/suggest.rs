@@ -56,11 +56,13 @@ impl SuggestionEngine {
         if let Some(flag_name) = pending_flag {
             let value_partial = flag_value_partial(remaining_parts);
             let items = suggest_values_for_flag(spec, &flag_name, &value_partial, providers);
-            // Signal loading when there is a binding for this flag but no non-enum provider values yet
+            // Signal loading when a provider is declared for this flag but no non-enum values yet
             let has_binding = spec
-                .providers
+                .flags
                 .iter()
-                .any(|p| matches!(p.kind, heroku_types::ProviderParamKind::Flag) && p.name == flag_name);
+                .find(|f| f.name == flag_name)
+                .and_then(|f| f.provider.as_ref())
+                .is_some();
             let provider_found = items
                 .iter()
                 .any(|it| matches!(it.kind, ItemKind::Value) && it.meta.as_deref() != Some("enum"));
@@ -97,9 +99,7 @@ impl SuggestionEngine {
                 if !current.is_empty() {
                     values.retain(|item| item.insert_text != current);
                 }
-                let has_binding = spec.providers.iter().any(|p| {
-                    matches!(p.kind, heroku_types::ProviderParamKind::Positional) && p.name == positional_arg.name
-                });
+                let has_binding = positional_arg.provider.is_some();
                 let provider_found = values
                     .iter()
                     .any(|item| matches!(item.kind, ItemKind::Value) && item.meta.as_deref() != Some("enum"));
@@ -652,7 +652,7 @@ pub(crate) fn is_flag_value_complete(input: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use heroku_types::{CommandFlag, PositionalArgument, ProviderBinding, ProviderConfidence, ProviderParamKind};
+    use heroku_types::{CommandFlag, PositionalArgument, ServiceId};
     use std::sync::Arc;
 
     #[derive(Debug)]
@@ -687,7 +687,7 @@ mod tests {
     #[test]
     fn suggests_commands_before_resolution() {
         let reg = registry_with(vec![
-            heroku_types::CommandSpec {
+            CommandSpec {
                 group: "apps".into(),
                 name: "list".into(),
                 summary: "list".into(),
@@ -696,9 +696,9 @@ mod tests {
                 method: "GET".into(),
                 path: "/apps".into(),
                 ranges: vec![],
-                providers: vec![],
+                service_id: ServiceId::CoreApi,
             },
-            heroku_types::CommandSpec {
+            CommandSpec {
                 group: "apps".into(),
                 name: "info".into(),
                 summary: "info".into(),
@@ -707,7 +707,7 @@ mod tests {
                 method: "GET".into(),
                 path: "/apps/{app}".into(),
                 ranges: vec![],
-                providers: vec![],
+                service_id: ServiceId::CoreApi,
             },
         ]);
         let result = SuggestionEngine::build(&reg, &[], "ap");
@@ -719,7 +719,7 @@ mod tests {
     #[test]
     fn suggests_flag_values_enum_and_provider() {
         // apps:info with --region enum and --app provider
-        let spec = heroku_types::CommandSpec {
+        let spec = CommandSpec {
             group: "apps".into(),
             name: "info".into(),
             summary: "info".into(),
@@ -733,6 +733,7 @@ mod tests {
                     enum_values: vec!["us".into(), "eu".into()],
                     default_value: None,
                     description: None,
+                    provider: None,
                 },
                 CommandFlag {
                     name: "app".into(),
@@ -742,20 +743,17 @@ mod tests {
                     enum_values: vec![],
                     default_value: None,
                     description: None,
+                    provider: Some(heroku_types::ValueProvider::Command { command_id: "apps:list".into() }),
                 },
             ],
             method: "GET".into(),
             path: "/apps/{app}".into(),
             ranges: vec![],
-            providers: vec![ProviderBinding {
-                kind: ProviderParamKind::Flag,
-                name: "app".into(),
-                provider_id: "apps:list".into(),
-                confidence: ProviderConfidence::High,
-            }],
+            // Provider is now embedded on the field; legacy vector removed
+            service_id: ServiceId::CoreApi,
         };
         let reg = registry_with(vec![
-            heroku_types::CommandSpec {
+            CommandSpec {
                 group: "apps".into(),
                 name: "list".into(),
                 summary: "list".into(),
@@ -764,10 +762,11 @@ mod tests {
                 method: "GET".into(),
                 path: "/apps".into(),
                 ranges: vec![],
-                providers: vec![],
+                service_id: ServiceId::CoreApi,
             },
             spec,
         ]);
+        // Provider embedded on flag in the spec
         let mut map = std::collections::HashMap::new();
         map.insert(("apps:info".into(), "app".into()), vec!["demo".into(), "prod".into()]);
         let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
@@ -784,27 +783,20 @@ mod tests {
 
     #[test]
     fn suggests_positional_with_provider() {
-        let spec = heroku_types::CommandSpec {
+        let spec = CommandSpec {
             group: "addons".into(),
             name: "config:update".into(),
             summary: "update".into(),
-            positional_args: vec![PositionalArgument {
-                name: "addon".into(),
-                help: None,
-            }],
+            positional_args: vec![PositionalArgument { name: "addon".into(), help: None, provider: Some(heroku_types::ValueProvider::Command { command_id: "addons:list".into() }) }],
             flags: vec![],
             method: "PATCH".into(),
             path: "/addons/{addon}/config".into(),
             ranges: vec![],
-            providers: vec![ProviderBinding {
-                kind: ProviderParamKind::Positional,
-                name: "addon".into(),
-                provider_id: "addons:list".into(),
-                confidence: ProviderConfidence::High,
-            }],
+            // No legacy providers vector
+            service_id: ServiceId::CoreApi,
         };
         let reg = registry_with(vec![
-            heroku_types::CommandSpec {
+            CommandSpec {
                 group: "addons".into(),
                 name: "list".into(),
                 summary: "list".into(),
@@ -813,10 +805,11 @@ mod tests {
                 method: "GET".into(),
                 path: "/addons".into(),
                 ranges: vec![],
-                providers: vec![],
+                service_id: ServiceId::CoreApi,
             },
             spec,
         ]);
+        // Provider embedded on positional in the spec
         let mut map = std::collections::HashMap::new();
         map.insert(
             ("addons:config:update".into(), "addon".into()),
@@ -830,7 +823,7 @@ mod tests {
 
     #[test]
     fn provider_loading_signal_when_binding_present_but_no_values() {
-        let spec = heroku_types::CommandSpec {
+        let spec = CommandSpec {
             group: "apps".into(),
             name: "info".into(),
             summary: "info".into(),
@@ -843,19 +836,15 @@ mod tests {
                 enum_values: vec![],
                 default_value: None,
                 description: None,
+                provider: Some(heroku_types::ValueProvider::Command { command_id: "apps:list".into() }),
             }],
             method: "GET".into(),
             path: "/apps/{app}".into(),
             ranges: vec![],
-            providers: vec![ProviderBinding {
-                kind: ProviderParamKind::Flag,
-                name: "app".into(),
-                provider_id: "apps:list".into(),
-                confidence: ProviderConfidence::High,
-            }],
+            service_id: ServiceId::CoreApi,
         };
         let reg = registry_with(vec![
-            heroku_types::CommandSpec {
+            CommandSpec {
                 group: "apps".into(),
                 name: "list".into(),
                 summary: "list".into(),
@@ -864,10 +853,11 @@ mod tests {
                 method: "GET".into(),
                 path: "/apps".into(),
                 ranges: vec![],
-                providers: vec![],
+                service_id: ServiceId::CoreApi,
             },
             spec,
         ]);
+        // provider already embedded on flag
         let empty_provider: Box<dyn ValueProvider> = Box::new(TestProvider {
             map: Default::default(),
         });
@@ -878,27 +868,20 @@ mod tests {
     #[test]
     fn no_duplicate_suggestion_when_positional_complete() {
         // Single positional command; provider returns exact current value only
-        let spec = heroku_types::CommandSpec {
+        let spec = CommandSpec {
             group: "apps".into(),
             name: "info".into(),
             summary: "info".into(),
-            positional_args: vec![PositionalArgument {
-                name: "app".into(),
-                help: None,
-            }],
+            positional_args: vec![PositionalArgument { name: "app".into(), help: None, provider: Some(heroku_types::ValueProvider::Command { command_id: "apps:list".into() }) }],
             flags: vec![],
             method: "GET".into(),
             path: "/apps/{app}".into(),
             ranges: vec![],
-            providers: vec![ProviderBinding {
-                kind: ProviderParamKind::Positional,
-                name: "app".into(),
-                provider_id: "apps:list".into(),
-                confidence: ProviderConfidence::High,
-            }],
+            // No legacy providers vector
+            service_id: ServiceId::CoreApi,
         };
         let reg = registry_with(vec![
-            heroku_types::CommandSpec {
+            CommandSpec {
                 group: "apps".into(),
                 name: "list".into(),
                 summary: "list".into(),
@@ -907,7 +890,7 @@ mod tests {
                 method: "GET".into(),
                 path: "/apps".into(),
                 ranges: vec![],
-                providers: vec![],
+                service_id: ServiceId::CoreApi,
             },
             spec,
         ]);
@@ -924,41 +907,23 @@ mod tests {
     #[test]
     fn multi_positional_suggest_second_arg_list() {
         // Two positional args: first filters provider1, second shows provider2
-        let spec = heroku_types::CommandSpec {
+        let spec = CommandSpec {
             group: "pipelines".into(),
             name: "ci:run".into(),
             summary: "run".into(),
             positional_args: vec![
-                PositionalArgument {
-                    name: "pipeline".into(),
-                    help: None,
-                },
-                PositionalArgument {
-                    name: "branch".into(),
-                    help: None,
-                },
+                PositionalArgument { name: "pipeline".into(), help: None, provider: Some(heroku_types::ValueProvider::Command { command_id: "pipelines:list".into() }) },
+                PositionalArgument { name: "branch".into(), help: None, provider: Some(heroku_types::ValueProvider::Command { command_id: "branches:list".into() }) },
             ],
             flags: vec![],
             method: "POST".into(),
             path: "/pipelines/{pipeline}/ci".into(),
             ranges: vec![],
-            providers: vec![
-                ProviderBinding {
-                    kind: ProviderParamKind::Positional,
-                    name: "pipeline".into(),
-                    provider_id: "pipelines:list".into(),
-                    confidence: ProviderConfidence::High,
-                },
-                ProviderBinding {
-                    kind: ProviderParamKind::Positional,
-                    name: "branch".into(),
-                    provider_id: "branches:list".into(),
-                    confidence: ProviderConfidence::High,
-                },
-            ],
+            // No legacy providers vector
+            service_id: ServiceId::CoreApi,
         };
         let reg = registry_with(vec![
-            heroku_types::CommandSpec {
+            CommandSpec {
                 group: "pipelines".into(),
                 name: "list".into(),
                 summary: "list".into(),
@@ -967,9 +932,9 @@ mod tests {
                 method: "GET".into(),
                 path: "/pipelines".into(),
                 ranges: vec![],
-                providers: vec![],
+                service_id: ServiceId::CoreApi,
             },
-            heroku_types::CommandSpec {
+            CommandSpec {
                 group: "branches".into(),
                 name: "list".into(),
                 summary: "list".into(),
@@ -978,7 +943,7 @@ mod tests {
                 method: "GET".into(),
                 path: "/branches".into(),
                 ranges: vec![],
-                providers: vec![],
+                service_id: ServiceId::CoreApi,
             },
             spec,
         ]);

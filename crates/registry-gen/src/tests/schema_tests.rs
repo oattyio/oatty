@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::schema::*;
+    use heroku_types::ServiceId;
     use serde_json::json;
 
     #[test]
@@ -18,7 +19,7 @@ mod tests {
         }
         "#;
         let v: serde_json::Value = serde_json::from_str(schema_json)?;
-        let cmds = derive_commands_from_schema(&v)?;
+        let cmds = derive_commands_from_schema(&v, ServiceId::CoreApi)?;
         assert_eq!(cmds.len(), 1);
         assert_eq!(cmds[0].name, "list");
         assert_eq!(cmds[0].summary, "List all apps");
@@ -36,9 +37,10 @@ mod tests {
             }
         });
 
-        let (path, args, help) = path_and_vars_with_help("/test/{ (#/definitions/param) }", &root);
+        let (path, args) = path_and_vars_with_help("/test/{ (#/definitions/param) }", &root);
         assert_eq!(path, "/test/{param}");
-        assert_eq!(args, vec!["param".to_string()]);
-        assert_eq!(help.get("param"), Some(&"desc1 or desc2".to_string()));
+        assert_eq!(args.len(), 1);
+        assert_eq!(args[0].name, "param");
+        assert_eq!(args[0].help.as_deref(), Some("desc1 or desc2"));
     }
 }

@@ -3,6 +3,7 @@ use std::path::PathBuf;
 
 use heroku_registry_gen::openapi::transform_openapi_to_links;
 use heroku_registry_gen::schema::derive_commands_from_schema;
+use heroku_types::ServiceId;
 #[test]
 fn openapi_v3_smoke_generates_commands() {
     // Load the example swagger.yaml we downloaded during planning
@@ -16,7 +17,7 @@ fn openapi_v3_smoke_generates_commands() {
     let text = fs::read_to_string(&yaml_path).expect("read example-swagger.yaml");
     let doc: serde_json::Value = serde_yaml::from_str(&text).expect("parse yaml as json value");
     let transformed = transform_openapi_to_links(&doc).expect("transform openapi to links");
-    let commands = derive_commands_from_schema(&transformed).expect("derive commands");
+    let commands = derive_commands_from_schema(&transformed, ServiceId::CoreApi).expect("derive commands");
 
     assert!(!commands.is_empty(), "should produce some commands");
 
@@ -32,7 +33,7 @@ fn openapi_v3_smoke_generates_commands() {
         assert!(flag_names.contains(&needed), "missing flag {}", needed);
     }
 
-    // Find GET /data/postgres/v1/{addon}/expensive-queries and ensure limit flag exists and positional help wired
+    // Find GET /data/postgres/v1/{addon}/expensive-queries and ensure limit flag exists
     let exp_get = commands
         .iter()
         .find(|c| c.method == "GET" && c.path == "/data/postgres/v1/{v1}/expensive-queries");
@@ -41,8 +42,5 @@ fn openapi_v3_smoke_generates_commands() {
     let has_limit = eg.flags.iter().any(|f| f.name == "limit" && f.default_value.as_deref() == Some("10"));
     assert!(has_limit, "expected limit flag with default 10");
 
-    // Positional help should be present via x-parameters pointer
-    if let Some(pos) = eg.positional_args.first() {
-        assert!(pos.help.as_deref().unwrap_or("").to_lowercase().contains("database addon"));
-    }
+    // Strict draft-04: no non-standard path param metadata; positional help may be absent.
 }

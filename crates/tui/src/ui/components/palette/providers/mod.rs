@@ -39,13 +39,20 @@ impl RegistryBackedProvider {
 
     /// Finds the provider ID for a field within a command specified by group and name.
     fn provider_for_field(&self, group: &str, name: &str, field: &str) -> Option<String> {
-        self.registry
-            .find_by_group_and_cmd(group, name)
-            .ok()?
-            .providers
-            .iter()
-            .find(|p| p.name == field)
-            .map(|p| p.provider_id.clone())
+        let spec = self.registry.find_by_group_and_cmd(group, name).ok()?;
+        // Check flags first
+        if let Some(flag) = spec.flags.iter().find(|f| f.name == field) {
+            if let Some(heroku_types::ValueProvider::Command { command_id }) = &flag.provider {
+                return Some(command_id.clone());
+            }
+        }
+        // Then positionals
+        if let Some(pos) = spec.positional_args.iter().find(|a| a.name == field) {
+            if let Some(heroku_types::ValueProvider::Command { command_id }) = &pos.provider {
+                return Some(command_id.clone());
+            }
+        }
+        None
     }
 
     /// Fetches or retrieves cached values for a provider ID.
@@ -78,7 +85,6 @@ impl RegistryBackedProvider {
         let Ok(spec) = self.registry.find_by_group_and_cmd(group, name) else {
             return Vec::new();
         };
-        let path = spec.path.clone();
 
         // Skip if fetch is already in progress
         {
@@ -92,10 +98,11 @@ impl RegistryBackedProvider {
         let cache = Arc::clone(&self.cache);
         let active_fetches = Arc::clone(&self.active_fetches);
         let provider_id_owned = provider_id.to_string();
+        let spec_owned = spec.clone();
         std::thread::spawn(move || {
             let result = match tokio::runtime::Runtime::new() {
                 Ok(rt) => rt.block_on(async {
-                    fetch_json_array(&path)
+                    fetch_json_array(&spec_owned)
                         .await
                         .map(|values| values.into_iter().filter_map(label_from_value).collect::<Vec<String>>())
                         .unwrap_or_default()

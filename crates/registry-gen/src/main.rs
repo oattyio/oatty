@@ -1,8 +1,9 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, str::FromStr};
 
 use anyhow::Result;
 use clap::Parser;
-use heroku_registry_gen::{write_manifest, write_manifest_json};
+use heroku_registry_gen::{io::ManifestInput, write_manifest, write_manifest_json};
+use heroku_types::ServiceId;
 
 /// Generate the Heroku command registry from a JSON Hyper-Schema.
 #[derive(Parser, Debug)]
@@ -17,13 +18,25 @@ struct Args {
     /// Write JSON instead of bincode
     #[arg(long)]
     json: bool,
+
+    // id of the base url to use for the commands
+    #[arg(long)]
+    service: String,
 }
 
+/// CLI entry point
 fn main() -> Result<()> {
-    let args = Args::parse();
-    if args.json {
-        write_manifest_json(args.input, args.output)
+    let Args {
+        input,
+        output,
+        json,
+        service,
+    } = Args::parse();
+    let service_id: ServiceId = ServiceId::from_str(&service).ok().unwrap_or(ServiceId::default());
+    let input = vec![ManifestInput{input, service_id}];
+    if json {
+        write_manifest_json(input, output)
     } else {
-        write_manifest(args.input, args.output)
+        write_manifest(input, output)
     }
 }

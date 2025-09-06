@@ -4,6 +4,8 @@
 //! handles text input, command suggestions, and user interactions for
 //! building Heroku CLI commands.
 
+use std::vec;
+
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use heroku_util::lex_shell_like_ranged;
 use ratatui::{
@@ -358,8 +360,8 @@ impl PaletteComponent {
     /// * `app` - The application state to update
     fn handle_backspace(&self, app: &mut app::App) {
         app.palette.reduce_backspace();
-        app.palette.set_is_suggestions_open(false);
         app.palette.reduce_clear_error();
+        app.palette.apply_suggestions(vec![]);
     }
 
     /// Handles left arrow key press to move cursor left.

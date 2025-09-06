@@ -97,8 +97,6 @@ pub struct App<'a> {
     pub last_command_ranges: Option<Vec<String>>,
     /// Last executed CommandSpec (for pagination replays)
     pub last_spec: Option<heroku_registry::CommandSpec>,
-    /// Last resolved path for the executed command
-    pub last_path: Option<String>,
     /// Last request body used for the executed command
     pub last_body: Option<JsonMap<String, JsonValue>>,
     /// History of Range headers used per page request (None means no Range header)
@@ -221,7 +219,6 @@ impl App<'_> {
             last_pagination: None,
             last_command_ranges: None,
             last_spec: None,
-            last_path: None,
             last_body: None,
             pagination_history: Vec::new(),
             initial_range: None,

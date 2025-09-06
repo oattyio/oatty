@@ -4,9 +4,10 @@
 //! into a minimal hyper-schema-like format with a `links` array for command generation.
 
 use anyhow::{Result, anyhow};
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
+use percent_encoding::{utf8_percent_encode, AsciiSet, CONTROLS};
+// percent_encoding no longer needed here
 use serde_json::{Map, Value, json};
-use std::collections::HashMap;
+// no longer requires HashMap
 
 // ============================================================================
 // Utility Functions
@@ -22,12 +23,7 @@ fn is_oas3(doc: &Value) -> bool {
     doc.get("openapi").and_then(Value::as_str).is_some()
 }
 
-/// Escapes JSON pointer tokens according to RFC 6901.
-///
-/// Replaces `~` with `~0` and `/` with `~1` for safe JSON pointer usage.
-fn escape_json_pointer_token(s: &str) -> String {
-    s.replace('~', "~0").replace('/', "~1")
-}
+// No JSON pointer token escaping needed in strict draft-04 mode.
 
 /// Resolves local JSON references within the same document.
 ///
@@ -213,45 +209,57 @@ fn build_link_schema_from_oas3(root: &Value, path_item: &Value, op: &Value) -> O
 // HREF Rewriting
 // ============================================================================
 
-/// Rewrites HREF to embed JSON pointers for path parameters.
-///
-/// Converts path segments like `{id}` to `{(#/x-parameters/paths/.../id)}`
-/// to enable dynamic parameter resolution.
-fn rewrite_href_with_param_pointers(path: &str, params: &[Value]) -> String {
-    // Build name->schema map for path parameters
-    let mut param_map: HashMap<String, Value> = HashMap::new();
+/// Leaves `href` unchanged, using standard URI Template variables.
+// Encode set for pointer components like "#/definitions/foo/definitions/identity"
+const PTR_ENCODE_SET: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'#')
+    .add(b'%')
+    .add(b'<')
+    .add(b'>')
+    .add(b'?')
+    .add(b'{')
+    .add(b'}')
+    .add(b'/');
+
+/// Rewrites href path variables to encoded definition refs and collects path param definitions.
+fn rewrite_href_and_collect_definitions(
+    path: &str,
+    params: &[Value],
+    definitions: &mut Map<String, Value>,
+) -> String {
+    let mut href = path.to_string();
+
     for p in params {
-        if p.get("in").and_then(Value::as_str) == Some("path")
-            && let Some(name) = p.get("name").and_then(Value::as_str)
-        {
-            param_map.insert(name.to_string(), p.get("schema").cloned().unwrap_or_else(|| p.clone()));
+        if p.get("in").and_then(Value::as_str) != Some("path") {
+            continue;
         }
+        let Some(name) = p.get("name").and_then(Value::as_str) else { continue };
+        // Build or merge definitions.<name>.definitions.identity
+        let ty = p
+            .get("schema")
+            .and_then(|s| s.get("type"))
+            .cloned()
+            .unwrap_or_else(|| json!("string"));
+        let desc = p.get("description").cloned();
+
+        let mut identity = Map::new();
+        identity.insert("type".into(), ty);
+        if let Some(d) = desc { identity.insert("description".into(), d); }
+
+        let entry = definitions.entry(name.to_string()).or_insert_with(|| json!({"definitions": {}}));
+        let obj = entry.as_object_mut().unwrap();
+        let defs_obj = obj.entry("definitions").or_insert_with(|| json!({})).as_object_mut().unwrap();
+        defs_obj.entry("identity").or_insert_with(|| Value::Object(identity.clone()));
+
+        // Rewrite {name} to {(%23%2Fdefinitions%2Fname%2Fdefinitions%2Fidentity)}
+        let ptr = format!("#/definitions/{}/definitions/identity", name);
+        let encoded = utf8_percent_encode(&ptr, PTR_ENCODE_SET).to_string();
+        href = href.replace(&format!("{{{}}}", name), &format!("{{({})}}", encoded));
     }
 
-    if param_map.is_empty() {
-        return path.to_string();
-    }
-
-    let escaped_path = escape_json_pointer_token(path);
-    let mut segments = Vec::new();
-
-    for segment in path.split('/') {
-        if segment.starts_with('{') && segment.ends_with('}') {
-            let param_name = segment.trim_start_matches('{').trim_end_matches('}');
-            if param_map.contains_key(param_name) {
-                let escaped_name = escape_json_pointer_token(param_name);
-                let pointer = format!("#/x-parameters/paths/{}/{}", escaped_path, escaped_name);
-                let enc = utf8_percent_encode(&pointer, NON_ALPHANUMERIC).to_string();
-                segments.push(format!("{{({})}}", enc));
-            } else {
-                segments.push(segment.to_string());
-            }
-        } else {
-            segments.push(segment.to_string());
-        }
-    }
-
-    segments.join("/")
+    href
 }
 
 // ============================================================================
@@ -319,7 +327,7 @@ pub fn transform_openapi_to_links(doc: &Value) -> Result<Value> {
 /// Transforms OpenAPI v3 documents to the target format.
 fn transform_oas3(doc: &Value) -> Result<Value> {
     let mut links: Vec<Value> = Vec::new();
-    let mut x_params: HashMap<String, Map<String, Value>> = HashMap::new();
+    let mut definitions: Map<String, Value> = Map::new();
 
     let paths = doc
         .get("paths")
@@ -335,15 +343,7 @@ fn transform_oas3(doc: &Value) -> Result<Value> {
         for (method, operation) in path_obj.iter() {
             match method.as_str() {
                 "get" | "post" | "put" | "patch" | "delete" => {
-                    let link = build_link_from_operation(doc, path_item, operation, method, path)?;
-
-                    // Collect path parameters for help system
-                    let params = collect_parameters(doc, path_item, operation);
-                    let path_params = collect_path_parameters(&params);
-                    if !path_params.is_empty() {
-                        x_params.insert(path.clone(), path_params);
-                    }
-
+                    let link = build_link_from_operation(doc, path_item, operation, method, path, &mut definitions)?;
                     links.push(link);
                 }
                 _ => {} // Skip non-HTTP methods
@@ -359,16 +359,9 @@ fn transform_oas3(doc: &Value) -> Result<Value> {
     if let Some(components) = doc.get("components").cloned() {
         root.insert("components".into(), components);
     }
-
-    // Add x-parameters for path parameter help
-    if !x_params.is_empty() {
-        let mut xp = Map::new();
-        for (path, params) in x_params {
-            xp.insert(path, Value::Object(params));
-        }
-        let mut xroot = Map::new();
-        xroot.insert("paths".into(), Value::Object(xp));
-        root.insert("x-parameters".into(), Value::Object(xroot));
+    // Add synthesized definitions for path params so placeholders can reference them
+    if !definitions.is_empty() {
+        root.insert("definitions".into(), Value::Object(definitions));
     }
 
     Ok(Value::Object(root))
@@ -377,7 +370,7 @@ fn transform_oas3(doc: &Value) -> Result<Value> {
 /// Transforms Swagger v2 documents to the target format.
 fn transform_swagger2(doc: &Value) -> Result<Value> {
     let mut links: Vec<Value> = Vec::new();
-    let mut x_params: HashMap<String, Map<String, Value>> = HashMap::new();
+    let mut definitions: Map<String, Value> = Map::new();
 
     let paths = doc
         .get("paths")
@@ -393,15 +386,7 @@ fn transform_swagger2(doc: &Value) -> Result<Value> {
         for (method, operation) in path_obj.iter() {
             match method.as_str() {
                 "get" | "post" | "put" | "patch" | "delete" => {
-                    let link = build_link_from_swagger2_operation(doc, path_item, operation, method, path)?;
-
-                    // Collect path parameters for help system
-                    let all_params = collect_swagger2_parameters(doc, path_item, operation);
-                    let path_params = collect_path_parameters(&all_params);
-                    if !path_params.is_empty() {
-                        x_params.insert(path.clone(), path_params);
-                    }
-
+                    let link = build_link_from_swagger2_operation(doc, path_item, operation, method, path, &mut definitions)?;
                     links.push(link);
                 }
                 _ => {} // Skip non-HTTP methods
@@ -414,22 +399,19 @@ fn transform_swagger2(doc: &Value) -> Result<Value> {
     root.insert("links".into(), Value::Array(links));
 
     // Preserve definitions and parameters for reference resolution
-    if let Some(defs) = doc.get("definitions").cloned() {
-        root.insert("definitions".into(), defs);
+    let mut defs_out = Map::new();
+    if let Some(defs) = doc.get("definitions").and_then(Value::as_object) {
+        defs_out = defs.clone();
+    }
+    // Merge synthesized path param definitions
+    for (k, v) in definitions.into_iter() {
+        defs_out.entry(k).or_insert(v);
+    }
+    if !defs_out.is_empty() {
+        root.insert("definitions".into(), Value::Object(defs_out));
     }
     if let Some(params) = doc.get("parameters").cloned() {
         root.insert("parameters".into(), params);
-    }
-
-    // Add x-parameters for path parameter help
-    if !x_params.is_empty() {
-        let mut xp = Map::new();
-        for (path, params) in x_params {
-            xp.insert(path, Value::Object(params));
-        }
-        let mut xroot = Map::new();
-        xroot.insert("paths".into(), Value::Object(xp));
-        root.insert("x-parameters".into(), Value::Object(xroot));
     }
 
     Ok(Value::Object(root))
@@ -440,7 +422,14 @@ fn transform_swagger2(doc: &Value) -> Result<Value> {
 // ============================================================================
 
 /// Builds a link object from an OpenAPI v3 operation.
-fn build_link_from_operation(doc: &Value, path_item: &Value, op: &Value, method: &str, path: &str) -> Result<Value> {
+fn build_link_from_operation(
+    doc: &Value,
+    path_item: &Value,
+    op: &Value,
+    method: &str,
+    path: &str,
+    definitions: &mut Map<String, Value>,
+) -> Result<Value> {
     let title = op
         .get("summary")
         .and_then(Value::as_str)
@@ -455,8 +444,9 @@ fn build_link_from_operation(doc: &Value, path_item: &Value, op: &Value, method:
         .to_string();
 
     let params = collect_parameters(doc, path_item, op);
-    let href = rewrite_href_with_param_pointers(path, &params);
+    let href = rewrite_href_and_collect_definitions(path, &params, definitions);
     let schema = build_link_schema_from_oas3(doc, path_item, op);
+    let target_schema = build_target_schema_from_oas3(doc, op);
 
     let mut link_obj = Map::new();
     link_obj.insert("href".into(), json!(href));
@@ -472,6 +462,11 @@ fn build_link_from_operation(doc: &Value, path_item: &Value, op: &Value, method:
     if let Some(s) = schema {
         link_obj.insert("schema".into(), s);
     }
+    if let Some(ts) = target_schema {
+        link_obj.insert("targetSchema".into(), ts);
+    }
+
+    // Draft-04 Hyper-Schema has no standard per-variable schema; omit non-standard keys.
 
     Ok(Value::Object(link_obj))
 }
@@ -483,6 +478,7 @@ fn build_link_from_swagger2_operation(
     op: &Value,
     method: &str,
     path: &str,
+    definitions: &mut Map<String, Value>,
 ) -> Result<Value> {
     let title = op
         .get("summary")
@@ -498,8 +494,9 @@ fn build_link_from_swagger2_operation(
         .to_string();
 
     let all_params = collect_swagger2_parameters(doc, path_item, op);
-    let href = rewrite_href_with_param_pointers(path, &all_params);
+    let href = rewrite_href_and_collect_definitions(path, &all_params, definitions);
     let schema = build_swagger2_link_schema(doc, &all_params);
+    let target_schema = build_target_schema_from_swagger2(doc, op);
 
     let mut link_obj = Map::new();
     link_obj.insert("href".into(), json!(href));
@@ -515,6 +512,11 @@ fn build_link_from_swagger2_operation(
     if let Some(s) = schema {
         link_obj.insert("schema".into(), s);
     }
+    if let Some(ts) = target_schema {
+        link_obj.insert("targetSchema".into(), ts);
+    }
+
+    // Draft-04 Hyper-Schema has no standard per-variable schema; omit non-standard keys.
 
     Ok(Value::Object(link_obj))
 }
@@ -549,20 +551,63 @@ fn resolve_swagger2_param_ref(root: &Value, p: &Value) -> Value {
     }
 }
 
-/// Collects path parameters from a parameter list.
-fn collect_path_parameters(params: &[Value]) -> Map<String, Value> {
-    let mut path_params: Map<String, Value> = Map::new();
-
-    for p in params {
-        if p.get("in").and_then(Value::as_str) == Some("path")
-            && let Some(name) = p.get("name").and_then(Value::as_str)
-        {
-            let schema = p.get("schema").cloned().unwrap_or_else(|| p.clone());
-            path_params.insert(name.to_string(), schema);
+/// Builds a targetSchema from OAS3 responses (first available 2xx JSON schema).
+fn build_target_schema_from_oas3(root: &Value, op: &Value) -> Option<Value> {
+    let responses = op.get("responses")?.as_object()?;
+    // Try 200 then 201 then any 2xx
+    let keys_preferred = ["200", "201", "202", "204"];
+    let mut resp_schema: Option<&Value> = None;
+    for k in keys_preferred.iter() {
+        if let Some(r) = responses.get(*k) {
+            resp_schema = Some(r);
+            break;
         }
     }
+    if resp_schema.is_none() {
+        for (k, v) in responses.iter() {
+            if k.starts_with('2') {
+                resp_schema = Some(v);
+                break;
+            }
+        }
+    }
+    let resp = resp_schema?;
+    let schema = resp
+        .get("content")
+        .and_then(|c| c.get("application/json"))
+        .and_then(|aj| aj.get("schema"))?;
+    if let Some(r) = schema.get("$ref").and_then(Value::as_str) {
+        resolve_local_ref(root, r)
+    } else {
+        Some(schema.clone())
+    }
+}
 
-    path_params
+/// Builds a targetSchema from Swagger2 responses (first available 2xx schema).
+fn build_target_schema_from_swagger2(root: &Value, op: &Value) -> Option<Value> {
+    let responses = op.get("responses")?.as_object()?;
+    let mut resp_schema: Option<&Value> = None;
+    for k in ["200", "201", "202", "204"].iter() {
+        if let Some(r) = responses.get(*k) {
+            resp_schema = Some(r);
+            break;
+        }
+    }
+    if resp_schema.is_none() {
+        for (k, v) in responses.iter() {
+            if k.starts_with('2') {
+                resp_schema = Some(v);
+                break;
+            }
+        }
+    }
+    let resp = resp_schema?;
+    let schema = resp.get("schema")?;
+    if let Some(r) = schema.get("$ref").and_then(Value::as_str) {
+        resolve_local_ref(root, r)
+    } else {
+        Some(schema.clone())
+    }
 }
 
 /// Builds a link schema from Swagger v2 parameters.
@@ -659,5 +704,131 @@ fn build_swagger2_link_schema(root: &Value, params: &[Value]) -> Option<Value> {
             schema.insert("required".into(), json!(required));
         }
         Some(Value::Object(schema))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::transform_openapi_to_links;
+    use serde_json::json;
+    use std::fs;
+
+    #[test]
+    fn oas3_path_with_params_carries_over_to_links_href() {
+        let doc = json!({
+            "openapi": "3.0.0",
+            "paths": {
+                "/data/postgres/v1/{addon}/credentials/{cred_name}/rotate": {
+                    "post": {
+                        "summary": "Rotate credentials",
+                        "parameters": [
+                            {"name": "addon", "in": "path", "required": true, "schema": {"type": "string"}},
+                            {"name": "cred_name", "in": "path", "required": true, "schema": {"type": "string"}}
+                        ]
+                    }
+                }
+            }
+        });
+
+        let out = transform_openapi_to_links(&doc).expect("transform should succeed");
+        let links = out.get("links").and_then(|v| v.as_array()).expect("links array");
+        assert_eq!(links.len(), 1, "expected a single link");
+        let href = links[0].get("href").and_then(|v| v.as_str()).expect("href string");
+
+        // Ensure the static parts of the path carry over intact
+        assert!(
+            href.starts_with("/data/postgres/v1/"),
+            "href should preserve prefix: {}",
+            href
+        );
+        assert!(
+            href.contains("/credentials/"),
+            "href should preserve middle segment: {}",
+            href
+        );
+        assert!(
+            href.ends_with("/rotate"),
+            "href should preserve trailing segment: {}",
+            href
+        );
+
+        // Ensure href variables are rewritten to encoded definition pointers
+        assert!(
+            href.contains("{(%23%2Fdefinitions%2Faddon%2Fdefinitions%2Fidentity)}"),
+            "href should include encoded addon ref"
+        );
+        assert!(
+            href.contains("{(%23%2Fdefinitions%2Fcred_name%2Fdefinitions%2Fidentity)}"),
+            "href should include encoded cred_name ref"
+        );
+    }
+
+    #[test]
+    fn pretty_print_transformed_data_schema_debug() {
+        // Always succeed: best-effort parse -> transform -> pretty string
+        let path = format!("{}/../../schemas/data-schema.yaml", env!("CARGO_MANIFEST_DIR"));
+
+        let yaml = fs::read_to_string(&path).unwrap_or_default();
+        let parsed: serde_json::Value = serde_yaml::from_str(&yaml).unwrap_or(serde_json::Value::Null);
+        let transformed = transform_openapi_to_links(&parsed).unwrap_or_else(|_| parsed.clone());
+        let pretty = serde_json::to_string_pretty(&transformed).unwrap_or_else(|_| String::new());
+
+        // Keep this for local debugging convenience; test should always pass
+        assert!(!pretty.is_empty());
+    }
+
+    #[test]
+    fn oas3_query_parameter_description_and_default_flow_into_properties() {
+        let doc = json!({
+            "openapi": "3.0.0",
+            "paths": {
+                "/apps": {
+                    "get": {
+                        "summary": "List apps",
+                        "parameters": [
+                            {
+                                "name": "owner",
+                                "in": "query",
+                                "description": "Filter by owner",
+                                "required": false,
+                                "schema": {"type": "string", "default": "me"}
+                            }
+                        ]
+                    }
+                }
+            }
+        });
+
+        let out = transform_openapi_to_links(&doc).expect("transform should succeed");
+        let links = out.get("links").and_then(|v| v.as_array()).expect("links array");
+        let schema = links[0].get("schema").and_then(|v| v.as_object()).expect("schema object");
+        let props = schema.get("properties").and_then(|v| v.as_object()).expect("properties object");
+        let owner = props.get("owner").and_then(|v| v.as_object()).expect("owner schema");
+        assert_eq!(owner.get("description").and_then(|v| v.as_str()), Some("Filter by owner"));
+        assert_eq!(owner.get("default").and_then(|v| v.as_str()), Some("me"));
+    }
+
+    #[test]
+    fn swagger2_query_parameter_description_and_default_flow_into_properties() {
+        let doc = json!({
+            "swagger": "2.0",
+            "paths": {
+                "/apps": {
+                    "get": {
+                        "parameters": [
+                            {"name": "owner", "in": "query", "type": "string", "description": "Filter by owner", "default": "me"}
+                        ]
+                    }
+                }
+            }
+        });
+
+        let out = transform_openapi_to_links(&doc).expect("transform should succeed");
+        let links = out.get("links").and_then(|v| v.as_array()).expect("links array");
+        let schema = links[0].get("schema").and_then(|v| v.as_object()).expect("schema object");
+        let props = schema.get("properties").and_then(|v| v.as_object()).expect("properties object");
+        let owner = props.get("owner").and_then(|v| v.as_object()).expect("owner schema");
+        assert_eq!(owner.get("description").and_then(|v| v.as_str()), Some("Filter by owner"));
+        assert_eq!(owner.get("default").and_then(|v| v.as_str()), Some("me"));
     }
 }

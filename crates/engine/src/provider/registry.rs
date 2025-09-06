@@ -5,7 +5,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use heroku_registry::Registry;
+use heroku_registry::{CommandSpec, Registry};
 use serde_json::{Map as JsonMap, Value};
 
 use super::{
@@ -52,12 +52,9 @@ impl RegistryProvider {
         Self::new(registry, Box::new(super::fetch::DefaultHttpFetcher), cache_ttl)
     }
 
-    fn resolve_path(&self, provider_id: &str) -> Option<String> {
+    fn resolve_spec(&self, provider_id: &str) -> Option<&CommandSpec> {
         let (group, name) = provider_id.split_once(':')?;
-        self.registry
-            .find_by_group_and_cmd(group, name)
-            .ok()
-            .map(|s| s.path.clone())
+        self.registry.find_by_group_and_cmd(group, name).ok().map(|s| s)
     }
 
     pub fn persist_choice(&self, provider_id: &str, selection: FieldSelection) {
@@ -83,11 +80,9 @@ impl crate::provider::ProviderRegistry for RegistryProvider {
         if let Some((group, name)) = provider_id.split_once(':')
             && let Ok(spec_ref) = self.registry.find_by_group_and_cmd(group, name)
         {
-            let spec = spec_ref.clone();
-            let path = spec.path.clone();
             let body = args.clone();
             let result = match tokio::runtime::Runtime::new() {
-                Ok(rt) => rt.block_on(async move { heroku_util::http_exec::exec_remote(spec, path, body).await }),
+                Ok(rt) => rt.block_on(async move { heroku_util::http_exec::exec_remote(spec_ref, body).await }),
                 Err(e) => Err(format!("runtime init failed: {}", e)),
             };
             if let Ok(outcome) = result
@@ -105,10 +100,10 @@ impl crate::provider::ProviderRegistry for RegistryProvider {
             }
         }
 
-        let path = self
-            .resolve_path(provider_id)
+        let resolved_spec = self
+            .resolve_spec(provider_id)
             .ok_or_else(|| anyhow::anyhow!("unknown provider: {}", provider_id))?;
-        let items = self.fetcher.fetch_list(&path, args)?;
+        let items = self.fetcher.fetch_list(&resolved_spec, args)?;
         self.cache.lock().expect("cache lock").insert(
             key,
             CacheEntry {
@@ -120,7 +115,7 @@ impl crate::provider::ProviderRegistry for RegistryProvider {
     }
 
     fn get_contract(&self, provider_id: &str) -> Option<ProviderContract> {
-        self.resolve_path(provider_id).map(|_| ProviderContract {
+        self.resolve_spec(provider_id).map(|_| ProviderContract {
             args: JsonMap::new(),
             returns: ProviderReturns {
                 fields: vec![

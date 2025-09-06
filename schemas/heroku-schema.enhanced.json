@@ -553,7 +553,8 @@
                 "name": {
                   "$ref": "#/definitions/team/definitions/name"
                 }
-              }
+              },
+              "description": "Identity of the team (name and/or UUID)."
             },
             "organization": {
               "type": [
@@ -563,7 +564,8 @@
                 "name": {
                   "$ref": "#/definitions/team/definitions/name"
                 }
-              }
+              },
+              "description": "Identity of the organization (name and/or UUID)."
             },
             "owner": {
               "$ref": "#/definitions/identity-provider/definitions/owner"
@@ -1894,7 +1896,8 @@
               "strictProperties": true,
               "type": [
                 "object"
-              ]
+              ],
+              "description": "Identity of the add‑on service (name and/or UUID)."
             },
             {
               "$ref": "#/definitions/add-on-service"
@@ -1916,7 +1919,8 @@
               "strictProperties": true,
               "type": [
                 "object"
-              ]
+              ],
+              "description": "Identity of the add‑on plan (name and/or UUID)."
             },
             {
               "$ref": "#/definitions/plan"
@@ -2251,7 +2255,7 @@
       ],
       "definitions": {
         "added_at": {
-          "description": "when the add-on service was allowed",
+          "description": "Timestamp for added at (UTC, ISO 8601).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -2267,14 +2271,16 @@
               "type": [
                 "string",
                 "null"
-              ]
+              ],
+              "description": "Email address."
             },
             "id": {
               "$ref": "#/definitions/account/definitions/id",
               "type": [
                 "string",
                 "null"
-              ]
+              ],
+              "description": "Unique identifier (UUID)."
             }
           },
           "readOnly": true,
@@ -3175,14 +3181,14 @@
           ]
         },
         "attempt_created_at": {
-          "description": "when attempt was created",
+          "description": "Timestamp for attempt created at (UTC, ISO 8601).",
           "format": "date-time",
           "type": [
             "string"
           ]
         },
         "attempt_updated_at": {
-          "description": "when attempt was updated",
+          "description": "Timestamp for attempt updated at (UTC, ISO 8601).",
           "format": "date-time",
           "type": [
             "string"
@@ -3230,7 +3236,7 @@
           ]
         },
         "next_attempt_at": {
-          "description": "when delivery will be attempted again",
+          "description": "Timestamp for next attempt at (UTC, ISO 8601).",
           "format": "date-time",
           "type": [
             "string",
@@ -3788,7 +3794,7 @@
       ],
       "definitions": {
         "archived_at": {
-          "description": "when app was archived",
+          "description": "Timestamp for archived at (UTC, ISO 8601).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -3889,7 +3895,7 @@
         },
         "released_at": {
           "default": null,
-          "description": "when app was released",
+          "description": "Timestamp for released at (UTC, ISO 8601).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -4419,13 +4425,15 @@
               "format": "uuid",
               "type": [
                 "string"
-              ]
+              ],
+              "description": "Unique identifier (UUID)."
             },
             "email": {
               "format": "email",
               "type": [
                 "string"
-              ]
+              ],
+              "description": "Email address."
             }
           }
         },
@@ -4440,12 +4448,14 @@
               "format": "uuid",
               "type": [
                 "string"
-              ]
+              ],
+              "description": "Unique identifier (UUID)."
             },
             "name": {
               "type": [
                 "string"
-              ]
+              ],
+              "description": "Unique, human‑readable name."
             }
           }
         },
@@ -4460,13 +4470,15 @@
               "format": "uuid",
               "type": [
                 "string"
-              ]
+              ],
+              "description": "Unique identifier (UUID)."
             },
             "email": {
               "format": "email",
               "type": [
                 "string"
-              ]
+              ],
+              "description": "Email address."
             }
           }
         },
@@ -4481,12 +4493,14 @@
               "format": "uuid",
               "type": [
                 "string"
-              ]
+              ],
+              "description": "Unique identifier (UUID)."
             },
             "name": {
               "type": [
                 "string"
-              ]
+              ],
+              "description": "Unique, human‑readable name."
             }
           }
         },
@@ -4501,12 +4515,14 @@
               "format": "uuid",
               "type": [
                 "string"
-              ]
+              ],
+              "description": "Unique identifier (UUID)."
             },
             "name": {
               "type": [
                 "string"
-              ]
+              ],
+              "description": "Unique, human‑readable name."
             }
           }
         },
@@ -5352,7 +5368,7 @@
           ]
         },
         "expires_at": {
-          "description": "when credit will expire",
+          "description": "Timestamp for expires at (UTC, ISO 8601).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "type": [
@@ -6546,7 +6562,8 @@
                 "type": [
                   "string"
                 ],
-                "example": "View enterprise account members and teams."
+                "example": "View enterprise account members and teams.",
+                "description": "Short description of this resource or field."
               },
               "name": {
                 "$ref": "#/definitions/enterprise-account-member/definitions/permission",
@@ -7156,7 +7173,8 @@
           ],
           "items": {
             "$ref": "#/definitions/app/definitions/id"
-          }
+          },
+          "description": "Unique identifier (UUID)."
         }
       },
       "links": [
@@ -10270,7 +10288,7 @@
           ]
         },
         "expires": {
-          "description": "When a peering connection will expire.",
+          "description": "Timestamp for expires (UTC, ISO 8601).",
           "example": "2020-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -12440,7 +12458,8 @@
                 {
                   "$ref": "#/definitions/oci-image/definitions/id"
                 }
-              ]
+              ],
+              "description": "Unique identifier (UUID)."
             }
           },
           "readOnly": true,
@@ -14057,7 +14076,8 @@
                     "name": {
                       "type": [
                         "string"
-                      ]
+                      ],
+                      "description": "Unique, human‑readable name."
                     }
                   }
                 }
@@ -14120,12 +14140,14 @@
               "description": {
                 "type": [
                   "string"
-                ]
+                ],
+                "description": "Short description of this resource or field."
               },
               "name": {
                 "type": [
                   "string"
-                ]
+                ],
+                "description": "Unique, human‑readable name."
               }
             }
           }
@@ -15985,7 +16007,8 @@
           "strictProperties": true,
           "type": [
             "object"
-          ]
+          ],
+          "description": "Identity of the team (name and/or UUID)."
         },
         "role": {
           "$ref": "#/definitions/team/definitions/role"

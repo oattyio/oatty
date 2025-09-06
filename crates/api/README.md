@@ -5,7 +5,7 @@ Overview
 - Used by the CLI and TUI for live API execution.
 
 Defaults
-- Base URL: `https://api.heroku.com` (override with `HEROKU_API_BASE`).
+- Base URL: `https://api.heroku.com` (override with `HEROKU_API_BASE`). Only HTTPS hosts under `heroku.com` are allowed; e.g., `https://api.heroku.com`, `https://eu.api.heroku.com`. Non-Heroku domains are rejected to prevent token exfiltration.
 - Headers:
   - `Accept: application/vnd.heroku+json; version=3`
   - `User-Agent: heroku-cli/0.1 (+https://example.com); <os>`

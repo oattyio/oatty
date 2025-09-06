@@ -16,53 +16,34 @@ The Value Provider Registry serves several key purposes:
 
 ## Core Components
 
-### 1. Schema-Driven Provider Binding (`schema.rs`)
+### 1. Schema-Driven Provider Resolution (two-pass)
 
-The schema system automatically infers provider bindings by analyzing OpenAPI/JSON schema definitions and command structures.
+The generator infers and verifies providers in a second pass and embeds them directly on fields (`CommandFlag.provider` and `PositionalArgument.provider`).
 
 #### Key Functions
 
-- **`infer_provider_bindings()`**: Main entry point that analyzes commands and assigns providers
-- **`infer_positionals_from_path()`**: Maps path parameters to list-based providers
-- **`map_flag_to_group()`**: Associates flag names with appropriate data sources
+- Build command index: `<group>:<name>` for all commands
+- Identify list-capable groups (presence of `<group>:list`)
+- Resolve providers:
+  - Positionals: previous concrete path segment → `<group>:list` when present
+  - Flags: map flag name to plural group via synonym/pluralization → `<group>:list` when present
 
-#### Provider Binding Logic
+#### Provider Resolution Logic
 
 ```rust
-// Example of how providers are inferred
-fn infer_provider_bindings(commands: &mut [CommandSpec]) {
-    // Identify groups that have list commands
-    let list_groups: HashSet<String> = commands
-        .iter()
-        .filter_map(|c| {
-            classify_command(&c.path, &c.method).and_then(|(grp, action)| {
-                (action == "list").then(|| normalize_group(&grp))
-            })
-        })
-        .collect();
-
-    // Map flags and positionals to appropriate providers
-    for cmd in commands.iter_mut() {
-        let mut providers = infer_positionals_from_path(&cmd.path, &list_groups);
-        
-        for flag in &cmd.flags {
-            if let Some((group, confidence)) = map_flag_to_group(&flag.name, &synonyms) {
-                if list_groups.contains(&group) {
-                    providers.push(ProviderBinding {
-                        kind: ProviderParamKind::Flag,
-                        name: flag.name.clone(),
-                        provider_id: format!("{}:{}", group, "list"),
-                        confidence,
-                    });
-                }
-            }
-        }
-        cmd.providers = providers;
+pub fn resolve_and_infer_providers(commands: &mut [CommandSpec]) {
+    let index = build_command_index(commands);
+    let list_groups = groups_with_list(&index);
+    for spec in commands.iter_mut() {
+        // Flags
+        apply_flag_providers(&mut spec.flags, &list_groups, &index);
+        // Positionals
+        apply_positional_providers(&mut spec.positional_args, &spec.path, &list_groups, &index);
     }
 }
 ```
 
-### 2. Registry-Backed Provider (`mod.rs`)
+### 2. Registry-Backed Provider (`providers/mod.rs`)
 
 The `RegistryBackedProvider` implements the actual value fetching and caching logic.
 
@@ -160,7 +141,7 @@ sequenceDiagram
     
     U->>P: Type in field
     P->>R: Get command spec
-    R->>P: Return with provider bindings
+    R->>P: Return spec with per-field providers
     P->>V: Request suggestions
     V->>C: Check cache
     alt Cache hit
@@ -174,7 +155,7 @@ sequenceDiagram
     P->>U: Display suggestions
 ```
 
-### 3. Provider Binding Resolution
+### 3. Provider Resolution Heuristics
 
 ```mermaid
 graph LR
@@ -194,7 +175,7 @@ graph LR
     M -->|Yes| N[Create Flag Provider]
     M -->|No| O[No Provider Binding]
     
-    H --> P[Provider Registry]
+    H --> P[Field.provider]
     N --> P
     I --> P
     O --> P
@@ -202,20 +183,14 @@ graph LR
 
 ## Implementation Details
 
-### Provider Binding Types
+### Provider Attachment Types
 
-The system supports two main types of provider bindings:
+Providers are attached directly to fields:
 
-1. **Positional Arguments**: Automatically inferred from URL path parameters
-2. **Flag Values**: Mapped based on naming conventions and synonyms
+1. **Positional Arguments**: Inferred from URL path parameters and verified
+2. **Flag Values**: Inferred via naming conventions and verified
 
-### Confidence Levels
-
-Provider bindings include confidence levels to handle ambiguous cases:
-
-- **High**: Direct path-based inference (e.g., `/apps/{app}/config` → `app` parameter)
-- **Medium**: Synonym-based mapping (e.g., `app` flag → `apps:list` provider)
-- **Low**: Conservative pluralization (e.g., `region` → `regions:list`)
+Note: Confidence scoring and a separate providers vector are removed; providers are only attached when verifiably resolvable.
 
 ### Caching Strategy
 

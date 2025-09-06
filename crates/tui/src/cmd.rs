@@ -22,6 +22,7 @@
 use std::sync::atomic::Ordering;
 
 use heroku_registry::CommandSpec;
+use heroku_util::exec_remote;
 // Types imported as needed; HTTP helpers moved to heroku-util
 use serde_json::Value;
 use tokio::task::spawn;
@@ -70,7 +71,7 @@ pub enum Cmd {
     ///     assert!(b.is_empty());
     /// }
     /// ```
-    ExecuteHttp(Box<CommandSpec>, String, serde_json::Map<String, Value>),
+    ExecuteHttp(Box<CommandSpec>, serde_json::Map<String, Value>),
 }
 
 /// Convert application [`Effect`]s into actual [`Cmd`] instances.
@@ -162,16 +163,14 @@ fn handle_copy_command_requested(app: &app::App) -> Option<Vec<Cmd>> {
 fn handle_next_page_requested(app: &mut app::App, next_raw: String) -> Option<Vec<Cmd>> {
     let mut commands = Vec::new();
 
-    if let (Some(spec), Some(path), Some(mut body)) =
-        (app.last_spec.clone(), app.last_path.clone(), app.last_body.clone())
-    {
+    if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
         // Inject raw next-range override for Range header
         body.insert("next-range".into(), serde_json::Value::String(next_raw.clone()));
 
         // Append to history for Prev/First navigation
         app.pagination_history.push(Some(next_raw));
 
-        commands.push(Cmd::ExecuteHttp(Box::new(spec), path, body));
+        commands.push(Cmd::ExecuteHttp(Box::new(spec), body));
     } else {
         app.logs
             .entries
@@ -193,9 +192,7 @@ fn handle_next_page_requested(app: &mut app::App, next_raw: String) -> Option<Ve
 fn handle_prev_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
     let mut commands = Vec::new();
 
-    if let (Some(spec), Some(path), Some(mut body)) =
-        (app.last_spec.clone(), app.last_path.clone(), app.last_body.clone())
-    {
+    if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
         if app.pagination_history.len() <= 1 {
             // No previous page to go to
             return Some(commands);
@@ -211,7 +208,7 @@ fn handle_prev_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
             let _ = body.remove("next-range");
         }
 
-        commands.push(Cmd::ExecuteHttp(Box::new(spec), path, body));
+        commands.push(Cmd::ExecuteHttp(Box::new(spec), body));
     } else {
         app.logs
             .entries
@@ -233,9 +230,7 @@ fn handle_prev_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
 fn handle_first_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
     let mut commands = Vec::new();
 
-    if let (Some(spec), Some(path), Some(mut body)) =
-        (app.last_spec.clone(), app.last_path.clone(), app.last_body.clone())
-    {
+    if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
         // Get the first page range if available
         if let Some(first) = app.pagination_history.first().cloned().flatten() {
             body.insert("next-range".into(), serde_json::Value::String(first));
@@ -248,7 +243,7 @@ fn handle_first_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
         app.pagination_history.clear();
         app.pagination_history.push(first_opt);
 
-        commands.push(Cmd::ExecuteHttp(Box::new(spec), path, body));
+        commands.push(Cmd::ExecuteHttp(Box::new(spec), body));
     } else {
         app.logs
             .entries
@@ -279,7 +274,7 @@ pub fn run_cmds(app: &mut app::App, commands: Vec<Cmd>) {
     for command in commands {
         match command {
             Cmd::ClipboardSet(text) => execute_clipboard_set(app, text),
-            Cmd::ExecuteHttp(spec, path, body) => execute_http(app, *spec, path, body),
+            Cmd::ExecuteHttp(spec, body) => execute_http(app, *spec, body),
         }
     }
 }
@@ -334,7 +329,7 @@ fn execute_clipboard_set(app: &mut app::App, text: String) {
 /// * `spec` - The command specification for the HTTP request
 /// * `path` - The API endpoint path
 /// * `body` - The request body as a JSON map
-fn execute_http(app: &mut app::App, spec: CommandSpec, path: String, body: serde_json::Map<String, Value>) {
+fn execute_http(app: &mut app::App, spec: CommandSpec, body: serde_json::Map<String, Value>) {
     // Live request: spawn async task and show throbber
     app.executing = true;
     app.throbber_idx = 0;
@@ -344,7 +339,7 @@ fn execute_http(app: &mut app::App, spec: CommandSpec, path: String, body: serde
     active.fetch_add(1, Ordering::Relaxed);
 
     spawn(async move {
-        let outcome = heroku_util::http_exec::exec_remote(spec, path, body).await;
+        let outcome = exec_remote(&spec, body).await;
 
         match outcome {
             Ok(out) => {

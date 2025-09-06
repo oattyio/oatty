@@ -1,33 +1,22 @@
+use std::{error::Error, str::FromStr};
+
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Identifies what kind of parameter a provider binds to.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Encode, Decode)]
-pub enum ProviderParamKind {
-    Flag,
-    Positional,
-}
-
-/// Confidence score for an inferred provider mapping.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Encode, Decode)]
-pub enum ProviderConfidence {
-    High,
-    Medium,
-    Low,
-}
-
-/// Maps a parameter (flag or positional) to a provider command (e.g., "apps:list").
+/// Declares how values for a parameter can be populated.
+///
+/// A ValueProvider typically references another command that can be executed
+/// to fetch candidate values (e.g., using an `apps:list` command to populate
+/// the values for an `--app` flag or a positional `app`). Additional variants
+/// can be added later (e.g., static lists, plugins) without changing callers
+/// that treat this as opaque metadata.
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
-pub struct ProviderBinding {
-    /// The parameter kind this provider applies to.
-    pub kind: ProviderParamKind,
-    /// The parameter name (e.g., "app", "addon").
-    pub name: String,
-    /// Provider identifier in the form "<group>:list" (e.g., "apps:list").
-    pub provider_id: String,
-    /// Confidence for this mapping.
-    pub confidence: ProviderConfidence,
+pub enum ValueProvider {
+    /// Use another command identified by `<group>:<name>` to supply values.
+    ///
+    /// Example: `Command { command_id: "apps:list".into() }`
+    Command { command_id: String },
 }
 
 /// Represents a command-line flag or option for a Heroku CLI command.
@@ -51,7 +40,72 @@ pub struct CommandFlag {
     /// Human-readable description of what this flag does
     #[serde(default)]
     pub description: Option<String>,
+    /// Optional ValueProvider that supplies dynamic values for this flag.
+    ///
+    /// When present, UIs and engines can query this provider to fetch
+    /// candidate values for prompting and autocompletion.
+    #[serde(default)]
+    pub provider: Option<ValueProvider>,
 }
+#[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Default, Serialize, Deserialize, Encode, Decode)]
+pub enum ServiceId {
+    #[default]
+    CoreApi, // https://api.heroku.com
+    DataApi, // https://api.data.heroku.com
+    DataApiStaging, // https://heroku-data-api-staging.herokuapp.com
+}
+
+impl ToServiceIdInfo for ServiceId {
+    fn env_var(&self) -> &str {
+        match self {
+            Self::CoreApi => "HEROKU_API_BASE",
+            Self::DataApi | Self::DataApiStaging => "HEROKU_DATA_API_BASE",
+        }
+    }
+    fn default_base_url(&self) -> &str {
+        match self {
+            Self::CoreApi => "https://api.heroku.com",
+            Self::DataApi => "https://api.data.heroku.com",
+            Self::DataApiStaging => "https://heroku-data-api-staging.herokuapp.com",
+        }
+    }
+    fn accept_headers(&self) -> &str {
+        match self {
+            Self::CoreApi => "application/vnd.heroku+json; version=3",
+            Self::DataApi | Self::DataApiStaging => "application/vnd.heroku+json; version=3"
+        }
+    }
+}
+
+impl FromStr for ServiceId {
+    type Err = ParseServiceIdError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "core-api" => Ok(Self::CoreApi),
+            "data-api" => Ok(Self::DataApi),
+            "data-api-staging" => Ok(Self::DataApiStaging),
+            _ => Err(ParseServiceIdError),
+        }
+    }
+}
+
+pub trait ToServiceIdInfo {
+    fn env_var(&self) -> &str;
+    fn default_base_url(&self) -> &str;
+    fn accept_headers(&self) -> &str;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ParseServiceIdError;
+
+impl std::fmt::Display for ParseServiceIdError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("invalid service id; expected 'core' or 'data'")
+    }
+}
+
+impl Error for ParseServiceIdError {}
 
 /// Represents a complete Heroku CLI command specification.
 #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
@@ -77,9 +131,9 @@ pub struct CommandSpec {
     /// "updated_at"])
     #[serde(default)]
     pub ranges: Vec<String>,
-    /// Provider bindings inferred for flags and positional arguments
+    /// endpoint
     #[serde(default)]
-    pub providers: Vec<ProviderBinding>,
+    pub service_id: ServiceId,
 }
 
 /// Represents a positional argument for a command, including its name and help
@@ -91,6 +145,9 @@ pub struct PositionalArgument {
     /// Optional help/description for this positional argument
     #[serde(default)]
     pub help: Option<String>,
+    /// Optional ValueProvider that supplies dynamic values for this positional.
+    #[serde(default)]
+    pub provider: Option<ValueProvider>,
 }
 
 /// Represents a single input field for a command parameter.

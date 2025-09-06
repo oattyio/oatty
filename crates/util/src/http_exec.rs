@@ -6,9 +6,10 @@
 
 use crate::http;
 use heroku_api::HerokuClient;
-use heroku_registry::CommandSpec;
+use heroku_types::CommandSpec;
 use heroku_types::ExecOutcome;
 use reqwest::header::{CONTENT_RANGE, HeaderMap, HeaderName};
+use reqwest::Method;
 use serde_json::{Map as JsonMap, Value};
 
 /// Perform an asynchronous REST API call against the Heroku platform.
@@ -17,16 +18,16 @@ use serde_json::{Map as JsonMap, Value};
 /// - Applies Range headers from the body when present.
 /// - Sends the request and parses the response into [`ExecOutcome`].
 /// - Returns a user-friendly `Err(String)` on HTTP/auth/network issues.
-pub async fn exec_remote(spec: CommandSpec, path: String, body: JsonMap<String, Value>) -> Result<ExecOutcome, String> {
-    let client = HerokuClient::new_from_env().map_err(|e| {
+pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>) -> Result<ExecOutcome, String> {
+    let client = HerokuClient::new_from_service_id(spec.service_id).map_err(|e| {
         format!(
             "Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc",
             e
         )
     })?;
 
-    let method = parse_http_method(&spec.method)?;
-    let mut builder = client.request(method, &path);
+    let method = Method::from_bytes(&spec.method.as_bytes()).map_err(|e| e.to_string())?;
+    let mut builder = client.request(method, &spec.path);
 
     // Build and apply Range header
     builder = apply_range_headers(builder, &body);
@@ -78,20 +79,24 @@ pub async fn exec_remote(spec: CommandSpec, path: String, body: JsonMap<String, 
 ///
 /// Returns Ok(Vec<Value>) when the response body parses to a JSON array.
 /// On error or non-array response, returns Err with a user-friendly message.
-pub async fn fetch_json_array(path: &str) -> Result<Vec<Value>, String> {
-    let client = HerokuClient::new_from_env().map_err(|e| {
+pub async fn fetch_json_array(spec: &CommandSpec) -> Result<Vec<Value>, String> {
+    let client = HerokuClient::new_from_service_id(spec.service_id).map_err(|e| {
         format!(
             "Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc",
             e
         )
     })?;
 
-    let resp = client.request(reqwest::Method::GET, path).send().await.map_err(|e| {
-        format!(
-            "Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY or ~/.netrc is set",
-            e
-        )
-    })?;
+    let resp = client
+        .request(reqwest::Method::GET, &spec.path)
+        .send()
+        .await
+        .map_err(|e| {
+            format!(
+                "Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY or ~/.netrc is set",
+                e
+            )
+        })?;
 
     let status = resp.status();
     let text = resp.text().await.unwrap_or_else(|_| String::from("<no body>"));
@@ -104,16 +109,6 @@ pub async fn fetch_json_array(path: &str) -> Result<Vec<Value>, String> {
         Ok(Value::Array(arr)) => Ok(arr),
         Ok(_) => Err("Response is not a JSON array".into()),
         Err(e) => Err(format!("Invalid JSON: {}", e)),
-    }
-}
-
-fn parse_http_method(method_str: &str) -> Result<reqwest::Method, String> {
-    match method_str.to_uppercase().as_str() {
-        "GET" => Ok(reqwest::Method::GET),
-        "POST" => Ok(reqwest::Method::POST),
-        "DELETE" => Ok(reqwest::Method::DELETE),
-        "PATCH" => Ok(reqwest::Method::PATCH),
-        other => Err(format!("unsupported method: {}", other)),
     }
 }
 
