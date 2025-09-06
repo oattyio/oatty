@@ -7,7 +7,6 @@
 use std::vec;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use heroku_util::lex_shell_like_ranged;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -155,64 +154,14 @@ impl PaletteComponent {
     /// # Returns
     ///
     /// The suggestions list widget
-    fn create_suggestions_list(&'_ self, app: &app::App, theme: &dyn Theme) -> List<'_> {
-        let current_token = Self::get_current_token(app.palette.input(), app.palette.selected_cursor_position());
-        let needle = current_token.trim();
-
-        let items_all: Vec<ListItem> = app
-            .palette
-            .suggestions()
-            .iter()
-            .map(|s| {
-                let display = s.display.clone();
-                if needle.is_empty() {
-                    return ListItem::new(Line::from(Span::styled(display, theme.text_primary_style())));
-                }
-
-                let mut spans: Vec<Span> = Vec::new();
-                let hay = display.as_str();
-                let mut i = 0usize;
-                let needle_lower = needle.to_ascii_lowercase();
-                let hay_lower = hay.to_ascii_lowercase();
-
-                // Find and highlight all matches
-                while let Some(pos) = hay_lower[i..].find(&needle_lower) {
-                    let start = i + pos;
-
-                    // Add text before the match
-                    if start > i {
-                        spans.push(Span::styled(hay[i..start].to_string(), theme.text_primary_style()));
-                    }
-
-                    // Add highlighted match
-                    let end = start + needle.len();
-                    spans.push(Span::styled(
-                        hay[start..end].to_string(),
-                        theme.accent_emphasis_style().add_modifier(Modifier::BOLD),
-                    ));
-
-                    i = end;
-                    if i >= hay.len() {
-                        break;
-                    }
-                }
-
-                // Add remaining text after last match
-                if i < hay.len() {
-                    spans.push(Span::styled(hay[i..].to_string(), theme.text_primary_style()));
-                }
-
-                ListItem::new(Line::from(spans))
-            })
-            .collect();
-
+    fn create_suggestions_list<'a>(&'_ self, app: &'a app::App, theme: &dyn Theme) -> List<'a> {
         // Create popup with border
         let popup_block = Block::default()
             .borders(Borders::TOP)
             .border_style(Style::default().fg(theme.roles().focus))
             .border_type(BorderType::Plain);
 
-        List::new(items_all)
+        List::new(app.palette.rendered_suggestions().to_vec())
             .block(popup_block)
             .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
             .style(th::panel_style(theme))
@@ -286,30 +235,6 @@ impl PaletteComponent {
         frame.set_cursor_position((x, y));
     }
 
-    /// Extracts the current token at the cursor position for suggestion
-    /// matching.
-    ///
-    /// This function parses the input string to find the token that contains
-    /// the current cursor position, which is used for highlighting matches
-    /// in the suggestion list.
-    ///
-    /// # Arguments
-    ///
-    /// * `input` - The current input string
-    /// * `cursor_position` - The current cursor position
-    ///
-    /// # Returns
-    ///
-    /// The current token text, trimmed of whitespace
-    fn get_current_token(input: &str, cursor_position: usize) -> String {
-        let tokens = lex_shell_like_ranged(input);
-        let token = tokens
-            .iter()
-            .find(|t| t.start <= cursor_position && cursor_position <= t.end)
-            .or_else(|| tokens.last());
-
-        token.map(|t| t.text.to_string()).unwrap_or_default()
-    }
 
     /// Handles character input in the command palette.
     ///
@@ -342,7 +267,7 @@ impl PaletteComponent {
         let SharedCtx {
             registry, providers, ..
         } = &app.ctx;
-        app.palette.apply_build_suggestions(registry, providers);
+        app.palette.apply_build_suggestions(registry, providers, &*app.ctx.theme);
         let spec = app.palette.selected_command();
         if spec.is_some() {
             app.help.set_spec(spec.cloned());
@@ -424,7 +349,7 @@ impl PaletteComponent {
         let SharedCtx {
             registry, providers, ..
         } = &app.ctx;
-        app.palette.apply_build_suggestions(registry, providers);
+        app.palette.apply_build_suggestions(registry, providers, &*app.ctx.theme);
         app.palette.set_is_suggestions_open(app.palette.suggestions_len() > 0);
     }
 
@@ -456,7 +381,7 @@ impl PaletteComponent {
                     registry, providers, ..
                 } = &app.ctx;
                 // Rebuild suggestions after accepting
-                app.palette.apply_build_suggestions(registry, providers);
+                app.palette.apply_build_suggestions(registry, providers, &*app.ctx.theme);
                 app.palette.set_selected(0);
 
                 // Close popup after accepting

@@ -85,7 +85,7 @@ pub struct SuggestionItem {
 ///
 /// This struct manages the current state of the command palette including
 /// input text, cursor position, suggestions, and error states.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct PaletteState {
     /// Focus flag for rat-focus integration
     pub focus: FocusFlag,
@@ -103,6 +103,8 @@ pub struct PaletteState {
     suggestion_index: usize,
     /// List of current suggestions
     suggestions: Vec<SuggestionItem>,
+    /// Pre-rendered suggestion list items for efficient display
+    rendered_suggestions: Vec<ratatui::widgets::ListItem<'static>>,
     /// Optional error message to display
     error_message: Option<String>,
 
@@ -115,6 +117,27 @@ pub struct PaletteState {
     history_index: Option<usize>,
     /// Draft input captured when entering history browse mode, restored when exiting
     draft_input: Option<String>,
+}
+
+impl Default for PaletteState {
+    fn default() -> Self {
+        Self {
+            focus: FocusFlag::default(),
+            all_commands: Arc::from([]),
+            input: String::new(),
+            cursor_position: 0,
+            ghost_text: None,
+            is_suggestions_open: false,
+            suggestion_index: 0,
+            suggestions: Vec::new(),
+            rendered_suggestions: Vec::new(),
+            error_message: None,
+            provider_loading: false,
+            history: Vec::new(),
+            history_index: None,
+            draft_input: None,
+        }
+    }
 }
 
 impl PaletteState {
@@ -227,6 +250,11 @@ impl PaletteState {
         self.is_suggestions_open
     }
 
+    /// Get the current rendered suggestions list
+    pub fn rendered_suggestions(&self) -> &[ratatui::widgets::ListItem<'static>] {
+        &self.rendered_suggestions
+    }
+
     // ===== REDUCERS =====
 
     /// Clear all palette state and reset to defaults
@@ -234,6 +262,7 @@ impl PaletteState {
         self.input.clear();
         self.cursor_position = 0;
         self.suggestions.clear();
+        self.rendered_suggestions.clear();
         self.is_suggestions_open = false;
         self.error_message = None;
         self.ghost_text = None;
@@ -289,6 +318,7 @@ impl PaletteState {
     /// Apply suggestions and update popup state
     pub fn apply_suggestions(&mut self, suggestions: Vec<SuggestionItem>) {
         self.suggestions = suggestions;
+        self.rendered_suggestions.clear();
         self.suggestion_index = self.suggestion_index.min(self.suggestions.len().saturating_sub(1));
         self.is_suggestions_open = !self.suggestions.is_empty();
         self.apply_ghost_text();
@@ -297,6 +327,7 @@ impl PaletteState {
     /// Clear all suggestions and close popup
     pub fn reduce_clear_suggestions(&mut self) {
         self.suggestions.clear();
+        self.rendered_suggestions.clear();
         self.is_suggestions_open = false;
         self.suggestion_index = 0;
         self.ghost_text = None;
@@ -441,14 +472,77 @@ impl PaletteState {
 
     /// Finalize suggestion list for the UI: rank, truncate, ghost text, and
     /// state flags.
-    fn finalize_suggestions(&mut self, items: &mut Vec<SuggestionItem>) {
+    fn finalize_suggestions(&mut self, items: &mut Vec<SuggestionItem>, theme: &dyn crate::ui::theme::Theme) {
+        use ratatui::text::{Line, Span};
+        use ratatui::style::Modifier;
+        use ratatui::widgets::ListItem;
+
         items.sort_by(|a, b| b.score.cmp(&a.score));
         if items.len() > MAX_SUGGESTIONS {
             items.truncate(MAX_SUGGESTIONS);
         }
-        self.suggestion_index = self.suggestion_index.min(self.suggestions.len().saturating_sub(1));
+        self.suggestion_index = self.suggestion_index.min(items.len().saturating_sub(1));
         self.suggestions = items.clone();
         self.is_suggestions_open = !self.suggestions.is_empty();
+
+        let current_token = get_current_token(&self.input, self.cursor_position);
+        let needle = current_token.trim();
+
+        self.rendered_suggestions = self
+            .suggestions
+            .iter()
+            .map(|s| {
+                let display = s.display.clone();
+                if needle.is_empty() {
+                    return ListItem::new(Line::from(Span::styled(
+                        display,
+                        theme.text_primary_style(),
+                    )));
+                }
+
+                let mut spans: Vec<Span> = Vec::new();
+                let hay = display.as_str();
+                let mut i = 0usize;
+                let needle_lower = needle.to_ascii_lowercase();
+                let hay_lower = hay.to_ascii_lowercase();
+
+                // Find and highlight all matches
+                while let Some(pos) = hay_lower[i..].find(&needle_lower) {
+                    let start = i + pos;
+
+                    // Add text before the match
+                    if start > i {
+                        spans.push(Span::styled(
+                            hay[i..start].to_string(),
+                            theme.text_primary_style(),
+                        ));
+                    }
+
+                    // Add highlighted match
+                    let end = start + needle.len();
+                    spans.push(Span::styled(
+                        hay[start..end].to_string(),
+                        theme.accent_emphasis_style().add_modifier(Modifier::BOLD),
+                    ));
+
+                    i = end;
+                    if i >= hay.len() {
+                        break;
+                    }
+                }
+
+                // Add remaining text after last match
+                if i < hay.len() {
+                    spans.push(Span::styled(
+                        hay[i..].to_string(),
+                        theme.text_primary_style(),
+                    ));
+                }
+
+                ListItem::new(Line::from(spans))
+            })
+            .collect();
+
         self.apply_ghost_text();
     }
 
@@ -773,7 +867,7 @@ impl PaletteState {
     /// st.apply_build_suggestions(&Registry::from_embedded_schema().unwrap(), &[]);
     /// assert!(!st.selected_suggestions().is_empty());
     /// ```
-    pub fn apply_build_suggestions(&mut self, reg: &Registry, providers: &[Box<dyn ValueProvider>]) {
+    pub fn apply_build_suggestions(&mut self, reg: &Registry, providers: &[Box<dyn ValueProvider>], theme: &dyn crate::ui::theme::Theme) {
         let result = super::suggest::SuggestionEngine::build(reg, providers, &self.input);
         let mut items = result.items;
         self.provider_loading = result.provider_loading;
@@ -801,7 +895,7 @@ impl PaletteState {
             }
         }
 
-        self.finalize_suggestions(&mut items);
+        self.finalize_suggestions(&mut items, theme);
         // Preserve run hint ghost when suggestions are empty
         if self.suggestions.is_empty() && self.ghost_text.is_none() {
             let tokens: Vec<String> = lex_shell_like(&self.input);
@@ -1009,6 +1103,16 @@ impl ValueProvider for StaticValuesProvider {
 // assert!(!is_flag_value_complete("--app my"));
 // assert!(is_flag_value_complete("--app my "));
 // ```
+fn get_current_token(input: &str, cursor_position: usize) -> String {
+    let tokens = lex_shell_like_ranged(input);
+    let token = tokens
+        .iter()
+        .find(|t| t.start <= cursor_position && cursor_position <= t.end)
+        .or_else(|| tokens.last());
+
+    token.map(|t| t.text.to_string()).unwrap_or_default()
+}
+
 // is_flag_value_complete is implemented in suggest.rs and re-exported above
 
 // Collect candidate flag suggestions for a command specification.

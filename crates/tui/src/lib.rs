@@ -452,9 +452,11 @@ fn handle_builder_enter(application: &mut app::App) {
         let command_line = build_palette_line_from_spec(command_spec, application.builder.input_fields());
         application.palette.set_input(command_line);
         application.palette.set_cursor(application.palette.input().len());
-        application
-            .palette
-            .apply_build_suggestions(&application.ctx.registry, &application.ctx.providers);
+        application.palette.apply_build_suggestions(
+            &application.ctx.registry,
+            &application.ctx.providers,
+            &*application.ctx.theme,
+        );
     }
     application.builder.apply_visibility(false);
 }

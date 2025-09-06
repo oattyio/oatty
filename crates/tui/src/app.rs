@@ -271,7 +271,7 @@ impl App<'_> {
                     let SharedCtx {
                         registry, providers, ..
                     } = &self.ctx;
-                    self.palette.apply_build_suggestions(registry, providers);
+                    self.palette.apply_build_suggestions(registry, providers, &*self.ctx.theme);
                 }
             }
             Msg::Resize(..) => {
