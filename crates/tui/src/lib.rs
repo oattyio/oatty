@@ -135,7 +135,7 @@ fn parse_command_arguments(
                         }
                     }
                 } else {
-            return Err(format!("Unknown flag: '--{}'. You can view available flags for this command with the --help flag.", flag_name));
+            return Err(format!("Unknown flag: '--{}'. You can view available flags for this command with ctrl+h.", flag_name));
                 }
             }
         } else {
@@ -181,7 +181,7 @@ fn validate_command_arguments(
             .map(|arg| arg.name.to_string())
             .collect();
         return Err(format!(
-            "Missing required argument(s): {}. You can view required arguments for this command with the --help flag.",
+            "Missing required argument(s): {}. You can view required arguments for this command with ctrl+h.",
             missing_arguments.join(", ")
         ));
     }
@@ -191,13 +191,13 @@ fn validate_command_arguments(
         if flag_spec.required {
             if flag_spec.r#type == "boolean" {
                 if !user_flags.contains_key(&flag_spec.name) {
-                    return Err(format!("Missing required flag: --{}. You can view required flags for this command with the --help flag.", flag_spec.name));
+                    return Err(format!("Missing required flag: --{}. You can view required flags for this command with ctrl+h.", flag_spec.name));
                 }
             } else {
                 match user_flags.get(&flag_spec.name) {
                     Some(Some(value)) if !value.is_empty() => {}
                     _ => {
-                        return Err(format!("The '--{}' flag requires a value. You can view required flags and their values for this command with the --help flag.", flag_spec.name));
+                        return Err(format!("The '--{}' flag requires a value. You can view required flags and their values for this command with ctrl+h.", flag_spec.name));
                     }
                 }
             }

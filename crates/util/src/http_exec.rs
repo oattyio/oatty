@@ -101,7 +101,7 @@ pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>) -> Re
     }
 
     let log = if status.is_success() {
-        format!("{}\n{}", status, text)
+        format!("Success (Status: {})", status)
     } else {
         format_error_response(status, &text)
     };
