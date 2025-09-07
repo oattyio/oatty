@@ -6,11 +6,32 @@
 
 use crate::http;
 use heroku_api::HerokuClient;
+use serde::Deserialize;
 use heroku_types::CommandSpec;
 use heroku_types::ExecOutcome;
 use reqwest::Method;
 use reqwest::header::{CONTENT_RANGE, HeaderMap, HeaderName};
 use serde_json::{Map as JsonMap, Value};
+
+#[derive(Deserialize)]
+struct HerokuApiError {
+    message: String,
+    id: Option<String>,
+    url: Option<String>,
+}
+
+fn format_error_response(status: reqwest::StatusCode, text: &str) -> String {
+    if let Ok(api_error) = serde_json::from_str::<HerokuApiError>(text) {
+        let mut error_message = format!("Error: {}", api_error.message);
+        if let Some(url) = api_error.url {
+            error_message.push_str(&format!("\nSee {} for more information.", url));
+        }
+        error_message
+    } else {
+        // Fallback for non-JSON errors or different structures
+        format!("Request failed with status: {}\n{}", status, text)
+    }
+}
 
 /// Perform an asynchronous REST API call against the Heroku platform.
 ///
@@ -21,7 +42,7 @@ use serde_json::{Map as JsonMap, Value};
 pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>) -> Result<ExecOutcome, String> {
     let client = HerokuClient::new_from_service_id(spec.service_id).map_err(|e| {
         format!(
-            "Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc",
+            "Authentication failed: {}. You can authenticate by setting the `HEROKU_API_KEY` environment variable or by creating a `~/.netrc` file.",
             e
         )
     })?;
@@ -55,7 +76,7 @@ pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>) -> Re
 
     let resp = builder.send().await.map_err(|e| {
         format!(
-            "Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY or ~/.netrc is set",
+            "Could not connect to the Heroku API: {}. Check your network connection and proxy settings.",
             e
         )
     })?;
@@ -79,7 +100,11 @@ pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>) -> Re
         return Err(error_msg);
     }
 
-    let log = format!("{}\n{}", status, text);
+    let log = if status.is_success() {
+        format!("{}\n{}", status, text)
+    } else {
+        format_error_response(status, &text)
+    };
     let (result_json, open_table) = http::parse_response_json(&text);
 
     Ok(ExecOutcome {
@@ -97,7 +122,7 @@ pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>) -> Re
 pub async fn fetch_json_array(spec: &CommandSpec) -> Result<Vec<Value>, String> {
     let client = HerokuClient::new_from_service_id(spec.service_id).map_err(|e| {
         format!(
-            "Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc",
+            "Authentication failed: {}. You can authenticate by setting the `HEROKU_API_KEY` environment variable or by creating a `~/.netrc` file.",
             e
         )
     })?;
@@ -108,7 +133,7 @@ pub async fn fetch_json_array(spec: &CommandSpec) -> Result<Vec<Value>, String> 
         .await
         .map_err(|e| {
             format!(
-                "Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY or ~/.netrc is set",
+                "Could not connect to the Heroku API: {}. Check your network connection and proxy settings.",
                 e
             )
         })?;
@@ -117,13 +142,13 @@ pub async fn fetch_json_array(spec: &CommandSpec) -> Result<Vec<Value>, String> 
     let text = resp.text().await.unwrap_or_else(|_| String::from("<no body>"));
 
     if !status.is_success() {
-        return Err(format!("{}\n{}", status, text));
+        return Err(format_error_response(status, &text));
     }
 
     match serde_json::from_str::<Value>(&text) {
         Ok(Value::Array(arr)) => Ok(arr),
-        Ok(_) => Err("Response is not a JSON array".into()),
-        Err(e) => Err(format!("Invalid JSON: {}", e)),
+        Ok(_) => Err("The Heroku API returned an unexpected response. Expected a list of items.".into()),
+        Err(e) => Err(format!("The Heroku API returned an invalid response: {}", e)),
     }
 }
 

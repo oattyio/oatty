@@ -131,11 +131,11 @@ fn parse_command_arguments(
                             user_flags.insert(flag_name.to_string(), Some(argument_tokens[index + 1].to_string()));
                             index += 1; // Skip the value token
                         } else {
-                            return Err(format!("Flag '--{}' requires a value", flag_name));
+                    return Err(format!("The '--{}' flag requires a value. For example: --{} <value>", flag_name, flag_name));
                         }
                     }
                 } else {
-                    return Err(format!("Unknown flag '--{}'", flag_name));
+            return Err(format!("Unknown flag: '--{}'. You can view available flags for this command with the --help flag.", flag_name));
                 }
             }
         } else {
@@ -181,7 +181,7 @@ fn validate_command_arguments(
             .map(|arg| arg.name.to_string())
             .collect();
         return Err(format!(
-            "Missing required argument(s): {}",
+            "Missing required argument(s): {}. You can view required arguments for this command with the --help flag.",
             missing_arguments.join(", ")
         ));
     }
@@ -191,13 +191,13 @@ fn validate_command_arguments(
         if flag_spec.required {
             if flag_spec.r#type == "boolean" {
                 if !user_flags.contains_key(&flag_spec.name) {
-                    return Err(format!("Missing required flag: --{}", flag_spec.name));
+                    return Err(format!("Missing required flag: --{}. You can view required flags for this command with the --help flag.", flag_spec.name));
                 }
             } else {
                 match user_flags.get(&flag_spec.name) {
                     Some(Some(value)) if !value.is_empty() => {}
                     _ => {
-                        return Err(format!("Missing required flag value: --{} <value>", flag_spec.name));
+                        return Err(format!("The '--{}' flag requires a value. You can view required flags and their values for this command with the --help flag.", flag_spec.name));
                     }
                 }
             }
@@ -284,14 +284,13 @@ pub fn start_palette_execution(application: &mut app::App) -> Result<CommandSpec
     let input_owned = application.palette.input().to_string();
     let input = input_owned.trim().to_string();
     if input.is_empty() {
-        return Err("Empty command input. Type a command (e.g., apps info)".into());
+        return Err("Enter a command to get started. For example: apps info".into());
     }
     // Tokenize the input using shell-like parsing for consistent behavior
     let tokens = lex_shell_like(&input);
     if tokens.len() < 2 {
         return Err(format!(
-            "Incomplete command '{}'. Use '<group> <sub>' format (e.g., apps info)",
-            input
+            "Incomplete command. Use the '<group> <subcommand>' format. For example: apps info"
         ));
     }
 
@@ -305,7 +304,7 @@ pub fn start_palette_execution(application: &mut app::App) -> Result<CommandSpec
         .cloned()
         .ok_or_else(|| {
             format!(
-                "Unknown command '{} {}'. Check available commands with help.",
+                "Unknown command: '{} {}'. You can view a list of available commands by typing 'help'.",
                 tokens[0], tokens[1]
             )
         })?;

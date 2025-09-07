@@ -189,21 +189,21 @@ pub fn build_range_header_from_body(body: &Map<String, Value>) -> Option<String>
 /// use heroku_util::http::status_error_message;
 ///
 /// let error_401 = status_error_message(401).unwrap();
+/// assert!(error_401.contains("Authentication failed"));
 /// assert!(error_401.contains("HEROKU_API_KEY"));
-/// assert!(error_401.contains("Unauthorized"));
 ///
 /// let error_403 = status_error_message(403).unwrap();
-/// assert!(error_403.contains("Forbidden"));
-/// assert!(error_403.contains("team/app access"));
+/// assert!(error_403.contains("Permission denied"));
+/// assert!(error_403.contains("team permissions"));
 ///
 /// assert!(status_error_message(404).is_none());
 /// ```
 pub fn status_error_message(status_code: u16) -> Option<String> {
     match status_code {
         401 => Some(
-            "Unauthorized (401). Hint: set HEROKU_API_KEY=... or configure ~/.netrc with machine api.heroku.com".into(),
+            "Authentication failed. You can authenticate by setting the `HEROKU_API_KEY` environment variable or by creating a `~/.netrc` file.".into(),
         ),
-        403 => Some("Forbidden (403). Hint: check team/app access, permissions, and role membership".into()),
+        403 => Some("Permission denied. Please check your app and team permissions to ensure you have the necessary access.".into()),
         _ => None,
     }
 }
