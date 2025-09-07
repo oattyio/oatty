@@ -6,6 +6,7 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use heroku_types::Pagination;
 use heroku_util::format_date_mmddyyyy;
+use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -17,6 +18,7 @@ use serde_json::Value;
 
 use crate::{
     app,
+    app::Effect,
     ui::{
         components::{PaginationComponent, component::Component, table::TableFooter},
         theme::{helpers as th, roles::Theme as UiTheme},
@@ -261,7 +263,9 @@ impl Component for TableComponent<'_> {
     /// Applies local state updates directly to `app.table` for scrolling and
     /// navigation. Returns `Ok(true)` if the key was handled by the table,
     /// otherwise `Ok(false)`.
-    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Option<app::Msg> {
+    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
+        let mut effects: Vec<Effect> = vec![];
+
         // Keep pagination focus in sync with enabled state
         self.pagination.normalize_focus();
 
@@ -271,34 +275,77 @@ impl Component for TableComponent<'_> {
         let focus_on_pagination = p.nav_first_f.get() || p.nav_prev_f.get() || p.nav_next_f.get() || p.nav_last_f.get();
         // Let table handle Tab/BackTab to cycle grid <-> pagination; otherwise delegate
         if !focus_on_grid && focus_on_pagination && key.code != KeyCode::Tab && key.code != KeyCode::BackTab {
-            // This is tricky, pagination handler returns Vec<Effect>
-            // We need to convert them to Msgs or handle them differently.
-            // For now, let's assume it returns messages.
-            // return self.pagination.handle_key_events(app, key);
-            return None;
+            effects.extend(self.pagination.handle_key_events(app, key));
+            return effects;
         }
 
         match key.code {
-            KeyCode::Tab => Some(app::Msg::TableFocusNext),
-            KeyCode::BackTab => Some(app::Msg::TableFocusPrev),
-            KeyCode::Up => Some(app::Msg::TableScroll(-1)),
-            KeyCode::Down => Some(app::Msg::TableScroll(1)),
+            KeyCode::Tab | KeyCode::BackTab => {
+                // Cycle grid + pagination subcontrols
+                let p = self.pagination.state();
+                let mut b = rat_focus::FocusBuilder::new(None);
+                b.widget(&PanelLeaf(app.table.grid_f.clone()));
+                // Only include enabled nav buttons
+                if p.has_prev_page() {
+                    b.widget(&PanelLeaf(p.nav_first_f.clone()));
+                    b.widget(&PanelLeaf(p.nav_prev_f.clone()));
+                }
+                if p.has_next_page() {
+                    b.widget(&PanelLeaf(p.nav_next_f.clone()));
+                    b.widget(&PanelLeaf(p.nav_last_f.clone()));
+                }
+                let f = b.build();
+                if key.code == KeyCode::Tab {
+                    let _ = f.next();
+                } else {
+                    let _ = f.prev();
+                }
+            }
+            KeyCode::Up => {
+                app.table.reduce_scroll(-1);
+            }
+            KeyCode::Down => {
+                app.table.reduce_scroll(1);
+            }
             KeyCode::PageUp => {
                 let step = app.table.visible_rows().saturating_sub(1);
                 let step = if step == 0 { 10 } else { step } as isize;
-                Some(app::Msg::TableScroll(-step))
+                app.table.reduce_scroll(-step);
             }
             KeyCode::PageDown => {
                 let step = app.table.visible_rows().saturating_sub(1);
                 let step = if step == 0 { 10 } else { step } as isize;
-                Some(app::Msg::TableScroll(step))
+                app.table.reduce_scroll(step);
             }
-            KeyCode::Home => Some(app::Msg::TableHome),
-            KeyCode::End => Some(app::Msg::TableEnd),
-            KeyCode::Char('t') => Some(app::Msg::ToggleTable),
-            KeyCode::Char('c') => Some(app::Msg::CopyCommand),
-            _ => None,
+            KeyCode::Home => {
+                app.table.reduce_home();
+            }
+            KeyCode::End => {
+                app.table.reduce_end();
+            }
+            // Toggle handled via App message; keep consistent with global actions
+            KeyCode::Char('t') => {
+                let _ = app.update(app::Msg::ToggleTable);
+            }
+            KeyCode::Char('c') => {
+                effects.extend(app.update(app::Msg::CopyCommand));
+            }
+            _ => {}
         }
+        effects
     }
 }
 
+// Local leaf wrapper used for table grid and pagination focus items
+struct PanelLeaf(FocusFlag);
+impl HasFocus for PanelLeaf {
+    fn build(&self, builder: &mut FocusBuilder) {
+        builder.leaf_widget(self);
+    }
+    fn focus(&self) -> FocusFlag {
+        self.0.clone()
+    }
+    fn area(&self) -> ratatui::layout::Rect {
+        ratatui::layout::Rect::default()
+    }
+}

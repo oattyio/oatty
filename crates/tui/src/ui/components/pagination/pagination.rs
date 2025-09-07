@@ -340,6 +340,45 @@ impl PaginationComponent {
 
     // Removed: interactive range field navigation (no longer applicable)
 
+    /// Handles navigation button actions.
+    ///
+    /// Processes left/right arrow keys and home/end keys for
+    /// page navigation when the navigation area has focus.
+    ///
+    /// # Arguments
+    /// * `event` - The key event that triggered the navigation
+    fn handle_navigation_actions(&mut self, event: &KeyEvent) -> Option<crate::app::Effect> {
+        match event.code {
+            KeyCode::Left => {
+                if self.state.has_prev_page() {
+                    self.state.prev_page();
+                    Some(crate::app::Effect::PrevPageRequested)
+                } else {
+                    None
+                }
+            }
+            KeyCode::Right | KeyCode::End => {
+                // Use Raw Next-Range header to request the next page when available
+                if self.state.has_next_page() {
+                    self.state.next_range.clone().map(|next_range| {
+                        self.state.current_page = self.state.current_page.saturating_add(1);
+                        crate::app::Effect::NextPageRequested(next_range)
+                    })
+                } else {
+                    None
+                }
+            }
+            KeyCode::Home => {
+                if self.state.has_prev_page() {
+                    self.state.first_page();
+                    Some(crate::app::Effect::FirstPageRequested)
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
 
     // Removed: text input handling for range values (now display-only)
 }
@@ -392,29 +431,44 @@ impl Component for PaginationComponent {
     ///
     /// # Returns
     /// Vector of effects to be processed by the application
-    fn handle_key_events(&mut self, _app: &mut crate::app::App, event: KeyEvent) -> Option<crate::app::Msg> {
+    fn handle_key_events(&mut self, _app: &mut crate::app::App, event: KeyEvent) -> Vec<crate::app::Effect> {
         if !self.state.is_visible {
-            return None;
+            return vec![];
         }
 
         match event.code {
+            KeyCode::Tab | KeyCode::BackTab => { /* Tab handled at table level */ }
+            KeyCode::Left | KeyCode::Right | KeyCode::Home | KeyCode::End => {
+                if (self.state.nav_first_f.get()
+                    || self.state.nav_prev_f.get()
+                    || self.state.nav_next_f.get()
+                    || self.state.nav_last_f.get())
+                    && let Some(effect) = self.handle_navigation_actions(&event)
+                {
+                    return vec![effect];
+                }
+            }
             KeyCode::Enter => {
-                if self.state.nav_first_f.get() {
-                    return Some(crate::app::Msg::PaginationFirst);
+                // Activate the focused nav button
+                if self.state.nav_first_f.get() && self.state.has_prev_page() {
+                    self.state.first_page();
+                    return vec![crate::app::Effect::FirstPageRequested];
                 }
-                if self.state.nav_prev_f.get() {
-                    return Some(crate::app::Msg::PaginationPrev);
+                if self.state.nav_prev_f.get() && self.state.has_prev_page() {
+                    self.state.prev_page();
+                    return vec![crate::app::Effect::PrevPageRequested];
                 }
-                if self.state.nav_next_f.get() {
-                    return Some(crate::app::Msg::PaginationNext);
-                }
-                if self.state.nav_last_f.get() {
-                    return Some(crate::app::Msg::PaginationLast);
+                if (self.state.nav_next_f.get() || self.state.nav_last_f.get())
+                    && self.state.has_next_page()
+                    && let Some(next_range) = self.state.next_range.clone()
+                {
+                    self.state.current_page = self.state.current_page.saturating_add(1);
+                    return vec![crate::app::Effect::NextPageRequested(next_range)];
                 }
             }
             _ => {}
         }
 
-        None
+        vec![]
     }
 }

@@ -98,6 +98,100 @@ impl BuilderComponent {
         Self
     }
 
+    /// Handle global shortcuts that work across all panels.
+    fn handle_global_shortcuts(&self, key: KeyEvent) -> Option<app::Msg> {
+        match key.code {
+            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(app::Msg::ToggleBuilder),
+            KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(app::Msg::ToggleHelp),
+            KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(app::Msg::ToggleTable),
+            KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(app::Msg::CopyCommand),
+            _ => None,
+        }
+    }
+
+    /// Handle key events specific to the search panel.
+    ///
+    /// Applies local state updates directly to `app.builder`.
+    fn handle_search_keys(&self, app: &mut app::App, key: KeyEvent) {
+        match key.code {
+            KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+                app.builder.search_input_push(c);
+            }
+            KeyCode::Backspace => app.builder.search_input_pop(),
+            KeyCode::Esc => app.builder.search_input_clear(),
+            KeyCode::Tab | KeyCode::BackTab => {
+                let focus_ring = app.builder.focus_ring();
+                if key.code == KeyCode::Tab {
+                    focus_ring.next();
+                } else {
+                    focus_ring.prev();
+                };
+            }
+            KeyCode::Down => app.builder.move_selection(1),
+            KeyCode::Up => app.builder.move_selection(-1),
+            KeyCode::Enter => {
+                app.builder.apply_enter();
+                // move focus to inputs via rat-focus ring
+                app.builder.inputs_flag.set(true);
+                app.builder.search_flag.set(false);
+                app.builder.commands_flag.set(false);
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle key events specific to the commands panel.
+    ///
+    /// Applies local state updates directly to `app.builder`.
+    fn handle_commands_keys(&self, app: &mut app::App, key: KeyEvent) {
+        match key.code {
+            KeyCode::Down => app.builder.move_selection(1),
+            KeyCode::Up => app.builder.move_selection(-1),
+            KeyCode::Enter => {
+                app.builder.apply_enter();
+                app.builder.inputs_flag.set(true);
+                app.builder.search_flag.set(false);
+                app.builder.commands_flag.set(false);
+            }
+            KeyCode::Tab | KeyCode::BackTab => {
+                let f = app.builder.focus_ring();
+                if key.code == KeyCode::Tab {
+                    let _ = f.next();
+                } else {
+                    let _ = f.prev();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Handle key events specific to the inputs panel.
+    ///
+    /// Applies local state updates directly to `app.builder`.
+    fn handle_inputs_keys(&self, app: &mut app::App, key: KeyEvent) {
+        match key.code {
+            KeyCode::Tab | KeyCode::BackTab => {
+                let f = app.builder.focus_ring();
+                if key.code == KeyCode::Tab {
+                    let _ = f.next();
+                } else {
+                    let _ = f.prev();
+                }
+            }
+            KeyCode::Up => app.builder.reduce_move_field_up(app.ctx.debug_enabled),
+            KeyCode::Down => app.builder.reduce_move_field_down(app.ctx.debug_enabled),
+            // Note: Enter in builder is handled at the top-level input loop to
+            // close the modal and populate the palette; no direct run here.
+            KeyCode::Left => app.builder.reduce_cycle_enum_left(),
+            KeyCode::Right => app.builder.reduce_cycle_enum_right(),
+            KeyCode::Backspace => app.builder.reduce_remove_char_from_field(),
+            KeyCode::Char(' ') => app.builder.reduce_toggle_boolean_field(),
+            KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+                app.builder.reduce_add_char_to_field(c);
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Component for BuilderComponent {
@@ -151,53 +245,25 @@ impl Component for BuilderComponent {
     /// Local/UI state updates are applied directly to `app` here (no App::Msg),
     /// mirroring the palette's local-first handling. Only global actions
     /// escalate via `app.update(..)` to produce side effects.
-    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Option<app::Msg> {
+    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<app::Effect> {
+        let mut effects: Vec<app::Effect> = Vec::new();
+
         // Handle global shortcuts first
-        match key.code {
-            KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => return Some(app::Msg::ToggleHelp),
-            KeyCode::Char('t') if key.modifiers.contains(KeyModifiers::CONTROL) => return Some(app::Msg::ToggleTable),
-            KeyCode::Char('y') if key.modifiers.contains(KeyModifiers::CONTROL) => return Some(app::Msg::CopyCommand),
-            _ => {}
+        if let Some(effect) = self.handle_global_shortcuts(key) {
+            effects.extend(app.update(effect));
+            return effects;
         }
 
-        // Handle focus-specific key events
+        // Handle focus-specific key events (local updates applied in-place)
         if app.builder.search_flag.get() {
-            return match key.code {
-                KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => Some(app::Msg::BuilderSearchInput(c)),
-                KeyCode::Backspace => Some(app::Msg::BuilderSearchBackspace),
-                KeyCode::Esc => Some(app::Msg::BuilderSearchClear),
-                KeyCode::Tab => Some(app::Msg::BuilderCycleFocus),
-                KeyCode::BackTab => Some(app::Msg::BuilderCycleFocusBack),
-                KeyCode::Down => Some(app::Msg::BuilderMoveSelection(1)),
-                KeyCode::Up => Some(app::Msg::BuilderMoveSelection(-1)),
-                KeyCode::Enter => Some(app::Msg::BuilderAccept),
-                _ => None,
-            };
+            self.handle_search_keys(app, key);
         } else if app.builder.commands_flag.get() {
-            return match key.code {
-                KeyCode::Down => Some(app::Msg::BuilderMoveSelection(1)),
-                KeyCode::Up => Some(app::Msg::BuilderMoveSelection(-1)),
-                KeyCode::Enter => Some(app::Msg::BuilderAccept),
-                KeyCode::Tab => Some(app::Msg::BuilderCycleFocus),
-                KeyCode::BackTab => Some(app::Msg::BuilderCycleFocusBack),
-                _ => None,
-            };
+            self.handle_commands_keys(app, key);
         } else if app.builder.inputs_flag.get() {
-            return match key.code {
-                KeyCode::Tab => Some(app::Msg::BuilderCycleFocus),
-                KeyCode::BackTab => Some(app::Msg::BuilderCycleFocusBack),
-                KeyCode::Up => Some(app::Msg::BuilderCycleField(app::Direction::Up)),
-                KeyCode::Down => Some(app::Msg::BuilderCycleField(app::Direction::Down)),
-                KeyCode::Left => Some(app::Msg::BuilderCycleEnum(app::Direction::Left)),
-                KeyCode::Right => Some(app::Msg::BuilderCycleEnum(app::Direction::Right)),
-                KeyCode::Backspace => Some(app::Msg::BuilderFieldBackspace),
-                KeyCode::Char(' ') => Some(app::Msg::BuilderToggleBooleanField),
-                KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => Some(app::Msg::BuilderFieldInput(c)),
-                _ => None,
-            };
+            self.handle_inputs_keys(app, key);
         }
 
-        None
+        effects
     }
 }
 

@@ -16,9 +16,9 @@ use ratatui::{
 };
 
 use crate::{
-    app,
+    app::{self, Effect, SharedCtx},
     ui::{
-        components::component::Component,
+        components::{component::Component, palette::state::ItemKind},
         theme::{Theme, helpers as th},
     },
 };
@@ -236,6 +236,189 @@ impl PaletteComponent {
     }
 
 
+    /// Handles character input in the command palette.
+    ///
+    /// This function processes regular character input (with or without Shift
+    /// modifier) by inserting the character at the current cursor position,
+    /// closing the suggestions popup, and clearing any previous error messages.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    /// * `character` - The character to insert
+    fn handle_character_input(&self, app: &mut app::App, character: char) {
+        app.palette.apply_insert_char(character);
+        app.palette.set_is_suggestions_open(false);
+        app.palette.reduce_clear_error();
+    }
+
+    /// Handles the Ctrl+H key combination to open help for the current command.
+    ///
+    /// This function ensures suggestions are up to date, retrieves the
+    /// currently selected command specification, and opens the help modal
+    /// if a valid command is found. The help system provides detailed
+    /// information about command usage, flags, and examples.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    fn handle_help_request(&self, app: &mut app::App) {
+        // Ensure suggestions are up to date, then fetch effective command
+        let SharedCtx {
+            registry, providers, ..
+        } = &app.ctx;
+        app.palette.apply_build_suggestions(registry, providers, &*app.ctx.theme);
+        let spec = app.palette.selected_command();
+        if spec.is_some() {
+            app.help.set_spec(spec.cloned());
+            let _ = app.update(app::Msg::ToggleHelp);
+        }
+    }
+
+    /// Handles backspace key press in the command palette.
+    ///
+    /// This function removes the character before the current cursor position,
+    /// closes the suggestions popup, and clears any previous error messages.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    fn handle_backspace(&self, app: &mut app::App) {
+        app.palette.reduce_backspace();
+        app.palette.reduce_clear_error();
+        app.palette.apply_suggestions(vec![]);
+    }
+
+    /// Handles left arrow key press to move cursor left.
+    ///
+    /// This function moves the cursor one position to the left within the input
+    /// text, allowing users to navigate and edit their command input.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    fn handle_cursor_left(&self, app: &mut app::App) {
+        app.palette.reduce_move_cursor_left();
+    }
+
+    /// Handles right arrow key press to move cursor right.
+    ///
+    /// This function moves the cursor one position to the right within the
+    /// input text, allowing users to navigate and edit their command input.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    fn handle_cursor_right(&self, app: &mut app::App) {
+        app.palette.reduce_move_cursor_right();
+    }
+
+    /// Handles up/down arrow key presses to navigate through suggestions.
+    ///
+    /// This function allows users to navigate through the suggestion list using
+    /// arrow keys. The selection wraps around at the top and bottom of the list
+    /// for a seamless navigation experience. When a suggestion is selected,
+    /// ghost text is applied to show what the completed command would look
+    /// like.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    /// * `direction` - The direction to navigate (Up or Down)
+    fn handle_suggestion_navigation(&self, app: &mut app::App, direction: KeyCode) {
+        let len = app.palette.suggestions().len();
+        if len > 0 {
+            let selected = app.palette.suggestion_index() as isize;
+            let delta = if direction == KeyCode::Down { 1isize } else { -1isize };
+            // Wrap around using modulus with length as isize
+            let new_selected = (selected + delta).rem_euclid(len as isize) as usize;
+            app.palette.set_selected(new_selected);
+            app.palette.apply_ghost_text();
+        }
+    }
+
+    /// Handles tab keypress to trigger or refresh the suggestions list.
+    ///
+    /// This function triggers building the suggestions list and opens the popup
+    /// if suggestions are available.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    fn handle_tab_press(&self, app: &mut app::App) {
+        let SharedCtx {
+            registry, providers, ..
+        } = &app.ctx;
+        app.palette.apply_build_suggestions(registry, providers, &*app.ctx.theme);
+        app.palette.set_is_suggestions_open(app.palette.suggestions_len() > 0);
+    }
+
+    /// Handles the Enter keypress.
+    fn handle_enter(&self, app: &mut app::App) {
+        // Execute the command
+        if !app.palette.is_suggestions_open() {
+            let _ = app.update(app::Msg::Run);
+        } else {
+            // otherwise, select from the list
+            if let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index()).cloned() {
+                match item.kind {
+                    ItemKind::Command => {
+                        // Replace input with command exec
+                        app.palette.apply_accept_command_suggestion(&item.insert_text);
+                        app.palette.set_is_suggestions_open(false);
+                        app.palette.reduce_clear_suggestions();
+                    }
+                    ItemKind::Positional => {
+                        // Accept positional suggestion
+                        app.palette.apply_accept_positional_suggestion(&item.insert_text);
+                    }
+                    _ => {
+                        // Accept flag or value suggestion
+                        app.palette.apply_accept_non_command_suggestion(&item.insert_text);
+                    }
+                }
+                let SharedCtx {
+                    registry, providers, ..
+                } = &app.ctx;
+                // Rebuild suggestions after accepting
+                app.palette.apply_build_suggestions(registry, providers, &*app.ctx.theme);
+                app.palette.set_selected(0);
+
+                // Close popup after accepting
+                app.palette.set_is_suggestions_open(false);
+            }
+        }
+    }
+
+    /// Handles the Ctrl+F key combination to open the command builder modal.
+    ///
+    /// This function opens the interactive command builder modal, which
+    /// provides a more structured way to build complex commands with guided
+    /// input for flags, arguments, and options.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    fn handle_builder_request(&self, app: &mut app::App) {
+        let _ = app.update(app::Msg::ToggleBuilder);
+    }
+
+    /// Handles the Escape key to clear input and close suggestions.
+    ///
+    /// This function provides a quick way to reset the command palette by
+    /// clearing all input text and closing the suggestions popup. This is
+    /// useful when users want to start over with a fresh command input.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    fn handle_escape(&self, app: &mut app::App) {
+        if app.palette.is_suggestions_open() {
+            app.palette.set_is_suggestions_open(false);
+        } else {
+            app.palette.reduce_clear_all();
+        }
+    }
 }
 
 impl Component for PaletteComponent {
@@ -304,48 +487,98 @@ impl Component for PaletteComponent {
         }
     }
 
-    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Option<app::Msg> {
+    /// Handle key events for the command palette when the builder is not open.
+    ///
+    /// This function processes keyboard input for the command palette, handling
+    /// text input, navigation, suggestion acceptance, and special commands like
+    /// help toggling and builder opening.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    /// * `key` - The key event to process
+    ///
+    /// # Returns
+    ///
+    /// `Vec<Effect>` containing any effects that should be processed
+    ///
+    /// # Key Bindings
+    ///
+    /// - **Character input**: Adds characters to the palette input
+    /// - **Backspace**: Removes the character before the cursor
+    /// - **Arrow keys**: Navigate through suggestions (Up/Down) or move cursor
+    ///   (Left/Right)
+    /// - **Tab**: Trigger the suggestions list
+    /// - **Ctrl+H**: Open help for the current command or top suggestion
+    /// - **Ctrl+F**: Open the command builder modal
+    /// - **Enter**: Execute the current command (if complete) or insert selected suggestion
+    /// - **Escape**: Clear the palette input and close suggestions
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // Example requires constructing full App and Registry; ignored in doctests.
+    /// ```
+    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
+        let effects: Vec<Effect> = vec![];
         match key.code {
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
-                Some(app::Msg::PaletteInput(c))
+                // Handle character input
+                self.handle_character_input(app, c);
             }
             KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // This one is tricky because it needs to build suggestions first.
-                // For now, let's keep it as a special case in the main handler.
-                // A better solution would be a multi-step message.
-                None
+                // Handle help request
+                self.handle_help_request(app);
             }
-            KeyCode::Backspace => Some(app::Msg::PaletteBackspace),
-            KeyCode::Left => Some(app::Msg::PaletteCursorLeft),
-            KeyCode::Right => Some(app::Msg::PaletteCursorRight),
-            KeyCode::Down => {
+            KeyCode::Backspace => {
+                // Handle backspace
+                self.handle_backspace(app);
+            }
+            KeyCode::Left => {
+                // Handle cursor left
+                self.handle_cursor_left(app);
+            }
+            KeyCode::Right => {
+                // Handle cursor right
+                self.handle_cursor_right(app);
+            }
+            KeyCode::Down | KeyCode::Up => {
                 if app.palette.is_suggestions_open() {
-                    Some(app::Msg::PaletteNavigateSuggestions(app::Direction::Down))
+                    // Navigate suggestions when popup is open
+                    self.handle_suggestion_navigation(app, key.code);
                 } else {
-                    Some(app::Msg::PaletteNavigateHistory(app::Direction::Down))
+                    // Navigate command history when popup is closed
+                    let changed = if key.code == KeyCode::Up {
+                        app.palette.history_up()
+                    } else {
+                        app.palette.history_down()
+                    };
+                    if changed {
+                        // Clear errors/suggestions while browsing history
+                        app.palette.reduce_clear_error();
+                        app.palette.set_is_suggestions_open(false);
+                    }
                 }
             }
-            KeyCode::Up => {
-                if app.palette.is_suggestions_open() {
-                    Some(app::Msg::PaletteNavigateSuggestions(app::Direction::Up))
-                } else {
-                    Some(app::Msg::PaletteNavigateHistory(app::Direction::Up))
-                }
+            KeyCode::Tab => {
+                // Handle suggestions trigger
+                self.handle_tab_press(app);
             }
-            KeyCode::Tab => Some(app::Msg::PaletteSuggest),
             KeyCode::Enter => {
-                if !app.palette.is_suggestions_open() {
-                    Some(app::Msg::Run)
-                } else {
-                    Some(app::Msg::PaletteAcceptSuggestion)
-                }
+                // Handle enter keypress
+                self.handle_enter(app);
             }
             KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                Some(app::Msg::ToggleBuilder)
+                // Handle builder request
+                self.handle_builder_request(app);
             }
-            KeyCode::Esc => Some(app::Msg::PaletteClear),
-            _ => None,
+            KeyCode::Esc => {
+                // Handle escape
+                self.handle_escape(app);
+            }
+            _ => {}
         }
+        effects
     }
 }
 

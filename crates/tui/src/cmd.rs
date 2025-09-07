@@ -27,7 +27,7 @@ use heroku_util::exec_remote;
 use serde_json::Value;
 use tokio::task::spawn;
 
-use crate::app;
+use crate::app::{self, Effect};
 
 /// Represents side-effectful system commands executed outside of pure state
 /// updates.
@@ -74,6 +74,184 @@ pub enum Cmd {
     ExecuteHttp(Box<CommandSpec>, serde_json::Map<String, Value>),
 }
 
+/// Convert application [`Effect`]s into actual [`Cmd`] instances.
+///
+/// This enables a clean separation: effects represent "what should happen",
+/// while commands describe "how it should happen".
+///
+/// # Example
+/// ```rust,ignore
+/// # use your_crate::{from_effects, Cmd};
+/// # struct DummyBuilder;
+/// # impl DummyBuilder {
+/// #   fn selected_command(&self) -> Option<&'static str> { Some("ls") }
+/// #   fn input_fields(&self) -> Vec<&'static str> { vec![] }
+/// # }
+/// # struct DummyApp { builder: DummyBuilder }
+/// # mod preview { pub fn cli_preview(_s: &str, _f: Vec<&str>) -> String { "ls".into() } }
+/// # enum Effect { CopyCommandRequested }
+/// # let mut app = DummyApp { builder: DummyBuilder };
+/// # let effects = vec![Effect::CopyCommandRequested];
+/// // Translates an effect into a side-effectful command
+/// let cmds = from_effects(&mut app, effects);
+/// assert!(matches!(cmds, Cmd::ClipboardSet(_)));
+/// ```
+pub fn from_effects(app: &mut app::App, effects: Vec<Effect>) -> Vec<Cmd> {
+    let mut commands = Vec::new();
+
+    for effect in effects {
+        let effect_commands = match effect {
+            Effect::CopyCommandRequested => handle_copy_command_requested(app),
+            Effect::CopyLogsRequested(text) => Some(vec![Cmd::ClipboardSet(text)]),
+            Effect::NextPageRequested(next_raw) => handle_next_page_requested(app, next_raw),
+            Effect::PrevPageRequested => handle_prev_page_requested(app),
+            Effect::FirstPageRequested => handle_first_page_requested(app),
+        };
+
+        commands.extend(effect_commands.unwrap());
+    }
+
+    commands
+}
+
+/// Handle the copy command requested effect by determining what to copy based on current focus.
+///
+/// Returns a vector containing either a clipboard command for the selected command
+/// or selected table data, depending on which component has focus.
+///
+/// # Arguments
+/// * `app` - The application state containing builder and table components
+///
+/// # Returns
+/// A vector of commands, typically containing a single clipboard command
+fn handle_copy_command_requested(app: &app::App) -> Option<Vec<Cmd>> {
+    let mut commands = Vec::new();
+
+    match (app.builder.is_visible(), app.table.grid_focus().get()) {
+        (true, false) => {
+            // Builder is focused - copy the selected command
+            if let Some(spec) = app.builder.selected_command() {
+                let command_text = crate::preview::cli_preview(spec, app.builder.input_fields());
+                commands.push(Cmd::ClipboardSet(command_text));
+            }
+        }
+        (false, true) => {
+            // Table is focused - copy selected row data
+            if let Ok(stringified) = serde_json::to_string(app.table.selected_data()?) {
+                commands.push(Cmd::ClipboardSet(stringified));
+            }
+        }
+        _ => {
+            // Neither component focused or both focused (edge case)
+            // No action needed
+        }
+    }
+
+    Some(commands)
+}
+
+/// Handle the next page requested effect by executing the previous command with updated pagination.
+///
+/// Updates the pagination history and creates an HTTP execution command with the new range.
+///
+/// # Arguments
+/// * `app` - The application state containing previous command context
+/// * `next_raw` - The raw next-range value for the Range header
+///
+/// # Returns
+/// A vector containing an HTTP execution command if context is available
+fn handle_next_page_requested(app: &mut app::App, next_raw: String) -> Option<Vec<Cmd>> {
+    let mut commands = Vec::new();
+
+    if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
+        // Inject raw next-range override for Range header
+        body.insert("next-range".into(), serde_json::Value::String(next_raw.clone()));
+
+        // Append to history for Prev/First navigation
+        app.pagination_history.push(Some(next_raw));
+
+        commands.push(Cmd::ExecuteHttp(Box::new(spec), body));
+    } else {
+        app.logs
+            .entries
+            .push("Cannot request next page: no prior command context".into());
+    }
+
+    Some(commands)
+}
+
+/// Handle the previous page requested effect by navigating back in pagination history.
+///
+/// Updates the pagination history and creates an HTTP execution command with the previous range.
+///
+/// # Arguments
+/// * `app` - The application state containing previous command context and pagination history
+///
+/// # Returns
+/// A vector containing an HTTP execution command if navigation is possible
+fn handle_prev_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
+    let mut commands = Vec::new();
+
+    if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
+        if app.pagination_history.len() <= 1 {
+            // No previous page to go to
+            return Some(commands);
+        }
+
+        // Remove current page from history
+        let _ = app.pagination_history.pop();
+
+        // Navigate to previous page
+        if let Some(prev) = app.pagination_history.last().cloned().flatten() {
+            body.insert("next-range".into(), serde_json::Value::String(prev));
+        } else {
+            let _ = body.remove("next-range");
+        }
+
+        commands.push(Cmd::ExecuteHttp(Box::new(spec), body));
+    } else {
+        app.logs
+            .entries
+            .push("Cannot request previous page: no prior command context".into());
+    }
+
+    Some(commands)
+}
+
+/// Handle the first page requested effect by navigating to the beginning of pagination history.
+///
+/// Resets the pagination history to the first entry and creates an HTTP execution command.
+///
+/// # Arguments
+/// * `app` - The application state containing previous command context and pagination history
+///
+/// # Returns
+/// A vector containing an HTTP execution command if context is available
+fn handle_first_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
+    let mut commands = Vec::new();
+
+    if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
+        // Get the first page range if available
+        if let Some(first) = app.pagination_history.first().cloned().flatten() {
+            body.insert("next-range".into(), serde_json::Value::String(first));
+        } else {
+            let _ = body.remove("next-range");
+        }
+
+        // Reset history to the first entry
+        let first_opt = app.pagination_history.first().cloned().flatten();
+        app.pagination_history.clear();
+        app.pagination_history.push(first_opt);
+
+        commands.push(Cmd::ExecuteHttp(Box::new(spec), body));
+    } else {
+        app.logs
+            .entries
+            .push("Cannot request first page: no prior command context".into());
+    }
+
+    Some(commands)
+}
 
 /// Execute a sequence of commands and update application logs.
 ///
