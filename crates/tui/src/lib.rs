@@ -26,7 +26,7 @@ mod preview;
 mod ui;
 
 // Standard library imports
-use std::{collections::HashMap, io, sync::atomic::Ordering, time::Duration};
+use std::{collections::HashMap, io, time::Duration};
 
 // Third-party imports
 use anyhow::Result;
@@ -125,25 +125,6 @@ fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Re
     Ok(())
 }
 
-fn initial_render<'a>(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    application: &mut app::App,
-    comps: &mut UiComponents<'a>,
-) -> Result<()> {
-    terminal.draw(|frame| {
-        main::draw(
-            frame,
-            application,
-            &mut comps.palette,
-            &mut comps.hint_bar,
-            &mut comps.logs,
-            &mut comps.builder,
-            &mut comps.help,
-            &mut comps.table,
-        )
-    })?;
-    Ok(())
-}
 
 fn render<'a>(
     terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -166,37 +147,26 @@ fn render<'a>(
 }
 
 fn spawn_ui_event_producer(
-    active_execution_count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     ui_event_sender: mpsc::UnboundedSender<UiEvent>,
     animation_interval: Duration,
 ) {
     task::spawn_blocking(move || {
         loop {
-            if active_execution_count.load(Ordering::Relaxed) > 0 {
-                match crossterm::event::poll(animation_interval) {
-                    Ok(true) => match crossterm::event::read() {
-                        Ok(input_event) => {
-                            if ui_event_sender.send(UiEvent::Input(input_event)).is_err() {
-                                break;
-                            }
-                        }
-                        Err(_) => std::thread::sleep(Duration::from_millis(10)),
-                    },
-                    Ok(false) => {
-                        if ui_event_sender.send(UiEvent::Animate).is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
-                }
-            } else {
-                match crossterm::event::read() {
-                    Ok(input_event) => {
+            match crossterm::event::poll(animation_interval) {
+                Ok(true) => {
+                    if let Ok(input_event) = crossterm::event::read() {
                         if ui_event_sender.send(UiEvent::Input(input_event)).is_err() {
                             break;
                         }
                     }
-                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
+                }
+                Ok(false) => {
+                    if ui_event_sender.send(UiEvent::Animate).is_err() {
+                        break;
+                    }
+                }
+                Err(_) => {
+                    // Ignore errors and continue polling
                 }
             }
         }
@@ -246,72 +216,53 @@ pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
     let mut terminal = setup_terminal()?;
 
     // Set up event handling
-    let animation_interval = Duration::from_millis(200);
+    let animation_interval = Duration::from_millis(100); // 10 FPS
     let (ui_event_sender, mut ui_event_receiver) = mpsc::unbounded_channel::<UiEvent>();
-    let active_execution_count = application.active_exec_count.clone();
-    // Spawn a blocking task to handle input events and animation ticks
-    spawn_ui_event_producer(active_execution_count, ui_event_sender, animation_interval);
-
-    // Perform initial render so UI is visible before any events
-    initial_render(&mut terminal, &mut application, &mut comps)?;
+    spawn_ui_event_producer(ui_event_sender, animation_interval);
 
     // Main event loop
-    loop {
-        let mut needs_rerender = false;
-
-        tokio::select! {
-            // Handle UI events (input, animation)
-            maybe_ui_event = ui_event_receiver.recv() => {
-                if let Some(ui_event) = maybe_ui_event {
-                    match ui_event {
-                        UiEvent::Input(input_event) => match input_event {
-                            Event::Key(key_event) => {
-                                // Handle Ctrl+C for graceful shutdown
-                                if key_event.code == KeyCode::Char('c') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                                    break;
-                                }
-                                // Process the key event and check if we should exit
-                                if handle_key_event(
-                                    &mut application,
-                                    &mut comps.palette,
-                                    &mut comps.builder,
-                                    &mut comps.table,
-                                    &mut comps.logs,
-                                    key_event,
-                                )? {
-                                    break;
-                                }
-                                needs_rerender = true;
-                            }
-                            Event::Resize(width, height) => {
-                                let _ = application.update(app::Msg::Resize(width, height));
-                                needs_rerender = true;
-                            }
-                            _ => {}
-                        },
-                        UiEvent::Animate => {
-                            let _ = application.update(app::Msg::Tick);
-                            needs_rerender = true;
-                        }
+    let mut needs_rerender = true;
+    'main: loop {
+        // Process all pending events from the UI event channel
+        while let Ok(ui_event) = ui_event_receiver.try_recv() {
+            let msg = match ui_event {
+                UiEvent::Input(Event::Key(key)) => {
+                    if key.code == KeyCode::Char('c') && key.modifiers == KeyModifiers::CONTROL {
+                        break 'main;
                     }
+                    handle_key_event(&mut application, &mut comps, key)
                 }
+                UiEvent::Input(Event::Resize(w, h)) => Some(app::Msg::Resize(w, h)),
+                UiEvent::Animate => Some(app::Msg::Tick),
+                _ => None,
+            };
+
+            if let Some(m) = msg {
+                let (_, rerender) = application.update(m);
+                needs_rerender |= rerender;
             }
-            // Handle command execution completion
-            maybe_execution_output = application.exec_receiver.recv() => {
-                if let Some(execution_output) = maybe_execution_output {
-                    let _ = application.update(app::Msg::ExecCompleted(execution_output));
-                    needs_rerender = true;
-                }
-            }
-            // Handle Ctrl+C signal
-            _ = signal::ctrl_c() => {
-                break;
-            }
+        }
+
+        // Process any pending execution results
+        while let Ok(execution_output) = application.exec_receiver.try_recv() {
+            let (_, rerender) = application.update(app::Msg::ExecCompleted(execution_output));
+            needs_rerender |= rerender;
         }
 
         // Render the UI if needed
         if needs_rerender {
             render(&mut terminal, &mut application, &mut comps)?;
+            needs_rerender = false;
+        }
+
+        // A small sleep to prevent a tight loop when no events are coming in
+        // but needs_rerender is false. The event producer's poll acts as the
+        // main pacer.
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        // Check for Ctrl+C signal for graceful shutdown
+        if signal::ctrl_c().await.is_ok() {
+            break;
         }
     }
 
@@ -348,66 +299,50 @@ pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
 /// 4. Tab/Shift+Tab for focus cycling
 fn handle_key_event(
     application: &mut app::App,
-    palette_component: &mut PaletteComponent,
-    builder_component: &mut BuilderComponent,
-    table_component: &mut TableComponent,
-    logs_component: &mut LogsComponent,
+    comps: &mut UiComponents,
     key_event: KeyEvent,
-) -> Result<bool> {
-    // First, check for global key mappings (Esc, Ctrl+F, etc.)
+) -> Option<app::Msg> {
     if let Some(global_message) = map_key_to_global_message(application, &key_event) {
-        let _ = application.update(global_message);
-        return Ok(false);
+        return Some(global_message);
     }
 
-    // Route to table component when table modal is visible
-    if application.table.is_visible() {
-        let component_effects = table_component.handle_key_events(application, key_event);
-        let commands = crate::cmd::from_effects(application, component_effects);
-        crate::cmd::run_cmds(application, commands);
-        return Ok(false);
+    if let Some(msg) = handle_modal_input(application, comps, key_event) {
+        return Some(msg);
     }
 
-    // Handle Enter key in builder modal to close and populate palette
-    if application.builder.is_visible() && key_event.code == KeyCode::Enter {
-        handle_builder_enter(application);
-        return Ok(false);
+    handle_main_input(application, comps, key_event)
+}
+
+fn handle_modal_input(app: &mut app::App, comps: &mut UiComponents, key: KeyEvent) -> Option<app::Msg> {
+    if app.table.is_visible() {
+        return comps.table.handle_key_events(app, key);
     }
 
-    // Route to logs component when detail view is open
-    if application.logs.detail.is_some() {
-        let component_effects = logs_component.handle_key_events(application, key_event);
-        let commands = crate::cmd::from_effects(application, component_effects);
-        crate::cmd::run_cmds(application, commands);
-        return Ok(false);
-    }
-
-    // Handle focus management and component routing when not in builder
-    if !application.builder.is_visible() {
-        // Handle Tab/Shift+Tab for focus cycling between palette and logs
-        if handle_focus_cycle(application, &key_event) {
-            return Ok(false);
+    if app.builder.is_visible() {
+        if key.code == KeyCode::Enter {
+            handle_builder_enter(app);
+            return None; // This action is complex, handled directly for now.
         }
-
-        // Route to focused component
-        if application.logs.focus.get() {
-            let component_effects = logs_component.handle_key_events(application, key_event);
-            let commands = crate::cmd::from_effects(application, component_effects);
-            crate::cmd::run_cmds(application, commands);
-            return Ok(false);
-        } else {
-            let component_effects = palette_component.handle_key_events(application, key_event);
-            let commands = crate::cmd::from_effects(application, component_effects);
-            crate::cmd::run_cmds(application, commands);
-            return Ok(false);
-        }
+        return comps.builder.handle_key_events(app, key);
     }
 
-    // Route to builder component when builder is visible
-    let component_effects = builder_component.handle_key_events(application, key_event);
-    let commands = crate::cmd::from_effects(application, component_effects);
-    crate::cmd::run_cmds(application, commands);
-    Ok(false)
+    if app.logs.detail.is_some() {
+        return comps.logs.handle_key_events(app, key);
+    }
+
+    None
+}
+
+fn handle_main_input(app: &mut app::App, comps: &mut UiComponents, key: KeyEvent) -> Option<app::Msg> {
+    if handle_focus_cycle(app, &key) {
+        return None;
+    }
+
+    if app.logs.focus.get() {
+        return comps.logs.handle_key_events(app, key);
+    }
+
+    comps.palette.handle_key_events(app, key)
 }
 
 /// Maps global keyboard shortcuts to application messages.
