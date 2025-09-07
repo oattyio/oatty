@@ -41,7 +41,7 @@
 - Network via `reqwest` + TLS; set `RUST_LOG=info|debug` for diagnostics.
 
 ## Architecture Overview
-See `ARCHITECTURE.md` for a full overview of crates, command/registry design, ValueProviders, execution flow, TUI UX, and security/caching.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for a full overview of crates, command/registry design, ValueProviders, execution flow, TUI UX, and security/caching.
 
 **TUI Components**
 - **Location:** `crates/tui/src/ui/components/` with one folder per feature (e.g., `palette/`, `table/`, `logs/`, `builder/`, `help/`, `pagination/`). Each submodule typically has `mod.rs`, a main component file (e.g., `palette.rs`), and an optional `state.rs` plus helpers.

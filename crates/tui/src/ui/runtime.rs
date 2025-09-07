@@ -19,8 +19,8 @@
 //!   event processing, and teardown.
 
 use std::sync::Arc;
-use std::time::Duration;
 use std::sync::atomic::Ordering;
+use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::{
@@ -217,7 +217,11 @@ fn update_animation_interval(
     slow_interval_ms: u64,
 ) {
     let needs_animation = application.executing || application.palette.is_provider_loading();
-    let target = if needs_animation { fast_interval_ms } else { slow_interval_ms };
+    let target = if needs_animation {
+        fast_interval_ms
+    } else {
+        slow_interval_ms
+    };
     if interval_ms.load(Ordering::Relaxed) != target {
         interval_ms.store(target, Ordering::Relaxed);
     }

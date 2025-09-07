@@ -6,7 +6,8 @@ use std::{collections::BTreeSet, env, fs, path::PathBuf};
 
 fn main() {
     // Path to the repo root schemas directory from crates/tui
-    let schema_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../schemas/heroku-schema.enhanced.json");
+    let schema_path =
+        PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../schemas/heroku-schema.enhanced.json");
 
     // Re-run build script if schema changes
     println!("cargo:rerun-if-changed={}", schema_path.display());

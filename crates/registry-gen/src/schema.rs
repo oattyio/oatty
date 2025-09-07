@@ -852,9 +852,9 @@ mod tests {
             fl_map.insert(&f.name, (&f.description, f.required));
         }
         assert_eq!(fl_map.get("name").unwrap().0.as_deref(), Some("Team name"));
-        assert_eq!(fl_map.get("name").unwrap().1, true);
+        assert!(fl_map.get("name").unwrap().1);
         assert_eq!(fl_map.get("force").unwrap().0.as_deref(), Some("Force operation"));
-        assert_eq!(fl_map.get("force").unwrap().1, false);
+        assert!(!fl_map.get("force").unwrap().1);
     }
 
     #[test]

@@ -1,5 +1,6 @@
-use crate::ui::components::palette::state::{ItemKind, SuggestionItem, ValueProvider};
+use crate::ui::components::palette::state::ValueProvider;
 use heroku_registry::Registry;
+use heroku_types::{ItemKind, SuggestionItem};
 use heroku_util::http_path_resolution::build_path;
 use heroku_util::{fetch_json_array, fuzzy_score};
 use std::{

@@ -1,8 +1,8 @@
 use heroku_registry::Registry;
-use heroku_types::CommandSpec;
+use heroku_types::{CommandSpec, ItemKind, SuggestionItem};
 use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
 
-use super::state::{ItemKind, SuggestionItem, ValueProvider};
+use super::state::ValueProvider;
 
 // ===== Types =====
 

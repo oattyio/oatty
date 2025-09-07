@@ -3,6 +3,33 @@ use std::{error::Error, str::FromStr};
 use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+/// Represents the type of suggestion item.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ItemKind {
+    /// A command name (e.g., "apps:list")
+    Command,
+    /// A flag or option (e.g., "--app", "--region")
+    Flag,
+    /// A value for a flag or positional argument
+    Value,
+    /// A positional argument (e.g., app name, dyno name)
+    Positional,
+}
+
+/// Represents a single suggestion item in the palette.
+#[derive(Clone, Debug)]
+pub struct SuggestionItem {
+    /// The text to display in the suggestion list
+    pub display: String,
+    /// The text to insert when the suggestion is selected
+    pub insert_text: String,
+    /// The type of suggestion (command, flag, value, etc.)
+    pub kind: ItemKind,
+    /// Optional metadata to display (e.g., flag description)
+    pub meta: Option<String>,
+    /// Score for ranking suggestions (higher is better)
+    pub score: i64,
+}
 
 /// Declares how values for a parameter can be populated.
 ///

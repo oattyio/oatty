@@ -403,7 +403,7 @@ mod tests {
         let mut ctx = RunContext::default();
         let res = run_step_repeating_with(&step, &mut ctx, &runner);
         assert_eq!(res.status, StepStatus::Succeeded);
-        assert!(ctx.steps.get("s1").is_some());
+        assert!(ctx.steps.contains_key("s1"));
         assert!(res.attempts >= 1);
     }
 }

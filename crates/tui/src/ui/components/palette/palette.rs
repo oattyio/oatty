@@ -7,6 +7,7 @@
 use std::vec;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use heroku_types::ItemKind;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -18,7 +19,7 @@ use ratatui::{
 use crate::{
     app::{self, Effect, SharedCtx},
     ui::{
-        components::{component::Component, palette::state::ItemKind},
+        components::component::Component,
         theme::{Theme, helpers as th},
     },
 };
@@ -352,7 +353,9 @@ impl PaletteComponent {
         } = &app.ctx;
         app.palette
             .apply_build_suggestions(registry, providers, &*app.ctx.theme);
-        app.palette.set_is_suggestions_open(app.palette.suggestions_len() > 0);
+        // Open popup if we have suggestions or if provider-backed suggestions are loading
+        let open = app.palette.suggestions_len() > 0 || app.palette.is_provider_loading();
+        app.palette.set_is_suggestions_open(open);
     }
 
     /// Handles the Enter keypress.
@@ -379,15 +382,7 @@ impl PaletteComponent {
                         app.palette.apply_accept_non_command_suggestion(&item.insert_text);
                     }
                 }
-                let SharedCtx {
-                    registry, providers, ..
-                } = &app.ctx;
-                // Rebuild suggestions after accepting
-                app.palette
-                    .apply_build_suggestions(registry, providers, &*app.ctx.theme);
                 app.palette.set_selected(0);
-
-                // Close popup after accepting
                 app.palette.set_is_suggestions_open(false);
             }
         }

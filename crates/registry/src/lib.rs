@@ -37,10 +37,6 @@ mod tests {
             }
             seen.insert(group_name);
         }
-        assert!(
-            duplicates.len() == 0,
-            "duplicates seen: {}",
-            duplicates.len().to_string()
-        );
+        assert!(duplicates.is_empty(), "duplicates seen: {}", duplicates.len());
     }
 }

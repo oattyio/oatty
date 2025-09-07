@@ -17,7 +17,7 @@ use std::{fmt::Debug, sync::Arc};
 
 use super::suggest::{parse_user_flags_args, required_flags_remaining};
 use heroku_registry::Registry;
-use heroku_types::CommandSpec;
+use heroku_types::{CommandSpec, ItemKind, SuggestionItem};
 use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
@@ -49,39 +49,7 @@ fn token_index_at_cursor(input: &str, cursor: usize) -> Option<usize> {
     }
 }
 
-/// Represents the type of suggestion item.
-///
-/// This enum categorizes different types of suggestions that can be
-/// provided to the user in the command palette.
-#[derive(Clone, Debug, PartialEq)]
-pub enum ItemKind {
-    /// A command name (e.g., "apps:list")
-    Command,
-    /// A flag or option (e.g., "--app", "--region")
-    Flag,
-    /// A value for a flag or positional argument
-    Value,
-    /// A positional argument (e.g., app name, dyno name)
-    Positional,
-}
-
-/// Represents a single suggestion item in the palette.
-///
-/// This struct contains all the information needed to display and
-/// insert a suggestion in the command palette.
-#[derive(Clone, Debug)]
-pub struct SuggestionItem {
-    /// The text to display in the suggestion list
-    pub display: String,
-    /// The text to insert when the suggestion is selected
-    pub insert_text: String,
-    /// The type of suggestion (command, flag, value, etc.)
-    pub kind: ItemKind,
-    /// Optional metadata to display (e.g., flag description)
-    pub meta: Option<String>,
-    /// Score for ranking suggestions (higher is better)
-    pub score: i64,
-}
+// ItemKind and SuggestionItem moved to types.rs and re-exported via mod.rs
 
 /// State for the command palette input and suggestions.
 ///
@@ -869,6 +837,18 @@ impl PaletteState {
         let result = super::suggest::SuggestionEngine::build(reg, providers, &self.input);
         let mut items = result.items;
         self.provider_loading = result.provider_loading;
+
+        // When provider-backed suggestions are still loading and we have nothing to show yet,
+        // present a lightweight placeholder so the popup can open immediately.
+        if self.provider_loading {
+            items.push(SuggestionItem {
+                display: "loading more…".to_string(),
+                insert_text: String::new(),
+                kind: ItemKind::Value,
+                meta: Some("loading".to_string()),
+                score: i64::MIN, // ensure it sorts to the bottom if mixed
+            });
+        }
 
         // Offer end-of-line flag hint if still empty
         if items.is_empty() {
