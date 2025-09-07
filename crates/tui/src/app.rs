@@ -22,10 +22,7 @@ use crate::{
             builder::BuilderState,
             help::HelpState,
             logs::{LogsState, state::LogEntry},
-            palette::{
-                state::{ItemKind, ValueProvider},
-                PaletteState, providers::RegistryBackedProvider,
-            },
+            palette::{PaletteState, providers::RegistryBackedProvider, state::ValueProvider},
             table::TableState,
         },
         theme,
@@ -144,45 +141,6 @@ pub enum Msg {
     Resize(u16, u16),
     /// Background execution completed with outcome
     ExecCompleted(ExecOutcome),
-
-    // Palette interactions
-    PaletteInput(char),
-    PaletteBackspace,
-    PaletteCursorLeft,
-    PaletteCursorRight,
-    PaletteSuggest,
-    PaletteAcceptSuggestion,
-    PaletteNavigateSuggestions(Direction),
-    PaletteNavigateHistory(Direction),
-    PaletteClear,
-
-    // Table interactions
-    TableScroll(isize),
-    TableHome,
-    TableEnd,
-    TableFocusNext,
-    TableFocusPrev,
-
-    // Pagination interactions
-    PaginationFirst,
-    PaginationPrev,
-    PaginationNext,
-    PaginationLast,
-
-    // Builder interactions
-    BuilderSearchInput(char),
-    BuilderSearchBackspace,
-    BuilderSearchClear,
-    BuilderMoveSelection(isize),
-    BuilderAccept,
-    BuilderCycleFocus,
-    BuilderCycleFocusBack,
-    BuilderCycleField(Direction),
-    BuilderFieldInput(char),
-    BuilderFieldBackspace,
-    BuilderToggleBooleanField,
-    BuilderCycleEnum(Direction),
-
     // Logs interactions
     /// Move log selection cursor up
     LogsUp,
@@ -200,14 +158,6 @@ pub enum Msg {
     LogsCopy,
     /// Toggle pretty/raw for single API response
     LogsTogglePretty,
-}
-
-#[derive(Debug, Clone)]
-pub enum Direction {
-    Up,
-    Down,
-    Left,
-    Right,
 }
 
 /// Side effects that can be triggered by state changes.
@@ -306,24 +256,27 @@ impl App<'_> {
     /// ```rust,ignore
     /// // Example requires real App/Msg types; ignored to avoid compile in doctests.
     /// ```
-    pub fn update(&mut self, msg: Msg) -> (Vec<Effect>, bool) {
+    pub fn update(&mut self, msg: Msg) -> Vec<Effect> {
         let mut effects = Vec::new();
-        let mut needs_rerender = true;
-
         match msg {
             Msg::Tick => {
-                let mut is_animating = false;
+                // Animate spinner while executing or while provider-backed suggestions are loading
                 if self.executing || self.palette.is_provider_loading() {
                     self.throbber_idx = (self.throbber_idx + 1) % 10;
-                    is_animating = true;
                 }
+                // If provider-backed suggestions are loading and the popup is open,
+                // rebuild suggestions to pick up newly cached results without requiring
+                // another keypress.
                 if self.palette.is_suggestions_open() && self.palette.is_provider_loading() {
-                    self.palette.apply_build_suggestions(&self.ctx.registry, &self.ctx.providers, &*self.ctx.theme);
-                    is_animating = true;
+                    let SharedCtx {
+                        registry, providers, ..
+                    } = &self.ctx;
+                    self.palette.apply_build_suggestions(registry, providers, &*self.ctx.theme);
                 }
-                needs_rerender = is_animating;
             }
-            Msg::Resize(..) => {}
+            Msg::Resize(..) => {
+                // No-op for now; placeholder to enable TEA-style event
+            }
             Msg::ToggleHelp => {
                 let spec = if self.builder.is_visible() {
                     self.builder.selected_command()
@@ -332,7 +285,9 @@ impl App<'_> {
                 };
                 self.help.toggle_visibility(spec.cloned());
             }
-            Msg::ToggleTable => self.table.toggle_show(),
+            Msg::ToggleTable => {
+                self.table.toggle_show();
+            }
             Msg::ToggleBuilder => {
                 self.builder.toggle_visibility();
                 if self.builder.is_visible() {
@@ -345,8 +300,10 @@ impl App<'_> {
                 self.builder.apply_visibility(false);
             }
             Msg::Run => {
+                // always execute from palette
                 if !self.palette.is_input_empty() {
                     match start_palette_execution(self) {
+                        // Execution started successfully
                         Ok(_) => {
                             let input = &self.palette.input();
                             self.logs.entries.push(format!("Running: {}", input));
@@ -355,7 +312,9 @@ impl App<'_> {
                                 msg: format!("Running: {}", input),
                             });
                         }
-                        Err(e) => self.palette.apply_error(e),
+                        Err(e) => {
+                            self.palette.apply_error(e);
+                        }
                     }
                 }
             }
@@ -364,146 +323,35 @@ impl App<'_> {
             }
             Msg::ExecCompleted(out) => {
                 let raw = out.log;
-                self.executing = self.active_exec_count.load(Ordering::Relaxed) > 0;
+                // Keep executing=true if other executions are still active
+                let still_active = self.active_exec_count.load(Ordering::Relaxed) > 0;
+                self.executing = still_active;
+                // Pre-redact for list display to avoid per-frame redaction
                 self.logs.entries.push(heroku_util::redact_sensitive(&raw));
                 self.logs.rich_entries.push(LogEntry::Api {
                     status: 0,
                     raw,
                     json: out.result_json.clone(),
                 });
-                if self.logs.entries.len() > 500 {
-                    let _ = self.logs.entries.drain(0..self.logs.entries.len() - 500);
+                let log_len = self.logs.entries.len();
+                if log_len > 500 {
+                    let _ = self.logs.entries.drain(0..log_len - 500);
                 }
-                if self.logs.rich_entries.len() > 500 {
-                    let _ = self.logs.rich_entries.drain(0..self.logs.rich_entries.len() - 500);
+                let rich_len = self.logs.rich_entries.len();
+                if rich_len > 500 {
+                    let _ = self.logs.rich_entries.drain(0..rich_len - 500);
                 }
                 self.table.apply_result_json(out.result_json, &*self.ctx.theme);
                 self.table.apply_visible(out.open_table);
+                // Update last seen pagination info for the table/pagination component
                 self.last_pagination = out.pagination;
+                // Clear palette input and suggestion state
                 self.palette.reduce_clear_all();
             }
-            Msg::PaletteInput(c) => {
-                self.palette.apply_insert_char(c);
-                self.palette.set_is_suggestions_open(false);
-                self.palette.reduce_clear_error();
-            }
-            Msg::PaletteBackspace => {
-                self.palette.reduce_backspace();
-                self.palette.reduce_clear_error();
-                self.palette.apply_suggestions(vec![]);
-            }
-            Msg::PaletteCursorLeft => self.palette.reduce_move_cursor_left(),
-            Msg::PaletteCursorRight => self.palette.reduce_move_cursor_right(),
-            Msg::PaletteSuggest => {
-                self.palette.apply_build_suggestions(&self.ctx.registry, &self.ctx.providers, &*self.ctx.theme);
-                self.palette.set_is_suggestions_open(self.palette.suggestions_len() > 0);
-            }
-            Msg::PaletteAcceptSuggestion => {
-                if let Some(item) = self.palette.selected_suggestion().cloned() {
-                    match item.kind {
-                        ItemKind::Command => {
-                            self.palette.apply_accept_command_suggestion(&item.insert_text);
-                            self.palette.set_is_suggestions_open(false);
-                            self.palette.reduce_clear_suggestions();
-                        }
-                        ItemKind::Positional => self.palette.apply_accept_positional_suggestion(&item.insert_text),
-                        _ => self.palette.apply_accept_non_command_suggestion(&item.insert_text),
-                    }
-                    self.palette.apply_build_suggestions(&self.ctx.registry, &self.ctx.providers, &*self.ctx.theme);
-                    self.palette.set_selected(0);
-                    self.palette.set_is_suggestions_open(false);
-                }
-            }
-            Msg::PaletteNavigateSuggestions(direction) => {
-                let len = self.palette.suggestions().len();
-                if len > 0 {
-                    let selected = self.palette.suggestion_index() as isize;
-                    let delta = if matches!(direction, Direction::Down) { 1isize } else { -1isize };
-                    let new_selected = (selected + delta).rem_euclid(len as isize) as usize;
-                    self.palette.set_selected(new_selected);
-                }
-            }
-            Msg::PaletteNavigateHistory(direction) => {
-                let changed = if matches!(direction, Direction::Up) {
-                    self.palette.history_up()
-                } else {
-                    self.palette.history_down()
-                };
-                if changed {
-                    self.palette.reduce_clear_error();
-                    self.palette.set_is_suggestions_open(false);
-                }
-            }
-            Msg::PaletteClear => {
-                if self.palette.is_suggestions_open() {
-                    self.palette.set_is_suggestions_open(false);
-                } else {
-                    self.palette.reduce_clear_all();
-                }
-            }
-            Msg::TableScroll(delta) => self.table.reduce_scroll(delta),
-            Msg::TableHome => self.table.reduce_home(),
-            Msg::TableEnd => self.table.reduce_end(),
-            Msg::TableFocusNext => { /* TODO */ needs_rerender = false; }
-            Msg::TableFocusPrev => { /* TODO */ needs_rerender = false; }
-            Msg::PaginationFirst => {
-                self.pagination_history.truncate(1);
-                effects.push(Effect::FirstPageRequested);
-            }
-            Msg::PaginationPrev => {
-                if self.pagination_history.len() > 1 {
-                    self.pagination_history.pop();
-                    effects.push(Effect::PrevPageRequested);
-                }
-            }
-            Msg::PaginationNext | Msg::PaginationLast => {
-                if let Some(next_range) = self.last_pagination.as_ref().and_then(|p| p.next_range.clone()) {
-                    self.pagination_history.push(Some(next_range.clone()));
-                    effects.push(Effect::NextPageRequested(next_range));
-                }
-            }
-            Msg::LogsUp => { /* TODO */ needs_rerender = false; }
-            Msg::LogsDown => { /* TODO */ needs_rerender = false; }
-            Msg::LogsExtendUp => { /* TODO */ needs_rerender = false; }
-            Msg::LogsExtendDown => { /* TODO */ needs_rerender = false; }
-            Msg::LogsOpenDetail => { /* TODO */ needs_rerender = false; }
-            Msg::LogsCloseDetail => {
-                self.logs.detail = None;
-            }
-            Msg::LogsCopy => { /* TODO */ needs_rerender = false; }
-            Msg::LogsTogglePretty => { /* TODO */ needs_rerender = false; }
-
-            // Builder handlers
-            Msg::BuilderSearchInput(c) => self.builder.search_input_push(c),
-            Msg::BuilderSearchBackspace => self.builder.search_input_pop(),
-            Msg::BuilderSearchClear => self.builder.search_input_clear(),
-            Msg::BuilderMoveSelection(delta) => self.builder.move_selection(delta),
-            Msg::BuilderAccept => {
-                self.builder.apply_enter();
-                self.builder.inputs_flag.set(true);
-                self.builder.search_flag.set(false);
-                self.builder.commands_flag.set(false);
-            }
-            Msg::BuilderCycleFocus => { self.builder.focus_ring().next(); }
-            Msg::BuilderCycleFocusBack => { self.builder.focus_ring().prev(); }
-            Msg::BuilderCycleField(direction) => {
-                if matches!(direction, Direction::Up) {
-                    self.builder.reduce_move_field_up(self.ctx.debug_enabled);
-                } else {
-                    self.builder.reduce_move_field_down(self.ctx.debug_enabled);
-                }
-            }
-            Msg::BuilderFieldInput(c) => self.builder.reduce_add_char_to_field(c),
-            Msg::BuilderFieldBackspace => self.builder.reduce_remove_char_from_field(),
-            Msg::BuilderToggleBooleanField => self.builder.reduce_toggle_boolean_field(),
-            Msg::BuilderCycleEnum(direction) => {
-                if matches!(direction, Direction::Left) {
-                    self.builder.reduce_cycle_enum_left();
-                } else {
-                    self.builder.reduce_cycle_enum_right();
-                }
-            }
+            // Placeholder handlers for upcoming logs features
+            Msg::LogsUp | Msg::LogsDown | Msg::LogsExtendUp | Msg::LogsExtendDown => {}
+            Msg::LogsOpenDetail | Msg::LogsCloseDetail | Msg::LogsCopy | Msg::LogsTogglePretty => {}
         }
-        (effects, needs_rerender)
+        effects
     }
 }

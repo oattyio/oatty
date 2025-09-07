@@ -68,6 +68,17 @@ impl PaginationState {
         self.range_mode = true;
     }
 
+    /// Moves to the previous page
+    pub fn prev_page(&mut self) {
+        if self.current_page > 0 {
+            self.current_page -= 1;
+        }
+    }
+
+    /// Moves to the first page
+    pub fn first_page(&mut self) {
+        self.current_page = 0;
+    }
 
     /// Gets the current range info as a string
     pub fn range_info(&self) -> String {

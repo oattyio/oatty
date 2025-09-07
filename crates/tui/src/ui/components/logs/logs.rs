@@ -30,7 +30,7 @@ use serde_json::Value;
 
 use super::{
     hint_bar::LogsHintBarComponent,
-    state::LogEntry,
+    state::{LogDetailView, LogEntry},
 };
 use crate::{
     app,
@@ -61,8 +61,255 @@ impl LogsComponent {
     }
 
     // ============================================================================
-    // Styling and Visual Enhancement Methods
+    // Selection and Navigation Methods
     // ============================================================================
+
+    /// Gets the currently selected log entry index.
+    ///
+    /// Returns `None` if there are no log entries, otherwise returns the cursor
+    /// position clamped to valid bounds.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state containing log entries and selection
+    ///
+    /// # Returns
+    ///
+    /// * `Some(usize)` - The selected index if entries exist
+    /// * `None` - If no entries are available
+    fn selected_index(&self, app: &app::App) -> Option<usize> {
+        if app.logs.entries.is_empty() {
+            None
+        } else {
+            Some(app.logs.selection.cursor.min(app.logs.entries.len() - 1))
+        }
+    }
+
+    /// Moves the cursor by the specified delta and updates the selection
+    /// anchor.
+    ///
+    /// This method handles single-item selection mode where the cursor and
+    /// anchor are synchronized. The cursor is clamped to valid bounds.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - Mutable reference to application state
+    /// * `delta` - Number of positions to move (positive for down, negative for
+    ///   up)
+    fn move_cursor(&self, app: &mut app::App, delta: isize) {
+        if app.logs.entries.is_empty() {
+            return;
+        }
+        let len = app.logs.entries.len() as isize;
+        let cur = app.logs.selection.cursor as isize;
+        let next = (cur + delta).clamp(0, len - 1) as usize;
+        app.logs.selection.cursor = next;
+        app.logs.selection.anchor = next;
+    }
+
+    /// Extends the selection by the specified delta without changing the
+    /// anchor.
+    ///
+    /// This method is used for multi-selection mode where the user holds Shift
+    /// to extend the selection range. Only the cursor position is updated.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - Mutable reference to application state
+    /// * `delta` - Number of positions to extend (positive for down, negative
+    ///   for up)
+    fn extend_selection(&self, app: &mut app::App, delta: isize) {
+        if app.logs.entries.is_empty() {
+            return;
+        }
+        let len = app.logs.entries.len() as isize;
+        let cur = app.logs.selection.cursor as isize;
+        let next = (cur + delta).clamp(0, len - 1) as usize;
+        app.logs.selection.cursor = next;
+    }
+
+    /// Checks if a single API log entry is currently selected.
+    ///
+    /// Returns the selected log entry if exactly one item is selected and it's
+    /// an API entry. Used for determining available actions like JSON
+    /// formatting.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state containing selection and log entries
+    ///
+    /// # Returns
+    ///
+    /// * `Some(LogEntry)` - The selected API log entry if single selection
+    /// * `None` - If no selection, multi-selection, or non-API entry
+    fn is_single_api(&self, app: &app::App) -> Option<LogEntry> {
+        if app.logs.selection.is_single() {
+            let idx = app.logs.selection.cursor;
+            return app.logs.rich_entries.get(idx).cloned();
+        }
+        None
+    }
+
+    // ============================================================================
+    // Detail View and JSON Processing Methods
+    // ============================================================================
+
+    /// Determines and opens the appropriate detail view for the current
+    /// selection.
+    ///
+    /// This method handles the logic for choosing between different detail view
+    /// modes based on the selected log entry type and content:
+    ///
+    /// - **Multi-selection**: Always shows text view
+    /// - **API with array JSON**: Routes to global table component
+    /// - **API with object JSON**: Shows formatted JSON in detail modal
+    /// - **Other entries**: Shows plain text view
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - Mutable reference to application state
+    fn choose_detail(&self, app: &mut app::App) {
+        // Multi-selection always shows text view
+        if !app.logs.selection.is_single() {
+            app.logs.detail = Some(LogDetailView::Text);
+            app.logs.cached_detail_index = None;
+            app.logs.cached_redacted_json = None;
+            return;
+        }
+
+        let idx = app.logs.selection.cursor;
+        match app.logs.rich_entries.get(idx) {
+            Some(LogEntry::Api { json: Some(j), .. }) => {
+                if self.json_has_array(j) {
+                    // Route array JSON to the global Table modal for better UX
+                    let redacted = Self::redact_json(j);
+                    app.table.apply_result_json(Some(redacted), &*app.ctx.theme);
+                    app.table.apply_visible(true);
+                    // Clear logs detail modal state since we're using table
+                    app.logs.detail = None;
+                    app.logs.cached_detail_index = None;
+                    app.logs.cached_redacted_json = None;
+                } else {
+                    // Show formatted JSON in logs detail modal
+                    app.logs.detail = Some(LogDetailView::Text);
+                    app.logs.cached_detail_index = Some(idx);
+                    app.logs.cached_redacted_json = Some(Self::redact_json(j));
+                }
+            }
+            _ => {
+                // Non-API entries or API without JSON show as text
+                app.logs.detail = Some(LogDetailView::Text);
+                app.logs.cached_detail_index = None;
+                app.logs.cached_redacted_json = None;
+            }
+        }
+    }
+
+    /// Checks if a JSON value contains array data suitable for table display.
+    ///
+    /// Returns `true` if the JSON contains arrays that would benefit from
+    /// tabular presentation rather than formatted text display.
+    ///
+    /// # Arguments
+    ///
+    /// * `v` - The JSON value to check
+    ///
+    /// # Returns
+    ///
+    /// * `true` - If the value contains non-empty arrays
+    /// * `false` - If the value contains no arrays or only empty arrays
+    fn json_has_array(&self, v: &Value) -> bool {
+        match v {
+            Value::Array(a) => !a.is_empty(),
+            Value::Object(m) => m.values().any(|v| matches!(v, Value::Array(_))),
+            _ => false,
+        }
+    }
+
+    /// Recursively redacts sensitive data from JSON values.
+    ///
+    /// This method traverses the JSON structure and applies redaction to all
+    /// string values while preserving the overall structure. Used for security
+    /// when displaying JSON data in the UI.
+    ///
+    /// # Arguments
+    ///
+    /// * `v` - The JSON value to redact
+    ///
+    /// # Returns
+    ///
+    /// A new JSON value with all string content redacted
+    fn redact_json(v: &Value) -> Value {
+        match v {
+            Value::String(s) => Value::String(redact_sensitive(s)),
+            Value::Array(arr) => Value::Array(arr.iter().map(Self::redact_json).collect()),
+            Value::Object(map) => {
+                let mut out = serde_json::Map::new();
+                for (k, val) in map.iter() {
+                    out.insert(k.clone(), Self::redact_json(val));
+                }
+                Value::Object(out)
+            }
+            other => other.clone(),
+        }
+    }
+
+    // ============================================================================
+    // Copy and Text Processing Methods
+    // ============================================================================
+
+    /// Builds the text content to be copied to clipboard based on current
+    /// selection.
+    ///
+    /// This method handles different copy scenarios:
+    ///
+    /// - **Single API entry with JSON**: Returns formatted JSON if pretty mode
+    ///   enabled
+    /// - **Single API entry without JSON**: Returns raw log content
+    /// - **Multi-selection**: Returns concatenated log entries
+    ///
+    /// All output is automatically redacted for security.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state containing logs and selection
+    ///
+    /// # Returns
+    ///
+    /// A redacted string containing the selected log content
+    fn build_copy_text(&self, app: &app::App) -> String {
+        if app.logs.entries.is_empty() {
+            return String::new();
+        }
+        let (start, end) = app.logs.selection.range();
+        if start >= app.logs.entries.len() {
+            return String::new();
+        }
+
+        // Handle single selection with special JSON formatting
+        if start == end
+            && let Some(LogEntry::Api { json, raw, .. }) = app.logs.rich_entries.get(start)
+        {
+            if let Some(j) = json
+                && app.logs.pretty_json
+            {
+                let red = Self::redact_json(j);
+                return serde_json::to_string_pretty(&red).unwrap_or_else(|_| redact_sensitive(raw));
+            }
+            return redact_sensitive(raw);
+        }
+
+        // Multi-select or text fallback: concatenate visible strings
+        let mut buf = String::new();
+        for i in start..=end.min(app.logs.entries.len() - 1) {
+            let line = app.logs.entries.get(i).cloned().unwrap_or_default();
+            if !buf.is_empty() {
+                buf.push('\n');
+            }
+            buf.push_str(&line);
+        }
+        redact_sensitive(&buf)
+    }
 
     // ============================================================================
     // Styling and Visual Enhancement Methods
@@ -170,37 +417,78 @@ impl Component for LogsComponent {
     /// # Returns
     ///
     /// A vector of effects to be processed by the application
-    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Option<app::Msg> {
+    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<app::Effect> {
+        let mut effects = Vec::new();
+
         // Handle keys when detail modal is open
-        if app.logs.detail.is_some() {
-            return match key.code {
-                KeyCode::Esc | KeyCode::Backspace => Some(app::Msg::LogsCloseDetail),
-                // TODO: Add messages for scrolling in detail view
-                _ => None,
-            };
+        if let Some(detail) = app.logs.detail {
+            match key.code {
+                KeyCode::Esc | KeyCode::Backspace => {
+                    // Close detail modal
+                    app.logs.detail = None;
+                    return effects;
+                }
+                KeyCode::Up => {
+                    // Scroll up in table detail view
+                    if let LogDetailView::Table { offset } = detail {
+                        app.logs.detail = Some(LogDetailView::Table {
+                            offset: offset.saturating_sub(1),
+                        });
+                    }
+                    return effects;
+                }
+                KeyCode::Down => {
+                    // Scroll down in table detail view
+                    if let LogDetailView::Table { offset } = detail {
+                        app.logs.detail = Some(LogDetailView::Table {
+                            offset: offset.saturating_add(1),
+                        });
+                    }
+                    return effects;
+                }
+                _ => {}
+            }
         }
 
         // Handle main navigation and action keys
         match key.code {
             KeyCode::Up => {
                 if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    Some(app::Msg::LogsExtendUp)
+                    // Extend selection upward
+                    self.extend_selection(app, -1);
                 } else {
-                    Some(app::Msg::LogsUp)
+                    // Move cursor up
+                    self.move_cursor(app, -1);
                 }
             }
             KeyCode::Down => {
                 if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    Some(app::Msg::LogsExtendDown)
+                    // Extend selection downward
+                    self.extend_selection(app, 1);
                 } else {
-                    Some(app::Msg::LogsDown)
+                    // Move cursor down
+                    self.move_cursor(app, 1);
                 }
             }
-            KeyCode::Enter => Some(app::Msg::LogsOpenDetail),
-            KeyCode::Char('c') => Some(app::Msg::LogsCopy),
-            KeyCode::Char('v') => Some(app::Msg::LogsTogglePretty),
-            _ => None,
+            KeyCode::Enter => {
+                // Open detail view for selected entry
+                self.choose_detail(app);
+            }
+            KeyCode::Char('c') => {
+                // Copy selected content to clipboard
+                let text = self.build_copy_text(app);
+                effects.push(app::Effect::CopyLogsRequested(text));
+            }
+            KeyCode::Char('v') => {
+                // Toggle JSON pretty-printing (API entries only)
+                if matches!(self.is_single_api(app), Some(LogEntry::Api { .. })) {
+                    app.logs.pretty_json = !app.logs.pretty_json;
+                }
+                return effects;
+            }
+            _ => {}
         }
+        effects
     }
 
     /// Renders the logs component to the terminal frame.
@@ -248,8 +536,8 @@ impl Component for LogsComponent {
         // Set up list state for selection highlighting
         let mut list_state = ListState::default();
         if focused {
-            if !app.logs.entries.is_empty() {
-                list_state.select(Some(app.logs.selection.cursor));
+            if let Some(sel) = self.selected_index(app) {
+                list_state.select(Some(sel));
             }
         } else {
             list_state.select(None);
@@ -262,7 +550,7 @@ impl Component for LogsComponent {
             let content_len = app.logs.entries.len();
             if content_len > 0 {
                 let visible = rect.height.saturating_sub(2) as usize; // Account for borders
-                let sel = app.logs.selection.cursor;
+                let sel = self.selected_index(app).unwrap_or(0);
                 let max_top = content_len.saturating_sub(visible);
                 let top = sel.min(max_top);
                 let mut sb_state = ScrollbarState::new(content_len).position(top);

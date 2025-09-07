@@ -151,19 +151,19 @@ pub(crate) trait Component {
     /// # Examples
     ///
     /// ```rust,ignore
-    /// fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Option<Msg> {
+    /// fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
     ///     match key.code {
     ///         KeyCode::Char('q') => {
     ///             self.close();
-    ///             Some(Msg::CloseModal)
+    ///             vec![Effect::CloseModal]
     ///         }
-    ///         _ => None
+    ///         _ => vec![]
     ///     }
     /// }
     /// ```
     #[allow(dead_code)]
-    fn handle_key_events(&mut self, _app: &mut crate::app::App, _key: KeyEvent) -> Option<Msg> {
-        None
+    fn handle_key_events(&mut self, _app: &mut crate::app::App, _key: KeyEvent) -> Vec<Effect> {
+        Vec::new()
     }
 
     /// Handle mouse events when this component has focus.
