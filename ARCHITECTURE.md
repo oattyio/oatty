@@ -34,6 +34,7 @@
 
 - **TUI Layer:** Guided/Power modes, autocomplete surfaces provider results, focus management for forms/tables, theming from `plans/THEME.md`, accessibility + UX patterns from `plans/FOCUS_MANAGEMENT.md`, general guidelines from `plans/UX_GUIDELINES.md`, autocomplete from `plans/AUTOCOMPLETE.md` and workflow.
   - State ownership: top-level components (palette, builder, logs, help, table) keep their state on `app::App` for coordination; nested subcomponents (e.g., pagination inside the table) may keep private state and be composed by the parent. See AGENTS.md for the component cookbook.
+  - Runtime: The event loop and input routing live in `crates/tui/src/ui/runtime.rs`. It handles terminal setup/teardown, emits a constant animation tick (~8 FPS), routes input to focused components, and renders only when `App` marks itself dirty. This ensures smooth animations without unnecessary redraws while idle.
 
 ## Focus Management
 

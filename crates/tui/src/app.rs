@@ -103,6 +103,8 @@ pub struct App<'a> {
     pub pagination_history: Vec<Option<String>>,
     /// Initial Range header used (if any)
     pub initial_range: Option<String>,
+    /// Internal dirty flag to indicate UI should re-render
+    dirty: bool,
 }
 
 impl<'a> App<'a> {
@@ -114,6 +116,25 @@ impl<'a> App<'a> {
             return r.clone();
         }
         self.builder.available_ranges()
+    }
+}
+
+impl App<'_> {
+    /// Marks the application state as changed, signaling a redraw is needed.
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
+    }
+
+    /// Returns whether the application is currently marked dirty.
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
+    }
+
+    /// Returns the dirty state and resets it to clean in one call.
+    pub fn take_dirty(&mut self) -> bool {
+        let was_dirty = self.dirty;
+        self.dirty = false;
+        was_dirty
     }
 }
 
@@ -222,6 +243,7 @@ impl App<'_> {
             last_body: None,
             pagination_history: Vec::new(),
             initial_range: None,
+            dirty: false,
         };
         app.builder.set_all_commands(app.ctx.registry.commands.clone());
         app.palette.set_all_commands(app.ctx.registry.commands.clone());
@@ -262,7 +284,11 @@ impl App<'_> {
             Msg::Tick => {
                 // Animate spinner while executing or while provider-backed suggestions are loading
                 if self.executing || self.palette.is_provider_loading() {
+                    let before = self.throbber_idx;
                     self.throbber_idx = (self.throbber_idx + 1) % 10;
+                    if self.throbber_idx != before {
+                        self.mark_dirty();
+                    }
                 }
                 // If provider-backed suggestions are loading and the popup is open,
                 // rebuild suggestions to pick up newly cached results without requiring
@@ -271,11 +297,15 @@ impl App<'_> {
                     let SharedCtx {
                         registry, providers, ..
                     } = &self.ctx;
-                    self.palette.apply_build_suggestions(registry, providers, &*self.ctx.theme);
+                    self.palette
+                        .apply_build_suggestions(registry, providers, &*self.ctx.theme);
+                    // Suggestions UI likely changed (new results); request redraw
+                    self.mark_dirty();
                 }
             }
             Msg::Resize(..) => {
                 // No-op for now; placeholder to enable TEA-style event
+                self.mark_dirty();
             }
             Msg::ToggleHelp => {
                 let spec = if self.builder.is_visible() {
@@ -284,20 +314,24 @@ impl App<'_> {
                     self.palette.selected_command()
                 };
                 self.help.toggle_visibility(spec.cloned());
+                self.mark_dirty();
             }
             Msg::ToggleTable => {
                 self.table.toggle_show();
+                self.mark_dirty();
             }
             Msg::ToggleBuilder => {
                 self.builder.toggle_visibility();
                 if self.builder.is_visible() {
                     self.builder.normalize_focus();
                 }
+                self.mark_dirty();
             }
             Msg::CloseModal => {
                 self.help.set_visibility(false);
                 self.table.apply_visible(false);
                 self.builder.apply_visibility(false);
+                self.mark_dirty();
             }
             Msg::Run => {
                 // always execute from palette
@@ -311,9 +345,11 @@ impl App<'_> {
                                 level: Some("info".into()),
                                 msg: format!("Running: {}", input),
                             });
+                            self.mark_dirty();
                         }
                         Err(e) => {
                             self.palette.apply_error(e);
+                            self.mark_dirty();
                         }
                     }
                 }
@@ -347,6 +383,7 @@ impl App<'_> {
                 self.last_pagination = out.pagination;
                 // Clear palette input and suggestion state
                 self.palette.reduce_clear_all();
+                self.mark_dirty();
             }
             // Placeholder handlers for upcoming logs features
             Msg::LogsUp | Msg::LogsDown | Msg::LogsExtendUp | Msg::LogsExtendDown => {}

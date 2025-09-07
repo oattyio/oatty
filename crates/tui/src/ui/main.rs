@@ -111,7 +111,12 @@ fn render_modals(
     if any_modal {
         use ratatui::widgets::Block;
         let area = f.area();
-        f.render_widget(Block::default().bg(app.ctx.theme.roles().background).add_modifier(Modifier::DIM), area);
+        f.render_widget(
+            Block::default()
+                .bg(app.ctx.theme.roles().background)
+                .add_modifier(Modifier::DIM),
+            area,
+        );
     }
 
     if app.help.is_visible() {

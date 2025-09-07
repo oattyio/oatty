@@ -52,7 +52,7 @@ enum BindingOutcome {
 pub fn resolve_and_infer_providers(commands: &mut [CommandSpec]) {
     let (command_index, _command_id_to_index) = build_command_index(commands);
     let list_groups = find_groups_with_list_commands(&command_index);
-    
+
     let provider_metadata = precompute_provider_metadata(commands);
 
     for command_spec in commands.iter_mut() {
@@ -82,13 +82,13 @@ struct ProviderMetadata {
 fn build_command_index(commands: &[CommandSpec]) -> (HashSet<String>, HashMap<String, usize>) {
     let mut command_identifiers = HashSet::new();
     let mut command_id_to_index = HashMap::new();
-    
+
     for (index, command) in commands.iter().enumerate() {
         let command_id = format!("{}:{}", command.group, command.name);
         command_identifiers.insert(command_id.clone());
         command_id_to_index.insert(command_id, index);
     }
-    
+
     (command_identifiers, command_id_to_index)
 }
 
@@ -151,17 +151,13 @@ fn find_groups_with_list_commands(command_index: &HashSet<String>) -> HashSet<St
 /// * `flags` - Mutable slice of command flags to process
 /// * `list_groups` - Set of groups that have `list` commands
 /// * `command_index` - Set of all available command identifiers
-fn apply_flag_providers(
-    flags: &mut [CommandFlag],
-    list_groups: &HashSet<String>,
-    command_index: &HashSet<String>,
-) {
+fn apply_flag_providers(flags: &mut [CommandFlag], list_groups: &HashSet<String>, command_index: &HashSet<String>) {
     let flag_to_group_synonyms = create_flag_to_group_synonyms();
-    
+
     for flag in flags.iter_mut() {
         if let Some(group_name) = map_flag_name_to_group(&flag.name, &flag_to_group_synonyms) {
             let list_provider_id = format!("{}:{}", group_name, "list");
-            
+
             if list_groups.contains(&group_name) && command_index.contains(&list_provider_id) {
                 flag.provider = Some(ValueProvider::Command {
                     command_id: list_provider_id,
@@ -212,9 +208,9 @@ fn apply_positional_providers(
 ) {
     let positional_name_to_index = build_positional_index(command_spec);
     let path_segments = parse_path_segments(&command_spec.path);
-    
+
     let mut previous_concrete_segment: Option<String> = None;
-    
+
     for segment in path_segments {
         match segment {
             PathSegment::Placeholder(placeholder_name) => {
@@ -265,11 +261,7 @@ fn parse_path_segments(path: &str) -> Vec<PathSegment> {
         .filter(|segment| !segment.is_empty())
         .map(|segment| {
             if segment.starts_with('{') && segment.ends_with('}') {
-                let placeholder_name = segment
-                    .trim_start_matches('{')
-                    .trim_end_matches('}')
-                    .trim()
-                    .to_string();
+                let placeholder_name = segment.trim_start_matches('{').trim_end_matches('}').trim().to_string();
                 PathSegment::Placeholder(placeholder_name)
             } else {
                 PathSegment::Concrete(segment.to_string())
@@ -290,17 +282,17 @@ fn find_provider_candidates(
     command_index: &HashSet<String>,
 ) -> Vec<String> {
     let mut candidates = Vec::new();
-    
+
     // First, try the simple unscoped provider
     let simple_provider = format!("{}:{}", normalized_group, "list");
     if command_index.contains(&simple_provider) {
         candidates.push(simple_provider);
     }
-    
+
     // Then, look for scoped providers by examining earlier path segments
     let path_segments = parse_path_segments(&command_spec.path);
     let mut concrete_segments = Vec::new();
-    
+
     for segment in path_segments {
         match segment {
             PathSegment::Concrete(segment_name) => {
@@ -313,11 +305,12 @@ fn find_provider_candidates(
             }
         }
     }
-    
+
     // Look for scoped providers by checking if earlier segments can be used as group names
     // for commands with name "<target_group>:list"
     for (i, segment) in concrete_segments.iter().enumerate() {
-        if i < concrete_segments.len() - 1 { // Don't use the last segment (it's the target group)
+        if i < concrete_segments.len() - 1 {
+            // Don't use the last segment (it's the target group)
             // Try using this segment as a group name with "<target_group>:list" as the command name
             let scoped_provider = format!("{}:{}:{}", segment, normalized_group, "list");
             if command_index.contains(&scoped_provider) {
@@ -325,14 +318,14 @@ fn find_provider_candidates(
             }
         }
     }
-    
+
     candidates
 }
 
 /// Process a placeholder segment and assign the best available provider.
 ///
 /// This function finds provider candidates by checking both simple and scoped providers,
-/// then selects the best one based on binding success. Scoped providers (e.g., 
+/// then selects the best one based on binding success. Scoped providers (e.g.,
 /// "apps:addons:list") are preferred over simple providers (e.g., "addons:list") when
 /// they can successfully bind to earlier consumer arguments.
 fn process_placeholder(
@@ -345,19 +338,14 @@ fn process_placeholder(
     provider_required_flags: &HashMap<String, Vec<String>>,
 ) {
     let normalized_group = normalize_group_name(previous_segment);
-    
+
     // Try to find the best provider by checking both scoped and unscoped options
-    let provider_candidates = find_provider_candidates(
-        &normalized_group,
-        command_spec,
-        positional_name_to_index,
-        command_index,
-    );
-    
-    
+    let provider_candidates =
+        find_provider_candidates(&normalized_group, command_spec, positional_name_to_index, command_index);
+
     // Find the best provider that can be bound
     let mut best_provider: Option<(String, Vec<Bind>)> = None;
-    
+
     for candidate_id in provider_candidates {
         let binding_outcome = compute_provider_bindings(
             &candidate_id,
@@ -367,7 +355,7 @@ fn process_placeholder(
             provider_placeholders,
             provider_required_flags,
         );
-        
+
         match binding_outcome {
             BindingOutcome::Satisfied(bindings) => {
                 // Prefer providers with bindings over those without
@@ -386,18 +374,17 @@ fn process_placeholder(
             }
         }
     }
-    
-    if let Some((provider_id, binds)) = best_provider {
-        if let Some(positional_arg) = command_spec
+
+    if let Some((provider_id, binds)) = best_provider
+        && let Some(positional_arg) = command_spec
             .positional_args
             .iter_mut()
             .find(|arg| arg.name == placeholder_name)
-        {
-            positional_arg.provider = Some(ValueProvider::Command {
-                command_id: provider_id,
-                binds,
-            });
-        }
+    {
+        positional_arg.provider = Some(ValueProvider::Command {
+            command_id: provider_id,
+            binds,
+        });
     }
 }
 
@@ -433,38 +420,30 @@ fn compute_provider_bindings(
 ) -> BindingOutcome {
     let provider_placeholders = provider_placeholders.get(provider_id).cloned().unwrap_or_default();
     let provider_required_flags = provider_required_flags.get(provider_id).cloned().unwrap_or_default();
-    
+
     if provider_placeholders.is_empty() && provider_required_flags.is_empty() {
         return BindingOutcome::NoPlaceholders;
     }
 
-    let available_inputs = build_available_inputs(
-        target_positional_name,
-        positional_name_to_index,
-        consumer_command,
-    );
-    
+    let available_inputs = build_available_inputs(target_positional_name, positional_name_to_index, consumer_command);
+
     if available_inputs.is_empty() {
         return BindingOutcome::Unsatisfied;
     }
 
     let name_synonyms = create_name_synonyms_mapping();
-    
+
     // Attempt to bind path placeholders
     let mut bindings = Vec::new();
-    
+
     for placeholder_name in provider_placeholders {
-        if let Some(binding) = find_binding_for_placeholder(
-            &placeholder_name,
-            &available_inputs,
-            &name_synonyms,
-        ) {
+        if let Some(binding) = find_binding_for_placeholder(&placeholder_name, &available_inputs, &name_synonyms) {
             bindings.push(binding);
         } else {
             return BindingOutcome::Unsatisfied;
         }
     }
-    
+
     // Attempt to bind required flags
     if let Err(()) = bind_required_flags(
         &provider_required_flags,
@@ -475,7 +454,7 @@ fn compute_provider_bindings(
     ) {
         return BindingOutcome::Unsatisfied;
     }
-    
+
     BindingOutcome::Satisfied(bindings)
 }
 
@@ -489,7 +468,7 @@ fn build_available_inputs(
         Some(&index) => index,
         None => return HashSet::new(),
     };
-    
+
     consumer_command
         .positional_args
         .iter()
@@ -526,7 +505,7 @@ fn find_binding_for_placeholder(
         .get(placeholder_name)
         .map(|synonyms| synonyms.iter().map(|s| s.to_string()).collect())
         .unwrap_or_else(|| vec![placeholder_name.to_string()]);
-    
+
     candidate_names
         .iter()
         .find(|candidate| available_inputs.contains(*candidate))
@@ -547,27 +526,36 @@ fn bind_required_flags(
     bindings: &mut Vec<Bind>,
 ) -> Result<(), ()> {
     let allowed_flag_names: HashSet<&str> = HashSet::from([
-        "app", "app_id", "pipeline", "team", "team_name", "addon", "addon_id", 
-        "space", "space_id", "region", "stack",
+        "app",
+        "app_id",
+        "pipeline",
+        "team",
+        "team_name",
+        "addon",
+        "addon_id",
+        "space",
+        "space_id",
+        "region",
+        "stack",
     ]);
-    
+
     let consumer_required_flag_names: HashSet<String> = consumer_command
         .flags
         .iter()
         .filter(|flag| flag.required)
         .map(|flag| flag.name.clone())
         .collect();
-    
+
     for required_flag in required_flags {
         if !allowed_flag_names.contains(required_flag.as_str()) {
             continue; // Skip non-core flag names
         }
-        
+
         let candidate_names: Vec<String> = name_synonyms
             .get(required_flag.as_str())
             .map(|synonyms| synonyms.iter().map(|s| s.to_string()).collect())
             .unwrap_or_else(|| vec![required_flag.clone()]);
-        
+
         // Try to bind from available positional inputs first
         if let Some(found_name) = candidate_names
             .iter()
@@ -579,7 +567,7 @@ fn bind_required_flags(
             });
             continue;
         }
-        
+
         // Try to bind from consumer required flags
         if let Some(found_name) = candidate_names
             .iter()
@@ -591,11 +579,11 @@ fn bind_required_flags(
             });
             continue;
         }
-        
+
         // Could not satisfy this required flag
         return Err(());
     }
-    
+
     Ok(())
 }
 
@@ -608,11 +596,7 @@ fn extract_path_placeholders(path: &str) -> Vec<String> {
         .split('/')
         .filter_map(|segment| {
             if segment.starts_with('{') && segment.ends_with('}') {
-                let placeholder_name = segment
-                    .trim_start_matches('{')
-                    .trim_end_matches('}')
-                    .trim()
-                    .to_string();
+                let placeholder_name = segment.trim_start_matches('{').trim_end_matches('}').trim().to_string();
                 Some(placeholder_name)
             } else {
                 None
@@ -650,9 +634,7 @@ fn normalize_group_name(group_name: &str) -> String {
 /// - `"v"` → `false` (too short)
 fn is_version_segment(segment: &str) -> bool {
     let trimmed = segment.trim();
-    trimmed.len() > 1 
-        && trimmed.starts_with('v') 
-        && trimmed[1..].chars().all(|c| c.is_ascii_digit())
+    trimmed.len() > 1 && trimmed.starts_with('v') && trimmed[1..].chars().all(|c| c.is_ascii_digit())
 }
 
 /// Map a flag name to its corresponding group name.
@@ -671,11 +653,11 @@ fn is_version_segment(segment: &str) -> bool {
 /// * `None` if no mapping can be determined
 fn map_flag_name_to_group(flag_name: &str, synonyms: &HashMap<&str, &str>) -> Option<String> {
     let normalized_flag_name = flag_name.to_lowercase();
-    
+
     if let Some(&group_name) = synonyms.get(normalized_flag_name.as_str()) {
         return Some(group_name.to_string());
     }
-    
+
     apply_conservative_pluralization(&normalized_flag_name)
 }
 
@@ -704,21 +686,21 @@ fn apply_conservative_pluralization(singular_name: &str) -> Option<String> {
     if singular_name.is_empty() {
         return None;
     }
-    
+
     if singular_name.ends_with('s') {
         return Some(singular_name.to_string());
     }
-    
+
     if singular_name.ends_with('y') && singular_name.len() > 1 {
         let second_to_last_char = singular_name.chars().nth(singular_name.len() - 2).unwrap();
         if !matches!(second_to_last_char, 'a' | 'e' | 'i' | 'o' | 'u') {
             return Some(format!("{}ies", &singular_name[..singular_name.len() - 1]));
         }
     }
-    
+
     if singular_name.ends_with('x') || singular_name.ends_with("ch") || singular_name.ends_with("sh") {
         return Some(format!("{}es", singular_name));
     }
-    
+
     Some(format!("{}s", singular_name))
 }

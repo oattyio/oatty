@@ -21,7 +21,9 @@ use heroku_types::CommandSpec;
 use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
-
+use ratatui::style::Modifier;
+use ratatui::text::{Line, Span};
+use ratatui::widgets::ListItem;
 /// Maximum number of suggestions to display in the popup.
 const MAX_SUGGESTIONS: usize = 20;
 
@@ -473,10 +475,6 @@ impl PaletteState {
     /// Finalize suggestion list for the UI: rank, truncate, ghost text, and
     /// state flags.
     fn finalize_suggestions(&mut self, items: &mut Vec<SuggestionItem>, theme: &dyn crate::ui::theme::Theme) {
-        use ratatui::text::{Line, Span};
-        use ratatui::style::Modifier;
-        use ratatui::widgets::ListItem;
-
         items.sort_by(|a, b| b.score.cmp(&a.score));
         if items.len() > MAX_SUGGESTIONS {
             items.truncate(MAX_SUGGESTIONS);
@@ -494,10 +492,7 @@ impl PaletteState {
             .map(|s| {
                 let display = s.display.clone();
                 if needle.is_empty() {
-                    return ListItem::new(Line::from(Span::styled(
-                        display,
-                        theme.text_primary_style(),
-                    )));
+                    return ListItem::new(Line::from(Span::styled(display, theme.text_primary_style())));
                 }
 
                 let mut spans: Vec<Span> = Vec::new();
@@ -512,10 +507,7 @@ impl PaletteState {
 
                     // Add text before the match
                     if start > i {
-                        spans.push(Span::styled(
-                            hay[i..start].to_string(),
-                            theme.text_primary_style(),
-                        ));
+                        spans.push(Span::styled(hay[i..start].to_string(), theme.text_primary_style()));
                     }
 
                     // Add highlighted match
@@ -533,10 +525,7 @@ impl PaletteState {
 
                 // Add remaining text after last match
                 if i < hay.len() {
-                    spans.push(Span::styled(
-                        hay[i..].to_string(),
-                        theme.text_primary_style(),
-                    ));
+                    spans.push(Span::styled(hay[i..].to_string(), theme.text_primary_style()));
                 }
 
                 ListItem::new(Line::from(spans))
@@ -547,6 +536,10 @@ impl PaletteState {
     }
 
     pub fn apply_ghost_text(&mut self) {
+        if !self.is_suggestions_open {
+            self.ghost_text = None;
+            return;
+        }
         self.ghost_text = self
             .suggestions
             .get(self.suggestion_index)
@@ -867,7 +860,12 @@ impl PaletteState {
     /// st.apply_build_suggestions(&Registry::from_embedded_schema().unwrap(), &[]);
     /// assert!(!st.selected_suggestions().is_empty());
     /// ```
-    pub fn apply_build_suggestions(&mut self, reg: &Registry, providers: &[Box<dyn ValueProvider>], theme: &dyn crate::ui::theme::Theme) {
+    pub fn apply_build_suggestions(
+        &mut self,
+        reg: &Registry,
+        providers: &[Box<dyn ValueProvider>],
+        theme: &dyn crate::ui::theme::Theme,
+    ) {
         let result = super::suggest::SuggestionEngine::build(reg, providers, &self.input);
         let mut items = result.items;
         self.provider_loading = result.provider_loading;

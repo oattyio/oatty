@@ -235,7 +235,6 @@ impl PaletteComponent {
         frame.set_cursor_position((x, y));
     }
 
-
     /// Handles character input in the command palette.
     ///
     /// This function processes regular character input (with or without Shift
@@ -250,6 +249,7 @@ impl PaletteComponent {
         app.palette.apply_insert_char(character);
         app.palette.set_is_suggestions_open(false);
         app.palette.reduce_clear_error();
+        app.palette.apply_ghost_text();
     }
 
     /// Handles the Ctrl+H key combination to open help for the current command.
@@ -267,7 +267,8 @@ impl PaletteComponent {
         let SharedCtx {
             registry, providers, ..
         } = &app.ctx;
-        app.palette.apply_build_suggestions(registry, providers, &*app.ctx.theme);
+        app.palette
+            .apply_build_suggestions(registry, providers, &*app.ctx.theme);
         let spec = app.palette.selected_command();
         if spec.is_some() {
             app.help.set_spec(spec.cloned());
@@ -349,7 +350,8 @@ impl PaletteComponent {
         let SharedCtx {
             registry, providers, ..
         } = &app.ctx;
-        app.palette.apply_build_suggestions(registry, providers, &*app.ctx.theme);
+        app.palette
+            .apply_build_suggestions(registry, providers, &*app.ctx.theme);
         app.palette.set_is_suggestions_open(app.palette.suggestions_len() > 0);
     }
 
@@ -381,7 +383,8 @@ impl PaletteComponent {
                     registry, providers, ..
                 } = &app.ctx;
                 // Rebuild suggestions after accepting
-                app.palette.apply_build_suggestions(registry, providers, &*app.ctx.theme);
+                app.palette
+                    .apply_build_suggestions(registry, providers, &*app.ctx.theme);
                 app.palette.set_selected(0);
 
                 // Close popup after accepting
@@ -415,6 +418,7 @@ impl PaletteComponent {
     fn handle_escape(&self, app: &mut app::App) {
         if app.palette.is_suggestions_open() {
             app.palette.set_is_suggestions_open(false);
+            app.palette.apply_ghost_text();
         } else {
             app.palette.reduce_clear_all();
         }

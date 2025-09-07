@@ -26,182 +26,22 @@ mod preview;
 mod ui;
 
 // Standard library imports
-use std::{collections::HashMap, io, sync::atomic::Ordering, time::Duration};
+use std::collections::HashMap;
 
 // Third-party imports
 use anyhow::Result;
-use crossterm::{
-    event::{DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers},
-    execute,
-    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
-};
-use rat_focus::FocusBuilder;
-use ratatui::{Terminal, prelude::*};
 use serde_json::{Map, Value};
-use tokio::{signal, sync::mpsc, task};
 
 // Heroku-specific imports
-use heroku_types::{CommandSpec, Field};
+use heroku_types::CommandSpec;
+#[cfg(test)]
+use heroku_types::Field;
 use heroku_util::{lex_shell_like, resolve_path};
 
 // Local imports
-use crate::{
-    cmd::{Cmd, run_cmds},
-    ui::{
-        components::{
-            BuilderComponent, HelpComponent, LogsComponent, TableComponent,
-            component::Component,
-            palette::{HintBarComponent, PaletteComponent},
-        },
-        main,
-    },
-};
+use crate::cmd::{Cmd, run_cmds};
 
-/// Events that can be sent to the UI event loop.
-///
-/// This enum represents the different types of events that the UI can process,
-/// including user input events and animation ticks for smooth UI updates.
-enum UiEvent {
-    /// User input event (keyboard, mouse, etc.)
-    Input(Event),
-    /// Animation tick for periodic UI updates
-    Animate,
-}
-
-/// Convenience container for all top-level UI components.
-struct UiComponents<'a> {
-    palette: PaletteComponent,
-    hint_bar: HintBarComponent<'a>,
-    logs: LogsComponent,
-    builder: BuilderComponent,
-    help: HelpComponent,
-    table: TableComponent<'a>,
-}
-
-impl<'a> UiComponents<'a> {
-    fn new_initialized() -> Self {
-        let mut palette = PaletteComponent::new();
-        let _ = palette.init();
-
-        let mut hint_bar = HintBarComponent::new();
-        let _ = hint_bar.init();
-
-        let mut logs = LogsComponent::new();
-        let _ = logs.init();
-
-        let mut builder = BuilderComponent::new();
-        let _ = builder.init();
-
-        let mut help = HelpComponent::new();
-        let _ = help.init();
-
-        let mut table = TableComponent::default();
-        let _ = table.init();
-
-        Self {
-            palette,
-            hint_bar,
-            logs,
-            builder,
-            help,
-            table,
-        }
-    }
-}
-
-fn setup_terminal() -> Result<Terminal<CrosstermBackend<io::Stdout>>> {
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
-    let backend = CrosstermBackend::new(stdout);
-    let terminal = Terminal::new(backend)?;
-    Ok(terminal)
-}
-
-fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) -> Result<()> {
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
-    terminal.show_cursor()?;
-    Ok(())
-}
-
-fn initial_render<'a>(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    application: &mut app::App,
-    comps: &mut UiComponents<'a>,
-) -> Result<()> {
-    terminal.draw(|frame| {
-        main::draw(
-            frame,
-            application,
-            &mut comps.palette,
-            &mut comps.hint_bar,
-            &mut comps.logs,
-            &mut comps.builder,
-            &mut comps.help,
-            &mut comps.table,
-        )
-    })?;
-    Ok(())
-}
-
-fn render<'a>(
-    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
-    application: &mut app::App,
-    comps: &mut UiComponents<'a>,
-) -> Result<()> {
-    terminal.draw(|frame| {
-        main::draw(
-            frame,
-            application,
-            &mut comps.palette,
-            &mut comps.hint_bar,
-            &mut comps.logs,
-            &mut comps.builder,
-            &mut comps.help,
-            &mut comps.table,
-        )
-    })?;
-    Ok(())
-}
-
-fn spawn_ui_event_producer(
-    active_execution_count: std::sync::Arc<std::sync::atomic::AtomicUsize>,
-    ui_event_sender: mpsc::UnboundedSender<UiEvent>,
-    animation_interval: Duration,
-) {
-    task::spawn_blocking(move || {
-        loop {
-            if active_execution_count.load(Ordering::Relaxed) > 0 {
-                match crossterm::event::poll(animation_interval) {
-                    Ok(true) => match crossterm::event::read() {
-                        Ok(input_event) => {
-                            if ui_event_sender.send(UiEvent::Input(input_event)).is_err() {
-                                break;
-                            }
-                        }
-                        Err(_) => std::thread::sleep(Duration::from_millis(10)),
-                    },
-                    Ok(false) => {
-                        if ui_event_sender.send(UiEvent::Animate).is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
-                }
-            } else {
-                match crossterm::event::read() {
-                    Ok(input_event) => {
-                        if ui_event_sender.send(UiEvent::Input(input_event)).is_err() {
-                            break;
-                        }
-                    }
-                    Err(_) => std::thread::sleep(Duration::from_millis(10)),
-                }
-            }
-        }
-    });
-}
+// Runtime moved to ui::runtime
 
 /// Runs the main TUI application loop.
 ///
@@ -238,86 +78,7 @@ fn spawn_ui_event_producer(
 /// }
 /// ```
 pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
-    // Initialize the main application state
-    let mut application = app::App::new(registry);
-    let mut comps = UiComponents::new_initialized();
-
-    // Terminal setup
-    let mut terminal = setup_terminal()?;
-
-    // Set up event handling
-    let animation_interval = Duration::from_millis(200);
-    let (ui_event_sender, mut ui_event_receiver) = mpsc::unbounded_channel::<UiEvent>();
-    let active_execution_count = application.active_exec_count.clone();
-    // Spawn a blocking task to handle input events and animation ticks
-    spawn_ui_event_producer(active_execution_count, ui_event_sender, animation_interval);
-
-    // Perform initial render so UI is visible before any events
-    initial_render(&mut terminal, &mut application, &mut comps)?;
-
-    // Main event loop
-    loop {
-        let mut needs_rerender = false;
-
-        tokio::select! {
-            // Handle UI events (input, animation)
-            maybe_ui_event = ui_event_receiver.recv() => {
-                if let Some(ui_event) = maybe_ui_event {
-                    match ui_event {
-                        UiEvent::Input(input_event) => match input_event {
-                            Event::Key(key_event) => {
-                                // Handle Ctrl+C for graceful shutdown
-                                if key_event.code == KeyCode::Char('c') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                                    break;
-                                }
-                                // Process the key event and check if we should exit
-                                if handle_key_event(
-                                    &mut application,
-                                    &mut comps.palette,
-                                    &mut comps.builder,
-                                    &mut comps.table,
-                                    &mut comps.logs,
-                                    key_event,
-                                )? {
-                                    break;
-                                }
-                                needs_rerender = true;
-                            }
-                            Event::Resize(width, height) => {
-                                let _ = application.update(app::Msg::Resize(width, height));
-                                needs_rerender = true;
-                            }
-                            _ => {}
-                        },
-                        UiEvent::Animate => {
-                            let _ = application.update(app::Msg::Tick);
-                            needs_rerender = true;
-                        }
-                    }
-                }
-            }
-            // Handle command execution completion
-            maybe_execution_output = application.exec_receiver.recv() => {
-                if let Some(execution_output) = maybe_execution_output {
-                    let _ = application.update(app::Msg::ExecCompleted(execution_output));
-                    needs_rerender = true;
-                }
-            }
-            // Handle Ctrl+C signal
-            _ = signal::ctrl_c() => {
-                break;
-            }
-        }
-
-        // Render the UI if needed
-        if needs_rerender {
-            render(&mut terminal, &mut application, &mut comps)?;
-        }
-    }
-
-    // Cleanup: restore terminal to normal mode
-    cleanup_terminal(&mut terminal)?;
-    Ok(())
+    crate::ui::runtime::run_app(registry).await
 }
 
 /// Handles keyboard input events and routes them to the appropriate UI components.
@@ -346,147 +107,131 @@ pub async fn run(registry: heroku_registry::Registry) -> Result<()> {
 /// 2. Modal-specific routing (table, builder, logs detail)
 /// 3. Focus-based routing between palette and logs
 /// 4. Tab/Shift+Tab for focus cycling
-fn handle_key_event(
-    application: &mut app::App,
-    palette_component: &mut PaletteComponent,
-    builder_component: &mut BuilderComponent,
-    table_component: &mut TableComponent,
-    logs_component: &mut LogsComponent,
-    key_event: KeyEvent,
-) -> Result<bool> {
-    // First, check for global key mappings (Esc, Ctrl+F, etc.)
-    if let Some(global_message) = map_key_to_global_message(application, &key_event) {
-        let _ = application.update(global_message);
-        return Ok(false);
-    }
+// Key routing moved to ui::runtime
 
-    // Route to table component when table modal is visible
-    if application.table.is_visible() {
-        let component_effects = table_component.handle_key_events(application, key_event);
-        let commands = crate::cmd::from_effects(application, component_effects);
-        crate::cmd::run_cmds(application, commands);
-        return Ok(false);
-    }
+// Input routing helpers moved to ui::runtime
 
-    // Handle Enter key in builder modal to close and populate palette
-    if application.builder.is_visible() && key_event.code == KeyCode::Enter {
-        handle_builder_enter(application);
-        return Ok(false);
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use heroku_types::{CommandFlag, PositionalArgument};
 
-    // Route to logs component when detail view is open
-    if application.logs.detail.is_some() {
-        let component_effects = logs_component.handle_key_events(application, key_event);
-        let commands = crate::cmd::from_effects(application, component_effects);
-        crate::cmd::run_cmds(application, commands);
-        return Ok(false);
-    }
-
-    // Handle focus management and component routing when not in builder
-    if !application.builder.is_visible() {
-        // Handle Tab/Shift+Tab for focus cycling between palette and logs
-        if handle_focus_cycle(application, &key_event) {
-            return Ok(false);
-        }
-
-        // Route to focused component
-        if application.logs.focus.get() {
-            let component_effects = logs_component.handle_key_events(application, key_event);
-            let commands = crate::cmd::from_effects(application, component_effects);
-            crate::cmd::run_cmds(application, commands);
-            return Ok(false);
-        } else {
-            let component_effects = palette_component.handle_key_events(application, key_event);
-            let commands = crate::cmd::from_effects(application, component_effects);
-            crate::cmd::run_cmds(application, commands);
-            return Ok(false);
-        }
-    }
-
-    // Route to builder component when builder is visible
-    let component_effects = builder_component.handle_key_events(application, key_event);
-    let commands = crate::cmd::from_effects(application, component_effects);
-    crate::cmd::run_cmds(application, commands);
-    Ok(false)
-}
-
-/// Maps global keyboard shortcuts to application messages.
-///
-/// This function handles application-wide keyboard shortcuts that should be
-/// processed regardless of which component currently has focus. It maintains
-/// the TEA (The Elm Architecture) pattern by converting key events to messages.
-///
-/// # Arguments
-///
-/// * `application` - The current application state
-/// * `key_event` - The keyboard event to process
-///
-/// # Returns
-///
-/// Returns `Some(message)` if the key event maps to a global action,
-/// or `None` if the event should be handled by focused components.
-///
-/// # Global Shortcuts
-///
-/// - `Esc`: Close any visible modal (help, table, builder)
-/// - `Ctrl+F`: Toggle the command builder modal
-fn map_key_to_global_message(application: &app::App, key_event: &KeyEvent) -> Option<app::Msg> {
-    // Close any visible modal when Esc is pressed
-    if (application.help.is_visible() || application.table.is_visible() || application.builder.is_visible())
-        && key_event.code == KeyCode::Esc
-    {
-        return Some(app::Msg::CloseModal);
-    }
-
-    // Toggle command builder with Ctrl+F
-    if key_event.code == KeyCode::Char('f') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
-        return Some(app::Msg::ToggleBuilder);
-    }
-
-    // No global mapping found - let focused components handle the event
-    None
-}
-
-fn handle_builder_enter(application: &mut app::App) {
-    if let Some(command_spec) = application.builder.selected_command() {
-        let command_line = build_palette_line_from_spec(command_spec, application.builder.input_fields());
-        application.palette.set_input(command_line);
-        application.palette.set_cursor(application.palette.input().len());
-        application.palette.apply_build_suggestions(
-            &application.ctx.registry,
-            &application.ctx.providers,
-            &*application.ctx.theme,
-        );
-    }
-    application.builder.apply_visibility(false);
-}
-
-fn handle_focus_cycle(application: &app::App, key_event: &KeyEvent) -> bool {
-    if (key_event.code == KeyCode::Tab || key_event.code == KeyCode::BackTab)
-        && !key_event.modifiers.contains(KeyModifiers::CONTROL)
-    {
-        let palette_has_suggestions =
-            application.palette.is_suggestions_open() || !application.palette.input().is_empty();
-
-        if palette_has_suggestions && application.palette.focus.get() && key_event.code == KeyCode::Tab {
-            // Let palette handle Tab for suggestion navigation/acceptance
-            return false;
-        }
-
-        let mut focus_builder = FocusBuilder::new(None);
-        focus_builder.widget(&application.palette);
-        focus_builder.widget(&application.logs);
-        let focus_ring = focus_builder.build();
-
-        let _ = if key_event.code == KeyCode::Tab {
-            focus_ring.next()
-        } else {
-            focus_ring.prev()
+    #[test]
+    fn build_palette_line_formats_args_and_flags() {
+        let spec = CommandSpec {
+            group: "apps".into(),
+            name: "info".into(),
+            summary: "Get app info".into(),
+            positional_args: vec![PositionalArgument {
+                name: "app".into(),
+                help: None,
+                provider: None,
+            }],
+            flags: vec![
+                CommandFlag {
+                    name: "json".into(),
+                    short_name: None,
+                    required: false,
+                    r#type: "boolean".into(),
+                    enum_values: vec![],
+                    default_value: None,
+                    description: None,
+                    provider: None,
+                },
+                CommandFlag {
+                    name: "region".into(),
+                    short_name: None,
+                    required: false,
+                    r#type: "string".into(),
+                    enum_values: vec![],
+                    default_value: None,
+                    description: None,
+                    provider: None,
+                },
+            ],
+            method: "GET".into(),
+            path: "/apps/{app}".into(),
+            ranges: vec![],
+            service_id: Default::default(),
         };
-        return true;
+
+        let fields = vec![
+            Field {
+                name: "app".into(),
+                required: true,
+                is_bool: false,
+                value: "my-app".into(),
+                enum_values: vec![],
+                enum_idx: None,
+            },
+            Field {
+                name: "json".into(),
+                required: false,
+                is_bool: true,
+                value: "1".into(),
+                enum_values: vec![],
+                enum_idx: None,
+            },
+            Field {
+                name: "region".into(),
+                required: false,
+                is_bool: false,
+                value: "us".into(),
+                enum_values: vec![],
+                enum_idx: None,
+            },
+        ];
+
+        let line = build_palette_line_from_spec(&spec, &fields);
+        assert_eq!(line, "apps info my-app --json --region us");
     }
-    false
+
+    #[test]
+    fn parse_validate_and_build_request_body_for_flags() {
+        let spec = CommandSpec {
+            group: "apps".into(),
+            name: "list".into(),
+            summary: "List apps".into(),
+            positional_args: vec![],
+            flags: vec![
+                CommandFlag {
+                    name: "json".into(),
+                    short_name: None,
+                    required: false,
+                    r#type: "boolean".into(),
+                    enum_values: vec![],
+                    default_value: None,
+                    description: None,
+                    provider: None,
+                },
+                CommandFlag {
+                    name: "region".into(),
+                    short_name: None,
+                    required: false,
+                    r#type: "string".into(),
+                    enum_values: vec![],
+                    default_value: None,
+                    description: None,
+                    provider: None,
+                },
+            ],
+            method: "GET".into(),
+            path: "/apps".into(),
+            ranges: vec![],
+            service_id: Default::default(),
+        };
+
+        let tokens = vec!["--region".to_string(), "us".to_string(), "--json".to_string()];
+        let (flags, args) = parse_command_arguments(&tokens, &spec).expect("parse flags");
+        assert!(args.is_empty());
+        validate_command_arguments(&[], &flags, &spec).expect("validate flags");
+        let body = build_request_body(flags, &spec);
+        assert_eq!(body.get("region").and_then(|v| v.as_str()), Some("us"));
+        assert_eq!(body.get("json").and_then(|v| v.as_bool()), Some(true));
+    }
 }
+
+// Helper moved to ui::runtime
 
 /// Builds a command line string from a command specification and input fields.
 ///
@@ -516,6 +261,7 @@ fn handle_focus_cycle(application: &app::App, key_event: &KeyEvent) -> bool {
 /// // For spec with group="apps", name="info", and fields with app_id="my-app"
 /// // Returns: "apps info my-app"
 /// ```
+#[cfg(test)]
 fn build_palette_line_from_spec(command_spec: &CommandSpec, input_fields: &[Field]) -> String {
     let mut command_parts: Vec<String> = Vec::new();
 
