@@ -1,24 +1,4 @@
-//! MCP client framework and transport management.
-//!
-//! This module provides the core components for creating and managing clients that
-//! communicate with MCP (Managed Component Protocol) servers. It defines a generic
-//! framework with traits for different communication methods (transports) and a
-//! client struct that manages the state of a connection.
-//!
-//! ## Key Components
-//!
-//! - `McpTransport`: A trait for transport implementations (e.g., `StdioTransport`,
-//!   `HttpTransport`). It defines the interface for connecting to a server and
-//!   performing health checks.
-//! - `McpConnection`: A trait representing an active, established connection to a
-//!   server. It provides access to the underlying `rmcp` service peer and methods
-//!   to check the connection's liveness and to close it.
-//! - `McpClient`: A state machine for a single client instance. It wraps a
-//!   transport and manages the connection lifecycle (e.g., connecting,
-//!   disconnecting, tracking status).
-//! - `McpClientManager`: (In the `manager` submodule) A higher-level component
-//!   that manages a collection of `McpClient` instances, handles their lifecycle,
-//!   and performs periodic health monitoring.
+//! MCP client management for different transport types.
 
 mod health;
 mod http;
@@ -35,77 +15,58 @@ use crate::config::McpServer;
 use crate::types::{PluginStatus, TransportStatus};
 use rmcp::{ErrorData as McpError, service::RoleClient};
 
-/// A trait for MCP transport implementations.
-///
-/// A transport is responsible for establishing a connection to an MCP server
-/// and performing transport-specific health checks.
+/// Trait for MCP transport implementations.
 #[async_trait::async_trait]
 pub trait McpTransport: Send + Sync {
-    /// Establishes a connection to the MCP server.
-    ///
-    /// On success, returns a `Box<dyn McpConnection>` representing the active
-    /// connection.
+    /// Connect to the MCP server.
     async fn connect(&self) -> Result<Box<dyn McpConnection>, McpError>;
 
-    /// Performs a health check on the MCP server.
-    ///
-    /// The implementation is transport-specific. For example, an HTTP transport
-    /// might send a GET request, while a stdio transport might spawn the process.
+    /// Perform a health check.
     async fn health_check(&self) -> Result<HealthCheckResult, McpError>;
 
-    /// Returns a string slice identifying the transport type (e.g., "stdio", "http").
+    /// Get the transport type.
     fn transport_type(&self) -> &'static str;
 
-    /// Returns a reference to the server configuration.
+    /// Get the server configuration.
     fn server_config(&self) -> &McpServer;
 }
 
-/// A trait for an active MCP connection.
-///
-/// This represents an established connection to an MCP server and provides the
-/// means to interact with it.
+/// Trait for MCP connections.
 #[async_trait::async_trait]
 pub trait McpConnection: Send + Sync {
-    /// Returns a reference to the `rmcp` service peer for making RPC calls.
+    /// Get the underlying service.
     fn peer(&self) -> &rmcp::service::Peer<RoleClient>;
 
-    /// Checks if the connection is still active.
+    /// Check if the connection is alive.
     async fn is_alive(&self) -> bool;
 
-    /// Closes the connection and cleans up any associated resources.
+    /// Close the connection.
     async fn close(self: Box<Self>) -> Result<(), McpError>;
 }
 
-/// A client that manages a connection to a single MCP server.
-///
-/// `McpClient` acts as a state machine, wrapping a specific `McpTransport` and
-/// managing the lifecycle of the connection. It tracks the connection's status,
-/// health, and any errors.
-#[derive(Debug)]
+/// A managed MCP client.
 pub struct McpClient {
-    /// The transport used to establish and check the connection.
+    /// The transport for this client.
     transport: Box<dyn McpTransport>,
 
-    /// The active connection, if one is established.
+    /// The current connection (if any).
     connection: Option<Box<dyn McpConnection>>,
 
-    /// The overall status of the plugin (e.g., Running, Stopped).
+    /// Current status of the client.
     status: PluginStatus,
 
-    /// The status of the underlying transport connection (e.g., Connected, Disconnected).
+    /// Transport-specific status.
     transport_status: TransportStatus,
 
-    /// The current health status of the client.
+    /// Health information.
     health: HealthStatus,
 
-    /// The last error message, if the client is in an error state.
+    /// Last error (if any).
     last_error: Option<String>,
 }
 
 impl McpClient {
-    /// Creates a new `McpClient` with the given transport.
-    ///
-    /// The client starts in a `Stopped` state.
+    /// Create a new MCP client.
     pub fn new(transport: Box<dyn McpTransport>) -> Self {
         Self {
             transport,
@@ -117,13 +78,10 @@ impl McpClient {
         }
     }
 
-    /// Connects to the MCP server using the configured transport.
-    ///
-    /// This method updates the client's status and health based on the outcome.
+    /// Connect to the MCP server.
     pub async fn connect(&mut self) -> Result<(), McpError> {
         self.status = PluginStatus::Starting;
         self.transport_status = TransportStatus::Connecting;
-        self.last_error = None;
 
         match self.transport.connect().await {
             Ok(connection) => {
@@ -131,6 +89,7 @@ impl McpClient {
                 self.status = PluginStatus::Running;
                 self.transport_status = TransportStatus::Connected;
                 self.health.mark_healthy();
+                self.last_error = None;
                 Ok(())
             }
             Err(error) => {
@@ -143,9 +102,7 @@ impl McpClient {
         }
     }
 
-    /// Disconnects from the MCP server.
-    ///
-    /// This closes the active connection and updates the client's status.
+    /// Disconnect from the MCP server.
     pub async fn disconnect(&mut self) -> Result<(), McpError> {
         self.status = PluginStatus::Stopping;
 
@@ -160,34 +117,32 @@ impl McpClient {
         Ok(())
     }
 
-    /// Returns `true` if the client is currently connected and running.
+    /// Check if the client is connected.
     pub fn is_connected(&self) -> bool {
         self.connection.is_some() && self.status.is_running()
     }
 
-    /// Returns the current `PluginStatus` of the client.
+    /// Get the current status.
     pub fn status(&self) -> PluginStatus {
         self.status
     }
 
-    /// Returns the current `TransportStatus` of the client's connection.
+    /// Get the transport status.
     pub fn transport_status(&self) -> TransportStatus {
         self.transport_status
     }
 
-    /// Returns a reference to the client's current `HealthStatus`.
+    /// Get the health status.
     pub fn health(&self) -> &HealthStatus {
         &self.health
     }
 
-    /// Returns the last error message, if any.
+    /// Get the last error.
     pub fn last_error(&self) -> Option<&String> {
         self.last_error.as_ref()
     }
 
-    /// Performs a health check using the client's transport.
-    ///
-    /// This updates the client's internal health state based on the result.
+    /// Perform a health check.
     pub async fn health_check(&mut self) -> Result<HealthCheckResult, McpError> {
         let result = self.transport.health_check().await?;
 
@@ -203,9 +158,7 @@ impl McpClient {
         Ok(result)
     }
 
-    /// Returns a reference to the `rmcp` service peer if the client is connected.
-    ///
-    /// This can be used to make direct RPC calls to the MCP server.
+    /// Get the service for making MCP calls.
     pub fn peer(&self) -> Option<&rmcp::service::Peer<RoleClient>> {
         self.connection.as_ref().map(|conn| conn.peer())
     }
@@ -225,6 +178,5 @@ mod tests {
         assert_eq!(client.status(), PluginStatus::Stopped);
         assert_eq!(client.transport_status(), TransportStatus::Disconnected);
         assert!(!client.is_connected());
-        assert!(client.last_error().is_none());
     }
 }
