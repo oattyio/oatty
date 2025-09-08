@@ -2,26 +2,34 @@ openapi: 3.0.1
 info:
   title: Heroku Data API V1
   version: v1
-  description: 'REST API for managing Heroku PostgreSQL (Next‑Gen) and object stores.
+  description: 'The Heroku Data API V1 provides programmatic access to manage and
+    interact with Heroku PostgreSQL databases and object stores.
 
-    Automates pools, scaling, quotas, settings, credentials, and diagnostics for database
-    operations.'
+    It enables operations like creating and managing instance pools, scaling databases,
+    retrieving quotas, and handling credentials for PostgreSQL databases.
+
+    The API is designed for developers and administrators to automate database management
+    tasks efficiently.'
 tags:
 - name: PG2.0
-  description: Operations for Next‑Gen PostgreSQL (pre‑GA; breaking changes possible).
+  description: Operations for managing Next-Gen PostgreSQL databases (pre-GA, expect
+    breaking changes).
 - name: PG2.0 (To Implement)
-  description: Planned Next‑Gen PostgreSQL operations (not yet available).
+  description: Planned operations for Next-Gen PostgreSQL databases that are not yet
+    available.
 - name: PG2.0 (Deprecated)
-  description: Deprecated Next‑Gen PostgreSQL operations (scheduled for removal).
+  description: Deprecated operations for Next-Gen PostgreSQL databases, scheduled
+    for removal in future updates.
 paths:
   /data/postgres/v1/levels/{tier}:
     get:
       tags:
       - PG2.0
       summary: Retrieve Available PostgreSQL Performance Levels
-      description: "Gets a list of available performance levels for PostgreSQL databases\
-        \ based on the specified tier. \nEach level represents a configuration with\
-        \ a specific memory allocation, such as \"32G-Performance\" for 32GB of memory."
+      description: "Fetches a list of available performance levels for PostgreSQL\
+        \ databases based on the specified tier. \nEach level represents a configuration\
+        \ with a specific memory allocation, such as \"32G-Performance\" for 32GB\
+        \ of memory."
       parameters:
       - name: tier
         in: path
@@ -37,10 +45,11 @@ paths:
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       responses:
         '200':
-          description: OK.
+          description: Successfully retrieved the list of available PostgreSQL performance
+            levels.
           content:
             application/json:
               schema:
@@ -74,16 +83,16 @@ paths:
                 - name: 768G-Performance
                 - name: 1024G-Performance
         '400':
-          description: Invalid request.
+          description: Bad request due to invalid parameters or malformed request.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
   /data/postgres/v1/{addon}/pools:
     post:
       tags:
       - PG2.0
       summary: Create a New Instance Pool
-      description: "Creates instance pool for a Next-Gen PostgreSQL addon. An instance\
-        \ pool is a group of compute instances \nthat share the same configuration\
+      description: "Creates a new instance pool for a Next-Gen PostgreSQL addon. An\
+        \ instance pool is a group of compute instances \nthat share the same configuration\
         \ and connection endpoints, used to manage database workloads."
       parameters:
       - name: addon
@@ -91,13 +100,13 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       requestBody:
         required: true
         content:
@@ -125,13 +134,13 @@ paths:
                   example: 1
       responses:
         '201':
-          description: Created.
+          description: Instance pool created successfully.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ComputePool'
         '404':
-          description: Not found.
+          description: The specified addon was not found.
           content:
             application/json:
               schema:
@@ -140,7 +149,7 @@ paths:
                 id: not_found
                 message: Addon not found
         '409':
-          description: Conflict.
+          description: An instance pool with the same name already exists.
           content:
             application/json:
               schema:
@@ -153,37 +162,37 @@ paths:
       tags:
       - PG2.0
       summary: Retrieve an Instance Pool
-      description: Gets details about a specific instance pool within a Next-Gen PostgreSQL
-        addon, including its configuration and status.
+      description: Fetches details about a specific instance pool within a Next-Gen
+        PostgreSQL addon, including its configuration and status.
       parameters:
       - name: addon
         in: path
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: uuid
         in: path
         required: true
         schema:
           type: string
           format: uuid
-        description: Pool UUID.
+        description: The unique identifier of the instance pool.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       responses:
         '200':
-          description: OK.
+          description: Instance pool details retrieved successfully.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ComputePool'
         '404':
-          description: Not found.
+          description: The specified instance pool was not found.
           content:
             application/json:
               schema:
@@ -203,20 +212,20 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: uuid
         in: path
         required: true
         schema:
           type: string
           format: uuid
-        description: Pool UUID.
+        description: The unique identifier of the instance pool.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       requestBody:
         required: true
         content:
@@ -238,13 +247,13 @@ paths:
                   example: 1
       responses:
         '200':
-          description: OK.
+          description: Instance pool updated successfully.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ComputePool'
         '404':
-          description: Not found.
+          description: The specified instance pool was not found.
           content:
             application/json:
               schema:
@@ -264,25 +273,25 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: uuid
         in: path
         required: true
         schema:
           type: string
           format: uuid
-        description: Pool UUID.
+        description: The unique identifier of the instance pool.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       responses:
         '204':
-          description: No content.
+          description: Instance pool deleted successfully.
         '404':
-          description: Not found.
+          description: The specified instance pool was not found.
           content:
             application/json:
               schema:
@@ -306,13 +315,13 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       requestBody:
         required: true
         content:
@@ -344,7 +353,7 @@ paths:
                   description: Confirms the scaling operation to proceed.
       responses:
         '200':
-          description: OK.
+          description: Scaling operation completed successfully.
           content:
             application/json:
               schema:
@@ -394,17 +403,17 @@ paths:
                   current: 2
                   pool: default
         '400':
-          description: Invalid request.
+          description: Bad request due to invalid parameters or malformed request.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
         '404':
-          description: Not found.
+          description: The specified database was not found.
   /data/postgres/v1/{addon}/settings:
     get:
       tags:
       - PG2.0
       summary: Retrieve PostgreSQL Configuration Settings
-      description: Gets the current configuration settings for a PostgreSQL database,
+      description: Fetches the current configuration settings for a PostgreSQL database,
         such as logging and performance tuning parameters.
       parameters:
       - name: addon
@@ -412,16 +421,16 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       responses:
         '200':
-          description: OK.
+          description: Successfully retrieved the current PostgreSQL settings.
           content:
             application/json:
               schema:
@@ -447,11 +456,11 @@ paths:
                 auto_explain.log_triggers: true
                 auto_explain.log_verbose: true
         '400':
-          description: Invalid request.
+          description: Bad request due to invalid parameters or malformed request.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
         '404':
-          description: Not found.
+          description: The specified addon was not found.
     put:
       tags:
       - PG2.0
@@ -464,13 +473,13 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       requestBody:
         required: true
         content:
@@ -487,7 +496,7 @@ paths:
               - settings
       responses:
         '200':
-          description: OK.
+          description: Settings updated successfully.
           content:
             application/json:
               schema:
@@ -528,17 +537,17 @@ paths:
                     previous: '80000'
                     current: '864000'
         '400':
-          description: Invalid request.
+          description: Bad request due to invalid parameters or malformed request.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
         '404':
-          description: Not found.
+          description: The specified addon was not found.
   /data/postgres/v1/{addon}/info:
     get:
       tags:
       - PG2.0
       summary: Retrieve PostgreSQL Database Information
-      description: 'Gets detailed information about a Performance-Tier PostgreSQL
+      description: 'Fetches detailed information about a Performance-Tier PostgreSQL
         database, including its status, version, and associated pools.
 
         This endpoint replaces the deprecated `/data/postgres/v1/{addon}` endpoint
@@ -551,22 +560,22 @@ paths:
           type: string
           format: uuid
           example: 01234567-89ab-cdef-0123-456789abcdef
-        description: Addon UUID.
+        description: The unique identifier of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       responses:
         '200':
-          description: OK.
+          description: Successfully retrieved PostgreSQL database information.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PostgresTenant'
         '404':
-          description: Not found.
+          description: The specified database was not found.
           content:
             application/json:
               schema:
@@ -580,7 +589,7 @@ paths:
       tags:
       - PG2.0 (Deprecated)
       summary: Retrieve PostgreSQL Addon Information
-      description: "Gets detailed information about a PostgreSQL addon, including\
+      description: "Fetches detailed information about a PostgreSQL addon, including\
         \ its pools, status, and resource usage. \nThis endpoint is deprecated and\
         \ will be replaced by `/data/postgres/v1/{addon}/info` in the future."
       parameters:
@@ -589,16 +598,16 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       responses:
         '200':
-          description: OK.
+          description: Successfully retrieved PostgreSQL addon information.
           content:
             application/json:
               schema:
@@ -620,7 +629,7 @@ paths:
                 properties:
                   addon_id:
                     type: string
-                    description: Addon UUID.
+                    description: The unique identifier of the addon.
                   addon_name:
                     type: string
                     description: The name of the addon.
@@ -782,17 +791,17 @@ paths:
                   used_message: 1/100MB
                   compliance_message: In compliance
         '400':
-          description: Invalid request.
+          description: Bad request due to invalid parameters or malformed request.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
         '404':
-          description: Not found.
+          description: The specified addon was not found.
   /data/postgres/v1/{addon}/quotas:
     get:
       tags:
       - PG2.0
       summary: Retrieve PostgreSQL Quotas
-      description: Gets a list of all quotas for a PostgreSQL database, including
+      description: Fetches a list of all quotas for a PostgreSQL database, including
         storage and other resource limits.
       parameters:
       - name: addon
@@ -800,32 +809,32 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       responses:
         '200':
-          description: OK.
+          description: Successfully retrieved the list of database quotas.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Quotas'
         '400':
-          description: Invalid request.
+          description: Bad request due to invalid parameters or malformed request.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
         '404':
-          description: Not found.
+          description: The specified database was not found.
   /data/postgres/v1/{addon}/quotas/storage:
     get:
       tags:
       - PG2.0
       summary: Retrieve PostgreSQL Storage Quotas
-      description: Gets the storage quota settings for a PostgreSQL database, including
+      description: Fetches the storage quota settings for a PostgreSQL database, including
         current usage and thresholds.
       parameters:
       - name: addon
@@ -833,26 +842,26 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       responses:
         '200':
-          description: OK.
+          description: Successfully retrieved the storage quota settings.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/StorageQuota'
         '400':
-          description: Invalid request.
+          description: Bad request due to invalid parameters or malformed request.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
         '404':
-          description: Not found.
+          description: The specified database was not found.
     patch:
       tags:
       - PG2.0
@@ -866,13 +875,13 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       requestBody:
         required: true
         content:
@@ -906,78 +915,80 @@ paths:
                     - **notify**: Sends a notification without restricting operations.
 
                     - **none**: Takes no action, potentially incurring additional
-                    costs.'
+                    costs.
+
+                    '
                   example: restrict
       responses:
         '200':
-          description: OK.
+          description: Storage quota updated successfully.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/StorageQuota'
         '400':
-          description: Invalid request.
+          description: Bad request due to invalid parameters or malformed request.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
         '404':
-          description: Not found.
+          description: The specified database was not found.
   /data/postgres/v1/{addon}/diagnose:
     get:
       tags:
       - PG2.0 (To Implement)
       summary: Retrieve Database Diagnostic Information
-      description: "Gets comprehensive diagnostic information about a PostgreSQL database,\
-        \ including connection counts, long-running queries, \ntransactions, index\
-        \ usage, bloat, hit rates, blocking queries, and more. This endpoint is planned\
-        \ but not yet implemented."
+      description: "Fetches comprehensive diagnostic information about a PostgreSQL\
+        \ database, including connection counts, long-running queries, \ntransactions,\
+        \ index usage, bloat, hit rates, blocking queries, and more. This endpoint\
+        \ is planned but not yet implemented."
       parameters:
       - name: addon
         in: path
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       responses:
         '200':
-          description: OK.
+          description: Successfully retrieved diagnostic information.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PostgresDiagnosticReport'
         '400':
-          description: Invalid request.
+          description: Bad request due to invalid parameters or malformed request.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
         '404':
-          description: Not found.
+          description: The specified database was not found.
   /data/postgres/v1/{addon}/expensive-queries:
     get:
       tags:
       - PG2.0 (To Implement)
       summary: Retrieve Expensive Queries
-      description: "Gets a list of the most resource-intensive queries executed on\
-        \ a PostgreSQL database over the past week, \nsorted by total execution time.\
-        \ Includes hourly observation data. Query text is truncated to 4,000 characters.\
-        \ \nThis endpoint is planned but not yet implemented."
+      description: "Fetches a list of the most resource-intensive queries executed\
+        \ on a PostgreSQL database over the past week, \nsorted by total execution\
+        \ time. Includes hourly observation data. Query text is truncated to 4,000\
+        \ characters. \nThis endpoint is planned but not yet implemented."
       parameters:
       - name: addon
         in: path
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       - name: limit
         in: query
         required: false
@@ -989,7 +1000,7 @@ paths:
         description: The number of queries to return, between 1 and 25.
       responses:
         '200':
-          description: OK.
+          description: Successfully retrieved the list of expensive queries.
           content:
             application/json:
               schema:
@@ -1023,11 +1034,11 @@ paths:
                     read_time: 50
                     write_time: 70
         '400':
-          description: Invalid request.
+          description: Bad request due to invalid parameters or malformed request.
         '403':
-          description: Forbidden.
+          description: Forbidden due to insufficient permissions.
         '404':
-          description: Not found.
+          description: The specified resource was not found.
   /data/postgres/v1/{addon}/reset:
     post:
       tags:
@@ -1042,13 +1053,13 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       requestBody:
         required: true
         content:
@@ -1064,17 +1075,17 @@ paths:
                     the reset.
       responses:
         '200':
-          description: OK.
+          description: Database reset successfully.
         '400':
-          description: Invalid request.
+          description: Bad request due to invalid parameters or malformed request.
         '403':
-          description: Forbidden.
+          description: Forbidden due to insufficient permissions.
         '404':
-          description: Not found.
+          description: The specified resource was not found.
   /object-stores/{uuid}:
     get:
       summary: Retrieve an Object Store
-      description: Gets details about a specific object store, including its status,
+      description: Fetches details about a specific object store, including its status,
         region, and plan.
       parameters:
       - name: Authorization
@@ -1082,16 +1093,16 @@ paths:
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       - name: uuid
         in: path
         required: true
         schema:
           type: string
-        description: Object store UUID.
+        description: The unique identifier of the object store.
       responses:
         '200':
-          description: OK.
+          description: Successfully retrieved object store details.
           content:
             application/json:
               examples:
@@ -1104,11 +1115,11 @@ paths:
                     status: Available
                     created_at: '2024-06-27T19:04:58.210+00:00'
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
   /object-stores/{uuid}/credential/rotate:
     post:
       summary: Rotate Object Store Credentials
-      description: Rotates credentials for an object store, generating new access
+      description: Rotates the credentials for an object store, generating new access
         keys and invalidating the old ones.
       parameters:
       - name: Authorization
@@ -1116,36 +1127,37 @@ paths:
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       - name: uuid
         in: path
         required: true
         schema:
           type: string
-        description: Object store UUID.
+        description: The unique identifier of the object store.
       responses:
         '200':
-          description: OK.
+          description: Credentials rotated successfully.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
   /addons/heroku-postgresql/heroku/resources:
     post:
       summary: Create a New Heroku PostgreSQL Addon
-      description: Creates Heroku PostgreSQL addon for use with a Heroku app.
+      description: Provisions a new Heroku PostgreSQL addon for use with a Heroku
+        app.
       parameters:
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       responses:
         '202':
-          description: Accepted.
+          description: PostgreSQL addon creation initiated successfully.
         '400':
-          description: Invalid request.
+          description: Bad request due to missing or invalid parameters.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
       requestBody:
         content:
           application/json:
@@ -1154,7 +1166,7 @@ paths:
   /addons/heroku-postgresql/heroku/resources/{id}:
     put:
       summary: Update a Heroku PostgreSQL Addon
-      description: Updates the plan or configuration of an existing Heroku PostgreSQL
+      description: Modifies the plan or configuration of an existing Heroku PostgreSQL
         addon.
       parameters:
       - name: Authorization
@@ -1162,20 +1174,20 @@ paths:
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       - name: id
         in: path
         required: true
         schema:
           type: string
-        description: Addon UUID.
+        description: The unique identifier of the PostgreSQL addon.
       responses:
         '202':
-          description: Accepted.
+          description: PostgreSQL addon update initiated successfully.
         '400':
-          description: Invalid request.
+          description: Bad request due to missing or invalid parameters.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
       requestBody:
         content:
           application/json:
@@ -1183,59 +1195,60 @@ paths:
               $ref: '#/components/schemas/UpdateAddon'
     delete:
       summary: Delete a Heroku PostgreSQL Addon
-      description: Deletes an existing Heroku PostgreSQL addon, removing it from the
-        associated app.
+      description: Deprovisions an existing Heroku PostgreSQL addon, removing it from
+        the associated app.
       parameters:
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       - name: id
         in: path
         required: true
         schema:
           type: string
-        description: Addon UUID.
+        description: The unique identifier of the PostgreSQL addon.
       responses:
         '204':
-          description: No content.
+          description: PostgreSQL addon deleted successfully.
         '400':
-          description: Invalid request.
+          description: Bad request due to missing or invalid parameters.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
   /addons/heroku-postgresql/heroku/resources/{id}/namespaces:
     post:
       summary: Create a New Attachment for a PostgreSQL Addon
-      description: Creates attachment to associate a Heroku PostgreSQL addon with
-        an app or specific configuration.
+      description: Creates a new attachment to associate a Heroku PostgreSQL addon
+        with an app or specific configuration.
       parameters:
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       - name: id
         in: path
         required: true
         schema:
           type: string
-        description: Addon UUID.
+        description: The unique identifier of the PostgreSQL addon.
       responses:
         '200':
-          description: OK.
+          description: Attachment created successfully.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/AttachmentResponse'
         '400':
-          description: Invalid request.
+          description: Bad request due to missing or invalid parameters.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
         '404':
-          description: Not found.
+          description: The specified database, credential, or instance pool was not
+            found.
         '422':
           description: Unprocessable entity due to invalid request data.
       requestBody:
@@ -1245,23 +1258,23 @@ paths:
               $ref: '#/components/schemas/Attachment'
   /client/v11/database/{name}/expensive-queries:
     get:
-      summary: Retrieve Expensive Queries (Legacy Endpoint)
-      description: "Gets a list of resource-intensive queries for a PostgreSQL database\
-        \ over the past week, sorted by total execution time. \nIncludes hourly observation\
-        \ data. Query text is truncated to 4,000 characters."
+      summary: Retrieve Expensive Queries (legacy Endpoint)
+      description: "Fetches a list of resource-intensive queries for a PostgreSQL\
+        \ database over the past week, sorted by total execution time. \nIncludes\
+        \ hourly observation data. Query text is truncated to 4,000 characters."
       parameters:
       - name: name
         in: path
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       - name: limit
         in: query
         required: false
@@ -1273,7 +1286,7 @@ paths:
         description: The number of queries to return, between 1 and 25.
       responses:
         '200':
-          description: OK.
+          description: Successfully retrieved the list of expensive queries.
           content:
             application/json:
               schema:
@@ -1307,11 +1320,11 @@ paths:
                     read_time: 50
                     write_time: 70
         '400':
-          description: Invalid request.
+          description: Bad request due to invalid parameters or malformed request.
         '403':
-          description: Forbidden.
+          description: Forbidden due to insufficient permissions.
         '404':
-          description: Not found.
+          description: The specified resource was not found.
   /data/postgres/v1/{addon}/rotate_credentials:
     post:
       tags:
@@ -1326,13 +1339,13 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       requestBody:
         required: false
         content:
@@ -1346,7 +1359,7 @@ paths:
                     rotating credentials.
       responses:
         '200':
-          description: OK.
+          description: All credentials rotated successfully.
           content:
             application/json:
               schema:
@@ -1361,35 +1374,35 @@ paths:
               example:
                 message: All credentials have been rotated within {database_name}.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
         '404':
-          description: Not found.
+          description: The specified database was not found.
         '400':
-          description: Invalid request.
+          description: Bad request due to invalid parameters or malformed request.
   /data/postgres/v1/{addon}/credentials:
     get:
       tags:
       - PG2.0 (To Implement)
       summary: List All Database Credentials
-      description: "Gets a list of all credentials associated with a PostgreSQL database,\
-        \ including their status and connection details. \nThis endpoint is planned\
-        \ but not yet implemented."
+      description: "Fetches a list of all credentials associated with a PostgreSQL\
+        \ database, including their status and connection details. \nThis endpoint\
+        \ is planned but not yet implemented."
       parameters:
       - name: addon
         in: path
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       responses:
         '200':
-          description: OK.
+          description: Successfully retrieved the list of database credentials.
           content:
             application/json:
               schema:
@@ -1405,14 +1418,14 @@ paths:
                 port: 5432
                 roles: []
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
         '404':
-          description: Not found.
+          description: The specified database was not found.
     post:
       tags:
       - PG2.0 (To Implement)
       summary: Create a New Database Credential
-      description: "Creates credential for a PostgreSQL database, allowing access\
+      description: "Creates a new credential for a PostgreSQL database, allowing access\
         \ with specified permissions. \nThis endpoint is planned but not yet implemented."
       parameters:
       - name: addon
@@ -1420,13 +1433,13 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       requestBody:
         required: true
         content:
@@ -1441,19 +1454,19 @@ paths:
               - name
       responses:
         '200':
-          description: OK.
+          description: Credential created successfully.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
         '404':
-          description: Not found.
+          description: The specified database was not found.
         '400':
-          description: Invalid request.
+          description: Bad request due to invalid parameters or malformed request.
   /data/postgres/v1/{addon}/credentials/{cred_name}:
     get:
       tags:
       - PG2.0 (To Implement)
       summary: Retrieve a Specific Database Credential
-      description: "Gets details about a specific credential for a PostgreSQL database,\
+      description: "Fetches details about a specific credential for a PostgreSQL database,\
         \ including its connection details and status. \nThis endpoint is planned\
         \ but not yet implemented."
       parameters:
@@ -1462,7 +1475,7 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: cred_name
         in: path
         required: true
@@ -1474,10 +1487,10 @@ paths:
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       responses:
         '200':
-          description: OK.
+          description: Successfully retrieved credential details.
           content:
             application/json:
               schema:
@@ -1494,7 +1507,7 @@ paths:
                   uuid:
                     type: string
                     format: uuid
-                    description: Credential UUID.
+                    description: The unique identifier of the credential.
                   name:
                     type: string
                     description: The name of the credential.
@@ -1546,22 +1559,22 @@ paths:
                   password: password123
                   state: active
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
         '404':
-          description: Not found.
+          description: The specified credential was not found.
     delete:
       tags:
       - PG2.0 (To Implement)
       summary: Delete a Database Credential
-      description: "Deletes credential from a PostgreSQL database, removing its access.\
-        \ \nThis endpoint is planned but not yet implemented."
+      description: "Deletes a specific credential from a PostgreSQL database, removing\
+        \ its access. \nThis endpoint is planned but not yet implemented."
       parameters:
       - name: addon
         in: path
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: cred_name
         in: path
         required: true
@@ -1573,10 +1586,10 @@ paths:
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       responses:
         '200':
-          description: OK.
+          description: Credential deleted successfully.
           content:
             application/json:
               schema:
@@ -1592,9 +1605,9 @@ paths:
                 message: The credential {credential_name} has been destroyed within
                   {database_name} and detached from all apps.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
         '404':
-          description: Not found.
+          description: The specified credential was not found.
   /data/postgres/v1/{addon}/credentials/{cred_name}/rotate:
     post:
       tags:
@@ -1609,7 +1622,7 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: cred_name
         in: path
         required: true
@@ -1621,7 +1634,7 @@ paths:
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       requestBody:
         required: false
         content:
@@ -1635,7 +1648,7 @@ paths:
                     the credential before rotation.
       responses:
         '200':
-          description: OK.
+          description: Credential rotated successfully.
           content:
             application/json:
               schema:
@@ -1651,18 +1664,18 @@ paths:
                 message: The credential {credential_name} has been rotated within
                   {database_name}.
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
         '404':
-          description: Not found.
+          description: The specified credential was not found.
         '400':
-          description: Invalid request.
+          description: Bad request due to invalid parameters or malformed request.
   /data/postgres/v1/{addon}/attach:
     put:
       tags:
       - PG2.0 (To Implement)
-      summary: Attach a PostgreSQL Addon (Placeholder)
-      description: "Placeholder endpoint for attaching a PostgreSQL addon to an app\
-        \ or resource. \nDetails are still being defined for general availability.\
+      summary: Attach a PostgreSQL Addon (placeholder)
+      description: "A placeholder endpoint for attaching a PostgreSQL addon to an\
+        \ app or resource. \nDetails are still being defined for general availability.\
         \ This endpoint is planned but not yet implemented."
       parameters:
       - name: addon
@@ -1670,22 +1683,22 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       responses:
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
   /data/postgres/v1/{addon}/capabilities:
     get:
       tags:
       - PG2.0 (To Implement)
-      summary: Retrieve Database Capabilities (Placeholder)
-      description: "Placeholder endpoint to fetch the allowed actions or capabilities\
+      summary: Retrieve Database Capabilities (placeholder)
+      description: "A placeholder endpoint to fetch the allowed actions or capabilities\
         \ for a PostgreSQL database. \nIntended for use by dashboards to determine\
         \ available operations. This endpoint is planned but not yet implemented."
       parameters:
@@ -1694,16 +1707,16 @@ paths:
         required: true
         schema:
           type: string
-        description: Addon UUID or name.
+        description: The unique identifier or name of the PostgreSQL addon.
       - name: Authorization
         in: header
         required: true
         schema:
           type: string
-        description: Bearer token for authentication.
+        description: The API token required to authenticate the request.
       responses:
         '401':
-          description: Unauthorized.
+          description: Unauthorized due to missing or invalid authentication token.
 servers:
 - url: https://{defaultHost}
   variables:
@@ -1743,7 +1756,7 @@ components:
         uuid:
           type: string
           format: uuid
-          description: App UUID.
+          description: The unique identifier of the Heroku app.
           example: 01234567-89ab-cdef-0123-456789abcdef
         name:
           type: string
@@ -1759,7 +1772,7 @@ components:
         uuid:
           type: string
           format: uuid
-          description: Addon UUID.
+          description: The unique identifier of the addon.
           example: 01234567-89ab-cdef-0123-456789abcdef
         name:
           type: string
@@ -1892,7 +1905,7 @@ components:
         uuid:
           type: string
           format: uuid
-          description: Pool UUID.
+          description: The unique identifier of the compute pool.
           example: 01234567-89ab-cdef-0123-456789abcdef
         name:
           type: string
@@ -2238,7 +2251,7 @@ components:
         uuid:
           type: string
           format: uuid
-          description: Credential UUID.
+          description: The unique identifier of the credential.
         name:
           type: string
           description: The name of the credential.

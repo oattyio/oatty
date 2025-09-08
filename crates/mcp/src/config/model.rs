@@ -1,0 +1,186 @@
+//! Data models for MCP configuration.
+
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use thiserror::Error;
+use url::Url;
+
+/// MCP configuration containing all configured servers.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct McpConfig {
+    /// Map of server names to server configurations.
+    #[serde(rename = "mcpServers")]
+    pub mcp_servers: HashMap<String, McpServer>,
+}
+
+/// Configuration for a single MCP server.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpServer {
+    /// Command to execute for stdio transport (required for stdio).
+    pub command: Option<String>,
+
+    /// Arguments to pass to the command.
+    pub args: Option<Vec<String>>,
+
+    /// Environment variables to set for the process.
+    pub env: Option<HashMap<String, String>>,
+
+    /// Working directory for the process.
+    pub cwd: Option<PathBuf>,
+
+    /// Base URL for HTTP/SSE transport (required for http/sse).
+    pub base_url: Option<Url>,
+
+    /// HTTP headers to include in requests.
+    pub headers: Option<HashMap<String, String>>,
+
+    /// Whether this server is disabled.
+    pub disabled: Option<bool>,
+
+    /// Optional tags for display/filtering in the UI.
+    pub tags: Option<Vec<String>>,
+}
+
+impl Default for McpServer {
+    fn default() -> Self {
+        Self {
+            command: None,
+            args: None,
+            env: None,
+            cwd: None,
+            base_url: None,
+            headers: None,
+            disabled: Some(false),
+            tags: None,
+        }
+    }
+}
+
+impl McpServer {
+    /// Check if this server is configured for stdio transport.
+    pub fn is_stdio(&self) -> bool {
+        self.command.is_some()
+    }
+
+    /// Check if this server is configured for HTTP/SSE transport.
+    pub fn is_http(&self) -> bool {
+        self.base_url.is_some()
+    }
+
+    /// Check if this server is disabled.
+    pub fn is_disabled(&self) -> bool {
+        self.disabled.unwrap_or(false)
+    }
+
+    /// Get the transport type for this server.
+    pub fn transport_type(&self) -> TransportType {
+        if self.is_stdio() {
+            TransportType::Stdio
+        } else if self.is_http() {
+            TransportType::Http
+        } else {
+            TransportType::Unknown
+        }
+    }
+}
+
+/// Transport type for MCP servers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransportType {
+    Stdio,
+    Http,
+    Unknown,
+}
+
+impl std::fmt::Display for TransportType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TransportType::Stdio => write!(f, "stdio"),
+            TransportType::Http => write!(f, "http"),
+            TransportType::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+/// Errors that can occur during configuration operations.
+#[derive(Debug, Error)]
+pub enum ConfigError {
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+
+    #[error("JSON parsing error: {0}")]
+    Json(#[from] serde_json::Error),
+
+    #[error("URL parsing error: {0}")]
+    Url(#[from] url::ParseError),
+
+    #[error("Interpolation error: {0}")]
+    Interpolation(#[from] crate::config::InterpolationError),
+
+    #[error("Validation error: {0}")]
+    Validation(#[from] crate::config::ValidationError),
+
+    #[error("Configuration error: {message}")]
+    Invalid { message: String },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn deserialize_spec_style_config() {
+        let json = r#"{
+          "mcpServers": {
+            "server-name": {
+              "command": "node",
+              "args": ["-e", "require('@mcp/server').start()"],
+              "env": {
+                "FOO": "bar",
+                "HEROKU_API_TOKEN": "${env:HEROKU_API_TOKEN}"
+              },
+              "cwd": "/path/optional",
+              "disabled": false,
+              "tags": ["code", "gh"]
+            },
+            "remote-example": {
+              "baseUrl": "https://mcp.example.com",
+              "headers": {
+                "Authorization": "Bearer ${secret:EXAMPLE_TOKEN}"
+              },
+              "disabled": false
+            }
+          }
+        }"#;
+
+        let cfg: McpConfig = serde_json::from_str(json).expect("config deserializes");
+        assert!(cfg.mcp_servers.contains_key("server-name"));
+        assert!(cfg.mcp_servers.contains_key("remote-example"));
+
+        let stdio = cfg.mcp_servers.get("server-name").unwrap();
+        assert!(stdio.is_stdio());
+        assert_eq!(stdio.command.as_deref(), Some("node"));
+        assert_eq!(
+            stdio.tags.as_ref().unwrap(),
+            &vec!["code".to_string(), "gh".to_string()]
+        );
+
+        let http = cfg.mcp_servers.get("remote-example").unwrap();
+        assert!(http.is_http());
+        assert_eq!(http.base_url.as_ref().unwrap().as_str(), "https://mcp.example.com/");
+    }
+
+    #[test]
+    fn serialize_uses_camel_case_keys() {
+        let mut cfg = McpConfig::default();
+        let mut server = McpServer::default();
+        server.base_url = Some(Url::parse("https://api.example").unwrap());
+        cfg.mcp_servers.insert("svc".to_string(), server);
+
+        let json = serde_json::to_string(&cfg).expect("serialize");
+        assert!(json.contains("\"mcpServers\""));
+        assert!(json.contains("\"baseUrl\""));
+    }
+}

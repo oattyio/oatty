@@ -15,7 +15,7 @@
       ],
       "definitions": {
         "scheduled_suspension_time": {
-          "description": "scheduled time of when we will suspend your account due to delinquency",
+          "description": "Scheduled suspension time (UTC timestamp).",
           "example": "2024-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -25,7 +25,7 @@
           ]
         },
         "scheduled_deletion_time": {
-          "description": "scheduled time of when we will delete your account due to delinquency",
+          "description": "Scheduled deletion time (UTC timestamp).",
           "example": "2024-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -67,7 +67,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when account feature was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -76,7 +76,7 @@
           ]
         },
         "description": {
-          "description": "description of account feature",
+          "description": "What this field represents.",
           "example": "Causes account to example.",
           "readOnly": true,
           "type": [
@@ -84,7 +84,7 @@
           ]
         },
         "doc_url": {
-          "description": "documentation URL of account feature",
+          "description": "Link to documentation.",
           "example": "http://devcenter.heroku.com/articles/example",
           "readOnly": true,
           "type": [
@@ -92,7 +92,7 @@
           ]
         },
         "enabled": {
-          "description": "whether or not account feature has been enabled",
+          "description": "True if enabled.",
           "example": true,
           "readOnly": false,
           "type": [
@@ -100,7 +100,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of account feature",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -119,7 +119,7 @@
           ]
         },
         "name": {
-          "description": "unique name of account feature",
+          "description": "Human-readable name.",
           "example": "name",
           "readOnly": true,
           "type": [
@@ -127,7 +127,7 @@
           ]
         },
         "state": {
-          "description": "state of account feature",
+          "description": "Current status of this resource.",
           "example": "public",
           "readOnly": true,
           "type": [
@@ -135,7 +135,7 @@
           ]
         },
         "updated_at": {
-          "description": "when account feature was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -144,7 +144,7 @@
           ]
         },
         "display_name": {
-          "description": "user readable feature name",
+          "description": "Name you see in the dashboard.",
           "example": "My Feature",
           "readOnly": true,
           "type": [
@@ -152,7 +152,7 @@
           ]
         },
         "feedback_email": {
-          "description": "e-mail to send feedback about the feature",
+          "description": "Contact email for feedback.",
           "example": "feedback@heroku.com",
           "readOnly": true,
           "type": [
@@ -255,7 +255,7 @@
       "definitions": {
         "allow_tracking": {
           "default": true,
-          "description": "whether to allow third party web activity tracking",
+          "description": "True if third-party tracking is allowed.",
           "example": true,
           "readOnly": false,
           "type": [
@@ -264,7 +264,7 @@
         },
         "beta": {
           "default": false,
-          "description": "whether allowed to utilize beta Heroku features",
+          "description": "True if beta features are on.",
           "example": false,
           "readOnly": false,
           "type": [
@@ -272,7 +272,7 @@
           ]
         },
         "created_at": {
-          "description": "when account was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -281,7 +281,7 @@
           ]
         },
         "country_of_residence": {
-          "description": "country where account owner resides",
+          "description": "Account owner’s country of residence.",
           "example": "United States",
           "readOnly": false,
           "type": [
@@ -290,7 +290,7 @@
           ]
         },
         "email": {
-          "description": "unique email address of account",
+          "description": "Email address.",
           "example": "username@example.com",
           "format": "email",
           "readOnly": false,
@@ -299,7 +299,7 @@
           ]
         },
         "federated": {
-          "description": "whether the user is federated and belongs to an Identity Provider",
+          "description": "True if managed by an external identity provider.",
           "example": false,
           "readOnly": true,
           "type": [
@@ -307,7 +307,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of an account",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -329,7 +329,7 @@
           ]
         },
         "last_login": {
-          "description": "when account last authorized with Heroku",
+          "description": "When the user last signed in (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -339,7 +339,7 @@
           ]
         },
         "name": {
-          "description": "full name of the account owner",
+          "description": "Human-readable name.",
           "example": "Tina Edmonds",
           "readOnly": false,
           "type": [
@@ -367,7 +367,7 @@
           ]
         },
         "sms_number": {
-          "description": "SMS number of account",
+          "description": "SMS phone number in E.164 format.",
           "example": "+1 ***-***-1234",
           "readOnly": true,
           "type": [
@@ -376,7 +376,7 @@
           ]
         },
         "suspended_at": {
-          "description": "when account was suspended",
+          "description": "When the account was suspended (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -386,7 +386,7 @@
           ]
         },
         "delinquent_at": {
-          "description": "when account became delinquent",
+          "description": "When the account became delinquent (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -396,7 +396,7 @@
           ]
         },
         "two_factor_authentication": {
-          "description": "whether two-factor auth is enabled on the account",
+          "description": "True if 2FA is on.",
           "example": false,
           "readOnly": true,
           "type": [
@@ -404,7 +404,7 @@
           ]
         },
         "updated_at": {
-          "description": "when account was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -554,7 +554,7 @@
                   "$ref": "#/definitions/team/definitions/name"
                 }
               },
-              "description": "Identity of the team (name and/or UUID)."
+              "description": "Team identity (name or ID)."
             },
             "organization": {
               "type": [
@@ -565,7 +565,7 @@
                   "$ref": "#/definitions/team/definitions/name"
                 }
               },
-              "description": "Identity of the organization (name and/or UUID)."
+              "description": "Organization identity (name or ID)."
             },
             "owner": {
               "$ref": "#/definitions/identity-provider/definitions/owner"
@@ -682,14 +682,14 @@
       ],
       "definitions": {
         "confirm": {
-          "description": "name of owning app for confirmation",
+          "description": "Confirmation string (usually the app or billing entity).",
           "example": "example",
           "type": [
             "string"
           ]
         },
         "created_at": {
-          "description": "when add-on attachment was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -698,7 +698,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of this add-on attachment",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -724,7 +724,7 @@
           ]
         },
         "name": {
-          "description": "unique name for this add-on attachment to this app",
+          "description": "Human-readable name.",
           "example": "DATABASE",
           "readOnly": true,
           "type": [
@@ -732,7 +732,7 @@
           ]
         },
         "namespace": {
-          "description": "attachment namespace",
+          "description": "Attachment namespace that scopes access (for example, role:analytics).",
           "example": "role:analytics",
           "readOnly": true,
           "type": [
@@ -741,7 +741,7 @@
           ]
         },
         "updated_at": {
-          "description": "when add-on attachment was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -750,7 +750,7 @@
           ]
         },
         "web_url": {
-          "description": "URL for logging into web interface of add-on in attached app context",
+          "description": "Link to this resource in the Heroku dashboard.",
           "example": "https://postgres.heroku.com/databases/01234567-89ab-cdef-0123-456789abcdef",
           "format": "uri",
           "readOnly": true,
@@ -760,7 +760,7 @@
           ]
         },
         "log_input_url": {
-          "description": "URL for add-on partners to write to an add-on's logs",
+          "description": "URL partners use to write to the add-on’s logs.",
           "example": "https://token:t.abcdef12-3456-7890-abcd-ef1234567890@1.us.logplex.io/logs",
           "type": [
             "null",
@@ -1008,7 +1008,7 @@
           ]
         },
         "name": {
-          "description": "unique name of the config",
+          "description": "Human-readable name.",
           "example": "FOO",
           "type": [
             "string"
@@ -1090,7 +1090,7 @@
       ],
       "definitions": {
         "id": {
-          "description": "a unique identifier",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -1163,7 +1163,7 @@
       ],
       "definitions": {
         "id": {
-          "description": "unique identifier of this add-on-region-capability",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -1264,7 +1264,7 @@
           ]
         },
         "created_at": {
-          "description": "when add-on-service was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -1281,7 +1281,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of this add-on-service",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -1300,7 +1300,7 @@
           ]
         },
         "name": {
-          "description": "unique name of this add-on-service",
+          "description": "Human-readable name.",
           "example": "heroku-postgresql",
           "readOnly": true,
           "type": [
@@ -1308,7 +1308,7 @@
           ]
         },
         "state": {
-          "description": "release status for add-on service",
+          "description": "Current status of this resource.",
           "enum": [
             "alpha",
             "beta",
@@ -1340,7 +1340,7 @@
           ]
         },
         "updated_at": {
-          "description": "when add-on-service was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -1750,7 +1750,7 @@
           }
         },
         "cents": {
-          "description": "price in cents per unit of add-on",
+          "description": "Price in cents per billing unit.",
           "example": 0,
           "readOnly": true,
           "type": [
@@ -1775,7 +1775,7 @@
           ]
         },
         "config_vars": {
-          "description": "config vars exposed to the owning app by this add-on",
+          "description": "Config vars this add-on sets on the app.",
           "example": [
             "FOO",
             "BAZ"
@@ -1791,14 +1791,14 @@
           ]
         },
         "confirm": {
-          "description": "name of billing entity for confirmation",
+          "description": "Confirmation string (usually the app or billing entity).",
           "example": "example",
           "type": [
             "string"
           ]
         },
         "created_at": {
-          "description": "when add-on was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -1807,7 +1807,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of add-on",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -1826,7 +1826,7 @@
           ]
         },
         "name": {
-          "description": "globally unique name of the add-on",
+          "description": "Human-readable name.",
           "example": "acme-inc-primary-database",
           "pattern": "^[a-zA-Z][A-Za-z0-9_-]+$",
           "type": [
@@ -1834,7 +1834,7 @@
           ]
         },
         "provider_id": {
-          "description": "id of this add-on with its provider",
+          "description": "ID from the external add-on provider.",
           "example": "abcd1234",
           "readOnly": true,
           "type": [
@@ -1842,7 +1842,7 @@
           ]
         },
         "state": {
-          "description": "state in the add-on's lifecycle",
+          "description": "Current status of this resource.",
           "enum": [
             "provisioning",
             "provisioned",
@@ -1855,7 +1855,7 @@
           ]
         },
         "unit": {
-          "description": "unit of price for add-on",
+          "description": "Billing unit (for example, month).",
           "example": "month",
           "readOnly": true,
           "type": [
@@ -1863,7 +1863,7 @@
           ]
         },
         "updated_at": {
-          "description": "when add-on was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -1872,7 +1872,7 @@
           ]
         },
         "web_url": {
-          "description": "URL for logging into web interface of add-on (e.g. a dashboard)",
+          "description": "Link to this resource in the Heroku dashboard.",
           "example": "https://postgres.heroku.com/databases/01234567-89ab-cdef-0123-456789abcdef",
           "format": "uri",
           "readOnly": true,
@@ -1897,7 +1897,7 @@
               "type": [
                 "object"
               ],
-              "description": "Identity of the add‑on service (name and/or UUID)."
+              "description": "Add-on service identity (name or ID)."
             },
             {
               "$ref": "#/definitions/add-on-service"
@@ -1920,7 +1920,7 @@
               "type": [
                 "object"
               ],
-              "description": "Identity of the add‑on plan (name and/or UUID)."
+              "description": "Add-on plan identity (name or ID)."
             },
             {
               "$ref": "#/definitions/plan"
@@ -2147,7 +2147,7 @@
           ],
           "properties": {
             "id": {
-              "description": "unique identifier of the billing entity",
+              "description": "The unique ID for this resource.",
               "example": "01234567-89ab-cdef-0123-456789abcdef",
               "format": "uuid",
               "readOnly": true,
@@ -2156,7 +2156,7 @@
               ]
             },
             "name": {
-              "description": "name of the billing entity",
+              "description": "Human-readable name.",
               "example": "example",
               "readOnly": true,
               "type": [
@@ -2255,7 +2255,7 @@
       ],
       "definitions": {
         "added_at": {
-          "description": "Timestamp for added at (UTC, ISO 8601).",
+          "description": "when the add-on service was allowed",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -2280,7 +2280,7 @@
                 "string",
                 "null"
               ],
-              "description": "Unique identifier (UUID)."
+              "description": "The unique ID for this resource."
             }
           },
           "readOnly": true,
@@ -2307,7 +2307,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier for this allowed add-on service record",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -2408,7 +2408,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when app feature was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -2417,7 +2417,7 @@
           ]
         },
         "description": {
-          "description": "description of app feature",
+          "description": "What this field represents.",
           "example": "Causes app to example.",
           "readOnly": true,
           "type": [
@@ -2425,7 +2425,7 @@
           ]
         },
         "doc_url": {
-          "description": "documentation URL of app feature",
+          "description": "Link to documentation.",
           "example": "http://devcenter.heroku.com/articles/example",
           "readOnly": true,
           "type": [
@@ -2433,7 +2433,7 @@
           ]
         },
         "enabled": {
-          "description": "whether or not app feature has been enabled",
+          "description": "True if enabled.",
           "example": true,
           "readOnly": false,
           "type": [
@@ -2441,7 +2441,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of app feature",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -2460,7 +2460,7 @@
           ]
         },
         "name": {
-          "description": "unique name of app feature",
+          "description": "Human-readable name.",
           "example": "name",
           "readOnly": true,
           "type": [
@@ -2468,7 +2468,7 @@
           ]
         },
         "state": {
-          "description": "state of app feature",
+          "description": "Current status of this resource.",
           "example": "public",
           "readOnly": true,
           "type": [
@@ -2476,7 +2476,7 @@
           ]
         },
         "updated_at": {
-          "description": "when app feature was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -2485,7 +2485,7 @@
           ]
         },
         "display_name": {
-          "description": "user readable feature name",
+          "description": "Name you see in the dashboard.",
           "example": "My Feature",
           "readOnly": true,
           "type": [
@@ -2493,7 +2493,7 @@
           ]
         },
         "feedback_email": {
-          "description": "e-mail to send feedback about the feature",
+          "description": "Contact email for feedback.",
           "example": "feedback@heroku.com",
           "readOnly": true,
           "type": [
@@ -2595,7 +2595,7 @@
       ],
       "definitions": {
         "id": {
-          "description": "unique identifier of app setup",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "readOnly": true,
           "type": [
@@ -2626,7 +2626,7 @@
           ]
         },
         "created_at": {
-          "description": "when app setup was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "readOnly": true,
           "type": [
@@ -2635,7 +2635,7 @@
           "format": "date-time"
         },
         "updated_at": {
-          "description": "when app setup was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "readOnly": true,
           "type": [
@@ -2938,7 +2938,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when app transfer was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -2947,7 +2947,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of app transfer",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -2975,7 +2975,7 @@
           ]
         },
         "state": {
-          "description": "the current state of an app transfer",
+          "description": "Current status of this resource.",
           "enum": [
             "pending",
             "accepted",
@@ -2988,7 +2988,7 @@
           ]
         },
         "updated_at": {
-          "description": "when app transfer was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -3181,14 +3181,14 @@
           ]
         },
         "attempt_created_at": {
-          "description": "Timestamp for attempt created at (UTC, ISO 8601).",
+          "description": "when attempt was created",
           "format": "date-time",
           "type": [
             "string"
           ]
         },
         "attempt_updated_at": {
-          "description": "Timestamp for attempt updated at (UTC, ISO 8601).",
+          "description": "when attempt was updated",
           "format": "date-time",
           "type": [
             "string"
@@ -3207,14 +3207,14 @@
           ]
         },
         "created_at": {
-          "description": "when the delivery was created",
+          "description": "When this resource was created (UTC timestamp).",
           "format": "date-time",
           "type": [
             "string"
           ]
         },
         "id": {
-          "description": "the delivery's unique identifier",
+          "description": "The unique ID for this resource.",
           "readOnly": true,
           "format": "uuid",
           "type": [
@@ -3236,7 +3236,7 @@
           ]
         },
         "next_attempt_at": {
-          "description": "Timestamp for next attempt at (UTC, ISO 8601).",
+          "description": "when delivery will be attempted again",
           "format": "date-time",
           "type": [
             "string",
@@ -3258,7 +3258,7 @@
           ]
         },
         "updated_at": {
-          "description": "when the delivery was last updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "format": "date-time",
           "type": [
             "string"
@@ -3404,7 +3404,7 @@
           ]
         },
         "created_at": {
-          "description": "when event was created",
+          "description": "When this resource was created (UTC timestamp).",
           "format": "date-time",
           "type": [
             "string"
@@ -3417,7 +3417,7 @@
           ]
         },
         "id": {
-          "description": "the event's unique identifier",
+          "description": "The unique ID for this resource.",
           "readOnly": true,
           "format": "uuid",
           "type": [
@@ -3479,7 +3479,7 @@
           ]
         },
         "updated_at": {
-          "description": "when the event was last updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "format": "date-time",
           "type": [
             "string"
@@ -3566,14 +3566,14 @@
           ]
         },
         "created_at": {
-          "description": "when the webhook was created",
+          "description": "When this resource was created (UTC timestamp).",
           "format": "date-time",
           "type": [
             "string"
           ]
         },
         "id": {
-          "description": "the webhook's unique identifier",
+          "description": "The unique ID for this resource.",
           "readOnly": true,
           "format": "uuid",
           "type": [
@@ -3619,7 +3619,7 @@
           ]
         },
         "updated_at": {
-          "description": "when the webhook was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "format": "date-time",
           "type": [
             "string"
@@ -3794,7 +3794,7 @@
       ],
       "definitions": {
         "archived_at": {
-          "description": "Timestamp for archived at (UTC, ISO 8601).",
+          "description": "when app was archived",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -3813,7 +3813,7 @@
           ]
         },
         "created_at": {
-          "description": "when app was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -3829,7 +3829,7 @@
           ],
           "properties": {
             "id": {
-              "description": "unique identifier of the generation of the Heroku platform for this app",
+              "description": "The unique ID for this resource.",
               "example": "01234567-89ab-cdef-0123-456789abcdef",
               "format": "uuid",
               "readOnly": true,
@@ -3838,7 +3838,7 @@
               ]
             },
             "name": {
-              "description": "unique name of the generation of the Heroku platform for this app",
+              "description": "Human-readable name.",
               "example": "cedar",
               "readOnly": true,
               "type": [
@@ -3857,7 +3857,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of app",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -3885,7 +3885,7 @@
           ]
         },
         "name": {
-          "description": "unique name of app",
+          "description": "Human-readable name.",
           "example": "example",
           "pattern": "^[a-z][a-z0-9-]{1,28}[a-z0-9]$",
           "readOnly": false,
@@ -3895,7 +3895,7 @@
         },
         "released_at": {
           "default": null,
-          "description": "Timestamp for released at (UTC, ISO 8601).",
+          "description": "when app was released",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -3925,7 +3925,7 @@
           ]
         },
         "updated_at": {
-          "description": "when app was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -3934,7 +3934,7 @@
           ]
         },
         "web_url": {
-          "description": "web URL of app",
+          "description": "Link to this resource in the Heroku dashboard.",
           "example": "https://example.herokuapp.com/",
           "format": "uri",
           "pattern": "^https?://[a-z][a-z0-9-]{3,43}\\.herokuapp\\.com/$",
@@ -4274,7 +4274,7 @@
       ],
       "definitions": {
         "id": {
-          "description": "unique identifier of enterprise_account",
+          "description": "The unique ID for this resource.",
           "readOnly": true,
           "format": "uuid",
           "type": [
@@ -4316,7 +4316,7 @@
           ]
         },
         "created_at": {
-          "description": "when archive was created",
+          "description": "When this resource was created (UTC timestamp).",
           "format": "date-time",
           "type": [
             "string"
@@ -4393,7 +4393,7 @@
       ],
       "definitions": {
         "id": {
-          "description": "unique identifier of event",
+          "description": "The unique ID for this resource.",
           "readOnly": true,
           "format": "uuid",
           "type": [
@@ -4426,7 +4426,7 @@
               "type": [
                 "string"
               ],
-              "description": "Unique identifier (UUID)."
+              "description": "The unique ID for this resource."
             },
             "email": {
               "format": "email",
@@ -4449,13 +4449,13 @@
               "type": [
                 "string"
               ],
-              "description": "Unique identifier (UUID)."
+              "description": "The unique ID for this resource."
             },
             "name": {
               "type": [
                 "string"
               ],
-              "description": "Unique, human‑readable name."
+              "description": "Human-readable name."
             }
           }
         },
@@ -4471,7 +4471,7 @@
               "type": [
                 "string"
               ],
-              "description": "Unique identifier (UUID)."
+              "description": "The unique ID for this resource."
             },
             "email": {
               "format": "email",
@@ -4494,13 +4494,13 @@
               "type": [
                 "string"
               ],
-              "description": "Unique identifier (UUID)."
+              "description": "The unique ID for this resource."
             },
             "name": {
               "type": [
                 "string"
               ],
-              "description": "Unique, human‑readable name."
+              "description": "Human-readable name."
             }
           }
         },
@@ -4516,13 +4516,13 @@
               "type": [
                 "string"
               ],
-              "description": "Unique identifier (UUID)."
+              "description": "The unique ID for this resource."
             },
             "name": {
               "type": [
                 "string"
               ],
-              "description": "Unique, human‑readable name."
+              "description": "Human-readable name."
             }
           }
         },
@@ -4549,7 +4549,7 @@
           ]
         },
         "created_at": {
-          "description": "when event was created",
+          "description": "When this resource was created (UTC timestamp).",
           "format": "date-time",
           "type": [
             "string"
@@ -4640,7 +4640,7 @@
                 ]
               },
               "name": {
-                "description": "Buildpack Registry name of the buildpack for the app",
+                "description": "Human-readable name.",
                 "example": "heroku/ruby",
                 "readOnly": false,
                 "type": [
@@ -4651,7 +4651,7 @@
           }
         },
         "created_at": {
-          "description": "when build was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -4660,7 +4660,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of build",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -4701,7 +4701,7 @@
           ],
           "definitions": {
             "id": {
-              "description": "unique identifier of release",
+              "description": "The unique ID for this resource.",
               "example": "01234567-89ab-cdef-0123-456789abcdef",
               "type": [
                 "string"
@@ -4775,7 +4775,7 @@
           ]
         },
         "updated_at": {
-          "description": "when build was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -4971,7 +4971,7 @@
           ]
         },
         "name": {
-          "description": "either the Buildpack Registry name or a URL of the buildpack for the app",
+          "description": "Human-readable name.",
           "example": "heroku/ruby",
           "readOnly": false,
           "type": [
@@ -5068,7 +5068,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when collaborator was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -5077,7 +5077,7 @@
           ]
         },
         "email": {
-          "description": "invited email address of collaborator",
+          "description": "Email address.",
           "example": "collaborator@example.com",
           "format": "email",
           "readOnly": false,
@@ -5086,7 +5086,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of collaborator",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -5114,7 +5114,7 @@
           ]
         },
         "updated_at": {
-          "description": "when collaborator was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -5254,7 +5254,7 @@
       "definitions": {
         "config_vars": {
           "additionalProperties": false,
-          "description": "hash of config vars",
+          "description": "Config vars this add-on sets on the app.",
           "example": {
             "FOO": "bar",
             "BAZ": "qux"
@@ -5360,7 +5360,7 @@
           ]
         },
         "created_at": {
-          "description": "when credit was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "type": [
@@ -5368,7 +5368,7 @@
           ]
         },
         "expires_at": {
-          "description": "Timestamp for expires at (UTC, ISO 8601).",
+          "description": "when credit will expire",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "type": [
@@ -5376,7 +5376,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of credit",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "type": [
@@ -5398,7 +5398,7 @@
           ]
         },
         "updated_at": {
-          "description": "when credit was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "type": [
@@ -5517,7 +5517,7 @@
           ]
         },
         "created_at": {
-          "description": "when domain was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -5552,7 +5552,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of this domain",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -5583,7 +5583,7 @@
           ]
         },
         "updated_at": {
-          "description": "when domain was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -5787,7 +5787,7 @@
           ],
           "properties": {
             "id": {
-              "description": "unique identifier of the generation of the Heroku platform for this dyno size",
+              "description": "The unique ID for this resource.",
               "example": "01234567-89ab-cdef-0123-456789abcdef",
               "format": "uuid",
               "readOnly": true,
@@ -5796,7 +5796,7 @@
               ]
             },
             "name": {
-              "description": "unique name of the generation of the Heroku platform for this dyno size",
+              "description": "Human-readable name.",
               "example": "cedar",
               "readOnly": true,
               "type": [
@@ -5806,7 +5806,7 @@
           }
         },
         "id": {
-          "description": "unique identifier of the dyno size",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -5833,7 +5833,7 @@
           ]
         },
         "name": {
-          "description": "name of the dyno size",
+          "description": "Human-readable name.",
           "example": "eco",
           "readOnly": true,
           "type": [
@@ -5849,7 +5849,7 @@
           ],
           "definitions": {
             "cents": {
-              "description": "price in cents per unit time",
+              "description": "Price in cents per billing unit.",
               "example": 0,
               "readOnly": true,
               "type": [
@@ -5857,7 +5857,7 @@
               ]
             },
             "unit": {
-              "description": "unit of price for dyno",
+              "description": "Billing unit (for example, month).",
               "readOnly": true,
               "example": "month",
               "type": [
@@ -5991,7 +5991,7 @@
           ]
         },
         "created_at": {
-          "description": "when dyno was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -6020,7 +6020,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of this dyno",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -6039,7 +6039,7 @@
           ]
         },
         "name": {
-          "description": "the name of this process on this dyno",
+          "description": "Human-readable name.",
           "example": "run.1",
           "readOnly": true,
           "type": [
@@ -6072,7 +6072,7 @@
           ]
         },
         "state": {
-          "description": "current status of process (either: crashed, down, idle, starting, or up)",
+          "description": "Current status of this resource.",
           "example": "up",
           "readOnly": true,
           "type": [
@@ -6096,7 +6096,7 @@
           ]
         },
         "updated_at": {
-          "description": "when process last changed state",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -6341,7 +6341,7 @@
           ]
         },
         "id": {
-          "description": "enterprise account identifier",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -6350,7 +6350,7 @@
           ]
         },
         "name": {
-          "description": "name of the enterprise account",
+          "description": "Human-readable name.",
           "example": "example-co",
           "readOnly": true,
           "type": [
@@ -6506,7 +6506,7 @@
       ],
       "definitions": {
         "id": {
-          "description": "unique identifier of the member",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -6563,7 +6563,7 @@
                   "string"
                 ],
                 "example": "View enterprise account members and teams.",
-                "description": "Short description of this resource or field."
+                "description": "What this field represents."
               },
               "name": {
                 "$ref": "#/definitions/enterprise-account-member/definitions/permission",
@@ -6583,7 +6583,7 @@
           ]
         },
         "two_factor_authentication": {
-          "description": "whether the Enterprise Account member has two factor authentication enabled",
+          "description": "True if 2FA is on.",
           "example": true,
           "readOnly": true,
           "type": [
@@ -6597,7 +6597,7 @@
               "$ref": "#/definitions/identity-provider/definitions/id"
             },
             "name": {
-              "description": "name of the identity provider",
+              "description": "Human-readable name.",
               "example": "acme",
               "readOnly": true,
               "type": [
@@ -6652,7 +6652,7 @@
                 "$ref": "#/definitions/enterprise-account-member/definitions/permissions"
               },
               "federated": {
-                "description": "whether membership is being created as part of SSO JIT",
+                "description": "True if managed by an external identity provider.",
                 "example": false,
                 "type": [
                   "boolean"
@@ -6801,7 +6801,7 @@
           ]
         },
         "id": {
-          "description": "enterprise account identifier",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -6810,7 +6810,7 @@
           ]
         },
         "name": {
-          "description": "name of the enterprise account",
+          "description": "Human-readable name.",
           "example": "example-co",
           "readOnly": true,
           "type": [
@@ -6972,7 +6972,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when the enterprise account was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -6981,7 +6981,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of the enterprise account",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -7019,7 +7019,7 @@
           }
         },
         "name": {
-          "description": "unique name of the enterprise account",
+          "description": "Human-readable name.",
           "example": "example",
           "readOnly": true,
           "type": [
@@ -7027,7 +7027,7 @@
           ]
         },
         "updated_at": {
-          "description": "when the enterprise account was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -7174,7 +7174,7 @@
           "items": {
             "$ref": "#/definitions/app/definitions/id"
           },
-          "description": "Unique identifier (UUID)."
+          "description": "The unique ID for this resource."
         }
       },
       "links": [
@@ -7222,7 +7222,7 @@
           ]
         },
         "created_at": {
-          "description": "when process type was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -7249,7 +7249,7 @@
           ],
           "properties": {
             "id": {
-              "description": "unique identifier of the dyno size",
+              "description": "The unique ID for this resource.",
               "example": "01234567-89ab-cdef-0123-456789abcdef",
               "format": "uuid",
               "readOnly": true,
@@ -7258,7 +7258,7 @@
               ]
             },
             "name": {
-              "description": "name of the dyno size",
+              "description": "Human-readable name.",
               "example": "Standard-1X",
               "readOnly": true,
               "type": [
@@ -7275,7 +7275,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of this process type",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -7320,7 +7320,7 @@
           ]
         },
         "updated_at": {
-          "description": "when dyno type was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -7501,7 +7501,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when generation was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2024-12-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -7510,7 +7510,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of generation",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -7529,7 +7529,7 @@
           ]
         },
         "name": {
-          "description": "unique name of generation",
+          "description": "Human-readable name.",
           "example": "fir",
           "readOnly": true,
           "type": [
@@ -7537,7 +7537,7 @@
           ]
         },
         "updated_at": {
-          "description": "when generation was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2024-12-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -7622,7 +7622,7 @@
           ]
         },
         "created_at": {
-          "description": "when provider record was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -7639,7 +7639,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of this identity provider",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -7648,7 +7648,7 @@
           ]
         },
         "name": {
-          "description": "user-friendly unique identifier for this identity provider",
+          "description": "Human-readable name.",
           "example": "acme-sso",
           "type": [
             "string"
@@ -7671,7 +7671,7 @@
           ]
         },
         "updated_at": {
-          "description": "when the identity provider record was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -7683,7 +7683,7 @@
           "description": "entity that owns this identity provider",
           "properties": {
             "id": {
-              "description": "unique identifier of the owner",
+              "description": "The unique ID for this resource.",
               "example": "01234567-89ab-cdef-0123-456789abcdef",
               "format": "uuid",
               "readOnly": true,
@@ -7692,7 +7692,7 @@
               ]
             },
             "name": {
-              "description": "name of the owner",
+              "description": "Human-readable name.",
               "example": "acme",
               "readOnly": true,
               "type": [
@@ -7883,7 +7883,7 @@
           ]
         },
         "created_at": {
-          "description": "when inbound-ruleset was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -7892,7 +7892,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of an inbound-ruleset",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -8092,7 +8092,7 @@
           "type": [
             "string"
           ],
-          "description": "invoice state",
+          "description": "Current status of this resource.",
           "example": "WA"
         },
         "use_invoice_address": {
@@ -8206,7 +8206,7 @@
           ]
         },
         "created_at": {
-          "description": "when invoice was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -8223,7 +8223,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of this invoice",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -8263,7 +8263,7 @@
           ]
         },
         "state": {
-          "description": "payment status for this invoice (pending, successful, failed)",
+          "description": "Current status of this resource.",
           "example": 1,
           "readOnly": true,
           "type": [
@@ -8279,7 +8279,7 @@
           ]
         },
         "updated_at": {
-          "description": "when invoice was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -8367,7 +8367,7 @@
           ]
         },
         "created_at": {
-          "description": "when key was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -8377,7 +8377,7 @@
         },
         "email": {
           "deprecated": true,
-          "description": "deprecated. Please refer to 'comment' instead",
+          "description": "Email address.",
           "example": "username@host",
           "readOnly": true,
           "type": [
@@ -8393,7 +8393,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of this key",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -8420,7 +8420,7 @@
           ]
         },
         "updated_at": {
-          "description": "when key was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -8551,7 +8551,7 @@
           ]
         },
         "created_at": {
-          "description": "when log drain was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -8560,7 +8560,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of this log drain",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -8597,7 +8597,7 @@
           ]
         },
         "updated_at": {
-          "description": "when log drain was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -8747,7 +8747,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when log connection was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -8772,7 +8772,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of this log session",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -8820,7 +8820,7 @@
           ]
         },
         "updated_at": {
-          "description": "when log session was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -8889,7 +8889,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when OAuth authorization was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -8898,7 +8898,7 @@
           ]
         },
         "description": {
-          "description": "human-friendly description of this OAuth authorization",
+          "description": "What this field represents.",
           "example": "sample authorization",
           "readOnly": true,
           "type": [
@@ -8906,7 +8906,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of OAuth authorization",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -8937,7 +8937,7 @@
           }
         },
         "updated_at": {
-          "description": "when OAuth authorization was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -9196,7 +9196,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when OAuth client was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -9205,7 +9205,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of this OAuth client",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -9230,7 +9230,7 @@
           ]
         },
         "name": {
-          "description": "OAuth client name",
+          "description": "Human-readable name.",
           "example": "example",
           "readOnly": true,
           "type": [
@@ -9254,7 +9254,7 @@
           ]
         },
         "updated_at": {
-          "description": "when OAuth client was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -9408,7 +9408,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of OAuth grant",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -9446,7 +9446,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when OAuth token was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -9464,7 +9464,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of OAuth token",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -9488,7 +9488,7 @@
           ]
         },
         "updated_at": {
-          "description": "when OAuth token was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -9687,7 +9687,7 @@
       ],
       "definitions": {
         "id": {
-          "description": "unique identifier of the OCI image",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -9767,7 +9767,7 @@
           "readOnly": false,
           "properties": {
             "name": {
-              "description": "name of the process type",
+              "description": "Human-readable name.",
               "example": "web",
               "type": [
                 "string"
@@ -9839,7 +9839,7 @@
           "readOnly": false,
           "properties": {
             "id": {
-              "description": "identifier of the buildpack",
+              "description": "The unique ID for this resource.",
               "example": "heroku/ruby",
               "type": [
                 "string"
@@ -9896,7 +9896,7 @@
           ]
         },
         "created_at": {
-          "description": "when the OCI image was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -9905,7 +9905,7 @@
           ]
         },
         "updated_at": {
-          "description": "when the OCI image was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -10039,7 +10039,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when password reset was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -10288,7 +10288,7 @@
           ]
         },
         "expires": {
-          "description": "Timestamp for expires (UTC, ISO 8601).",
+          "description": "When a peering connection will expire.",
           "example": "2020-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -10388,7 +10388,7 @@
       ],
       "definitions": {
         "id": {
-          "description": "ID of the entity.",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -10409,7 +10409,7 @@
           ]
         },
         "name": {
-          "description": "Name of the entity.",
+          "description": "Human-readable name.",
           "example": "polar-lake-12345",
           "readOnly": true,
           "type": [
@@ -10652,7 +10652,7 @@
       "definitions": {
         "config_vars": {
           "additionalProperties": false,
-          "description": "hash of config vars",
+          "description": "Config vars this add-on sets on the app.",
           "example": {
             "FOO": "bar",
             "BAZ": "qux"
@@ -10744,7 +10744,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when pipeline coupling was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -10753,7 +10753,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of pipeline coupling",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -10783,7 +10783,7 @@
           ]
         },
         "updated_at": {
-          "description": "when pipeline coupling was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -11114,7 +11114,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of promotion target",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "readOnly": true,
           "format": "uuid",
@@ -11219,7 +11219,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when promotion was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "type": [
@@ -11227,7 +11227,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of promotion",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "readOnly": true,
           "format": "uuid",
@@ -11255,7 +11255,7 @@
           ]
         },
         "updated_at": {
-          "description": "when promotion was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "type": [
@@ -11621,7 +11621,7 @@
                 "description": "New pipeline owner",
                 "properties": {
                   "id": {
-                    "description": "unique identifier of a pipeline owner",
+                    "description": "The unique ID for this resource.",
                     "example": "01234567-89ab-cdef-0123-456789abcdef",
                     "format": "uuid",
                     "type": [
@@ -11687,7 +11687,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when pipeline was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -11696,7 +11696,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of pipeline",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -11715,7 +11715,7 @@
           ]
         },
         "name": {
-          "description": "name of pipeline",
+          "description": "Human-readable name.",
           "example": "example",
           "pattern": "^[a-z][a-z0-9-]{2,29}$",
           "readOnly": false,
@@ -11727,7 +11727,7 @@
           "description": "Owner of a pipeline.",
           "definitions": {
             "id": {
-              "description": "unique identifier of a pipeline owner",
+              "description": "The unique ID for this resource.",
               "example": "01234567-89ab-cdef-0123-456789abcdef",
               "format": "uuid",
               "readOnly": false,
@@ -11764,7 +11764,7 @@
           ]
         },
         "updated_at": {
-          "description": "when pipeline was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -11776,7 +11776,7 @@
           "description": "the generation of the Heroku platform for this pipeline",
           "definitions": {
             "id": {
-              "description": "unique identifier of the generation of the Heroku platform for this pipeline",
+              "description": "The unique ID for this resource.",
               "example": "01234567-89ab-cdef-0123-456789abcdef",
               "format": "uuid",
               "readOnly": true,
@@ -11795,7 +11795,7 @@
               ]
             },
             "name": {
-              "description": "unique name of the generation of the Heroku platform for this pipeline",
+              "description": "Human-readable name.",
               "example": "cedar",
               "readOnly": true,
               "type": [
@@ -11936,7 +11936,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when plan was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -11967,7 +11967,7 @@
           ]
         },
         "description": {
-          "description": "description of plan",
+          "description": "What this field represents.",
           "example": "Heroku Postgres Dev",
           "readOnly": true,
           "type": [
@@ -11983,7 +11983,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of this plan",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -12018,7 +12018,7 @@
           ]
         },
         "name": {
-          "description": "unique name of this plan",
+          "description": "Human-readable name.",
           "example": "heroku-postgresql:dev",
           "readOnly": true,
           "type": [
@@ -12038,7 +12038,7 @@
           ]
         },
         "cents": {
-          "description": "price in cents per unit of plan",
+          "description": "Price in cents per billing unit.",
           "example": 0,
           "readOnly": true,
           "type": [
@@ -12054,7 +12054,7 @@
           ]
         },
         "unit": {
-          "description": "unit of price for plan",
+          "description": "Billing unit (for example, month).",
           "example": "month",
           "readOnly": true,
           "type": [
@@ -12070,7 +12070,7 @@
           ]
         },
         "state": {
-          "description": "release status for plan",
+          "description": "Current status of this resource.",
           "example": "public",
           "readOnly": true,
           "type": [
@@ -12078,7 +12078,7 @@
           ]
         },
         "updated_at": {
-          "description": "when plan was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -12264,7 +12264,7 @@
           ]
         },
         "created_at": {
-          "description": "when region was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -12273,7 +12273,7 @@
           ]
         },
         "description": {
-          "description": "description of region",
+          "description": "What this field represents.",
           "example": "United States",
           "readOnly": true,
           "type": [
@@ -12281,7 +12281,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of region",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -12308,7 +12308,7 @@
           ]
         },
         "name": {
-          "description": "unique name of region",
+          "description": "Human-readable name.",
           "example": "us",
           "readOnly": true,
           "type": [
@@ -12330,7 +12330,7 @@
           ],
           "properties": {
             "name": {
-              "description": "name of provider",
+              "description": "Human-readable name.",
               "example": "amazon-web-services",
               "readOnly": true,
               "type": [
@@ -12364,7 +12364,7 @@
           "readOnly": true
         },
         "updated_at": {
-          "description": "when region was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -12459,7 +12459,7 @@
                   "$ref": "#/definitions/oci-image/definitions/id"
                 }
               ],
-              "description": "Unique identifier (UUID)."
+              "description": "The unique ID for this resource."
             }
           },
           "readOnly": true,
@@ -12468,7 +12468,7 @@
           ]
         },
         "created_at": {
-          "description": "when release was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -12477,7 +12477,7 @@
           ]
         },
         "description": {
-          "description": "description of changes in this release",
+          "description": "What this field represents.",
           "example": "Added new feature",
           "readOnly": true,
           "type": [
@@ -12498,7 +12498,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of release",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -12517,7 +12517,7 @@
           ]
         },
         "updated_at": {
-          "description": "when release was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -12753,7 +12753,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of the review app",
+          "description": "The unique ID for this resource.",
           "readOnly": true,
           "format": "uuid",
           "type": [
@@ -12775,7 +12775,7 @@
           ],
           "definitions": {
             "id": {
-              "description": "unique identifier of a review app owner",
+              "description": "The unique ID for this resource.",
               "example": "01234567-89ab-cdef-0123-456789abcdef",
               "format": "uuid",
               "readOnly": false,
@@ -12786,7 +12786,7 @@
           }
         },
         "created_at": {
-          "description": "when test run was created",
+          "description": "When this resource was created (UTC timestamp).",
           "format": "date-time",
           "readOnly": true,
           "type": [
@@ -12834,7 +12834,7 @@
           ]
         },
         "updated_at": {
-          "description": "when review app was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "format": "date-time",
           "readOnly": true,
           "type": [
@@ -12867,7 +12867,7 @@
         },
         "config_vars": {
           "additionalProperties": false,
-          "description": "hash of config vars",
+          "description": "Config vars this add-on sets on the app.",
           "example": {
             "FOO": "bar",
             "BAZ": "qux"
@@ -13081,7 +13081,7 @@
       ],
       "definitions": {
         "id": {
-          "description": "unique identifier of pipeline",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -13150,7 +13150,7 @@
           "description": "the deploy target for the review apps of a pipeline",
           "definitions": {
             "id": {
-              "description": "unique identifier of deploy target",
+              "description": "The unique ID for this resource.",
               "example": "us",
               "pattern": "(^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$|^[a-z]{2}$)",
               "readOnly": true,
@@ -13380,7 +13380,7 @@
           ]
         },
         "created_at": {
-          "description": "when slug was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -13389,7 +13389,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of slug",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -13441,7 +13441,7 @@
           ]
         },
         "updated_at": {
-          "description": "when slug was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -13672,7 +13672,7 @@
           ]
         },
         "created_at": {
-          "description": "when endpoint was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -13691,7 +13691,7 @@
           }
         },
         "display_name": {
-          "description": "unique name for SSL certificate",
+          "description": "Name you see in the dashboard.",
           "example": "example",
           "pattern": "^[a-z][a-z0-9-]{2,29}$",
           "readOnly": false,
@@ -13705,10 +13705,11 @@
           "format": "date-time",
           "type": [
             "string"
-          ]
+          ],
+          "description": "When expires at occurred (UTC timestamp)."
         },
         "id": {
-          "description": "unique identifier of this SNI endpoint",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -13733,7 +13734,7 @@
           ]
         },
         "name": {
-          "description": "unique name for SNI endpoint",
+          "description": "Human-readable name.",
           "example": "example",
           "pattern": "^[a-z][a-z0-9-]{2,29}$",
           "readOnly": true,
@@ -13760,7 +13761,8 @@
           "format": "date-time",
           "type": [
             "string"
-          ]
+          ],
+          "description": "When starts at occurred (UTC timestamp)."
         },
         "subject": {
           "readOnly": true,
@@ -13769,7 +13771,7 @@
           ]
         },
         "updated_at": {
-          "description": "when SNI endpoint was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -13934,7 +13936,7 @@
               "$ref": "#/definitions/sni-endpoint/definitions/subject"
             },
             "id": {
-              "description": "unique identifier of this SSL certificate",
+              "description": "The unique ID for this resource.",
               "example": "01234567-89ab-cdef-0123-456789abcdef",
               "format": "uuid",
               "readOnly": true,
@@ -14024,7 +14026,7 @@
       ],
       "definitions": {
         "id": {
-          "description": "unique identifier of the space a user has permissions on",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -14077,7 +14079,7 @@
                       "type": [
                         "string"
                       ],
-                      "description": "Unique, human‑readable name."
+                      "description": "Human-readable name."
                     }
                   }
                 }
@@ -14141,13 +14143,13 @@
                 "type": [
                   "string"
                 ],
-                "description": "Short description of this resource or field."
+                "description": "What this field represents."
               },
               "name": {
                 "type": [
                   "string"
                 ],
-                "description": "Unique, human‑readable name."
+                "description": "Human-readable name."
               }
             }
           }
@@ -14183,7 +14185,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when network address translation for a space was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -14210,7 +14212,7 @@
           }
         },
         "state": {
-          "description": "availability of network address translation for a space",
+          "description": "Current status of this resource.",
           "enum": [
             "disabled",
             "updating",
@@ -14223,7 +14225,7 @@
           ]
         },
         "updated_at": {
-          "description": "when network address translation for a space was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -14439,7 +14441,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when space was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -14448,7 +14450,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of space",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -14467,7 +14469,7 @@
           ]
         },
         "name": {
-          "description": "unique name of space",
+          "description": "Human-readable name.",
           "example": "nasa",
           "readOnly": false,
           "pattern": "^[a-z0-9](?:[a-z0-9]|-(?!-))+[a-z0-9]$",
@@ -14484,7 +14486,7 @@
           ]
         },
         "state": {
-          "description": "availability of this space",
+          "description": "Current status of this resource.",
           "enum": [
             "allocating",
             "allocated",
@@ -14497,7 +14499,7 @@
           ]
         },
         "updated_at": {
-          "description": "when space was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -14538,7 +14540,7 @@
           ],
           "properties": {
             "id": {
-              "description": "unique identifier of the generation of the Heroku platform for this space",
+              "description": "The unique ID for this resource.",
               "example": "01234567-89ab-cdef-0123-456789abcdef",
               "format": "uuid",
               "readOnly": true,
@@ -14547,7 +14549,7 @@
               ]
             },
             "name": {
-              "description": "unique name of the generation of the Heroku platform for this space",
+              "description": "Human-readable name.",
               "example": "cedar",
               "readOnly": true,
               "type": [
@@ -14745,7 +14747,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when stack was introduced",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -14762,7 +14764,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of stack",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -14781,7 +14783,7 @@
           ]
         },
         "name": {
-          "description": "unique name of stack",
+          "description": "Human-readable name.",
           "example": "heroku-18",
           "readOnly": true,
           "type": [
@@ -14789,7 +14791,7 @@
           ]
         },
         "state": {
-          "description": "availability of this stack: beta, deprecated or public",
+          "description": "Current status of this resource.",
           "example": "public",
           "readOnly": true,
           "type": [
@@ -14797,7 +14799,7 @@
           ]
         },
         "updated_at": {
-          "description": "when stack was last modified",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -15086,7 +15088,7 @@
           ]
         },
         "name": {
-          "description": "The name of the app permission.",
+          "description": "Human-readable name.",
           "example": "view",
           "readOnly": true,
           "type": [
@@ -15094,7 +15096,7 @@
           ]
         },
         "description": {
-          "description": "A description of what the app permission allows.",
+          "description": "What this field represents.",
           "example": "Can manage config, deploy, run commands and restart the app.",
           "readOnly": true,
           "type": [
@@ -15508,7 +15510,7 @@
           ]
         },
         "id": {
-          "description": "team identifier",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -15517,7 +15519,7 @@
           ]
         },
         "name": {
-          "description": "name of the team",
+          "description": "Human-readable name.",
           "example": "ops",
           "readOnly": true,
           "type": [
@@ -15639,7 +15641,7 @@
       ],
       "definitions": {
         "scheduled_suspension_time": {
-          "description": "scheduled time of when we will suspend your team due to delinquency",
+          "description": "Scheduled suspension time (UTC timestamp).",
           "example": "2024-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -15649,7 +15651,7 @@
           ]
         },
         "scheduled_deletion_time": {
-          "description": "scheduled time of when we will delete your team due to delinquency",
+          "description": "Scheduled deletion time (UTC timestamp).",
           "example": "2024-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -15691,7 +15693,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when team feature was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -15700,7 +15702,7 @@
           ]
         },
         "description": {
-          "description": "description of team feature",
+          "description": "What this field represents.",
           "example": "Causes account to example.",
           "readOnly": true,
           "type": [
@@ -15708,7 +15710,7 @@
           ]
         },
         "doc_url": {
-          "description": "documentation URL of team feature",
+          "description": "Link to documentation.",
           "example": "http://devcenter.heroku.com/articles/example",
           "readOnly": true,
           "type": [
@@ -15716,7 +15718,7 @@
           ]
         },
         "enabled": {
-          "description": "whether or not team feature has been enabled",
+          "description": "True if enabled.",
           "example": true,
           "readOnly": false,
           "type": [
@@ -15724,7 +15726,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of team feature",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -15743,7 +15745,7 @@
           ]
         },
         "name": {
-          "description": "unique name of team feature",
+          "description": "Human-readable name.",
           "example": "name",
           "readOnly": true,
           "type": [
@@ -15751,7 +15753,7 @@
           ]
         },
         "state": {
-          "description": "state of team feature",
+          "description": "Current status of this resource.",
           "example": "public",
           "readOnly": true,
           "type": [
@@ -15759,7 +15761,7 @@
           ]
         },
         "updated_at": {
-          "description": "when team feature was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -15768,7 +15770,7 @@
           ]
         },
         "display_name": {
-          "description": "user readable feature name",
+          "description": "Name you see in the dashboard.",
           "example": "My Feature",
           "readOnly": true,
           "type": [
@@ -15776,7 +15778,7 @@
           ]
         },
         "feedback_email": {
-          "description": "e-mail to send feedback about the feature",
+          "description": "Contact email for feedback.",
           "example": "feedback@heroku.com",
           "readOnly": true,
           "type": [
@@ -15855,7 +15857,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when invitation was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -15871,7 +15873,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of an invitation",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -15888,7 +15890,7 @@
           ]
         },
         "updated_at": {
-          "description": "when invitation was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -16008,7 +16010,7 @@
           "type": [
             "object"
           ],
-          "description": "Identity of the team (name and/or UUID)."
+          "description": "Team identity (name or ID)."
         },
         "role": {
           "$ref": "#/definitions/team/definitions/role"
@@ -16070,7 +16072,7 @@
           ]
         },
         "created_at": {
-          "description": "when invoice was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -16095,7 +16097,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of this invoice",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -16151,7 +16153,7 @@
           ]
         },
         "state": {
-          "description": "payment status for this invoice (pending, successful, failed)",
+          "description": "Current status of this resource.",
           "example": 1,
           "readOnly": true,
           "type": [
@@ -16167,7 +16169,7 @@
           ]
         },
         "updated_at": {
-          "description": "when invoice was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -16279,7 +16281,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when the membership record was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -16288,7 +16290,7 @@
           ]
         },
         "email": {
-          "description": "email address of the team member",
+          "description": "Email address.",
           "example": "someone@example.org",
           "readOnly": true,
           "type": [
@@ -16296,7 +16298,7 @@
           ]
         },
         "federated": {
-          "description": "whether the user is federated and belongs to an Identity Provider",
+          "description": "True if managed by an external identity provider.",
           "example": false,
           "readOnly": true,
           "type": [
@@ -16304,7 +16306,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of the team member",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -16323,7 +16325,7 @@
           ]
         },
         "name": {
-          "description": "full name of the team member",
+          "description": "Human-readable name.",
           "example": "Tina Edmonds",
           "readOnly": true,
           "type": [
@@ -16344,7 +16346,7 @@
           ]
         },
         "two_factor_authentication": {
-          "description": "whether the team member has two factor authentication enabled",
+          "description": "True if 2FA is on.",
           "example": true,
           "readOnly": true,
           "type": [
@@ -16352,7 +16354,7 @@
           ]
         },
         "updated_at": {
-          "description": "when the membership record was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -16516,7 +16518,7 @@
               "$ref": "#/definitions/identity-provider/definitions/id"
             },
             "name": {
-              "description": "name of the identity provider",
+              "description": "Human-readable name.",
               "example": "acme",
               "readOnly": true,
               "type": [
@@ -16635,7 +16637,7 @@
           ]
         },
         "id": {
-          "description": "team identifier",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -16653,7 +16655,7 @@
           ]
         },
         "name": {
-          "description": "name of the team",
+          "description": "Human-readable name.",
           "example": "ops",
           "readOnly": true,
           "type": [
@@ -16884,7 +16886,7 @@
       ],
       "definitions": {
         "created_at": {
-          "description": "when the team was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -16923,7 +16925,7 @@
           }
         },
         "id": {
-          "description": "unique identifier of team",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -17070,7 +17072,7 @@
           "type": [
             "string"
           ],
-          "description": "state",
+          "description": "Current status of this resource.",
           "example": "CA"
         },
         "membership_limit": {
@@ -17083,7 +17085,7 @@
           ]
         },
         "name": {
-          "description": "unique name of team",
+          "description": "Human-readable name.",
           "example": "example",
           "readOnly": true,
           "type": [
@@ -17127,7 +17129,7 @@
           ]
         },
         "updated_at": {
-          "description": "when the team was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -17352,7 +17354,7 @@
       ],
       "definitions": {
         "id": {
-          "description": "unique identifier of telemetry drain",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -17368,7 +17370,7 @@
           ]
         },
         "created_at": {
-          "description": "when the telemetry drain was created",
+          "description": "When this resource was created (UTC timestamp).",
           "example": "2024-12-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -17377,7 +17379,7 @@
           ]
         },
         "updated_at": {
-          "description": "when telemetry drain was last updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "example": "2012-01-01T12:00:00Z",
           "format": "date-time",
           "readOnly": true,
@@ -17484,7 +17486,7 @@
           "description": "entity that owns this telemetry drain",
           "properties": {
             "id": {
-              "description": "unique identifier of owner",
+              "description": "The unique ID for this resource.",
               "example": "01234567-89ab-cdef-0123-456789abcdef",
               "format": "uuid",
               "readOnly": true,
@@ -17655,7 +17657,7 @@
       ],
       "definitions": {
         "id": {
-          "description": "unique identifier of a test case",
+          "description": "The unique ID for this resource.",
           "readOnly": true,
           "format": "uuid",
           "type": [
@@ -17663,7 +17665,7 @@
           ]
         },
         "description": {
-          "description": "description of the test case",
+          "description": "What this field represents.",
           "type": [
             "string"
           ]
@@ -17700,7 +17702,7 @@
           ]
         },
         "created_at": {
-          "description": "when test case was created",
+          "description": "When this resource was created (UTC timestamp).",
           "format": "date-time",
           "readOnly": true,
           "type": [
@@ -17708,7 +17710,7 @@
           ]
         },
         "updated_at": {
-          "description": "when test case was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "format": "date-time",
           "readOnly": true,
           "type": [
@@ -17793,7 +17795,7 @@
       ],
       "definitions": {
         "id": {
-          "description": "unique identifier of a test node",
+          "description": "The unique ID for this resource.",
           "example": "01234567-89ab-cdef-0123-456789abcdef",
           "format": "uuid",
           "readOnly": true,
@@ -17811,7 +17813,7 @@
           ]
         },
         "created_at": {
-          "description": "when test node was created",
+          "description": "When this resource was created (UTC timestamp).",
           "format": "date-time",
           "readOnly": true,
           "type": [
@@ -17885,7 +17887,7 @@
           ]
         },
         "updated_at": {
-          "description": "when test node was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "format": "date-time",
           "readOnly": true,
           "type": [
@@ -18036,7 +18038,7 @@
           ]
         },
         "id": {
-          "description": "unique identifier of a test run",
+          "description": "The unique ID for this resource.",
           "readOnly": true,
           "format": "uuid",
           "type": [
@@ -18051,7 +18053,7 @@
           ]
         },
         "created_at": {
-          "description": "when test run was created",
+          "description": "When this resource was created (UTC timestamp).",
           "format": "date-time",
           "readOnly": true,
           "type": [
@@ -18096,7 +18098,7 @@
           ]
         },
         "updated_at": {
-          "description": "when test-run was updated",
+          "description": "When this resource last changed (UTC timestamp).",
           "format": "date-time",
           "readOnly": true,
           "type": [
@@ -18521,7 +18523,7 @@
       ],
       "definitions": {
         "name": {
-          "description": "VPN Name",
+          "description": "Human-readable name.",
           "example": "office",
           "type": [
             "string"
@@ -18547,7 +18549,7 @@
           }
         },
         "id": {
-          "description": "VPN ID",
+          "description": "The unique ID for this resource.",
           "example": "123456789012",
           "readOnly": true,
           "type": [

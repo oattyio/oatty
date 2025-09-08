@@ -8,10 +8,12 @@ members = [
     "crates/api",
     "crates/util",
     "crates/types",
+    "crates/mcp",
 ]
 resolver = "2"
 
 [workspace.package]
+version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
 license = "MIT OR Apache-2.0"
@@ -26,8 +28,8 @@ serde = { version = "1", features = ["derive", "rc"] }
 serde_json = "1"
 serde_yaml = "0.9.33"
 clap = { version = "4", features = ["derive"] }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "signal", "process", "fs"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 ratatui = "0.29.0"
@@ -50,3 +52,8 @@ rat-focus = "1.0.2"
 chrono = { version = "0.4", features = ["serde"] }
 arboard = "3"
 futures-util = "0.3"
+rmcp = { version = "0.6.3", features = ["transport-child-process", "client"] }
+keyring = "2.0"
+ring_buffer = "0.1"
+uuid = "1.0"
+async-trait = "0.1"

@@ -1,13 +1,14 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-- Workspace crates: `crates/cli` (binary), `crates/tui`, `crates/registry`, `crates/engine`, `crates/api`, `crates/util`.
+- Workspace crates: `crates/cli` (binary), `crates/tui`, `crates/registry`, `crates/engine`, `crates/api`, `crates/util`, `crates/mcp` (MCP plugin infrastructure).
 - Supporting assets: `schemas/` (schemas), `workflows/` (sample workflow YAML/JSON), `plans/` (design notes).
 - Example layout:
   - `crates/cli/src/main.rs` — CLI entrypoint
   - `crates/tui/` — Ratatui UI
   - `crates/registry/` — schema → command registry
-  - Tests live inline (`#[cfg(test)]`) or under each crate’s `tests/`.
+  - `crates/mcp/` — MCP plugin engine, client management, logging
+  - Tests live inline (`#[cfg(test)]`) or under each crate's `tests/`.
 
 ## Build, Test, and Development Commands
 - Build all: `cargo build --workspace` — compiles every crate.
@@ -16,7 +17,7 @@
 - Tests: `cargo test --workspace` — run unit/integration tests.
 - Lint: `cargo clippy --workspace -- -D warnings` — fail on warnings.
 - Format: `cargo fmt --all` — apply repo `rustfmt` settings.
-- Helpful env: `RUST_LOG=debug`, `HEROKU_API_KEY=…`, `FEATURE_WORKFLOWS=1`, `DEBUG=1`.
+- Helpful env: `RUST_LOG=debug`, `HEROKU_API_KEY=…`, `FEATURE_WORKFLOWS=1`, `DEBUG=1`, `MCP_CONFIG_PATH=~/.config/heroku/mcp.json`.
 
 ## Coding Style & Naming Conventions
 - Edition: Rust 2024; indent 4 spaces; max width 100 (see `rustfmt.toml`).
@@ -39,6 +40,8 @@
 - Never commit secrets; prefer `HEROKU_API_KEY` to `~/.netrc`.
 - Redaction utilities mask sensitive values in logs; still avoid pasting tokens.
 - Network via `reqwest` + TLS; set `RUST_LOG=info|debug` for diagnostics.
+- MCP plugins: Use `${secret:NAME}` interpolation for sensitive values; secrets stored in OS keychain via `keyring-rs`.
+- MCP config: Located at `~/.config/heroku/mcp.json`; supports stdio and HTTP/SSE transports.
 
 ## Architecture Overview
 See [ARCHITECTURE.md](ARCHITECTURE.md) for a full overview of crates, command/registry design, ValueProviders, execution flow, TUI UX, and security/caching.
