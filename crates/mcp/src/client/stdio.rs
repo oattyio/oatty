@@ -1,36 +1,55 @@
 //! Stdio transport implementation for MCP clients.
+//!
+//! This module provides an `McpTransport` that communicates with an MCP server
+//! by spawning it as a child process and interacting with it over `stdin` and
+//! `stdout`.
+//!
+//! ## Design
+//!
+//! - `StdioTransport`: Responsible for spawning the child process based on the
+//!   server configuration (`command`, `args`, etc.).
+//! - `StdioClient`: Represents an active connection to the child process. It wraps
+//!   the `rmcp` `RunningService` to manage the connection and communication.
+//! - **Process Management**: The transport handles the details of setting up the
+//!   `tokio::process::Command`, including piping `stdin`, `stdout`, and `stderr`.
+//!   The `StdioClient` ensures that the child process is properly terminated when
+//!   the connection is closed.
 
 use crate::client::{HealthCheckResult, McpConnection, McpTransport};
 use crate::config::McpServer;
 use rmcp::{
-    ErrorData as McpError, ServiceExt, service::RoleClient, service::RunningService, transport::TokioChildProcess,
+    ErrorData as McpError, ServiceExt,
+    service::{RoleClient, RunningService},
+    transport::TokioChildProcess,
 };
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 
-/// Stdio transport for MCP clients.
+/// An `McpTransport` that spawns a child process and communicates over stdio.
 pub struct StdioTransport {
-    /// Server configuration.
+    /// The server configuration, specifying the command and arguments to execute.
     server: McpServer,
 
-    /// Command timeout for health checks.
+    /// The timeout for health checks, which involves spawning a new process.
     health_check_timeout: Duration,
 }
 
-/// Stdio connection wrapper.
+/// An `McpConnection` for a stdio-based transport.
+///
+/// This wraps the `rmcp` service that manages the running child process.
 pub struct StdioClient {
-    /// The running MCP service.
+    /// The running `rmcp` service, which handles the RPC protocol.
     service: RunningService<RoleClient, ()>,
 
-    /// Child stderr handle for potential log streaming.
+    /// The `stderr` handle of the child process, which can be used for logging.
     #[allow(dead_code)]
     stderr: Option<tokio::process::ChildStderr>,
 }
 
 impl StdioTransport {
-    /// Create a new stdio transport.
+    /// Creates a new `StdioTransport`.
     pub fn new(server: McpServer) -> Self {
         Self {
             server,
@@ -38,7 +57,8 @@ impl StdioTransport {
         }
     }
 
-    /// Create a new stdio transport with custom timeout.
+    /// Creates a new `StdioTransport` with a custom timeout for health checks.
+    #[allow(dead_code)]
     pub fn with_timeout(server: McpServer, timeout: Duration) -> Self {
         Self {
             server,
@@ -46,7 +66,10 @@ impl StdioTransport {
         }
     }
 
-    /// Build the command for the MCP server.
+    /// Builds a `tokio::process::Command` from the server configuration.
+    ///
+    /// This sets up the command, arguments, environment variables, and working
+    /// directory, and configures the stdio pipes.
     fn build_command(&self) -> Result<Command, McpError> {
         let command = self
             .server
@@ -56,27 +79,17 @@ impl StdioTransport {
 
         let mut cmd = Command::new(command);
 
-        // Set arguments
         if let Some(args) = &self.server.args {
             cmd.args(args);
         }
-
-        // Set environment variables
         if let Some(env) = &self.server.env {
-            for (key, value) in env {
-                cmd.env(key, value);
-            }
+            cmd.envs(env.clone());
         }
-
-        // Set working directory
         if let Some(cwd) = &self.server.cwd {
             cmd.current_dir(cwd);
         }
 
-        // Configure stdio
-        cmd.stdin(Stdio::piped());
-        cmd.stdout(Stdio::piped());
-        cmd.stderr(Stdio::piped());
+        cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
 
         Ok(cmd)
     }
@@ -87,17 +100,14 @@ impl McpTransport for StdioTransport {
     async fn connect(&self) -> Result<Box<dyn McpConnection>, McpError> {
         let cmd = self.build_command()?;
 
-        // Create the MCP service using rmcp's builder
-        // Capture the real child process handle for proper lifecycle management
         let (transport, child_stderr) = TokioChildProcess::builder(cmd)
             .spawn()
-            .map_err(|e| McpError::invalid_request(format!("Failed to spawn process: {}", e), None))?;
+            .map_err(|e| McpError::transport(format!("Failed to spawn process: {}", e), None))?;
 
-        // Start the service with default client handler
         let service = ()
             .serve(transport)
             .await
-            .map_err(|e| McpError::invalid_request(format!("Failed to start MCP service: {}", e), None))?;
+            .map_err(|e| McpError::internal(format!("Failed to start MCP service: {}", e), None))?;
 
         Ok(Box::new(StdioClient {
             service,
@@ -108,14 +118,13 @@ impl McpTransport for StdioTransport {
     async fn health_check(&self) -> Result<HealthCheckResult, McpError> {
         let start = std::time::Instant::now();
 
-        // Try to connect and perform a basic handshake
+        // A health check for a stdio transport involves spawning the process and
+        // ensuring the service can start.
         match timeout(self.health_check_timeout, self.connect()).await {
             Ok(Ok(connection)) => {
                 let latency = start.elapsed().as_millis() as u64;
-
-                // Close the connection
-                connection.close().await.ok();
-
+                // We successfully connected, so close it immediately.
+                let _ = connection.close().await;
                 Ok(HealthCheckResult {
                     healthy: true,
                     latency_ms: Some(latency),
@@ -150,17 +159,16 @@ impl McpConnection for StdioClient {
         self.service.peer()
     }
 
+    /// Checks if the connection to the child process is still active.
+    ///
+    /// This is determined by checking if the underlying `rmcp` service is closed.
     async fn is_alive(&self) -> bool {
-        // For now, we'll assume the service is alive if it exists
-        // In a real implementation, we'd check the actual process status
-
-        // Try to perform a simple operation to check if the service is responsive
-        // This is a basic check - in a real implementation, you might want to
-        // send a ping or list tools to verify the connection is working
-        true
+        !self.service.is_closed()
     }
 
-    async fn close(self: Box<Self>) -> Result<(), McpError> {
+    /// Closes the connection and terminates the child process.
+    async fn close(mut self: Box<Self>) -> Result<(), McpError> {
+        self.service.close().await;
         Ok(())
     }
 }
@@ -180,8 +188,8 @@ mod tests {
         assert_eq!(transport.transport_type(), "stdio");
     }
 
-    #[test]
-    fn test_build_command() {
+    #[tokio::test]
+    async fn test_build_command() {
         let mut server = McpServer::default();
         server.command = Some("node".to_string());
         server.args = Some(vec!["-e".to_string(), "console.log('test')".to_string()]);
@@ -189,8 +197,9 @@ mod tests {
         let transport = StdioTransport::new(server);
         let cmd = transport.build_command().unwrap();
 
-        // We can't easily test the command without spawning it,
-        // but we can verify it was created successfully
-        assert!(cmd.as_std().get_program() == "node");
+        assert_eq!(cmd.as_std().get_program(), "node");
+        let mut args = cmd.as_std().get_args();
+        assert_eq!(args.next().unwrap(), "-e");
+        assert_eq!(args.next().unwrap(), "console.log('test')");
     }
 }
