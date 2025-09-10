@@ -4,7 +4,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use super::components::{BuilderComponent, HelpComponent, LogsComponent, TableComponent};
+use super::components::{BuilderComponent, HelpComponent, LogsComponent, PluginsComponent, TableComponent};
 use crate::{
     app::App,
     ui::{
@@ -36,8 +36,15 @@ pub fn draw(
     builder: &mut BuilderComponent,
     help: &mut HelpComponent,
     table: &mut TableComponent,
+    plugins: &mut PluginsComponent,
 ) {
     let size = frame.area();
+
+    // When Plugins is in fullscreen mode, render it over the entire UI and return
+    if app.plugins_fullscreen {
+        plugins.render(frame, size, app);
+        return;
+    }
 
     // Fill the entire background with the theme's background color for consistency
     let bg_fill = Paragraph::new("").style(Style::default().bg(app.ctx.theme.roles().background));
@@ -52,7 +59,7 @@ pub fn draw(
     render_logs(frame, app, logs, chunks[2]);
 
     // Render modal overlays if active
-    render_modals(frame, app, builder, help, table);
+    render_modals(frame, app, builder, help, table, plugins);
 }
 
 // Creates the main vertical layout for the application.
@@ -105,9 +112,11 @@ fn render_modals(
     builder: &mut BuilderComponent,
     help: &mut HelpComponent,
     table: &mut TableComponent,
+    plugins: &mut PluginsComponent,
 ) {
     // Draw a dim overlay when any modal is visible
-    let any_modal = app.help.is_visible() || app.table.is_visible() || app.builder.is_visible();
+    let any_modal =
+        app.help.is_visible() || app.table.is_visible() || app.builder.is_visible() || app.plugins.is_visible();
     if any_modal {
         use ratatui::widgets::Block;
         let area = f.area();
@@ -127,5 +136,8 @@ fn render_modals(
     }
     if app.builder.is_visible() {
         builder.render(f, f.area(), app);
+    }
+    if app.plugins.is_visible() {
+        plugins.render(f, f.area(), app);
     }
 }

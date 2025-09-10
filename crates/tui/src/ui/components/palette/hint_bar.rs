@@ -13,16 +13,12 @@ use ratatui::{
 
 use crate::{app, ui::components::component::Component};
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct HintBarComponent<'a> {
     hints: Option<Paragraph<'a>>,
 }
 
 impl HintBarComponent<'_> {
-    pub fn new() -> Self {
-        HintBarComponent { hints: None }
-    }
-
     fn hints(&mut self, app: &mut app::App) -> &Paragraph<'_> {
         if self.hints.is_none() {
             let theme = &*app.ctx.theme;
@@ -37,6 +33,8 @@ impl HintBarComponent<'_> {
                     Span::styled(" accept  ", theme.text_muted_style()),
                     Span::styled("Ctrl-F", theme.accent_emphasis_style()),
                     Span::styled(" builder  ", theme.text_muted_style()),
+                    Span::styled("Ctrl-p", theme.accent_emphasis_style()),
+                    Span::styled(" plugins  ", theme.text_muted_style()),
                     Span::styled("Esc", theme.accent_emphasis_style()),
                     Span::styled(" cancel", theme.text_muted_style()),
                 ]))

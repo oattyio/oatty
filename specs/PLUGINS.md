@@ -126,7 +126,7 @@ Layout:┌ github — Details ────────────────�
 │ Logs (recent):                                [L] View (follow)   │
 │ [12:41:03] info handshake ok (180ms)                              │
 └───────────────────────────────────────────────────────────────────┤
-Hints: E env • R restart • L logs • b back
+Hints: Ctrl-a add • E env • R restart • L logs • b back
 
 
 Behaviors: Tab navigation, inline actions (e.g., [E]), health metrics.
@@ -135,18 +135,41 @@ Widget: ratatui::widgets::Tabs, Paragraph, Table.
 
 Add Plugin
 
-Purpose: Install plugins (npm, pip, binary, http/sse).
-Layout (Wizard):┌ Add Plugin ─────────────────────────────────────────┐
-│ Method: (•) From npm   ( ) From pip   ( ) From command   ( ) Remote │
-│ Name: github                                                     ⓘ │
-│ Command: npx -y @modelcontextprotocol/server-github              ⓘ │
-│ Env: GITHUB_TOKEN = ${secret:GITHUB_TOKEN}                          │
-│ [Validate]  [Next]  [Cancel]                                        │
-└────────────────────────────────────────────────────────────────────┘
+Purpose: Install plugins (stdio command or remote http/sse) with a simple, responsive panel.
+Layout (Responsive Panel):
+- Wide (≥120 cols): side-by-side Add panel (left) and Plugins table (right).
+- Narrow (<120 cols): full-body Add view replaces the table while open.
 
+Wide Example:
+┌ Plugins — MCP ───────────────────────────────────────────────────────────────┐
+│ / search ▎                                                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ ┌ Add Plugin — [Ctrl+V] validate  [Ctrl+A] apply  [Esc] cancel ┐  Table …    │
+│ │   Transport: [✓] Local   [ ] Remote                          │             │
+│ │ › Name: github                                               │             │
+│ │   Command: npx                                               │             │
+│ │   Args: -y @modelcontextprotocol/server-github               │             │
+│ │   Base URL:                                                  │             │
+│ │                                                              │             │
+│ │ [ Validate ]   [ Save ]   [ Cancel ]                         │             │
+│ └──────────────────────────────────────────────────────────────┘             │
+├──────────────────────────────────────────────────────────────────────────────┤
+│ Hints: Ctrl-a add • Ctrl-v validate • Ctrl-a save • Ctrl-b back              │
+└──────────────────────────────────────────────────────────────────────────────┘
 
-Behaviors: Validates via --version or handshake, previews mcp.json patch.
-Widget: ratatui::widgets::Block, Paragraph.
+Fields:
+- Name: plugin key (^[a-z0-9._-]+$).
+- Transport (radio): single-select between Local (stdio) and Remote (http/sse).
+  - Local shows Command and Args fields.
+  - Remote shows Base URL field.
+  - Keyboard: Left/Right to change, Space/Enter to toggle when focused.
+
+Transport Selection:
+- The transport is chosen explicitly via the radio group (Local or Remote).
+- Validation enforces required fields for the selected transport.
+
+Behaviors: Validates via transport health check and previews mcp.json patch; Save applies, refreshes, closes, and selects the new plugin; Cancel closes without changes.
+Widget: ratatui::widgets::Block, Paragraph (form + radio group), Table (for concurrent table view on wide screens).
 
 
 Logs Drawer
@@ -211,7 +234,7 @@ Authorization: Managed externally via RBAC/ABAC; TUI assumes plugins handle acce
 5. Implementation Notes
 5.1 Rust and Ratatui
 
-Components: List, Details, Logs, Environment Editor, Add Wizard, Toasts.
+Components: List, Details, Logs, Environment Editor, Add Panel, Toasts.
 Rendering: Use ratatui::widgets (Table, List, Paragraph, Block); avoid blocking I/O.
 State: TEA (The Elm Architecture) for event handling; async channels for logs.
 Clipboard: System → OSC52 → file fallback.

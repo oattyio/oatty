@@ -52,8 +52,8 @@ rat-focus = "1.0.2"
 chrono = { version = "0.4", features = ["serde"] }
 arboard = "3"
 futures-util = "0.3"
-rmcp = { version = "0.6.3", features = ["transport-child-process", "client"] }
-keyring = "2.0"
-ring_buffer = "0.1"
+ultrafast-mcp = { version = "202506018.1.0", features = ["http-with-auth" ] }
+keyring = "3.6.3"
+ring_buffer = "2.0.2"
 uuid = "1.0"
 async-trait = "0.1"

@@ -9,7 +9,7 @@ use tokio::time::{interval, sleep};
 use tracing::{debug, warn};
 
 /// Health check result.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct HealthCheckResult {
     /// Whether the service is healthy.
     pub healthy: bool,
@@ -69,14 +69,14 @@ impl HealthMonitor {
 
         let health_status = Arc::clone(&self.health_status);
         let monitoring = Arc::clone(&self.monitoring);
-        let check_interval = self.check_interval;
+        let tick_every = self.check_interval;
         let check_timeout = self.check_timeout;
 
         tokio::spawn(async move {
-            let mut interval = interval(check_interval);
+            let mut ticker = interval(tick_every);
 
             loop {
-                interval.tick().await;
+                ticker.tick().await;
 
                 // Check if we should still be monitoring
                 let should_monitor = {
@@ -161,10 +161,7 @@ impl HealthMonitor {
         plugin_name: &str,
         _timeout: Duration,
     ) -> Result<(), String> {
-        // This is a placeholder implementation
-        // In practice, you would call the actual health check method
-        // for the specific plugin's transport
-
+        // Placeholder implementation; integrate real per-transport checks in callers.
         let start = SystemTime::now();
 
         // Simulate a health check
@@ -172,7 +169,7 @@ impl HealthMonitor {
 
         let latency = start.elapsed().unwrap_or_default().as_millis() as u64;
 
-        // Update the health status
+        // Update the health status with a successful probe
         let mut status = health_status.lock().await;
         if let Some(health) = status.get_mut(plugin_name) {
             health.mark_healthy();

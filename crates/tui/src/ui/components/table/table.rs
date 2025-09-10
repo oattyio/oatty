@@ -61,7 +61,7 @@ use crate::{
 /// let mut table = TableComponent::new();
 /// table.init()?;
 /// ```
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct TableComponent<'a> {
     table: Table<'a>,
     table_state: TableState,

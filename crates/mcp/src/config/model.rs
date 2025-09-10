@@ -36,6 +36,9 @@ pub struct McpServer {
     /// HTTP headers to include in requests.
     pub headers: Option<HashMap<String, String>>,
 
+    /// Optional authorization configuration (e.g., Basic credentials).
+    pub auth: Option<McpAuthConfig>,
+
     /// Whether this server is disabled.
     pub disabled: Option<bool>,
 
@@ -52,6 +55,7 @@ impl Default for McpServer {
             cwd: None,
             base_url: None,
             headers: None,
+            auth: None,
             disabled: Some(false),
             tags: None,
         }
@@ -84,6 +88,25 @@ impl McpServer {
             TransportType::Unknown
         }
     }
+}
+
+/// Authorization configuration for MCP servers.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpAuthConfig {
+    /// Authorization scheme. Currently supports "basic".
+    pub scheme: String,
+    /// Username (supports interpolation like ${env:NAME} or ${secret:NAME}).
+    pub username: Option<String>,
+    /// Password (supports interpolation).
+    pub password: Option<String>,
+    /// Token (supports interpolation). If present without username/password,
+    /// constructs Basic auth using "<token>:" as the user:pass pair.
+    pub token: Option<String>,
+    /// Optional custom header name; defaults to "Authorization" when omitted.
+    pub header_name: Option<String>,
+    /// Allow interactive prompting on failure.
+    pub interactive: Option<bool>,
 }
 
 /// Transport type for MCP servers.

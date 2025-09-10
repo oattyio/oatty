@@ -9,6 +9,7 @@ use std::sync::{
     atomic::{AtomicUsize, Ordering},
 };
 
+use heroku_mcp::client::McpClientManager;
 use heroku_registry::Registry;
 use heroku_types::{ExecOutcome, Screen};
 use rat_focus::FocusBuilder;
@@ -23,6 +24,7 @@ use crate::{
             help::HelpState,
             logs::{LogsState, state::LogEntry},
             palette::{PaletteState, providers::RegistryBackedProvider, state::ValueProvider},
+            plugins::PluginsState,
             table::TableState,
         },
         theme,
@@ -43,6 +45,8 @@ pub struct SharedCtx {
     pub providers: Vec<Box<dyn ValueProvider>>,
     /// Active UI theme (Dracula by default) loaded from env
     pub theme: Box<dyn theme::Theme>,
+    /// MCP supervisor for plugins (optional until initialized)
+    pub mcp: Option<Arc<McpClientManager>>,
 }
 
 impl SharedCtx {
@@ -60,6 +64,7 @@ impl SharedCtx {
             debug_enabled,
             providers,
             theme: theme::load_from_env(),
+            mcp: None,
         }
     }
 }
@@ -77,8 +82,12 @@ pub struct App<'a> {
     pub table: TableState<'a>,
     /// Help modal state
     pub help: HelpState,
+    /// Plugins overlay state (MCP management)
+    pub plugins: PluginsState,
     /// Application logs and status messages
     pub logs: LogsState,
+    /// Whether Plugins view is in full-screen mode (replaces palette UI)
+    pub plugins_fullscreen: bool,
     // moved to ctx: dry_run, debug_enabled, providers
     /// Whether a command is currently executing
     pub executing: bool,
@@ -148,6 +157,8 @@ pub enum Msg {
     ToggleHelp,
     /// Toggle the table modal visibility
     ToggleTable,
+    /// Toggle the plugins overlay visibility
+    TogglePlugins,
     /// Toggle the builder modal visibility
     ToggleBuilder,
     /// Close any currently open modal
@@ -198,6 +209,32 @@ pub enum Effect {
     PrevPageRequested,
     /// Request the first page using the initial Range header (or none)
     FirstPageRequested,
+    /// Load MCP plugins from config into PluginsState
+    PluginsLoadRequested,
+    /// Refresh plugin statuses/health
+    PluginsRefresh,
+    /// Start the selected plugin
+    PluginsStart(String),
+    /// Stop the selected plugin
+    PluginsStop(String),
+    /// Restart the selected plugin
+    PluginsRestart(String),
+    /// Open logs drawer for a plugin
+    PluginsOpenLogs(String),
+    /// Refresh logs for open logs drawer (follow mode)
+    PluginsRefreshLogs(String),
+    /// Export logs for a plugin to a default location (redacted)
+    PluginsExportLogsDefault(String),
+    /// Open environment editor for a plugin
+    PluginsOpenEnv(String),
+    /// Save environment changes for a plugin (key/value pairs)
+    PluginsSaveEnv { name: String, rows: Vec<(String, String)> },
+    /// Open add plugin view
+    PluginsOpenAdd,
+    /// Validate add plugin candidate
+    PluginsValidateAdd,
+    /// Apply add plugin patch
+    PluginsApplyAdd,
 }
 
 // Legacy MainFocus removed; focus is handled via ui::focus::FocusStore
@@ -229,7 +266,9 @@ impl App<'_> {
             ctx: SharedCtx::new(registry),
             builder: BuilderState::default(),
             logs: LogsState::default(),
+            plugins_fullscreen: false,
             help: HelpState::default(),
+            plugins: PluginsState::new(),
             table: TableState::default(),
             palette: PaletteState::default(),
             executing: false,
@@ -253,6 +292,7 @@ impl App<'_> {
             let mut focus_builder = FocusBuilder::new(None);
             focus_builder.widget(&app.palette);
             focus_builder.widget(&app.logs);
+            // Plugins overlay will manage its own focus when opened.
             let f = focus_builder.build();
             f.focus(&app.palette);
         }
@@ -290,6 +330,16 @@ impl App<'_> {
                         self.mark_dirty();
                     }
                 }
+                // Periodically refresh plugin statuses when overlay is visible.
+                if self.plugins.is_visible() && self.plugins.should_refresh() {
+                    effects.push(Effect::PluginsRefresh);
+                }
+                // Refresh logs in follow mode
+                if let Some(logs) = &self.plugins.logs {
+                    if logs.follow {
+                        effects.push(Effect::PluginsRefreshLogs(logs.name.clone()));
+                    }
+                }
                 // If provider-backed suggestions are loading and the popup is open,
                 // rebuild suggestions to pick up newly cached results without requiring
                 // another keypress.
@@ -320,6 +370,16 @@ impl App<'_> {
                 self.table.toggle_show();
                 self.mark_dirty();
             }
+            Msg::TogglePlugins => {
+                let now_visible = !self.plugins.is_visible();
+                self.plugins.set_visible(now_visible);
+                // Focus normalization: when opened, default to search
+                if now_visible {
+                    let ring = self.plugins.focus_ring();
+                    ring.focus(&self.plugins.search_flag);
+                }
+                self.mark_dirty();
+            }
             Msg::ToggleBuilder => {
                 self.builder.toggle_visibility();
                 if self.builder.is_visible() {
@@ -331,6 +391,7 @@ impl App<'_> {
                 self.help.set_visibility(false);
                 self.table.apply_visible(false);
                 self.builder.apply_visibility(false);
+                self.plugins.set_visible(false);
                 self.mark_dirty();
             }
             Msg::Run => {
@@ -362,6 +423,109 @@ impl App<'_> {
                 // Keep executing=true if other executions are still active
                 let still_active = self.active_exec_count.load(Ordering::Relaxed) > 0;
                 self.executing = still_active;
+                // If this is a plugins refresh payload, apply it and short-circuit other UI updates
+                if let Some(ref json) = out.result_json {
+                    if let Some(refresh) = json.get("plugins_refresh").and_then(|v| v.as_array()) {
+                        let mut updates = Vec::new();
+                        for v in refresh {
+                            if let (Some(name), Some(status)) = (
+                                v.get("name").and_then(|s| s.as_str()),
+                                v.get("status").and_then(|s| s.as_str()),
+                            ) {
+                                let latency = v.get("latency_ms").and_then(|l| l.as_u64());
+                                let last_error = v.get("last_error").and_then(|e| e.as_str()).map(|s| s.to_string());
+                                updates.push((name.to_string(), status.to_string(), latency, last_error));
+                            }
+                        }
+                        self.plugins.apply_refresh_updates(updates);
+                        self.mark_dirty();
+                        // Also log, redacted
+                        self.logs.entries.push(heroku_util::redact_sensitive(&raw));
+                        return effects;
+                    }
+                    if let Some(plogs) = json.get("plugins_logs").and_then(|v| v.as_object()) {
+                        if let (Some(name), Some(lines)) = (
+                            plogs.get("name").and_then(|s| s.as_str()),
+                            plogs.get("lines").and_then(|l| l.as_array()),
+                        ) {
+                            if let Some(logs_state) = &mut self.plugins.logs {
+                                if logs_state.name == name {
+                                    let mut out_lines = Vec::with_capacity(lines.len());
+                                    for l in lines {
+                                        if let Some(s) = l.as_str() {
+                                            out_lines.push(s.to_string());
+                                        }
+                                    }
+                                    logs_state.set_lines(out_lines);
+                                    self.mark_dirty();
+                                    self.logs.entries.push(heroku_util::redact_sensitive(&raw));
+                                    return effects;
+                                }
+                            }
+                        }
+                    }
+                    if let Some(penv) = json.get("plugins_env").and_then(|v| v.as_object()) {
+                        if let (Some(name), Some(rows)) = (
+                            penv.get("name").and_then(|s| s.as_str()),
+                            penv.get("rows").and_then(|l| l.as_array()),
+                        ) {
+                            if let Some(env_state) = &mut self.plugins.env {
+                                if env_state.name == name {
+                                    let mut out_rows = Vec::with_capacity(rows.len());
+                                    for r in rows {
+                                        if let (Some(k), Some(v), Some(is_secret)) = (
+                                            r.get("key").and_then(|s| s.as_str()),
+                                            r.get("value").and_then(|s| s.as_str()),
+                                            r.get("is_secret").and_then(|b| b.as_bool()),
+                                        ) {
+                                            out_rows.push(crate::ui::components::plugins::EnvRow {
+                                                key: k.to_string(),
+                                                value: v.to_string(),
+                                                is_secret,
+                                            });
+                                        }
+                                    }
+                                    env_state.set_rows(out_rows);
+                                    self.mark_dirty();
+                                    self.logs.entries.push(heroku_util::redact_sensitive(&raw));
+                                    return effects;
+                                }
+                            } else {
+                                // If env not open yet, open and set rows
+                                self.plugins.open_env(name.to_string());
+                                if let Some(env_state) = &mut self.plugins.env {
+                                    let mut out_rows = Vec::new();
+                                    for r in rows {
+                                        if let (Some(k), Some(v), Some(is_secret)) = (
+                                            r.get("key").and_then(|s| s.as_str()),
+                                            r.get("value").and_then(|s| s.as_str()),
+                                            r.get("is_secret").and_then(|b| b.as_bool()),
+                                        ) {
+                                            out_rows.push(crate::ui::components::plugins::EnvRow {
+                                                key: k.to_string(),
+                                                value: v.to_string(),
+                                                is_secret,
+                                            });
+                                        }
+                                    }
+                                    env_state.set_rows(out_rows);
+                                    self.mark_dirty();
+                                    self.logs.entries.push(heroku_util::redact_sensitive(&raw));
+                                    return effects;
+                                }
+                            }
+                        }
+                    }
+                    if let Some(preview) = json.get("plugins_add_preview").and_then(|v| v.as_object()) {
+                        if let Some(wiz) = &mut self.plugins.add {
+                            wiz.validation = preview.get("message").and_then(|s| s.as_str()).map(|s| s.to_string());
+                            wiz.preview = preview.get("patch").and_then(|s| s.as_str()).map(|s| s.to_string());
+                            self.mark_dirty();
+                            self.logs.entries.push(heroku_util::redact_sensitive(&raw));
+                            return effects;
+                        }
+                    }
+                }
                 // Pre-redact for list display to avoid per-frame redaction
                 self.logs.entries.push(heroku_util::redact_sensitive(&raw));
                 self.logs.rich_entries.push(LogEntry::Api {

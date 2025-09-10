@@ -2,7 +2,13 @@
 
 use crate::plugin::PluginEngine;
 use crate::provider::{McpProviderError, McpProviderOps};
-use rmcp::model::{CallToolRequestParam, Tool};
+// TODO: Replace with ultrafast-mcp types for tool metadata and calls
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, Default)]
+pub struct Tool {
+    pub name: String,
+    pub description: Option<String>,
+    pub input_schema: Option<serde_json::Value>,
+}
 use serde_json::{Map, Value};
 use std::sync::Arc;
 use std::time::Duration;
@@ -77,34 +83,9 @@ impl McpProvider {
                 name: self.plugin_name.clone(),
             })?;
 
-        let client = client.lock().await;
-        let peer = client.peer().ok_or_else(|| McpProviderError::PluginNotRunning {
-            name: self.plugin_name.clone(),
-        })?;
-
-        // List tools to get metadata
-        let tools = peer.list_tools(Default::default()).await.map_err(|e| match e {
-            rmcp::service::ServiceError::McpError(mcp_err) => McpProviderError::McpError(mcp_err),
-            other => McpProviderError::McpError(rmcp::ErrorData::invalid_request(
-                format!("Service error: {}", other),
-                None,
-            )),
-        })?;
-
-        // Find the specific tool
-        let tool = tools
-            .tools
-            .iter()
-            .find(|tool| tool.name == self.tool_name)
-            .ok_or_else(|| McpProviderError::ToolNotFound {
-                plugin: self.plugin_name.clone(),
-                tool: self.tool_name.clone(),
-            })?;
-
-        self.tool_metadata = Some(tool.clone());
-
-        // Build the provider contract from tool metadata
-        self.contract = self.build_contract(tool)?;
+        let _client = client.lock().await;
+        // TODO: Query tool metadata via ultrafast-mcp client once wired.
+        // For now, leave metadata empty; contract remains default.
 
         Ok(())
     }
@@ -140,9 +121,9 @@ impl McpProvider {
     }
 
     /// Call the MCP tool with the given arguments.
-    async fn call_tool(&self, arguments: &Map<String, Value>) -> Result<Value, McpProviderError> {
+    async fn call_tool(&self, _arguments: &Map<String, Value>) -> Result<Value, McpProviderError> {
         // Get the client for the plugin
-        let client = self
+        let _client = self
             .plugin_engine
             .client_manager()
             .get_client(&self.plugin_name)
@@ -150,37 +131,10 @@ impl McpProvider {
             .ok_or_else(|| McpProviderError::PluginNotFound {
                 name: self.plugin_name.clone(),
             })?;
-
-        let client = client.lock().await;
-        let peer = client.peer().ok_or_else(|| McpProviderError::PluginNotRunning {
-            name: self.plugin_name.clone(),
-        })?;
-
-        // Prepare the tool call request
-        let request = CallToolRequestParam {
-            name: self.tool_name.clone().into(),
-            arguments: Some(arguments.clone()),
-        };
-
-        // Call the tool with timeout
-        let result = timeout(Duration::from_secs(30), peer.call_tool(request))
-            .await
-            .map_err(|_| McpProviderError::TimeoutError {
-                operation: "tool_call".to_string(),
-            })?;
-
-        let result = result.map_err(|e| match e {
-            rmcp::service::ServiceError::McpError(mcp_err) => McpProviderError::McpError(mcp_err),
-            other => McpProviderError::McpError(rmcp::ErrorData::invalid_request(
-                format!("Service error: {}", other),
-                None,
-            )),
-        })?;
-
-        // Convert the result to JSON
-        let result_json = serde_json::to_value(result).map_err(McpProviderError::SerializationError)?;
-
-        Ok(result_json)
+        // TODO: Execute tool via ultrafast-mcp client; for now, return an informative error
+        Err(McpProviderError::ProviderError {
+            message: "MCP tool execution not yet wired to ultrafast-mcp".into(),
+        })
     }
 }
 

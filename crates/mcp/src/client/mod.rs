@@ -1,9 +1,13 @@
 //! MCP client management for different transport types.
+//!
+//! This module exposes transports (`stdio`, `http`), a managed `McpClient`, and a
+//! `McpClientManager` to orchestrate multiple plugins with health monitoring.
 
 mod health;
 mod http;
 mod manager;
 mod stdio;
+mod ultrafast;
 
 pub use crate::types::HealthStatus;
 pub use health::{HealthCheckResult, HealthMonitor};
@@ -11,9 +15,9 @@ pub use http::{HttpClient, HttpTransport};
 pub use manager::McpClientManager;
 pub use stdio::{StdioClient, StdioTransport};
 
+use crate::McpError;
 use crate::config::McpServer;
 use crate::types::{PluginStatus, TransportStatus};
-use rmcp::{ErrorData as McpError, service::RoleClient};
 
 /// Trait for MCP transport implementations.
 #[async_trait::async_trait]
@@ -34,11 +38,8 @@ pub trait McpTransport: Send + Sync {
 /// Trait for MCP connections.
 #[async_trait::async_trait]
 pub trait McpConnection: Send + Sync {
-    /// Get the underlying service.
-    fn peer(&self) -> &rmcp::service::Peer<RoleClient>;
-
     /// Check if the connection is alive.
-    async fn is_alive(&self) -> bool;
+    async fn is_alive(&mut self) -> bool;
 
     /// Close the connection.
     async fn close(self: Box<Self>) -> Result<(), McpError>;
@@ -107,7 +108,14 @@ impl McpClient {
         self.status = PluginStatus::Stopping;
 
         if let Some(connection) = self.connection.take() {
-            connection.close().await?;
+            // Guard against hangs during shutdown
+            match tokio::time::timeout(std::time::Duration::from_secs(5), connection.close()).await {
+                Ok(res) => res?,
+                Err(_) => {
+                    // Timed out
+                    self.last_error = Some("Disconnect timeout".to_string());
+                }
+            }
         }
 
         self.status = PluginStatus::Stopped;
@@ -156,11 +164,6 @@ impl McpClient {
         }
 
         Ok(result)
-    }
-
-    /// Get the service for making MCP calls.
-    pub fn peer(&self) -> Option<&rmcp::service::Peer<RoleClient>> {
-        self.connection.as_ref().map(|conn| conn.peer())
     }
 }
 

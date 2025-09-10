@@ -27,7 +27,7 @@ use crate::ui::{
 /// The component supports both traditional page-based pagination and
 /// range-based pagination for API endpoints that support cursor-based
 /// navigation.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct PaginationComponent {
     /// Internal state managing pagination data and UI state
     state: PaginationState,

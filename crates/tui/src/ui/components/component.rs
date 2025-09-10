@@ -4,8 +4,6 @@
 //! modular UI development. Components are self-contained UI elements that
 //! handle their own state, events, and rendering while integrating with the
 //! main application through a consistent interface.
-
-use anyhow::Result;
 use crossterm::event::{KeyEvent, MouseEvent};
 use ratatui::{Frame, layout::Rect};
 
@@ -77,29 +75,6 @@ use crate::app::{Effect, Msg};
 /// }
 /// ```
 pub(crate) trait Component {
-    /// Initialize any internal state.
-    ///
-    /// This method is called once when the component is created, allowing
-    /// it to set up any internal state, load resources, or perform other
-    /// initialization tasks.
-    ///
-    /// # Returns
-    ///
-    /// `Result<()>` indicating success or failure of initialization
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// fn init(&mut self) -> Result<()> {
-    ///     self.load_configuration()?;
-    ///     self.initialize_widgets()?;
-    ///     Ok(())
-    /// }
-    /// ```
-    fn init(&mut self) -> Result<()> {
-        Ok(())
-    }
-
     /// Handle a generic application-level message the component cares about.
     ///
     /// This method allows components to respond to application-wide messages

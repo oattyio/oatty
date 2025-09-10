@@ -111,7 +111,7 @@ pub enum McpProviderError {
     PluginNotRunning { name: String },
 
     #[error("MCP error: {0}")]
-    McpError(#[from] rmcp::ErrorData),
+    McpError(String),
 
     #[error("Provider error: {message}")]
     ProviderError { message: String },

@@ -1,6 +1,7 @@
 //! Log formatting and redaction utilities.
 
 use crate::types::LogEntry;
+use heroku_util::redact_sensitive_with;
 use regex::{Captures, Regex};
 
 /// Formatter for log entries with redaction capabilities.
@@ -70,27 +71,9 @@ impl Default for LogFormatter {
 impl RedactionRules {
     /// Create new redaction rules with default patterns.
     pub fn new() -> Self {
-        let patterns = vec![
-            // API keys and tokens (allow space, underscore, or dash between parts)
-            Regex::new(r"(?i)(api[\s_-]?key|auth[\s_-]?token|token|secret|password)\s*[:=]\s*([^\s,;]+)")
-                .expect("Invalid regex pattern"),
-            // Bearer tokens
-            Regex::new(r"Bearer\s+([A-Za-z0-9\-._~+/]+=*)").expect("Invalid regex pattern"),
-            // Basic auth
-            Regex::new(r"Basic\s+([A-Za-z0-9+/]+=*)").expect("Invalid regex pattern"),
-            // JWT tokens (basic pattern)
-            Regex::new(r"eyJ[A-Za-z0-9\-._~+/]+=*").expect("Invalid regex pattern"),
-            // UUIDs that might be sensitive
-            Regex::new(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}").expect("Invalid regex pattern"),
-            // Credit card numbers (basic pattern)
-            Regex::new(r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b").expect("Invalid regex pattern"),
-            // Email addresses (optional - might want to keep these)
-            // Regex::new(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
-            //     .expect("Invalid regex pattern"),
-        ];
-
+        // Rely on shared util patterns by default; allow callers to supply extras.
         Self {
-            patterns,
+            patterns: Vec::new(),
             replacement: "[REDACTED]".to_string(),
         }
     }
@@ -107,21 +90,16 @@ impl RedactionRules {
 
     /// Redact sensitive information from text.
     pub fn redact(&self, text: &str) -> String {
-        let mut result = text.to_string();
+        // First, apply shared redaction rules from util with our replacement token
+        let mut result = redact_sensitive_with(text, &self.replacement);
 
+        // Then, apply any additional local patterns (if configured)
         for pattern in &self.patterns {
-            // Replace only the captured sensitive portion when possible,
-            // preserving any descriptive prefix like "API key:" or "Bearer ".
             result = pattern
                 .replace_all(&result, |caps: &Captures| {
-                    // If there is at least one capturing group, treat the last capture
-                    // as the sensitive value and replace only that portion.
                     if caps.len() > 1 {
                         let full = caps.get(0).unwrap().as_str();
                         let sensitive = caps.get(caps.len() - 1).unwrap();
-
-                        // Build the redacted string by replacing the sensitive span
-                        // within the full match while keeping the rest intact.
                         let mut redacted = String::with_capacity(full.len());
                         let start = sensitive.start() - caps.get(0).unwrap().start();
                         let end = sensitive.end() - caps.get(0).unwrap().start();
@@ -130,7 +108,6 @@ impl RedactionRules {
                         redacted.push_str(&full[end..]);
                         redacted
                     } else {
-                        // No capture groups: replace the entire match.
                         self.replacement.clone()
                     }
                 })
@@ -171,8 +148,6 @@ impl Default for RedactionRules {
         Self::new()
     }
 }
-
-// Intentionally no public formatting error type for now; callers use Strings.
 
 #[cfg(test)]
 mod tests {

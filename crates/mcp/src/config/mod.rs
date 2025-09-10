@@ -8,7 +8,7 @@ mod model;
 mod validation;
 
 pub use interpolation::{InterpolationError, interpolate_config};
-pub use model::{ConfigError, McpConfig, McpServer};
+pub use model::{ConfigError, McpAuthConfig, McpConfig, McpServer};
 pub use validation::{ValidationError, validate_config, validate_server_name};
 
 use dirs_next::config_dir;

@@ -10,7 +10,7 @@ use regex::Regex;
 ///
 /// This function scans input text for patterns that commonly indicate
 /// sensitive information like API keys, tokens, passwords, and database URLs.
-/// When found, these values are replaced with `<redacted>` while preserving
+/// When found, these values are replaced with `[REDACTED]` while preserving
 /// the key names for debugging purposes.
 ///
 /// # Arguments
@@ -25,20 +25,25 @@ use regex::Regex;
 ///
 /// let input = "API_KEY=abc123 TOKEN=xyz789";
 /// let redacted = redact_sensitive(input);
-/// assert_eq!(redacted, "API_KEY=<redacted> TOKEN=<redacted>");
+/// assert_eq!(redacted, "API_KEY=[REDACTED] TOKEN=[REDACTED]");
 ///
 /// let input = "Authorization: Bearer secret123";
 /// let redacted = redact_sensitive(input);
-/// assert_eq!(redacted, "Authorization: <redacted>");
+/// assert_eq!(redacted, "Authorization: [REDACTED]");
 /// ```
 pub fn redact_sensitive(input: &str) -> String {
+    redact_sensitive_with(input, "[REDACTED]")
+}
+
+/// Redacts sensitive-looking values, using a custom replacement token.
+pub fn redact_sensitive_with(input: &str, replacement: &str) -> String {
     let mut redacted = input.to_string();
 
     for pattern in get_redact_patterns().iter() {
         redacted = pattern
             .replace_all(&redacted, |captures: &regex::Captures| {
-                let prefix = captures.get(1).map(|match_| match_.as_str()).unwrap_or("");
-                format!("{}<redacted>", prefix)
+                let prefix = captures.get(1).map(|m| m.as_str()).unwrap_or("");
+                format!("{}{}", prefix, replacement)
             })
             .to_string();
     }
@@ -59,9 +64,24 @@ pub fn redact_sensitive(input: &str) -> String {
 fn get_redact_patterns() -> &'static Vec<Regex> {
     static REDACT_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
         vec![
+            // Authorization headers (keep prefix, redact value)
             Regex::new(r"(?i)(authorization:\s+)([^\s]+(?:\s+[^\s]+)*)").unwrap(),
-            Regex::new(r"(?i)([A-Z0-9_]*?(KEY|TOKEN|SECRET|PASSWORD)=)([^\s]+)").unwrap(),
-            Regex::new(r"(?i)(DATABASE_URL)=([^\s]+)").unwrap(),
+            // Bearer tokens in free text
+            Regex::new(r"(?i)((?:^|\b)Bearer\s+)([A-Za-z0-9\-._~+/]+=*)").unwrap(),
+            // Basic auth in free text
+            Regex::new(r"(?i)((?:^|\b)Basic\s+)([A-Za-z0-9+/]+=*)").unwrap(),
+            // Common key/token env or labels (keep prefix including delimiter)
+            Regex::new(r"(?i)((?:api[\s_-]?key|auth[\s_-]?token|token|secret|password)\s*[:=]\s*)([^\s,;]+)").unwrap(),
+            // Env-like KEY=VALUE patterns for KEY/TOKEN/SECRET/PASSWORD
+            Regex::new(r"(?i)((?:[A-Z0-9_]*?(?:KEY|TOKEN|SECRET|PASSWORD))=)([^\s]+)").unwrap(),
+            // Database URLs
+            Regex::new(r"(?i)(DATABASE_URL=)([^\s]+)").unwrap(),
+            // JWT-like tokens (replace entirely)
+            Regex::new(r"(eyJ[A-Za-z0-9\-._~+/]+=*)").unwrap(),
+            // UUIDs (replace entirely)
+            Regex::new(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b").unwrap(),
+            // Credit card numbers (replace entirely)
+            Regex::new(r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b").unwrap(),
         ]
     });
 

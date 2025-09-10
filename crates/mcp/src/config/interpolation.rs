@@ -1,6 +1,6 @@
 //! Configuration interpolation for environment variables and secrets.
 
-use crate::config::{McpConfig, McpServer};
+use crate::config::{McpAuthConfig, McpConfig, McpServer};
 use regex::Regex;
 use thiserror::Error;
 use tracing::debug;
@@ -28,6 +28,11 @@ async fn interpolate_server(server: &mut McpServer) -> Result<(), InterpolationE
         for (_, value) in headers.iter_mut() {
             *value = interpolate_string(value).await?;
         }
+    }
+
+    // Interpolate auth config
+    if let Some(auth) = &mut server.auth {
+        interpolate_auth(auth).await?;
     }
 
     Ok(())
@@ -75,6 +80,24 @@ async fn resolve_secret(name: &str) -> Result<String, InterpolationError> {
     })
 }
 
+async fn interpolate_auth(auth: &mut McpAuthConfig) -> Result<(), InterpolationError> {
+    // Scheme is literal; normalize to lowercase
+    auth.scheme = auth.scheme.to_lowercase();
+    if let Some(u) = &mut auth.username {
+        *u = interpolate_string(u).await?;
+    }
+    if let Some(p) = &mut auth.password {
+        *p = interpolate_string(p).await?;
+    }
+    if let Some(t) = &mut auth.token {
+        *t = interpolate_string(t).await?;
+    }
+    if let Some(h) = &mut auth.header_name {
+        *h = interpolate_string(h).await?;
+    }
+    Ok(())
+}
+
 /// Store a secret in the OS keychain.
 #[allow(dead_code)]
 pub async fn store_secret(name: &str, value: &str) -> Result<(), InterpolationError> {
@@ -103,7 +126,7 @@ pub async fn remove_secret(name: &str) -> Result<(), InterpolationError> {
     })?;
 
     keyring
-        .delete_password()
+        .delete_credential()
         .map_err(|e| InterpolationError::KeyringError {
             name: name.to_string(),
             error: e.to_string(),

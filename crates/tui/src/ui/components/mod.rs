@@ -6,10 +6,12 @@ pub mod help;
 pub mod logs;
 pub mod pagination;
 pub mod palette;
+pub mod plugins;
 pub mod table;
 
 pub use builder::BuilderComponent;
 pub use help::HelpComponent;
 pub use logs::LogsComponent;
 pub use pagination::PaginationComponent;
+pub use plugins::PluginsComponent;
 pub use table::TableComponent;

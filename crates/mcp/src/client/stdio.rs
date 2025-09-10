@@ -1,10 +1,8 @@
 //! Stdio transport implementation for MCP clients.
 
+use crate::McpError;
 use crate::client::{HealthCheckResult, McpConnection, McpTransport};
 use crate::config::McpServer;
-use rmcp::{
-    ErrorData as McpError, ServiceExt, service::RoleClient, service::RunningService, transport::TokioChildProcess,
-};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::process::Command;
@@ -21,8 +19,8 @@ pub struct StdioTransport {
 
 /// Stdio connection wrapper.
 pub struct StdioClient {
-    /// The running MCP service.
-    service: RunningService<RoleClient, ()>,
+    /// Child process handle.
+    child: tokio::process::Child,
 
     /// Child stderr handle for potential log streaming.
     #[allow(dead_code)]
@@ -56,53 +54,95 @@ impl StdioTransport {
 
         let mut cmd = Command::new(command);
 
-        // Set arguments
-        if let Some(args) = &self.server.args {
-            cmd.args(args);
+        Self::apply_args_env_cwd(&mut cmd, &self.server);
+        Self::configure_stdio(&mut cmd);
+
+        Ok(cmd)
+    }
+
+    /// Apply args, environment variables, and cwd settings to the command.
+    fn apply_args_env_cwd(cmd: &mut Command, server: &McpServer) {
+        // Start with a minimal, clean environment to avoid inheriting secrets.
+        cmd.env_clear();
+        // Provide a minimal PATH if needed (avoid command searches using broad PATHs).
+        #[cfg(unix)]
+        {
+            cmd.env("PATH", "/usr/bin:/bin");
+        }
+        #[cfg(windows)]
+        {
+            // Keep Windows minimal PATH; if the command is absolute, PATH is not used.
+            if std::env::var_os("PATH").is_some() {
+                cmd.env("PATH", std::env::var("PATH").unwrap_or_default());
+            }
         }
 
-        // Set environment variables
-        if let Some(env) = &self.server.env {
+        if let Some(args) = &server.args {
+            cmd.args(args);
+        }
+        if let Some(env) = &server.env {
             for (key, value) in env {
                 cmd.env(key, value);
             }
         }
-
-        // Set working directory
-        if let Some(cwd) = &self.server.cwd {
+        if let Some(cwd) = &server.cwd {
             cmd.current_dir(cwd);
         }
+    }
 
-        // Configure stdio
+    /// Configure stdio pipes for the child process.
+    fn configure_stdio(cmd: &mut Command) {
         cmd.stdin(Stdio::piped());
         cmd.stdout(Stdio::piped());
         cmd.stderr(Stdio::piped());
+        // Drop privileges and harden the process on Unix before exec.
+        #[cfg(unix)]
+        {
+            use libc::{getgid, getuid, setgid, setuid};
+            unsafe {
+                cmd.pre_exec(|| {
+                    // Disable core dumps for the child process in a portable way
+                    #[cfg(target_os = "linux")]
+                    {
+                        use libc::{PR_SET_DUMPABLE, prctl};
+                        let _ = prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
+                    }
+                    #[cfg(all(unix, not(target_os = "linux")))]
+                    {
+                        use libc::{RLIMIT_CORE, rlimit, setrlimit};
+                        let lim = rlimit {
+                            rlim_cur: 0,
+                            rlim_max: 0,
+                        };
+                        let _ = setrlimit(RLIMIT_CORE, &lim);
+                    }
 
-        Ok(cmd)
+                    // Drop to invoking user's uid/gid (no-op if already non-root)
+                    let uid = getuid();
+                    let gid = getgid();
+                    if setgid(gid) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    if setuid(uid) != 0 {
+                        return Err(std::io::Error::last_os_error());
+                    }
+                    Ok(())
+                });
+            }
+        }
     }
 }
 
 #[async_trait::async_trait]
 impl McpTransport for StdioTransport {
     async fn connect(&self) -> Result<Box<dyn McpConnection>, McpError> {
-        let cmd = self.build_command()?;
-
-        // Create the MCP service using rmcp's builder
-        // Capture the real child process handle for proper lifecycle management
-        let (transport, child_stderr) = TokioChildProcess::builder(cmd)
+        let mut cmd = self.build_command()?;
+        let mut child = cmd
             .spawn()
             .map_err(|e| McpError::invalid_request(format!("Failed to spawn process: {}", e), None))?;
+        let stderr = child.stderr.take();
 
-        // Start the service with default client handler
-        let service = ()
-            .serve(transport)
-            .await
-            .map_err(|e| McpError::invalid_request(format!("Failed to start MCP service: {}", e), None))?;
-
-        Ok(Box::new(StdioClient {
-            service,
-            stderr: child_stderr,
-        }))
+        Ok(Box::new(StdioClient { child, stderr }))
     }
 
     async fn health_check(&self) -> Result<HealthCheckResult, McpError> {
@@ -146,21 +186,20 @@ impl McpTransport for StdioTransport {
 
 #[async_trait::async_trait]
 impl McpConnection for StdioClient {
-    fn peer(&self) -> &rmcp::service::Peer<RoleClient> {
-        self.service.peer()
+    async fn is_alive(&mut self) -> bool {
+        match self.child.id() {
+            Some(_) => match self.child.try_wait() {
+                Ok(Some(_status)) => false,
+                Ok(None) => true,
+                Err(_) => false,
+            },
+            None => false,
+        }
     }
 
-    async fn is_alive(&self) -> bool {
-        // For now, we'll assume the service is alive if it exists
-        // In a real implementation, we'd check the actual process status
-
-        // Try to perform a simple operation to check if the service is responsive
-        // This is a basic check - in a real implementation, you might want to
-        // send a ping or list tools to verify the connection is working
-        true
-    }
-
-    async fn close(self: Box<Self>) -> Result<(), McpError> {
+    async fn close(mut self: Box<Self>) -> Result<(), McpError> {
+        // Terminate the child process if still running
+        let _ = self.child.kill().await;
         Ok(())
     }
 }

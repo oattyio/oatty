@@ -85,19 +85,10 @@ use crate::{
 /// let mut builder = BuilderComponent::new();
 /// builder.init()?;
 /// ```
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct BuilderComponent;
 
 impl BuilderComponent {
-    /// Creates a new builder component instance.
-    ///
-    /// # Returns
-    ///
-    /// A new BuilderComponent with default state
-    pub fn new() -> Self {
-        Self
-    }
-
     /// Handle global shortcuts that work across all panels.
     fn handle_global_shortcuts(&self, key: KeyEvent) -> Option<app::Msg> {
         match key.code {
@@ -446,7 +437,7 @@ impl BuilderComponent {
         if app.builder.inputs_flag.get() && !missing.is_empty() {
             lines.push(Line::from(""));
             lines.push(Line::from(vec![
-                Span::styled("Missing required: ", Style::default().fg(app.ctx.theme.roles().warning)),
+                Span::styled("Missing required: ", app.ctx.theme.status_warning()),
                 Span::styled(missing.join(", "), app.ctx.theme.text_primary_style()),
             ]));
         }

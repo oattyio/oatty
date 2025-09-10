@@ -36,7 +36,7 @@ use crate::{
     app, cmd,
     ui::{
         components::{
-            BuilderComponent, HelpComponent, LogsComponent, TableComponent,
+            BuilderComponent, HelpComponent, LogsComponent, PluginsComponent, TableComponent,
             component::Component,
             palette::{HintBarComponent, PaletteComponent},
         },
@@ -69,6 +69,7 @@ enum LoopAction {
 ///
 /// Using concrete types avoids dynamic dispatch overhead when routing input
 /// and drawing.
+#[derive(Debug, Default)]
 struct UiComponents<'a> {
     palette: PaletteComponent,
     hint_bar: HintBarComponent<'a>,
@@ -76,38 +77,7 @@ struct UiComponents<'a> {
     builder: BuilderComponent,
     help: HelpComponent,
     table: TableComponent<'a>,
-}
-
-impl<'a> UiComponents<'a> {
-    /// Constructs all components and calls their `init()` once.
-    fn new_initialized() -> Self {
-        let mut palette = PaletteComponent::new();
-        let _ = palette.init();
-
-        let mut hint_bar = HintBarComponent::new();
-        let _ = hint_bar.init();
-
-        let mut logs = LogsComponent::new();
-        let _ = logs.init();
-
-        let mut builder = BuilderComponent::new();
-        let _ = builder.init();
-
-        let mut help = HelpComponent::new();
-        let _ = help.init();
-
-        let mut table = TableComponent::default();
-        let _ = table.init();
-
-        Self {
-            palette,
-            hint_bar,
-            logs,
-            builder,
-            help,
-            table,
-        }
-    }
+    plugins: PluginsComponent<'a>,
 }
 
 /// Put the terminal into raw mode and enter the alternate screen.
@@ -146,6 +116,7 @@ fn initial_render<'a>(
             &mut comps.builder,
             &mut comps.help,
             &mut comps.table,
+            &mut comps.plugins,
         )
     })?;
     Ok(())
@@ -167,6 +138,7 @@ fn render<'a>(
             &mut comps.builder,
             &mut comps.help,
             &mut comps.table,
+            &mut comps.plugins,
         )
     })?;
     Ok(())
@@ -236,8 +208,28 @@ fn handle_input_event<'a>(
 ) -> Result<LoopAction> {
     match input_event {
         Event::Key(key_event) => {
+            // Ctrl-C: if plugins fullscreen active, exit that mode; otherwise exit app
             if key_event.code == KeyCode::Char('c') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                return Ok(LoopAction::Exit);
+                if application.plugins_fullscreen {
+                    application.plugins_fullscreen = false;
+                    application.mark_dirty();
+                    return Ok(LoopAction::Continue);
+                } else {
+                    return Ok(LoopAction::Exit);
+                }
+            }
+            // Ctrl-P: enter plugins fullscreen
+            if key_event.code == KeyCode::Char('p') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                application.plugins_fullscreen = true;
+                // Load plugins if empty
+                if application.plugins.items.is_empty() {
+                    run_component_effects(application, vec![app::Effect::PluginsLoadRequested]);
+                }
+                // Focus search
+                let ring = application.plugins.focus_ring();
+                ring.focus(&application.plugins.search_flag);
+                application.mark_dirty();
+                return Ok(LoopAction::Continue);
             }
             let _ = handle_key_event(
                 application,
@@ -245,6 +237,7 @@ fn handle_input_event<'a>(
                 &mut comps.builder,
                 &mut comps.table,
                 &mut comps.logs,
+                &mut comps.plugins,
                 key_event,
             )?;
             application.mark_dirty();
@@ -268,7 +261,8 @@ fn handle_ui_event<'a>(
     match ui_event {
         UiEvent::Input(input_event) => handle_input_event(application, comps, input_event),
         UiEvent::Animate => {
-            let _ = application.update(app::Msg::Tick);
+            let effects = application.update(app::Msg::Tick);
+            run_component_effects(application, effects);
             Ok(LoopAction::Continue)
         }
     }
@@ -340,13 +334,19 @@ fn handle_focus_cycle(application: &app::App, key_event: &KeyEvent) -> bool {
 
 /// Maps global shortcuts (Esc, Ctrl+F) to high-level application messages.
 fn map_key_to_global_message(application: &app::App, key_event: &KeyEvent) -> Option<app::Msg> {
-    if (application.help.is_visible() || application.table.is_visible() || application.builder.is_visible())
+    if (application.help.is_visible()
+        || application.table.is_visible()
+        || application.builder.is_visible()
+        || application.plugins.is_visible())
         && key_event.code == KeyCode::Esc
     {
         return Some(app::Msg::CloseModal);
     }
     if key_event.code == KeyCode::Char('f') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
         return Some(app::Msg::ToggleBuilder);
+    }
+    if key_event.code == KeyCode::F(9) {
+        return Some(app::Msg::TogglePlugins);
     }
     None
 }
@@ -417,10 +417,26 @@ fn handle_key_event(
     builder_component: &mut BuilderComponent,
     table_component: &mut TableComponent,
     logs_component: &mut LogsComponent,
+    plugins_component: &mut PluginsComponent,
     key_event: KeyEvent,
 ) -> Result<bool> {
     if let Some(global_message) = map_key_to_global_message(application, &key_event) {
         let _ = application.update(global_message);
+        // After toggling Plugins overlay via F9, trigger initial load if needed
+        if matches!(key_event.code, KeyCode::F(9)) && application.plugins.is_visible() {
+            // Only load when list is empty to avoid re-reading repeatedly
+            if application.plugins.items.is_empty() {
+                run_component_effects(application, vec![app::Effect::PluginsLoadRequested]);
+            }
+            // Normalize focus to search when opened for parity with Builder
+            let ring = application.plugins.focus_ring();
+            ring.focus(&application.plugins.search_flag);
+        }
+        return Ok(false);
+    }
+    if application.plugins_fullscreen || application.plugins.is_visible() {
+        let effects = plugins_component.handle_key_events(application, key_event);
+        run_component_effects(application, effects);
         return Ok(false);
     }
     if application.table.is_visible() {
@@ -454,9 +470,31 @@ fn handle_key_event(
 /// producer, runs the async event loop, and performs cleanup on exit.
 pub async fn run_app(registry: heroku_registry::Registry) -> Result<()> {
     let mut application = app::App::new(registry);
-    let mut comps = UiComponents::new_initialized();
+    let mut comps = UiComponents::default();
 
     let mut terminal = setup_terminal()?;
+
+    // Initialize MCP supervisor (non-blocking if it fails; UI can still run)
+    if application.ctx.mcp.is_none() {
+        match McpSupervisor::new().await {
+            Ok(sup) => {
+                if let Err(e) = sup.start().await {
+                    application
+                        .logs
+                        .entries
+                        .push(format!("MCP supervisor start failed: {}", e));
+                }
+                application.ctx.mcp = Some(Arc::new(sup));
+            }
+            Err(e) => {
+                // Best-effort log: show a line in the logs area
+                application
+                    .logs
+                    .entries
+                    .push(format!("MCP supervisor init failed: {}", e));
+            }
+        }
+    }
 
     // Target ~8 FPS for spinners without wasting CPU. Rendering is
     // skipped if no frame advanced, so this remains efficient.

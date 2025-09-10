@@ -10,6 +10,7 @@ pub use ring_buffer::{LogBufferError, LogRingBuffer};
 
 use crate::types::{LogEntry, LogError};
 use dirs_next::config_dir;
+use heroku_util::redact_sensitive_with;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -156,6 +157,11 @@ pub fn default_audit_log_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
         .join("heroku")
         .join("mcp-audit.jsonl")
+}
+
+/// Sanitize text for safe logging by redacting sensitive substrings.
+pub fn sanitize_log_text(text: &str) -> String {
+    redact_sensitive_with(text, "[REDACTED]")
 }
 
 #[cfg(test)]

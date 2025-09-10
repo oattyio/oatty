@@ -15,9 +15,17 @@ pub use config::{ConfigError, McpConfig, McpServer};
 pub use plugin::{PluginEngine, PluginInfo};
 pub use types::{EnvVar, HealthStatus, LogEntry, PluginDetail, PluginStatus};
 
-/// Re-export commonly used types for convenience
-pub use rmcp::{
-    ErrorData as McpError,
-    model::{CallToolResult, Content, Tool},
-    service::{Service, ServiceExt},
-};
+/// Local MCP error type (temporary while migrating to ultrafast-mcp APIs)
+#[derive(Debug, thiserror::Error, Clone)]
+pub enum McpError {
+    #[error("Invalid request: {message}")]
+    InvalidRequest { message: String },
+    #[error("Internal error: {message}")]
+    InternalError { message: String },
+}
+
+impl McpError {
+    pub fn invalid_request<M: Into<String>>(msg: M, _data: Option<serde_json::Value>) -> Self {
+        McpError::InvalidRequest { message: msg.into() }
+    }
+}

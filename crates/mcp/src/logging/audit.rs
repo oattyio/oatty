@@ -1,6 +1,7 @@
 //! Audit logging for MCP plugin lifecycle events.
 
 use chrono::{DateTime, Utc};
+use heroku_util::redact_sensitive_with;
 use serde::{Deserialize, Serialize};
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -112,22 +113,30 @@ impl AuditLogger {
             self.rotate_log().await?;
         }
 
-        // Write the entry to the log file
-        let json_line = serde_json::to_string(&entry).map_err(|e| AuditError::SerializationError(e.to_string()))?;
+        // Redact sensitive fields in the audit entry before writing
+        let redacted_entry = redact_audit_entry(entry);
+        let json_line =
+            serde_json::to_string(&redacted_entry).map_err(|e| AuditError::SerializationError(e.to_string()))?;
 
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.log_path)
-            .map_err(AuditError::IoError)?;
+        let mut builder = OpenOptions::new();
+        builder.create(true).append(true);
+
+        // On Unix, ensure restrictive permissions (0600)
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            builder.mode(0o600);
+        }
+
+        let mut file = builder.open(&self.log_path).map_err(AuditError::IoError)?;
 
         writeln!(file, "{}", json_line).map_err(AuditError::IoError)?;
 
         debug!(
             "Audit log entry: {} {} {}",
-            entry.plugin_name,
-            serde_json::to_string(&entry.action).unwrap_or_default(),
-            serde_json::to_string(&entry.result).unwrap_or_default()
+            redacted_entry.plugin_name,
+            serde_json::to_string(&redacted_entry.action).unwrap_or_default(),
+            serde_json::to_string(&redacted_entry.result).unwrap_or_default()
         );
 
         Ok(())
@@ -208,6 +217,50 @@ impl AuditLogger {
     /// Get the path to the audit log file.
     pub fn log_path(&self) -> &PathBuf {
         &self.log_path
+    }
+}
+
+/// Redact sensitive values in an AuditEntry's metadata and any string fields.
+fn redact_audit_entry(mut entry: AuditEntry) -> AuditEntry {
+    // Redact metadata string values and known sensitive keys
+    let mut redacted = serde_json::Map::new();
+    for (k, v) in entry.metadata.into_iter() {
+        redacted.insert(k, redact_json_value(v));
+    }
+    entry.metadata = redacted;
+    entry
+}
+
+/// Recursively redact strings in JSON values and mask values for sensitive keys.
+fn redact_json_value(v: serde_json::Value) -> serde_json::Value {
+    match v {
+        serde_json::Value::String(s) => serde_json::Value::String(redact_sensitive_with(&s, "[REDACTED]")),
+        serde_json::Value::Object(mut map) => {
+            let sensitive_keys = [
+                "authorization",
+                "auth",
+                "token",
+                "access_token",
+                "id_token",
+                "secret",
+                "password",
+                "api_key",
+                "apikey",
+                "x-api-key",
+                "cookie",
+                "set-cookie",
+            ];
+            for (k, val) in map.clone().into_iter() {
+                if sensitive_keys.iter().any(|sk| k.eq_ignore_ascii_case(sk)) {
+                    map.insert(k, serde_json::Value::String("[REDACTED]".to_string()));
+                } else {
+                    map.insert(k, redact_json_value(val));
+                }
+            }
+            serde_json::Value::Object(map)
+        }
+        serde_json::Value::Array(arr) => serde_json::Value::Array(arr.into_iter().map(redact_json_value).collect()),
+        other => other,
     }
 }
 

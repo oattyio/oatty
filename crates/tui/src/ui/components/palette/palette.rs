@@ -23,7 +23,7 @@ use crate::{
         theme::{Theme, helpers as th},
     },
 };
-
+static FRAMES: [&'static str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 /// Command palette component for input and suggestions.
 ///
 /// This component encapsulates the command palette experience including the
@@ -55,27 +55,13 @@ use crate::{
 /// ```rust,ignore
 /// use heroku_tui::ui::components::PaletteComponent;
 ///
-/// let mut palette = PaletteComponent::new();
+/// let mut palette = PaletteComponent::default();
 /// palette.init()?;
 /// ```
-#[derive(Default)]
-pub struct PaletteComponent {
-    // Throbber animation frames
-    throbber_frames: [&'static str; 10],
-}
+#[derive(Debug, Default)]
+pub struct PaletteComponent;
 
 impl PaletteComponent {
-    /// Creates a new palette component instance.
-    ///
-    /// # Returns
-    ///
-    /// A new PaletteComponent with default state
-    pub fn new() -> Self {
-        Self {
-            throbber_frames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"],
-        }
-    }
-
     /// Creates the input paragraph widget with current state.
     ///
     /// This function creates the input paragraph with throbber, input text, and
@@ -111,7 +97,7 @@ impl PaletteComponent {
 
         // Add throbber at end if executing or provider-loading
         if app.executing || app.palette.is_provider_loading() {
-            let sym = self.throbber_frames[app.throbber_idx % self.throbber_frames.len()];
+            let sym = FRAMES[app.throbber_idx % FRAMES.len()];
             spans.push(Span::styled(format!(" {}", sym), theme.accent_emphasis_style()));
         }
 

@@ -45,19 +45,10 @@ use crate::{
 /// let mut help = HelpComponent::new();
 /// help.init()?;
 /// ```
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct HelpComponent;
 
 impl HelpComponent {
-    /// Creates a new help component instance.
-    ///
-    /// # Returns
-    ///
-    /// A new HelpComponent with default state
-    pub fn new() -> Self {
-        Self
-    }
-
     /// Builds comprehensive help text for a command specification.
     ///
     /// This function generates detailed help documentation for a command,

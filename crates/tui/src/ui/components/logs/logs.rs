@@ -13,8 +13,6 @@
 //!
 //! The component follows the TEA (The Elm Architecture) pattern and integrates
 //! with the application's focus management system.
-
-use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use heroku_util::redact_sensitive;
 use once_cell::sync::Lazy;
@@ -47,19 +45,10 @@ use crate::{
 /// support for selection, detail views, and various interaction modes. It
 /// automatically handles data redaction for security and provides visual
 /// enhancements for better readability.
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct LogsComponent;
 
 impl LogsComponent {
-    /// Creates a new LogsComponent instance.
-    ///
-    /// # Returns
-    ///
-    /// A new `LogsComponent` with default configuration.
-    pub fn new() -> Self {
-        Self
-    }
-
     // ============================================================================
     // Selection and Navigation Methods
     // ============================================================================
@@ -380,17 +369,6 @@ impl LogsComponent {
 }
 
 impl Component for LogsComponent {
-    /// Initializes the LogsComponent.
-    ///
-    /// Currently a no-op as the component doesn't require any initialization.
-    ///
-    /// # Returns
-    ///
-    /// Always returns `Ok(())` indicating successful initialization.
-    fn init(&mut self) -> Result<()> {
-        Ok(())
-    }
-
     /// Handles keyboard input events for the logs component.
     ///
     /// This method processes various key combinations to provide navigation,
