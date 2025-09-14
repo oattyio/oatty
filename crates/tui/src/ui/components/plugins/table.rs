@@ -11,6 +11,7 @@ use ratatui::{
 use crate::app::Effect;
 use crate::ui::components::component::Component;
 use crate::ui::theme::{Theme, helpers as th};
+use heroku_mcp::types::plugin::AuthStatus;
 
 use super::state::PluginsState;
 
@@ -21,8 +22,11 @@ pub struct PluginsTableComponent;
 impl PluginsTableComponent {
     fn move_selection_up(app: &mut crate::app::App) {
         let filtered_indices = app.plugins.filtered_indices();
-        if filtered_indices.is_empty() { return; }
-        let selected_index = app.plugins
+        if filtered_indices.is_empty() {
+            return;
+        }
+        let selected_index = app
+            .plugins
             .selected
             .unwrap_or(0)
             .min(filtered_indices.len().saturating_sub(1));
@@ -33,8 +37,11 @@ impl PluginsTableComponent {
 
     fn move_selection_down(app: &mut crate::app::App) {
         let filtered_indices = app.plugins.filtered_indices();
-        if filtered_indices.is_empty() { return; }
-        let selected_index = app.plugins
+        if filtered_indices.is_empty() {
+            return;
+        }
+        let selected_index = app
+            .plugins
             .selected
             .unwrap_or(0)
             .min(filtered_indices.len().saturating_sub(1));
@@ -47,8 +54,14 @@ impl PluginsTableComponent {
 impl Component for PluginsTableComponent {
     fn handle_key_events(&mut self, app: &mut crate::app::App, key: KeyEvent) -> Vec<Effect> {
         match key.code {
-            KeyCode::Up if app.plugins.grid_flag.get() => { Self::move_selection_up(app); Vec::new() }
-            KeyCode::Down if app.plugins.grid_flag.get() => { Self::move_selection_down(app); Vec::new() }
+            KeyCode::Up if app.plugins.grid_flag.get() => {
+                Self::move_selection_up(app);
+                Vec::new()
+            }
+            KeyCode::Down if app.plugins.grid_flag.get() => {
+                Self::move_selection_down(app);
+                Vec::new()
+            }
             _ => Vec::new(),
         }
     }
@@ -62,7 +75,7 @@ impl Component for PluginsTableComponent {
 impl PluginsTableComponent {
     /// Render the plugins table with header and selection styling.
     fn render_plugins_table(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, state: &PluginsState) {
-        let header_cells = ["Name", "Status", "Command/BaseUrl", "Tags"]
+        let header_cells = ["Name", "Status", "Command/BaseUrl", "Auth", "Tags"]
             .into_iter()
             .map(|h| ratatui::text::Span::styled(h, th::table_header_style(theme)));
         let header = Row::new(header_cells).style(th::table_header_row_style(theme));
@@ -75,17 +88,38 @@ impl PluginsTableComponent {
         for (row_index, &item_index) in filtered.iter().enumerate() {
             if let Some(item) = state.items.get(item_index) {
                 let mut row_style = th::table_row_style(theme, row_index);
-                if row_index == selected_row_index { row_style = selected_row_style; }
-                let tags = if item.tags.is_empty() { String::new() } else { item.tags.join(",") };
-                let display_name = if row_index == selected_row_index { format!("› {}", item.name) } else { item.name.clone() };
-                rows.push(Row::new(vec![display_name, item.status.clone(), item.command_or_url.clone(), tags]).style(row_style));
+                if row_index == selected_row_index {
+                    row_style = selected_row_style;
+                }
+                let tags = if item.tags.is_empty() {
+                    String::new()
+                } else {
+                    item.tags.join(",")
+                };
+                let display_name = if row_index == selected_row_index {
+                    format!("› {}", item.name)
+                } else {
+                    item.name.clone()
+                };
+                let auth_status = format_auth_status(&item.auth_status);
+                rows.push(
+                    Row::new(vec![
+                        display_name,
+                        item.status.clone(),
+                        item.command_or_url.clone(),
+                        auth_status,
+                        tags,
+                    ])
+                    .style(row_style),
+                );
             }
         }
 
         let widths = [
             ratatui::layout::Constraint::Length(18),
             ratatui::layout::Constraint::Length(10),
-            ratatui::layout::Constraint::Percentage(60),
+            ratatui::layout::Constraint::Percentage(50),
+            ratatui::layout::Constraint::Length(12),
             ratatui::layout::Constraint::Percentage(20),
         ];
         let table = Table::new(rows, widths).header(header).block(
@@ -96,6 +130,16 @@ impl PluginsTableComponent {
         );
 
         frame.render_widget(table, area);
+    }
+}
+
+/// Format authentication status for display in the table.
+fn format_auth_status(status: &AuthStatus) -> String {
+    match status {
+        AuthStatus::Unknown => "?".to_string(),
+        AuthStatus::Authorized => "✓".to_string(),
+        AuthStatus::Required => "!".to_string(),
+        AuthStatus::Failed => "✗".to_string(),
     }
 }
 

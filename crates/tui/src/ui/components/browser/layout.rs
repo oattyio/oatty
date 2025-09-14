@@ -1,8 +1,8 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
-pub(crate) struct BuilderLayout;
+pub(crate) struct BrowserLayout;
 
-impl BuilderLayout {
+impl BrowserLayout {
     /// Creates the vertical layout for search, main content, and footer.
     pub fn vertical_layout(inner: Rect) -> Vec<Rect> {
         Layout::default()
@@ -16,3 +16,4 @@ impl BuilderLayout {
             .to_vec()
     }
 }
+

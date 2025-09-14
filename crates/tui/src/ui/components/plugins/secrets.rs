@@ -16,60 +16,87 @@ use crate::app::Effect;
 use crate::ui::components::component::Component;
 use crate::ui::theme::{Theme, helpers as th};
 
-use super::state::PluginEnvEditorState;
+use super::state::PluginSecretsEditorState;
 
 /// Component for rendering the plugin environment editor overlay.
 #[derive(Debug, Default)]
-pub struct PluginsEnvComponent;
+pub struct PluginsSecretsComponent;
 
-impl PluginsEnvComponent {
-    /// Handle key events specific to the environment editor.
-    pub fn handle_key_events(&self, env: &mut PluginEnvEditorState, key: KeyEvent) -> Vec<Effect> {
-        match key.code {
-            KeyCode::Up => { Self::move_up(env); Vec::new() }
-            KeyCode::Down => { Self::move_down(env); Vec::new() }
-            KeyCode::Enter => { Self::toggle_or_commit(env); Vec::new() }
-            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => Self::save(env),
-            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => { Self::cancel_edit(env); Vec::new() }
-            KeyCode::Backspace if env.editing => { env.input.pop(); Vec::new() }
-            KeyCode::Char(c) if env.editing && !key.modifiers.contains(KeyModifiers::CONTROL) => { env.input.push(c); Vec::new() }
-            _ => Vec::new(),
+impl PluginsSecretsComponent {
+    fn move_up(&mut self, env: &mut PluginSecretsEditorState) {
+        if env.selected > 0 {
+            env.selected -= 1;
         }
     }
 
-    fn move_up(env: &mut PluginEnvEditorState) {
-        if env.selected > 0 { env.selected -= 1; }
+    fn move_down(&mut self, env: &mut PluginSecretsEditorState) {
+        if env.selected + 1 < env.rows.len() {
+            env.selected += 1;
+        }
     }
 
-    fn move_down(env: &mut PluginEnvEditorState) {
-        if env.selected + 1 < env.rows.len() { env.selected += 1; }
-    }
-
-    fn toggle_or_commit(env: &mut PluginEnvEditorState) {
+    fn toggle_or_commit(&mut self, env: &mut PluginSecretsEditorState) {
         if env.editing {
-            if let Some(row) = env.rows.get_mut(env.selected) { row.value = env.input.clone(); }
-            env.input.clear(); env.editing = false;
+            if let Some(row) = env.rows.get_mut(env.selected) {
+                row.value = env.input.clone();
+            }
+            env.input.clear();
+            env.editing = false;
         } else if let Some(row) = env.rows.get(env.selected) {
-            env.input = row.value.clone(); env.editing = true;
+            env.input = row.value.clone();
+            env.editing = true;
         }
     }
 
-    fn save(env: &PluginEnvEditorState) -> Vec<Effect> {
+    fn save(&mut self, env: &PluginSecretsEditorState) -> Vec<Effect> {
         let name = env.name.clone();
         let rows = env.rows.iter().map(|r| (r.key.clone(), r.value.clone())).collect();
         vec![Effect::PluginsSaveEnv { name, rows }]
     }
 
-    fn cancel_edit(env: &mut PluginEnvEditorState) { if env.editing { env.input.clear(); env.editing = false; } }
+    fn cancel_edit(&mut self, env: &mut PluginSecretsEditorState) {
+        if env.editing {
+            env.input.clear();
+            env.editing = false;
+        }
+    }
 }
 
-impl Component for PluginsEnvComponent {
-    fn handle_key_events(&mut self, _app: &mut crate::app::App, _key: KeyEvent) -> Vec<Effect> {
-        Vec::new()
-    }
-
-    fn update(&mut self, _app: &mut crate::app::App, _msg: &crate::app::Msg) -> Vec<Effect> {
-        Vec::new()
+impl Component for PluginsSecretsComponent {
+    fn handle_key_events(&mut self, app: &mut crate::app::App, key: KeyEvent) -> Vec<Effect> {
+        let env = app
+            .plugins
+            .env
+            .as_mut()
+            .expect("key event on uninitialized PluginsEnvComponent");
+        match key.code {
+            KeyCode::Up => {
+                self.move_up(env);
+                Vec::new()
+            }
+            KeyCode::Down => {
+                self.move_down(env);
+                Vec::new()
+            }
+            KeyCode::Enter => {
+                self.toggle_or_commit(env);
+                Vec::new()
+            }
+            KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => self.save(env),
+            KeyCode::Char('b') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                self.cancel_edit(env);
+                Vec::new()
+            }
+            KeyCode::Backspace if env.editing => {
+                env.input.pop();
+                Vec::new()
+            }
+            KeyCode::Char(c) if env.editing && !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                env.input.push(c);
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
@@ -80,15 +107,15 @@ impl Component for PluginsEnvComponent {
     }
 }
 
-impl PluginsEnvComponent {
+impl PluginsSecretsComponent {
     /// Render the environment editor table and title.
-    fn render_env_editor(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, env: &PluginEnvEditorState) {
+    fn render_env_editor(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, env: &PluginSecretsEditorState) {
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(theme.border_style(true))
             .style(th::panel_style(theme))
             .title(Span::styled(
-                format!("Edit Env — {}  [Enter] edit  [Ctrl-S] save  [b] back", env.name),
+                format!("Edit Env — {}  [Enter] edit  [Ctrl-s] save  [b] back", env.name),
                 theme.text_secondary_style().add_modifier(Modifier::BOLD),
             ));
         frame.render_widget(block.clone(), area);
@@ -128,7 +155,7 @@ mod tests {
 
     #[test]
     fn plugins_env_component_constructs() {
-        let _c = PluginsEnvComponent::default();
+        let _c = PluginsSecretsComponent::default();
         assert!(true);
     }
 }

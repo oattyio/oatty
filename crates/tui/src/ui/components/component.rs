@@ -20,7 +20,7 @@ use crate::app::{Effect, Msg};
 /// - **Separation of concerns**: Components own only local UI behavior and
 ///   state
 /// - **Single responsibility**: Each component handles one specific area (e.g.,
-///   palette, builder, help)
+///   palette, browser, help)
 /// - **Consistent patterns**: All components expose `init`, event handlers,
 ///   `update`, and `render`
 /// - **Event-driven**: Components respond to application messages and user

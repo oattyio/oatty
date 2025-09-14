@@ -4,7 +4,7 @@ use ratatui::{
     widgets::Paragraph,
 };
 
-use super::components::{BuilderComponent, HelpComponent, LogsComponent, PluginsComponent, TableComponent};
+use super::components::{BrowserComponent, HelpComponent, LogsComponent, PluginsComponent, TableComponent};
 use crate::{
     app::App,
     ui::{
@@ -33,7 +33,7 @@ pub fn draw(
     palette: &mut PaletteComponent,
     hints: &mut HintBarComponent,
     logs: &mut LogsComponent,
-    builder: &mut BuilderComponent,
+    browser: &mut BrowserComponent,
     help: &mut HelpComponent,
     table: &mut TableComponent,
     plugins: &mut PluginsComponent,
@@ -59,7 +59,7 @@ pub fn draw(
     render_logs(frame, app, logs, chunks[2]);
 
     // Render modal overlays if active
-    render_modals(frame, app, builder, help, table, plugins);
+    render_modals(frame, app, browser, help, table, plugins);
 }
 
 // Creates the main vertical layout for the application.
@@ -109,14 +109,14 @@ fn render_logs(f: &mut Frame, app: &mut App, logs: &mut LogsComponent, area: Rec
 fn render_modals(
     f: &mut Frame,
     app: &mut App,
-    builder: &mut BuilderComponent,
+    browser: &mut BrowserComponent,
     help: &mut HelpComponent,
     table: &mut TableComponent,
     plugins: &mut PluginsComponent,
 ) {
     // Draw a dim overlay when any modal is visible
     let any_modal =
-        app.help.is_visible() || app.table.is_visible() || app.builder.is_visible() || app.plugins.is_visible();
+        app.help.is_visible() || app.table.is_visible() || app.browser.is_visible() || app.plugins.is_visible();
     if any_modal {
         use ratatui::widgets::Block;
         let area = f.area();
@@ -134,8 +134,8 @@ fn render_modals(
     if app.table.is_visible() {
         table.render(f, f.area(), app);
     }
-    if app.builder.is_visible() {
-        builder.render(f, f.area(), app);
+    if app.browser.is_visible() {
+        browser.render(f, f.area(), app);
     }
     if app.plugins.is_visible() {
         plugins.render(f, f.area(), app);

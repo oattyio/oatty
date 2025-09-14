@@ -33,6 +33,10 @@ pub struct McpServer {
     /// Base URL for HTTP/SSE transport (required for http/sse).
     pub base_url: Option<Url>,
 
+    /// Optional SSE path segment for HTTP transport (defaults to "sse").
+    /// Example: "/events" or "mcp/sse". Leading slash is optional.
+    pub sse_path: Option<String>,
+
     /// HTTP headers to include in requests.
     pub headers: Option<HashMap<String, String>>,
 
@@ -54,6 +58,7 @@ impl Default for McpServer {
             env: None,
             cwd: None,
             base_url: None,
+            sse_path: None,
             headers: None,
             auth: None,
             disabled: Some(false),

@@ -4,6 +4,36 @@ use crate::types::{HealthStatus, PluginStatus};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+/// Authentication status for a plugin.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AuthStatus {
+    /// Authentication status is unknown (not yet checked).
+    Unknown,
+    /// Plugin is successfully authenticated.
+    Authorized,
+    /// Authentication is required but not provided.
+    Required,
+    /// Authentication failed with an error.
+    Failed,
+}
+
+impl std::fmt::Display for AuthStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            AuthStatus::Unknown => write!(f, "Unknown"),
+            AuthStatus::Authorized => write!(f, "Authorized"),
+            AuthStatus::Required => write!(f, "Required"),
+            AuthStatus::Failed => write!(f, "Failed"),
+        }
+    }
+}
+
+impl Default for AuthStatus {
+    fn default() -> Self {
+        AuthStatus::Unknown
+    }
+}
+
 /// Detailed information about a plugin.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PluginDetail {
@@ -33,6 +63,9 @@ pub struct PluginDetail {
 
     /// Handshake latency in milliseconds.
     pub handshake_latency: Option<u64>,
+
+    /// Authentication status for the plugin.
+    pub auth_status: AuthStatus,
 }
 
 impl PluginDetail {
@@ -48,6 +81,7 @@ impl PluginDetail {
             tags: Vec::new(),
             last_start: None,
             handshake_latency: None,
+            auth_status: AuthStatus::default(),
         }
     }
 

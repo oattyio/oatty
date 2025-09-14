@@ -9,7 +9,6 @@ repository = { workspace = true }
 description = "Model Context Protocol (MCP) plugin infrastructure for Heroku CLI"
 
 [dependencies]
-ultrafast-mcp = { workspace = true }
 keyring = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -32,6 +31,8 @@ reqwest = { workspace = true }
 base64 = { workspace = true }
 heroku-util = { path = "../util" }
 libc = { version = "0.2", optional = true }
+tracing-subscriber = { workspace = true }
+rmcp = { version = "0.6", features = ["client", "transport-child-process", "transport-sse-client-reqwest", "auth"] }
 
 [features]
 default = []

@@ -57,7 +57,7 @@ impl MainLayout {
         let mut palette_extra: u16 = 0;
         let show_popup = app.palette.error_message().is_none()
             && app.palette.is_suggestions_open()
-            && !app.builder.is_visible()
+            && !app.browser.is_visible()
             && !app.help.is_visible()
             && !app.palette.suggestions().is_empty();
         if show_popup {

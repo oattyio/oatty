@@ -27,8 +27,14 @@ impl PluginsLogsComponent {
     /// Handle key events specific to the logs drawer.
     pub fn handle_key_events(&self, logs: &mut PluginLogsState, key: KeyEvent) -> Vec<Effect> {
         match key.code {
-            KeyCode::Backspace if logs.search_active => { logs.search_query.pop(); Vec::new() }
-            KeyCode::Char(c) if logs.search_active && !key.modifiers.contains(KeyModifiers::CONTROL) => { logs.search_query.push(c); Vec::new() }
+            KeyCode::Backspace if logs.search_active => {
+                logs.search_query.pop();
+                Vec::new()
+            }
+            KeyCode::Char(c) if logs.search_active && !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                logs.search_query.push(c);
+                Vec::new()
+            }
             _ => Vec::new(),
         }
     }

@@ -14,6 +14,8 @@ pub use validation::{ValidationError, validate_config, validate_server_name};
 use dirs_next::config_dir;
 use dirs_next::home_dir;
 use std::env;
+use std::fs::create_dir_all;
+use std::fs::write;
 use std::path::PathBuf;
 
 /// Get the default path for the MCP configuration file.
@@ -57,18 +59,18 @@ pub async fn load_config_from_path(path: &std::path::Path) -> anyhow::Result<Mcp
 /// Save the MCP configuration to the default location.
 pub async fn save_config(config: &McpConfig) -> anyhow::Result<()> {
     let path = default_config_path();
-    save_config_to_path(config, &path).await
+    save_config_to_path(config, &path)
 }
 
 /// Save the MCP configuration to a specific path.
-pub async fn save_config_to_path(config: &McpConfig, path: &std::path::Path) -> anyhow::Result<()> {
+pub fn save_config_to_path(config: &McpConfig, path: &std::path::Path) -> anyhow::Result<()> {
     // Ensure the directory exists
     if let Some(parent) = path.parent() {
-        tokio::fs::create_dir_all(parent).await?;
+        create_dir_all(parent)?;
     }
 
     let content = serde_json::to_string_pretty(config)?;
-    tokio::fs::write(path, content).await?;
+    write(path, content)?;
 
     Ok(())
 }

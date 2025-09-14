@@ -9,7 +9,7 @@
 //!
 //! - Interactive command palette with autocomplete
 //! - Real-time command execution and log streaming
-//! - Command builder with field validation
+//! - Command browser with inline help
 //! - Tabular data display with pagination
 //! - Focus management and keyboard navigation
 //! - Asynchronous command execution
@@ -17,7 +17,7 @@
 //! ## Architecture
 //!
 //! The TUI follows a component-based architecture where each UI element
-//! (palette, logs, builder, table, help) is implemented as a separate
+//! (palette, logs, browser, table, help) is implemented as a separate
 //! component that can handle events and render itself.
 
 mod app;

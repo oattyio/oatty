@@ -11,8 +11,6 @@ pub struct Tool {
 }
 use serde_json::{Map, Value};
 use std::sync::Arc;
-use std::time::Duration;
-use tokio::time::timeout;
 // Note: This would need to be implemented to integrate with the existing engine
 // For now, we'll create a local version
 use serde::{Deserialize, Serialize};

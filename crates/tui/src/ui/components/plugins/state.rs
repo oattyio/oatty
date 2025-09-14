@@ -1,3 +1,4 @@
+use heroku_mcp::types::plugin::AuthStatus;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use std::time::{Duration, Instant};
@@ -22,9 +23,9 @@ pub struct PluginsState {
     /// Logs drawer state, if open.
     pub logs: Option<PluginLogsState>,
     /// Environment editor state, if open
-    pub env: Option<PluginEnvEditorState>,
-    /// Add plugin wizard state
-    pub add: Option<PluginAddViewState>,
+    pub env: Option<PluginSecretsEditorState>,
+    /// Add plugin view state
+    pub add: Option<super::add_plugin::state::PluginAddViewState>,
 }
 
 impl PluginsState {
@@ -103,14 +104,6 @@ impl PluginsState {
         }
     }
 
-    /// Build a simple focus ring: search -> grid.
-    pub fn focus_ring(&self) -> rat_focus::Focus {
-        let mut b = FocusBuilder::new(None);
-        b.widget(&PanelLeaf(self.search_flag.clone()));
-        b.widget(&PanelLeaf(self.grid_flag.clone()));
-        b.build()
-    }
-
     /// Get the currently selected item (respecting the filtered view).
     pub fn selected_item(&self) -> Option<&PluginListItem> {
         let filtered = self.filtered_indices();
@@ -127,10 +120,10 @@ impl PluginsState {
         self.logs = None;
     }
 
-    pub fn open_env(&mut self, name: String) {
-        self.env = Some(PluginEnvEditorState::new(name));
+    pub fn open_secrets(&mut self, name: String) {
+        self.env = Some(PluginSecretsEditorState::new(name));
     }
-    pub fn close_env(&mut self) {
+    pub fn close_secrets(&mut self) {
         self.env = None;
     }
 }
@@ -149,6 +142,36 @@ impl HasFocus for PanelLeaf {
     }
 }
 
+impl HasFocus for PluginsState {
+    fn build(&self, builder: &mut FocusBuilder) {
+        let tag = builder.start(self);
+        // Header search input and main grid
+        builder.widget(&PanelLeaf(self.search_flag.clone()));
+        builder.widget(&PanelLeaf(self.grid_flag.clone()));
+        // Include add wizard if visible
+        if let Some(add) = &self.add {
+            builder.widget(add);
+        }
+        // Include overlays if open
+        if let Some(logs) = &self.logs {
+            builder.widget(logs);
+        }
+        if let Some(env) = &self.env {
+            builder.widget(env);
+        }
+        builder.end(tag);
+    }
+
+    fn focus(&self) -> FocusFlag {
+        // Default container identity; search is a sensible default
+        self.search_flag.clone()
+    }
+
+    fn area(&self) -> Rect {
+        Rect::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -156,8 +179,10 @@ mod tests {
     #[test]
     fn plugins_state_focus_builds() {
         let s = PluginsState::new();
-        let f = s.focus_ring();
-        // Sanity: focusing search should be possible
+        let mut b = FocusBuilder::new(None);
+        b.widget(&s);
+        let f = b.build();
+        // Sanity: focusing search and grid should be possible
         f.focus(&s.search_flag);
         f.focus(&s.grid_flag);
     }
@@ -172,6 +197,7 @@ pub struct PluginListItem {
     pub tags: Vec<String>,
     pub latency_ms: Option<u64>,
     pub last_error: Option<String>,
+    pub auth_status: AuthStatus,
 }
 
 /// Logs drawer state for a plugin
@@ -182,6 +208,8 @@ pub struct PluginLogsState {
     pub follow: bool,
     pub search_active: bool,
     pub search_query: String,
+    /// Root focus flag for logs overlay
+    pub focus: FocusFlag,
 }
 
 impl PluginLogsState {
@@ -192,6 +220,7 @@ impl PluginLogsState {
             follow: true,
             search_active: false,
             search_query: String::new(),
+            focus: FocusFlag::named("plugins.logs"),
         }
     }
     pub fn set_lines(&mut self, lines: Vec<String>) {
@@ -210,14 +239,28 @@ impl PluginLogsState {
     }
 }
 
+impl HasFocus for PluginLogsState {
+    fn build(&self, builder: &mut FocusBuilder) {
+        builder.leaf_widget(self);
+    }
+    fn focus(&self) -> FocusFlag {
+        self.focus.clone()
+    }
+    fn area(&self) -> Rect {
+        Rect::default()
+    }
+}
+
 /// Environment editor state for a plugin
-#[derive(Debug, Clone)]
-pub struct PluginEnvEditorState {
+#[derive(Debug, Default, Clone)]
+pub struct PluginSecretsEditorState {
     pub name: String,
     pub rows: Vec<EnvRow>,
     pub selected: usize,
     pub editing: bool,
     pub input: String,
+    /// Root focus flag for env overlay
+    pub focus: FocusFlag,
 }
 
 #[derive(Debug, Clone)]
@@ -227,7 +270,7 @@ pub struct EnvRow {
     pub is_secret: bool,
 }
 
-impl PluginEnvEditorState {
+impl PluginSecretsEditorState {
     pub fn new(name: String) -> Self {
         Self {
             name,
@@ -235,6 +278,7 @@ impl PluginEnvEditorState {
             selected: 0,
             editing: false,
             input: String::new(),
+            focus: FocusFlag::named("plugins.env"),
         }
     }
     pub fn set_rows(&mut self, rows: Vec<EnvRow>) {
@@ -245,46 +289,14 @@ impl PluginEnvEditorState {
     }
 }
 
-/// Add Plugin view state
-#[derive(Debug, Clone)]
-pub struct PluginAddViewState {
-    pub visible: bool,
-    /// Selected transport for the plugin: Local (stdio) or Remote (http/sse)
-    pub transport: AddTransport,
-    pub name: String,
-    pub command: String,
-    pub args: String,
-    pub base_url: String,
-    pub env: Vec<EnvRow>,
-    pub selected: usize, // 0..=6 maps to fields + buttons
-    pub editing: bool,
-    pub input: String,
-    pub validation: Option<String>,
-    pub preview: Option<String>,
-}
-
-impl PluginAddViewState {
-    pub fn new() -> Self {
-        Self {
-            visible: true,
-            transport: AddTransport::Local,
-            name: String::new(),
-            command: String::new(),
-            args: String::new(),
-            base_url: String::new(),
-            env: Vec::new(),
-            selected: 0,
-            editing: false,
-            input: String::new(),
-            validation: None,
-            preview: None,
-        }
+impl HasFocus for PluginSecretsEditorState {
+    fn build(&self, builder: &mut FocusBuilder) {
+        builder.leaf_widget(self);
     }
-}
-
-/// Transport selection for Add Plugin wizard
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AddTransport {
-    Local,
-    Remote,
+    fn focus(&self) -> FocusFlag {
+        self.focus.clone()
+    }
+    fn area(&self) -> Rect {
+        Rect::default()
+    }
 }

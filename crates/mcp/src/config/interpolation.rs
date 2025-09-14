@@ -5,6 +5,8 @@ use regex::Regex;
 use thiserror::Error;
 use tracing::debug;
 
+static SERVICE: &'static str = "heroku";
+
 /// Interpolate environment variables and secrets in the configuration.
 pub async fn interpolate_config(config: &mut McpConfig) -> Result<(), InterpolationError> {
     for (name, server) in config.mcp_servers.iter_mut() {
@@ -69,7 +71,7 @@ async fn interpolate_string(value: &str) -> Result<String, InterpolationError> {
 /// Resolve a secret from the OS keychain.
 async fn resolve_secret(name: &str) -> Result<String, InterpolationError> {
     // Use keyring-rs to resolve secrets
-    let keyring = keyring::Entry::new("heroku-mcp", name).map_err(|e| InterpolationError::KeyringError {
+    let keyring = keyring::Entry::new(SERVICE, name).map_err(|e| InterpolationError::KeyringError {
         name: name.to_string(),
         error: e.to_string(),
     })?;
@@ -101,7 +103,7 @@ async fn interpolate_auth(auth: &mut McpAuthConfig) -> Result<(), InterpolationE
 /// Store a secret in the OS keychain.
 #[allow(dead_code)]
 pub async fn store_secret(name: &str, value: &str) -> Result<(), InterpolationError> {
-    let keyring = keyring::Entry::new("heroku-mcp", name).map_err(|e| InterpolationError::KeyringError {
+    let keyring = keyring::Entry::new(SERVICE, name).map_err(|e| InterpolationError::KeyringError {
         name: name.to_string(),
         error: e.to_string(),
     })?;
@@ -120,7 +122,7 @@ pub async fn store_secret(name: &str, value: &str) -> Result<(), InterpolationEr
 /// Remove a secret from the OS keychain.
 #[allow(dead_code)]
 pub async fn remove_secret(name: &str) -> Result<(), InterpolationError> {
-    let keyring = keyring::Entry::new("heroku-mcp", name).map_err(|e| InterpolationError::KeyringError {
+    let keyring = keyring::Entry::new(SERVICE, name).map_err(|e| InterpolationError::KeyringError {
         name: name.to_string(),
         error: e.to_string(),
     })?;

@@ -34,7 +34,7 @@ use crate::{
 /// # Usage
 ///
 /// The help component is typically activated by pressing Ctrl+H in the
-/// command palette or builder modal. It displays help for the currently
+/// command palette or command browser. It displays help for the currently
 /// selected command or the command being typed.
 ///
 /// # Examples
@@ -91,149 +91,11 @@ impl HelpComponent {
     /// let help_text = build_command_help(&spec);
     /// println!("{}", help_text);
     /// ```
-    fn build_command_help<'a>(theme: &'a dyn crate::ui::theme::roles::Theme, spec: &'a CommandSpec) -> Text<'a> {
-        let mut split = spec.name.splitn(2, ':');
-        let group = split.next().unwrap_or("");
-        let rest = split.next().unwrap_or("");
-        let cmd = if rest.is_empty() {
-            group.to_string()
-        } else {
-            format!("{} {}", group, rest)
-        };
-        let mut lines: Vec<Line<'_>> = vec![Line::from("")];
-        lines.push(Line::styled(
-            " USAGE:",
-            theme
-                .text_secondary_style()
-                .add_modifier(ratatui::style::Modifier::BOLD),
-        ));
-
-        let mut usage_spans: Vec<Span<'_>> =
-            vec![Span::styled(format!("  heroku {}", cmd), theme.text_primary_style())];
-
-        // Positional args as muted placeholders
-        for arg in &spec.positional_args {
-            usage_spans.push(Span::styled(format!(" <{}>", arg.name), theme.text_muted_style()));
-        }
-
-        let mut flags_sorted: Vec<_> = spec.flags.iter().collect();
-        flags_sorted.sort_by_key(|flag| !flag.required);
-        for flag in flags_sorted.into_iter() {
-            if flag.required {
-                usage_spans.push(Span::styled(
-                    format!(" --{}", flag.name),
-                    theme
-                        .text_secondary_style()
-                        .add_modifier(ratatui::style::Modifier::BOLD),
-                ));
-                if flag.r#type != "boolean" {
-                    usage_spans.push(Span::styled(" <value>", theme.text_muted_style()));
-                }
-            } else {
-                // Optional flags enclosed in muted brackets
-                usage_spans.push(Span::styled(" [", theme.text_muted_style()));
-                usage_spans.push(Span::styled(
-                    format!("--{}", flag.name),
-                    theme
-                        .text_secondary_style()
-                        .add_modifier(ratatui::style::Modifier::BOLD),
-                ));
-                if flag.r#type != "boolean" {
-                    usage_spans.push(Span::styled(" <value>", theme.text_muted_style()));
-                }
-                usage_spans.push(Span::styled("]", theme.text_muted_style()));
-            }
-        }
-
-        let command: Line<'_> = Line::from(usage_spans);
-
-        lines.push(command);
-        lines.push(Line::from(""));
-        // Description
-        lines.push(Line::styled(
-            " DESCRIPTION:",
-            theme
-                .text_secondary_style()
-                .add_modifier(ratatui::style::Modifier::BOLD),
-        ));
-        lines.push(Line::from(format!("  {}", spec.summary)));
-
-        // Arguments
-        if !spec.positional_args.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::styled(
-                " ARGUMENTS:",
-                theme
-                    .text_secondary_style()
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ));
-            for pa in &spec.positional_args {
-                if let Some(desc) = &pa.help {
-                    let mut arg_line = Line::styled(
-                        format!("  {} ", pa.name.to_uppercase()),
-                        theme
-                            .text_secondary_style()
-                            .add_modifier(ratatui::style::Modifier::BOLD),
-                    );
-                    arg_line.push_span(Span::styled(desc.to_string(), theme.text_muted_style()));
-                    lines.push(arg_line);
-                } else {
-                    lines.push(Line::raw(format!(
-                        "  {}: Path parameter derived from the endpoint URL.\n",
-                        pa.name
-                    )));
-                }
-            }
-        }
-        // Options
-        if !spec.flags.is_empty() {
-            lines.push(Line::from(""));
-            lines.push(Line::styled(
-                " OPTIONS:",
-                theme
-                    .text_secondary_style()
-                    .add_modifier(ratatui::style::Modifier::BOLD),
-            ));
-            for f in &spec.flags {
-                let mut flag_line = if f.short_name.is_some() {
-                    Line::styled(
-                        format!("  -{},  --{}", f.short_name.as_ref().unwrap(), f.name),
-                        theme
-                            .text_secondary_style()
-                            .add_modifier(ratatui::style::Modifier::BOLD),
-                    )
-                } else {
-                    Line::styled(
-                        format!("  --{}", f.name),
-                        theme
-                            .text_secondary_style()
-                            .add_modifier(ratatui::style::Modifier::BOLD),
-                    )
-                };
-
-                if f.r#type != "boolean" {
-                    flag_line.push_span(Span::styled(" <value>", theme.text_muted_style()));
-                }
-                if f.required {
-                    flag_line.push_span(Span::styled("  (required)", theme.text_muted_style()));
-                }
-                if !f.enum_values.is_empty() {
-                    flag_line.push_span(Span::styled(
-                        format!("  [enum: {}]", f.enum_values.join("|")),
-                        theme.text_muted_style(),
-                    ));
-                }
-                if let Some(def) = &f.default_value {
-                    flag_line.push_span(Span::styled(format!("  [default: {}]", def), theme.text_muted_style()));
-                }
-                if let Some(desc) = &f.description {
-                    flag_line.push_span(Span::styled(format!(" — {}", desc), theme.text_muted_style()));
-                }
-                lines.push(flag_line);
-            }
-        }
-
-        Text::from(lines)
+    pub(crate) fn build_command_help<'a>(
+        theme: &'a dyn crate::ui::theme::roles::Theme,
+        spec: &'a CommandSpec,
+    ) -> Text<'a> {
+        super::content::build_command_help_text(theme, spec)
     }
 }
 
@@ -281,7 +143,7 @@ impl Component for HelpComponent {
             "Select a command to view detailed help.".to_string(),
             app.ctx.theme.text_secondary_style().add_modifier(Modifier::BOLD),
         )]);
-        if let Some(spec) = app.help.spec().or(app.builder.selected_command()) {
+        if let Some(spec) = app.help.spec().or(app.browser.selected_command()) {
             let mut split = spec.name.splitn(2, ':');
             let group = split.next().unwrap_or("");
             let rest = split.next().unwrap_or("");

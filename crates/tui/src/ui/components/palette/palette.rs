@@ -46,7 +46,7 @@ static FRAMES: [&'static str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "
 /// - **Arrow keys**: Navigate suggestions (Up/Down) or move cursor (Left/Right)
 /// - **Tab**: Trigger suggestions list
 /// - **Ctrl+H**: Open help for current command
-/// - **Ctrl+F**: Open command builder modal
+/// - **Ctrl+F**: Open command browser
 /// - **Enter**: Execute command or insert selected suggestion
 /// - **Escape**: Clear input and close suggestions
 ///
@@ -76,7 +76,7 @@ impl PaletteComponent {
     ///
     /// The input paragraph widget
     fn create_input_paragraph(&'_ self, app: &app::App, theme: &dyn Theme) -> Paragraph<'_> {
-        let dimmed = app.builder.is_visible() || app.help.is_visible();
+        let dimmed = app.browser.is_visible() || app.help.is_visible();
         let base_style = if dimmed {
             theme.text_muted_style()
         } else {
@@ -205,7 +205,7 @@ impl PaletteComponent {
     /// * `input_area` - The rectangular area of the input line
     /// * `app` - The application state containing palette data
     fn position_cursor(frame: &mut Frame, input_area: Rect, app: &app::App) {
-        let dimmed = app.builder.is_visible() || app.help.is_visible();
+        let dimmed = app.browser.is_visible() || app.help.is_visible();
         if dimmed {
             return;
         }
@@ -374,9 +374,9 @@ impl PaletteComponent {
         }
     }
 
-    /// Handles the Ctrl+F key combination to open the command builder modal.
+    /// Handles the Ctrl+F key combination to open the command browser.
     ///
-    /// This function opens the interactive command builder modal, which
+    /// This function opens the interactive command browser, which
     /// provides a more structured way to build complex commands with guided
     /// input for flags, arguments, and options.
     ///
@@ -446,7 +446,7 @@ impl Component for PaletteComponent {
         // Render suggestions popup
         let should_show_suggestions = app.palette.error_message().is_none()
             && app.palette.is_suggestions_open()
-            && !app.builder.is_visible()
+            && !app.browser.is_visible()
             && !app.help.is_visible()
             && !app.palette.suggestions().is_empty();
 
@@ -495,7 +495,7 @@ impl Component for PaletteComponent {
     ///   (Left/Right)
     /// - **Tab**: Trigger the suggestions list
     /// - **Ctrl+H**: Open help for the current command or top suggestion
-    /// - **Ctrl+F**: Open the command builder modal
+    /// - **Ctrl+F**: Open the command browser
     /// - **Enter**: Execute the current command (if complete) or insert selected suggestion
     /// - **Escape**: Clear the palette input and close suggestions
     ///

@@ -36,7 +36,7 @@ use crate::{
     app, cmd,
     ui::{
         components::{
-            BuilderComponent, HelpComponent, LogsComponent, PluginsComponent, TableComponent,
+            BrowserComponent, HelpComponent, LogsComponent, PluginsComponent, TableComponent,
             component::Component,
             palette::{HintBarComponent, PaletteComponent},
         },
@@ -74,7 +74,7 @@ struct UiComponents<'a> {
     palette: PaletteComponent,
     hint_bar: HintBarComponent<'a>,
     logs: LogsComponent,
-    builder: BuilderComponent,
+    browser: BrowserComponent,
     help: HelpComponent,
     table: TableComponent<'a>,
     plugins: PluginsComponent<'a>,
@@ -113,7 +113,7 @@ fn initial_render<'a>(
             &mut comps.palette,
             &mut comps.hint_bar,
             &mut comps.logs,
-            &mut comps.builder,
+            &mut comps.browser,
             &mut comps.help,
             &mut comps.table,
             &mut comps.plugins,
@@ -135,7 +135,7 @@ fn render<'a>(
             &mut comps.palette,
             &mut comps.hint_bar,
             &mut comps.logs,
-            &mut comps.builder,
+            &mut comps.browser,
             &mut comps.help,
             &mut comps.table,
             &mut comps.plugins,
@@ -226,15 +226,17 @@ fn handle_input_event<'a>(
                     run_component_effects(application, vec![app::Effect::PluginsLoadRequested]);
                 }
                 // Focus search
-                let ring = application.plugins.focus_ring();
-                ring.focus(&application.plugins.search_flag);
+                let mut builder = FocusBuilder::new(None);
+                builder.widget(&application.plugins);
+                let f = builder.build();
+                f.focus(&application.plugins.search_flag);
                 application.mark_dirty();
                 return Ok(LoopAction::Continue);
             }
             let _ = handle_key_event(
                 application,
                 &mut comps.palette,
-                &mut comps.builder,
+                &mut comps.browser,
                 &mut comps.table,
                 &mut comps.logs,
                 &mut comps.plugins,
@@ -296,9 +298,9 @@ fn handle_palette_keys(application: &mut app::App, palette: &mut PaletteComponen
     run_component_effects(application, effects);
 }
 
-/// Key routing for the command builder modal.
-/// Route builder keystrokes and run effects.
-fn handle_builder_keys(application: &mut app::App, builder: &mut BuilderComponent, key: KeyEvent) {
+/// Key routing for the command browser modal.
+/// Route browser keystrokes and run effects.
+fn handle_browser_keys(application: &mut app::App, builder: &mut BrowserComponent, key: KeyEvent) {
     let effects = builder.handle_key_events(application, key);
     run_component_effects(application, effects);
 }
@@ -309,6 +311,10 @@ fn handle_focus_cycle(application: &app::App, key_event: &KeyEvent) -> bool {
     if (key_event.code == KeyCode::Tab || key_event.code == KeyCode::BackTab)
         && !key_event.modifiers.contains(KeyModifiers::CONTROL)
     {
+        if application.help.is_visible() || application.table.is_visible() {
+            // Consume Tab/BackTab while modal overlays are open
+            return true;
+        }
         let palette_has_suggestions =
             application.palette.is_suggestions_open() || !application.palette.input().is_empty();
 
@@ -336,7 +342,7 @@ fn handle_focus_cycle(application: &app::App, key_event: &KeyEvent) -> bool {
 fn map_key_to_global_message(application: &app::App, key_event: &KeyEvent) -> Option<app::Msg> {
     if (application.help.is_visible()
         || application.table.is_visible()
-        || application.builder.is_visible()
+        || application.browser.is_visible()
         || application.plugins.is_visible())
         && key_event.code == KeyCode::Esc
     {
@@ -393,11 +399,11 @@ fn build_palette_line_from_spec(
     command_parts.join(" ")
 }
 
-/// When pressing Enter in the builder, populate the palette with the
-/// constructed command and close the builder modal.
-fn handle_builder_enter(application: &mut app::App) {
-    if let Some(command_spec) = application.builder.selected_command() {
-        let command_line = build_palette_line_from_spec(command_spec, application.builder.input_fields());
+/// When pressing Enter in the browser, populate the palette with the
+/// constructed command and close the command browser.
+fn handle_browser_enter(application: &mut app::App) {
+    if let Some(command_spec) = application.browser.selected_command() {
+        let command_line = build_palette_line_from_spec(command_spec, application.browser.input_fields());
         application.palette.set_input(command_line);
         application.palette.set_cursor(application.palette.input().len());
         application.palette.apply_build_suggestions(
@@ -406,7 +412,7 @@ fn handle_builder_enter(application: &mut app::App) {
             &*application.ctx.theme,
         );
     }
-    application.builder.apply_visibility(false);
+    application.browser.apply_visibility(false);
 }
 
 /// Central key routing based on current UI state and focus.
@@ -414,7 +420,7 @@ fn handle_builder_enter(application: &mut app::App) {
 fn handle_key_event(
     application: &mut app::App,
     palette_component: &mut PaletteComponent,
-    builder_component: &mut BuilderComponent,
+    builder_component: &mut BrowserComponent,
     table_component: &mut TableComponent,
     logs_component: &mut LogsComponent,
     plugins_component: &mut PluginsComponent,
@@ -429,8 +435,10 @@ fn handle_key_event(
                 run_component_effects(application, vec![app::Effect::PluginsLoadRequested]);
             }
             // Normalize focus to search when opened for parity with Builder
-            let ring = application.plugins.focus_ring();
-            ring.focus(&application.plugins.search_flag);
+            let mut builder = FocusBuilder::new(None);
+            builder.widget(&application.plugins);
+            let f = builder.build();
+            f.focus(&application.plugins.search_flag);
         }
         return Ok(false);
     }
@@ -443,15 +451,15 @@ fn handle_key_event(
         handle_table_keys(application, table_component, key_event);
         return Ok(false);
     }
-    if application.builder.is_visible() && key_event.code == KeyCode::Enter {
-        handle_builder_enter(application);
+    if application.browser.is_visible() && key_event.code == KeyCode::Enter {
+        handle_browser_enter(application);
         return Ok(false);
     }
     if application.logs.detail.is_some() {
         handle_logs_keys(application, logs_component, key_event);
         return Ok(false);
     }
-    if !application.builder.is_visible() {
+    if !application.browser.is_visible() {
         if handle_focus_cycle(application, &key_event) {
             return Ok(false);
         }
@@ -462,7 +470,7 @@ fn handle_key_event(
         }
         return Ok(false);
     }
-    handle_builder_keys(application, builder_component, key_event);
+    handle_browser_keys(application, builder_component, key_event);
     Ok(false)
 }
 
@@ -474,27 +482,8 @@ pub async fn run_app(registry: heroku_registry::Registry) -> Result<()> {
 
     let mut terminal = setup_terminal()?;
 
-    // Initialize MCP supervisor (non-blocking if it fails; UI can still run)
-    if application.ctx.mcp.is_none() {
-        match McpSupervisor::new().await {
-            Ok(sup) => {
-                if let Err(e) = sup.start().await {
-                    application
-                        .logs
-                        .entries
-                        .push(format!("MCP supervisor start failed: {}", e));
-                }
-                application.ctx.mcp = Some(Arc::new(sup));
-            }
-            Err(e) => {
-                // Best-effort log: show a line in the logs area
-                application
-                    .logs
-                    .entries
-                    .push(format!("MCP supervisor init failed: {}", e));
-            }
-        }
-    }
+    // Initialize MCP engine (non-blocking if it fails; UI can still run)
+    if application.ctx.mcp.is_none() {}
 
     // Target ~8 FPS for spinners without wasting CPU. Rendering is
     // skipped if no frame advanced, so this remains efficient.

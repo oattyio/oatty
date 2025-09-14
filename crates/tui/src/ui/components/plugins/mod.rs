@@ -4,22 +4,23 @@
 //! follow the app's `Component` trait contract and the theme helpers for a
 //! consistent look-and-feel across the interface.
 
-mod add;
+mod add_plugin;
 mod details;
-mod env;
 mod hints_bar;
 mod logs;
 mod plugins;
 mod search;
+mod secrets;
 mod state;
 mod table;
 
-pub use add::PluginsAddComponent;
+pub use add_plugin::AddTransport;
+pub use add_plugin::PluginsAddComponent;
 pub use details::PluginsDetailsComponent;
-pub use env::PluginsEnvComponent;
 pub use hints_bar::PluginHintsBar;
 pub use logs::PluginsLogsComponent;
 pub use plugins::PluginsComponent;
 pub use search::PluginsSearchComponent;
-pub use state::{AddTransport, EnvRow, PluginListItem, PluginsState};
+pub use secrets::PluginsSecretsComponent;
+pub use state::{EnvRow, PluginListItem, PluginsState};
 pub use table::PluginsTableComponent;

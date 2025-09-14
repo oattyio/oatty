@@ -21,8 +21,14 @@ impl PluginsSearchComponent {
     /// Handle key events specific to the search input.
     pub fn handle_key_events(&self, app: &mut crate::app::App, key: KeyEvent) -> Vec<Effect> {
         match key.code {
-            KeyCode::Backspace if app.plugins.search_flag.get() => { Self::remove_last(app); Vec::new() }
-            KeyCode::Char(c) if app.plugins.search_flag.get() => { Self::insert_char(app, key, c); Vec::new() }
+            KeyCode::Backspace if app.plugins.search_flag.get() => {
+                Self::remove_last(app);
+                Vec::new()
+            }
+            KeyCode::Char(c) if app.plugins.search_flag.get() => {
+                Self::insert_char(app, key, c);
+                Vec::new()
+            }
             _ => Vec::new(),
         }
     }
@@ -34,7 +40,9 @@ impl PluginsSearchComponent {
     }
 
     fn insert_char(app: &mut crate::app::App, key: KeyEvent, c: char) {
-        if key.modifiers.contains(KeyModifiers::CONTROL) { return; }
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            return;
+        }
         app.plugins.filter.push(c);
         app.plugins.selected = Some(0);
         app.mark_dirty();

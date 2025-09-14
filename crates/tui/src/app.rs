@@ -20,7 +20,7 @@ use crate::{
     start_palette_execution,
     ui::{
         components::{
-            builder::BuilderState,
+            browser::BrowserState,
             help::HelpState,
             logs::{LogsState, state::LogEntry},
             palette::{PaletteState, providers::RegistryBackedProvider, state::ValueProvider},
@@ -76,8 +76,8 @@ pub struct App<'a> {
     pub ctx: SharedCtx,
     /// State for the command palette input
     pub palette: PaletteState,
-    /// Builder modal state
-    pub builder: BuilderState,
+    /// Command browser state
+    pub browser: BrowserState,
     /// Table modal state
     pub table: TableState<'a>,
     /// Help modal state
@@ -124,7 +124,7 @@ impl<'a> App<'a> {
         {
             return r.clone();
         }
-        self.builder.available_ranges()
+        self.browser.available_ranges()
     }
 }
 
@@ -159,7 +159,7 @@ pub enum Msg {
     ToggleTable,
     /// Toggle the plugins overlay visibility
     TogglePlugins,
-    /// Toggle the builder modal visibility
+    /// Toggle the command browser visibility
     ToggleBuilder,
     /// Close any currently open modal
     CloseModal,
@@ -226,15 +226,17 @@ pub enum Effect {
     /// Export logs for a plugin to a default location (redacted)
     PluginsExportLogsDefault(String),
     /// Open environment editor for a plugin
-    PluginsOpenEnv(String),
+    PluginsOpenSecrets(String),
     /// Save environment changes for a plugin (key/value pairs)
     PluginsSaveEnv { name: String, rows: Vec<(String, String)> },
     /// Open add plugin view
     PluginsOpenAdd,
-    /// Validate add plugin candidate
+    /// Open the secrets view
     PluginsValidateAdd,
     /// Apply add plugin patch
     PluginsApplyAdd,
+    // Cancel adding a new plugin
+    PluginsCancel,
 }
 
 // Legacy MainFocus removed; focus is handled via ui::focus::FocusStore
@@ -264,7 +266,7 @@ impl App<'_> {
         let mut app = Self {
             route: Screen::default(),
             ctx: SharedCtx::new(registry),
-            builder: BuilderState::default(),
+            browser: BrowserState::default(),
             logs: LogsState::default(),
             plugins_fullscreen: false,
             help: HelpState::default(),
@@ -284,9 +286,9 @@ impl App<'_> {
             initial_range: None,
             dirty: false,
         };
-        app.builder.set_all_commands(app.ctx.registry.commands.clone());
+        app.browser.set_all_commands(app.ctx.registry.commands.clone());
         app.palette.set_all_commands(app.ctx.registry.commands.clone());
-        app.builder.update_browser_filtered();
+        app.browser.update_browser_filtered();
         // Initialize rat-focus: start with the palette focused at root
         {
             let mut focus_builder = FocusBuilder::new(None);
@@ -358,8 +360,8 @@ impl App<'_> {
                 self.mark_dirty();
             }
             Msg::ToggleHelp => {
-                let spec = if self.builder.is_visible() {
-                    self.builder.selected_command()
+                let spec = if self.browser.is_visible() {
+                    self.browser.selected_command()
                 } else {
                     self.palette.selected_command()
                 };
@@ -375,22 +377,24 @@ impl App<'_> {
                 self.plugins.set_visible(now_visible);
                 // Focus normalization: when opened, default to search
                 if now_visible {
-                    let ring = self.plugins.focus_ring();
-                    ring.focus(&self.plugins.search_flag);
+                    let mut focus_builder = FocusBuilder::new(None);
+                    focus_builder.widget(&self.plugins);
+                    let f = focus_builder.build();
+                    f.focus(&self.plugins.search_flag);
                 }
                 self.mark_dirty();
             }
             Msg::ToggleBuilder => {
-                self.builder.toggle_visibility();
-                if self.builder.is_visible() {
-                    self.builder.normalize_focus();
+                self.browser.toggle_visibility();
+                if self.browser.is_visible() {
+                    self.browser.normalize_focus();
                 }
                 self.mark_dirty();
             }
             Msg::CloseModal => {
                 self.help.set_visibility(false);
                 self.table.apply_visible(false);
-                self.builder.apply_visibility(false);
+                self.browser.apply_visibility(false);
                 self.plugins.set_visible(false);
                 self.mark_dirty();
             }
@@ -492,7 +496,7 @@ impl App<'_> {
                                 }
                             } else {
                                 // If env not open yet, open and set rows
-                                self.plugins.open_env(name.to_string());
+                                self.plugins.open_secrets(name.to_string());
                                 if let Some(env_state) = &mut self.plugins.env {
                                     let mut out_rows = Vec::new();
                                     for r in rows {

@@ -11,11 +11,13 @@ use ratatui::{
 use crate::app::{Effect, Msg};
 use crate::ui::components::component::Component;
 use crate::ui::theme::helpers as th;
+use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
+use ratatui::layout::Rect as _Rect;
 
-use super::state::PluginAddViewState;
+use super::add_plugin::state::{AddTransport, PluginAddViewState};
 use super::{
-    PluginHintsBar, PluginsAddComponent, PluginsDetailsComponent, PluginsEnvComponent, PluginsLogsComponent,
-    PluginsSearchComponent, PluginsTableComponent,
+    PluginHintsBar, PluginsAddComponent, PluginsDetailsComponent, PluginsLogsComponent, PluginsSearchComponent,
+    PluginsSecretsComponent, PluginsTableComponent,
 };
 
 /// Top-level Plugins view component. For M1, renders a minimal panel shell
@@ -29,7 +31,7 @@ pub struct PluginsComponent<'a> {
     search_component: PluginsSearchComponent,
     details_component: PluginsDetailsComponent,
     logs_component: PluginsLogsComponent,
-    env_component: PluginsEnvComponent,
+    env_component: PluginsSecretsComponent,
     add_component: PluginsAddComponent,
     footer: PluginHintsBar<'a>,
 }
@@ -64,7 +66,9 @@ impl Component for PluginsComponent<'_> {
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
-        let Some(inner_area) = self.render_shell(frame, area, app) else { return; };
+        let Some(inner_area) = self.render_shell(frame, area, app) else {
+            return;
+        };
         let layout = self.layout_main(inner_area);
         let header_area = layout.get(0).expect("header area not found");
         let body_area = layout.get(1).expect("body area not found");
@@ -93,39 +97,127 @@ fn centered_rect(area: Rect, percent_x: u16, percent_y: u16) -> Rect {
 impl PluginsComponent<'_> {
     /// If an overlay (env, logs, add view) is open, delegate keys to it.
     fn delegate_open_overlays_keys(&mut self, app: &mut crate::app::App, key: KeyEvent) -> Option<Vec<Effect>> {
-        if let Some(env) = &mut app.plugins.env {
-            let effects = self.env_component.handle_key_events(env, key);
-            return Some(if effects.is_empty() { app.mark_dirty(); Vec::new() } else { effects });
+        // Let global focus manager handle Tab/BackTab across the whole tree
+        if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+            return None;
+        }
+        if app.plugins.env.is_some() {
+            let effects = self.env_component.handle_key_events(app, key);
+            return Some(if effects.is_empty() {
+                app.mark_dirty();
+                Vec::new()
+            } else {
+                effects
+            });
         }
         if let Some(logs) = &mut app.plugins.logs {
             let effects = self.logs_component.handle_key_events(logs, key);
-            return Some(if effects.is_empty() { app.mark_dirty(); Vec::new() } else { effects });
+            return Some(if effects.is_empty() {
+                app.mark_dirty();
+                Vec::new()
+            } else {
+                effects
+            });
         }
         if app.plugins.add.is_some() {
             let effects = self.add_component.handle_key_events(app, key);
-            return Some(if effects.is_empty() { app.mark_dirty(); Vec::new() } else { effects });
+            return Some(if effects.is_empty() {
+                app.mark_dirty();
+                Vec::new()
+            } else {
+                effects
+            });
         }
         None
     }
 
-    /// Cycle focus between search and table on Tab/BackTab.
+    /// Cycle focus using rat_focus when Tab/BackTab.
+    /// If an overlay or the add wizard is open, restrict cycling to that context.
     fn handle_focus_cycle(&self, app: &mut crate::app::App, key: KeyEvent) -> bool {
-        if matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
-            let ring = app.plugins.focus_ring();
-            if key.code == KeyCode::Tab { let _ = ring.next(); } else { let _ = ring.prev(); }
-            app.mark_dirty();
-            return true;
+        if !matches!(key.code, KeyCode::Tab | KeyCode::BackTab) {
+            return false;
         }
-        false
+        let mut builder = rat_focus::FocusBuilder::new(None);
+        if let Some(env) = &app.plugins.env {
+            builder.widget(env);
+        } else if let Some(logs) = &app.plugins.logs {
+            builder.widget(logs);
+        } else if let Some(add) = &app.plugins.add {
+            // Build a manual ring over Add children to ensure cycling works
+            struct Leaf(FocusFlag);
+            impl HasFocus for Leaf {
+                fn build(&self, b: &mut FocusBuilder) {
+                    b.leaf_widget(self);
+                }
+                fn focus(&self) -> FocusFlag {
+                    self.0.clone()
+                }
+                fn area(&self) -> _Rect {
+                    _Rect::default()
+                }
+            }
+            builder.widget(&Leaf(add.f_transport.clone()));
+            builder.widget(&Leaf(add.f_name.clone()));
+            match add.transport {
+                AddTransport::Local => {
+                    builder.widget(&Leaf(add.f_command.clone()));
+                    builder.widget(&Leaf(add.f_args.clone()));
+                }
+                AddTransport::Remote => {
+                    builder.widget(&Leaf(add.f_base_url.clone()));
+                }
+            }
+            builder.widget(&Leaf(add.f_key_value_pairs.clone()));
+            // Buttons: include only enabled
+            let name_present = !add.name.trim().is_empty();
+            match add.transport {
+                AddTransport::Local => {
+                    let command_present = !add.command.trim().is_empty();
+                    if command_present {
+                        builder.widget(&Leaf(add.f_btn_validate.clone()));
+                    }
+                    if name_present && command_present {
+                        builder.widget(&Leaf(add.f_btn_save.clone()));
+                    }
+                }
+                AddTransport::Remote => {
+                    let base_url_present = !add.base_url.trim().is_empty();
+                    if base_url_present {
+                        builder.widget(&Leaf(add.f_btn_validate.clone()));
+                    }
+                    if name_present && base_url_present {
+                        builder.widget(&Leaf(add.f_btn_save.clone()));
+                    }
+                }
+            }
+            builder.widget(&Leaf(add.f_btn_cancel.clone()));
+        } else {
+            builder.widget(&app.plugins);
+        }
+        let f = builder.build();
+        if key.code == KeyCode::Tab {
+            let _ = f.next();
+        } else {
+            let _ = f.prev();
+        }
+        // When scoping focus to Add, ensure top-level search/grid flags are off
+        if app.plugins.add.is_some() {
+            app.plugins.search_flag.set(false);
+            app.plugins.grid_flag.set(false);
+        }
+        app.mark_dirty();
+        true
     }
 
     /// Handle top-level Ctrl-based shortcuts and return any effects.
     fn handle_ctrl_shortcuts(&mut self, app: &mut crate::app::App, key: KeyEvent) -> Option<Vec<Effect>> {
-        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let mut effects: Vec<Effect> = Vec::with_capacity(1);
+        let ctrl: bool = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
             KeyCode::Char('b') if ctrl => {
                 if self.logs_open {
-                    self.logs_open = false; app.plugins.close_logs();
+                    self.logs_open = false;
+                    app.plugins.close_logs();
                 } else if app.plugins.add.is_some() {
                     app.plugins.add = None;
                 } else if self.details_open {
@@ -134,60 +226,101 @@ impl PluginsComponent<'_> {
                     app.plugins.set_visible(false);
                 }
                 app.mark_dirty();
-                Some(Vec::new())
             }
             KeyCode::Enter | KeyCode::Char('d') if ctrl => {
-                self.details_open = true; app.mark_dirty(); Some(Vec::new())
+                self.details_open = true;
+                app.mark_dirty();
             }
             KeyCode::Char('f') if ctrl => {
-                if self.logs_open { if let Some(logs) = &mut app.plugins.logs { logs.search_active = true; } }
-                else { app.plugins.search_flag.set(true); app.plugins.grid_flag.set(false); }
-                app.mark_dirty(); Some(Vec::new())
+                if self.logs_open {
+                    if let Some(logs) = &mut app.plugins.logs {
+                        logs.search_active = true;
+                    }
+                } else {
+                    app.plugins.search_flag.set(true);
+                    app.plugins.grid_flag.set(false);
+                }
+                app.mark_dirty();
             }
             KeyCode::Char('k') if ctrl => {
-                app.plugins.filter.clear(); app.plugins.selected = Some(0); app.mark_dirty(); Some(Vec::new())
+                app.plugins.filter.clear();
+                app.plugins.selected = Some(0);
+                app.mark_dirty();
             }
             KeyCode::Char('s') if ctrl => {
-                if let Some(item) = app.plugins.selected_item() { return Some(vec![Effect::PluginsStart(item.name.clone())]); }
-                Some(Vec::new())
+                if let Some(item) = app.plugins.selected_item() {
+                    effects.push(Effect::PluginsStart(item.name.clone()));
+                }
             }
             KeyCode::Char('t') if ctrl => {
-                if let Some(item) = app.plugins.selected_item() { return Some(vec![Effect::PluginsStop(item.name.clone())]); }
-                Some(Vec::new())
+                if let Some(item) = app.plugins.selected_item() {
+                    effects.push(Effect::PluginsStop(item.name.clone()));
+                }
             }
             KeyCode::Char('r') if ctrl => {
-                if let Some(item) = app.plugins.selected_item() { return Some(vec![Effect::PluginsRestart(item.name.clone())]); }
-                Some(Vec::new())
+                if let Some(item) = app.plugins.selected_item() {
+                    effects.push(Effect::PluginsRestart(item.name.clone()));
+                }
             }
-            KeyCode::Char('a') if ctrl && !self.details_open && app.plugins.env.is_none() && app.plugins.logs.is_none() => {
-                app.plugins.add = Some(PluginAddViewState::new()); app.mark_dirty(); Some(Vec::new())
+            KeyCode::Char('a')
+                if ctrl && !self.details_open && app.plugins.env.is_none() && app.plugins.logs.is_none() =>
+            {
+                app.plugins.add = Some(PluginAddViewState::new());
+                // Focus the Add wizard's Name field by default
+                if let Some(add) = &app.plugins.add {
+                    let mut builder = rat_focus::FocusBuilder::new(None);
+                    builder.widget(&app.plugins);
+                    let f = builder.build();
+                    f.focus(&add.f_name);
+                }
+                if let Some(add) = &mut app.plugins.add {
+                    add.sync_selected_from_focus();
+                }
+                app.mark_dirty();
             }
             KeyCode::Char('l') if ctrl => {
                 if let Some(item) = app.plugins.selected_item() {
-                    let name = item.name.clone(); app.plugins.open_logs(name.clone()); self.logs_open = true; return Some(vec![Effect::PluginsOpenLogs(name)]);
+                    let name = item.name.clone();
+                    app.plugins.open_logs(name.clone());
+                    self.logs_open = true;
+                    effects.push(Effect::PluginsOpenLogs(name));
                 }
-                Some(Vec::new())
             }
             KeyCode::Char('e') if ctrl => {
                 if let Some(item) = app.plugins.selected_item() {
-                    let name = item.name.clone(); app.plugins.open_env(name.clone()); return Some(vec![Effect::PluginsOpenEnv(name)]);
+                    let name = item.name.clone();
+                    app.plugins.open_secrets(name.clone());
+                    effects.push(Effect::PluginsOpenSecrets(name));
                 }
-                Some(Vec::new())
             }
-            KeyCode::Char('v') if ctrl && app.plugins.add.is_some() => Some(vec![Effect::PluginsValidateAdd]),
-            KeyCode::Char('a') if ctrl && app.plugins.add.is_some() => Some(vec![Effect::PluginsApplyAdd]),
-            KeyCode::Char('l') if ctrl && self.logs_open => { if let Some(logs) = &mut app.plugins.logs { logs.toggle_follow(); } app.mark_dirty(); Some(Vec::new()) }
+            KeyCode::Char('v') if ctrl && app.plugins.add.is_some() => effects.push(Effect::PluginsValidateAdd),
+            KeyCode::Char('a') if ctrl && app.plugins.add.is_some() => effects.push(Effect::PluginsApplyAdd),
+            KeyCode::Char('l') if ctrl && self.logs_open => {
+                if let Some(logs) = &mut app.plugins.logs {
+                    logs.toggle_follow();
+                }
+                app.mark_dirty();
+            }
             KeyCode::Char('y') if ctrl && self.logs_open => {
-                if let Some(logs) = &app.plugins.logs { let last = logs.lines.last().cloned().unwrap_or_default(); return Some(vec![Effect::CopyLogsRequested(last)]); }
-                Some(Vec::new())
+                if let Some(logs) = &app.plugins.logs {
+                    let last = logs.lines.last().cloned().unwrap_or_default();
+                    effects.push(Effect::CopyLogsRequested(last));
+                }
             }
             KeyCode::Char('u') if ctrl && self.logs_open => {
-                if let Some(logs) = &app.plugins.logs { let body = logs.lines.join("\n"); return Some(vec![Effect::CopyLogsRequested(body)]); }
-                Some(Vec::new())
+                if let Some(logs) = &app.plugins.logs {
+                    let body = logs.lines.join("\n");
+                    effects.push(Effect::CopyLogsRequested(body));
+                }
             }
-            KeyCode::Char('o') if ctrl && self.logs_open => { if let Some(logs) = &app.plugins.logs { return Some(vec![Effect::PluginsExportLogsDefault(logs.name.clone())]); } Some(Vec::new()) }
-            _ => None,
+            KeyCode::Char('o') if ctrl && self.logs_open => {
+                if let Some(logs) = &app.plugins.logs {
+                    effects.push(Effect::PluginsExportLogsDefault(logs.name.clone()));
+                }
+            }
+            _ => {}
         }
+        return if effects.is_empty() { Some(effects) } else { None };
     }
 
     /// Delegate keys to search or table when those areas are focused.
@@ -195,22 +328,29 @@ impl PluginsComponent<'_> {
         match key.code {
             KeyCode::Backspace | KeyCode::Char(_) if app.plugins.search_flag.get() => {
                 let effects = self.search_component.handle_key_events(app, key);
-                if !effects.is_empty() { return effects; }
-                app.mark_dirty(); Vec::new()
+                if !effects.is_empty() {
+                    return effects;
+                }
+                app.mark_dirty();
             }
             KeyCode::Up | KeyCode::Down if app.plugins.grid_flag.get() => {
                 let effects = self.table_component.handle_key_events(app, key);
-                if !effects.is_empty() { return effects; }
-                app.mark_dirty(); Vec::new()
+                if !effects.is_empty() {
+                    return effects;
+                }
+                app.mark_dirty();
             }
-            _ => Vec::new(),
+            _ => {}
         }
+        Vec::new()
     }
 
     /// Render the outer shell depending on fullscreen vs overlay; returns inner area.
     fn render_shell(&self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) -> Option<Rect> {
         let fullscreen = app.plugins_fullscreen;
-        if !fullscreen && !app.plugins.is_visible() { return None; }
+        if !fullscreen && !app.plugins.is_visible() {
+            return None;
+        }
         let outer = area;
         let inner = if fullscreen {
             let block = th::block(&*app.ctx.theme, Some("Plugins — MCP"), true);

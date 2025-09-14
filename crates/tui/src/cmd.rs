@@ -19,17 +19,32 @@
 //! This design follows a **functional core, imperative shell** pattern:
 //! state updates are pure, but commands handle side effects.
 
-use std::sync::atomic::Ordering;
-
-use heroku_mcp::client::HealthCheckResult;
+use heroku_mcp::McpConfig;
+use heroku_mcp::config::McpServer;
+use heroku_mcp::config::default_config_path;
+use heroku_mcp::config::save_config_to_path;
+use heroku_mcp::config::validate_config;
+use heroku_mcp::config::validate_server_name;
+use heroku_mcp::{client::HealthCheckResult, types::plugin::AuthStatus};
 use heroku_registry::CommandSpec;
 use heroku_util::exec_remote;
-// Types imported as needed; HTTP helpers moved to heroku-util
-use serde_json::Value;
-use tokio::task::spawn;
-
-use crate::app::{self, Effect};
 use reqwest::Url;
+use serde_json::Map;
+use serde_json::Value;
+use serde_json::from_str;
+use serde_json::json;
+use serde_json::to_string;
+use serde_json::to_string_pretty;
+use serde_json::to_value;
+use std::fs::read_to_string;
+use std::sync::atomic::Ordering;
+use std::vec;
+
+use crate::ui::components::plugins::EnvRow;
+use crate::{
+    app::{self, Effect},
+    ui::components::plugins::{AddTransport, PluginListItem},
+};
 
 /// Represents side-effectful system commands executed outside of pure state
 /// updates.
@@ -62,7 +77,7 @@ pub enum Cmd {
     /// ```rust,ignore
     /// use your_crate::Cmd;
     /// use heroku_registry::CommandSpec;
-    /// use serde_json::{Map, Value};
+    /// use{Map, Value};
     ///
     /// let spec = CommandSpec { method: "GET".into(), path: "/apps".into() };
     /// let cmd = Cmd::ExecuteHttp(spec.clone(), "/apps".into(), Map::new());
@@ -73,7 +88,7 @@ pub enum Cmd {
     ///     assert!(b.is_empty());
     /// }
     /// ```
-    ExecuteHttp(Box<CommandSpec>, serde_json::Map<String, Value>),
+    ExecuteHttp(Box<CommandSpec>, Map<String, Value>),
     /// Load MCP plugins from config (synchronous file read) and populate UI state.
     LoadPlugins,
     PluginsStart(String),
@@ -82,13 +97,14 @@ pub enum Cmd {
     PluginsRefresh,
     PluginsRefreshLogs(String),
     PluginsExportLogsDefault(String),
-    PluginsOpenEnv(String),
+    PluginsOpenSecrets(String),
     PluginsSaveEnv {
         name: String,
         rows: Vec<(String, String)>,
     },
     PluginsValidateAdd,
     PluginsApplyAdd,
+    PluginsCancel,
 }
 
 /// Convert application [`Effect`]s into actual [`Cmd`] instances.
@@ -99,15 +115,15 @@ pub enum Cmd {
 /// # Example
 /// ```rust,ignore
 /// # use your_crate::{from_effects, Cmd};
-/// # struct DummyBuilder;
-/// # impl DummyBuilder {
+/// # struct DummyBrowser;
+/// # impl DummyBrowser {
 /// #   fn selected_command(&self) -> Option<&'static str> { Some("ls") }
 /// #   fn input_fields(&self) -> Vec<&'static str> { vec![] }
 /// # }
-/// # struct DummyApp { builder: DummyBuilder }
+/// # struct DummyApp { builder: DummyBrowser }
 /// # mod preview { pub fn cli_preview(_s: &str, _f: Vec<&str>) -> String { "ls".into() } }
 /// # enum Effect { CopyCommandRequested }
-/// # let mut app = DummyApp { builder: DummyBuilder };
+/// # let mut app = DummyApp { builder: DummyBrowser };
 /// # let effects = vec![Effect::CopyCommandRequested];
 /// // Translates an effect into a side-effectful command
 /// let cmds = from_effects(&mut app, effects);
@@ -131,11 +147,12 @@ pub fn from_effects(app: &mut app::App, effects: Vec<Effect>) -> Vec<Cmd> {
             Effect::PluginsOpenLogs(name) => Some(vec![Cmd::PluginsRefreshLogs(name)]),
             Effect::PluginsRefreshLogs(name) => Some(vec![Cmd::PluginsRefreshLogs(name)]),
             Effect::PluginsExportLogsDefault(name) => Some(vec![Cmd::PluginsExportLogsDefault(name)]),
-            Effect::PluginsOpenEnv(name) => Some(vec![Cmd::PluginsOpenEnv(name)]),
+            Effect::PluginsOpenSecrets(name) => Some(vec![Cmd::PluginsOpenSecrets(name)]),
             Effect::PluginsSaveEnv { name, rows } => Some(vec![Cmd::PluginsSaveEnv { name, rows }]),
             Effect::PluginsOpenAdd => Some(vec![]),
             Effect::PluginsValidateAdd => Some(vec![Cmd::PluginsValidateAdd]),
             Effect::PluginsApplyAdd => Some(vec![Cmd::PluginsApplyAdd]),
+            Effect::PluginsCancel => Some(vec![Cmd::PluginsCancel])
         };
 
         commands.extend(effect_commands.unwrap());
@@ -150,24 +167,24 @@ pub fn from_effects(app: &mut app::App, effects: Vec<Effect>) -> Vec<Cmd> {
 /// or selected table data, depending on which component has focus.
 ///
 /// # Arguments
-/// * `app` - The application state containing builder and table components
+/// * `app` - The application state containing browser and table components
 ///
 /// # Returns
 /// A vector of commands, typically containing a single clipboard command
 fn handle_copy_command_requested(app: &app::App) -> Option<Vec<Cmd>> {
     let mut commands = Vec::new();
 
-    match (app.builder.is_visible(), app.table.grid_focus().get()) {
+    match (app.browser.is_visible(), app.table.grid_focus().get()) {
         (true, false) => {
             // Builder is focused - copy the selected command
-            if let Some(spec) = app.builder.selected_command() {
-                let command_text = crate::preview::cli_preview(spec, app.builder.input_fields());
+            if let Some(spec) = app.browser.selected_command() {
+                let command_text = crate::preview::cli_preview(spec, app.browser.input_fields());
                 commands.push(Cmd::ClipboardSet(command_text));
             }
         }
         (false, true) => {
             // Table is focused - copy selected row data
-            if let Ok(stringified) = serde_json::to_string(app.table.selected_data()?) {
+            if let Ok(stringified) = to_string(app.table.selected_data()?) {
                 commands.push(Cmd::ClipboardSet(stringified));
             }
         }
@@ -195,7 +212,7 @@ fn handle_next_page_requested(app: &mut app::App, next_raw: String) -> Option<Ve
 
     if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
         // Inject raw next-range override for Range header
-        body.insert("next-range".into(), serde_json::Value::String(next_raw.clone()));
+        body.insert("next-range".into(), Value::String(next_raw.clone()));
 
         // Append to history for Prev/First navigation
         app.pagination_history.push(Some(next_raw));
@@ -233,7 +250,7 @@ fn handle_prev_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
 
         // Navigate to previous page
         if let Some(prev) = app.pagination_history.last().cloned().flatten() {
-            body.insert("next-range".into(), serde_json::Value::String(prev));
+            body.insert("next-range".into(), Value::String(prev));
         } else {
             let _ = body.remove("next-range");
         }
@@ -263,7 +280,7 @@ fn handle_first_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
     if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
         // Get the first page range if available
         if let Some(first) = app.pagination_history.first().cloned().flatten() {
-            body.insert("next-range".into(), serde_json::Value::String(first));
+            body.insert("next-range".into(), Value::String(first));
         } else {
             let _ = body.remove("next-range");
         }
@@ -312,10 +329,11 @@ pub fn run_cmds(app: &mut app::App, commands: Vec<Cmd>) {
             Cmd::PluginsRefresh => execute_plugins_refresh(app),
             Cmd::PluginsRefreshLogs(name) => execute_plugins_refresh_logs(app, name),
             Cmd::PluginsExportLogsDefault(name) => execute_plugins_export_default(app, name),
-            Cmd::PluginsOpenEnv(name) => execute_plugins_open_env(app, name),
+            Cmd::PluginsOpenSecrets(name) => execute_plugins_open_env(app, name),
             Cmd::PluginsSaveEnv { name, rows } => execute_plugins_save_env(app, name, rows),
             Cmd::PluginsValidateAdd => execute_plugins_validate_add(app),
             Cmd::PluginsApplyAdd => execute_plugins_apply_add(app),
+            Cmd::PluginsCancel => execute_plugins_cancel(app),
         }
     }
 }
@@ -348,14 +366,12 @@ fn execute_clipboard_set(app: &mut app::App, text: String) {
 
 /// Load MCP plugins from the user's config file and populate the PluginsState list.
 fn execute_load_plugins(app: &mut app::App) {
-    use heroku_mcp::config::{McpConfig, McpServer, default_config_path};
-
     let path = default_config_path();
-    let content = std::fs::read_to_string(&path);
-    let mut items: Vec<crate::ui::components::plugins::PluginListItem> = Vec::new();
+    let content = read_to_string(&path);
+    let mut items: Vec<PluginListItem> = Vec::new();
 
     if let Ok(text) = content {
-        if let Ok(cfg) = serde_json::from_str::<McpConfig>(&text) {
+        if let Ok(cfg) = from_str::<McpConfig>(&text) {
             for (name, server) in cfg.mcp_servers.into_iter() {
                 let command_or_url = format_command_or_url(&server);
                 let status = if server.disabled.unwrap_or(false) {
@@ -364,7 +380,8 @@ fn execute_load_plugins(app: &mut app::App) {
                     "Stopped".to_string()
                 };
                 let tags = server.tags.unwrap_or_default();
-                items.push(crate::ui::components::plugins::PluginListItem {
+                items.push(PluginListItem {
+                    auth_status: AuthStatus::Unknown,
                     name,
                     status,
                     command_or_url,
@@ -449,7 +466,6 @@ fn execute_plugins_refresh(app: &mut app::App) {
 
     let tx = app.exec_sender.clone();
     tokio::spawn(async move {
-        use serde_json::json;
         let mcp_client_mgr = sup_opt.unwrap();
         let mut arr = Vec::new();
         for name in names {
@@ -459,7 +475,7 @@ fn execute_plugins_refresh(app: &mut app::App) {
                 let stat = status_result.expect("status not available");
 
                 let health_result = _client.health_check().await;
-                let HealthCheckResult {latency_ms, error, ..} = health_result.ok().unwrap_or_default();
+                let HealthCheckResult { latency_ms, error, .. } = health_result.ok().unwrap_or_default();
                 arr.push(json!({
                     "name": name,
                     "status": stat.display(),
@@ -486,7 +502,6 @@ fn execute_plugins_refresh_logs(app: &mut app::App, name: String) {
     }
     let tx = app.exec_sender.clone();
     tokio::spawn(async move {
-        use serde_json::json;
         let mcp_client_mgr = sup_opt.unwrap();
         let lines = mcp_client_mgr.log_manager().get_recent_logs(&name, 500).await;
         let payload = json!({ "plugins_logs": { "name": name, "lines": lines } });
@@ -527,15 +542,14 @@ fn execute_plugins_export_default(app: &mut app::App, name: String) {
 
 /// Open environment editor: load rows from config and dispatch a payload.
 fn execute_plugins_open_env(app: &mut app::App, name: String) {
-    use heroku_mcp::config::{McpConfig, default_config_path};
     let path = default_config_path();
-    let mut rows: Vec<crate::ui::components::plugins::EnvRow> = Vec::new();
-    if let Ok(text) = std::fs::read_to_string(&path) {
-        if let Ok(cfg) = serde_json::from_str::<McpConfig>(&text) {
+    let mut rows: Vec<EnvRow> = Vec::new();
+    if let Ok(text) = read_to_string(&path) {
+        if let Ok(cfg) = from_str::<McpConfig>(&text) {
             if let Some(s) = cfg.mcp_servers.get(&name) {
                 if let Some(env) = &s.env {
                     for (k, v) in env.iter() {
-                        rows.push(crate::ui::components::plugins::EnvRow {
+                        rows.push(EnvRow {
                             key: k.clone(),
                             value: v.clone(),
                             is_secret: v.trim().starts_with("${secret:")
@@ -549,8 +563,8 @@ fn execute_plugins_open_env(app: &mut app::App, name: String) {
         }
     }
     // Dispatch as result_json for App to apply
-    let payload = serde_json::json!({
-        "plugins_env": { "name": name, "rows": rows.iter().map(|r| serde_json::json!({"key": r.key, "value": r.value, "is_secret": r.is_secret})).collect::<Vec<_>>() }
+    let payload = json!({
+        "plugins_env": { "name": name, "rows": rows.iter().map(|r|json!({"key": r.key, "value": r.value, "is_secret": r.is_secret})).collect::<Vec<_>>() }
     });
     let _ = app.exec_sender.send(heroku_types::ExecOutcome {
         log: "Plugins: env loaded".into(),
@@ -562,10 +576,9 @@ fn execute_plugins_open_env(app: &mut app::App, name: String) {
 
 /// Save environment changes back to config (overwrites env map for the plugin).
 fn execute_plugins_save_env(app: &mut app::App, name: String, rows: Vec<(String, String)>) {
-    use heroku_mcp::config::{McpConfig, default_config_path, save_config_to_path, validate_config};
     let path = default_config_path();
-    let mut cfg = if let Ok(text) = std::fs::read_to_string(&path) {
-        serde_json::from_str::<McpConfig>(&text).unwrap_or_default()
+    let mut cfg = if let Ok(text) = read_to_string(&path) {
+        from_str::<McpConfig>(&text).unwrap_or_default()
     } else {
         McpConfig::default()
     };
@@ -597,13 +610,8 @@ fn execute_plugins_save_env(app: &mut app::App, name: String, rows: Vec<(String,
 
 /// Validate Add Plugin view input and emit a preview payload.
 fn execute_plugins_validate_add(app: &mut app::App) {
-    use heroku_mcp::client::{HttpTransport, McpTransport, StdioTransport};
-    use heroku_mcp::config::McpServer;
-    use heroku_mcp::config::validate_server_name;
-    use reqwest::Url;
-
-    let Some(wiz) = &app.plugins.add else { return };
-    let name = wiz.name.trim();
+    let Some(add_view_state) = &app.plugins.add else { return };
+    let name = add_view_state.name.trim();
     let mut message = String::new();
     let mut ok = true;
     if let Err(e) = validate_server_name(name) {
@@ -613,9 +621,9 @@ fn execute_plugins_validate_add(app: &mut app::App) {
 
     // Build server candidate based on selected transport
     let mut server = McpServer::default();
-    match wiz.transport {
-        crate::ui::components::plugins::AddTransport::Remote => {
-            let base_url = wiz.base_url.trim();
+    match add_view_state.transport {
+        AddTransport::Remote => {
+            let base_url = add_view_state.base_url.trim();
             if base_url.is_empty() {
                 ok = false;
                 message = "Base URL is required for remote transport".into();
@@ -625,64 +633,68 @@ fn execute_plugins_validate_add(app: &mut app::App) {
                 ok = false;
                 message = "Invalid Base URL".into();
             }
+            // Optional headers input (comma-separated key=value)
+            if !add_view_state.headers_input.trim().is_empty() {
+                match parse_key_value_list_strict(add_view_state.headers_input.as_str()) {
+                    Ok(map) => {
+                        if !map.is_empty() {
+                            server.headers = Some(map);
+                        }
+                    }
+                    Err(errors) => {
+                        ok = false;
+                        message = format!("Invalid headers: {}", errors.join("; "));
+                    }
+                }
+            }
         }
-        crate::ui::components::plugins::AddTransport::Local => {
-            let command = wiz.command.trim();
+        AddTransport::Local => {
+            let command = add_view_state.command.trim();
             if command.is_empty() {
                 ok = false;
                 message = "Command is required for local transport".into();
             } else {
                 server.command = Some(command.to_string());
-                if !wiz.args.trim().is_empty() {
-                    let parsed: Vec<String> = wiz.args.split_whitespace().map(|s| s.to_string()).collect();
+                if !add_view_state.args.trim().is_empty() {
+                    let parsed: Vec<String> = add_view_state.args.split_whitespace().map(|s| s.to_string()).collect();
                     server.args = Some(parsed);
+                }
+            }
+            // Optional env input (comma-separated key=value)
+            if !add_view_state.env_input.trim().is_empty() {
+                match parse_key_value_list_strict(add_view_state.env_input.as_str()) {
+                    Ok(map) => {
+                        if !map.is_empty() {
+                            server.env = Some(map);
+                        }
+                    }
+                    Err(errors) => {
+                        ok = false;
+                        message = format!("Invalid env vars: {}", errors.join("; "));
+                    }
                 }
             }
         }
     }
 
-    // Basic field presence already validated by server_name and per-method; full server validation is handled on apply via validate_config
-
-    // Optional health check
+    // Build a preview payload; skip live health probe (rmcp connects at start).
     if ok {
-        let rt = app.exec_sender.clone();
-        let name_s = name.to_string();
-        tokio::spawn(async move {
-            let hc_msg = if server.base_url.is_some() {
-                match HttpTransport::new(server.clone()).and_then(|t| Ok(t)) {
-                    Ok(t) => match t.health_check().await {
-                        Ok(r) => format!("HTTP ok, latency={:?}", r.latency_ms),
-                        Err(e) => format!("HTTP health failed: {}", e),
-                    },
-                    Err(e) => format!("HTTP transport error: {}", e),
-                }
-            } else if server.command.is_some() {
-                let t = StdioTransport::new(server.clone());
-                match t.health_check().await {
-                    Ok(r) => format!("stdio ok, latency={:?}", r.latency_ms),
-                    Err(e) => format!("stdio health failed: {}", e),
-                }
-            } else {
-                "unknown transport".into()
-            };
-
-            let patch = build_add_patch(&name_s, &server);
-            let payload = serde_json::json!({
-                "plugins_add_preview": { "ok": true, "message": hc_msg, "patch": patch }
-            });
-            let _ = rt.send(heroku_types::ExecOutcome {
-                log: format!("Add validate: {}", name_s),
-                result_json: Some(payload),
-                open_table: false,
-                pagination: None,
-            });
+        let patch = build_add_patch(name, &server);
+        let payload = json!({
+            "plugins_add_preview": { "ok": true, "message": "Looks good", "patch": patch }
+        });
+        let _ = app.exec_sender.send(heroku_types::ExecOutcome {
+            log: format!("Add validate: {}", name),
+            result_json: Some(payload),
+            open_table: false,
+            pagination: None,
         });
         return;
     }
 
     // If failed before health check
     let patch = build_add_patch(name, &server);
-    let payload = serde_json::json!({
+    let payload = json!({
         "plugins_add_preview": { "ok": false, "message": message, "patch": patch }
     });
     let _ = app.exec_sender.send(heroku_types::ExecOutcome {
@@ -695,13 +707,12 @@ fn execute_plugins_validate_add(app: &mut app::App) {
 
 /// Apply Add Plugin view: write server to config and refresh plugins list.
 fn execute_plugins_apply_add(app: &mut app::App) {
-    use heroku_mcp::config::{McpConfig, McpServer, default_config_path, save_config_to_path, validate_config};
-    let Some(wiz) = &app.plugins.add else { return };
-    let name = wiz.name.trim().to_string();
+    let Some(add_view_state) = &app.plugins.add else { return };
+    let name = add_view_state.name.trim().to_string();
     let mut server = McpServer::default();
-    match wiz.transport {
-        crate::ui::components::plugins::AddTransport::Remote => {
-            let base_url = wiz.base_url.trim();
+    match add_view_state.transport {
+        AddTransport::Remote => {
+            let base_url = add_view_state.base_url.trim();
             if let Ok(url) = Url::parse(base_url) {
                 server.base_url = Some(url);
             } else {
@@ -713,9 +724,28 @@ fn execute_plugins_apply_add(app: &mut app::App) {
                 });
                 return;
             }
+            // Optional headers input (comma-separated key=value)
+            if !add_view_state.headers_input.trim().is_empty() {
+                match parse_key_value_list_strict(add_view_state.headers_input.as_str()) {
+                    Ok(map) => {
+                        if !map.is_empty() {
+                            server.headers = Some(map);
+                        }
+                    }
+                    Err(errors) => {
+                        let _ = app.exec_sender.send(heroku_types::ExecOutcome {
+                            log: format!("Add apply validation failed: invalid headers: {}", errors.join("; ")),
+                            result_json: None,
+                            open_table: false,
+                            pagination: None,
+                        });
+                        return;
+                    }
+                }
+            }
         }
-        crate::ui::components::plugins::AddTransport::Local => {
-            let command = wiz.command.trim();
+        AddTransport::Local => {
+            let command = add_view_state.command.trim();
             if command.is_empty() {
                 let _ = app.exec_sender.send(heroku_types::ExecOutcome {
                     log: "Add apply validation failed: command is required".into(),
@@ -726,17 +756,36 @@ fn execute_plugins_apply_add(app: &mut app::App) {
                 return;
             }
             server.command = Some(command.to_string());
-            if !wiz.args.trim().is_empty() {
-                let parsed: Vec<String> = wiz.args.split_whitespace().map(|s| s.to_string()).collect();
+            if !add_view_state.args.trim().is_empty() {
+                let parsed: Vec<String> = add_view_state.args.split_whitespace().map(|s| s.to_string()).collect();
                 server.args = Some(parsed);
+            }
+            // Optional env input (comma-separated key=value)
+            if !add_view_state.env_input.trim().is_empty() {
+                match parse_key_value_list_strict(add_view_state.env_input.as_str()) {
+                    Ok(map) => {
+                        if !map.is_empty() {
+                            server.env = Some(map);
+                        }
+                    }
+                    Err(errors) => {
+                        let _ = app.exec_sender.send(heroku_types::ExecOutcome {
+                            log: format!("Add apply validation failed: invalid env vars: {}", errors.join("; ")),
+                            result_json: None,
+                            open_table: false,
+                            pagination: None,
+                        });
+                        return;
+                    }
+                }
             }
         }
     }
 
     // Write to config
     let path = default_config_path();
-    let mut cfg = if let Ok(text) = std::fs::read_to_string(&path) {
-        serde_json::from_str::<McpConfig>(&text).unwrap_or_default()
+    let mut cfg = if let Ok(text) = read_to_string(&path) {
+        from_str::<McpConfig>(&text).unwrap_or_default()
     } else {
         McpConfig::default()
     };
@@ -751,7 +800,6 @@ fn execute_plugins_apply_add(app: &mut app::App) {
         return;
     }
     let _ = save_config_to_path(&cfg, &path);
-
     // Refresh list
     execute_load_plugins(app);
 
@@ -769,13 +817,43 @@ fn execute_plugins_apply_add(app: &mut app::App) {
     });
 }
 
+fn execute_plugins_cancel(app: &mut app::App) {
+    app.plugins.close_secrets();
+}
+
 fn build_add_patch(name: &str, server: &heroku_mcp::config::McpServer) -> String {
-    let mut map = serde_json::Map::new();
-    let v = serde_json::to_value(server).unwrap_or(serde_json::json!({}));
-    let mut servers = serde_json::Map::new();
+    let mut map = Map::new();
+    let v = to_value(server).unwrap_or(serde_json::json!({}));
+    let mut servers = Map::new();
     servers.insert(name.to_string(), v);
-    map.insert("mcpServers".to_string(), serde_json::Value::Object(servers));
-    serde_json::to_string_pretty(&serde_json::Value::Object(map)).unwrap_or_default()
+    map.insert("mcpServers".to_string(), Value::Object(servers));
+    to_string_pretty(&serde_json::Value::Object(map)).unwrap_or_default()
+}
+
+/// Strict validator for comma-separated `key=value` pairs.
+fn parse_key_value_list_strict(input: &str) -> Result<std::collections::HashMap<String, String>, Vec<String>> {
+    let mut out = std::collections::HashMap::new();
+    let mut errors: Vec<String> = Vec::new();
+    for (idx, pair) in input.split(',').enumerate() {
+        let raw = pair;
+        let p = pair.trim();
+        if p.is_empty() {
+            continue;
+        }
+        match p.split_once('=') {
+            Some((k, v)) => {
+                let key = k.trim();
+                let val = v.trim();
+                if key.is_empty() {
+                    errors.push(format!("segment {} has empty key: '{}'", idx + 1, raw));
+                } else {
+                    out.insert(key.to_string(), val.to_string());
+                }
+            }
+            None => errors.push(format!("segment {} missing '=': '{}'", idx + 1, raw)),
+        }
+    }
+    if errors.is_empty() { Ok(out) } else { Err(errors) }
 }
 
 /// Spawn a background thread to execute a Heroku API request.
@@ -788,7 +866,7 @@ fn build_add_patch(name: &str, server: &heroku_mcp::config::McpServer) -> String
 /// ```rust,ignore
 /// # use your_crate::execute_http;
 /// # use heroku_registry::CommandSpec;
-/// # use serde_json::Map;
+/// # useMap;
 /// # struct DummyApp { executing: bool, exec_receiver: Option<std::sync::mpsc::Receiver<()>>, throbber_idx: usize }
 /// # impl DummyApp { fn new() -> Self { Self { executing: false, exec_receiver: None, throbber_idx: 0 } } }
 /// let mut app = DummyApp::new();
@@ -802,7 +880,7 @@ fn build_add_patch(name: &str, server: &heroku_mcp::config::McpServer) -> String
 /// * `spec` - The command specification for the HTTP request
 /// * `path` - The API endpoint path
 /// * `body` - The request body as a JSON map
-fn execute_http(app: &mut app::App, spec: CommandSpec, body: serde_json::Map<String, Value>) {
+fn execute_http(app: &mut app::App, spec: CommandSpec, body: Map<String, Value>) {
     // Live request: spawn async task and show throbber
     app.executing = true;
     app.throbber_idx = 0;
@@ -811,7 +889,7 @@ fn execute_http(app: &mut app::App, spec: CommandSpec, body: serde_json::Map<Str
     let active = app.active_exec_count.clone();
     active.fetch_add(1, Ordering::Relaxed);
 
-    spawn(async move {
+    tokio::spawn(async move {
         let outcome = exec_remote(&spec, body).await;
 
         match outcome {

@@ -4,7 +4,7 @@ Overview
 - Fast, schema-aware TUI for the Heroku CLI.
 - Two primary modes:
   1) Default palette: a single-line command input with fuzzy autocomplete and inline help/errors.
-  2) Command Builder modal: guided UI with searchable command list, inputs, and live command preview.
+  2) Command Browser modal: guided UI with searchable command list and inline help.
 
 Key Features
 - Palette (power mode):
@@ -13,11 +13,10 @@ Key Features
   - Inline validation & inline error message below the input.
   - Ctrl+H: opens Help for exact or top command suggestion.
   - Async execution: throbber (spinner) while processing; input clears on completion; results/logs update.
-- Command Builder modal (Ctrl+F):
+- Command Browser modal (Ctrl+F):
   - Left: Commands list (filters from palette token when opened).
-  - Middle: Inputs (positionals then flags) with enum cycling and bool toggles.
-  - Right: Command preview (execution form: `group sub --flag value`).
-  - Enter: applies the constructed command back to the palette and closes the modal.
+  - Right: Inline Help (usage, arguments, options) for the selected command.
+  - Enter: sends the composed command back to the palette and closes the modal (does not execute).
 - Results viewing:
   - Arrays → rendered as tables with heuristic column selection.
   - Objects → key/value list; scalars → plain text.
@@ -30,13 +29,13 @@ Execution
 
 Keybindings
 - Global:
-  - Ctrl+F: toggle Command Builder.
+  - Ctrl+F: toggle Command Browser.
   - Ctrl+H: open Help (palette context uses exact or top suggestion).
   - Ctrl+C: quit.
 - Palette:
   - Up/Down: cycle suggestions; Tab: accept; Enter: validate + execute.
-- Builder:
-  - Up/Down/Enter: select/apply; hints line shows `Ctrl+F close  Enter apply  Esc cancel`.
+- Browser:
+  - Up/Down/Enter: select/apply; hints line shows `Ctrl+F close  Enter send to palette  Esc cancel`.
 - Table modal:
   - Up/Down/PgUp/PgDn/Home/End: scroll; Esc close.
 
@@ -50,7 +49,7 @@ Providers (Value Suggestions)
 Dev Notes
 - Rendering split across:
   - `palette.rs`: power-mode input, suggestions, dimming, throbber, inline errors.
-  - `ui.rs`: layout, builder/help/table modals, styling.
+  - `ui.rs`: layout, browser/help/table modals, styling.
   - `tables.rs`: array→table renderer and KV/scalar fallbacks.
   - `preview.rs`: request previews and CLI preview string.
 - Async execution:

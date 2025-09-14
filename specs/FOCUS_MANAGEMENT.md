@@ -18,16 +18,16 @@ We migrated off custom focus enums and adopted rat-focus flags across the root s
 
 - Legacy removed:
   - `MainFocus` (root focus enum)
-  - `heroku_types::Focus` (builder panel enum)
+- `heroku_types::Focus` (legacy builder panel enum)
   - `TableFocus` and `PaginationFocus` (table/pagination enums)
 - rat-focus in use:
   - `PaletteState`: `focus: FocusFlag` (leaf)
   - `LogsState`: `focus: FocusFlag` (leaf)
-  - `BuilderState`: `search_f`, `commands_f`, `inputs_f` flags + a local focus ring
+- `BrowserState`: `search_flag`, `commands_flag` flags + a local focus ring
   - `TableState`: `grid_f` flag
   - `PaginationState`: `nav_first_f`, `nav_prev_f`, `nav_next_f`, `nav_last_f` flags (buttons are focusable)
 
-The app builds small focus rings (via `FocusBuilder`) at the places where traversal is needed (root, builder, table/pagination). This keeps code localized and avoids a single global focus graph.
+The app builds small focus rings (via `FocusBuilder`) at the places where traversal is needed (root, browser, table/pagination). This keeps code localized and avoids a single global focus graph.
 
 ## Files and Responsibilities
 
@@ -51,15 +51,15 @@ The app builds small focus rings (via `FocusBuilder`) at the places where traver
   - `crates/tui/src/ui/components/logs/logs.rs`
     - Borders/cursor/hints derive `focused` from `app.logs.focus.get()`.
 
-- Builder
-  - `crates/tui/src/ui/components/builder/state.rs`
-    - Flags: `search_f`, `commands_f`, `inputs_f`.
-    - `focus_ring() -> Focus`: `FocusBuilder` over the three flags.
-  - `crates/tui/src/ui/components/builder/builder.rs`
+- Browser
+  - `crates/tui/src/ui/components/browser/state.rs`
+    - Flags: `search_flag`, `commands_flag`.
+    - `focus_ring() -> Focus`: `FocusBuilder` over the two flags.
+  - `crates/tui/src/ui/components/browser/browser.rs`
     - Tab/Shift-Tab: `focus_ring().next()/prev()`.
-    - Which panel handles keys: check `search_f.get()`, `commands_f.get()`, `inputs_f.get()`.
+    - Which panel handles keys: check `search_flag.get()`, `commands_flag.get()`.
     - Styling and cursor placement: same checks.
-    - Enter sets `inputs_f = true` (moves focus to Inputs).
+    - Enter keeps focus on the command list and populates the palette (no execution).
 
 - Table + Pagination
   - `crates/tui/src/ui/components/table/state.rs`
@@ -81,10 +81,10 @@ The app builds small focus rings (via `FocusBuilder`) at the places where traver
   - On Tab: `focus.next()`. On Shift-Tab: `focus.prev()`.
   - When Palette suggestions are open, the Tab is consumed by the palette (no traversal).
 
-- Builder traversal (search → commands → inputs)
-  - Build a `Focus` with `(search_f, commands_f, inputs_f)`.
+- Browser traversal (search ↔ commands)
+  - Build a `Focus` with `(search_flag, commands_flag)`.
   - On Tab/Shift-Tab: `focus.next()/prev()`.
-  - Enter sets `inputs_f = true` to jump into Inputs.
+  - Enter keeps focus on the list and updates inline help.
 
 - Table traversal (grid ↔ pagination nav buttons)
   - Build a `Focus` with `(grid_f, nav_first_f, nav_prev_f, nav_next_f, nav_last_f)`.
@@ -95,7 +95,7 @@ The app builds small focus rings (via `FocusBuilder`) at the places where traver
 
 - Compute a local `focused: bool` using `.get()` on the relevant `FocusFlag`:
   - Logs panel: `app.logs.focus.get()`
-  - Builder panels: `app.builder.search_f.get()`, etc.
+  - Browser panels: `app.builder.search_flag.get()`, `app.builder.commands_flag.get()`
   - Table grid: `app.table.grid_f.get()`
 - Pagination buttons: `state.nav_first_f.get()`, `state.nav_prev_f.get()`, etc.
 - Pass `focused` into theme helpers like `theme.border_style(focused)` and conditional rendering (e.g., cursor placement, highlight symbols).

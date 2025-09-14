@@ -1,4 +1,5 @@
 # Repository Guidelines
+- Always organize code by breaking it down into focused responsibilities, cleaning up code for readability. apply idiomatic rust, expand abbreviations, add comprehensive doc blocks and breaking out long functions into shorter ones as needed
 
 ## Project Structure & Module Organization
 - Workspace crates: `crates/cli` (binary), `crates/tui`, `crates/registry`, `crates/engine`, `crates/api`, `crates/util`, `crates/mcp` (MCP plugin infrastructure).
@@ -47,11 +48,11 @@
 See [ARCHITECTURE.md](ARCHITECTURE.md) for a full overview of crates, command/registry design, ValueProviders, execution flow, TUI UX, and security/caching.
 
 **TUI Components**
-- **Location:** `crates/tui/src/ui/components/` with one folder per feature (e.g., `palette/`, `table/`, `logs/`, `builder/`, `help/`, `pagination/`). Each submodule typically has `mod.rs`, a main component file (e.g., `palette.rs`), and an optional `state.rs` plus helpers.
+- **Location:** `crates/tui/src/ui/components/` with one folder per feature (e.g., `palette/`, `table/`, `logs/`, `browser/`, `help/`, `pagination/`). Each submodule typically has `mod.rs`, a main component file (e.g., `palette.rs`), and an optional `state.rs` plus helpers.
 - **Trait:** All renderable pieces implement `ui::components::component::Component`, which defines `init()`, `handle_events()`, `handle_key_events()`, `handle_mouse_events()`, `update()`, and `render(frame, area, app)`. Most components implement `handle_key_events` and `render` and mutate local state under `app.*` directly; cross-cutting actions go through `app.update(Msg)` and return `Vec<Effect>`.
-- **State:** App-level owns state structs (e.g., `PaletteState`, `BuilderState`, `TableState`) in `app::App`. Components are thin, mostly stateless render/controllers that read/write `app.*`. Put UI-specific state in `state.rs` under each component folder.
-  - State ownership guideline: Top-level components (palette, builder, logs, help, table) keep their `*State` on `app::App` so other parts of the UI can coordinate. Nested/leaf subcomponents (e.g., `PaginationComponent` inside the table) may encapsulate their own `*State` privately and be composed by the parent component.
-- **Focus:** Use `rat_focus::FocusFlag` per focusable area (e.g., `builder.search_flag`, `table.grid_f`). Build focus rings via `FocusBuilder` to cycle focus on Tab/BackTab. Focus affects styling through theme helpers.
+- **State:** App-level owns state structs (e.g., `PaletteState`, `BrowserState`, `TableState`) in `app::App`. Components are thin, mostly stateless render/controllers that read/write `app.*`. Put UI-specific state in `state.rs` under each component folder.
+  - State ownership guideline: Top-level components (palette, browser, logs, help, table) keep their `*State` on `app::App` so other parts of the UI can coordinate. Nested/leaf subcomponents (e.g., `PaginationComponent` inside the table) may encapsulate their own `*State` privately and be composed by the parent component.
+- **Focus:** Use `rat_focus::FocusFlag` per focusable area (e.g., `browser.search_flag`, `table.grid_f`). Build focus rings via `FocusBuilder` to cycle focus on Tab/BackTab. Focus affects styling through theme helpers.
 - **Theme:** Use `ui::theme::helpers` (`th::block`, `panel_style`, `selection_style`) and `Theme::border_style(focused)` instead of raw styles to keep a consistent look.
 - **Integration:** Components are constructed in `crates/tui/src/lib.rs` and rendered from `ui/main.rs`. Key input routing also lives in `crates/tui/src/lib.rs` (`handle_key`) and delegates to the focused/visible component.
 
@@ -65,7 +66,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a full overview of crates, command/re
 - **Component:**
   - Implement `Component` for `NameComponent` in `<name>.rs`.
   - Prefer local UI mutations on `app.<feature>`; for global actions use `effects.extend(app.update(Msg::...))` and return the `Vec<Effect>`.
-  - Handle focus-specific keys inside the component, using `FocusFlag`s on your state for routing (see `BuilderComponent::handle_*_keys`).
+  - Handle focus-specific keys inside the component, using `FocusFlag`s on your state for routing (see `BrowserComponent::handle_*_keys`).
 - **Rendering:**
   - Lay out the area with `ratatui::layout::Layout`. Wrap sections in `th::block(theme, title, focused)` where appropriate.
   - Read styles from `app.ctx.theme`; avoid hard-coded colors.
@@ -78,13 +79,13 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a full overview of crates, command/re
   - Components return `Vec<app::Effect>`. The runtime maps these via `cmd::from_effects` and `cmd::run_cmds`.
   - Use `app.update(Msg)` for state transitions that may produce effects; only perform side-effects via returned `Effect`s.
 - **Modal Pattern:**
-  - For overlays, clear the area with `widgets::Clear` and use a centered rect (`ui::utils::centered_rect`). See `HelpComponent`, `BuilderComponent`, and `TableComponent` for examples.
+  - For overlays, clear the area with `widgets::Clear` and use a centered rect (`ui::utils::centered_rect`). See `HelpComponent`, `BrowserComponent`, and `TableComponent` for examples.
 - **Pagination Pattern:**
   - If your view shows pageable API data, compose `PaginationComponent` like `TableComponent` does and expose focus items via `FocusFlag`s for Tab/BackTab cycling.
 
 **Design Conventions**
 - **Local-first updates:** UI interactions update `app.<feature>` state directly; reserve `Msg` + `Effect` for cross-feature actions (open/close modals, run, copy, pagination fetch).
-- **Focus-normalization:** Provide a `normalize_focus()` on state to ensure a valid initial focus when made visible (see `BuilderState::normalize_focus`).
+- **Focus-normalization:** Provide a `normalize_focus()` on state to ensure a valid initial focus when made visible (see `BrowserState::normalize_focus`).
 - **Performance:** Precompute expensive view models in state reducers (`apply_result_json` builds table rows/columns once), then keep `render()` side-effect free except drawing.
 - **Security:** Redact sensitive values before display/copy (`heroku_util::redact_sensitive`). This is enforced in logs and detail views; reuse that pattern for new components.
 
