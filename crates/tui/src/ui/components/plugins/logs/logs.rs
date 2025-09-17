@@ -1,10 +1,5 @@
-//! Plugins logs component for displaying plugin logs in a drawer overlay.
-//!
-//! Supports search within the drawer, follow toggling (handled by parent), and
-//! copying/exporting logs via effects. This component focuses on rendering the
-//! list and handling in-drawer search input.
-
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use heroku_types::{Effect, Msg};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -13,9 +8,8 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem},
 };
 
-use crate::app::Effect;
-use crate::ui::components::component::Component;
 use crate::ui::theme::{Theme, helpers as th};
+use crate::{app::App, ui::components::component::Component};
 
 use super::state::PluginLogsState;
 
@@ -41,15 +35,15 @@ impl PluginsLogsComponent {
 }
 
 impl Component for PluginsLogsComponent {
-    fn handle_key_events(&mut self, _app: &mut crate::app::App, _key: KeyEvent) -> Vec<Effect> {
+    fn handle_key_events(&mut self, _app: &mut App, _key: KeyEvent) -> Vec<Effect> {
         Vec::new()
     }
 
-    fn update(&mut self, _app: &mut crate::app::App, _msg: &crate::app::Msg) -> Vec<Effect> {
+    fn update(&mut self, _app: &mut App, _msg: &Msg) -> Vec<Effect> {
         Vec::new()
     }
 
-    fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         if let Some(logs) = &app.plugins.logs {
             let theme = &*app.ctx.theme;
             self.render_logs_drawer(frame, area, theme, logs);

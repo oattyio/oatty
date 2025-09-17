@@ -14,6 +14,7 @@
 //! The component follows the TEA (The Elm Architecture) pattern and integrates
 //! with the application's focus management system.
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use heroku_types::Effect;
 use heroku_util::redact_sensitive;
 use once_cell::sync::Lazy;
 use ratatui::{
@@ -27,7 +28,7 @@ use regex::Regex;
 use serde_json::Value;
 
 use super::{
-    hint_bar::LogsHintBarComponent,
+    hint_bar::LogsHintBar,
     state::{LogDetailView, LogEntry},
 };
 use crate::{
@@ -173,7 +174,7 @@ impl LogsComponent {
                     // Route array JSON to the global Table modal for better UX
                     let redacted = Self::redact_json(j);
                     app.table.apply_result_json(Some(redacted), &*app.ctx.theme);
-                    app.table.apply_visible(true);
+                    app.table.normalize();
                     // Clear logs detail modal state since we're using table
                     app.logs.detail = None;
                     app.logs.cached_detail_index = None;
@@ -395,7 +396,7 @@ impl Component for LogsComponent {
     /// # Returns
     ///
     /// A vector of effects to be processed by the application
-    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<app::Effect> {
+    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
         let mut effects = Vec::new();
 
         // Handle keys when detail modal is open
@@ -455,7 +456,7 @@ impl Component for LogsComponent {
             KeyCode::Char('c') => {
                 // Copy selected content to clipboard
                 let text = self.build_copy_text(app);
-                effects.push(app::Effect::CopyLogsRequested(text));
+                effects.push(Effect::CopyLogsRequested(text));
             }
             KeyCode::Char('v') => {
                 // Toggle JSON pretty-printing (API entries only)
@@ -542,7 +543,7 @@ impl Component for LogsComponent {
         // Render hint bar at bottom when focused
         if focused && inner.height >= 1 {
             let hint_area = Rect::new(inner.x, inner.y + inner.height.saturating_sub(1), inner.width, 1);
-            let mut hints_comp = LogsHintBarComponent;
+            let mut hints_comp = LogsHintBar;
             hints_comp.render(frame, hint_area, app);
         }
 

@@ -10,7 +10,7 @@
 //!
 //! ## Design
 //! - [`Cmd`] is the effectful command type (clipboard / http).
-//! - [`from_effects`] translates state-driven [`Effect`]s into [`Cmd`]s.
+//! - [`run_from_effects`] translates state-driven [`Effect`]s into [`Cmd`]s.
 //! - [`run_cmds`] takes these commands and executes them, ensuring logs remain
 //!   user-visible.
 //! - [`execute_http`] and [`exec_remote`] handle async HTTP requests and return
@@ -27,23 +27,29 @@ use heroku_mcp::config::validate_config;
 use heroku_mcp::config::validate_server_name;
 use heroku_mcp::{client::HealthCheckResult, types::plugin::AuthStatus};
 use heroku_registry::CommandSpec;
+use heroku_types::{Effect, Modal, Route};
 use heroku_util::exec_remote;
 use reqwest::Url;
 use serde_json::Map;
 use serde_json::Value;
 use serde_json::from_str;
 use serde_json::json;
-use serde_json::to_string;
 use serde_json::to_string_pretty;
 use serde_json::to_value;
 use std::fs::read_to_string;
 use std::sync::atomic::Ordering;
 use std::vec;
 
+use crate::cmd;
 use crate::ui::components::plugins::EnvRow;
 use crate::{
-    app::{self, Effect},
-    ui::components::plugins::{AddTransport, PluginListItem},
+    app::{self},
+    ui::components::{
+        browser::BrowserComponent,
+        help::HelpComponent,
+        plugins::{AddTransport, PluginListItem, PluginsComponent},
+        table::TableComponent,
+    },
 };
 
 /// Represents side-effectful system commands executed outside of pure state
@@ -112,29 +118,12 @@ pub enum Cmd {
 /// This enables a clean separation: effects represent "what should happen",
 /// while commands describe "how it should happen".
 ///
-/// # Example
-/// ```rust,ignore
-/// # use your_crate::{from_effects, Cmd};
-/// # struct DummyBrowser;
-/// # impl DummyBrowser {
-/// #   fn selected_command(&self) -> Option<&'static str> { Some("ls") }
-/// #   fn input_fields(&self) -> Vec<&'static str> { vec![] }
-/// # }
-/// # struct DummyApp { builder: DummyBrowser }
-/// # mod preview { pub fn cli_preview(_s: &str, _f: Vec<&str>) -> String { "ls".into() } }
-/// # enum Effect { CopyCommandRequested }
-/// # let mut app = DummyApp { builder: DummyBrowser };
-/// # let effects = vec![Effect::CopyCommandRequested];
-/// // Translates an effect into a side-effectful command
-/// let cmds = from_effects(&mut app, effects);
-/// assert!(matches!(cmds, Cmd::ClipboardSet(_)));
-/// ```
-pub fn from_effects(app: &mut app::App, effects: Vec<Effect>) -> Vec<Cmd> {
+pub fn run_from_effects(app: &mut app::App, effects: Vec<Effect>) {
     let mut commands = Vec::new();
 
     for effect in effects {
         let effect_commands = match effect {
-            Effect::CopyCommandRequested => handle_copy_command_requested(app),
+            Effect::CopyToClipboardRequested(text) => Some(vec![Cmd::ClipboardSet(text)]),
             Effect::CopyLogsRequested(text) => Some(vec![Cmd::ClipboardSet(text)]),
             Effect::NextPageRequested(next_raw) => handle_next_page_requested(app, next_raw),
             Effect::PrevPageRequested => handle_prev_page_requested(app),
@@ -152,49 +141,17 @@ pub fn from_effects(app: &mut app::App, effects: Vec<Effect>) -> Vec<Cmd> {
             Effect::PluginsOpenAdd => Some(vec![]),
             Effect::PluginsValidateAdd => Some(vec![Cmd::PluginsValidateAdd]),
             Effect::PluginsApplyAdd => Some(vec![Cmd::PluginsApplyAdd]),
-            Effect::PluginsCancel => Some(vec![Cmd::PluginsCancel])
+            Effect::PluginsCancel => Some(vec![Cmd::PluginsCancel]),
+            Effect::ShowModal(modal) => handle_show_modal(app, modal),
+            Effect::CloseModal => handle_close_modal(app),
+            Effect::SwitchTo(route) => handle_switch_to(app, route),
         };
-
-        commands.extend(effect_commands.unwrap());
-    }
-
-    commands
-}
-
-/// Handle the copy command requested effect by determining what to copy based on current focus.
-///
-/// Returns a vector containing either a clipboard command for the selected command
-/// or selected table data, depending on which component has focus.
-///
-/// # Arguments
-/// * `app` - The application state containing browser and table components
-///
-/// # Returns
-/// A vector of commands, typically containing a single clipboard command
-fn handle_copy_command_requested(app: &app::App) -> Option<Vec<Cmd>> {
-    let mut commands = Vec::new();
-
-    match (app.browser.is_visible(), app.table.grid_focus().get()) {
-        (true, false) => {
-            // Builder is focused - copy the selected command
-            if let Some(spec) = app.browser.selected_command() {
-                let command_text = crate::preview::cli_preview(spec, app.browser.input_fields());
-                commands.push(Cmd::ClipboardSet(command_text));
-            }
-        }
-        (false, true) => {
-            // Table is focused - copy selected row data
-            if let Ok(stringified) = to_string(app.table.selected_data()?) {
-                commands.push(Cmd::ClipboardSet(stringified));
-            }
-        }
-        _ => {
-            // Neither component focused or both focused (edge case)
-            // No action needed
+        if let Some(cmds) = effect_commands {
+            commands.extend(cmds);
         }
     }
 
-    Some(commands)
+    run_cmds(app, commands)
 }
 
 /// Handle the next page requested effect by executing the previous command with updated pagination.
@@ -300,6 +257,45 @@ fn handle_first_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
     Some(commands)
 }
 
+/// Handle the show modal effect by setting the appropriate modal component.
+///
+/// # Arguments
+/// * `app` - The application state
+/// * `modal` - The modal type to show
+///
+/// # Returns
+/// A vector containing no commands (modal changes are direct UI state updates)
+fn handle_show_modal(app: &mut app::App, modal: Modal) -> Option<Vec<Cmd>> {
+    app.set_open_modal_kind(Some(modal));
+    None // No commands needed for direct UI state update
+}
+
+/// Handle the close modal effect by clearing the open modal.
+///
+/// # Arguments
+/// * `app` - The application state
+///
+/// # Returns
+/// A vector containing no commands (modal changes are direct UI state updates)
+fn handle_close_modal(app: &mut app::App) -> Option<Vec<Cmd>> {
+    // retain focus so it can be restored when the modal closes
+    app.set_open_modal_kind(None);
+    None // No commands needed for direct UI state update
+}
+
+/// Handle the switch to route effect by setting the appropriate main view component.
+///
+/// # Arguments
+/// * `app` - The application state
+/// * `route` - The route to switch to
+///
+/// # Returns
+/// A vector containing no commands (view changes are direct UI state updates)
+fn handle_switch_to(app: &mut app::App, route: Route) -> Option<Vec<Cmd>> {
+    app.set_current_route(route);
+    Some(vec![]) // No commands needed for direct UI state update
+}
+
 /// Execute a sequence of commands and update application logs.
 ///
 /// Each command corresponds to a user-visible side effect, such as writing
@@ -396,7 +392,6 @@ fn execute_load_plugins(app: &mut app::App) {
     // Sort by name
     items.sort_by(|a, b| a.name.cmp(&b.name));
     app.plugins.replace_items(items);
-    app.mark_dirty();
 
     fn format_command_or_url(server: &McpServer) -> String {
         if let Some(cmd) = &server.command {
@@ -612,7 +607,7 @@ fn execute_plugins_save_env(app: &mut app::App, name: String, rows: Vec<(String,
 fn execute_plugins_validate_add(app: &mut app::App) {
     let Some(add_view_state) = &app.plugins.add else { return };
     let name = add_view_state.name.trim();
-    let mut message = String::new();
+    let mut message = String::from("Looks good");
     let mut ok = true;
     if let Err(e) = validate_server_name(name) {
         ok = false;
@@ -678,24 +673,9 @@ fn execute_plugins_validate_add(app: &mut app::App) {
     }
 
     // Build a preview payload; skip live health probe (rmcp connects at start).
-    if ok {
-        let patch = build_add_patch(name, &server);
-        let payload = json!({
-            "plugins_add_preview": { "ok": true, "message": "Looks good", "patch": patch }
-        });
-        let _ = app.exec_sender.send(heroku_types::ExecOutcome {
-            log: format!("Add validate: {}", name),
-            result_json: Some(payload),
-            open_table: false,
-            pagination: None,
-        });
-        return;
-    }
-
-    // If failed before health check
     let patch = build_add_patch(name, &server);
     let payload = json!({
-        "plugins_add_preview": { "ok": false, "message": message, "patch": patch }
+        "plugins_add_preview": { "ok": ok, "message": message, "patch": patch }
     });
     let _ = app.exec_sender.send(heroku_types::ExecOutcome {
         log: format!("Add validate: {}", name),

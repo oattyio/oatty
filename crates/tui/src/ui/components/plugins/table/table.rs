@@ -1,6 +1,5 @@
-//! Plugins table component for displaying and navigating the main plugins list.
-
 use crossterm::event::{KeyCode, KeyEvent};
+use heroku_types::Effect;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -8,19 +7,16 @@ use ratatui::{
     widgets::{Block, Borders, Row, Table},
 };
 
-use crate::app::Effect;
-use crate::ui::components::component::Component;
-use crate::ui::theme::{Theme, helpers as th};
+use crate::ui::theme::helpers as th;
+use crate::{app::App, ui::components::component::Component};
 use heroku_mcp::types::plugin::AuthStatus;
-
-use super::state::PluginsState;
 
 /// Component for rendering the plugins table with selection and navigation.
 #[derive(Debug, Default)]
 pub struct PluginsTableComponent;
 
 impl PluginsTableComponent {
-    fn move_selection_up(app: &mut crate::app::App) {
+    fn move_selection_up(app: &mut App) {
         let filtered_indices = app.plugins.filtered_indices();
         if filtered_indices.is_empty() {
             return;
@@ -32,10 +28,9 @@ impl PluginsTableComponent {
             .min(filtered_indices.len().saturating_sub(1));
         let new_position = selected_index.saturating_sub(1);
         app.plugins.selected = Some(new_position);
-        app.mark_dirty();
     }
 
-    fn move_selection_down(app: &mut crate::app::App) {
+    fn move_selection_down(app: &mut App) {
         let filtered_indices = app.plugins.filtered_indices();
         if filtered_indices.is_empty() {
             return;
@@ -47,12 +42,11 @@ impl PluginsTableComponent {
             .min(filtered_indices.len().saturating_sub(1));
         let new_position = (selected_index + 1).min(filtered_indices.len().saturating_sub(1));
         app.plugins.selected = Some(new_position);
-        app.mark_dirty();
     }
 }
 
 impl Component for PluginsTableComponent {
-    fn handle_key_events(&mut self, app: &mut crate::app::App, key: KeyEvent) -> Vec<Effect> {
+    fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         match key.code {
             KeyCode::Up if app.plugins.grid_flag.get() => {
                 Self::move_selection_up(app);
@@ -66,15 +60,9 @@ impl Component for PluginsTableComponent {
         }
     }
 
-    fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         let theme = &*app.ctx.theme;
-        self.render_plugins_table(frame, area, theme, &app.plugins);
-    }
-}
-
-impl PluginsTableComponent {
-    /// Render the plugins table with header and selection styling.
-    fn render_plugins_table(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, state: &PluginsState) {
+        let state = &app.plugins;
         let header_cells = ["Name", "Status", "Command/BaseUrl", "Auth", "Tags"]
             .into_iter()
             .map(|h| ratatui::text::Span::styled(h, th::table_header_style(theme)));
@@ -125,7 +113,7 @@ impl PluginsTableComponent {
         let table = Table::new(rows, widths).header(header).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(theme.border_style(false))
+                .border_style(theme.border_style(state.grid_flag.get()))
                 .style(th::panel_style(theme)),
         );
 

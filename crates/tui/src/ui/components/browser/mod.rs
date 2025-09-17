@@ -5,4 +5,3 @@ pub mod state;
 
 pub use browser::BrowserComponent;
 pub use state::BrowserState;
-

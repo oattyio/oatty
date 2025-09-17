@@ -11,10 +11,10 @@ use ratatui::{
 // theme helpers accessed via app.ctx.theme in render
 use crate::{app, ui::components::component::Component};
 
-#[derive(Default)]
-pub struct LogsHintBarComponent;
+#[derive(Default, Debug)]
+pub struct LogsHintBar;
 
-impl Component for LogsHintBarComponent {
+impl Component for LogsHintBar {
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
         // Only render when logs are focused (rat-focus)
         if !app.logs.focus.get() {

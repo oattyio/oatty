@@ -13,7 +13,11 @@ pub(crate) fn build_command_help_text<'a>(
     let mut split = spec.name.splitn(2, ':');
     let group = split.next().unwrap_or("");
     let rest = split.next().unwrap_or("");
-    let cmd = if rest.is_empty() { group.to_string() } else { format!("{} {}", group, rest) };
+    let cmd = if rest.is_empty() {
+        group.to_string()
+    } else {
+        format!("{} {}", group, rest)
+    };
 
     let mut lines: Vec<Line<'_>> = vec![Line::from("")];
     lines.push(Line::styled(
@@ -88,7 +92,10 @@ pub(crate) fn build_command_help_text<'a>(
                 arg_line.push_span(Span::styled(desc.to_string(), theme.text_muted_style()));
                 lines.push(arg_line);
             } else {
-                lines.push(Line::from(format!("  {}: Path parameter derived from the endpoint URL.", pa.name)));
+                lines.push(Line::from(format!(
+                    "  {}: Path parameter derived from the endpoint URL.",
+                    pa.name
+                )));
             }
         }
     }
@@ -101,39 +108,39 @@ pub(crate) fn build_command_help_text<'a>(
                 .text_secondary_style()
                 .add_modifier(ratatui::style::Modifier::BOLD),
         ));
-        for f in &spec.flags {
-            let mut flag_line = if let Some(short) = &f.short_name {
+        for flag in &spec.flags {
+            let mut flag_line = if let Some(short) = &flag.short_name {
                 Line::styled(
-                    format!("  -{},  --{}", short, f.name),
+                    format!("  -{},  --{}", short, flag.name),
                     theme
                         .text_secondary_style()
                         .add_modifier(ratatui::style::Modifier::BOLD),
                 )
             } else {
                 Line::styled(
-                    format!("  --{}", f.name),
+                    format!("  --{}", flag.name),
                     theme
                         .text_secondary_style()
                         .add_modifier(ratatui::style::Modifier::BOLD),
                 )
             };
 
-            if f.r#type != "boolean" {
+            if flag.r#type != "boolean" {
                 flag_line.push_span(Span::styled(" <value>", theme.text_muted_style()));
             }
-            if f.required {
+            if flag.required {
                 flag_line.push_span(Span::styled("  (required)", theme.text_muted_style()));
             }
-            if !f.enum_values.is_empty() {
+            if !flag.enum_values.is_empty() {
                 flag_line.push_span(Span::styled(
-                    format!("  [enum: {}]", f.enum_values.join("|")),
+                    format!("  [enum: {}]", flag.enum_values.join("|")),
                     theme.text_muted_style(),
                 ));
             }
-            if let Some(def) = &f.default_value {
+            if let Some(def) = &flag.default_value {
                 flag_line.push_span(Span::styled(format!("  [default: {}]", def), theme.text_muted_style()));
             }
-            if let Some(desc) = &f.description {
+            if let Some(desc) = &flag.description {
                 flag_line.push_span(Span::styled(format!(" — {}", desc), theme.text_muted_style()));
             }
             lines.push(flag_line);
@@ -142,4 +149,3 @@ pub(crate) fn build_command_help_text<'a>(
 
     Text::from(lines)
 }
-

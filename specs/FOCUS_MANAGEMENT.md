@@ -1,157 +1,154 @@
-# Focus Management Architecture
+**Focus Management**
+- **Goal:** Let a parent container hand focus to a child; the child cycles its own focus items on Tab/BackTab. When reaching the end (or beginning) of its ring, focus returns to the parent and continues.
 
-This document explains how focus is implemented across the TUI using rat-focus, the migration choices we made, and how to extend or modify focus behavior for new and existing components.
+**Library**
+- **crate:** `rat_focus`
+- **Core types:** `Focus`, `FocusBuilder`, `FocusFlag`, `HasFocus`, `Navigation`
+- **Helpers:** `impl_has_focus!`, `on_gained!`, `on_lost!`, `match_focus!`, `event::FocusTraversal(&Focus)`
 
-## Overview
+**Top-Level Pattern**
+- **Single ring:** Maintain one `Focus` instance for the whole app. Rebuild it whenever widget structure changes or at least once per frame.
+- **Storage:** Add `focus: rat_focus::Focus` on `app::App` (or a runtime-local variable). Use `FocusBuilder::rebuild_for(&app_state, Some(old_focus))` so removed widgets get their flags cleared and allocations are reused.
+- **Build order:** Parent containers call `builder.widget(&child_state)` during `HasFocus::build` to nest children; the ring flattens but retains container ranges for handoff.
 
-- Library: [rat-focus 1.0.2](https://docs.rs/rat-focus/1.0.2/rat_focus/)
-- Core types we use:
-  - `FocusFlag`: a per-widget focus flag (lives on the widget state)
-  - `HasFocus`: trait a state struct implements (or small wrapper implements) so it can participate in a focus tree
-  - `FocusBuilder`: constructs a focus tree (ring) of widgets/containers
-  - `Focus::next()/prev()`: cycles focus forward/backward
-- Styling follows a consistent pattern: compute a `focused: bool` from a `FocusFlag` and pass it to theme helpers (e.g., `theme.border_style(focused)`).
+**Child-Manages-Itself Pattern**
+- The child owns a container `FocusFlag` and leaf flags for its internal focusables.
+- The parent includes the child in its `HasFocus::build` so focus can enter the child.
+- While focus is inside the child’s range, `focus.next()`/`focus.prev()` step within the child. When the child reaches its last/first item, the next step naturally lands on the parent’s next/previous item.
+- For custom exits (Enter/Esc/etc.), call `focus.expel_focus(&child_container_flag)` to hand focus to the parent’s next item after the child range.
 
-## Current State (Post-Migration)
+**Palette Example (concrete)**
 
-We migrated off custom focus enums and adopted rat-focus flags across the root screen and modal components.
+- `crates/tui/src/ui/components/palette/state.rs:1`
+```
+use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
+use ratatui::layout::Rect;
 
-- Legacy removed:
-  - `MainFocus` (root focus enum)
-- `heroku_types::Focus` (legacy builder panel enum)
-  - `TableFocus` and `PaginationFocus` (table/pagination enums)
-- rat-focus in use:
-  - `PaletteState`: `focus: FocusFlag` (leaf)
-  - `LogsState`: `focus: FocusFlag` (leaf)
-- `BrowserState`: `search_flag`, `commands_flag` flags + a local focus ring
-  - `TableState`: `grid_f` flag
-  - `PaginationState`: `nav_first_f`, `nav_prev_f`, `nav_next_f`, `nav_last_f` flags (buttons are focusable)
+pub struct PaletteState {
+    // Container focus for the palette as a whole
+    container_focus: FocusFlag,
+    // Internal items managed by the palette
+    input_focus: FocusFlag,
+    suggestions_focus: FocusFlag,
+    // ... existing fields (input, suggestions, etc.)
+}
 
-The app builds small focus rings (via `FocusBuilder`) at the places where traversal is needed (root, browser, table/pagination). This keeps code localized and avoids a single global focus graph.
+impl Default for PaletteState {
+    fn default() -> Self {
+        Self {
+            container_focus: FocusFlag::named("palette"),
+            input_focus: FocusFlag::named("palette.input"),
+            suggestions_focus: FocusFlag::named("palette.suggestions"),
+            // ...
+        }
+    }
+}
 
-## Files and Responsibilities
+impl HasFocus for PaletteState {
+    fn build(&self, builder: &mut FocusBuilder) {
+        let tag = builder.start(self);
+        // Input is navigable normally
+        builder.widget_with_navigation(&self.input_focus, Rect::default(), 0, Default::default());
+        // Suggestions list can be marked as Leave so Tab can leave forward while open
+        // or use Regular and let parent decide.
+        builder.widget_with_navigation(&self.suggestions_focus, Rect::default(), 0, rat_focus::Navigation::Leave);
+        builder.end(tag);
+    }
 
-- Root wiring
-  - `crates/tui/src/app.rs`
-    - Initializes a root ring (palette, logs) and focuses the palette at startup.
-  - `crates/tui/src/lib.rs`
-    - Global key loop. Tab/Shift-Tab builds a small ring over (palette, logs) and calls `next()/prev()`.
-    - Short-circuits Palette Tab when suggestions are open (i.e., don’t traverse).
-
-- Palette
-  - `crates/tui/src/ui/components/palette/state.rs`
-    - `PaletteState { focus: FocusFlag, … }`
-    - Implements `HasFocus` so it can participate in the root ring.
-  - `crates/tui/src/ui/components/palette/palette.rs`
-    - Rendering remains the same; focus-driven styling derives from `palette_state.focus.get()` when needed.
-
-- Logs
-  - `crates/tui/src/ui/components/logs/state.rs`
-    - `LogsState { focus: FocusFlag, … }`, implements `HasFocus`.
-  - `crates/tui/src/ui/components/logs/logs.rs`
-    - Borders/cursor/hints derive `focused` from `app.logs.focus.get()`.
-
-- Browser
-  - `crates/tui/src/ui/components/browser/state.rs`
-    - Flags: `search_flag`, `commands_flag`.
-    - `focus_ring() -> Focus`: `FocusBuilder` over the two flags.
-  - `crates/tui/src/ui/components/browser/browser.rs`
-    - Tab/Shift-Tab: `focus_ring().next()/prev()`.
-    - Which panel handles keys: check `search_flag.get()`, `commands_flag.get()`.
-    - Styling and cursor placement: same checks.
-    - Enter keeps focus on the command list and populates the palette (no execution).
-
-- Table + Pagination
-  - `crates/tui/src/ui/components/table/state.rs`
-    - Flag: `grid_f` (table grid focus).
-  - `crates/tui/src/ui/components/pagination/state.rs`
-    - Flags: `nav_first_f`, `nav_prev_f`, `nav_next_f`, `nav_last_f`.
-  - `crates/tui/src/ui/components/table/table.rs`
-    - Tab/Shift-Tab builds a ring over: `grid_f`, then pagination nav flags in order: First → Prev → Next → Last.
-    - If any pagination nav flag is focused, non-Tab keys delegate to `PaginationComponent`.
-    - Styling uses `grid_f.get()`.
-  - `crates/tui/src/ui/components/pagination/pagination.rs`
-    - Tab/Shift-Tab is handled by the table-level ring. Pagination handles Enter and arrows for the active nav button.
-    - Styling uses individual nav button focus flags to render highlights.
-
-## Traversal & Event Handling
-
-- Root traversal (palette/logs)
-  - Build a `Focus` with `(palette, logs)`.
-  - On Tab: `focus.next()`. On Shift-Tab: `focus.prev()`.
-  - When Palette suggestions are open, the Tab is consumed by the palette (no traversal).
-
-- Browser traversal (search ↔ commands)
-  - Build a `Focus` with `(search_flag, commands_flag)`.
-  - On Tab/Shift-Tab: `focus.next()/prev()`.
-  - Enter keeps focus on the list and updates inline help.
-
-- Table traversal (grid ↔ pagination nav buttons)
-  - Build a `Focus` with `(grid_f, nav_first_f, nav_prev_f, nav_next_f, nav_last_f)`.
-  - On Tab/Shift-Tab: `next()/prev()` handled in `table.rs`.
-  - If any pagination nav flag is focused, route non-Tab keys to `PaginationComponent`.
-
-## Focus-Driven Styling
-
-- Compute a local `focused: bool` using `.get()` on the relevant `FocusFlag`:
-  - Logs panel: `app.logs.focus.get()`
-  - Browser panels: `app.builder.search_flag.get()`, `app.builder.commands_flag.get()`
-  - Table grid: `app.table.grid_f.get()`
-- Pagination buttons: `state.nav_first_f.get()`, `state.nav_prev_f.get()`, etc.
-- Pass `focused` into theme helpers like `theme.border_style(focused)` and conditional rendering (e.g., cursor placement, highlight symbols).
-
-## Implementation Notes and Rationale
-
-- We removed enum-based focus to avoid scattered state machines across modules and unify traversal with rat-focus rings.
-- We keep rings local (built on demand) instead of a single shared focus object so components can evolve independently and without tight coupling.
-- For now, we update some focus flags directly (e.g., moving Builder focus to Inputs on Enter). If you need more formal semantics, you can use `Focus::focus(&widget)` or the `on_gained!/on_lost!` macros to coordinate enter/leave behavior.
-- Mouse: `HasFocus::area()` returns a `Rect` for hit-testing if you want mouse-driven focus; currently we use `Rect::default()`. Add real areas when enabling mouse focus.
-
-## Adding Focus to a New Panel/Component
-
-1) Add a `FocusFlag` to the component’s state:
-
-```rust
-pub struct MyPanelState {
-    pub focus: FocusFlag,
-    // …
+    fn focus(&self) -> FocusFlag { self.container_focus.clone() }
+    fn area(&self) -> Rect { Rect::default() }
 }
 ```
 
-2) Use it in rendering:
+- Parent container (e.g., top-level view) includes the palette as a child:
+```
+impl HasFocus for App {
+    fn build(&self, builder: &mut FocusBuilder) {
+        let tag = builder.start(self);
+        builder.widget(&self.palette);     // child container
+        builder.widget(&self.logs);        // sibling after palette
+        // ... other siblings
+        builder.end(tag);
+    }
 
-```rust
-let focused = state.focus.get();
-let block = th::block(theme, Some("My Panel"), focused);
+    fn focus(&self) -> FocusFlag { /* container flag for App */ }
+    fn area(&self) -> Rect { Rect::default() }
+}
 ```
 
-3) Include it in a ring:
+**Event Routing**
+- Provide components a way to drive focus travel:
+  - Store `app.focus: Focus` (or pass via `event::FocusTraversal<'_>(&Focus)` wrapper from `rat_focus::event`).
+  - Rebuild per frame or on structural changes:
+```
+// at render time (or after layout/state changes)
+app.focus = FocusBuilder::rebuild_for(&app, Some(std::mem::take(&mut app.focus)));
 
-```rust
-let mut b = FocusBuilder::new(None);
-b.widget(&PanelLeaf(state_a.focus.clone()));
-b.widget(&PanelLeaf(state_b.focus.clone()));
-let ring = b.build();
-let _ = ring.next();
+// ensure a valid starting focus once
+if app.focus.focused().is_none() { app.focus.first(); }
 ```
 
-4) Route keys based on which flag is focused and use Tab/Shift-Tab to move focus.
+**Child Key Handling (Palette)**
+- Inside `PaletteComponent::handle_key_events`, drive local cycling first; when hitting ends, hand off to parent.
+```
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use rat_focus::{event::FocusTraversal, on_gained, match_focus, Navigation};
 
-## Testing & Validation
+fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    let mut effects = Vec::new();
 
-- Build: `cargo build --workspace`
-- Unit tests: `cargo test --workspace`
-- Lints/format: `cargo clippy --workspace -- -D warnings` and `cargo fmt --all`
-- Manual checks:
-  - Root: Tab/Shift-Tab moves focus Palette ↔ Logs (Palette Tab still accepts suggestions).
-  - Builder: Tab cycles Search → Commands → Inputs; Enter jumps to Inputs.
-  - Table: Tab cycles Grid ↔ First → Prev → Next → Last; when any pagination button is focused, Enter/arrow keys activate navigation (Left/Home = Prev/First, Right/End = Next when available).
+    // Ensure child initializes its internal focus when it gains focus
+    on_gained!( app.palette => { app.focus.first_in(&app.palette); } );
 
-## Future Enhancements
+    match key.code {
+        KeyCode::Tab if key.modifiers.is_empty() => {
+            // If suggestions are open and focused, `next()` cycles to input or exits to parent
+            app.focus.next();
+        }
+        KeyCode::BackTab => {
+            app.focus.prev();
+        }
+        KeyCode::Enter => {
+            // Optional explicit handoff: leave child to parent’s next sibling
+            // when Enter is pressed while child has focus.
+            if app.palette_is_done() {
+                app.focus.expel_focus(&app.palette.container_focus);
+            }
+        }
+        _ => {
+            // Normal editing
+        }
+    }
 
-- Consider caching and reusing `Focus` objects per component instead of rebuilding on each key press (micro-optimization; current approach is simple and safe).
-- Use `on_gained!`/`on_lost!` macros for validation or initializations when focus changes (e.g., select first command on entering Commands panel).
-- Add real `area()` rectangles for mouse focus; use `area_z()` to define stacking where needed.
-- Remove the remaining scaffolding in `ui::focus` (string IDs and local `FocusStore`) if no longer needed.
+    effects
+}
+```
 
-This architecture gives us a predictable, testable focus model with rat-focus, removes custom enums, and keeps component responsibilities local and easy to extend.
+Notes
+- `on_gained!` runs when the palette container gains focus and ensures a valid initial child focus.
+- `Focus::next()`/`prev()` respect `Navigation` values; set `Navigation::Leave` on the last child to allow forward exit while keeping backward cycling inside, or use `ReachLeaveFront/Back` for stricter control.
+- `Focus::expel_focus(&child_container_flag)` forcibly moves focus to the next item after the child container; if none exists it clears focus.
+
+**Navigation Strategies**
+- Regular child cycling: mark all children `Navigation::Regular` and let `next/prev` naturally fall through to siblings after the last/first child.
+- One-way leave:
+  - First child: `ReachLeaveFront` (can be reached; backward leaves)
+  - Last child: `ReachLeaveBack` (can be reached; forward leaves)
+- Lock focus temporarily: `Navigation::Lock` prevents `next/prev` transitions until unlocked. Use sparingly (e.g., modal text areas).
+
+**Mouse Focus**
+- Provide accurate areas in `HasFocus::area()` (and z-index via `area_z()`) for mouse clicks to move focus via `focus_at(x, y)`.
+
+**Integration Checklist**
+- Add `focus: Focus` to `App` and rebuild it each render.
+- Implement `HasFocus` for top-level `App` and each focus-owning state.
+- Ensure each focusable has a `FocusFlag` and stable debug name.
+- On container focus gain, call `focus.first_in(&child)` to initialize child focus.
+- In key handlers, call `focus.next()`/`prev()`; use `expel_focus()` for explicit exits.
+- Keep build order deterministic to ensure expected traversal.
+
+**Troubleshooting**
+- Focus “stuck” in child: check `Navigation` for `Lock` or `Reach` on leaves.
+- Focus doesn’t return to parent: ensure the child is a container (used with `builder.start(self)`/`end(tag)`) and parent includes a sibling after the child.
+- Unexpected wrap-around: verify the target child’s last item `Navigation` and the parent’s ring order.
+

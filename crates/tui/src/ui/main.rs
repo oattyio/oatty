@@ -1,20 +1,12 @@
 use ratatui::{
     prelude::*,
     style::{Modifier, Style},
-    widgets::Paragraph,
+    widgets::{Block, Paragraph},
 };
 
-use super::components::{BrowserComponent, HelpComponent, LogsComponent, PluginsComponent, TableComponent};
-use crate::{
-    app::App,
-    ui::{
-        components::{
-            component::Component,
-            palette::{HintBarComponent, PaletteComponent},
-        },
-        layout::MainLayout,
-    },
-};
+use crate::app::App;
+use crate::ui::components::component::Component;
+use crate::ui::components::nav_bar::VerticalNavBarComponent;
 
 /// Renders the main user interface layout and coordinates all UI components.
 ///
@@ -26,78 +18,49 @@ use crate::{
 ///
 /// * `f` - The frame to render to
 /// * `app` - The application state containing all UI data
-#[allow(clippy::too_many_arguments)]
-pub fn draw(
-    frame: &mut Frame,
-    app: &mut App,
-    palette: &mut PaletteComponent,
-    hints: &mut HintBarComponent,
-    logs: &mut LogsComponent,
-    browser: &mut BrowserComponent,
-    help: &mut HelpComponent,
-    table: &mut TableComponent,
-    plugins: &mut PluginsComponent,
-) {
+pub fn draw(frame: &mut Frame, app: &mut App) {
     let size = frame.area();
-
-    // When Plugins is in fullscreen mode, render it over the entire UI and return
-    if app.plugins_fullscreen {
-        plugins.render(frame, size, app);
-        return;
-    }
-
     // Fill the entire background with the theme's background color for consistency
     let bg_fill = Paragraph::new("").style(Style::default().bg(app.ctx.theme.roles().background));
     frame.render_widget(bg_fill, size);
 
-    // Create main layout with vertical sections
-    let chunks = MainLayout::vertical_layout(size, app);
+    // Temporarily take components to avoid borrow checker issues
+    let mut main_view = std::mem::replace(&mut app.main_view, None);
+    let mut open_modal = std::mem::replace(&mut app.open_modal, None);
 
-    // Render main UI components
-    render_command_palette(frame, app, palette, chunks[0]);
-    render_hints(frame, app, hints, chunks[1]);
-    render_logs(frame, app, logs, chunks[2]);
+    // Layout: left rail for nav bar, right for active main view
+    let chunks = ratatui::layout::Layout::default()
+        .direction(ratatui::layout::Direction::Horizontal)
+        .constraints([
+            ratatui::layout::Constraint::Length(8),
+            ratatui::layout::Constraint::Min(1),
+        ])
+        .split(size);
+
+    // Handle main view rendering
+    if let Some(current) = main_view.as_mut() {
+        // Render nav bar on the left
+        let mut nav = VerticalNavBarComponent::new();
+        nav.render(frame, chunks[0], app);
+        // Render active view on the right
+        current.render(frame, chunks[1], app);
+    }
 
     // Render modal overlays if active
-    render_modals(frame, app, browser, help, table, plugins);
-}
+    if open_modal.is_some() {
+        render_overlay(frame, app);
+        if let Some(modal) = open_modal.as_mut() {
+            modal.render(frame, size, app);
+        }
+    }
 
-// Creates the main vertical layout for the application.
-//
-// Arguments:
-// * `size` - The total available screen area
-//
-// Returns:
-// Vector of rectangular areas for each UI section
-// (helper moved to ui/layout.rs)
-
-/// Renders the command palette area.
-///
-/// # Arguments
-///
-/// * `f` - The frame to render to
-/// * `app` - The application state
-/// * `area` - The area to render the palette in
-fn render_command_palette(f: &mut Frame, app: &mut App, palette: &mut PaletteComponent, area: Rect) {
-    palette.render(f, area, app);
-}
-
-/// Renders the hints area with keyboard shortcuts.
-///
-/// # Arguments
-///
-/// * `f` - The frame to render to
-/// * `app` - The application state
-/// * `area` - The area to render hints in
-fn render_hints(f: &mut Frame, app: &mut App, hints: &mut HintBarComponent, area: Rect) {
-    // Always render palette hints here; logs hints are drawn inside the logs block
-    // now.
-    hints.render(f, area, app);
-}
-
-// Render logs area via component
-fn render_logs(f: &mut Frame, app: &mut App, logs: &mut LogsComponent, area: Rect) {
-    logs.render(f, area, app);
+    // Move components back if they weren't replaced.
+    if app.main_view.is_none() {
+        app.main_view = main_view;
+    }
+    if app.open_modal.is_none() {
+        app.open_modal = open_modal;
+    }
 }
 
 /// Renders modal overlays based on application state.
@@ -106,38 +69,13 @@ fn render_logs(f: &mut Frame, app: &mut App, logs: &mut LogsComponent, area: Rec
 ///
 /// * `f` - The frame to render to
 /// * `app` - The application state
-fn render_modals(
-    f: &mut Frame,
-    app: &mut App,
-    browser: &mut BrowserComponent,
-    help: &mut HelpComponent,
-    table: &mut TableComponent,
-    plugins: &mut PluginsComponent,
-) {
+fn render_overlay(frame: &mut Frame, app: &mut App) {
     // Draw a dim overlay when any modal is visible
-    let any_modal =
-        app.help.is_visible() || app.table.is_visible() || app.browser.is_visible() || app.plugins.is_visible();
-    if any_modal {
-        use ratatui::widgets::Block;
-        let area = f.area();
-        f.render_widget(
-            Block::default()
-                .bg(app.ctx.theme.roles().background)
-                .add_modifier(Modifier::DIM),
-            area,
-        );
-    }
-
-    if app.help.is_visible() {
-        help.render(f, f.area(), app);
-    }
-    if app.table.is_visible() {
-        table.render(f, f.area(), app);
-    }
-    if app.browser.is_visible() {
-        browser.render(f, f.area(), app);
-    }
-    if app.plugins.is_visible() {
-        plugins.render(f, f.area(), app);
-    }
+    let area = frame.area();
+    frame.render_widget(
+        Block::default()
+            .bg(app.ctx.theme.roles().background)
+            .add_modifier(Modifier::DIM),
+        area,
+    );
 }

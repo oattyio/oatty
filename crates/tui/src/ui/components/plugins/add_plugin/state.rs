@@ -1,7 +1,7 @@
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 
-use super::super::state::EnvRow;
+use super::super::EnvRow;
 
 /// Add Plugin view state
 #[derive(Debug, Clone)]
@@ -26,6 +26,7 @@ pub struct PluginAddViewState {
     pub validation: Option<String>,
     pub preview: Option<String>,
     // Focus flags for focusable controls
+    pub focus: FocusFlag,
     pub f_transport: FocusFlag,
     pub f_name: FocusFlag,
     pub f_command: FocusFlag,
@@ -55,6 +56,7 @@ impl PluginAddViewState {
             input: String::new(),
             validation: None,
             preview: None,
+            focus: FocusFlag::named("plugins.add"),
             f_transport: FocusFlag::named("plugins.add.transport"),
             f_name: FocusFlag::named("plugins.add.name"),
             f_command: FocusFlag::named("plugins.add.command"),
@@ -66,8 +68,48 @@ impl PluginAddViewState {
             f_btn_save: FocusFlag::named("plugins.add.btn.save"),
             f_btn_cancel: FocusFlag::named("plugins.add.btn.cancel"),
         };
-        instance.f_name.set(true);
+        // Set initial focus to transport selector instead of name field
+        instance.f_transport.set(true);
         instance
+    }
+
+    ///
+    /// This component now relies directly on `FocusFlag` booleans exposed on
+    /// `PluginAddViewState` to route keyboard input and rendering focus. This
+    /// avoids building a `FocusRing` repeatedly and eliminates the `AddControl`
+    /// enum indirection that previously mapped focus flags to a variant.
+    /// All event handling and rendering paths read `f_*` flags directly.
+    // Removed `AddControl` enum in favor of direct focus-flag checks.
+
+    /// Computes the enablement state of the Validate and Save buttons.
+    ///
+    /// This function determines whether the Validate and Save buttons should be
+    /// enabled based on the current form state and transport type. The Validate
+    /// button is enabled when the required fields for the current transport are
+    /// filled, and the Save button is enabled when both the name and transport-specific
+    /// fields are complete.
+    ///
+    /// # Arguments
+    ///
+    /// * `add_state` - Reference to the add plugin plugin state
+    ///
+    /// # Returns
+    ///
+    /// Returns a tuple `(validate_enabled, save_enabled)` indicating which buttons
+    /// should be enabled.
+    pub fn compute_button_enablement(&self) -> (bool, bool) {
+        let name_present = !self.name.trim().is_empty();
+
+        match self.transport {
+            AddTransport::Local => {
+                let command_present = !self.command.trim().is_empty();
+                (command_present, name_present && command_present)
+            }
+            AddTransport::Remote => {
+                let base_url_present = !self.base_url.trim().is_empty();
+                (base_url_present, name_present && base_url_present)
+            }
+        }
     }
 }
 
@@ -78,90 +120,41 @@ pub enum AddTransport {
     Remote,
 }
 
-impl PluginAddViewState {
-    /// Synchronize `selected` index from which focus flag is active.
-    pub fn sync_selected_from_focus(&mut self) {
-        self.selected = if self.f_transport.get() {
-            0
-        } else if self.f_name.get() {
-            1
-        } else if self.f_command.get() {
-            2
-        } else if self.f_args.get() {
-            3
-        } else if self.f_base_url.get() {
-            4
-        } else if self.f_key_value_pairs.get() {
-            5
-        } else if self.f_btn_validate.get() {
-            7
-        } else if self.f_btn_save.get() {
-            8
-        } else if self.f_btn_cancel.get() {
-            9
-        } else {
-            1
-        };
-    }
-}
-
-// Minimal leaf wrapper for rat-focus usage, if needed externally
-struct PanelLeaf(FocusFlag);
-impl HasFocus for PanelLeaf {
-    fn build(&self, builder: &mut FocusBuilder) {
-        builder.leaf_widget(self);
-    }
-    fn focus(&self) -> FocusFlag {
-        self.0.clone()
-    }
-    fn area(&self) -> Rect {
-        Rect::default()
-    }
-}
-
 impl HasFocus for PluginAddViewState {
     fn build(&self, builder: &mut FocusBuilder) {
+        let (validate_enabled, save_enabled) = self.compute_button_enablement();
         let tag = builder.start(self);
-        builder.widget(&PanelLeaf(self.f_transport.clone()));
-        builder.widget(&PanelLeaf(self.f_name.clone()));
+        builder.leaf_widget(&self.f_transport);
+        builder.leaf_widget(&self.f_name);
         match self.transport {
             AddTransport::Local => {
-                builder.widget(&PanelLeaf(self.f_command.clone()));
-                builder.widget(&PanelLeaf(self.f_args.clone()));
+                builder.leaf_widget(&self.f_command);
+                builder.leaf_widget(&self.f_args);
             }
             AddTransport::Remote => {
-                builder.widget(&PanelLeaf(self.f_base_url.clone()));
+                builder.leaf_widget(&self.f_base_url);
             }
         }
-        builder.widget(&PanelLeaf(self.f_key_value_pairs.clone()));
+        builder.leaf_widget(&self.f_key_value_pairs);
 
-        // Buttons depending on enablement
-        let name_present = !self.name.trim().is_empty();
-        let (validate_enabled, save_enabled) = match self.transport {
-            AddTransport::Local => {
-                let command_present = !self.command.trim().is_empty();
-                (command_present, name_present && command_present)
-            }
-            AddTransport::Remote => {
-                let base_url_present = !self.base_url.trim().is_empty();
-                (base_url_present, name_present && base_url_present)
-            }
-        };
+        // Buttons (order matches rendered left→right); enablement handled in UI/actions
+        // Secrets is always present
+        builder.leaf_widget(&self.f_btn_secrets);
+        // Validate / Save are not always part of the focus ring; enablement is handled in UI/actions
         if validate_enabled {
-            builder.widget(&PanelLeaf(self.f_btn_validate.clone()));
+            builder.leaf_widget(&self.f_btn_validate);
         }
         if save_enabled {
-            builder.widget(&PanelLeaf(self.f_btn_save.clone()));
+            builder.leaf_widget(&self.f_btn_save);
         }
         // Cancel always present
-        builder.widget(&PanelLeaf(self.f_btn_secrets.clone()));
-        builder.widget(&PanelLeaf(self.f_btn_cancel.clone()));
+        builder.leaf_widget(&self.f_btn_cancel);
 
         builder.end(tag);
     }
 
     fn focus(&self) -> FocusFlag {
-        self.f_name.clone()
+        self.focus.clone()
     }
 
     fn area(&self) -> Rect {

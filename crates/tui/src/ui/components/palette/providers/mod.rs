@@ -1,3 +1,10 @@
+//! Palette providers for command argument value suggestions.
+//!
+//! This module contains a `ValueProvider` implementation that sources suggestions
+//! from the Heroku command registry and associated HTTP endpoints. Results are
+//! cached with a TTL to keep the UI responsive while avoiding excessive network
+//! requests. Fuzzy matching is applied to produce relevant, ranked suggestions.
+
 use crate::ui::components::palette::state::ValueProvider;
 use heroku_registry::Registry;
 use heroku_types::{ItemKind, SuggestionItem};
@@ -22,9 +29,13 @@ struct CacheEntry {
 /// and returns fuzzy-matched suggestions for a given field and partial input.
 #[derive(Debug, Clone)]
 pub struct RegistryBackedProvider {
+    /// Shared registry containing command specifications and provider bindings
     registry: Arc<Registry>,
+    /// Time-to-live duration for cached fetch results
     ttl: Duration,
+    /// In-memory cache for provider results keyed by provider id
     cache: Arc<Mutex<HashMap<String, CacheEntry>>>,
+    /// Tracks in-flight fetches to avoid duplicating concurrent work
     active_fetches: Arc<Mutex<HashSet<String>>>,
 }
 
@@ -41,20 +52,45 @@ impl RegistryBackedProvider {
 
     /// Finds the provider ID for a field within a command specified by group and name.
     fn provider_for_field(&self, group: &str, name: &str, field: &str) -> Option<(String, Vec<heroku_types::Bind>)> {
-        let spec = self.registry.find_by_group_and_cmd(group, name).ok()?;
+        let command_spec = self.registry.find_by_group_and_cmd(group, name).ok()?;
         // Check flags first
-        if let Some(flag) = spec.flags.iter().find(|f| f.name == field)
+        if let Some(flag) = command_spec.flags.iter().find(|flag| flag.name == field)
             && let Some(heroku_types::ValueProvider::Command { command_id, binds }) = &flag.provider
         {
             return Some((command_id.clone(), binds.clone()));
         }
         // Then positionals
-        if let Some(pos) = spec.positional_args.iter().find(|a| a.name == field)
-            && let Some(heroku_types::ValueProvider::Command { command_id, binds }) = &pos.provider
+        if let Some(positional) = command_spec.positional_args.iter().find(|arg| arg.name == field)
+            && let Some(heroku_types::ValueProvider::Command { command_id, binds }) = &positional.provider
         {
             return Some((command_id.clone(), binds.clone()));
         }
         None
+    }
+
+    /// Returns cached items if present and fresh, otherwise `None`.
+    fn get_cached_items_if_fresh(&self, provider_id: &str, current_time: Instant) -> Option<Vec<String>> {
+        let cache = self.cache.lock().expect("Cache lock poisoned");
+        let entry = cache.get(provider_id)?;
+        if current_time.duration_since(entry.fetched_at) < self.ttl {
+            Some(entry.items.clone())
+        } else {
+            None
+        }
+    }
+
+    /// Parses a provider key of the form "group:name" into its components.
+    fn parse_provider_key(provider_id: &str) -> Option<(&str, &str)> {
+        match provider_id.split_once(':') {
+            Some((group, name)) if !group.is_empty() && !name.is_empty() => Some((group, name)),
+            _ => None,
+        }
+    }
+
+    /// Attempts to mark a provider fetch as active; returns false if already active.
+    fn try_begin_fetch(&self, provider_id: &str) -> bool {
+        let mut active = self.active_fetches.lock().expect("Active fetches lock poisoned");
+        active.insert(provider_id.to_string())
     }
 
     /// Fetches or retrieves cached values for a provider ID.
@@ -71,72 +107,64 @@ impl RegistryBackedProvider {
         }
 
         // Check cache first
-        let now = Instant::now();
-        {
-            let cache = self.cache.lock().expect("Cache lock poisoned");
-            if let Some(entry) = cache.get(provider_id)
-                && now.duration_since(entry.fetched_at) < self.ttl
-            {
-                return entry.items.clone();
-            }
+        let current_time = Instant::now();
+        if let Some(items) = self.get_cached_items_if_fresh(provider_id, current_time) {
+            return items;
         }
 
         // Parse provider_id as "<group>:list"
-        let (group, name) = match provider_id.split_once(':') {
-            Some((g, n)) if !g.is_empty() && !n.is_empty() => (g, n),
+        let (group, name) = match Self::parse_provider_key(provider_id) {
+            Some((group, name)) => (group, name),
             _ => return Vec::new(),
         };
 
         // Get command spec and path
-        let Ok(spec) = self.registry.find_by_group_and_cmd(group, name) else {
+        let Ok(command_spec) = self.registry.find_by_group_and_cmd(group, name) else {
             return Vec::new();
         };
 
         // Build resolved path when variables provided and append query for leftover vars
-        let mut spec_owned = spec.clone();
+        let mut resolved_spec = command_spec.clone();
         if !variables.is_empty() {
-            let path = build_path(&spec_owned.path, variables);
+            let path = build_path(&resolved_spec.path, variables);
             // Determine which keys were used in path placeholders by checking original path for `{key}`
-            let mut leftover: Vec<(String, String)> = Vec::new();
-            for (k, v) in variables.iter() {
-                let needle = format!("{{{}}}", k);
-                if !spec.path.contains(&needle) {
-                    let sv = match v {
+            let mut unused_variables: Vec<(String, String)> = Vec::new();
+            for (key, value) in variables.iter() {
+                let needle = format!("{{{}}}", key);
+                if !command_spec.path.contains(&needle) {
+                    let string_value = match value {
                         serde_json::Value::String(s) => s.clone(),
                         other => other.to_string(),
                     };
-                    leftover.push((k.clone(), sv));
+                    unused_variables.push((key.clone(), string_value));
                 }
             }
-            if !leftover.is_empty() {
-                let qp: String = leftover
+            if !unused_variables.is_empty() {
+                let query_string: String = unused_variables
                     .into_iter()
-                    .map(|(k, v)| format!("{}={}", k, v))
+                    .map(|(key, value)| format!("{}={}", key, value))
                     .collect::<Vec<_>>()
                     .join("&");
-                spec_owned.path = format!("{}?{}", path, qp);
+                resolved_spec.path = format!("{}?{}", path, query_string);
             } else {
-                spec_owned.path = path;
+                resolved_spec.path = path;
             }
         }
 
         // Skip if fetch is already in progress
-        {
-            let mut active = self.active_fetches.lock().expect("Active fetches lock poisoned");
-            if !active.insert(provider_id.to_string()) {
-                return Vec::new(); // Fetch already in progress
-            }
+        if !self.try_begin_fetch(provider_id) {
+            return Vec::new(); // Fetch already in progress
         }
 
         // Spawn background fetch
         let cache = Arc::clone(&self.cache);
         let active_fetches = Arc::clone(&self.active_fetches);
-        let provider_id_owned = provider_id.to_string();
-        let spec_owned = spec_owned.clone();
+        let provider_id_clone = provider_id.to_string();
+        let resolved_spec_clone = resolved_spec.clone();
         std::thread::spawn(move || {
-            let result = match tokio::runtime::Runtime::new() {
-                Ok(rt) => rt.block_on(async {
-                    fetch_json_array(&spec_owned)
+            let fetched_items = match tokio::runtime::Runtime::new() {
+                Ok(runtime) => runtime.block_on(async {
+                    fetch_json_array(&resolved_spec_clone)
                         .await
                         .map(|values| values.into_iter().filter_map(label_from_value).collect::<Vec<String>>())
                         .unwrap_or_default()
@@ -145,20 +173,20 @@ impl RegistryBackedProvider {
             };
 
             // Update cache and clear active fetch
-            if !result.is_empty() {
+            if !fetched_items.is_empty() {
                 let mut cache = cache.lock().expect("Cache lock poisoned");
                 cache.insert(
-                    provider_id_owned.clone(),
+                    provider_id_clone.clone(),
                     CacheEntry {
                         fetched_at: Instant::now(),
-                        items: result,
+                        items: fetched_items,
                     },
                 );
             }
             active_fetches
                 .lock()
                 .expect("Active fetches lock poisoned")
-                .remove(&provider_id_owned);
+                .remove(&provider_id_clone);
         });
 
         Vec::new()
@@ -178,7 +206,7 @@ impl ValueProvider for RegistryBackedProvider {
         inputs: &std::collections::HashMap<String, String>,
     ) -> Vec<SuggestionItem> {
         let (group, name) = match command_key.split_once(':') {
-            Some((g, n)) if !g.is_empty() && !n.is_empty() => (g, n),
+            Some((group, name)) if !group.is_empty() && !name.is_empty() => (group, name),
             _ => return Vec::new(),
         };
 
@@ -187,21 +215,21 @@ impl ValueProvider for RegistryBackedProvider {
         };
 
         // Build variables map from bindings
-        let mut vars = serde_json::Map::new();
-        let mut missing = false;
-        for b in &binds {
-            if let Some(val) = inputs.get(&b.from) {
-                vars.insert(b.provider_key.clone(), serde_json::Value::String(val.clone()));
+        let mut variables = serde_json::Map::new();
+        let mut is_missing = false;
+        for binding in &binds {
+            if let Some(value) = inputs.get(&binding.from) {
+                variables.insert(binding.provider_key.clone(), serde_json::Value::String(value.clone()));
             } else {
-                missing = true;
+                is_missing = true;
                 break;
             }
         }
-        if missing {
+        if is_missing {
             return Vec::new();
         }
 
-        let values = self.list_values_for_provider(&provider_id, &vars);
+        let values = self.list_values_for_provider(&provider_id, &variables);
         let mut items: Vec<SuggestionItem> = values
             .into_iter()
             .filter_map(|value| {
@@ -220,7 +248,14 @@ impl ValueProvider for RegistryBackedProvider {
     }
 }
 
-/// Extracts a label from a JSON value, preferring 'name', then 'id', then any string field.
+/// Extracts a label from a JSON value for display and insertion.
+///
+/// Preference order:
+/// - `name`
+/// - `id`
+/// - `str`
+/// - any first string value found in the object
+/// - or the string itself if the value is a JSON string
 fn label_from_value(value: serde_json::Value) -> Option<String> {
     match value {
         serde_json::Value::String(s) => Some(s),

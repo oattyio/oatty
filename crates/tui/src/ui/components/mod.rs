@@ -4,6 +4,7 @@ pub mod browser;
 pub mod component;
 pub mod help;
 pub mod logs;
+pub mod nav_bar;
 pub mod pagination;
 pub mod palette;
 pub mod plugins;

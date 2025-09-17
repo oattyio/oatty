@@ -1,9 +1,5 @@
-//! Plugins environment editor component for editing plugin environment variables.
-//!
-//! Renders a two-column table of KEY and VALUE, supports inline editing of the
-//! selected row, and saving the updated environment via an effect. Secret values
-//! are redacted during rendering.
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use heroku_types::Effect;
 use ratatui::{
     Frame,
     layout::{Constraint, Rect},
@@ -12,9 +8,8 @@ use ratatui::{
     widgets::{Block, Borders, Row, Table},
 };
 
-use crate::app::Effect;
-use crate::ui::components::component::Component;
 use crate::ui::theme::{Theme, helpers as th};
+use crate::{app::App, ui::components::component::Component};
 
 use super::state::PluginSecretsEditorState;
 
@@ -63,10 +58,10 @@ impl PluginsSecretsComponent {
 }
 
 impl Component for PluginsSecretsComponent {
-    fn handle_key_events(&mut self, app: &mut crate::app::App, key: KeyEvent) -> Vec<Effect> {
+    fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         let env = app
             .plugins
-            .env
+            .secrets
             .as_mut()
             .expect("key event on uninitialized PluginsEnvComponent");
         match key.code {
@@ -99,8 +94,8 @@ impl Component for PluginsSecretsComponent {
         }
     }
 
-    fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
-        if let Some(env) = &app.plugins.env {
+    fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
+        if let Some(env) = &app.plugins.secrets {
             let theme = &*app.ctx.theme;
             self.render_env_editor(frame, area, theme, env);
         }

@@ -180,45 +180,6 @@ fn property_frequency_boost(header: &str) -> i32 {
     }
 }
 
-/// Extension trait for String to provide fallback values when empty.
-///
-/// This trait adds a method to String that returns an alternative value
-/// when the string is empty, useful for displaying placeholder text
-/// in UI components.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// use heroku_tui::ui::utils::IfEmptyStr;
-///
-/// let empty = String::new();
-/// let result = empty.if_empty_then("default".to_string());
-/// assert_eq!(result, "default");
-///
-/// let non_empty = "hello".to_string();
-/// let result = non_empty.if_empty_then("default".to_string());
-/// assert_eq!(result, "hello");
-/// ```
-pub trait IfEmptyStr {
-    /// Returns the string if non-empty, otherwise returns the alternative
-    /// value.
-    ///
-    /// # Arguments
-    ///
-    /// * `alt` - The alternative string to return if self is empty
-    ///
-    /// # Returns
-    ///
-    /// The original string if non-empty, otherwise the alternative string.
-    fn if_empty_then(self, alt: String) -> String;
-}
-
-impl IfEmptyStr for String {
-    fn if_empty_then(self, alt: String) -> String {
-        if self.is_empty() { alt } else { self }
-    }
-}
-
 /// Formatter kinds that influence header/value display.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ColumnFormatter {

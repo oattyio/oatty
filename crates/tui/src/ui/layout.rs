@@ -4,6 +4,8 @@
 //! components in a consistent and maintainable way. It defines the main
 //! application layout structure and provides reusable layout functions.
 
+use std::rc::Rc;
+
 use ratatui::prelude::*;
 
 use crate::app::App;
@@ -21,7 +23,7 @@ impl MainLayout {
     ///
     /// The main layout consists of four vertical sections:
     ///
-    /// 1. **Command Palette Area** (3 lines) - Input field and suggestions
+    /// 1. **Command Palette Area** (5 lines) - Input field and suggestions
     /// 2. **Hints Area** (1 line) - Keyboard shortcuts and help text
     /// 3. **Spacer Area** (minimum 1 line) - Future content area
     /// 4. **Logs Area** (6 lines) - Application logs and status messages
@@ -52,13 +54,11 @@ impl MainLayout {
     /// // layout_areas[1] = Hints area  
     /// // layout_areas[2] = Logs area
     /// ```
-    pub fn vertical_layout(size: Rect, app: &App) -> Vec<Rect> {
+    pub fn vertical_layout(size: Rect, app: &App) -> Rc<[Rect]> {
         // Dynamically expand the palette area when suggestions popup is visible
         let mut palette_extra: u16 = 0;
         let show_popup = app.palette.error_message().is_none()
             && app.palette.is_suggestions_open()
-            && !app.browser.is_visible()
-            && !app.help.is_visible()
             && !app.palette.suggestions().is_empty();
         if show_popup {
             let rows = app.palette.suggestions().len().min(10) as u16; // match palette.rs max_rows
@@ -67,8 +67,8 @@ impl MainLayout {
         }
 
         let constraints = [
-            Constraint::Length(2 + palette_extra), // Command palette area (+ suggestions)
-            Constraint::Length(1),                 // Hints area
+            Constraint::Length(5 + palette_extra), // Command palette area (+ suggestions) - increased to accommodate input block
+            Constraint::Length(1),                 // Hints area - moved down by 1 line
             Constraint::Min(1),                    // logs / output content
         ];
 
@@ -76,6 +76,5 @@ impl MainLayout {
             .direction(Direction::Vertical)
             .constraints(constraints)
             .split(size)
-            .to_vec()
     }
 }

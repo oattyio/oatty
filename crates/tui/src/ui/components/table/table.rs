@@ -4,7 +4,7 @@
 //! displays JSON results from command execution in a tabular format with
 //! scrolling and navigation capabilities.
 use crossterm::event::{KeyCode, KeyEvent};
-use heroku_types::Pagination;
+use heroku_types::{Effect, Msg, Pagination};
 use heroku_util::format_date_mmddyyyy;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::{
@@ -18,7 +18,6 @@ use serde_json::Value;
 
 use crate::{
     app,
-    app::Effect,
     ui::{
         components::{PaginationComponent, component::Component, table::TableFooter},
         theme::{helpers as th, roles::Theme as UiTheme},
@@ -323,12 +322,14 @@ impl Component for TableComponent<'_> {
             KeyCode::End => {
                 app.table.reduce_end();
             }
-            // Toggle handled via App message; keep consistent with global actions
-            KeyCode::Char('t') => {
-                let _ = app.update(app::Msg::ToggleTable);
-            }
             KeyCode::Char('c') => {
-                effects.extend(app.update(app::Msg::CopyCommand));
+                if let Some(value) = app.table.selected_data() {
+                    let s = serde_json::to_string(value).ok().unwrap_or_default();
+                    effects.extend(app.update(Msg::CopyToClipboard(s)));
+                }
+            }
+            KeyCode::Esc => {
+                effects.push(Effect::CloseModal);
             }
             _ => {}
         }

@@ -1,4 +1,5 @@
 //! Plugins details component for displaying plugin information in a modal overlay.
+use heroku_types::{Effect, Msg};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -7,11 +8,10 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::app::Effect;
 use crate::ui::components::component::Component;
 use crate::ui::theme::{Theme, helpers as th};
 
-use super::state::PluginsState;
+use super::PluginsState;
 
 /// Component for rendering the plugin details modal overlay.
 #[derive(Debug, Default)]
@@ -22,7 +22,7 @@ impl Component for PluginsDetailsComponent {
         Vec::new()
     }
 
-    fn update(&mut self, _app: &mut crate::app::App, _msg: &crate::app::Msg) -> Vec<Effect> {
+    fn update(&mut self, _app: &mut crate::app::App, _msg: &Msg) -> Vec<Effect> {
         Vec::new()
     }
 

@@ -26,7 +26,7 @@ impl PluginHintsBar<'_> {
                 Span::styled("Hints: ", theme.text_muted_style()),
                 Span::styled("Ctrl-f", theme.accent_emphasis_style()),
                 Span::styled(" search  ", theme.text_muted_style()),
-                Span::styled("Ctrl-k", theme.accent_emphasis_style()),
+                Span::styled("Esc", theme.accent_emphasis_style()),
                 Span::styled(" clear  ", theme.text_muted_style()),
                 Span::styled("Enter/Ctrl-d", theme.accent_emphasis_style()),
                 Span::styled(" details  ", theme.text_muted_style()),

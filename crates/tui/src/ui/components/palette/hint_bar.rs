@@ -14,11 +14,11 @@ use ratatui::{
 use crate::{app, ui::components::component::Component};
 
 #[derive(Debug, Default)]
-pub struct HintBarComponent<'a> {
+pub struct PaletteHintBar<'a> {
     hints: Option<Paragraph<'a>>,
 }
 
-impl HintBarComponent<'_> {
+impl PaletteHintBar<'_> {
     fn hints(&mut self, app: &mut app::App) -> &Paragraph<'_> {
         if self.hints.is_none() {
             let theme = &*app.ctx.theme;
@@ -31,10 +31,8 @@ impl HintBarComponent<'_> {
                     Span::styled(" cycle  ", theme.text_muted_style()),
                     Span::styled("Enter", theme.accent_emphasis_style()),
                     Span::styled(" accept  ", theme.text_muted_style()),
-                    Span::styled("Ctrl-F", theme.accent_emphasis_style()),
-                    Span::styled(" builder  ", theme.text_muted_style()),
-                    Span::styled("Ctrl-p", theme.accent_emphasis_style()),
-                    Span::styled(" plugins  ", theme.text_muted_style()),
+                    Span::styled("Ctrl+h", theme.accent_emphasis_style()),
+                    Span::styled(" help  ", theme.text_muted_style()),
                     Span::styled("Esc", theme.accent_emphasis_style()),
                     Span::styled(" cancel", theme.text_muted_style()),
                 ]))
@@ -45,7 +43,7 @@ impl HintBarComponent<'_> {
     }
 }
 
-impl Component for HintBarComponent<'_> {
+impl Component for PaletteHintBar<'_> {
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
         frame.render_widget(self.hints(app), rect);
     }

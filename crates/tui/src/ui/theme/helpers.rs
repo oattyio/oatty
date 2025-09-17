@@ -1,7 +1,9 @@
 use ratatui::{
+    Frame,
+    layout::Rect,
     style::{Color, Modifier, Style},
     text::Span,
-    widgets::{Block, BorderType, Borders, Paragraph, Tabs},
+    widgets::{Block, BorderType, Borders, Padding, Paragraph, Tabs},
 };
 
 use super::roles::Theme;
@@ -140,10 +142,18 @@ pub fn button_primary_style<T: Theme + ?Sized>(theme: &T, enabled: bool) -> Styl
 }
 
 /// Secondary button style (outline-like, rely on border color in Block).
-pub fn button_secondary_style<T: Theme + ?Sized>(theme: &T, enabled: bool) -> Style {
+pub fn button_secondary_style<T: Theme + ?Sized>(theme: &T, enabled: bool, selected: bool) -> Style {
     if enabled {
-        let ThemeRoles { accent_secondary, .. } = theme.roles().clone();
-        Style::default().fg(accent_secondary)
+        let ThemeRoles {
+            accent_secondary,
+            selection_bg,
+            ..
+        } = theme.roles().clone();
+        let style = Style::default().fg(accent_secondary);
+        if selected {
+            return style.bg(selection_bg);
+        }
+        return style;
     } else {
         theme.text_muted_style()
     }
@@ -160,4 +170,47 @@ pub fn badge_style<T: Theme + ?Sized>(theme: &T) -> Style {
 #[allow(dead_code)]
 pub fn paragraph<'a, T: Theme + ?Sized>(theme: &T, text: impl Into<Span<'a>>) -> Paragraph<'a> {
     Paragraph::new(text.into()).style(theme.text_primary_style())
+}
+
+/// Renders a standard button
+pub fn render_button<T: Theme + ?Sized>(
+    frame: &mut Frame,
+    area: Rect,
+    label: &str,
+    is_enabled: bool,
+    is_focused: bool,
+    is_selected: bool,
+    theme: &T,
+    borders: Borders,
+) {
+    let border_style = if is_enabled {
+        theme.border_style(is_focused)
+    } else {
+        theme.text_muted_style()
+    };
+
+    let button_style = if is_enabled {
+        button_secondary_style(theme, true, is_selected)
+    } else {
+        theme.text_muted_style()
+    };
+
+    let padding = if borders.is_empty() {
+        Padding::uniform(1) // Add padding when no borders to match bordered button size
+    } else {
+        Padding::uniform(0) // No padding when borders are present
+    };
+
+    frame.render_widget(
+        Paragraph::new(label)
+            .centered()
+            .block(
+                Block::bordered()
+                    .borders(borders)
+                    .border_style(border_style)
+                    .padding(padding),
+            )
+            .style(button_style),
+        area,
+    );
 }

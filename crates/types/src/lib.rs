@@ -208,21 +208,6 @@ pub struct Field {
     pub enum_idx: Option<usize>,
 }
 
-/// Top-level screens available for the application to display.
-///
-/// This represents the primary navigation state for the TUI. Modal overlays
-/// (help, table, builder) remain separate toggles so they can appear atop any
-/// route.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum Screen {
-    #[default]
-    Home,
-    Browser,
-    Builder,
-    Table,
-    Help,
-}
-
 /// Result of an asynchronous command execution.
 ///
 /// This struct contains the outcome of a command execution including
@@ -255,6 +240,112 @@ pub struct Pagination {
     #[serde(default)]
     pub next_range: Option<String>,
 }
+
+/// Messages that can be sent to update the application state.
+///
+/// This enum defines all the possible user actions and system events
+/// that can trigger state changes in the application.
+#[derive(Debug, Clone)]
+pub enum Msg {
+    /// Execute the current command
+    Run,
+    /// Copy the current command to clipboard
+    CopyToClipboard(String),
+    /// Periodic UI tick (e.g., throbbers)
+    Tick,
+    /// Terminal resized
+    Resize(u16, u16),
+    /// Background execution completed with outcome
+    ExecCompleted(ExecOutcome),
+    // Logs interactions
+    /// Move log selection cursor up
+    LogsUp,
+    /// Move log selection cursor down
+    LogsDown,
+    /// Extend selection upwards (Shift+Up)
+    LogsExtendUp,
+    /// Extend selection downwards (Shift+Down)
+    LogsExtendDown,
+    /// Open details for the current selection
+    LogsOpenDetail,
+    /// Close details view and return to list
+    LogsCloseDetail,
+    /// Copy current selection (redacted)
+    LogsCopy,
+    /// Toggle pretty/raw for single API response
+    LogsTogglePretty,
+}
+
+/// Side effects that can be triggered by state changes.
+///
+/// This enum defines actions that should be performed as a result
+/// of state changes, such as copying to clipboard or showing notifications.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
+pub enum Effect {
+    /// Request to copy the current command to clipboard
+    CopyToClipboardRequested(String),
+    /// Request to copy the current logs selection (already rendered/redacted)
+    CopyLogsRequested(String),
+    /// Request the next page using the Raw Next-Range header
+    NextPageRequested(String),
+    /// Request the previous page using the prior Range header, if any
+    PrevPageRequested,
+    /// Request the first page using the initial Range header (or none)
+    FirstPageRequested,
+    /// Load MCP plugins from config into PluginsState
+    PluginsLoadRequested,
+    /// Refresh plugin statuses/health
+    PluginsRefresh,
+    /// Start the selected plugin
+    PluginsStart(String),
+    /// Stop the selected plugin
+    PluginsStop(String),
+    /// Restart the selected plugin
+    PluginsRestart(String),
+    /// Open logs drawer for a plugin
+    PluginsOpenLogs(String),
+    /// Refresh logs for open logs drawer (follow mode)
+    PluginsRefreshLogs(String),
+    /// Export logs for a plugin to a default location (redacted)
+    PluginsExportLogsDefault(String),
+    /// Open environment editor for a plugin
+    PluginsOpenSecrets(String),
+    /// Save environment changes for a plugin (key/value pairs)
+    PluginsSaveEnv {
+        name: String,
+        rows: Vec<(String, String)>,
+    },
+    /// Open add plugin view
+    PluginsOpenAdd,
+    /// Open the secrets view
+    PluginsValidateAdd,
+    /// Apply add plugin patch
+    PluginsApplyAdd,
+    // Cancel adding a new plugin
+    PluginsCancel,
+    // Change the main view
+    SwitchTo(Route),
+    // Display a modal view
+    ShowModal(Modal),
+    // Hide any open modals
+    CloseModal,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Route {
+    Palette,
+    Browser,
+    Plugins,
+}
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Modal {
+    Help,
+    Secrets,
+    Results,
+}
+
+pub struct ValidationResult {}
 
 #[cfg(test)]
 mod tests {

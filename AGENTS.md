@@ -93,3 +93,73 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a full overview of crates, command/re
 - **Unit tests:** Co-locate simple reducers/selectors under `#[cfg(test)]` in `state.rs` or the component module. Favor pure functions for parsing/formatting.
 - **Manual checks:** Run `cargo run -p heroku-cli` and verify focus, key handling, and styling in a small terminal. Use `RUST_LOG=debug` and `DEBUG=1` to surface useful info.
 - **CI hygiene:** `cargo fmt --all`, `cargo clippy --workspace -- -D warnings`, and `cargo test --workspace` must be clean.
+
+## General Use Instructions for AI Assistants
+
+When working on this codebase, follow these guidelines to ensure consistent, high-quality code:
+
+### Code Organization & Refactoring
+- **Break down long functions**: Functions over 50 lines should be decomposed into smaller, focused helper functions
+- **Expand abbreviations**: Use full descriptive names instead of abbreviations (e.g., `ctx` → `context`, `msg` → `message`, `out` → `outcome`)
+- **Add comprehensive documentation**: Every public function, struct, and enum should have detailed doc blocks explaining purpose, arguments, return values, and examples
+- **Apply idiomatic Rust**: Follow Rust best practices, use proper error handling, and leverage Rust's type system effectively
+- **Single responsibility principle**: Each function should have one clear purpose and responsibility
+
+### Naming Conventions
+- **Variables**: Use descriptive names that explain intent (e.g., `execution_outcome` instead of `out`, `selected_command_spec` instead of `spec`)
+- **Functions**: Use verb-noun patterns for clarity (e.g., `handle_execution_completion`, `process_general_execution_result`)
+- **Constants**: Use `SCREAMING_SNAKE_CASE` with descriptive names (e.g., `MAX_LOG_ENTRIES`)
+- **Types**: Use `PascalCase` with clear, descriptive names
+- **Modules**: Use `snake_case` with descriptive names
+
+### Documentation Standards
+- **Module-level docs**: Start each module with a comprehensive doc block explaining its purpose and responsibilities
+- **Function docs**: Include purpose, arguments, return values, examples, and any side effects
+- **Struct/Enum docs**: Explain the purpose, usage patterns, and relationships to other types
+- **Inline comments**: Add comments for complex logic, business rules, and non-obvious decisions
+- **Examples**: Provide usage examples in doc blocks where helpful
+
+### Function Extraction Guidelines
+- **Extract when**: Functions exceed 30-50 lines, have multiple responsibilities, or contain complex nested logic
+- **Naming**: Use descriptive names that clearly indicate the function's purpose
+- **Parameters**: Keep parameter lists focused and use descriptive names
+- **Return values**: Make return types clear and well-documented
+- **Error handling**: Use proper Rust error handling patterns (`Result<T, E>`, `Option<T>`)
+
+### Code Quality Checklist
+Before submitting changes, ensure:
+- [ ] All functions have comprehensive documentation
+- [ ] Abbreviations have been expanded to full descriptive names
+- [ ] Long functions have been broken down into smaller, focused functions
+- [ ] Variable names are descriptive and self-documenting
+- [ ] Code follows idiomatic Rust patterns
+- [ ] All linting errors have been resolved (`cargo clippy --workspace -- -D warnings`)
+- [ ] Code is properly formatted (`cargo fmt --all`)
+- [ ] All tests pass (`cargo test --workspace`)
+
+### Refactoring Process
+1. **Read and understand** the existing code structure and purpose
+2. **Identify** areas for improvement (long functions, abbreviations, missing docs)
+3. **Plan** the refactoring approach (what to extract, how to name things)
+4. **Implement** changes incrementally, testing after each major change
+5. **Verify** that functionality remains intact and code quality improves
+6. **Document** any architectural decisions or patterns established
+
+### Common Patterns to Apply
+- **State management**: Use clear state structs with descriptive field names
+- **Event handling**: Break down complex event handlers into focused methods
+- **Rendering**: Separate rendering logic into focused, reusable functions
+- **Error handling**: Use descriptive error types and proper error propagation
+- **Resource management**: Use appropriate Rust patterns for cleanup and resource management
+
+### Testing Considerations
+- **Unit tests**: Add tests for extracted helper functions when they contain business logic
+- **Integration tests**: Ensure refactored code still works correctly in the broader system
+- **Manual testing**: Test UI changes manually to ensure behavior is preserved
+- **Performance**: Verify that refactoring doesn't introduce performance regressions
+
+### Communication
+- **Explain changes**: Document why changes were made and what benefits they provide
+- **Preserve functionality**: Ensure that refactoring doesn't change external behavior
+- **Maintain compatibility**: Keep public APIs stable unless explicitly changing them
+- **Follow conventions**: Adhere to existing code patterns and architectural decisions

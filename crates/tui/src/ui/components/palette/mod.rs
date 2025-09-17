@@ -5,6 +5,6 @@ pub mod providers;
 pub mod state;
 pub mod suggest;
 
-pub use hint_bar::HintBarComponent;
+pub use hint_bar::PaletteHintBar;
 pub use palette::PaletteComponent;
 pub use state::PaletteState;

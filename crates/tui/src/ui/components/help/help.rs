@@ -3,17 +3,20 @@
 //! This module provides a component for rendering the help modal, which
 //! displays comprehensive documentation for Heroku commands including usage
 //! syntax, arguments, options, and examples.
-use heroku_types::CommandSpec;
+use std::vec;
+
+use crossterm::event::{KeyCode, KeyEvent};
+use heroku_types::{CommandSpec, Effect};
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::Modifier,
-    text::{Line, Span, Text},
+    text::{Line, Text},
     widgets::{Clear, Paragraph, Wrap},
 };
 
 use crate::{
-    app,
+    app::{self, App},
     ui::{components::component::Component, theme::helpers as th, utils::centered_rect},
 };
 
@@ -163,26 +166,19 @@ impl Component for HelpComponent {
         frame.render_widget(Clear, area);
         frame.render_widget(block.clone(), area);
         let inner = block.inner(area);
-        let splits = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(1)])
-            .split(inner);
 
         // Content paragraph inside inner content rect
-        let p = Paragraph::new(text)
+        let paragraph = Paragraph::new(text)
             .style(app.ctx.theme.text_primary_style())
             .wrap(Wrap { trim: false });
-        frame.render_widget(p, splits[0]);
+        frame.render_widget(paragraph, inner);
+    }
 
-        // Footer hint pinned to baseline (styled)
-        let footer = Paragraph::new(Line::from(vec![
-            Span::styled("Hint: ", app.ctx.theme.text_muted_style()),
-            Span::styled("Ctrl+H", app.ctx.theme.accent_emphasis_style()),
-            Span::styled(" close  ", app.ctx.theme.text_muted_style()),
-            Span::styled("Ctrl+Y", app.ctx.theme.accent_emphasis_style()),
-            Span::styled(" copy", app.ctx.theme.text_muted_style()),
-        ]))
-        .style(app.ctx.theme.text_muted_style());
-        frame.render_widget(footer, splits[1]);
+    fn handle_key_events(&mut self, _app: &mut App, key: KeyEvent) -> Vec<Effect> {
+        match key.code {
+            KeyCode::Esc => vec![Effect::CloseModal],
+
+            _ => vec![],
+        }
     }
 }

@@ -1,4 +1,4 @@
-use rat_focus::FocusFlag;
+use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::{
     layout::Constraint,
     style::Style,
@@ -16,7 +16,6 @@ use crate::ui::{
 
 #[derive(Debug, Default)]
 pub struct TableState<'a> {
-    visible: bool,
     offset: usize,
     selected: usize,
     visible_rows: usize,
@@ -32,9 +31,6 @@ pub struct TableState<'a> {
 
 impl<'a> TableState<'_> {
     // Selectors
-    pub fn is_visible(&self) -> bool {
-        self.visible
-    }
     pub fn count_offset(&self) -> usize {
         self.offset
     }
@@ -72,28 +68,10 @@ impl<'a> TableState<'_> {
         None
     }
 
-    // Reducers
-    pub fn toggle_show(&mut self) {
-        self.visible = !self.visible;
-        if self.visible {
-            self.offset = 0;
-            self.selected = 0;
-            self.grid_f.set(true);
-        }
-    }
-
-    pub fn apply_visible(&mut self, show: bool) {
-        // Only reset and focus grid when transitioning from hidden -> visible.
-        if show {
-            if !self.visible {
-                self.visible = true;
-                self.offset = 0;
-                self.selected = 0;
-                self.grid_f.set(true);
-            }
-        } else {
-            self.visible = false;
-        }
+    pub fn normalize(&mut self) {
+        self.offset = 0;
+        self.selected = 0;
+        self.grid_f.set(true);
     }
 
     pub fn apply_result_json(&mut self, value: Option<Value>, theme: &dyn UiTheme) {
@@ -230,5 +208,20 @@ impl<'a> TableState<'_> {
             return arr_opt;
         }
         None
+    }
+}
+
+impl HasFocus for TableState<'_> {
+    fn build(&self, builder: &mut FocusBuilder) {
+        // Single focusable grid area; treat as a leaf.
+        builder.leaf_widget(self.grid_focus());
+    }
+
+    fn focus(&self) -> FocusFlag {
+        self.grid_f.clone()
+    }
+
+    fn area(&self) -> ratatui::layout::Rect {
+        ratatui::layout::Rect::default()
     }
 }

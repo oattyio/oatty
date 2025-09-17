@@ -57,8 +57,10 @@ fn token_index_at_cursor(input: &str, cursor: usize) -> Option<usize> {
 /// input text, cursor position, suggestions, and error states.
 #[derive(Clone, Debug)]
 pub struct PaletteState {
-    /// Focus flag for rat-focus integration
-    pub focus: FocusFlag,
+    /// Focus flag for self
+    focus: FocusFlag,
+    /// Focus flag for the input field
+    f_input: FocusFlag,
     /// Every command available
     all_commands: Arc<[CommandSpec]>,
     /// The current input text
@@ -92,7 +94,8 @@ pub struct PaletteState {
 impl Default for PaletteState {
     fn default() -> Self {
         Self {
-            focus: FocusFlag::default(),
+            focus: FocusFlag::named("heroku.palette"),
+            f_input: FocusFlag::named("heroku.palette.input"),
             all_commands: Arc::from([]),
             input: String::new(),
             cursor_position: 0,
@@ -107,6 +110,22 @@ impl Default for PaletteState {
             history_index: None,
             draft_input: None,
         }
+    }
+}
+
+impl HasFocus for PaletteState {
+    fn build(&self, builder: &mut FocusBuilder) {
+        let tag = builder.start(self);
+        builder.leaf_widget(&self.f_input);
+        builder.end(tag);
+    }
+
+    fn focus(&self) -> FocusFlag {
+        self.focus.clone()
+    }
+
+    fn area(&self) -> Rect {
+        Rect::default()
     }
 }
 
@@ -908,20 +927,6 @@ impl PaletteState {
             });
         }
         None
-    }
-}
-
-impl HasFocus for PaletteState {
-    fn build(&self, builder: &mut FocusBuilder) {
-        builder.leaf_widget(self);
-    }
-
-    fn focus(&self) -> FocusFlag {
-        self.focus.clone()
-    }
-
-    fn area(&self) -> Rect {
-        Rect::default()
     }
 }
 

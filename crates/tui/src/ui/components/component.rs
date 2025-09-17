@@ -4,10 +4,13 @@
 //! modular UI development. Components are self-contained UI elements that
 //! handle their own state, events, and rendering while integrating with the
 //! main application through a consistent interface.
+use std::fmt::Debug;
+
 use crossterm::event::{KeyEvent, MouseEvent};
+use heroku_types::{Effect, Msg};
 use ratatui::{Frame, layout::Rect};
 
-use crate::app::{Effect, Msg};
+use crate::app::App;
 
 /// A trait representing a UI component with its own state and behavior.
 ///
@@ -74,7 +77,7 @@ use crate::app::{Effect, Msg};
 ///     }
 /// }
 /// ```
-pub(crate) trait Component {
+pub trait Component: Debug {
     /// Handle a generic application-level message the component cares about.
     ///
     /// This method allows components to respond to application-wide messages
@@ -89,21 +92,6 @@ pub(crate) trait Component {
     /// # Returns
     ///
     /// Vector of effects that the application should process
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// fn handle_events(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-    ///     match msg {
-    ///         Msg::ToggleHelp => {
-    ///             self.show_help = !self.show_help;
-    ///             vec![]
-    ///         }
-    ///         _ => vec![]
-    ///     }
-    /// }
-    /// ```
-    #[allow(dead_code)]
     fn handle_events(&mut self, _app: &mut crate::app::App, _msg: &Msg) -> Vec<Effect> {
         Vec::new()
     }
@@ -237,5 +225,5 @@ pub(crate) trait Component {
     ///     frame.render_widget(widget, rect);
     /// }
     /// ```
-    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut crate::app::App);
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App);
 }

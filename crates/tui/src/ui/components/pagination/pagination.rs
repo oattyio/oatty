@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent};
-use heroku_types::Pagination;
+use heroku_types::{Effect, Pagination};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -9,9 +9,12 @@ use ratatui::{
 };
 
 use super::state::PaginationState;
-use crate::ui::{
-    components::component::Component,
-    theme::{helpers as th, roles::Theme as UiTheme},
+use crate::{
+    app::App,
+    ui::{
+        components::component::Component,
+        theme::{helpers as th, roles::Theme as UiTheme},
+    },
 };
 
 /// Pagination component for range-based navigation and controls.
@@ -92,7 +95,7 @@ impl PaginationComponent {
     ///
     /// Shows the current range field and start/end values as display-only
     /// widgets without any interactive input.
-    fn render_range_controls(&mut self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
+    fn render_range_controls(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         if !self.state.range_mode {
             return;
         }
@@ -201,7 +204,7 @@ impl PaginationComponent {
     /// * `frame` - The ratatui frame to render into
     /// * `area` - The rectangular area to render within
     /// * `app` - The application state for theme and focus information
-    fn render_navigation_controls(&self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
+    fn render_navigation_controls(&self, frame: &mut Frame, area: Rect, app: &mut App) {
         let theme = &*app.ctx.theme;
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -307,7 +310,7 @@ impl PaginationComponent {
         let button_style = if enabled {
             // Keep size stable on focus by avoiding bold; rely on border color
             // for focus indication.
-            th::button_secondary_style(theme, true)
+            th::button_secondary_style(theme, true, false)
         } else {
             // Stronger disabled styling: muted text + dim
             theme.text_muted_style().add_modifier(Modifier::DIM)
@@ -347,12 +350,12 @@ impl PaginationComponent {
     ///
     /// # Arguments
     /// * `event` - The key event that triggered the navigation
-    fn handle_navigation_actions(&mut self, event: &KeyEvent) -> Option<crate::app::Effect> {
+    fn handle_navigation_actions(&mut self, event: &KeyEvent) -> Option<Effect> {
         match event.code {
             KeyCode::Left => {
                 if self.state.has_prev_page() {
                     self.state.prev_page();
-                    Some(crate::app::Effect::PrevPageRequested)
+                    Some(Effect::PrevPageRequested)
                 } else {
                     None
                 }
@@ -362,7 +365,7 @@ impl PaginationComponent {
                 if self.state.has_next_page() {
                     self.state.next_range.clone().map(|next_range| {
                         self.state.current_page = self.state.current_page.saturating_add(1);
-                        crate::app::Effect::NextPageRequested(next_range)
+                        Effect::NextPageRequested(next_range)
                     })
                 } else {
                     None
@@ -371,7 +374,7 @@ impl PaginationComponent {
             KeyCode::Home => {
                 if self.state.has_prev_page() {
                     self.state.first_page();
-                    Some(crate::app::Effect::FirstPageRequested)
+                    Some(Effect::FirstPageRequested)
                 } else {
                     None
                 }
@@ -398,7 +401,7 @@ impl Component for PaginationComponent {
     /// * `frame` - The ratatui frame to render into
     /// * `area` - The rectangular area to render within
     /// * `app` - The application state for theme and focus information
-    fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         if !self.state.is_visible {
             return;
         }
@@ -431,7 +434,7 @@ impl Component for PaginationComponent {
     ///
     /// # Returns
     /// Vector of effects to be processed by the application
-    fn handle_key_events(&mut self, _app: &mut crate::app::App, event: KeyEvent) -> Vec<crate::app::Effect> {
+    fn handle_key_events(&mut self, _app: &mut App, event: KeyEvent) -> Vec<Effect> {
         if !self.state.is_visible {
             return vec![];
         }
@@ -452,18 +455,18 @@ impl Component for PaginationComponent {
                 // Activate the focused nav button
                 if self.state.nav_first_f.get() && self.state.has_prev_page() {
                     self.state.first_page();
-                    return vec![crate::app::Effect::FirstPageRequested];
+                    return vec![Effect::FirstPageRequested];
                 }
                 if self.state.nav_prev_f.get() && self.state.has_prev_page() {
                     self.state.prev_page();
-                    return vec![crate::app::Effect::PrevPageRequested];
+                    return vec![Effect::PrevPageRequested];
                 }
                 if (self.state.nav_next_f.get() || self.state.nav_last_f.get())
                     && self.state.has_next_page()
                     && let Some(next_range) = self.state.next_range.clone()
                 {
                     self.state.current_page = self.state.current_page.saturating_add(1);
-                    return vec![crate::app::Effect::NextPageRequested(next_range)];
+                    return vec![Effect::NextPageRequested(next_range)];
                 }
             }
             _ => {}

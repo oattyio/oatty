@@ -7,7 +7,8 @@
 use std::vec;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use heroku_types::ItemKind;
+use heroku_types::{Effect, ItemKind, Modal, Msg};
+use rat_focus::HasFocus;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -17,9 +18,10 @@ use ratatui::{
 };
 
 use crate::{
-    app::{self, Effect, SharedCtx},
+    app::{self, SharedCtx},
     ui::{
-        components::component::Component,
+        components::{LogsComponent, component::Component, palette::PaletteHintBar},
+        layout::MainLayout,
         theme::{Theme, helpers as th},
     },
 };
@@ -59,13 +61,16 @@ static FRAMES: [&'static str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "
 /// palette.init()?;
 /// ```
 #[derive(Debug, Default)]
-pub struct PaletteComponent;
+pub struct PaletteComponent<'a> {
+    hints_bar: PaletteHintBar<'a>,
+    logs: LogsComponent,
+}
 
-impl PaletteComponent {
+impl PaletteComponent<'_> {
     /// Creates the input paragraph widget with current state.
     ///
     /// This function creates the input paragraph with throbber, input text, and
-    /// ghost text.
+    /// ghost text, styled to match the browser's input appearance.
     ///
     /// # Arguments
     ///
@@ -74,19 +79,15 @@ impl PaletteComponent {
     ///
     /// # Returns
     ///
-    /// The input paragraph widget
-    fn create_input_paragraph(&'_ self, app: &app::App, theme: &dyn Theme) -> Paragraph<'_> {
-        let dimmed = app.browser.is_visible() || app.help.is_visible();
-        let base_style = if dimmed {
-            theme.text_muted_style()
-        } else {
-            theme.text_primary_style()
-        };
-
-        let mut spans: Vec<Span> = Vec::new();
+    /// The input paragraph widget with proper block styling
+    fn create_input_paragraph<'a>(&self, app: &'a app::App, theme: &'a dyn Theme) -> Paragraph<'a> {
+        let mut spans: Vec<Span<'a>> = Vec::new();
 
         // Add main input text
-        spans.push(Span::styled(app.palette.input().to_string(), base_style));
+        spans.push(Span::styled(
+            app.palette.input().to_string(),
+            theme.text_primary_style(),
+        ));
 
         // Add ghost text if available
         if let Some(ghost) = app.palette.ghost_text()
@@ -101,7 +102,34 @@ impl PaletteComponent {
             spans.push(Span::styled(format!(" {}", sym), theme.accent_emphasis_style()));
         }
 
-        Paragraph::new(Line::from(spans)).block(Block::default())
+        // Create block with title and focus styling, matching browser input
+        let input_title = self.create_input_title(theme);
+        let is_focused = app.palette.is_focused();
+        let mut input_block = th::block(theme, None, is_focused);
+        input_block = input_block.title(input_title);
+
+        Paragraph::new(Line::from(spans))
+            .style(theme.text_primary_style())
+            .block(input_block)
+    }
+
+    /// Creates the title for the input panel.
+    ///
+    /// This method generates the title line for the input panel, matching
+    /// the browser's input styling approach.
+    ///
+    /// # Arguments
+    ///
+    /// * `theme` - The current theme for styling
+    ///
+    /// # Returns
+    ///
+    /// * `Line<'_>` - The formatted title line
+    fn create_input_title<'a>(&self, theme: &'a dyn Theme) -> Line<'a> {
+        Line::from(Span::styled(
+            "Command Palette",
+            theme.text_secondary_style().add_modifier(Modifier::BOLD),
+        ))
     }
 
     /// Creates the error paragraph widget if an error exists.
@@ -116,7 +144,7 @@ impl PaletteComponent {
     /// # Returns
     ///
     /// The error paragraph widget, or None if no error
-    fn create_error_paragraph(&'_ self, app: &app::App, theme: &dyn Theme) -> Option<Paragraph<'_>> {
+    fn create_error_paragraph<'a>(&self, app: &'a app::App, theme: &'a dyn Theme) -> Option<Paragraph<'a>> {
         if let Some(err) = app.palette.error_message() {
             let line = Line::from(vec![
                 Span::styled("✖ ".to_string(), Style::default().fg(theme.roles().error)),
@@ -142,14 +170,7 @@ impl PaletteComponent {
     ///
     /// The suggestions list widget
     fn create_suggestions_list<'a>(&'_ self, app: &'a app::App, theme: &dyn Theme) -> List<'a> {
-        // Create popup with border
-        let popup_block = Block::default()
-            .borders(Borders::TOP)
-            .border_style(Style::default().fg(theme.roles().focus))
-            .border_type(BorderType::Plain);
-
         List::new(app.palette.rendered_suggestions().to_vec())
-            .block(popup_block)
             .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
             .style(th::panel_style(theme))
             .highlight_symbol("► ")
@@ -170,24 +191,21 @@ impl PaletteComponent {
     /// # Returns
     ///
     /// The split layout areas
-    fn render_palette_border(&mut self, frame: &mut Frame, rect: Rect, theme: &dyn Theme) -> Vec<Rect> {
-        let block = Block::default()
-            .borders(Borders::LEFT)
-            .border_style(theme.border_style(true))
-            .border_type(BorderType::Thick)
-            .style(th::panel_style(theme));
-
-        frame.render_widget(block.clone(), rect);
-
-        let inner = block.inner(rect);
+    fn render_palette_border(
+        &mut self,
+        _frame: &mut Frame,
+        rect: Rect,
+        _theme: &dyn Theme,
+        _focused: bool,
+    ) -> Vec<Rect> {
         let splits = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(1), // Input line
+                Constraint::Length(3), // Input line (increased to accommodate block with title and borders)
                 Constraint::Min(1),    // Content area (error messages, suggestions)
                 Constraint::Length(1), // Footer area
             ])
-            .split(inner);
+            .split(rect);
 
         splits.to_vec()
     }
@@ -196,30 +214,38 @@ impl PaletteComponent {
     ///
     /// This function calculates the correct cursor position based on the
     /// current cursor position in the palette input, accounting for
-    /// character count rather than byte count. The cursor is hidden when
-    /// modals are open.
+    /// character count rather than byte count and the block's inner area.
+    /// The cursor is hidden when modals are open.
     ///
     /// # Arguments
     ///
     /// * `frame` - The frame to set cursor position on
     /// * `input_area` - The rectangular area of the input line
     /// * `app` - The application state containing palette data
-    fn position_cursor(frame: &mut Frame, input_area: Rect, app: &app::App) {
-        let dimmed = app.browser.is_visible() || app.help.is_visible();
-        if dimmed {
-            return;
+    /// * `theme` - The current theme for styling
+    fn position_cursor(frame: &mut Frame, input_area: Rect, app: &app::App, theme: &dyn Theme) {
+        if app.palette.is_focused() {
+            // Create the same block structure to get the inner area
+            let input_title = Line::from(Span::styled(
+                "Command Palette",
+                theme.text_secondary_style().add_modifier(Modifier::BOLD),
+            ));
+            let is_focused = app.palette.is_focused();
+            let mut input_block = th::block(theme, None, is_focused);
+            input_block = input_block.title(input_title);
+            let inner_area = input_block.inner(input_area);
+
+            let col = app
+                .palette
+                .input()
+                .get(..app.palette.selected_cursor_position())
+                .map(|s| s.chars().count() as u16)
+                .unwrap_or(0);
+
+            let x = inner_area.x.saturating_add(col);
+            let y = inner_area.y;
+            frame.set_cursor_position((x, y));
         }
-
-        let col = app
-            .palette
-            .input()
-            .get(..app.palette.selected_cursor_position())
-            .map(|s| s.chars().count() as u16)
-            .unwrap_or(0);
-
-        let x = input_area.x.saturating_add(col);
-        let y = input_area.y;
-        frame.set_cursor_position((x, y));
     }
 
     /// Handles character input in the command palette.
@@ -249,7 +275,7 @@ impl PaletteComponent {
     /// # Arguments
     ///
     /// * `app` - The application state to update
-    fn handle_help_request(&self, app: &mut app::App) {
+    fn handle_help_request(&self, app: &mut app::App) -> Vec<Effect> {
         // Ensure suggestions are up to date, then fetch effective command
         let SharedCtx {
             registry, providers, ..
@@ -259,8 +285,9 @@ impl PaletteComponent {
         let spec = app.palette.selected_command();
         if spec.is_some() {
             app.help.set_spec(spec.cloned());
-            let _ = app.update(app::Msg::ToggleHelp);
+            return vec![Effect::ShowModal(Modal::Help)];
         }
+        vec![]
     }
 
     /// Handles backspace key press in the command palette.
@@ -334,9 +361,13 @@ impl PaletteComponent {
     ///
     /// * `app` - The application state to update
     fn handle_tab_press(&self, app: &mut app::App) {
+        if app.palette.is_input_empty() {
+            return;
+        }
         let SharedCtx {
             registry, providers, ..
         } = &app.ctx;
+
         app.palette
             .apply_build_suggestions(registry, providers, &*app.ctx.theme);
         // Open popup if we have suggestions or if provider-backed suggestions are loading
@@ -348,7 +379,7 @@ impl PaletteComponent {
     fn handle_enter(&self, app: &mut app::App) {
         // Execute the command
         if !app.palette.is_suggestions_open() {
-            let _ = app.update(app::Msg::Run);
+            let _ = app.update(Msg::Run);
         } else {
             // otherwise, select from the list
             if let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index()).cloned() {
@@ -374,19 +405,6 @@ impl PaletteComponent {
         }
     }
 
-    /// Handles the Ctrl+F key combination to open the command browser.
-    ///
-    /// This function opens the interactive command browser, which
-    /// provides a more structured way to build complex commands with guided
-    /// input for flags, arguments, and options.
-    ///
-    /// # Arguments
-    ///
-    /// * `app` - The application state to update
-    fn handle_builder_request(&self, app: &mut app::App) {
-        let _ = app.update(app::Msg::ToggleBuilder);
-    }
-
     /// Handles the Escape key to clear input and close suggestions.
     ///
     /// This function provides a quick way to reset the command palette by
@@ -406,7 +424,7 @@ impl PaletteComponent {
     }
 }
 
-impl Component for PaletteComponent {
+impl Component for PaletteComponent<'_> {
     /// Renders the command palette with input and suggestions.
     ///
     /// This method orchestrates the rendering of all palette components:
@@ -426,17 +444,17 @@ impl Component for PaletteComponent {
     /// * `rect` - The rectangular area to render in
     /// * `app` - The application state containing palette data
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
+        let chunks = MainLayout::vertical_layout(rect, app);
         let theme = &*app.ctx.theme;
-
         // Render main border and get layout areas
-        let splits = self.render_palette_border(frame, rect, theme);
+        let splits = self.render_palette_border(frame, chunks[0], theme, app.palette.is_focused());
 
         // Render input line with throbber and ghost text
         let input_para = self.create_input_paragraph(app, theme);
         frame.render_widget(input_para, splits[0]);
 
         // Position cursor in input line
-        Self::position_cursor(frame, splits[0], app);
+        Self::position_cursor(frame, splits[0], app, theme);
 
         // Render error message if present
         if let Some(error_para) = self.create_error_paragraph(app, theme) {
@@ -446,8 +464,6 @@ impl Component for PaletteComponent {
         // Render suggestions popup
         let should_show_suggestions = app.palette.error_message().is_none()
             && app.palette.is_suggestions_open()
-            && !app.browser.is_visible()
-            && !app.help.is_visible()
             && !app.palette.suggestions().is_empty();
 
         if should_show_suggestions {
@@ -456,8 +472,8 @@ impl Component for PaletteComponent {
             // Calculate popup dimensions
             let max_rows = 10usize;
             let rows = app.palette.suggestions().len().min(max_rows);
-            let popup_height = rows as u16 + 3;
-            let popup_area = Rect::new(rect.x, rect.y + 1, rect.width, popup_height);
+            let popup_height = rows as u16 + 2;
+            let popup_area = Rect::new(rect.x, rect.y + 3, rect.width, popup_height);
 
             // Update list state
             let sel = if app.palette.suggestions().is_empty() {
@@ -470,6 +486,8 @@ impl Component for PaletteComponent {
 
             frame.render_stateful_widget(suggestions_list, popup_area, &mut list_state);
         }
+        self.hints_bar.render(frame, chunks[1], app);
+        self.logs.render(frame, chunks[2], app);
     }
 
     /// Handle key events for the command palette when the builder is not open.
@@ -505,7 +523,7 @@ impl Component for PaletteComponent {
     /// // Example requires constructing full App and Registry; ignored in doctests.
     /// ```
     fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
-        let effects: Vec<Effect> = vec![];
+        let mut effects: Vec<Effect> = vec![];
         match key.code {
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
                 // Handle character input
@@ -513,7 +531,7 @@ impl Component for PaletteComponent {
             }
             KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 // Handle help request
-                self.handle_help_request(app);
+                effects.extend(self.handle_help_request(app));
             }
             KeyCode::Backspace => {
                 // Handle backspace
@@ -545,17 +563,21 @@ impl Component for PaletteComponent {
                     }
                 }
             }
+            KeyCode::BackTab => {
+                app.focus.prev();
+            }
             KeyCode::Tab => {
-                // Handle suggestions trigger
-                self.handle_tab_press(app);
+                // When input is empty, use Tab/BackTab for focus traversal between palette and logs.
+                if app.palette.is_input_empty() {
+                    app.focus.next();
+                } else {
+                    // Otherwise, Tab refreshes/opens suggestions
+                    self.handle_tab_press(app);
+                }
             }
             KeyCode::Enter => {
                 // Handle enter keypress
                 self.handle_enter(app);
-            }
-            KeyCode::Char('f') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // Handle builder request
-                self.handle_builder_request(app);
             }
             KeyCode::Esc => {
                 // Handle escape
@@ -566,6 +588,3 @@ impl Component for PaletteComponent {
         effects
     }
 }
-
-// rat-focus integration uses PaletteState.focus; component-level HasFocus not
-// needed

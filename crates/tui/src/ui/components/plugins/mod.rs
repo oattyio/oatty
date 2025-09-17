@@ -21,6 +21,6 @@ pub use hints_bar::PluginHintsBar;
 pub use logs::PluginsLogsComponent;
 pub use plugins::PluginsComponent;
 pub use search::PluginsSearchComponent;
-pub use secrets::PluginsSecretsComponent;
-pub use state::{EnvRow, PluginListItem, PluginsState};
+pub use secrets::{EnvRow, PluginSecretsEditorState, PluginsSecretsComponent};
+pub use state::{PluginListItem, PluginsState};
 pub use table::PluginsTableComponent;
