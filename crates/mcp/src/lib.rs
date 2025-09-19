@@ -13,7 +13,7 @@ pub mod types;
 
 pub use config::{ConfigError, McpConfig, McpServer};
 pub use plugin::{PluginEngine, PluginInfo};
-pub use types::{EnvVar, HealthStatus, LogEntry, PluginDetail, PluginStatus};
+pub use types::{EnvVar, HealthStatus, McpLogEntry, PluginDetail, PluginStatus};
 
 /// Local MCP error type (temporary while migrating to ultrafast-mcp APIs)
 #[derive(Debug, thiserror::Error, Clone)]

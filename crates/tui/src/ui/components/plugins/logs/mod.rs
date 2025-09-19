@@ -1,7 +1,7 @@
 //! Plugins logs module: state and component wiring.
 
-mod logs;
+mod logs_component;
 mod state;
 
-pub use logs::PluginsLogsComponent;
+pub use logs_component::PluginsLogsComponent;
 pub use state::PluginLogsState;

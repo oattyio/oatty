@@ -13,7 +13,7 @@ use crate::{
     app::App,
     ui::{
         components::component::Component,
-        theme::{helpers as th, roles::Theme as UiTheme},
+        theme::{roles::Theme as UiTheme, theme_helpers as th},
     },
 };
 
@@ -418,6 +418,35 @@ impl Component for PaginationComponent {
         self.render_range_controls(frame, chunks[0], app);
         self.render_divider(frame, chunks[1], &*app.ctx.theme);
         self.render_navigation_controls(frame, chunks[2], app);
+    }
+
+    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+        if !self.state.is_visible {
+            return Vec::new();
+        }
+
+        let nav_focused = self.state.nav_first_f.get()
+            || self.state.nav_prev_f.get()
+            || self.state.nav_next_f.get()
+            || self.state.nav_last_f.get();
+        if !nav_focused {
+            return Vec::new();
+        }
+
+        let theme = &*app.ctx.theme;
+        let mut spans = Vec::new();
+        if is_root {
+            spans.push(Span::styled("Pagination: ", theme.text_muted_style()));
+        }
+        spans.extend([
+            Span::styled("←/→", theme.accent_emphasis_style()),
+            Span::styled(" navigate  ", theme.text_muted_style()),
+            Span::styled("Home/End", theme.accent_emphasis_style()),
+            Span::styled(" jump  ", theme.text_muted_style()),
+            Span::styled("Enter", theme.accent_emphasis_style()),
+            Span::styled(" select", theme.text_muted_style()),
+        ]);
+        spans
     }
 
     /// Handles keyboard events for the pagination component.

@@ -1,6 +1,8 @@
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 
+use crate::ui::components::plugins::EnvRow;
+
 /// Environment editor state for a plugin
 #[derive(Debug, Default, Clone)]
 pub struct PluginSecretsEditorState {
@@ -11,13 +13,6 @@ pub struct PluginSecretsEditorState {
     pub input: String,
     /// Root focus flag for env overlay
     pub focus: FocusFlag,
-}
-
-#[derive(Debug, Clone)]
-pub struct EnvRow {
-    pub key: String,
-    pub value: String,
-    pub is_secret: bool,
 }
 
 impl PluginSecretsEditorState {

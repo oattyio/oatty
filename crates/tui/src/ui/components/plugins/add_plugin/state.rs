@@ -2,6 +2,7 @@ use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 
 use super::super::EnvRow;
+use super::key_value_editor::KeyValueEditorState;
 
 /// Add Plugin view state
 #[derive(Debug, Clone)]
@@ -16,13 +17,10 @@ pub struct PluginAddViewState {
     pub args: String,
     pub base_url: String,
     /// Optional environment variables for Local (stdio) plugins as key/value rows.
-    pub env: Vec<EnvRow>,
-    /// Inline input for environment variables when adding a Local plugin.
-    pub env_input: String,
-    /// Inline input for HTTP headers when adding a Remote plugin.
-    pub headers_input: String,
-    pub editing: bool,
-    pub input: String,
+    /// Editor state for environment variables on local transports.
+    pub env_editor: KeyValueEditorState,
+    /// Editor state for headers on remote transports.
+    pub header_editor: KeyValueEditorState,
     pub validation: Option<String>,
     pub preview: Option<String>,
     // Focus flags for focusable controls
@@ -49,11 +47,8 @@ impl PluginAddViewState {
             command: String::new(),
             args: String::new(),
             base_url: String::new(),
-            env: Vec::new(),
-            env_input: String::new(),
-            headers_input: String::new(),
-            editing: false,
-            input: String::new(),
+            env_editor: KeyValueEditorState::new(),
+            header_editor: KeyValueEditorState::new(),
             validation: None,
             preview: None,
             focus: FocusFlag::named("plugins.add"),
@@ -110,6 +105,54 @@ impl PluginAddViewState {
                 (base_url_present, name_present && base_url_present)
             }
         }
+    }
+
+    /// Returns the editor that should be used for the active transport mode.
+    pub fn active_key_value_editor(&self) -> &KeyValueEditorState {
+        match self.transport {
+            AddTransport::Local => &self.env_editor,
+            AddTransport::Remote => &self.header_editor,
+        }
+    }
+
+    /// Returns the editor that should be mutated for the active transport mode.
+    pub fn active_key_value_editor_mut(&mut self) -> &mut KeyValueEditorState {
+        match self.transport {
+            AddTransport::Local => &mut self.env_editor,
+            AddTransport::Remote => &mut self.header_editor,
+        }
+    }
+
+    /// Replaces all environment variable rows.
+    pub fn replace_environment_rows(&mut self, rows: Vec<EnvRow>) {
+        self.env_editor.rows = rows;
+        self.env_editor.selected_row_index = None;
+        self.env_editor.mode = Default::default();
+    }
+
+    /// Replaces all header rows for remote transports.
+    pub fn replace_header_rows(&mut self, rows: Vec<EnvRow>) {
+        self.header_editor.rows = rows;
+        self.header_editor.selected_row_index = None;
+        self.header_editor.mode = Default::default();
+    }
+
+    /// Provides a transport-specific label for the key/value table.
+    pub fn key_value_table_label(&self) -> &'static str {
+        match self.transport {
+            AddTransport::Local => "Env Vars",
+            AddTransport::Remote => "Headers",
+        }
+    }
+
+    /// Collects key/value pairs for the active transport, excluding empty keys.
+    pub fn collected_key_value_pairs(&self) -> Vec<(String, String)> {
+        self.active_key_value_editor()
+            .rows
+            .iter()
+            .filter(|row| !row.key.trim().is_empty())
+            .map(|row| (row.key.trim().to_string(), row.value.clone()))
+            .collect()
     }
 }
 

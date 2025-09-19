@@ -29,8 +29,8 @@
 //! // In your render pass, call component.render(...)
 //! ```
 
-mod nav_bar;
+mod nav_bar_component;
 mod state;
 
-pub use nav_bar::VerticalNavBarComponent;
+pub use nav_bar_component::VerticalNavBarComponent;
 pub use state::{NavItem, VerticalNavBarState};

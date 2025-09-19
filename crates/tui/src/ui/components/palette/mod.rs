@@ -1,10 +1,7 @@
-#![allow(clippy::module_inception)]
-pub mod hint_bar;
-pub mod palette;
+pub mod palette_component;
 pub mod providers;
 pub mod state;
-pub mod suggest;
+pub mod suggestion_engine;
 
-pub use hint_bar::PaletteHintBar;
-pub use palette::PaletteComponent;
+pub use palette_component::PaletteComponent;
 pub use state::PaletteState;

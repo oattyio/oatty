@@ -1,12 +1,12 @@
 //! Ring buffer implementation for plugin logs.
 
-use crate::types::{LogEntry, LogError};
+use crate::types::{LogError, McpLogEntry};
 use std::collections::VecDeque;
 
 /// A ring buffer for storing log entries with a maximum capacity.
 pub struct LogRingBuffer {
     /// The underlying buffer.
-    buffer: VecDeque<LogEntry>,
+    buffer: VecDeque<McpLogEntry>,
 
     /// Maximum number of entries to store.
     max_size: usize,
@@ -26,7 +26,7 @@ impl LogRingBuffer {
     }
 
     /// Add a log entry to the buffer.
-    pub fn add_entry(&mut self, entry: LogEntry) -> Result<(), LogError> {
+    pub fn add_entry(&mut self, entry: McpLogEntry) -> Result<(), LogError> {
         // If the buffer is full, remove the oldest entry
         if self.buffer.len() >= self.max_size {
             self.buffer.pop_front();
@@ -37,7 +37,7 @@ impl LogRingBuffer {
     }
 
     /// Get the most recent log entries.
-    pub fn get_recent(&self, count: usize) -> Vec<LogEntry> {
+    pub fn get_recent(&self, count: usize) -> Vec<McpLogEntry> {
         let start = if count >= self.buffer.len() {
             0
         } else {
@@ -48,7 +48,7 @@ impl LogRingBuffer {
     }
 
     /// Get all log entries.
-    pub fn get_all(&self) -> Vec<LogEntry> {
+    pub fn get_all(&self) -> Vec<McpLogEntry> {
         self.buffer.iter().cloned().collect()
     }
 
@@ -57,7 +57,7 @@ impl LogRingBuffer {
         &self,
         start: chrono::DateTime<chrono::Utc>,
         end: chrono::DateTime<chrono::Utc>,
-    ) -> Vec<LogEntry> {
+    ) -> Vec<McpLogEntry> {
         self.buffer
             .iter()
             .filter(|entry| entry.timestamp >= start && entry.timestamp <= end)
@@ -66,7 +66,7 @@ impl LogRingBuffer {
     }
 
     /// Get log entries by level.
-    pub fn get_by_level(&self, level: crate::types::plugin::LogLevel) -> Vec<LogEntry> {
+    pub fn get_by_level(&self, level: crate::types::plugin::LogLevel) -> Vec<McpLogEntry> {
         self.buffer
             .iter()
             .filter(|entry| entry.level == level)
@@ -75,7 +75,7 @@ impl LogRingBuffer {
     }
 
     /// Get log entries by source.
-    pub fn get_by_source(&self, source: crate::types::plugin::LogSource) -> Vec<LogEntry> {
+    pub fn get_by_source(&self, source: crate::types::plugin::LogSource) -> Vec<McpLogEntry> {
         self.buffer
             .iter()
             .filter(|entry| entry.source == source)
@@ -129,12 +129,12 @@ impl LogRingBuffer {
     }
 
     /// Get an iterator over all log entries.
-    pub fn iter(&self) -> impl Iterator<Item = &LogEntry> {
+    pub fn iter(&self) -> impl Iterator<Item = &McpLogEntry> {
         self.buffer.iter()
     }
 
     /// Get a reverse iterator over all log entries.
-    pub fn iter_rev(&self) -> impl Iterator<Item = &LogEntry> {
+    pub fn iter_rev(&self) -> impl Iterator<Item = &McpLogEntry> {
         self.buffer.iter().rev()
     }
 }
@@ -170,7 +170,7 @@ mod tests {
         assert!(buffer.is_empty());
         assert_eq!(buffer.len(), 0);
 
-        let entry = LogEntry::new(
+        let entry = McpLogEntry::new(
             LogLevel::Info,
             "Test message".to_string(),
             LogSource::System,
@@ -187,7 +187,7 @@ mod tests {
         let mut buffer = LogRingBuffer::new(2);
 
         for i in 0..5 {
-            let entry = LogEntry::new(
+            let entry = McpLogEntry::new(
                 LogLevel::Info,
                 format!("Message {}", i),
                 LogSource::System,
@@ -209,14 +209,14 @@ mod tests {
     fn test_ring_buffer_filtering() {
         let mut buffer = LogRingBuffer::new(10);
 
-        let info_entry = LogEntry::new(
+        let info_entry = McpLogEntry::new(
             LogLevel::Info,
             "Info message".to_string(),
             LogSource::System,
             "test".to_string(),
         );
 
-        let error_entry = LogEntry::new(
+        let error_entry = McpLogEntry::new(
             LogLevel::Error,
             "Error message".to_string(),
             LogSource::Stderr,
@@ -243,7 +243,7 @@ mod tests {
     fn test_ring_buffer_clear() {
         let mut buffer = LogRingBuffer::new(10);
 
-        let entry = LogEntry::new(
+        let entry = McpLogEntry::new(
             LogLevel::Info,
             "Test message".to_string(),
             LogSource::System,

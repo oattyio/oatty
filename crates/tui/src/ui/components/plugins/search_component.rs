@@ -10,7 +10,7 @@ use ratatui::{Frame, layout::Rect, widgets::Paragraph};
 
 use crate::app::App;
 use crate::ui::components::component::Component;
-use crate::ui::theme::{Theme, helpers as th};
+use crate::ui::theme::{Theme, theme_helpers as th};
 
 use super::PluginsState;
 

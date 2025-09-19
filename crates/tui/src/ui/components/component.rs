@@ -8,7 +8,7 @@ use std::fmt::Debug;
 
 use crossterm::event::{KeyEvent, MouseEvent};
 use heroku_types::{Effect, Msg};
-use ratatui::{Frame, layout::Rect};
+use ratatui::{Frame, layout::Rect, text::Span};
 
 use crate::app::App;
 
@@ -226,4 +226,34 @@ pub trait Component: Debug {
     /// }
     /// ```
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App);
+
+    /// Optionally render the hints bar into the given area.
+    ///
+    /// This method is responsible for drawing the component's hints
+    /// into the provided frame area. Implementations should be side-effect
+    /// free. Any state changes should happen in `update` or event handlers.
+    ///
+    /// If the component contains children, the child's render_hints_bar
+    /// should be called by the parent only when the child has focus or
+    /// when it is expected to received key events. This prevents a
+    /// scenario where the child specifies key combinations in it's hints
+    /// but is unable to act on them.
+    ///
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - The frame to render to
+    /// * `rect` - The rectangular area allocated for this component
+    /// * `app` - The application state (read-only during rendering)
+    /// * `is_root` - Indicates if this should be rendered as a root hints bar
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// fn render_hints_bar(&mut self, frame: &mut Frame, rect: Rect, app: &App) {
+    /// }
+    /// ```
+    fn get_hint_spans(&self, _app: &App, _is_root: bool) -> Vec<Span<'_>> {
+        vec![]
+    }
 }

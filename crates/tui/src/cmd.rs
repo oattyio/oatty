@@ -40,7 +40,6 @@ use std::fs::read_to_string;
 use std::sync::atomic::Ordering;
 use std::vec;
 
-use crate::cmd;
 use crate::ui::components::plugins::EnvRow;
 use crate::{
     app::{self},
@@ -421,7 +420,7 @@ enum PluginAction {
 /// Execute a plugin lifecycle action using the MCP supervisor.
 fn execute_plugins_action(app: &mut app::App, action: PluginAction, name: String) {
     let sup_opt = app.ctx.mcp.as_ref().cloned();
-    let tx = app.exec_sender.clone();
+    let execution_sender = app.exec_sender.clone();
     if let Some(sup) = sup_opt {
         tokio::spawn(async move {
             let res = match action {
@@ -437,12 +436,14 @@ fn execute_plugins_action(app: &mut app::App, action: PluginAction, name: String
                 (PluginAction::Stop, Err(e)) => format!("Plugins: stop '{}' failed: {}", name, e),
                 (PluginAction::Restart, Err(e)) => format!("Plugins: restart '{}' failed: {}", name, e),
             };
-            let _ = tx.send(heroku_types::ExecOutcome {
-                log: msg,
-                result_json: None,
-                open_table: false,
-                pagination: None,
-            });
+            let _ = execution_sender
+                .send(heroku_types::ExecOutcome {
+                    log: msg,
+                    result_json: None,
+                    open_table: false,
+                    pagination: None,
+                })
+                .await;
         });
     } else {
         app.logs
@@ -459,7 +460,7 @@ fn execute_plugins_refresh(app: &mut app::App) {
         return;
     }
 
-    let tx = app.exec_sender.clone();
+    let execution_sender = app.exec_sender.clone();
     tokio::spawn(async move {
         let mcp_client_mgr = sup_opt.unwrap();
         let mut arr = Vec::new();
@@ -480,12 +481,14 @@ fn execute_plugins_refresh(app: &mut app::App) {
             }
         }
         let payload = json!({ "plugins_refresh": arr });
-        let _ = tx.send(heroku_types::ExecOutcome {
-            log: "Plugins: refreshed".into(),
-            result_json: Some(payload),
-            open_table: false,
-            pagination: None,
-        });
+        let _ = execution_sender
+            .send(heroku_types::ExecOutcome {
+                log: "Plugins: refreshed".into(),
+                result_json: Some(payload),
+                open_table: false,
+                pagination: None,
+            })
+            .await;
     });
 }
 
@@ -495,17 +498,19 @@ fn execute_plugins_refresh_logs(app: &mut app::App, name: String) {
     if sup_opt.is_none() {
         return;
     }
-    let tx = app.exec_sender.clone();
+    let execution_sender = app.exec_sender.clone();
     tokio::spawn(async move {
         let mcp_client_mgr = sup_opt.unwrap();
         let lines = mcp_client_mgr.log_manager().get_recent_logs(&name, 500).await;
         let payload = json!({ "plugins_logs": { "name": name, "lines": lines } });
-        let _ = tx.send(heroku_types::ExecOutcome {
-            log: "Plugins: logs refreshed".into(),
-            result_json: Some(payload),
-            open_table: false,
-            pagination: None,
-        });
+        let _ = execution_sender
+            .send(heroku_types::ExecOutcome {
+                log: "Plugins: logs refreshed".into(),
+                result_json: Some(payload),
+                open_table: false,
+                pagination: None,
+            })
+            .await;
     });
 }
 
@@ -515,7 +520,7 @@ fn execute_plugins_export_default(app: &mut app::App, name: String) {
     if sup_opt.is_none() {
         return;
     }
-    let tx = app.exec_sender.clone();
+    let execution_sender = app.exec_sender.clone();
     tokio::spawn(async move {
         let mcp_client_mgr = sup_opt.unwrap();
         // Default temp path
@@ -526,12 +531,14 @@ fn execute_plugins_export_default(app: &mut app::App, name: String) {
             Ok(_) => format!("Plugins: exported logs for '{}' to {}", name, path.display()),
             Err(e) => format!("Plugins: export logs for '{}' failed: {}", name, e),
         };
-        let _ = tx.send(heroku_types::ExecOutcome {
-            log: msg,
-            result_json: None,
-            open_table: false,
-            pagination: None,
-        });
+        let _ = execution_sender
+            .send(heroku_types::ExecOutcome {
+                log: msg,
+                result_json: None,
+                open_table: false,
+                pagination: None,
+            })
+            .await;
     });
 }
 
@@ -559,9 +566,19 @@ fn execute_plugins_open_env(app: &mut app::App, name: String) {
     }
     // Dispatch as result_json for App to apply
     let payload = json!({
-        "plugins_env": { "name": name, "rows": rows.iter().map(|r|json!({"key": r.key, "value": r.value, "is_secret": r.is_secret})).collect::<Vec<_>>() }
+        "plugins_env": {
+            "name": name,
+            "rows": rows
+                .iter()
+                .map(|row| json!({
+                    "key": row.key,
+                    "value": row.value,
+                    "is_secret": row.is_secret,
+                }))
+                .collect::<Vec<_>>(),
+        }
     });
-    let _ = app.exec_sender.send(heroku_types::ExecOutcome {
+    app.enqueue_exec_outcome(heroku_types::ExecOutcome {
         log: "Plugins: env loaded".into(),
         result_json: Some(payload),
         open_table: false,
@@ -586,7 +603,7 @@ fn execute_plugins_save_env(app: &mut app::App, name: String, rows: Vec<(String,
     }
     // Validate and save
     if let Err(e) = validate_config(&cfg) {
-        let _ = app.exec_sender.send(heroku_types::ExecOutcome {
+        app.enqueue_exec_outcome(heroku_types::ExecOutcome {
             log: format!("Env save validation failed: {}", e),
             result_json: None,
             open_table: false,
@@ -595,7 +612,7 @@ fn execute_plugins_save_env(app: &mut app::App, name: String, rows: Vec<(String,
         return;
     }
     let _ = save_config_to_path(&cfg, &path);
-    let _ = app.exec_sender.send(heroku_types::ExecOutcome {
+    app.enqueue_exec_outcome(heroku_types::ExecOutcome {
         log: format!("Plugins: saved env for '{}'", name),
         result_json: None,
         open_table: false,
@@ -628,18 +645,14 @@ fn execute_plugins_validate_add(app: &mut app::App) {
                 ok = false;
                 message = "Invalid Base URL".into();
             }
-            // Optional headers input (comma-separated key=value)
-            if !add_view_state.headers_input.trim().is_empty() {
-                match parse_key_value_list_strict(add_view_state.headers_input.as_str()) {
-                    Ok(map) => {
-                        if !map.is_empty() {
-                            server.headers = Some(map);
-                        }
-                    }
-                    Err(errors) => {
-                        ok = false;
-                        message = format!("Invalid headers: {}", errors.join("; "));
-                    }
+            match collect_key_value_rows(&add_view_state.header_editor.rows) {
+                Ok(Some(map)) => {
+                    server.headers = Some(map);
+                }
+                Ok(None) => {}
+                Err(errors) => {
+                    ok = false;
+                    message = format!("Invalid headers: {}", errors.join("; "));
                 }
             }
         }
@@ -655,18 +668,14 @@ fn execute_plugins_validate_add(app: &mut app::App) {
                     server.args = Some(parsed);
                 }
             }
-            // Optional env input (comma-separated key=value)
-            if !add_view_state.env_input.trim().is_empty() {
-                match parse_key_value_list_strict(add_view_state.env_input.as_str()) {
-                    Ok(map) => {
-                        if !map.is_empty() {
-                            server.env = Some(map);
-                        }
-                    }
-                    Err(errors) => {
-                        ok = false;
-                        message = format!("Invalid env vars: {}", errors.join("; "));
-                    }
+            match collect_key_value_rows(&add_view_state.env_editor.rows) {
+                Ok(Some(map)) => {
+                    server.env = Some(map);
+                }
+                Ok(None) => {}
+                Err(errors) => {
+                    ok = false;
+                    message = format!("Invalid env vars: {}", errors.join("; "));
                 }
             }
         }
@@ -677,7 +686,7 @@ fn execute_plugins_validate_add(app: &mut app::App) {
     let payload = json!({
         "plugins_add_preview": { "ok": ok, "message": message, "patch": patch }
     });
-    let _ = app.exec_sender.send(heroku_types::ExecOutcome {
+    app.enqueue_exec_outcome(heroku_types::ExecOutcome {
         log: format!("Add validate: {}", name),
         result_json: Some(payload),
         open_table: false,
@@ -696,7 +705,7 @@ fn execute_plugins_apply_add(app: &mut app::App) {
             if let Ok(url) = Url::parse(base_url) {
                 server.base_url = Some(url);
             } else {
-                let _ = app.exec_sender.send(heroku_types::ExecOutcome {
+                app.enqueue_exec_outcome(heroku_types::ExecOutcome {
                     log: "Add apply validation failed: invalid Base URL".into(),
                     result_json: None,
                     open_table: false,
@@ -704,30 +713,26 @@ fn execute_plugins_apply_add(app: &mut app::App) {
                 });
                 return;
             }
-            // Optional headers input (comma-separated key=value)
-            if !add_view_state.headers_input.trim().is_empty() {
-                match parse_key_value_list_strict(add_view_state.headers_input.as_str()) {
-                    Ok(map) => {
-                        if !map.is_empty() {
-                            server.headers = Some(map);
-                        }
-                    }
-                    Err(errors) => {
-                        let _ = app.exec_sender.send(heroku_types::ExecOutcome {
-                            log: format!("Add apply validation failed: invalid headers: {}", errors.join("; ")),
-                            result_json: None,
-                            open_table: false,
-                            pagination: None,
-                        });
-                        return;
-                    }
+            match collect_key_value_rows(&add_view_state.header_editor.rows) {
+                Ok(Some(map)) => {
+                    server.headers = Some(map);
+                }
+                Ok(None) => {}
+                Err(errors) => {
+                    app.enqueue_exec_outcome(heroku_types::ExecOutcome {
+                        log: format!("Add apply validation failed: invalid headers: {}", errors.join("; ")),
+                        result_json: None,
+                        open_table: false,
+                        pagination: None,
+                    });
+                    return;
                 }
             }
         }
         AddTransport::Local => {
             let command = add_view_state.command.trim();
             if command.is_empty() {
-                let _ = app.exec_sender.send(heroku_types::ExecOutcome {
+                app.enqueue_exec_outcome(heroku_types::ExecOutcome {
                     log: "Add apply validation failed: command is required".into(),
                     result_json: None,
                     open_table: false,
@@ -740,23 +745,19 @@ fn execute_plugins_apply_add(app: &mut app::App) {
                 let parsed: Vec<String> = add_view_state.args.split_whitespace().map(|s| s.to_string()).collect();
                 server.args = Some(parsed);
             }
-            // Optional env input (comma-separated key=value)
-            if !add_view_state.env_input.trim().is_empty() {
-                match parse_key_value_list_strict(add_view_state.env_input.as_str()) {
-                    Ok(map) => {
-                        if !map.is_empty() {
-                            server.env = Some(map);
-                        }
-                    }
-                    Err(errors) => {
-                        let _ = app.exec_sender.send(heroku_types::ExecOutcome {
-                            log: format!("Add apply validation failed: invalid env vars: {}", errors.join("; ")),
-                            result_json: None,
-                            open_table: false,
-                            pagination: None,
-                        });
-                        return;
-                    }
+            match collect_key_value_rows(&add_view_state.env_editor.rows) {
+                Ok(Some(map)) => {
+                    server.env = Some(map);
+                }
+                Ok(None) => {}
+                Err(errors) => {
+                    app.enqueue_exec_outcome(heroku_types::ExecOutcome {
+                        log: format!("Add apply validation failed: invalid env vars: {}", errors.join("; ")),
+                        result_json: None,
+                        open_table: false,
+                        pagination: None,
+                    });
+                    return;
                 }
             }
         }
@@ -771,7 +772,7 @@ fn execute_plugins_apply_add(app: &mut app::App) {
     };
     cfg.mcp_servers.insert(name.clone(), server);
     if let Err(e) = validate_config(&cfg) {
-        let _ = app.exec_sender.send(heroku_types::ExecOutcome {
+        app.enqueue_exec_outcome(heroku_types::ExecOutcome {
             log: format!("Add apply validation failed: {}", e),
             result_json: None,
             open_table: false,
@@ -789,7 +790,7 @@ fn execute_plugins_apply_add(app: &mut app::App) {
         app.plugins.selected = Some(idx);
     }
 
-    let _ = app.exec_sender.send(heroku_types::ExecOutcome {
+    app.enqueue_exec_outcome(heroku_types::ExecOutcome {
         log: format!("Plugins: added '{}'", name),
         result_json: None,
         open_table: false,
@@ -810,30 +811,25 @@ fn build_add_patch(name: &str, server: &heroku_mcp::config::McpServer) -> String
     to_string_pretty(&serde_json::Value::Object(map)).unwrap_or_default()
 }
 
-/// Strict validator for comma-separated `key=value` pairs.
-fn parse_key_value_list_strict(input: &str) -> Result<std::collections::HashMap<String, String>, Vec<String>> {
-    let mut out = std::collections::HashMap::new();
+/// Strict validator for key/value rows captured in the Add Plugin editor.
+fn collect_key_value_rows(rows: &[EnvRow]) -> Result<Option<std::collections::HashMap<String, String>>, Vec<String>> {
+    let mut map = std::collections::HashMap::new();
     let mut errors: Vec<String> = Vec::new();
-    for (idx, pair) in input.split(',').enumerate() {
-        let raw = pair;
-        let p = pair.trim();
-        if p.is_empty() {
+
+    for (index, row) in rows.iter().enumerate() {
+        let key = row.key.trim();
+        if key.is_empty() {
+            errors.push(format!("row {} has empty key", index + 1));
             continue;
         }
-        match p.split_once('=') {
-            Some((k, v)) => {
-                let key = k.trim();
-                let val = v.trim();
-                if key.is_empty() {
-                    errors.push(format!("segment {} has empty key: '{}'", idx + 1, raw));
-                } else {
-                    out.insert(key.to_string(), val.to_string());
-                }
-            }
-            None => errors.push(format!("segment {} missing '=': '{}'", idx + 1, raw)),
-        }
+        map.insert(key.to_string(), row.value.trim().to_string());
     }
-    if errors.is_empty() { Ok(out) } else { Err(errors) }
+
+    if !errors.is_empty() {
+        return Err(errors);
+    }
+
+    if map.is_empty() { Ok(None) } else { Ok(Some(map)) }
 }
 
 /// Spawn a background thread to execute a Heroku API request.
@@ -865,7 +861,7 @@ fn execute_http(app: &mut app::App, spec: CommandSpec, body: Map<String, Value>)
     app.executing = true;
     app.throbber_idx = 0;
 
-    let tx = app.exec_sender.clone();
+    let execution_sender = app.exec_sender.clone();
     let active = app.active_exec_count.clone();
     active.fetch_add(1, Ordering::Relaxed);
 
@@ -874,15 +870,17 @@ fn execute_http(app: &mut app::App, spec: CommandSpec, body: Map<String, Value>)
 
         match outcome {
             Ok(out) => {
-                let _ = tx.send(out);
+                let _ = execution_sender.send(out).await;
             }
             Err(err) => {
-                let _ = tx.send(heroku_types::ExecOutcome {
-                    log: format!("Error: {}", err),
-                    result_json: None,
-                    open_table: false,
-                    pagination: None,
-                });
+                let _ = execution_sender
+                    .send(heroku_types::ExecOutcome {
+                        log: format!("Error: {}", err),
+                        result_json: None,
+                        open_table: false,
+                        pagination: None,
+                    })
+                    .await;
             }
         }
 

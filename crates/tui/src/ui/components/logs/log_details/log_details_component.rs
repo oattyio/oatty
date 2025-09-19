@@ -1,0 +1,175 @@
+use crate::{
+    app::App,
+    ui::{
+        components::{
+            TableComponent,
+            component::Component,
+            logs::state::{LogDetailView, LogEntry},
+        },
+        theme::theme_helpers,
+        utils::{build_copy_text, centered_rect},
+    },
+};
+use crossterm::event::KeyCode;
+use heroku_types::Effect;
+use heroku_util::redact_sensitive;
+use ratatui::{
+    Frame,
+    layout::{Constraint, Direction, Layout, Rect},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+};
+use serde_json::Value;
+
+#[derive(Clone, Debug, Default)]
+pub struct LogDetailsComponent;
+
+impl LogDetailsComponent {
+    /// Renders the content of the detail modal for selected log entries.
+    ///
+    /// This method handles different rendering modes based on the selection:
+    ///
+    /// - **Single API entry with JSON**: Renders formatted JSON using
+    ///   TableComponent
+    /// - **Single non-API entry**: Renders plain text with word wrapping
+    /// - **Multi-selection**: Renders concatenated text from all selected
+    ///   entries
+    ///
+    /// All content is automatically redacted for security before display.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - The terminal frame to render to
+    /// * `area` - The rectangular area allocated for the detail content
+    /// * `app` - The application state containing logs and selection
+    fn render_detail_content(&self, f: &mut Frame, area: Rect, app: &mut App) {
+        let (start, end) = app.logs.selection.range();
+
+        // Handle single selection
+        if start == end {
+            if let Some(LogEntry::Api { json: Some(j), .. }) = app.logs.rich_entries.get(start) {
+                // Use cached redacted JSON if available, otherwise redact on-the-fly
+                // Note: Only non-array JSON renders here; arrays are routed to global table
+                // modal
+                let red_ref: &Value = match app.logs.cached_detail_index {
+                    Some(i) if i == start => app.logs.cached_redacted_json.as_ref().unwrap_or(j),
+                    _ => j,
+                };
+
+                // Render formatted JSON using TableComponent for better presentation
+                let table = TableComponent::default();
+                table.render_kv_or_text(f, area, red_ref, &*app.ctx.theme);
+                return;
+            }
+
+            // Handle single non-API entry or API without JSON
+            let s = app.logs.entries.get(start).cloned().unwrap_or_default();
+            let p = Paragraph::new(redact_sensitive(&s))
+                .block(Block::default().borders(Borders::NONE))
+                .wrap(Wrap { trim: false })
+                .style(app.ctx.theme.text_primary_style());
+            f.render_widget(p, area);
+            return;
+        }
+
+        // Handle multi-selection: concatenate all selected log entries
+        let mut buf = String::new();
+        let max = app.logs.entries.len().saturating_sub(1);
+        for i in start..=end.min(max) {
+            if !buf.is_empty() {
+                buf.push('\n');
+            }
+            buf.push_str(app.logs.entries.get(i).map(|s| s.as_str()).unwrap_or(""));
+        }
+
+        // Render concatenated text with word wrapping
+        let p = Paragraph::new(redact_sensitive(&buf))
+            .block(Block::default().borders(Borders::NONE))
+            .wrap(Wrap { trim: false })
+            .style(app.ctx.theme.text_primary_style());
+        f.render_widget(p, area);
+    }
+}
+
+impl Component for LogDetailsComponent {
+    fn render(&mut self, frame: &mut ratatui::Frame, rect: ratatui::prelude::Rect, app: &mut crate::app::App) {
+        let area = centered_rect(80, 70, rect);
+        let title = "Log Details";
+        let block = theme_helpers::block(&*app.ctx.theme, Some(title), true);
+
+        // Clear the modal area and render the border
+        frame.render_widget(Clear, area);
+        frame.render_widget(&block, area);
+        let inner = block.inner(area);
+
+        // Split modal into content and footer areas
+        let splits = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(inner);
+
+        // Render the main detail content
+        self.render_detail_content(frame, splits[0], app);
+
+        // Render footer with keyboard hints
+        let hint_spans = self.get_hint_spans(app, true);
+        let hint_line = if hint_spans.is_empty() {
+            Line::default()
+        } else {
+            Line::from(hint_spans)
+        };
+        let footer = Paragraph::new(hint_line).style(app.ctx.theme.text_muted_style());
+        frame.render_widget(footer, splits[1]);
+    }
+
+    fn handle_key_events(&mut self, app: &mut crate::app::App, key: crossterm::event::KeyEvent) -> Vec<Effect> {
+        let mut effects = Vec::with_capacity(1);
+
+        // keys not requiring the detail
+        match key.code {
+            KeyCode::Esc => {
+                app.logs.detail = None;
+                effects.push(Effect::CloseModal);
+            }
+            KeyCode::Char('c') => {
+                effects.push(Effect::CopyLogsRequested(build_copy_text(app)));
+            }
+            _ => {}
+        }
+
+        // keys dependent on the detail
+        if let Some(LogDetailView::Table { offset }) = app.logs.detail.as_ref() {
+            match key.code {
+                KeyCode::Up => {
+                    // Scroll up in table detail view
+                    app.logs.detail = Some(LogDetailView::Table {
+                        offset: offset.saturating_sub(1),
+                    });
+                }
+                KeyCode::Down => {
+                    // Scroll down in table detail view
+                    app.logs.detail = Some(LogDetailView::Table {
+                        offset: offset.saturating_add(1),
+                    });
+                }
+                _ => {}
+            }
+        }
+        return effects;
+    }
+
+    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+        let theme = &*app.ctx.theme;
+        let mut spans = Vec::new();
+        if is_root {
+            spans.push(Span::styled("Hint: ", theme.text_muted_style()));
+        }
+        spans.extend([
+            Span::styled("Esc", theme.accent_emphasis_style()),
+            Span::styled(" Close  ", theme.text_muted_style()),
+            Span::styled("C", theme.accent_emphasis_style()),
+            Span::styled(" Copy  ", theme.text_muted_style()),
+        ]);
+        spans
+    }
+}

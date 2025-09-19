@@ -26,6 +26,13 @@ pub struct ThemeRoles {
     pub selection_fg: Color,
     pub focus: Color,
 
+    /// Background color used when displaying modal overlays.
+    ///
+    /// This color should be significantly darker than the primary background so that
+    /// the active modal content appears elevated while still matching the theme
+    /// palette.
+    pub modal_bg: Color,
+
     pub scrollbar_track: Color,
     pub scrollbar_thumb: Color,
 }
@@ -61,6 +68,11 @@ pub trait Theme: Send + Sync {
         Style::default()
             .fg(self.roles().selection_fg)
             .bg(self.roles().selection_bg)
+    }
+
+    /// Style used for the darkened background that appears behind modal dialogs.
+    fn modal_background_style(&self) -> Style {
+        Style::default().bg(self.roles().modal_bg)
     }
 
     // Status styles

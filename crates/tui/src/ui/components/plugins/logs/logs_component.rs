@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use heroku_types::{Effect, Msg};
+use heroku_types::Effect;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem},
 };
 
-use crate::ui::theme::{Theme, helpers as th};
+use crate::ui::theme::{Theme, theme_helpers as th};
 use crate::{app::App, ui::components::component::Component};
 
 use super::state::PluginLogsState;
@@ -35,19 +35,32 @@ impl PluginsLogsComponent {
 }
 
 impl Component for PluginsLogsComponent {
-    fn handle_key_events(&mut self, _app: &mut App, _key: KeyEvent) -> Vec<Effect> {
-        Vec::new()
-    }
-
-    fn update(&mut self, _app: &mut App, _msg: &Msg) -> Vec<Effect> {
-        Vec::new()
-    }
-
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         if let Some(logs) = &app.plugins.logs {
             let theme = &*app.ctx.theme;
             self.render_logs_drawer(frame, area, theme, logs);
         }
+    }
+
+    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+        let theme = &*app.ctx.theme;
+        let mut spans = vec![];
+        if is_root {
+            spans.push(Span::styled("Hints: ", theme.text_muted_style()))
+        }
+        spans.extend([
+            Span::styled("Ctrl+F", theme.accent_emphasis_style()),
+            Span::styled(" Search ", theme.text_muted_style()),
+            Span::styled("Ctrl+L", theme.accent_emphasis_style()),
+            Span::styled(" Follow ", theme.text_muted_style()),
+            Span::styled("Ctrl+Y", theme.accent_emphasis_style()),
+            Span::styled(" Copy ", theme.text_muted_style()),
+            Span::styled("Ctrl+U", theme.accent_emphasis_style()),
+            Span::styled(" Copy all ", theme.text_muted_style()),
+            Span::styled("Ctrl+O", theme.accent_emphasis_style()),
+            Span::styled(" Export ", theme.text_muted_style()),
+        ]);
+        spans
     }
 }
 
@@ -59,10 +72,7 @@ impl PluginsLogsComponent {
             .border_style(theme.border_style(true))
             .style(th::panel_style(theme))
             .title(Span::styled(
-                format!(
-                    "Logs — {}  [Ctrl-f] search  [Ctrl-l] follow  [Ctrl-y] copy  [Ctrl-u] copy all  [Ctrl-o] export",
-                    logs.name
-                ),
+                format!("Logs — {}", logs.name),
                 theme.text_secondary_style().add_modifier(Modifier::BOLD),
             ));
 

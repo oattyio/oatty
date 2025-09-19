@@ -7,7 +7,7 @@ use ratatui::{
     widgets::{Block, Borders, Row, Table},
 };
 
-use crate::ui::theme::helpers as th;
+use crate::ui::theme::theme_helpers as th;
 use crate::{app::App, ui::components::component::Component};
 use heroku_mcp::types::plugin::AuthStatus;
 

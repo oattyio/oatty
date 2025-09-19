@@ -20,9 +20,9 @@ use ratatui::{
 use crate::{
     app::{self, SharedCtx},
     ui::{
-        components::{LogsComponent, component::Component, palette::PaletteHintBar},
+        components::{LogsComponent, component::Component},
         layout::MainLayout,
-        theme::{Theme, helpers as th},
+        theme::{Theme, theme_helpers as th},
     },
 };
 static FRAMES: [&'static str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -61,12 +61,11 @@ static FRAMES: [&'static str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "
 /// palette.init()?;
 /// ```
 #[derive(Debug, Default)]
-pub struct PaletteComponent<'a> {
-    hints_bar: PaletteHintBar<'a>,
+pub struct PaletteComponent {
     logs: LogsComponent,
 }
 
-impl PaletteComponent<'_> {
+impl PaletteComponent {
     /// Creates the input paragraph widget with current state.
     ///
     /// This function creates the input paragraph with throbber, input text, and
@@ -127,7 +126,7 @@ impl PaletteComponent<'_> {
     /// * `Line<'_>` - The formatted title line
     fn create_input_title<'a>(&self, theme: &'a dyn Theme) -> Line<'a> {
         Line::from(Span::styled(
-            "Command Palette",
+            "Execute Command",
             theme.text_secondary_style().add_modifier(Modifier::BOLD),
         ))
     }
@@ -176,34 +175,23 @@ impl PaletteComponent<'_> {
             .highlight_symbol("► ")
     }
 
-    /// Renders the main palette border and returns the inner layout areas.
-    ///
-    /// This function creates the visual border around the palette and sets up
-    /// the internal layout constraints for the input line, content area, and
-    /// footer area.
+    /// Calculates the inner layout areas for the palette input,
+    /// error message, suggestions and hint bar.
     ///
     /// # Arguments
     ///
-    /// * `frame` - The frame to render to
     /// * `rect` - The rectangular area to render in
-    /// * `theme` - The current theme for styling
     ///
     /// # Returns
     ///
     /// The split layout areas
-    fn render_palette_border(
-        &mut self,
-        _frame: &mut Frame,
-        rect: Rect,
-        _theme: &dyn Theme,
-        _focused: bool,
-    ) -> Vec<Rect> {
+    fn layout_palette_input(&mut self, rect: Rect) -> Vec<Rect> {
         let splits = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(3), // Input line (increased to accommodate block with title and borders)
-                Constraint::Min(1),    // Content area (error messages, suggestions)
-                Constraint::Length(1), // Footer area
+                Constraint::Length(3), // Input line - accommodates block with title and borders
+                Constraint::Min(1),    // Content area - error messages, suggestions
+                Constraint::Length(1), // Hints bar
             ])
             .split(rect);
 
@@ -223,13 +211,10 @@ impl PaletteComponent<'_> {
     /// * `input_area` - The rectangular area of the input line
     /// * `app` - The application state containing palette data
     /// * `theme` - The current theme for styling
-    fn position_cursor(frame: &mut Frame, input_area: Rect, app: &app::App, theme: &dyn Theme) {
+    fn position_cursor(&self, frame: &mut Frame, input_area: Rect, app: &app::App, theme: &dyn Theme) {
         if app.palette.is_focused() {
             // Create the same block structure to get the inner area
-            let input_title = Line::from(Span::styled(
-                "Command Palette",
-                theme.text_secondary_style().add_modifier(Modifier::BOLD),
-            ));
+            let input_title = self.create_input_title(theme);
             let is_focused = app.palette.is_focused();
             let mut input_block = th::block(theme, None, is_focused);
             input_block = input_block.title(input_title);
@@ -424,7 +409,7 @@ impl PaletteComponent<'_> {
     }
 }
 
-impl Component for PaletteComponent<'_> {
+impl Component for PaletteComponent {
     /// Renders the command palette with input and suggestions.
     ///
     /// This method orchestrates the rendering of all palette components:
@@ -444,17 +429,17 @@ impl Component for PaletteComponent<'_> {
     /// * `rect` - The rectangular area to render in
     /// * `app` - The application state containing palette data
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
-        let chunks = MainLayout::vertical_layout(rect, app);
+        let main_regions = MainLayout::responsive_layout(rect, app);
         let theme = &*app.ctx.theme;
         // Render main border and get layout areas
-        let splits = self.render_palette_border(frame, chunks[0], theme, app.palette.is_focused());
+        let splits = self.layout_palette_input(main_regions[0]);
 
         // Render input line with throbber and ghost text
         let input_para = self.create_input_paragraph(app, theme);
         frame.render_widget(input_para, splits[0]);
 
         // Position cursor in input line
-        Self::position_cursor(frame, splits[0], app, theme);
+        self.position_cursor(frame, splits[0], app, theme);
 
         // Render error message if present
         if let Some(error_para) = self.create_error_paragraph(app, theme) {
@@ -486,8 +471,38 @@ impl Component for PaletteComponent<'_> {
 
             frame.render_stateful_widget(suggestions_list, popup_area, &mut list_state);
         }
-        self.hints_bar.render(frame, chunks[1], app);
-        self.logs.render(frame, chunks[2], app);
+
+        let hint_spans = self.get_hint_spans(app, true);
+        let hints_widget = Paragraph::new(Line::from(hint_spans)).style(theme.text_muted_style());
+        frame.render_widget(hints_widget, main_regions[2]);
+
+        self.logs.render(frame, main_regions[1], app);
+    }
+
+    fn get_hint_spans(&self, app: &app::App, is_root: bool) -> Vec<Span<'_>> {
+        let theme = &*app.ctx.theme;
+        let mut spans = Vec::new();
+        if is_root {
+            spans.push(Span::styled("Hints: ", theme.text_muted_style()));
+        }
+
+        if app.logs.focus.get() {
+            spans.extend(self.logs.get_hint_spans(app, false));
+        } else {
+            spans.extend([
+                Span::styled("Tab", theme.accent_emphasis_style()),
+                Span::styled(" Completions ", theme.text_muted_style()),
+                Span::styled("↑/↓", theme.accent_emphasis_style()),
+                Span::styled(" Cycle  ", theme.text_muted_style()),
+                Span::styled("Enter", theme.accent_emphasis_style()),
+                Span::styled(" Accept  ", theme.text_muted_style()),
+                Span::styled("Ctrl+H", theme.accent_emphasis_style()),
+                Span::styled(" Help  ", theme.text_muted_style()),
+                Span::styled("Esc", theme.accent_emphasis_style()),
+                Span::styled(" Cancel", theme.text_muted_style()),
+            ]);
+        }
+        spans
     }
 
     /// Handle key events for the command palette when the builder is not open.
@@ -524,6 +539,11 @@ impl Component for PaletteComponent<'_> {
     /// ```
     fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
         let mut effects: Vec<Effect> = vec![];
+        // Delegate to logs if focused.
+        if app.logs.focus.get() {
+            return self.logs.handle_key_events(app, key);
+        }
+
         match key.code {
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
                 // Handle character input

@@ -17,7 +17,7 @@ use ratatui::{
 
 use crate::{
     app::{self, App},
-    ui::{components::component::Component, theme::helpers as th, utils::centered_rect},
+    ui::{components::component::Component, theme::theme_helpers as th, utils::centered_rect},
 };
 
 /// Help modal component for displaying command documentation.

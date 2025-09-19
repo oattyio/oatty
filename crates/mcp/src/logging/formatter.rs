@@ -1,6 +1,6 @@
 //! Log formatting and redaction utilities.
 
-use crate::types::LogEntry;
+use crate::types::McpLogEntry;
 use heroku_util::redact_sensitive_with;
 use regex::{Captures, Regex};
 
@@ -33,7 +33,7 @@ impl LogFormatter {
     }
 
     /// Format a log entry for display.
-    pub fn format(&self, entry: &LogEntry) -> String {
+    pub fn format(&self, entry: &McpLogEntry) -> String {
         let timestamp = entry.timestamp.format("%H:%M:%S");
         let level = entry.level.to_string();
         let source = entry.source.to_string();
@@ -43,7 +43,7 @@ impl LogFormatter {
     }
 
     /// Format a log entry for export (without redaction).
-    pub fn format_for_export(&self, entry: &LogEntry) -> String {
+    pub fn format_for_export(&self, entry: &McpLogEntry) -> String {
         let timestamp = entry.timestamp.format("%Y-%m-%d %H:%M:%S%.3f UTC");
         let level = entry.level.to_string();
         let source = entry.source.to_string();
@@ -159,7 +159,7 @@ mod tests {
     fn test_log_formatter() {
         let formatter = LogFormatter::new();
 
-        let entry = LogEntry::new(
+        let entry = McpLogEntry::new(
             LogLevel::Info,
             "Plugin started successfully".to_string(),
             LogSource::System,

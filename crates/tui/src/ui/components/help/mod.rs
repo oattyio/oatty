@@ -1,7 +1,6 @@
-#![allow(clippy::module_inception)]
 pub mod content;
-pub mod help;
+pub mod help_component;
 pub mod state;
 
-pub use help::HelpComponent;
+pub use help_component::HelpComponent;
 pub use state::HelpState;

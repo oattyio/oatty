@@ -1,6 +1,6 @@
 use crate::{
     app::App,
-    ui::theme::helpers::{self as th, render_button},
+    ui::theme::theme_helpers::{self as th, render_button},
 };
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use heroku_types::Effect;

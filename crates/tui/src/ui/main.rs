@@ -1,6 +1,6 @@
 use ratatui::{
     prelude::*,
-    style::{Modifier, Style},
+    style::Style,
     widgets::{Block, Paragraph},
 };
 
@@ -70,12 +70,10 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 /// * `f` - The frame to render to
 /// * `app` - The application state
 fn render_overlay(frame: &mut Frame, app: &mut App) {
-    // Draw a dim overlay when any modal is visible
+    // Draw the theme-specific modal overlay when any modal is visible
     let area = frame.area();
     frame.render_widget(
-        Block::default()
-            .bg(app.ctx.theme.roles().background)
-            .add_modifier(Modifier::DIM),
+        Block::default().style(app.ctx.theme.modal_background_style()).dim(),
         area,
     );
 }

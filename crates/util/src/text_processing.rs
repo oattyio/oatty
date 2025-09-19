@@ -5,6 +5,7 @@
 
 use once_cell::sync::Lazy;
 use regex::Regex;
+use serde_json::Value;
 
 /// Redacts values that look like secrets in a string.
 ///
@@ -347,4 +348,32 @@ fn calculate_token_bonuses(hay_data: &HaystackData, token: &[char], first_match_
     }
 
     bonus
+}
+
+/// Recursively redacts sensitive data from JSON values.
+///
+/// This method traverses the JSON structure and applies redaction to all
+/// string values while preserving the overall structure. Used for security
+/// when displaying JSON data in the UI.
+///
+/// # Arguments
+///
+/// * `v` - The JSON value to redact
+///
+/// # Returns
+///
+/// A new JSON value with all string content redacted
+pub fn redact_json(v: &Value) -> Value {
+    match v {
+        Value::String(s) => Value::String(redact_sensitive(s)),
+        Value::Array(arr) => Value::Array(arr.iter().map(redact_json).collect()),
+        Value::Object(map) => {
+            let mut out = serde_json::Map::new();
+            for (k, val) in map.iter() {
+                out.insert(k.clone(), redact_json(val));
+            }
+            Value::Object(out)
+        }
+        other => other.clone(),
+    }
 }

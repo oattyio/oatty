@@ -15,7 +15,7 @@
 //! - Suggestions never render an empty popup.
 use std::{fmt::Debug, sync::Arc};
 
-use super::suggest::{parse_user_flags_args, required_flags_remaining};
+use super::suggestion_engine::{parse_user_flags_args, required_flags_remaining};
 use heroku_registry::Registry;
 use heroku_types::{CommandSpec, ItemKind, SuggestionItem};
 use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
@@ -25,7 +25,7 @@ use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::ListItem;
 /// Maximum number of suggestions to display in the popup.
-const MAX_SUGGESTIONS: usize = 20;
+const MAX_SUGGESTIONS: usize = 25;
 
 /// Locate the index of the token under the cursor.
 ///
@@ -853,7 +853,7 @@ impl PaletteState {
         providers: &[Box<dyn ValueProvider>],
         theme: &dyn crate::ui::theme::Theme,
     ) {
-        let result = super::suggest::SuggestionEngine::build(reg, providers, &self.input);
+        let result = super::suggestion_engine::SuggestionEngine::build(reg, providers, &self.input);
         let mut items = result.items;
         self.provider_loading = result.provider_loading;
 

@@ -17,8 +17,8 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 use crate::ui::components::{
-    BrowserComponent, HelpComponent, PluginsComponent, TableComponent, nav_bar::VerticalNavBarState,
-    plugins::PluginsSecretsComponent,
+    BrowserComponent, HelpComponent, PluginsComponent, TableComponent, logs::LogDetailsComponent,
+    nav_bar::VerticalNavBarState, plugins::PluginsSecretsComponent,
 };
 use crate::{
     start_palette_execution,
@@ -395,7 +395,8 @@ impl App<'_> {
             self.plugins.apply_refresh_updates(plugin_updates);
 
             // Also log, redacted
-            self.logs.entries.push(heroku_util::redact_sensitive(raw_log));
+            let (summary, _) = summarize_execution_outcome(self.last_spec.as_ref(), raw_log);
+            self.logs.entries.push(summary);
             return true;
         }
         false
@@ -427,7 +428,8 @@ impl App<'_> {
                         }
                         logs_state.set_lines(output_lines);
 
-                        self.logs.entries.push(heroku_util::redact_sensitive(raw_log));
+                        let (summary, _) = summarize_execution_outcome(self.last_spec.as_ref(), raw_log);
+                        self.logs.entries.push(summary);
                         return true;
                     }
                 }
@@ -470,7 +472,8 @@ impl App<'_> {
                         }
                         environment_state.set_rows(output_rows);
 
-                        self.logs.entries.push(heroku_util::redact_sensitive(raw_log));
+                        let (summary, _) = summarize_execution_outcome(self.last_spec.as_ref(), raw_log);
+                        self.logs.entries.push(summary);
                         return true;
                     }
                 } else {
@@ -493,7 +496,8 @@ impl App<'_> {
                         }
                         environment_state.set_rows(output_rows);
 
-                        self.logs.entries.push(heroku_util::redact_sensitive(raw_log));
+                        let (summary, _) = summarize_execution_outcome(self.last_spec.as_ref(), raw_log);
+                        self.logs.entries.push(summary);
                         return true;
                     }
                 }
@@ -524,7 +528,8 @@ impl App<'_> {
                     .and_then(|s| s.as_str())
                     .map(|s| s.to_string());
 
-                self.logs.entries.push(heroku_util::redact_sensitive(raw_log));
+                let (summary, _) = summarize_execution_outcome(self.last_spec.as_ref(), raw_log);
+                self.logs.entries.push(summary);
                 return true;
             }
         }
@@ -540,28 +545,29 @@ impl App<'_> {
     ///
     /// * `execution_outcome` - The result of the command execution
     fn process_general_execution_result(&mut self, execution_outcome: ExecOutcome) {
-        let raw_log = execution_outcome.log;
+        let ExecOutcome {
+            log: raw_log,
+            result_json,
+            open_table: _,
+            pagination,
+        } = execution_outcome;
 
-        // Pre-redact for list display to avoid per-frame redaction
-        self.logs.entries.push(heroku_util::redact_sensitive(&raw_log));
+        let (summary, status_code) = summarize_execution_outcome(self.last_spec.as_ref(), &raw_log);
+
+        self.logs.entries.push(summary);
         self.logs.rich_entries.push(LogEntry::Api {
-            status: 0,
+            status: status_code.unwrap_or(0),
             raw: raw_log,
-            json: execution_outcome.result_json.clone(),
+            json: result_json.clone(),
         });
 
-        // Maintain log size limits
         self.trim_logs_if_needed();
 
-        // Update table with results
-        self.table
-            .apply_result_json(execution_outcome.result_json, &*self.ctx.theme);
+        self.table.apply_result_json(result_json, &*self.ctx.theme);
         self.table.normalize();
 
-        // Update pagination information
-        self.last_pagination = execution_outcome.pagination;
+        self.last_pagination = pagination;
 
-        // Clear palette input and suggestion state
         self.palette.reduce_clear_all();
     }
 
@@ -603,6 +609,7 @@ impl App<'_> {
                 Modal::Help => Box::new(HelpComponent::default()),
                 Modal::Results => Box::new(TableComponent::default()),
                 Modal::Secrets => Box::new(PluginsSecretsComponent::default()),
+                Modal::LogDetails => Box::new(LogDetailsComponent::default()),
             };
             self.open_modal = Some(modal_view);
             // save the current focus to restore when the modal is closed
@@ -611,6 +618,19 @@ impl App<'_> {
             self.open_modal = None;
         }
         self.open_modal_kind = modal;
+    }
+
+    /// Enqueue an [`ExecOutcome`] for asynchronous processing by the runtime loop.
+    ///
+    /// This helper wraps the Tokio channel used to ferry execution results
+    /// back into the application. When the channel is full or closed we record
+    /// a log entry so the user can diagnose why results might be missing.
+    pub fn enqueue_exec_outcome(&mut self, outcome: ExecOutcome) {
+        if let Err(error) = self.exec_sender.try_send(outcome) {
+            self.logs
+                .entries
+                .push(format!("Failed to enqueue execution outcome: {error}"));
+        }
     }
 
     pub fn restore_focus(&mut self) {
@@ -622,6 +642,118 @@ impl App<'_> {
         } else {
             self.focus.first();
         }
+    }
+}
+
+const EXECUTION_SUMMARY_LIMIT: usize = 160;
+
+fn summarize_execution_outcome(
+    command_spec: Option<&heroku_registry::CommandSpec>,
+    raw_log: &str,
+) -> (String, Option<u16>) {
+    let label = command_label(command_spec);
+    let trimmed_log = raw_log.trim();
+
+    if let Some(error_message) = trimmed_log.strip_prefix("Error:") {
+        let redacted = heroku_util::redact_sensitive(error_message.trim());
+        let truncated = truncate_for_summary(&redacted, EXECUTION_SUMMARY_LIMIT);
+        let summary = format!("{} - failed: {}", label, truncated);
+        return (summary, None);
+    }
+
+    let status_line = trimmed_log.lines().next().unwrap_or_default().trim();
+    let status_code = status_line
+        .split_whitespace()
+        .next()
+        .and_then(|code| code.parse::<u16>().ok());
+
+    let summary = if status_line.is_empty() {
+        format!("{} - succeeded", label)
+    } else {
+        let sanitized_status = heroku_util::redact_sensitive(status_line);
+        format!("{} - succeeded ({})", label, sanitized_status)
+    };
+
+    (summary, status_code)
+}
+
+fn command_label(command_spec: Option<&heroku_registry::CommandSpec>) -> String {
+    match command_spec {
+        Some(spec) if spec.name.is_empty() => spec.group.clone(),
+        Some(spec) => format!("{} {}", spec.group, spec.name),
+        None => "Command".to_string(),
+    }
+}
+
+fn truncate_for_summary(text: &str, max_len: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max_len {
+        return trimmed.to_string();
+    }
+
+    // Reserve space for the trailing ellipsis ("...").
+    let target_len = max_len.saturating_sub(3);
+    let mut truncated = String::new();
+    for (idx, ch) in trimmed.chars().enumerate() {
+        if idx >= target_len {
+            break;
+        }
+        truncated.push(ch);
+    }
+    let trimmed_truncated = truncated.trim_end();
+    format!("{}...", trimmed_truncated)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use heroku_registry::CommandSpec;
+    use heroku_types::ServiceId;
+
+    fn sample_spec() -> CommandSpec {
+        CommandSpec {
+            group: "apps".to_string(),
+            name: "info".to_string(),
+            summary: String::new(),
+            positional_args: Vec::new(),
+            flags: Vec::new(),
+            method: "GET".to_string(),
+            path: "/apps".to_string(),
+            ranges: Vec::new(),
+            service_id: ServiceId::CoreApi,
+        }
+    }
+
+    #[test]
+    fn summarize_success_includes_status_code() {
+        let spec = sample_spec();
+        let (summary, status) = summarize_execution_outcome(Some(&spec), "200 OK\n{\"foo\":\"bar\"}");
+
+        assert_eq!(summary, "apps info - succeeded (200 OK)");
+        assert_eq!(status, Some(200));
+    }
+
+    #[test]
+    fn summarize_error_marks_failure_and_truncates() {
+        let spec = sample_spec();
+        let long_error = format!(
+            "Error: {}",
+            "SensitiveToken123".repeat((EXECUTION_SUMMARY_LIMIT / 5) + 10)
+        );
+
+        let (summary, status) = summarize_execution_outcome(Some(&spec), &long_error);
+
+        assert!(summary.starts_with("apps info - failed: "));
+        assert!(summary.ends_with("..."));
+        assert_eq!(status, None);
+    }
+
+    #[test]
+    fn summarize_without_spec_uses_generic_label() {
+        let (summary, status) = summarize_execution_outcome(None, "200 OK\n{}");
+
+        assert_eq!(summary, "Command - succeeded (200 OK)");
+        assert_eq!(status, Some(200));
     }
 }
 
@@ -639,6 +771,9 @@ impl HasFocus for App<'_> {
                 }
                 Modal::Secrets => {
                     builder.widget(&self.plugins);
+                }
+                Modal::LogDetails => {
+                    builder.widget(&self.logs);
                 }
                 Modal::Help => {
                     // Help has no focusable fields; leave ring empty

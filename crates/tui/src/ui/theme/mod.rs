@@ -6,9 +6,9 @@
 //! consistent and elegant.
 
 pub mod dracula;
-pub mod helpers;
 pub mod nord;
 pub mod roles;
+pub mod theme_helpers;
 
 pub use dracula::{DraculaTheme, DraculaThemeHighContrast};
 pub use nord::{NordTheme, NordThemeHighContrast};

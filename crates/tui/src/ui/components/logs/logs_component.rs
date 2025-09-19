@@ -14,12 +14,12 @@
 //! The component follows the TEA (The Elm Architecture) pattern and integrates
 //! with the application's focus management system.
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use heroku_types::Effect;
-use heroku_util::redact_sensitive;
+use heroku_types::{Effect, Modal};
+use heroku_util::{redact_json, redact_sensitive};
 use once_cell::sync::Lazy;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::*,
@@ -27,16 +27,13 @@ use ratatui::{
 use regex::Regex;
 use serde_json::Value;
 
-use super::{
-    hint_bar::LogsHintBar,
-    state::{LogDetailView, LogEntry},
-};
+use super::state::{LogDetailView, LogEntry};
 use crate::{
     app,
     ui::{
-        components::{TableComponent, component::Component},
-        theme::{helpers as th, roles::Theme as UiTheme},
-        utils::centered_rect,
+        components::component::Component,
+        theme::{roles::Theme as UiTheme, theme_helpers as th},
+        utils::build_copy_text,
     },
 };
 
@@ -158,41 +155,43 @@ impl LogsComponent {
     /// # Arguments
     ///
     /// * `app` - Mutable reference to application state
-    fn choose_detail(&self, app: &mut app::App) {
-        // Multi-selection always shows text view
+    fn choose_detail(&self, app: &mut app::App) -> Vec<Effect> {
+        let mut modal_to_open = Modal::LogDetails;
+
         if !app.logs.selection.is_single() {
             app.logs.detail = Some(LogDetailView::Text);
             app.logs.cached_detail_index = None;
             app.logs.cached_redacted_json = None;
-            return;
-        }
-
-        let idx = app.logs.selection.cursor;
-        match app.logs.rich_entries.get(idx) {
-            Some(LogEntry::Api { json: Some(j), .. }) => {
-                if self.json_has_array(j) {
-                    // Route array JSON to the global Table modal for better UX
-                    let redacted = Self::redact_json(j);
+        } else {
+            let selected_index = app.logs.selection.cursor;
+            match app.logs.rich_entries.get(selected_index) {
+                Some(LogEntry::Api {
+                    json: Some(json_value), ..
+                }) if self.json_has_array(json_value) => {
+                    let redacted = redact_json(json_value);
                     app.table.apply_result_json(Some(redacted), &*app.ctx.theme);
                     app.table.normalize();
-                    // Clear logs detail modal state since we're using table
                     app.logs.detail = None;
                     app.logs.cached_detail_index = None;
                     app.logs.cached_redacted_json = None;
-                } else {
-                    // Show formatted JSON in logs detail modal
+                    modal_to_open = Modal::Results;
+                }
+                Some(LogEntry::Api {
+                    json: Some(json_value), ..
+                }) => {
                     app.logs.detail = Some(LogDetailView::Text);
-                    app.logs.cached_detail_index = Some(idx);
-                    app.logs.cached_redacted_json = Some(Self::redact_json(j));
+                    app.logs.cached_detail_index = Some(selected_index);
+                    app.logs.cached_redacted_json = Some(redact_json(json_value));
+                }
+                _ => {
+                    app.logs.detail = Some(LogDetailView::Text);
+                    app.logs.cached_detail_index = None;
+                    app.logs.cached_redacted_json = None;
                 }
             }
-            _ => {
-                // Non-API entries or API without JSON show as text
-                app.logs.detail = Some(LogDetailView::Text);
-                app.logs.cached_detail_index = None;
-                app.logs.cached_redacted_json = None;
-            }
         }
+
+        vec![Effect::ShowModal(modal_to_open)]
     }
 
     /// Checks if a JSON value contains array data suitable for table display.
@@ -214,91 +213,6 @@ impl LogsComponent {
             Value::Object(m) => m.values().any(|v| matches!(v, Value::Array(_))),
             _ => false,
         }
-    }
-
-    /// Recursively redacts sensitive data from JSON values.
-    ///
-    /// This method traverses the JSON structure and applies redaction to all
-    /// string values while preserving the overall structure. Used for security
-    /// when displaying JSON data in the UI.
-    ///
-    /// # Arguments
-    ///
-    /// * `v` - The JSON value to redact
-    ///
-    /// # Returns
-    ///
-    /// A new JSON value with all string content redacted
-    fn redact_json(v: &Value) -> Value {
-        match v {
-            Value::String(s) => Value::String(redact_sensitive(s)),
-            Value::Array(arr) => Value::Array(arr.iter().map(Self::redact_json).collect()),
-            Value::Object(map) => {
-                let mut out = serde_json::Map::new();
-                for (k, val) in map.iter() {
-                    out.insert(k.clone(), Self::redact_json(val));
-                }
-                Value::Object(out)
-            }
-            other => other.clone(),
-        }
-    }
-
-    // ============================================================================
-    // Copy and Text Processing Methods
-    // ============================================================================
-
-    /// Builds the text content to be copied to clipboard based on current
-    /// selection.
-    ///
-    /// This method handles different copy scenarios:
-    ///
-    /// - **Single API entry with JSON**: Returns formatted JSON if pretty mode
-    ///   enabled
-    /// - **Single API entry without JSON**: Returns raw log content
-    /// - **Multi-selection**: Returns concatenated log entries
-    ///
-    /// All output is automatically redacted for security.
-    ///
-    /// # Arguments
-    ///
-    /// * `app` - The application state containing logs and selection
-    ///
-    /// # Returns
-    ///
-    /// A redacted string containing the selected log content
-    fn build_copy_text(&self, app: &app::App) -> String {
-        if app.logs.entries.is_empty() {
-            return String::new();
-        }
-        let (start, end) = app.logs.selection.range();
-        if start >= app.logs.entries.len() {
-            return String::new();
-        }
-
-        // Handle single selection with special JSON formatting
-        if start == end
-            && let Some(LogEntry::Api { json, raw, .. }) = app.logs.rich_entries.get(start)
-        {
-            if let Some(j) = json
-                && app.logs.pretty_json
-            {
-                let red = Self::redact_json(j);
-                return serde_json::to_string_pretty(&red).unwrap_or_else(|_| redact_sensitive(raw));
-            }
-            return redact_sensitive(raw);
-        }
-
-        // Multi-select or text fallback: concatenate visible strings
-        let mut buf = String::new();
-        for i in start..=end.min(app.logs.entries.len() - 1) {
-            let line = app.logs.entries.get(i).cloned().unwrap_or_default();
-            if !buf.is_empty() {
-                buf.push('\n');
-            }
-            buf.push_str(&line);
-        }
-        redact_sensitive(&buf)
     }
 
     // ============================================================================
@@ -379,10 +293,6 @@ impl Component for LogsComponent {
     /// - **↑/↓**: Move cursor up/down
     /// - **Shift + ↑/↓**: Extend selection range
     ///
-    /// ## Detail View Keys (when detail modal is open)
-    /// - **Esc/Backspace**: Close detail modal
-    /// - **↑/↓**: Scroll within table detail view
-    ///
     /// ## Action Keys
     /// - **Enter**: Open detail view for selected entry
     /// - **c**: Copy selected content to clipboard
@@ -399,38 +309,15 @@ impl Component for LogsComponent {
     fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
         let mut effects = Vec::new();
 
-        // Handle keys when detail modal is open
-        if let Some(detail) = app.logs.detail {
-            match key.code {
-                KeyCode::Esc | KeyCode::Backspace => {
-                    // Close detail modal
-                    app.logs.detail = None;
-                    return effects;
-                }
-                KeyCode::Up => {
-                    // Scroll up in table detail view
-                    if let LogDetailView::Table { offset } = detail {
-                        app.logs.detail = Some(LogDetailView::Table {
-                            offset: offset.saturating_sub(1),
-                        });
-                    }
-                    return effects;
-                }
-                KeyCode::Down => {
-                    // Scroll down in table detail view
-                    if let LogDetailView::Table { offset } = detail {
-                        app.logs.detail = Some(LogDetailView::Table {
-                            offset: offset.saturating_add(1),
-                        });
-                    }
-                    return effects;
-                }
-                _ => {}
-            }
-        }
-
         // Handle main navigation and action keys
         match key.code {
+            // tab navigation
+            KeyCode::BackTab => {
+                app.focus.prev();
+            }
+            KeyCode::Tab => {
+                app.focus.next();
+            }
             KeyCode::Up => {
                 if key.modifiers.contains(KeyModifiers::SHIFT) {
                     // Extend selection upward
@@ -451,11 +338,11 @@ impl Component for LogsComponent {
             }
             KeyCode::Enter => {
                 // Open detail view for selected entry
-                self.choose_detail(app);
+                return self.choose_detail(app);
             }
             KeyCode::Char('c') => {
                 // Copy selected content to clipboard
-                let text = self.build_copy_text(app);
+                let text = build_copy_text(app);
                 effects.push(Effect::CopyLogsRequested(text));
             }
             KeyCode::Char('v') => {
@@ -494,7 +381,6 @@ impl Component for LogsComponent {
         let focused = app.logs.focus.get();
         let title = format!("Logs ({})", app.logs.entries.len());
         let block = th::block(&*app.ctx.theme, Some(&title), focused);
-        let inner = block.inner(rect);
 
         // Create list items with syntax highlighting
         // Note: Entries are pre-redacted when appended for safety
@@ -540,110 +426,52 @@ impl Component for LogsComponent {
             }
         }
 
-        // Render hint bar at bottom when focused
-        if focused && inner.height >= 1 {
-            let hint_area = Rect::new(inner.x, inner.y + inner.height.saturating_sub(1), inner.width, 1);
-            let mut hints_comp = LogsHintBar;
-            hints_comp.render(frame, hint_area, app);
-        }
-
         // Render detail modal overlay when open
-        if focused && app.logs.detail.is_some() {
-            let area = centered_rect(90, 85, rect);
-            let title = "Log Details";
-            let block = th::block(&*app.ctx.theme, Some(title), true);
-
-            // Clear the modal area and render the border
-            frame.render_widget(Clear, area);
-            frame.render_widget(&block, area);
-            let inner = block.inner(area);
-
-            // Split modal into content and footer areas
-            let splits = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Min(1), Constraint::Length(1)])
-                .split(inner);
-
-            // Render the main detail content
-            self.render_detail_content(frame, splits[0], app);
-
-            // Render footer with keyboard hints
-            let footer = Paragraph::new(Line::from(vec![
-                Span::styled("Hint: ", app.ctx.theme.text_muted_style()),
-                Span::styled("Esc", app.ctx.theme.accent_emphasis_style()),
-                Span::styled(" close  ", app.ctx.theme.text_muted_style()),
-                Span::styled("c", app.ctx.theme.accent_emphasis_style()),
-                Span::styled(" copy  ", app.ctx.theme.text_muted_style()),
-            ]))
-            .style(app.ctx.theme.text_muted_style());
-            frame.render_widget(footer, splits[1]);
-        }
+        if focused && app.logs.detail.is_some() {}
     }
-}
 
-impl LogsComponent {
-    /// Renders the content of the detail modal for selected log entries.
-    ///
-    /// This method handles different rendering modes based on the selection:
-    ///
-    /// - **Single API entry with JSON**: Renders formatted JSON using
-    ///   TableComponent
-    /// - **Single non-API entry**: Renders plain text with word wrapping
-    /// - **Multi-selection**: Renders concatenated text from all selected
-    ///   entries
-    ///
-    /// All content is automatically redacted for security before display.
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - The terminal frame to render to
-    /// * `area` - The rectangular area allocated for the detail content
-    /// * `app` - The application state containing logs and selection
-    fn render_detail_content(&self, f: &mut Frame, area: Rect, app: &mut app::App) {
-        let (start, end) = app.logs.selection.range();
-
-        // Handle single selection
-        if start == end {
-            if let Some(LogEntry::Api { json: Some(j), .. }) = app.logs.rich_entries.get(start) {
-                // Use cached redacted JSON if available, otherwise redact on-the-fly
-                // Note: Only non-array JSON renders here; arrays are routed to global table
-                // modal
-                let red_ref: &Value = match app.logs.cached_detail_index {
-                    Some(i) if i == start => app.logs.cached_redacted_json.as_ref().unwrap_or(j),
-                    _ => j,
-                };
-
-                // Render formatted JSON using TableComponent for better presentation
-                let table = TableComponent::default();
-                table.render_kv_or_text(f, area, red_ref, &*app.ctx.theme);
-                return;
-            }
-
-            // Handle single non-API entry or API without JSON
-            let s = app.logs.entries.get(start).cloned().unwrap_or_default();
-            let p = Paragraph::new(redact_sensitive(&s))
-                .block(Block::default().borders(Borders::NONE))
-                .wrap(Wrap { trim: false })
-                .style(app.ctx.theme.text_primary_style());
-            f.render_widget(p, area);
-            return;
+    fn get_hint_spans(&self, app: &app::App, is_root: bool) -> Vec<Span<'_>> {
+        // Only render when logs are focused (rat-focus)
+        if !app.logs.focus.get() {
+            return vec![];
         }
 
-        // Handle multi-selection: concatenate all selected log entries
-        let mut buf = String::new();
-        let max = app.logs.entries.len().saturating_sub(1);
-        for i in start..=end.min(max) {
-            if !buf.is_empty() {
-                buf.push('\n');
+        // Decide if we should show the pretty/raw toggle hint
+        let mut show_pretty_toggle = false;
+        if app.logs.selection.is_single() {
+            let idx = app.logs.selection.cursor;
+            if let Some(LogEntry::Api { json: Some(_), .. }) = app.logs.rich_entries.get(idx) {
+                show_pretty_toggle = true;
             }
-            buf.push_str(app.logs.entries.get(i).map(|s| s.as_str()).unwrap_or(""));
         }
 
-        // Render concatenated text with word wrapping
-        let p = Paragraph::new(redact_sensitive(&buf))
-            .block(Block::default().borders(Borders::NONE))
-            .wrap(Wrap { trim: false })
-            .style(app.ctx.theme.text_primary_style());
-        f.render_widget(p, area);
+        let theme = &*app.ctx.theme;
+        let mut spans: Vec<Span> = vec![];
+        if is_root {
+            spans.push(Span::styled("Logs: ", theme.text_muted_style()))
+        }
+        spans.extend([
+            Span::styled("↑/↓", theme.accent_emphasis_style()),
+            Span::styled(" Move  ", theme.text_muted_style()),
+            Span::styled("Shift+↑/↓", theme.accent_emphasis_style()),
+            Span::styled(" Range  ", theme.text_muted_style()),
+            Span::styled("Enter", theme.accent_emphasis_style()),
+            Span::styled(" Open  ", theme.text_muted_style()),
+            Span::styled("C", theme.accent_emphasis_style()),
+            Span::styled(" Copy  ", theme.text_muted_style()),
+        ]);
+        if show_pretty_toggle {
+            spans.push(Span::styled("V ", theme.accent_emphasis_style()));
+            // Show current mode with green highlight
+            if app.logs.pretty_json {
+                spans.push(Span::styled("pretty", Style::default().fg(theme.roles().success)));
+                spans.push(Span::styled("/raw  ", theme.text_muted_style()));
+            } else {
+                spans.push(Span::styled("pretty/", theme.text_muted_style()));
+                spans.push(Span::styled("raw  ", Style::default().fg(theme.roles().success)));
+            }
+        }
+
+        spans
     }
 }

@@ -30,7 +30,7 @@ use ratatui::{
 use crate::app::App;
 use crate::ui::{
     components::{HelpComponent, browser::layout::BrowserLayout, component::Component},
-    theme::helpers as th,
+    theme::theme_helpers as th,
 };
 
 /// A modal component for browsing and selecting Heroku commands interactively.
@@ -73,7 +73,34 @@ impl Component for BrowserComponent {
         self.render_commands_panel(frame, app, main_layout[0]);
         self.render_inline_help_panel(frame, app, main_layout[1]);
 
-        self.render_footer(frame, app, layout_chunks[2]);
+        let hint_spans = self.get_hint_spans(app, true);
+
+        let paragraph = Paragraph::new(Line::from(hint_spans));
+        frame.render_widget(paragraph, layout_chunks[2]);
+    }
+
+    /// Renders the footer with keyboard shortcut hints.
+    ///
+    /// This method displays helpful keyboard shortcuts at the bottom of the
+    /// browser modal to guide user interaction.
+    ///
+    /// # Arguments
+    /// * `frame` - The Ratatui frame to render to
+    /// * `app` - The application state containing theme information
+    /// * `area` - The area to render the footer in
+    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+        let theme = &*app.ctx.theme;
+        let mut spans = vec![];
+        if is_root {
+            spans.push(Span::styled("Hint: ", theme.text_muted_style()));
+        }
+        spans.extend([
+            Span::styled("Esc", theme.accent_emphasis_style()),
+            Span::styled(" Clear ", theme.text_muted_style()),
+            Span::styled("Enter", theme.accent_emphasis_style()),
+            Span::styled(" Send to palette  ", theme.text_muted_style()),
+        ]);
+        spans
     }
 
     /// Handles keyboard events for the browser component.
@@ -89,6 +116,7 @@ impl Component for BrowserComponent {
     /// # Returns
     /// * `Vec<Effect>` - Effects to be processed by the runtime
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
+        self.handle_hot_keys(app, key);
         if app.browser.f_search.get() {
             self.handle_search_keys(app, key);
         } else if app.browser.f_commands.get() {
@@ -120,7 +148,7 @@ impl BrowserComponent {
                 app.browser.search_input_push(c);
             }
             KeyCode::Backspace => app.browser.search_input_pop(),
-            KeyCode::Esc => app.browser.search_input_clear(),
+
             KeyCode::Tab | KeyCode::BackTab => {
                 if key.code == KeyCode::Tab {
                     app.focus.next();
@@ -133,6 +161,16 @@ impl BrowserComponent {
             KeyCode::Enter => {
                 app.browser.apply_enter();
             }
+            _ => {}
+        }
+    }
+
+    fn handle_hot_keys(&self, app: &mut App, key: KeyEvent) {
+        match key.code {
+            KeyCode::Enter => {
+                app.browser.apply_enter();
+            }
+            KeyCode::Esc => app.browser.search_input_clear(),
             _ => {}
         }
     }
@@ -150,9 +188,6 @@ impl BrowserComponent {
         match key.code {
             KeyCode::Down => app.browser.move_selection(1),
             KeyCode::Up => app.browser.move_selection(-1),
-            KeyCode::Enter => {
-                app.browser.apply_enter();
-            }
             KeyCode::Tab | KeyCode::BackTab => {
                 if key.code == KeyCode::Tab {
                     app.focus.next();
@@ -162,18 +197,6 @@ impl BrowserComponent {
             }
             _ => {}
         }
-    }
-    /// Creates the footer text with keyboard shortcuts and hints.
-    fn create_footer_text(&self, theme: &dyn crate::ui::theme::Theme) -> Line<'static> {
-        Line::from(vec![
-            Span::styled("Hint: ", theme.text_muted_style()),
-            Span::styled("Ctrl+F", theme.accent_emphasis_style()),
-            Span::styled(" close  ", theme.text_muted_style()),
-            Span::styled("Enter", theme.accent_emphasis_style()),
-            Span::styled(" send to palette  ", theme.text_muted_style()),
-            Span::styled("Esc", theme.accent_emphasis_style()),
-            Span::styled(" cancel", theme.text_muted_style()),
-        ])
     }
 
     /// Creates the help content (title and text) based on the selected command.
@@ -210,16 +233,6 @@ impl BrowserComponent {
         }
     }
 
-    /// Creates the help panel footer with copy shortcut hint.
-    fn create_help_footer<'a>(&self, app: &'a App) -> Paragraph<'a> {
-        let footer_text = Line::from(vec![
-            Span::styled("Hint: ", app.ctx.theme.text_muted_style()),
-            Span::styled("Ctrl+Y", app.ctx.theme.accent_emphasis_style()),
-            Span::styled(" copy", app.ctx.theme.text_muted_style()),
-        ]);
-        Paragraph::new(footer_text).style(app.ctx.theme.text_muted_style())
-    }
-
     /// Creates the main horizontal layout for commands and help panels.
     ///
     /// This method splits the available area into two sections: 30% for the
@@ -239,22 +252,6 @@ impl BrowserComponent {
             ])
             .split(area)
             .to_vec()
-    }
-
-    /// Renders the footer with keyboard shortcut hints.
-    ///
-    /// This method displays helpful keyboard shortcuts at the bottom of the
-    /// browser modal to guide user interaction.
-    ///
-    /// # Arguments
-    /// * `frame` - The Ratatui frame to render to
-    /// * `app` - The application state containing theme information
-    /// * `area` - The area to render the footer in
-    fn render_footer(&self, frame: &mut Frame, app: &App, area: Rect) {
-        let theme = &*app.ctx.theme;
-        let footer_text = self.create_footer_text(theme);
-        let footer_paragraph = Paragraph::new(footer_text).style(theme.text_muted_style());
-        frame.render_widget(footer_paragraph, area);
     }
 
     /// Renders the search input panel with cursor positioning.
@@ -330,6 +327,8 @@ impl BrowserComponent {
         let commands_title = format!("Commands ({})", app.browser.filtered().len());
         let is_focused = app.browser.f_commands.get();
         let commands_block = th::block(&*app.ctx.theme, Some(&commands_title), is_focused);
+        let inner_height = commands_block.inner(area).height as usize;
+        app.browser.set_viewport_rows(inner_height);
 
         // Create command items and get list state separately to avoid borrowing conflicts
         let command_items = {
@@ -355,7 +354,7 @@ impl BrowserComponent {
             .block(commands_block)
             .highlight_style(app.ctx.theme.selection_style().add_modifier(Modifier::BOLD))
             .highlight_symbol("> ");
-        let list_state = &mut app.browser.list_state();
+        let list_state = app.browser.list_state();
         frame.render_stateful_widget(commands_list, area, list_state);
     }
 
@@ -372,17 +371,11 @@ impl BrowserComponent {
         let (help_title, help_text) = self.create_help_content(app);
         let help_block = th::block(&*app.ctx.theme, Some(&help_title), false);
         let inner_area = help_block.inner(area);
-        let layout_splits = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(1)])
-            .split(inner_area);
         frame.render_widget(help_block, area);
         let help_paragraph = Paragraph::new(help_text)
             .style(app.ctx.theme.text_primary_style())
             .wrap(Wrap { trim: false });
-        frame.render_widget(help_paragraph, layout_splits[0]);
-        let help_footer = self.create_help_footer(app);
-        frame.render_widget(help_footer, layout_splits[1]);
+        frame.render_widget(help_paragraph, inner_area);
     }
 }
 
@@ -398,6 +391,7 @@ mod tests {
     impl crate::ui::theme::Theme for MockTheme {
         fn roles(&self) -> &ThemeRoles {
             &ThemeRoles {
+                modal_bg: ratatui::style::Color::Black,
                 background: ratatui::style::Color::Black,
                 surface: ratatui::style::Color::DarkGray,
                 surface_muted: ratatui::style::Color::Gray,
@@ -502,7 +496,7 @@ mod tests {
         let component = BrowserComponent;
         let theme = MockTheme;
 
-        let footer_text = component.create_footer_text(&theme);
+        let footer_text = component.create_footer_text(&theme, true);
 
         // Verify the footer contains expected text elements
         let text_content = format!("{}", footer_text);

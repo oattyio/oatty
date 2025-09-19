@@ -19,8 +19,8 @@ use serde_json::Value;
 use crate::{
     app,
     ui::{
-        components::{PaginationComponent, component::Component, table::TableFooter},
-        theme::{helpers as th, roles::Theme as UiTheme},
+        components::{PaginationComponent, component::Component},
+        theme::{roles::Theme as UiTheme, theme_helpers as th},
         utils::{centered_rect, get_scored_keys, normalize_header, render_value},
     },
 };
@@ -66,7 +66,6 @@ pub struct TableComponent<'a> {
     table_state: TableState,
     scrollbar: Scrollbar<'a>,
     scrollbar_state: ScrollbarState,
-    footer: TableFooter<'a>,
     pagination: PaginationComponent,
 }
 
@@ -253,8 +252,43 @@ impl Component for TableComponent<'_> {
         if is_table {
             // Render pagination controls
             self.pagination.render(frame, splits[1], app);
-            self.footer.render(frame, splits[2], app);
+            let hint_spans = self.get_hint_spans(app, true);
+            let hint_line = if hint_spans.is_empty() {
+                Line::default()
+            } else {
+                Line::from(hint_spans)
+            };
+            let hints_widget = Paragraph::new(hint_line).style(app.ctx.theme.text_muted_style());
+            frame.render_widget(hints_widget, splits[2]);
         }
+    }
+
+    fn get_hint_spans(&self, app: &app::App, is_root: bool) -> Vec<Span<'_>> {
+        if app.table.rows().map(|rows| rows.is_empty()).unwrap_or(true) {
+            return Vec::new();
+        }
+
+        let theme = &*app.ctx.theme;
+        let mut spans: Vec<Span> = Vec::new();
+        if is_root {
+            spans.push(Span::styled("Hints: ", theme.text_muted_style()));
+        }
+
+        spans.extend([
+            Span::styled("Esc", theme.accent_emphasis_style()),
+            Span::styled(" close ", theme.text_muted_style()),
+            Span::styled("c", theme.accent_emphasis_style()),
+            Span::styled(" copy ", theme.text_muted_style()),
+            Span::styled("↑/↓", theme.accent_emphasis_style()),
+            Span::styled(" scroll  ", theme.text_muted_style()),
+            Span::styled("PgUp/PgDn", theme.accent_emphasis_style()),
+            Span::styled(" faster  ", theme.text_muted_style()),
+            Span::styled("Home/End", theme.accent_emphasis_style()),
+            Span::styled(" jump", theme.text_muted_style()),
+        ]);
+
+        spans.extend(self.pagination.get_hint_spans(app, false));
+        spans
     }
 
     /// Handle key events for the results table modal.

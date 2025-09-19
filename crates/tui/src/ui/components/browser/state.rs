@@ -20,6 +20,7 @@ pub struct BrowserState {
     filtered: Vec<usize>,
     selected: usize,
     list_state: ListState,
+    viewport_rows: usize,
 }
 
 impl Default for BrowserState {
@@ -36,6 +37,7 @@ impl Default for BrowserState {
             filtered: vec![],
             selected: 0,
             list_state: ListState::default(),
+            viewport_rows: 0,
         }
     }
 }
@@ -73,32 +75,54 @@ impl BrowserState {
         self.all_commands = commands;
     }
 
+    pub fn set_viewport_rows(&mut self, rows: usize) {
+        let normalized = rows.max(1);
+        if self.viewport_rows != normalized {
+            self.viewport_rows = normalized;
+            self.ensure_selection_visible();
+        }
+    }
+
     /// Updates the filtered command list based on the current search query.
     pub fn update_browser_filtered(&mut self) {
+        // Remember the command index that was selected before we rebuild the filter.
+        let previously_selected_command = self.filtered.get(self.selected).copied();
+
+        // Rebuild the filtered list.
         if self.search_input.is_empty() {
             self.filtered = (0..self.all_commands.len()).collect();
         } else {
-            let mut items: Vec<(i64, usize)> = self
+            let mut scored: Vec<(i64, usize)> = self
                 .all_commands
                 .iter()
                 .enumerate()
-                .filter_map(|(i, command)| {
-                    let group = &command.group;
-                    let name = &command.name;
-                    let exec = if name.is_empty() {
-                        group.to_string()
+                .filter_map(|(idx, command)| {
+                    let exec = if command.name.is_empty() {
+                        command.group.clone()
                     } else {
-                        format!("{} {}", group, name)
+                        format!("{} {}", command.group, command.name)
                     };
-                    fuzzy_score(&exec, &self.search_input).map(|score| (score, i))
+                    fuzzy_score(&exec, &self.search_input).map(|score| (score, idx))
                 })
                 .collect();
-            items.sort_by(|a, b| b.0.cmp(&a.0));
 
-            self.filtered = items.iter().map(|x| x.1).collect();
+            scored.sort_by(|a, b| b.0.cmp(&a.0));
+            self.filtered = scored.into_iter().map(|(_, idx)| idx).collect();
         }
-        self.selected = self.selected.min(self.filtered.len().saturating_sub(1));
-        self.list_state.select(Some(self.selected));
+
+        if let Some(command_idx) = previously_selected_command {
+            // Try to keep the cursor on the same command if it survived the filter.
+            if let Some(new_position) = self.filtered.iter().position(|&idx| idx == command_idx) {
+                self.selected = new_position;
+            } else {
+                // Otherwise fall back to the nearest valid slot.
+                self.selected = self.selected.min(self.filtered.len().saturating_sub(1));
+            }
+        } else {
+            self.selected = 0;
+        }
+
+        self.ensure_selection_visible();
     }
 
     pub fn move_selection(&mut self, delta: isize) {
@@ -112,11 +136,11 @@ impl BrowserState {
             selected.saturating_sub((-delta) as usize)
         };
         selected = new_selected.min(self.filtered.len().saturating_sub(1));
-        self.list_state.select(Some(selected));
-
-        let idx = self.filtered[selected];
-        let command = self.all_commands[idx].clone();
         self.selected = selected;
+        self.ensure_selection_visible();
+
+        let idx = self.filtered[self.selected];
+        let command = self.all_commands[idx].clone();
         self.apply_command_selection(command);
     }
 
@@ -196,6 +220,31 @@ impl BrowserState {
     }
     fn apply_field_idx(&mut self, idx: usize) {
         self.current_field_idx = idx;
+    }
+
+    fn ensure_selection_visible(&mut self) {
+        if self.filtered.is_empty() {
+            self.selected = 0;
+            self.list_state.select(None);
+            *self.list_state.offset_mut() = 0;
+            return;
+        }
+
+        let clamped = self.selected.min(self.filtered.len().saturating_sub(1));
+        self.selected = clamped;
+        self.list_state.select(Some(clamped));
+
+        let viewport = self.viewport_rows.max(1);
+        let offset_ref = self.list_state.offset_mut();
+        let offset = *offset_ref;
+
+        if clamped < offset {
+            *offset_ref = clamped;
+        } else if clamped >= offset + viewport {
+            *offset_ref = clamped + 1 - viewport;
+        } else if self.filtered.len() < offset + viewport {
+            *offset_ref = self.filtered.len().saturating_sub(viewport);
+        }
     }
 }
 

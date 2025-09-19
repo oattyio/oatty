@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::ui::components::component::Component;
-use crate::ui::theme::{Theme, helpers as th};
+use crate::ui::theme::{Theme, theme_helpers as th};
 
 use super::PluginsState;
 

@@ -8,8 +8,8 @@ use serde_json::Value;
 
 use crate::ui::{
     theme::{
-        helpers::{table_header_style, table_row_style},
         roles::Theme as UiTheme,
+        theme_helpers::{table_header_style, table_row_style},
     },
     utils::{ColumnWithSize, infer_columns_with_sizes_from_json, is_status_like, render_value, status_color_for_value},
 };

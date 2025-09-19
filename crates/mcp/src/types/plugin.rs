@@ -50,7 +50,7 @@ pub struct PluginDetail {
     pub env: Vec<EnvVar>,
 
     /// Recent logs from the plugin.
-    pub logs: Vec<LogEntry>,
+    pub logs: Vec<McpLogEntry>,
 
     /// Health metrics for the plugin.
     pub health: HealthStatus,
@@ -86,7 +86,7 @@ impl PluginDetail {
     }
 
     /// Add a log entry to the plugin.
-    pub fn add_log(&mut self, entry: LogEntry) {
+    pub fn add_log(&mut self, entry: McpLogEntry) {
         self.logs.push(entry);
         // Keep only the last 1000 log entries
         if self.logs.len() > 1000 {
@@ -95,7 +95,7 @@ impl PluginDetail {
     }
 
     /// Get the most recent log entries.
-    pub fn recent_logs(&self, count: usize) -> Vec<&LogEntry> {
+    pub fn recent_logs(&self, count: usize) -> Vec<&McpLogEntry> {
         self.logs.iter().rev().take(count).collect()
     }
 
@@ -182,7 +182,7 @@ impl std::fmt::Display for EnvSource {
 
 /// A log entry from a plugin.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LogEntry {
+pub struct McpLogEntry {
     /// Timestamp of the log entry.
     pub timestamp: DateTime<Utc>,
 
@@ -199,7 +199,7 @@ pub struct LogEntry {
     pub plugin_name: String,
 }
 
-impl LogEntry {
+impl McpLogEntry {
     /// Create a new log entry.
     pub fn new(level: LogLevel, message: String, source: LogSource, plugin_name: String) -> Self {
         Self {
@@ -298,7 +298,7 @@ mod tests {
 
     #[test]
     fn test_log_entry_formatting() {
-        let log = LogEntry::new(
+        let log = McpLogEntry::new(
             LogLevel::Info,
             "Plugin started".to_string(),
             LogSource::System,

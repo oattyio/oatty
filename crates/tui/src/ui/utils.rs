@@ -7,11 +7,15 @@
 use std::collections::{BTreeSet, HashMap};
 
 use heck::ToTitleCase;
-use heroku_util::{format_date_mmddyyyy, is_date_like_key};
+use heroku_mcp::McpLogEntry;
+use heroku_util::{format_date_mmddyyyy, is_date_like_key, redact_json, redact_sensitive};
 use ratatui::prelude::*;
 use serde_json::{Map, Value};
 
-use crate::ui::theme::roles::Theme as UiTheme;
+use crate::{
+    app,
+    ui::{components::logs::state::LogEntry, theme::roles::Theme as UiTheme},
+};
 
 /// Creates a centered rectangular area within a given rectangle.
 ///
@@ -311,4 +315,60 @@ fn ellipsize_middle_if_sha_like(s: &str, keep_total: usize) -> String {
     let head = keep_total / 2;
     let tail = keep_total - head;
     format!("{}…{}", &s[..head], &s[s.len() - tail..])
+}
+// ============================================================================
+// Copy and Text Processing Methods
+// ============================================================================
+
+/// Builds the text content to be copied to clipboard based on current
+/// selection.
+///
+/// This method handles different copy scenarios:
+///
+/// - **Single API entry with JSON**: Returns formatted JSON if pretty mode
+///   enabled
+/// - **Single API entry without JSON**: Returns raw log content
+/// - **Multi-selection**: Returns concatenated log entries
+///
+/// All output is automatically redacted for security.
+///
+/// # Arguments
+///
+/// * `app` - The application state containing logs and selection
+///
+/// # Returns
+///
+/// A redacted string containing the selected log content
+pub fn build_copy_text(app: &app::App) -> String {
+    if app.logs.entries.is_empty() {
+        return String::new();
+    }
+    let (start, end) = app.logs.selection.range();
+    if start >= app.logs.entries.len() {
+        return String::new();
+    }
+
+    // Handle single selection with special JSON formatting
+    if start == end
+        && let Some(LogEntry::Api { json, raw, .. }) = app.logs.rich_entries.get(start)
+    {
+        if let Some(j) = json
+            && app.logs.pretty_json
+        {
+            let red = redact_json(j);
+            return serde_json::to_string_pretty(&red).unwrap_or_else(|_| redact_sensitive(raw));
+        }
+        return redact_sensitive(raw);
+    }
+
+    // Multi-select or text fallback: concatenate visible strings
+    let mut buf = String::new();
+    for i in start..=end.min(app.logs.entries.len() - 1) {
+        let line = app.logs.entries.get(i).cloned().unwrap_or_default();
+        if !buf.is_empty() {
+            buf.push('\n');
+        }
+        buf.push_str(&line);
+    }
+    redact_sensitive(&buf)
 }

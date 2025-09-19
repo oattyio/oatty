@@ -21,6 +21,7 @@ pub const YELLOW: Color = Color::Rgb(0xF1, 0xFA, 0x8C); // #f1fa8c
 // THEME.md authoritative aliases (Dracula mapping)
 pub const BG_MAIN: Color = BG; // App/root background
 pub const BG_PANEL: Color = BG; // Panels share background in Dracula
+pub const BG_MODAL_OVERLAY: Color = Color::Rgb(0x1D, 0x1F, 0x27); // Darkened overlay for modals
 pub const UI_BORDER: Color = CURRENT_LINE; // Borders/dividers/scrollbars
 pub const TEXT_MUTED: Color = COMMENT; // Ghost text/hints/placeholders
 
@@ -69,6 +70,7 @@ impl DraculaTheme {
                 selection_bg: CURRENT_LINE,
                 selection_fg: TEXT_SELECTED,
                 focus: ACCENT_PRIMARY, // Cyan for active/focused borders
+                modal_bg: BG_MODAL_OVERLAY,
 
                 scrollbar_track: UI_BORDER,
                 scrollbar_thumb: COMMENT,
@@ -115,6 +117,7 @@ impl DraculaThemeHighContrast {
                 selection_bg: CURRENT_LINE,
                 selection_fg: TEXT_SELECTED,
                 focus: ACCENT_SECONDARY,
+                modal_bg: BG_MODAL_OVERLAY,
 
                 scrollbar_track: UI_BORDER,
                 scrollbar_thumb: PURPLE,

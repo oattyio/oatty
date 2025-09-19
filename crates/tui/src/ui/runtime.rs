@@ -23,7 +23,7 @@ use std::time::Duration;
 
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers, read},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -32,7 +32,6 @@ use ratatui::{Terminal, prelude::*};
 use tokio::{
     signal,
     sync::mpsc,
-    task::spawn_blocking,
     time::{self, MissedTickBehavior},
 };
 
@@ -54,7 +53,7 @@ enum LoopAction {
 /// events in some terminals. We call `read()` directly and never use `poll()`
 /// here — the blocking behavior is isolated to this thread.
 async fn spawn_input_thread() -> mpsc::Receiver<Event> {
-    let (sender, receiver) = mpsc::channel(25);
+    let (sender, receiver) = mpsc::channel(500);
     tokio::spawn(async move {
         loop {
             if event::poll(Duration::from_millis(10)).expect("poll failed") {
@@ -266,6 +265,7 @@ pub async fn run_app(registry: heroku_registry::Registry) -> Result<()> {
                 if needs_animation {
                     let effects = application.update(Msg::Tick);
                     cmd::run_from_effects(&mut application, effects);
+                    needs_render = true;
                 }
             }
 
@@ -274,6 +274,7 @@ pub async fn run_app(registry: heroku_registry::Registry) -> Result<()> {
                 if let Some(execution_output) = maybe_execution_output {
                     let effects = application.update(Msg::ExecCompleted(execution_output));
                     cmd::run_from_effects(&mut application, effects);
+                    needs_render = true;
                 }
             }
 

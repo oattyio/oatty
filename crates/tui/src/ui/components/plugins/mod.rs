@@ -5,22 +5,22 @@
 //! consistent look-and-feel across the interface.
 
 mod add_plugin;
-mod details;
-mod hints_bar;
+mod details_component;
 mod logs;
-mod plugins;
-mod search;
+mod plugins_component;
+mod search_component;
 mod secrets;
 mod state;
 mod table;
+mod types;
 
 pub use add_plugin::AddTransport;
 pub use add_plugin::PluginsAddComponent;
-pub use details::PluginsDetailsComponent;
-pub use hints_bar::PluginHintsBar;
+pub use details_component::PluginsDetailsComponent;
 pub use logs::PluginsLogsComponent;
-pub use plugins::PluginsComponent;
-pub use search::PluginsSearchComponent;
-pub use secrets::{EnvRow, PluginSecretsEditorState, PluginsSecretsComponent};
+pub use plugins_component::PluginsComponent;
+pub use search_component::PluginsSearchComponent;
+pub use secrets::{PluginSecretsEditorState, PluginsSecretsComponent};
 pub use state::{PluginListItem, PluginsState};
 pub use table::PluginsTableComponent;
+pub use types::*;

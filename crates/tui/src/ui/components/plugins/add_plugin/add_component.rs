@@ -15,10 +15,13 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::ui::theme::{Theme, helpers as theme_helpers};
-use crate::ui::{components::component::Component, theme::helpers::render_button};
+use crate::ui::theme::{Theme, theme_helpers};
+use crate::ui::{components::component::Component, theme::theme_helpers::render_button};
 
-use super::state::{AddTransport, PluginAddViewState};
+use super::{
+    key_value_editor::KeyValueEditorComponent,
+    state::{AddTransport, PluginAddViewState},
+};
 
 /// Component for the add plugin plugin interface.
 ///
@@ -27,7 +30,19 @@ use super::state::{AddTransport, PluginAddViewState};
 /// and action buttons for validation and saving. The component manages
 /// keyboard input, focus navigation, and rendering of the plugin interface.
 #[derive(Debug, Default)]
-pub struct PluginsAddComponent;
+pub struct PluginsAddComponent {
+    key_value_component: KeyValueEditorComponent,
+}
+
+#[derive(Debug, Default)]
+struct AddPluginFormLayout {
+    name_area: Rect,
+    command_area: Option<Rect>,
+    args_area: Option<Rect>,
+    base_url_area: Option<Rect>,
+    key_value_area: Rect,
+    validation_area: Option<Rect>,
+}
 
 impl Component for PluginsAddComponent {
     /// Handles keyboard events for the add plugin plugin.
@@ -50,6 +65,9 @@ impl Component for PluginsAddComponent {
         };
         // Use focus flags directly to avoid building a focus ring repeatedly
         let is_transport_focused = add_state.f_transport.get();
+        if add_state.f_key_value_pairs.get() {
+            return self.key_value_component.handle_key_events(app, key_event);
+        }
 
         match key_event.code {
             KeyCode::Esc => {
@@ -80,10 +98,14 @@ impl Component for PluginsAddComponent {
                 }
             }
             KeyCode::Backspace => {
-                handle_backspace_key(add_state);
+                if handle_backspace_key(add_state).is_some() {
+                    add_state.validation = None; // clear validation
+                }
             }
             KeyCode::Char(character) if !key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                handle_character_input(add_state, character);
+                if handle_character_input(add_state, character) {
+                    add_state.validation = None; // clear validation
+                }
             }
             _ => {}
         }
@@ -160,17 +182,19 @@ impl Component for PluginsAddComponent {
                 transport_area,
             );
 
+            let button_row_height = 3u16;
             // Form fields section
             let fields_area = Rect {
                 x: inner_area.x,
                 y: inner_area.y + 1,
                 width: inner_area.width,
-                height: inner_area.height.saturating_sub(1),
+                height: inner_area.height.saturating_sub(button_row_height.saturating_add(1)),
             };
-            render_form_fields(frame, fields_area, theme, add_state);
+            let form_layout = render_form_fields(frame, fields_area, theme, add_state);
+            self.key_value_component
+                .render_with_state(frame, form_layout.key_value_area, theme, add_state);
 
             // Action buttons section
-            let button_row_height = 3u16;
             let buttons_area = Rect {
                 x: inner_area.x,
                 y: inner_area
@@ -180,10 +204,62 @@ impl Component for PluginsAddComponent {
                 height: button_row_height,
             };
             render_action_buttons(frame, buttons_area, theme, add_state);
-
             // Position the cursor in the active input field
-            position_cursor_in_active_field(frame, fields_area, add_state);
+            position_cursor_in_active_field(frame, &form_layout, add_state);
         }
+    }
+
+    fn get_hint_spans(&self, app: &crate::app::App, is_root: bool) -> Vec<Span<'_>> {
+        let theme = &*app.ctx.theme;
+        let add_state = app.plugins.add.as_ref().expect("add state should be something");
+        let mut spans = vec![];
+        if is_root {
+            spans.push(Span::styled("Hints: ", theme.text_muted_style()))
+        }
+        spans.extend([
+            Span::styled("Esc", theme.accent_emphasis_style()),
+            Span::styled(" Cancel ", theme.text_muted_style()),
+        ]);
+
+        if add_state.f_key_value_pairs.get() {
+            // The KV pairs component is focused
+            spans.extend([
+                Span::styled("↑/↓", theme.accent_emphasis_style()),
+                Span::styled(" Cycle  ", theme.text_muted_style()),
+            ]);
+
+            // and we're editing something
+            if !add_state.active_key_value_editor().is_editing() {
+                // a row is selected and can be edited
+                if add_state.active_key_value_editor().selected_row().is_some() {
+                    spans.extend([
+                        Span::styled("Enter/Ctrl+E", theme.accent_emphasis_style()),
+                        Span::styled(" Edit ", theme.text_muted_style()),
+                    ]);
+                }
+                // row selection has no bearing on adding a new item
+                spans.extend([
+                    Span::styled("Ctrl+N", theme.accent_emphasis_style()),
+                    Span::styled(" New ", theme.text_muted_style()),
+                ]);
+            }
+        } else {
+            let (validate_enabled, save_enabled) = add_state.compute_button_enablement();
+            if validate_enabled {
+                spans.extend([
+                    Span::styled("Ctrl+V", theme.accent_emphasis_style()),
+                    Span::styled(" Validate ", theme.text_muted_style()),
+                ]);
+            }
+            if save_enabled {
+                spans.extend([
+                    Span::styled("Ctrl+s", theme.accent_emphasis_style()),
+                    Span::styled(" Save ", theme.text_muted_style()),
+                ]);
+            }
+        }
+
+        spans
     }
 }
 
@@ -239,29 +315,20 @@ fn handle_enter_key(state: &mut PluginAddViewState) -> Vec<Effect> {
 /// # Arguments
 ///
 /// * `add_state` - Mutable reference to the add plugin plugin state
-fn handle_backspace_key(add_state: &mut PluginAddViewState) {
+fn handle_backspace_key(add_state: &mut PluginAddViewState) -> Option<char> {
     if add_state.f_name.get() {
-        add_state.name.pop();
-        return;
+        return add_state.name.pop();
     }
     if add_state.f_command.get() {
-        add_state.command.pop();
-        return;
+        return add_state.command.pop();
     }
     if add_state.f_args.get() {
-        add_state.args.pop();
-        return;
+        return add_state.args.pop();
     }
     if add_state.f_base_url.get() {
-        add_state.base_url.pop();
-        return;
+        return add_state.base_url.pop();
     }
-    if add_state.f_key_value_pairs.get() {
-        match add_state.transport {
-            AddTransport::Local => add_state.env_input.pop(),
-            AddTransport::Remote => add_state.headers_input.pop(),
-        };
-    }
+    None
 }
 
 /// Handles character input in the add plugin plugin.
@@ -273,29 +340,24 @@ fn handle_backspace_key(add_state: &mut PluginAddViewState) {
 ///
 /// * `add_state` - Mutable reference to the add plugin plugin state
 /// * `character` - The character to add to the input field
-fn handle_character_input(add_state: &mut PluginAddViewState, character: char) {
+fn handle_character_input(add_state: &mut PluginAddViewState, character: char) -> bool {
     if add_state.f_name.get() {
         add_state.name.push(character);
-        return;
+        return true;
     }
     if add_state.f_command.get() {
         add_state.command.push(character);
-        return;
+        return true;
     }
     if add_state.f_args.get() {
         add_state.args.push(character);
-        return;
+        return true;
     }
     if add_state.f_base_url.get() {
         add_state.base_url.push(character);
-        return;
+        return true;
     }
-    if add_state.f_key_value_pairs.get() {
-        match add_state.transport {
-            AddTransport::Local => add_state.env_input.push(character),
-            AddTransport::Remote => add_state.headers_input.push(character),
-        }
-    }
+    false
 }
 
 /// Renders the form fields section of the add plugin plugin.
@@ -310,90 +372,154 @@ fn handle_character_input(add_state: &mut PluginAddViewState, character: char) {
 /// * `fields_area` - The rectangular area allocated for form fields
 /// * `theme` - Reference to the UI theme for styling
 /// * `add_state` - Reference to the add plugin plugin state
-fn render_form_fields(frame: &mut Frame, fields_area: Rect, theme: &dyn Theme, add_state: &PluginAddViewState) {
-    let mut field_lines: Vec<Line> = Vec::new();
+fn render_form_fields(
+    frame: &mut Frame,
+    fields_area: Rect,
+    theme: &dyn Theme,
+    add_state: &PluginAddViewState,
+) -> AddPluginFormLayout {
+    let mut layout = AddPluginFormLayout::default();
 
-    let create_field_line =
-        |is_focused: bool, label: &str, value: &str, placeholder: &str, theme: &dyn Theme| -> Line {
-            let mut field_spans: Vec<Span> = Vec::new();
+    let editor = add_state.active_key_value_editor();
+    let is_editing = editor.is_editing();
+    let show_validation = add_state.validation.is_some();
 
-            // Add focus indicator
-            field_spans.push(Span::styled(
-                if is_focused { "› " } else { "  " },
-                theme.text_secondary_style(),
-            ));
+    let mut constraints: Vec<Constraint> = vec![Constraint::Length(1)]; // Name always present
+    match add_state.transport {
+        AddTransport::Local => {
+            constraints.push(Constraint::Length(1)); // Command
+            constraints.push(Constraint::Length(1)); // Args
+        }
+        AddTransport::Remote => {
+            constraints.push(Constraint::Length(1)); // Base URL
+        }
+    }
+    constraints.push(Constraint::Length(1)); // Margin
+    let key_value_min_height: u16 = if is_editing { 8 } else { 4 };
+    constraints.push(Constraint::Min(key_value_min_height)); // Key/value table + inline editor
+    if show_validation {
+        constraints.push(Constraint::Length(1));
+    }
 
-            // Add field label
-            field_spans.push(Span::styled(format!("{}: ", label), theme.text_primary_style()));
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(constraints)
+        .split(fields_area);
 
-            // Add field value or placeholder
-            if value.is_empty() {
-                field_spans.push(Span::styled(placeholder.to_string(), theme.text_muted_style()));
-            } else {
-                field_spans.push(Span::styled(value.to_string(), theme.text_primary_style()));
-            }
+    let mut index = 0;
 
-            Line::from(field_spans)
-        };
-
-    // Always show the name field
-    field_lines.push(create_field_line(
-        add_state.f_name.get(),
+    // Name field
+    let name_area = sections[index];
+    layout.name_area = name_area;
+    render_labeled_input_field(
+        frame,
+        name_area,
+        theme,
         "Name",
         &add_state.name,
         "github",
-        theme,
-    ));
+        add_state.f_name.get(),
+    );
+    index += 1;
 
-    // Show transport-specific fields
     match add_state.transport {
         AddTransport::Local => {
-            field_lines.push(create_field_line(
-                add_state.f_command.get(),
+            let command_area = sections[index];
+            layout.command_area = Some(command_area);
+            render_labeled_input_field(
+                frame,
+                command_area,
+                theme,
                 "Command",
                 &add_state.command,
                 "npx",
+                add_state.f_command.get(),
+            );
+            index += 1;
+
+            let args_area = sections[index];
+            layout.args_area = Some(args_area);
+            render_labeled_input_field(
+                frame,
+                args_area,
                 theme,
-            ));
-            field_lines.push(create_field_line(
-                add_state.f_args.get(),
                 "Args",
                 &add_state.args,
                 "-y @modelcontextprotocol/server-github",
-                theme,
-            ));
-            field_lines.push(create_field_line(
-                add_state.f_key_value_pairs.get(),
-                "Env Vars",
-                &add_state.env_input,
-                "FOO=bar, HEROKU_API_TOKEN=${env:HEROKU_API_TOKEN}",
-                theme,
-            ));
+                add_state.f_args.get(),
+            );
+            index += 1;
         }
         AddTransport::Remote => {
-            field_lines.push(create_field_line(
-                add_state.f_base_url.get(),
+            let base_area = sections[index];
+            layout.base_url_area = Some(base_area);
+            render_labeled_input_field(
+                frame,
+                base_area,
+                theme,
                 "Base URL",
                 &add_state.base_url,
                 "https://mcp.example.com",
-                theme,
-            ));
-            field_lines.push(create_field_line(
-                add_state.f_key_value_pairs.get(),
-                "Headers",
-                &add_state.headers_input,
-                "Authorization=Bearer ${secret:EXAMPLE_TOKEN}",
-                theme,
-            ));
+                add_state.f_base_url.get(),
+            );
+            index += 1;
         }
     }
+    index += 1; // skip the margin
+    let table_area = sections[index];
+    layout.key_value_area = table_area;
+    index += 1;
 
-    if let Some(message) = add_state.validation.clone() {}
+    if show_validation {
+        let validation_area = sections[index];
+        if let Some(message) = &add_state.validation {
+            render_validation_message(frame, validation_area, theme, message);
+        }
+        layout.validation_area = Some(validation_area);
+    }
 
-    frame.render_widget(
-        Paragraph::new(field_lines).style(theme.text_primary_style()),
-        fields_area,
-    );
+    layout
+}
+
+/// Render a single-line labeled input field with optional placeholder text.
+fn render_labeled_input_field(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &dyn Theme,
+    label: &str,
+    value: &str,
+    placeholder: &str,
+    focused: bool,
+) {
+    let mut spans: Vec<Span> = Vec::new();
+    spans.push(Span::styled(
+        if focused { "› " } else { "  " },
+        theme.text_secondary_style(),
+    ));
+    spans.push(Span::styled(format!("{}: ", label), theme.text_primary_style()));
+    if value.is_empty() {
+        spans.push(Span::styled(placeholder.to_string(), theme.text_muted_style()));
+    } else {
+        spans.push(Span::styled(value.to_string(), theme.text_primary_style()));
+    }
+
+    let style = if focused {
+        theme.selection_style()
+    } else {
+        theme.text_primary_style()
+    };
+    let paragraph = Paragraph::new(Line::from(spans)).style(style);
+    frame.render_widget(paragraph, area);
+}
+
+/// Render a validation message for the add plugin form.
+fn render_validation_message(frame: &mut Frame, area: Rect, theme: &dyn Theme, message: &str) {
+    let spans = vec![
+        Span::styled("  ", theme.text_secondary_style()),
+        Span::styled(message.to_string(), theme.status_error()),
+    ];
+    let paragraph = Paragraph::new(Line::from(spans)).style(theme.status_error());
+    frame.render_widget(paragraph, area);
 }
 
 /// Renders the action buttons section of the add plugin plugin.
@@ -465,6 +591,7 @@ fn render_action_buttons(frame: &mut Frame, buttons_area: Rect, theme: &dyn Them
         Borders::ALL,
     );
 }
+
 /// Positions the cursor in the currently focused input field.
 ///
 /// This function calculates the appropriate cursor position based on the
@@ -474,38 +601,50 @@ fn render_action_buttons(frame: &mut Frame, buttons_area: Rect, theme: &dyn Them
 /// # Arguments
 ///
 /// * `frame` - Mutable reference to the terminal frame for cursor positioning
-/// * `fields_area` - The rectangular area containing the form fields
+/// * `layout` - Layout metadata generated during form rendering
 /// * `add_state` - Reference to the add plugin plugin state
-fn position_cursor_in_active_field(frame: &mut Frame, fields_area: Rect, add_state: &PluginAddViewState) {
-    // Only place the cursor for editable fields
-    let mut maybe_line_label_value: Option<(u16, usize, usize)> = None;
-
-    match add_state.transport {
-        AddTransport::Local => {
-            if add_state.f_name.get() {
-                maybe_line_label_value = Some((0, 2 + "Name: ".len(), add_state.name.chars().count()));
-            } else if add_state.f_command.get() {
-                maybe_line_label_value = Some((1, 2 + "Command: ".len(), add_state.command.chars().count()));
-            } else if add_state.f_args.get() {
-                maybe_line_label_value = Some((2, 2 + "Args: ".len(), add_state.args.chars().count()));
-            } else if add_state.f_key_value_pairs.get() {
-                maybe_line_label_value = Some((3, 2 + "Env Vars: ".len(), add_state.env_input.chars().count()));
-            }
-        }
-        AddTransport::Remote => {
-            if add_state.f_name.get() {
-                maybe_line_label_value = Some((0, 2 + "Name: ".len(), add_state.name.chars().count()));
-            } else if add_state.f_base_url.get() {
-                maybe_line_label_value = Some((1, 2 + "Base URL: ".len(), add_state.base_url.chars().count()));
-            } else if add_state.f_key_value_pairs.get() {
-                maybe_line_label_value = Some((2, 2 + "Headers: ".len(), add_state.headers_input.chars().count()));
-            }
-        }
+/// Position the terminal cursor based on the currently focused input field.
+fn position_cursor_in_active_field(frame: &mut Frame, layout: &AddPluginFormLayout, add_state: &PluginAddViewState) {
+    if add_state.f_key_value_pairs.get() {
+        // The key/value component manages cursor placement while editing.
+        return;
     }
 
-    if let Some((line_index, label_length, value_length)) = maybe_line_label_value {
-        let cursor_x = fields_area.x + label_length as u16 + value_length as u16;
-        let cursor_y = fields_area.y + line_index as u16;
+    if add_state.f_name.get() {
+        let (cursor_x, cursor_y) = cursor_position_for_field(layout.name_area, "Name", add_state.name.chars().count());
         frame.set_cursor_position((cursor_x, cursor_y));
+        return;
     }
+
+    if add_state.f_command.get() {
+        if let Some(area) = layout.command_area {
+            let (cursor_x, cursor_y) = cursor_position_for_field(area, "Command", add_state.command.chars().count());
+            frame.set_cursor_position((cursor_x, cursor_y));
+        }
+        return;
+    }
+
+    if add_state.f_args.get() {
+        if let Some(area) = layout.args_area {
+            let (cursor_x, cursor_y) = cursor_position_for_field(area, "Args", add_state.args.chars().count());
+            frame.set_cursor_position((cursor_x, cursor_y));
+        }
+        return;
+    }
+
+    if add_state.f_base_url.get() {
+        if let Some(area) = layout.base_url_area {
+            let (cursor_x, cursor_y) = cursor_position_for_field(area, "Base URL", add_state.base_url.chars().count());
+            frame.set_cursor_position((cursor_x, cursor_y));
+        }
+    }
+}
+
+/// Compute the cursor position for an inline labeled input field.
+fn cursor_position_for_field(area: Rect, label: &str, value_length: usize) -> (u16, u16) {
+    let label_prefix = format!("{}: ", label);
+    let offset = 2 + label_prefix.chars().count();
+    let cursor_x = area.x + offset as u16 + value_length as u16;
+    let cursor_y = area.y;
+    (cursor_x, cursor_y)
 }

@@ -11,14 +11,15 @@ use heroku_types::Effect;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    widgets::Clear,
+    text::{Line, Span},
+    widgets::{Clear, Paragraph},
 };
 
 use crate::{app::App, ui::components::component::Component};
 
 use super::add_plugin::state::PluginAddViewState;
 use super::{
-    PluginHintsBar, PluginsAddComponent, PluginsDetailsComponent, PluginsLogsComponent, PluginsSearchComponent,
+    PluginsAddComponent, PluginsDetailsComponent, PluginsLogsComponent, PluginsSearchComponent,
     PluginsSecretsComponent, PluginsTableComponent,
 };
 
@@ -36,7 +37,7 @@ use super::{
 /// (like PluginAddViewState) manages its own focus through the HasFocus trait,
 /// ensuring proper encapsulation and separation of concerns.
 #[derive(Debug, Default)]
-pub struct PluginsComponent<'a> {
+pub struct PluginsComponent {
     /// Whether the plugin details overlay is currently open
     details_open: bool,
     /// Whether the plugin logs overlay is currently open
@@ -53,11 +54,9 @@ pub struct PluginsComponent<'a> {
     environment_component: PluginsSecretsComponent,
     /// Child component for the add plugin plugin
     add_component: PluginsAddComponent,
-    /// Footer component displaying keyboard shortcuts and hints
-    footer: PluginHintsBar<'a>,
 }
 
-impl Component for PluginsComponent<'_> {
+impl Component for PluginsComponent {
     /// Handles keyboard events for the plugins component and its children.
     ///
     /// This method implements a hierarchical event handling strategy:
@@ -114,8 +113,67 @@ impl Component for PluginsComponent<'_> {
 
         self.render_header_section(frame, *header_area, app);
         self.render_body_section(frame, *body_area, app);
-        self.footer.render(frame, *footer_area, app);
+
+        let spans = self.get_hint_spans(app, true);
+        frame.render_widget(
+            Paragraph::new(Line::from(spans)).style(*&app.ctx.theme.text_muted_style()),
+            *footer_area,
+        );
+
         self.render_overlay_components(frame, area, app);
+    }
+
+    /// Renders the hints bar content
+    ///
+    /// This method provides an area to render hints contextually
+    /// and delegates to child components depending on focus.
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - Mutable reference to the terminal frame for rendering
+    /// * `area` - The rectangular area available for rendering
+    /// * `app` - Mutable reference to the app state
+    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+        let theme = &*app.ctx.theme;
+        let mut spans = vec![];
+        if is_root {
+            spans.push(Span::styled("Hints: ", theme.text_muted_style()));
+        }
+
+        // The add component is visible
+        if let Some(add_state) = app.plugins.add.as_ref() {
+            // use the add component hints
+            if add_state.focus.get() {
+                spans.extend(self.add_component.get_hint_spans(app, false));
+                return spans;
+            }
+            spans.extend([
+                Span::styled("Esc", theme.accent_emphasis_style()),
+                Span::styled(" Back  ", theme.text_muted_style()),
+            ]);
+        } else {
+            // the add component is not visible
+            spans.extend([
+                Span::styled("Esc", theme.accent_emphasis_style()),
+                Span::styled(" Clear  ", theme.text_muted_style()),
+                Span::styled("Ctrl-A", theme.accent_emphasis_style()),
+                Span::styled(" Add  ", theme.text_muted_style()),
+            ]);
+        }
+        // the grid is focused
+        if app.plugins.grid_flag.get() {
+            spans.extend([
+                Span::styled("Enter/Ctrl-D", theme.accent_emphasis_style()),
+                Span::styled(" Details  ", theme.text_muted_style()),
+            ]);
+        }
+        // logs are always available
+        spans.extend([
+            Span::styled("Ctrl-L", theme.accent_emphasis_style()),
+            Span::styled(" Logs  ", theme.text_muted_style()),
+        ]);
+
+        spans
     }
 }
 
@@ -145,7 +203,7 @@ fn create_centered_rectangle(area: Rect, width_percentage: u16, height_percentag
     Rect { x, y, width, height }
 }
 
-impl PluginsComponent<'_> {
+impl PluginsComponent {
     /// Delegates keyboard events to open overlays if any are currently active.
     ///
     /// This method checks if any overlay (environment editor, logs viewer, or add plugin plugin)

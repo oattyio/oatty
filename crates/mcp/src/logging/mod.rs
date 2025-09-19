@@ -8,7 +8,7 @@ pub use audit::{AuditAction, AuditEntry, AuditLogger};
 pub use formatter::{LogFormatter, RedactionRules};
 pub use ring_buffer::{LogBufferError, LogRingBuffer};
 
-use crate::types::{LogEntry, LogError};
+use crate::types::{LogError, McpLogEntry};
 use dirs_next::config_dir;
 use heroku_util::redact_sensitive_with;
 use std::collections::HashMap;
@@ -46,7 +46,7 @@ impl LogManager {
     }
 
     /// Add a log entry for a plugin.
-    pub async fn add_log(&self, plugin_name: &str, entry: LogEntry) -> Result<(), LogError> {
+    pub async fn add_log(&self, plugin_name: &str, entry: McpLogEntry) -> Result<(), LogError> {
         let mut buffers = self.buffers.lock().await;
 
         // Get or create the buffer for this plugin
@@ -65,7 +65,7 @@ impl LogManager {
     }
 
     /// Get recent log entries for a plugin.
-    pub async fn get_recent_logs(&self, plugin_name: &str, count: usize) -> Vec<LogEntry> {
+    pub async fn get_recent_logs(&self, plugin_name: &str, count: usize) -> Vec<McpLogEntry> {
         let buffers = self.buffers.lock().await;
 
         if let Some(buffer) = buffers.get(plugin_name) {
@@ -76,7 +76,7 @@ impl LogManager {
     }
 
     /// Get all log entries for a plugin.
-    pub async fn get_all_logs(&self, plugin_name: &str) -> Vec<LogEntry> {
+    pub async fn get_all_logs(&self, plugin_name: &str) -> Vec<McpLogEntry> {
         let buffers = self.buffers.lock().await;
 
         if let Some(buffer) = buffers.get(plugin_name) {
@@ -174,7 +174,7 @@ mod tests {
     async fn test_log_manager() {
         let manager = LogManager::new().unwrap();
 
-        let entry = LogEntry::new(
+        let entry = McpLogEntry::new(
             LogLevel::Info,
             "Test message".to_string(),
             LogSource::System,
@@ -193,7 +193,7 @@ mod tests {
         let manager = LogManager::new().unwrap();
 
         let secret_msg = "API key: abc123def456".to_string();
-        let entry = LogEntry::new(LogLevel::Info, secret_msg.clone(), LogSource::System, "p".to_string());
+        let entry = McpLogEntry::new(LogLevel::Info, secret_msg.clone(), LogSource::System, "p".to_string());
         manager.add_log("p", entry).await.unwrap();
 
         // Paths

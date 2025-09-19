@@ -6,7 +6,7 @@ use tokio::process::Command;
 
 use crate::config::McpServer;
 use crate::logging::LogManager;
-use crate::types::LogEntry;
+use crate::types::McpLogEntry;
 use crate::types::plugin::{LogLevel, LogSource};
 use std::sync::Arc;
 
@@ -41,7 +41,7 @@ pub(crate) fn spawn_stderr_logger(
     tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            let entry = LogEntry::new(LogLevel::Info, line, LogSource::Stderr, plugin_name.clone());
+            let entry = McpLogEntry::new(LogLevel::Info, line, LogSource::Stderr, plugin_name.clone());
             let _ = log_manager.add_log(&plugin_name, entry).await;
         }
     });

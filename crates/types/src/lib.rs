@@ -343,6 +343,7 @@ pub enum Modal {
     Help,
     Secrets,
     Results,
+    LogDetails,
 }
 
 pub struct ValidationResult {}

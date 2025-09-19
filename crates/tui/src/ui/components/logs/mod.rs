@@ -1,7 +1,7 @@
-#![allow(clippy::module_inception)]
-pub mod hint_bar;
-pub mod logs;
+pub mod log_details;
+pub mod logs_component;
 pub mod state;
 
-pub use logs::LogsComponent;
+pub use log_details::LogDetailsComponent;
+pub use logs_component::LogsComponent;
 pub use state::LogsState;
