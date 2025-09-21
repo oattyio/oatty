@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use anyhow::{Context, Result};
 use clap::ArgMatches;
 use heroku_api::HerokuClient;
+use heroku_mcp::{PluginEngine, config::load_config};
 use heroku_registry::{Registry, build_clap};
 use heroku_util::resolve_path;
 use reqwest::Method;
@@ -45,7 +46,11 @@ async fn main() -> Result<()> {
 
     // No subcommands => TUI
     if matches.subcommand_name().is_none() {
-        heroku_tui::run(registry).await?;
+        let cfg = load_config()?;
+        let plugin_engine = PluginEngine::new(cfg)?;
+        plugin_engine.start().await?;
+
+        heroku_tui::run(registry, plugin_engine).await?;
         return Ok(());
     }
 

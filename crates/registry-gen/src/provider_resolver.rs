@@ -337,11 +337,28 @@ fn process_placeholder(
     provider_placeholders: &HashMap<String, Vec<String>>,
     provider_required_flags: &HashMap<String, Vec<String>>,
 ) {
+    let mut candidate_group_names: Vec<String> = Vec::new();
+
     let normalized_group = normalize_group_name(previous_segment);
+    candidate_group_names.push(normalized_group);
+
+    if let Some(group_from_placeholder) = map_placeholder_to_group(placeholder_name) {
+        candidate_group_names.push(group_from_placeholder);
+    }
+
+    candidate_group_names.sort();
+    candidate_group_names.dedup();
 
     // Try to find the best provider by checking both scoped and unscoped options
-    let provider_candidates =
-        find_provider_candidates(&normalized_group, command_spec, positional_name_to_index, command_index);
+    let mut provider_candidates = Vec::new();
+    for group_name in candidate_group_names {
+        provider_candidates.extend(find_provider_candidates(
+            &group_name,
+            command_spec,
+            positional_name_to_index,
+            command_index,
+        ));
+    }
 
     // Find the best provider that can be bound
     let mut best_provider: Option<(String, Vec<Bind>)> = None;
@@ -385,6 +402,19 @@ fn process_placeholder(
             command_id: provider_id,
             binds,
         });
+    }
+}
+
+/// Map specific placeholder names to known provider group names.
+///
+/// Some command paths use placeholder names that do not align with the
+/// immediately preceding concrete segment (e.g., `/pipelines/{pipeline}/stage/{pipeline_coupling}`).
+/// In those cases, we can infer a better provider group directly from the
+/// placeholder to unlock scoped providers such as `pipelines:pipeline-couplings:list`.
+fn map_placeholder_to_group(placeholder_name: &str) -> Option<String> {
+    match placeholder_name {
+        "pipeline_coupling" => Some("pipeline-couplings".to_string()),
+        _ => None,
     }
 }
 

@@ -8,40 +8,40 @@ use tracing::debug;
 static SERVICE: &'static str = "heroku";
 
 /// Interpolate environment variables and secrets in the configuration.
-pub async fn interpolate_config(config: &mut McpConfig) -> Result<(), InterpolationError> {
+pub fn interpolate_config(config: &mut McpConfig) -> Result<(), InterpolationError> {
     for (name, server) in config.mcp_servers.iter_mut() {
-        interpolate_server(server).await?;
+        interpolate_server(server)?;
         debug!("Interpolated configuration for server: {}", name);
     }
     Ok(())
 }
 
 /// Interpolate values in a single server configuration.
-async fn interpolate_server(server: &mut McpServer) -> Result<(), InterpolationError> {
+fn interpolate_server(server: &mut McpServer) -> Result<(), InterpolationError> {
     // Interpolate environment variables
     if let Some(env) = &mut server.env {
         for (_, value) in env.iter_mut() {
-            *value = interpolate_string(value).await?;
+            *value = interpolate_string(value)?;
         }
     }
 
     // Interpolate HTTP headers
     if let Some(headers) = &mut server.headers {
         for (_, value) in headers.iter_mut() {
-            *value = interpolate_string(value).await?;
+            *value = interpolate_string(value)?;
         }
     }
 
     // Interpolate auth config
     if let Some(auth) = &mut server.auth {
-        interpolate_auth(auth).await?;
+        interpolate_auth(auth)?;
     }
 
     Ok(())
 }
 
 /// Interpolate a string value, replacing ${env:NAME} and ${secret:NAME} patterns.
-async fn interpolate_string(value: &str) -> Result<String, InterpolationError> {
+fn interpolate_string(value: &str) -> Result<String, InterpolationError> {
     let env_regex = Regex::new(r"\$\{env:([A-Z_][A-Z0-9_]*)\}")?;
     let secret_regex = Regex::new(r"\$\{secret:([A-Z_][A-Z0-9_]*)\}")?;
 
@@ -60,7 +60,7 @@ async fn interpolate_string(value: &str) -> Result<String, InterpolationError> {
     // Replace secrets
     for cap in secret_regex.captures_iter(value) {
         let secret_name = &cap[1];
-        let secret_value = resolve_secret(secret_name).await?;
+        let secret_value = resolve_secret(secret_name)?;
         result = result.replace(&cap[0], &secret_value);
         debug!("Interpolated secret: {} -> [REDACTED]", secret_name);
     }
@@ -69,7 +69,7 @@ async fn interpolate_string(value: &str) -> Result<String, InterpolationError> {
 }
 
 /// Resolve a secret from the OS keychain.
-async fn resolve_secret(name: &str) -> Result<String, InterpolationError> {
+fn resolve_secret(name: &str) -> Result<String, InterpolationError> {
     // Use keyring-rs to resolve secrets
     let keyring = keyring::Entry::new(SERVICE, name).map_err(|e| InterpolationError::KeyringError {
         name: name.to_string(),
@@ -82,27 +82,26 @@ async fn resolve_secret(name: &str) -> Result<String, InterpolationError> {
     })
 }
 
-async fn interpolate_auth(auth: &mut McpAuthConfig) -> Result<(), InterpolationError> {
+fn interpolate_auth(auth: &mut McpAuthConfig) -> Result<(), InterpolationError> {
     // Scheme is literal; normalize to lowercase
     auth.scheme = auth.scheme.to_lowercase();
     if let Some(u) = &mut auth.username {
-        *u = interpolate_string(u).await?;
+        *u = interpolate_string(u)?;
     }
     if let Some(p) = &mut auth.password {
-        *p = interpolate_string(p).await?;
+        *p = interpolate_string(p)?;
     }
     if let Some(t) = &mut auth.token {
-        *t = interpolate_string(t).await?;
+        *t = interpolate_string(t)?;
     }
     if let Some(h) = &mut auth.header_name {
-        *h = interpolate_string(h).await?;
+        *h = interpolate_string(h)?;
     }
     Ok(())
 }
 
 /// Store a secret in the OS keychain.
-#[allow(dead_code)]
-pub async fn store_secret(name: &str, value: &str) -> Result<(), InterpolationError> {
+pub fn store_secret(name: &str, value: &str) -> Result<(), InterpolationError> {
     let keyring = keyring::Entry::new(SERVICE, name).map_err(|e| InterpolationError::KeyringError {
         name: name.to_string(),
         error: e.to_string(),
@@ -120,8 +119,7 @@ pub async fn store_secret(name: &str, value: &str) -> Result<(), InterpolationEr
 }
 
 /// Remove a secret from the OS keychain.
-#[allow(dead_code)]
-pub async fn remove_secret(name: &str) -> Result<(), InterpolationError> {
+pub fn remove_secret(name: &str) -> Result<(), InterpolationError> {
     let keyring = keyring::Entry::new(SERVICE, name).map_err(|e| InterpolationError::KeyringError {
         name: name.to_string(),
         error: e.to_string(),

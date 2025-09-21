@@ -85,9 +85,6 @@ impl BrowserState {
 
     /// Updates the filtered command list based on the current search query.
     pub fn update_browser_filtered(&mut self) {
-        // Remember the command index that was selected before we rebuild the filter.
-        let previously_selected_command = self.filtered.get(self.selected).copied();
-
         // Rebuild the filtered list.
         if self.search_input.is_empty() {
             self.filtered = (0..self.all_commands.len()).collect();
@@ -98,9 +95,9 @@ impl BrowserState {
                 .enumerate()
                 .filter_map(|(idx, command)| {
                     let exec = if command.name.is_empty() {
-                        command.group.clone()
+                        format!("{} {}", command.name, command.summary)
                     } else {
-                        format!("{} {}", command.group, command.name)
+                        format!("{} {} {}", command.group, command.name, command.summary)
                     };
                     fuzzy_score(&exec, &self.search_input).map(|score| (score, idx))
                 })
@@ -110,19 +107,8 @@ impl BrowserState {
             self.filtered = scored.into_iter().map(|(_, idx)| idx).collect();
         }
 
-        if let Some(command_idx) = previously_selected_command {
-            // Try to keep the cursor on the same command if it survived the filter.
-            if let Some(new_position) = self.filtered.iter().position(|&idx| idx == command_idx) {
-                self.selected = new_position;
-            } else {
-                // Otherwise fall back to the nearest valid slot.
-                self.selected = self.selected.min(self.filtered.len().saturating_sub(1));
-            }
-        } else {
-            self.selected = 0;
-        }
-
-        self.ensure_selection_visible();
+        self.selected = 0;
+        self.move_selection(0);
     }
 
     pub fn move_selection(&mut self, delta: isize) {
@@ -177,9 +163,6 @@ impl BrowserState {
             .map(|cmd| cmd.ranges.clone())
             .unwrap_or_default()
     }
-
-    /// Handle Enter within the browser context (noop for now).
-    pub fn apply_enter(&mut self) {}
 
     // Internal helpers for managing field/selection state
     fn apply_command_selection(&mut self, command: CommandSpec) {

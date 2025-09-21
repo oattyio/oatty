@@ -17,10 +17,8 @@ use ratatui::{
 
 use crate::{app::App, ui::components::component::Component};
 
-use super::add_plugin::state::PluginAddViewState;
 use super::{
-    PluginsAddComponent, PluginsDetailsComponent, PluginsLogsComponent, PluginsSearchComponent,
-    PluginsSecretsComponent, PluginsTableComponent,
+    PluginsAddComponent, PluginsLogsComponent, PluginsSearchComponent, PluginsSecretsComponent, PluginsTableComponent,
 };
 
 /// Top-level Plugins view component that orchestrates all plugin-related UI elements.
@@ -38,20 +36,14 @@ use super::{
 /// ensuring proper encapsulation and separation of concerns.
 #[derive(Debug, Default)]
 pub struct PluginsComponent {
-    /// Whether the plugin details overlay is currently open
-    details_open: bool,
-    /// Whether the plugin logs overlay is currently open
-    logs_open: bool,
     /// Child component for displaying the plugin list table
     table_component: PluginsTableComponent,
     /// Child component for plugin search functionality
     search_component: PluginsSearchComponent,
-    /// Child component for displaying plugin details
-    details_component: PluginsDetailsComponent,
     /// Child component for displaying plugin logs
     logs_component: PluginsLogsComponent,
     /// Child component for editing plugin environment variables
-    environment_component: PluginsSecretsComponent,
+    secrets_component: PluginsSecretsComponent,
     /// Child component for the add plugin plugin
     add_component: PluginsAddComponent,
 }
@@ -74,16 +66,9 @@ impl Component for PluginsComponent {
     ///
     /// Returns a vector of effects that should be processed by the app
     fn handle_key_events(&mut self, app: &mut App, key_event: KeyEvent) -> Vec<Effect> {
-        let mut effects = vec![];
-        if let Some(e) = self.delegate_to_open_overlays(app, key_event) {
-            effects.extend(e);
-        }
-
-        if let Some(e) = self.handle_control_shortcuts(app, key_event) {
-            effects.extend(e);
-        }
-
-        self.delegate_to_child_components(app, key_event);
+        let mut effects = self.delegate_to_open_overlays(app, key_event);
+        effects.extend(self.handle_control_shortcuts(app, key_event));
+        effects.extend(self.delegate_to_child_components(app, key_event));
 
         match key_event.code {
             KeyCode::BackTab => app.focus.prev(),
@@ -156,22 +141,19 @@ impl Component for PluginsComponent {
             spans.extend([
                 Span::styled("Esc", theme.accent_emphasis_style()),
                 Span::styled(" Clear  ", theme.text_muted_style()),
-                Span::styled("Ctrl-A", theme.accent_emphasis_style()),
-                Span::styled(" Add  ", theme.text_muted_style()),
             ]);
+
+            if app.plugins.can_open_add_plugin() {
+                spans.extend([
+                    Span::styled("Ctrl-A", theme.accent_emphasis_style()),
+                    Span::styled(" Add  ", theme.text_muted_style()),
+                ]);
+            }
         }
         // the grid is focused
-        if app.plugins.grid_flag.get() {
-            spans.extend([
-                Span::styled("Enter/Ctrl-D", theme.accent_emphasis_style()),
-                Span::styled(" Details  ", theme.text_muted_style()),
-            ]);
+        if app.plugins.table.grid_flag.get() {
+            spans.extend(self.table_component.get_hint_spans(app, false));
         }
-        // logs are always available
-        spans.extend([
-            Span::styled("Ctrl-L", theme.accent_emphasis_style()),
-            Span::styled(" Logs  ", theme.text_muted_style()),
-        ]);
 
         spans
     }
@@ -220,29 +202,26 @@ impl PluginsComponent {
     ///
     /// Returns `Some(Vec<Effect>)` if the event was handled by an overlay, or `None` if
     /// no overlay is open or the event should be handled by the focus cycling system.
-    fn delegate_to_open_overlays(&mut self, app: &mut App, key_event: KeyEvent) -> Option<Vec<Effect>> {
+    fn delegate_to_open_overlays(&mut self, app: &mut App, key_event: KeyEvent) -> Vec<Effect> {
         // Let the focus cycling handler manage Tab/BackTab events
         // This ensures consistent focus management whether overlays are open or not
         if matches!(key_event.code, KeyCode::Tab | KeyCode::BackTab) {
-            return None;
+            return vec![];
         }
 
         if app.plugins.secrets.is_some() {
-            let effects = self.environment_component.handle_key_events(app, key_event);
-            return Some(if effects.is_empty() { Vec::new() } else { effects });
+            return self.secrets_component.handle_key_events(app, key_event);
         }
 
         if let Some(logs_state) = &mut app.plugins.logs {
-            let effects = self.logs_component.handle_key_events(logs_state, key_event);
-            return Some(if effects.is_empty() { Vec::new() } else { effects });
+            return self.logs_component.handle_key_events(logs_state, key_event);
         }
 
         if app.plugins.add.is_some() {
-            let effects = self.add_component.handle_key_events(app, key_event);
-            return Some(if effects.is_empty() { Vec::new() } else { effects });
+            return self.add_component.handle_key_events(app, key_event);
         }
 
-        None
+        vec![]
     }
 
     /// Handles top-level Ctrl-based shortcuts and returns any effects.
@@ -260,111 +239,58 @@ impl PluginsComponent {
     ///
     /// Returns `Some(Vec<Effect>)` if the shortcut was handled and effects were generated,
     /// or `None` if the shortcut was not recognized or handled.
-    fn handle_control_shortcuts(&mut self, app: &mut App, key_event: KeyEvent) -> Option<Vec<Effect>> {
+    fn handle_control_shortcuts(&mut self, app: &mut App, key_event: KeyEvent) -> Vec<Effect> {
         let mut effects: Vec<Effect> = Vec::with_capacity(1);
         let control_pressed: bool = key_event.modifiers.contains(KeyModifiers::CONTROL);
-
         match key_event.code {
-            KeyCode::Enter | KeyCode::Char('d') if control_pressed => {
-                self.details_open = true;
-            }
             KeyCode::Char('f') if control_pressed => {
                 self.handle_search_shortcut(app);
             }
             KeyCode::Esc => {
                 self.handle_clear_filter_shortcut(app);
             }
-            KeyCode::Char('s') if control_pressed => {
-                if let Some(selected_item) = app.plugins.selected_item() {
-                    effects.push(Effect::PluginsStart(selected_item.name.clone()));
-                }
-            }
-            KeyCode::Char('t') if control_pressed => {
-                if let Some(selected_item) = app.plugins.selected_item() {
-                    effects.push(Effect::PluginsStop(selected_item.name.clone()));
-                }
-            }
-            KeyCode::Char('r') if control_pressed => {
-                if let Some(selected_item) = app.plugins.selected_item() {
-                    effects.push(Effect::PluginsRestart(selected_item.name.clone()));
-                }
-            }
-            KeyCode::Char('a') if control_pressed && self.can_open_add_plugin(app) => {
-                self.handle_open_add_plugin_shortcut(app);
-            }
-            KeyCode::Char('l') if control_pressed => {
-                if let Some(selected_item) = app.plugins.selected_item() {
-                    let plugin_name = selected_item.name.clone();
-                    app.plugins.open_logs(plugin_name.clone());
-                    self.logs_open = true;
-                    effects.push(Effect::PluginsOpenLogs(plugin_name));
-                }
-            }
-            KeyCode::Char('e') if control_pressed => {
-                if let Some(selected_item) = app.plugins.selected_item() {
-                    let plugin_name = selected_item.name.clone();
-                    app.plugins.open_secrets(plugin_name.clone());
-                    effects.push(Effect::PluginsOpenSecrets(plugin_name));
-                }
-            }
+
             KeyCode::Char('v') if control_pressed && app.plugins.add.is_some() => {
                 effects.push(Effect::PluginsValidateAdd);
             }
-            KeyCode::Char('a') if control_pressed && app.plugins.add.is_some() => {
+            // Also available when the table component is focused
+            KeyCode::Char('a') if control_pressed && app.plugins.can_open_add_plugin() => {
                 effects.push(Effect::PluginsApplyAdd);
             }
-            KeyCode::Char('l') if control_pressed && self.logs_open => {
+            KeyCode::Char('l') if control_pressed && app.plugins.logs_open => {
                 self.handle_logs_toggle_follow_shortcut(app);
             }
-            KeyCode::Char('y') if control_pressed && self.logs_open => {
+            KeyCode::Char('y') if control_pressed && app.plugins.logs_open => {
                 self.handle_copy_last_log_line_shortcut(app, &mut effects);
             }
-            KeyCode::Char('u') if control_pressed && self.logs_open => {
+            KeyCode::Char('u') if control_pressed && app.plugins.logs_open => {
                 self.handle_copy_all_logs_shortcut(app, &mut effects);
             }
-            KeyCode::Char('o') if control_pressed && self.logs_open => {
+            KeyCode::Char('o') if control_pressed && app.plugins.logs_open => {
                 self.handle_export_logs_shortcut(app, &mut effects);
             }
             _ => {}
         }
-        if effects.is_empty() { None } else { Some(effects) }
+        effects
     }
 
     /// Handles the search shortcut (Ctrl+F) which activates search in the appropriate context.
     fn handle_search_shortcut(&mut self, app: &mut App) {
-        if self.logs_open {
+        if app.plugins.logs_open {
             if let Some(logs_state) = &mut app.plugins.logs {
                 logs_state.search_active = true;
             }
         } else {
-            app.plugins.search_flag.set(true);
-            app.plugins.grid_flag.set(false);
+            app.plugins.table.search_flag.set(true);
+            app.plugins.table.grid_flag.set(false);
         }
     }
 
     /// Handles the clear filter shortcut (Ctrl+K) which clears the search filter.
     fn handle_clear_filter_shortcut(&mut self, app: &mut App) {
-        if app.plugins.search_flag.get() {
-            app.plugins.filter.clear();
-            app.plugins.selected = Some(0);
+        if app.plugins.table.search_flag.get() {
+            app.plugins.table.clear_filter();
         }
-    }
-
-    /// Checks if the add plugin can be opened (no other overlays are open).
-    fn can_open_add_plugin(&self, app: &App) -> bool {
-        !self.details_open && app.plugins.secrets.is_none() && app.plugins.logs.is_none()
-    }
-
-    /// Handles opening the add plugin plugin (Ctrl+A).
-    ///
-    /// This method creates a new add plugin plugin state and sets up the initial focus.
-    /// The PluginAddViewState handles its own focus management through its HasFocus
-    /// implementation, so we don't need to manually manage the focus ring here.
-    fn handle_open_add_plugin_shortcut(&mut self, app: &mut App) {
-        app.plugins.add = Some(PluginAddViewState::new());
-
-        // The PluginAddViewState::new() already sets the initial focus to the name field
-        // and handles its own focus management through the HasFocus trait implementation
     }
 
     /// Handles the logs toggle follow shortcut (Ctrl+L when logs are open).
@@ -413,22 +339,14 @@ impl PluginsComponent {
     ///
     /// Returns a vector of effects generated by the child components.
     fn delegate_to_child_components(&mut self, app: &mut App, key_event: KeyEvent) -> Vec<Effect> {
-        match key_event.code {
-            KeyCode::Backspace | KeyCode::Char(_) if app.plugins.search_flag.get() => {
-                let effects = self.search_component.handle_key_events(app, key_event);
-                if !effects.is_empty() {
-                    return effects;
-                }
-            }
-            KeyCode::Up | KeyCode::Down if app.plugins.grid_flag.get() => {
-                let effects = self.table_component.handle_key_events(app, key_event);
-                if !effects.is_empty() {
-                    return effects;
-                }
-            }
-            _ => {}
+        if app.plugins.table.search_flag.get() {
+            return self.search_component.handle_key_events(app, key_event);
         }
-        Vec::new()
+
+        if app.plugins.table.grid_flag.get() {
+            return self.table_component.handle_key_events(app, key_event);
+        }
+        vec![]
     }
 
     /// Creates the main 3-row layout: header, body, and footer.
@@ -507,26 +425,20 @@ impl PluginsComponent {
     /// * `outer_area` - The outer rectangular area for overlay positioning
     /// * `app` - Mutable reference to the app state
     fn render_overlay_components(&mut self, frame: &mut Frame, outer_area: Rect, app: &mut App) {
-        if self.details_open {
-            let details_area = create_centered_rectangle(outer_area, 70, 60);
-            frame.render_widget(Clear, details_area);
-            self.details_component.render(frame, details_area, app);
-        }
-
-        if self.logs_open {
+        if app.plugins.logs_open {
             if let Some(_logs_state) = &app.plugins.logs {
                 let logs_area = create_centered_rectangle(outer_area, 90, 60);
                 frame.render_widget(Clear, logs_area);
                 self.logs_component.render(frame, logs_area, app);
             } else {
-                self.logs_open = false;
+                app.plugins.logs_open = false;
             }
         }
 
         if app.plugins.secrets.is_some() {
             let environment_area = create_centered_rectangle(outer_area, 90, 70);
             frame.render_widget(Clear, environment_area);
-            self.environment_component.render(frame, environment_area, app);
+            self.secrets_component.render(frame, environment_area, app);
         }
     }
 }

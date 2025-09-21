@@ -75,8 +75,8 @@ pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>) -> Re
     let text = resp.text().await.unwrap_or_default();
 
     // Handle common error status codes
-    if let Some(error_msg) = http::status_error_message(status.as_u16()) {
-        return Err(error_msg);
+    if !status.is_success() {
+        return Err(format!("HTTP {}: {}", status.as_u16(), text));
     }
 
     let log = format!("{}\n{}", status, text);

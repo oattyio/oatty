@@ -1,11 +1,14 @@
+use std::fmt::Display;
+
 use heroku_mcp::types::plugin::AuthStatus;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
-use std::time::{Duration, Instant};
 
 use crate::ui::components::plugins::{
     PluginSecretsEditorState, add_plugin::state::PluginAddViewState, logs::PluginLogsState,
 };
+
+use super::table::PluginsTableState;
 
 /// A row in the Plugins table.
 #[derive(Debug, Clone, Default)]
@@ -19,104 +22,70 @@ pub struct PluginListItem {
     pub auth_status: AuthStatus,
 }
 
+impl Display for PluginListItem {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Format the basic plugin information
+        write!(f, "Plugin: {}", self.name)?;
+
+        // Add status information
+        write!(f, " | Status: {}", self.status)?;
+
+        // Add command or URL
+        write!(f, " | Command/URL: {}", self.command_or_url)?;
+
+        // Add authentication status
+        write!(f, " | Auth: {}", self.auth_status)?;
+
+        // Add latency if available
+        if let Some(latency) = self.latency_ms {
+            write!(f, " | Latency: {}ms", latency)?;
+        }
+
+        // Add tags if present
+        if !self.tags.is_empty() {
+            write!(f, " | Tags: [{}]", self.tags.join(", "))?;
+        }
+
+        // Add last error if present
+        if let Some(error) = &self.last_error {
+            write!(f, " | Last Error: {}", error)?;
+        }
+
+        Ok(())
+    }
+}
+
 /// UI state for the Plugins view.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct PluginsState {
     pub focus: FocusFlag,
-    /// Focus for the quick search input in the list header.
-    pub search_flag: FocusFlag,
-    /// Focus for the main table/grid area.
-    pub grid_flag: FocusFlag,
-    /// Current quick search text ("/" behavior).
-    pub filter: String,
-    /// Current items loaded from config.
-    pub items: Vec<PluginListItem>,
-    /// Optional selection index into filtered view.
-    pub selected: Option<usize>,
-    /// Last refresh time for status polling.
-    last_refresh: Option<Instant>,
+    /// Table-specific state including filter, selection, and grid focus.
+    pub table: PluginsTableState,
     /// Logs drawer state, if open.
     pub logs: Option<PluginLogsState>,
     /// Environment editor state, if open
     pub secrets: Option<PluginSecretsEditorState>,
     /// Add plugin view state
     pub add: Option<PluginAddViewState>,
+    /// Whether the plugin logs overlay is currently open
+    pub logs_open: bool,
 }
 
 impl PluginsState {
     pub fn new() -> Self {
         Self {
             focus: FocusFlag::named("plugins"),
-            search_flag: FocusFlag::named("plugins.search"),
-            grid_flag: FocusFlag::named("plugins.grid"),
-            filter: String::new(),
-            items: Vec::new(),
-            selected: None,
-            last_refresh: None,
+            table: PluginsTableState::new(),
             logs: None,
             secrets: None,
             add: None,
+            logs_open: false,
         }
     }
 
-    pub fn replace_items(&mut self, rows: Vec<PluginListItem>) {
-        self.items = rows;
-        // Reset selection to the first row in filtered list
-        self.selected = if self.items.is_empty() { None } else { Some(0) };
-    }
-
-    /// Get indices of items matching the current filter (case-insensitive, name/url/tags).
-    pub fn filtered_indices(&self) -> Vec<usize> {
-        if self.filter.trim().is_empty() {
-            return (0..self.items.len()).collect();
-        }
-        let q = self.filter.to_lowercase();
-        self.items
-            .iter()
-            .enumerate()
-            .filter(|(_, it)| {
-                it.name.to_lowercase().contains(&q)
-                    || it.command_or_url.to_lowercase().contains(&q)
-                    || it.tags.iter().any(|t| t.to_lowercase().contains(&q))
-            })
-            .map(|(i, _)| i)
-            .collect()
-    }
-
-    /// Whether it's time to refresh status based on visibility and elapsed time.
-    pub fn should_refresh(&mut self) -> bool {
-        const INTERVAL: Duration = Duration::from_millis(1000);
-        let now = Instant::now();
-        match self.last_refresh {
-            None => {
-                self.last_refresh = Some(now);
-                true
-            }
-            Some(t) if now.duration_since(t) >= INTERVAL => {
-                self.last_refresh = Some(now);
-                true
-            }
-            _ => false,
-        }
-    }
-
-    /// Apply refresh updates (name, status, latency, last_error) to items in-place.
-    pub fn apply_refresh_updates(&mut self, updates: Vec<(String, String, Option<u64>, Option<String>)>) {
-        for (name, status, lat, err) in updates {
-            if let Some(item) = self.items.iter_mut().find(|it| it.name == name) {
-                item.status = status;
-                item.latency_ms = lat;
-                item.last_error = err;
-            }
-        }
-    }
-
-    /// Get the currently selected item (respecting the filtered view).
-    pub fn selected_item(&self) -> Option<&PluginListItem> {
-        let filtered = self.filtered_indices();
-        let pos = self.selected?;
-        let idx = *filtered.get(pos)?;
-        self.items.get(idx)
+    /// Checks if the add plugin can be opened (no other overlays are open).
+    pub fn can_open_add_plugin(&self) -> bool {
+        self.secrets.is_none() && self.logs.is_none()
     }
 
     pub fn open_logs(&mut self, name: String) {
@@ -137,11 +106,17 @@ impl PluginsState {
     }
 }
 
+impl Default for PluginsState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HasFocus for PluginsState {
     fn build(&self, builder: &mut FocusBuilder) {
         let tag = builder.start(self);
         // Header search input and main grid
-        builder.leaf_widget(&self.search_flag);
+        builder.leaf_widget(&self.table.search_flag);
         // Include add plugin view if visible
         if let Some(add) = &self.add {
             builder.widget(add);
@@ -153,7 +128,7 @@ impl HasFocus for PluginsState {
         if let Some(env) = &self.secrets {
             builder.widget(env);
         }
-        builder.leaf_widget(&self.grid_flag);
+        builder.leaf_widget(&self.table.grid_flag);
         builder.end(tag);
     }
 
@@ -177,7 +152,7 @@ mod tests {
         b.widget(&s);
         let f = b.build();
         // Sanity: focusing search and grid should be possible
-        f.focus(&s.search_flag);
-        f.focus(&s.grid_flag);
+        f.focus(&s.table.search_flag);
+        f.focus(&s.table.grid_flag);
     }
 }

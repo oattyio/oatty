@@ -6,7 +6,7 @@
 use std::vec;
 
 use crossterm::event::{KeyCode, KeyEvent};
-use heroku_types::{CommandSpec, Effect};
+use heroku_types::Effect;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -17,7 +17,11 @@ use ratatui::{
 
 use crate::{
     app::{self, App},
-    ui::{components::component::Component, theme::theme_helpers as th, utils::centered_rect},
+    ui::{
+        components::{component::Component, help::content::build_command_help_text},
+        theme::theme_helpers as th,
+        utils::centered_rect,
+    },
 };
 
 /// Help modal component for displaying command documentation.
@@ -50,57 +54,6 @@ use crate::{
 /// ```
 #[derive(Debug, Default)]
 pub struct HelpComponent;
-
-impl HelpComponent {
-    /// Builds comprehensive help text for a command specification.
-    ///
-    /// This function generates detailed help documentation for a command,
-    /// including usage syntax, description, arguments, options, and examples.
-    /// The help text is formatted for display in the help modal.
-    ///
-    /// # Arguments
-    ///
-    /// * `spec` - The command specification to generate help for
-    ///
-    /// # Returns
-    ///
-    /// A formatted string containing the complete help documentation.
-    ///
-    /// # Help Sections
-    ///
-    /// The generated help includes:
-    /// - **USAGE**: Command syntax with positional arguments
-    /// - **DESCRIPTION**: Command summary from spec
-    /// - **ARGUMENTS**: Positional argument details with help text
-    /// - **OPTIONS**: Flag descriptions, types, and defaults
-    /// - **EXAMPLE**: Sample command with current field values
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use heroku_registry::CommandSpec;
-    ///
-    /// // Create a minimal CommandSpec for testing
-    /// let spec = CommandSpec {
-    ///     name: "apps:info".to_string(),
-    ///     group: "apps".to_string(),
-    ///     summary: "Show app info".to_string(),
-    ///     method: "GET".to_string(),
-    ///     path: "/apps/{app}".to_string(),
-    ///     flags: vec![],
-    ///     positional_args: vec!["app".to_string()],
-    ///     positional_help: std::collections::HashMap::new(),
-    /// };
-    /// let help_text = build_command_help(&spec);
-    /// println!("{}", help_text);
-    /// ```
-    pub(crate) fn build_command_help<'a>(
-        theme: &'a dyn crate::ui::theme::roles::Theme,
-        spec: &'a CommandSpec,
-    ) -> Text<'a> {
-        super::content::build_command_help_text(theme, spec)
-    }
-}
 
 impl Component for HelpComponent {
     /// Renders the help modal overlay with detailed command documentation.
@@ -156,7 +109,7 @@ impl Component for HelpComponent {
                 format!("{} {}", group, rest)
             };
             title = format!("Help — {}", cmd);
-            text = HelpComponent::build_command_help(&*app.ctx.theme, spec);
+            text = build_command_help_text(&*app.ctx.theme, spec);
         }
 
         title.push_str("  [Esc] Close");

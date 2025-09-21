@@ -38,7 +38,7 @@ pub struct SuggestionItem {
 /// the values for an `--app` flag or a positional `app`). Additional variants
 /// can be added later (e.g., static lists, plugins) without changing callers
 /// that treat this as opaque metadata.
-#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
 pub enum ValueProvider {
     /// Use another command identified by `<group>:<name>` to supply values,
     /// optionally binding required provider inputs to consumer inputs.
@@ -49,7 +49,7 @@ pub enum ValueProvider {
 }
 
 /// Declares a mapping from a provider's required input to a consumer field name.
-#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
 pub struct Bind {
     /// The provider's input key (e.g., a path placeholder like `app`)
     pub provider_key: String,
@@ -58,7 +58,7 @@ pub struct Bind {
 }
 
 /// Represents a command-line flag or option for a Heroku CLI command.
-#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
 pub struct CommandFlag {
     /// The name of the flag (e.g., "app", "region", "stack")
     pub name: String,
@@ -146,7 +146,7 @@ impl std::fmt::Display for ParseServiceIdError {
 impl Error for ParseServiceIdError {}
 
 /// Represents a complete Heroku CLI command specification.
-#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
 pub struct CommandSpec {
     /// Resource group for the command (e.g., "apps")
     #[serde(default)]
@@ -176,7 +176,7 @@ pub struct CommandSpec {
 
 /// Represents a positional argument for a command, including its name and help
 /// text.
-#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode)]
+#[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
 pub struct PositionalArgument {
     /// The name of the positional argument (e.g., "app")
     pub name: String,
@@ -212,7 +212,7 @@ pub struct Field {
 ///
 /// This struct contains the outcome of a command execution including
 /// logs, results, and any UI state changes that should occur.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ExecOutcome {
     /// Log message from the command execution
     pub log: String,
@@ -222,6 +222,16 @@ pub struct ExecOutcome {
     pub open_table: bool,
     /// Pagination info from the response header when available
     pub pagination: Option<Pagination>,
+}
+impl ExecOutcome {
+    pub fn new(log: String) -> Self {
+        ExecOutcome {
+            log,
+            result_json: None,
+            open_table: false,
+            pagination: None,
+        }
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Pagination {
@@ -247,8 +257,6 @@ pub struct Pagination {
 /// that can trigger state changes in the application.
 #[derive(Debug, Clone)]
 pub enum Msg {
-    /// Execute the current command
-    Run,
     /// Copy the current command to clipboard
     CopyToClipboard(String),
     /// Periodic UI tick (e.g., throbbers)
@@ -283,6 +291,8 @@ pub enum Msg {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(clippy::enum_variant_names)]
 pub enum Effect {
+    /// Request to run the current command in the palette
+    Run,
     /// Request to copy the current command to clipboard
     CopyToClipboardRequested(String),
     /// Request to copy the current logs selection (already rendered/redacted)
@@ -322,14 +332,14 @@ pub enum Effect {
     PluginsValidateAdd,
     /// Apply add plugin patch
     PluginsApplyAdd,
-    // Cancel adding a new plugin
-    PluginsCancel,
     // Change the main view
     SwitchTo(Route),
     // Display a modal view
     ShowModal(Modal),
     // Hide any open modals
     CloseModal,
+    // Send the command spec to the palette
+    SendToPalette(CommandSpec),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -344,6 +354,7 @@ pub enum Modal {
     Secrets,
     Results,
     LogDetails,
+    PluginDetails,
 }
 
 pub struct ValidationResult {}

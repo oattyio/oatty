@@ -15,8 +15,11 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
-use crate::ui::theme::{Theme, theme_helpers};
 use crate::ui::{components::component::Component, theme::theme_helpers::render_button};
+use crate::{
+    app::App,
+    ui::theme::{Theme, theme_helpers},
+};
 
 use super::{
     key_value_editor::KeyValueEditorComponent,
@@ -65,7 +68,7 @@ impl Component for PluginsAddComponent {
         };
         // Use focus flags directly to avoid building a focus ring repeatedly
         let is_transport_focused = add_state.f_transport.get();
-        if add_state.f_key_value_pairs.get() {
+        if add_state.is_key_value_editor_focused() {
             return self.key_value_component.handle_key_events(app, key_event);
         }
 
@@ -92,7 +95,7 @@ impl Component for PluginsAddComponent {
                 return vec![Effect::PluginsApplyAdd];
             }
             KeyCode::Enter => {
-                let effects = handle_enter_key(add_state);
+                let effects = handle_enter_key(app);
                 if !effects.is_empty() {
                     return effects;
                 }
@@ -221,28 +224,8 @@ impl Component for PluginsAddComponent {
             Span::styled(" Cancel ", theme.text_muted_style()),
         ]);
 
-        if add_state.f_key_value_pairs.get() {
-            // The KV pairs component is focused
-            spans.extend([
-                Span::styled("↑/↓", theme.accent_emphasis_style()),
-                Span::styled(" Cycle  ", theme.text_muted_style()),
-            ]);
-
-            // and we're editing something
-            if !add_state.active_key_value_editor().is_editing() {
-                // a row is selected and can be edited
-                if add_state.active_key_value_editor().selected_row().is_some() {
-                    spans.extend([
-                        Span::styled("Enter/Ctrl+E", theme.accent_emphasis_style()),
-                        Span::styled(" Edit ", theme.text_muted_style()),
-                    ]);
-                }
-                // row selection has no bearing on adding a new item
-                spans.extend([
-                    Span::styled("Ctrl+N", theme.accent_emphasis_style()),
-                    Span::styled(" New ", theme.text_muted_style()),
-                ]);
-            }
+        if add_state.is_key_value_editor_focused() {
+            spans.extend(self.key_value_component.get_hint_spans(app, is_root));
         } else {
             let (validate_enabled, save_enabled) = add_state.compute_button_enablement();
             if validate_enabled {
@@ -277,7 +260,10 @@ impl Component for PluginsAddComponent {
 /// # Returns
 ///
 /// Returns a vector of effects that should be processed by the app.
-fn handle_enter_key(state: &mut PluginAddViewState) -> Vec<Effect> {
+fn handle_enter_key(app: &mut App) -> Vec<Effect> {
+    let Some(state) = &mut app.plugins.add else {
+        return vec![];
+    };
     let (validate_enabled, save_enabled) = state.compute_button_enablement();
 
     if state.f_btn_validate.get() {
@@ -291,10 +277,8 @@ fn handle_enter_key(state: &mut PluginAddViewState) -> Vec<Effect> {
         return vec![Effect::PluginsApplyAdd];
     }
     if state.f_btn_cancel.get() {
-        return vec![Effect::PluginsCancel];
-    }
-    if state.f_btn_secrets.get() {
-        return vec![Effect::PluginsOpenSecrets(state.name.clone())];
+        app.plugins.add = None;
+        return vec![];
     }
     if state.f_transport.get() {
         state.transport = match state.transport {
@@ -537,8 +521,6 @@ fn render_action_buttons(frame: &mut Frame, buttons_area: Rect, theme: &dyn Them
     let button_columns = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Length(12), // Secrets button
-            Constraint::Length(2),  // Spacer
             Constraint::Min(0),     // Flexible space
             Constraint::Length(12), // Validate button
             Constraint::Length(2),  // Spacer
@@ -552,17 +534,7 @@ fn render_action_buttons(frame: &mut Frame, buttons_area: Rect, theme: &dyn Them
 
     render_button(
         frame,
-        button_columns[0],
-        "Secrets",
-        save_enabled,
-        add_state.f_btn_secrets.get(),
-        false,
-        theme,
-        Borders::ALL,
-    );
-    render_button(
-        frame,
-        button_columns[3],
+        button_columns[1],
         "Validate",
         validate_enabled,
         add_state.f_btn_validate.get(),
@@ -572,7 +544,7 @@ fn render_action_buttons(frame: &mut Frame, buttons_area: Rect, theme: &dyn Them
     );
     render_button(
         frame,
-        button_columns[5],
+        button_columns[3],
         "Save",
         save_enabled,
         add_state.f_btn_save.get(),
@@ -582,7 +554,7 @@ fn render_action_buttons(frame: &mut Frame, buttons_area: Rect, theme: &dyn Them
     );
     render_button(
         frame,
-        button_columns[7],
+        button_columns[5],
         "Cancel",
         true,
         add_state.f_btn_cancel.get(),
@@ -605,7 +577,7 @@ fn render_action_buttons(frame: &mut Frame, buttons_area: Rect, theme: &dyn Them
 /// * `add_state` - Reference to the add plugin plugin state
 /// Position the terminal cursor based on the currently focused input field.
 fn position_cursor_in_active_field(frame: &mut Frame, layout: &AddPluginFormLayout, add_state: &PluginAddViewState) {
-    if add_state.f_key_value_pairs.get() {
+    if add_state.is_key_value_editor_focused() {
         // The key/value component manages cursor placement while editing.
         return;
     }

@@ -9,7 +9,7 @@ This crate provides the core building blocks to discover, configure, start/stop,
 - Plugin engine orchestrating lifecycle, registry, health, and logs
 - Stdio and HTTP/SSE transports built on `rmcp`
 - Managed clients with connection status, health checks, and error tracking
-- Config loader for `~/.config/heroku/mcp.json` with interpolation and validation
+- Synchronous config loader for `~/.config/heroku/mcp.json` with interpolation and validation
 - Provider bridge to expose MCP tools to the broader engine provider system
 - Structured logging, redaction, ring buffers, and audit log to file
 
@@ -29,7 +29,7 @@ This crate provides the core building blocks to discover, configure, start/stop,
 
 ## Concepts and data flow
 
-1. Configuration is loaded via `config::load_config()` from `MCP_CONFIG_PATH` or `~/.config/heroku/mcp.json`.
+1. Configuration is loaded synchronously via `config::load_config()` from `MCP_CONFIG_PATH` or `~/.config/heroku/mcp.json`.
    - `${env:FOO}` and `${secret:NAME}` are resolved via process env and OS keychain (`keyring-rs`).
    - Config is validated (naming, transport presence, headers/env constraints).
 2. `PluginEngine::new(config)` wires together:
@@ -82,7 +82,7 @@ TUI Add Plugin view:
 - Keyboard: when the radio is focused, use Left/Right to change and Space/Enter to toggle.
 
 Programmatic APIs:
-- `config::load_config()` reads, interpolates, and validates.
+- `config::load_config()` reads, interpolates, and validates without requiring a Tokio runtime.
 - `config::save_config(&cfg)` writes back using pretty JSON.
 
 ## Public API highlights
@@ -114,7 +114,7 @@ use heroku_mcp::{config, PluginEngine};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    let cfg = config::load_config().await?;
+    let cfg = config::load_config()?; // synchronous file read/interpolation
     let engine = PluginEngine::new(cfg)?;
     engine.start().await?;
 

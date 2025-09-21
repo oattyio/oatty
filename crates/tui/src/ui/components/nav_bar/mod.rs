@@ -33,4 +33,4 @@ mod nav_bar_component;
 mod state;
 
 pub use nav_bar_component::VerticalNavBarComponent;
-pub use state::{NavItem, VerticalNavBarState};
+pub use state::VerticalNavBarState;

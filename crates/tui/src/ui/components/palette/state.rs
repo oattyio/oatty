@@ -158,8 +158,6 @@ impl PaletteState {
         self.suggestions.get(self.suggestion_index)
     }
 
-    // selected_command(): removed to avoid redundant persisted state
-
     /// Derive the command spec from the current input tokens ("group sub").
     pub fn selected_command_from_input(&self) -> Option<&CommandSpec> {
         let tokens: Vec<String> = lex_shell_like(&self.input);

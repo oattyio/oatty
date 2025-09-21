@@ -361,10 +361,10 @@ impl PaletteComponent {
     }
 
     /// Handles the Enter keypress.
-    fn handle_enter(&self, app: &mut app::App) {
+    fn handle_enter(&self, app: &mut app::App) -> Vec<Effect> {
         // Execute the command
         if !app.palette.is_suggestions_open() {
-            let _ = app.update(Msg::Run);
+            return vec![Effect::Run];
         } else {
             // otherwise, select from the list
             if let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index()).cloned() {
@@ -388,6 +388,7 @@ impl PaletteComponent {
                 app.palette.set_is_suggestions_open(false);
             }
         }
+        vec![]
     }
 
     /// Handles the Escape key to clear input and close suggestions.
@@ -597,7 +598,7 @@ impl Component for PaletteComponent {
             }
             KeyCode::Enter => {
                 // Handle enter keypress
-                self.handle_enter(app);
+                effects.extend(self.handle_enter(app));
             }
             KeyCode::Esc => {
                 // Handle escape

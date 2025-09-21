@@ -85,9 +85,9 @@ impl VerticalNavBarState {
     /// - Plugins: "{}" (configuration/plugins)
     pub fn defaults_for_views() -> Self {
         Self::new(vec![
-            NavItem::new("[Cm]", "Command", Route::Palette),
-            NavItem::new("[Br]", "Browser", Route::Browser),
-            NavItem::new("[Xt]", "Extensions", Route::Plugins),
+            NavItem::new("[Cmd]", "Command", Route::Palette),
+            NavItem::new("[Brw]", "Browser", Route::Browser),
+            NavItem::new("[Ext]", "Extensions", Route::Plugins),
         ])
     }
 
@@ -126,6 +126,13 @@ impl VerticalNavBarState {
             return self.item_focus_flags.get(new_index).cloned();
         }
         None
+    }
+
+    pub fn set_route(&mut self, route: Route) -> Route {
+        if let Some(idx) = self.items.iter().position(|r| r.route == route) {
+            self.selected_index = idx;
+        }
+        route
     }
 
     /// Applies the current selection to the item focus flags.

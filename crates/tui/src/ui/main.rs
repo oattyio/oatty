@@ -32,7 +32,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let chunks = ratatui::layout::Layout::default()
         .direction(ratatui::layout::Direction::Horizontal)
         .constraints([
-            ratatui::layout::Constraint::Length(8),
+            ratatui::layout::Constraint::Length(9),
             ratatui::layout::Constraint::Min(1),
         ])
         .split(size);

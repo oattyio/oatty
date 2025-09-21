@@ -27,7 +27,8 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use heroku_types::Msg;
+use heroku_mcp::PluginEngine;
+use heroku_types::{Effect, ExecOutcome, Msg};
 use ratatui::{Terminal, prelude::*};
 use tokio::{
     signal,
@@ -35,9 +36,9 @@ use tokio::{
     time::{self, MissedTickBehavior},
 };
 
-use crate::ui::components::component::Component;
 use crate::ui::components::nav_bar::VerticalNavBarComponent;
 use crate::{app, cmd, ui::main};
+use crate::{app::App, ui::components::component::Component};
 use rat_focus::FocusBuilder;
 
 /// Control flow signal for the main loop
@@ -59,6 +60,9 @@ async fn spawn_input_thread() -> mpsc::Receiver<Event> {
             if event::poll(Duration::from_millis(10)).expect("poll failed") {
                 match event::read() {
                     Ok(event) => {
+                        if event.is_mouse() {
+                            continue;
+                        }
                         if let Err(e) = sender.send(event).await {
                             eprintln!("Failed to send event: {}", e);
                             break;
@@ -108,7 +112,7 @@ fn render<'a>(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, applic
 
 /// Handle raw crossterm input events and update `App`/components.
 /// Returns `Exit` for Ctrl+C, otherwise `Continue`.
-fn handle_input_event<'a>(app: &mut app::App, input_event: Event) -> Result<LoopAction> {
+async fn handle_input_event<'a>(app: &mut app::App<'_>, input_event: Event) -> Result<LoopAction> {
     match input_event {
         Event::Key(key_event) => {
             // Ctrl-C: if plugins fullscreen active, exit that mode; otherwise exit app
@@ -145,7 +149,7 @@ fn handle_input_event<'a>(app: &mut app::App, input_event: Event) -> Result<Loop
             }
 
             // Run the effects
-            cmd::run_from_effects(app, effects);
+            process_effects(app, effects).await;
         }
         Event::Resize(width, height) => {
             let _ = app.update(Msg::Resize(width, height));
@@ -156,67 +160,10 @@ fn handle_input_event<'a>(app: &mut app::App, input_event: Event) -> Result<Loop
     Ok(LoopAction::Continue)
 }
 
-/// Builds a command line string from a spec and current builder inputs.
-fn build_palette_line_from_spec(
-    command_spec: &heroku_types::CommandSpec,
-    input_fields: &[heroku_types::Field],
-) -> String {
-    let mut command_parts: Vec<String> = Vec::new();
-    let command_group = &command_spec.group;
-    let subcommand_name = &command_spec.name;
-    command_parts.push(command_group.to_string());
-    if !subcommand_name.is_empty() {
-        command_parts.push(subcommand_name.to_string());
-    }
-    for positional_argument in &command_spec.positional_args {
-        if let Some(input_field) = input_fields.iter().find(|field| field.name == positional_argument.name) {
-            let field_value = input_field.value.trim();
-            if field_value.is_empty() {
-                command_parts.push(format!("<{}>", positional_argument.name));
-            } else {
-                command_parts.push(field_value.to_string());
-            }
-        } else {
-            command_parts.push(format!("<{}>", positional_argument.name));
-        }
-    }
-    for input_field in input_fields.iter().filter(|field| {
-        !command_spec
-            .positional_args
-            .iter()
-            .any(|pos_arg| pos_arg.name == field.name)
-    }) {
-        if input_field.is_bool {
-            if !input_field.value.is_empty() {
-                command_parts.push(format!("--{}", input_field.name));
-            }
-        } else if !input_field.value.trim().is_empty() {
-            command_parts.push(format!("--{}", input_field.name));
-            command_parts.push(input_field.value.trim().to_string());
-        }
-    }
-    command_parts.join(" ")
-}
-
-/// When pressing Enter in the browser, populate the palette with the
-/// constructed command and close the command browser.
-fn handle_browser_enter(application: &mut app::App) {
-    if let Some(command_spec) = application.browser.selected_command() {
-        let command_line = build_palette_line_from_spec(command_spec, application.browser.input_fields());
-        application.palette.set_input(command_line);
-        application.palette.set_cursor(application.palette.input().len());
-        application.palette.apply_build_suggestions(
-            &application.ctx.registry,
-            &application.ctx.providers,
-            &*application.ctx.theme,
-        );
-    }
-}
-
 /// Entry point for the TUI runtime: sets up terminal, spawns the event
 /// producer, runs the async event loop, and performs cleanup on exit.
-pub async fn run_app(registry: heroku_registry::Registry) -> Result<()> {
-    let mut application = app::App::new(registry);
+pub async fn run_app(registry: heroku_registry::Registry, plugin_engine: PluginEngine) -> Result<()> {
+    let mut application = app::App::new(registry, plugin_engine);
     let mut terminal = setup_terminal()?;
 
     // Input comes from a dedicated blocking thread to ensure reliability.
@@ -230,7 +177,8 @@ pub async fn run_app(registry: heroku_registry::Registry) -> Result<()> {
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     render(&mut terminal, &mut application)?;
-
+    // run initialization effects
+    process_effects(&mut application, vec![Effect::PluginsLoadRequested]).await;
     // Track the last known terminal size to synthesize Resize messages when
     // some terminals fail to emit them reliably (e.g., certain iTerm2 setups).
     let mut last_size: Option<(u16, u16)> = crossterm::terminal::size().ok();
@@ -249,7 +197,7 @@ pub async fn run_app(registry: heroku_registry::Registry) -> Result<()> {
             // Terminal input events
             maybe_event = input_receiver.recv() => {
                 if let Some(event) = maybe_event {
-                    match handle_input_event(&mut application, event)? {
+                    match handle_input_event(&mut application, event).await? {
                         LoopAction::Continue => {}
                         LoopAction::Exit => return Ok(()),
                     }
@@ -264,16 +212,7 @@ pub async fn run_app(registry: heroku_registry::Registry) -> Result<()> {
             _ = ticker.tick() => {
                 if needs_animation {
                     let effects = application.update(Msg::Tick);
-                    cmd::run_from_effects(&mut application, effects);
-                    needs_render = true;
-                }
-            }
-
-            // Handle execution results
-            maybe_execution_output = application.exec_receiver.recv() => {
-                if let Some(execution_output) = maybe_execution_output {
-                    let effects = application.update(Msg::ExecCompleted(execution_output));
-                    cmd::run_from_effects(&mut application, effects);
+                    process_effects(&mut application, effects).await;
                     needs_render = true;
                 }
             }
@@ -300,4 +239,16 @@ pub async fn run_app(registry: heroku_registry::Registry) -> Result<()> {
 
     cleanup_terminal(&mut terminal)?;
     Ok(())
+}
+
+async fn process_effects(app: &mut App<'_>, effects: Vec<Effect>) {
+    let outcomes: Vec<ExecOutcome> = cmd::run_from_effects(app, effects).await;
+    let mut effects = vec![];
+    for outcome in outcomes {
+        effects.extend(app.update(Msg::ExecCompleted(outcome)));
+    }
+    if effects.is_empty() {
+        return;
+    }
+    Box::pin(process_effects(app, effects)).await;
 }

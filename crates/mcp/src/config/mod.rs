@@ -14,6 +14,7 @@ pub use validation::{ValidationError, validate_config, validate_server_name};
 use dirs_next::config_dir;
 use dirs_next::home_dir;
 use std::env;
+use std::fs;
 use std::fs::create_dir_all;
 use std::fs::write;
 use std::path::PathBuf;
@@ -33,22 +34,22 @@ pub fn default_config_path() -> PathBuf {
 }
 
 /// Load and parse the MCP configuration from the default location.
-pub async fn load_config() -> anyhow::Result<McpConfig> {
+pub fn load_config() -> anyhow::Result<McpConfig> {
     let path = default_config_path();
-    load_config_from_path(&path).await
+    load_config_from_path(&path)
 }
 
 /// Load and parse the MCP configuration from a specific path.
-pub async fn load_config_from_path(path: &std::path::Path) -> anyhow::Result<McpConfig> {
+pub fn load_config_from_path(path: &std::path::Path) -> anyhow::Result<McpConfig> {
     if !path.exists() {
         return Ok(McpConfig::default());
     }
 
-    let content = tokio::fs::read_to_string(path).await?;
+    let content = fs::read_to_string(path)?;
     let mut config: McpConfig = serde_json::from_str(&content)?;
 
     // Interpolate environment variables and secrets
-    interpolate_config(&mut config).await?;
+    interpolate_config(&mut config)?;
 
     // Validate the configuration
     validate_config(&config)?;

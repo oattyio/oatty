@@ -10,7 +10,7 @@ use ratatui::{
     widgets::{Block, Borders},
 };
 
-use super::{NavItem, VerticalNavBarState};
+use super::VerticalNavBarState;
 use crate::ui::components::component::Component;
 
 /// A reusable vertical navigation bar component.
@@ -31,11 +31,6 @@ impl VerticalNavBarComponent {
         Self {
             title: Some("Views".to_string()),
         }
-    }
-
-    /// Returns the currently selected item, if any.
-    pub fn selected_item<'a>(&self, state: &'a VerticalNavBarState) -> Option<&'a NavItem> {
-        state.items.get(state.selected_index)
     }
 
     /// Computes whether any item is focused (used to style borders/selection).

@@ -15,7 +15,7 @@
 //! with the application's focus management system.
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use heroku_types::{Effect, Modal};
-use heroku_util::{redact_json, redact_sensitive};
+use heroku_util::redact_json;
 use once_cell::sync::Lazy;
 use ratatui::{
     Frame,

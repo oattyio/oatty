@@ -4,36 +4,37 @@
 //! business logic for the TUI interface. It manages the application lifecycle,
 //! user interactions, and coordinates between different UI components.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 
-use heroku_mcp::client::McpClientManager;
+use heroku_mcp::PluginEngine;
 use heroku_registry::Registry;
 use heroku_types::{Effect, ExecOutcome, Modal, Msg, Route};
 use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
 use serde_json::{Map as JsonMap, Value as JsonValue};
-use tokio::sync::mpsc::{Receiver, Sender, channel};
 
 use crate::ui::components::{
-    BrowserComponent, HelpComponent, PluginsComponent, TableComponent, logs::LogDetailsComponent,
-    nav_bar::VerticalNavBarState, plugins::PluginsSecretsComponent,
+    BrowserComponent, HelpComponent, PluginsComponent, TableComponent,
+    logs::LogDetailsComponent,
+    nav_bar::VerticalNavBarState,
+    plugins::{PluginsDetailsComponent, PluginsSecretsComponent},
 };
-use crate::{
-    start_palette_execution,
-    ui::{
-        components::{
-            browser::BrowserState,
-            component::Component,
-            help::HelpState,
-            logs::{LogsState, state::LogEntry},
-            palette::{PaletteComponent, PaletteState, providers::RegistryBackedProvider, state::ValueProvider},
-            plugins::PluginsState,
-            table::TableState,
-        },
-        theme,
+use crate::ui::{
+    components::{
+        browser::BrowserState,
+        component::Component,
+        help::HelpState,
+        logs::{LogsState, state::LogEntry},
+        palette::{PaletteComponent, PaletteState, providers::RegistryBackedProvider, state::ValueProvider},
+        plugins::PluginsState,
+        table::TableState,
     },
+    theme,
 };
 
 /// Cross-cutting shared context owned by the App.
@@ -50,26 +51,26 @@ pub struct SharedCtx {
     pub providers: Vec<Box<dyn ValueProvider>>,
     /// Active UI theme (Dracula by default) loaded from env
     pub theme: Box<dyn theme::Theme>,
-    /// MCP supervisor for plugins (optional until initialized)
-    pub mcp: Option<Arc<McpClientManager>>,
+    /// MCP plugin engine (None until initialized in main.rs)
+    pub plugin_engine: Arc<PluginEngine>,
 }
 
 impl SharedCtx {
-    pub fn new(registry: Registry) -> Self {
+    pub fn new(registry: Registry, plugin_engine: PluginEngine) -> Self {
         let debug_enabled = std::env::var("DEBUG")
             .map(|v| !v.is_empty() && v != "0" && v.to_lowercase() != "false")
             .unwrap_or(false);
         // Add registry-backed provider with a small TTL cache
         let providers: Vec<Box<dyn ValueProvider>> = vec![Box::new(RegistryBackedProvider::new(
-            std::sync::Arc::new(registry.clone()),
-            std::time::Duration::from_secs(45),
+            Arc::new(registry.clone()),
+            Duration::from_secs(45),
         ))];
         Self {
             registry,
             debug_enabled,
             providers,
             theme: theme::load_from_env(),
-            mcp: None,
+            plugin_engine: Arc::new(plugin_engine),
         }
     }
 }
@@ -96,10 +97,6 @@ pub struct App<'a> {
     pub executing: bool,
     /// Animation frame for the execution throbber
     pub throbber_idx: usize,
-    /// Sender for async execution results
-    pub exec_sender: Sender<ExecOutcome>,
-    /// Receiver for async execution results
-    pub exec_receiver: Receiver<ExecOutcome>,
     /// Active execution count used by the event pump to decide whether to
     /// animate
     pub active_exec_count: Arc<AtomicUsize>,
@@ -151,10 +148,9 @@ impl App<'_> {
     /// ```rust,ignore
     /// // Requires constructing a full Registry and App; ignored in doctests.
     /// ```
-    pub fn new(registry: heroku_registry::Registry) -> Self {
-        let (exec_sender, exec_receiver) = channel(25);
+    pub fn new(registry: heroku_registry::Registry, engine: PluginEngine) -> Self {
         let mut application = Self {
-            ctx: SharedCtx::new(registry),
+            ctx: SharedCtx::new(registry, engine),
             browser: BrowserState::default(),
             logs: LogsState::default(),
             help: HelpState::default(),
@@ -164,8 +160,6 @@ impl App<'_> {
             nav_bar: VerticalNavBarState::defaults_for_views(),
             executing: false,
             throbber_idx: 0,
-            exec_sender,
-            exec_receiver,
             active_exec_count: Arc::new(AtomicUsize::new(0)),
             last_pagination: None,
             last_command_ranges: None,
@@ -245,25 +239,6 @@ impl App<'_> {
             Msg::Resize(..) => {
                 // No-op for now; placeholder to enable TEA-style event
             }
-            Msg::Run => {
-                // Always execute from palette
-                if !self.palette.is_input_empty() {
-                    match start_palette_execution(self) {
-                        // Execution started successfully
-                        Ok(_) => {
-                            let command_input = &self.palette.input();
-                            self.logs.entries.push(format!("Running: {}", command_input));
-                            self.logs.rich_entries.push(LogEntry::Text {
-                                level: Some("info".into()),
-                                msg: format!("Running: {}", command_input),
-                            });
-                        }
-                        Err(execution_error) => {
-                            self.palette.apply_error(execution_error);
-                        }
-                    }
-                }
-            }
             Msg::CopyToClipboard(text) => {
                 effects.push(Effect::CopyToClipboardRequested(text));
             }
@@ -297,7 +272,7 @@ impl App<'_> {
         }
 
         // Periodically refresh plugin statuses when overlay is visible
-        if self.plugins.should_refresh() {
+        if self.plugins.table.should_refresh() {
             effects.push(Effect::PluginsRefresh);
         }
 
@@ -360,8 +335,7 @@ impl App<'_> {
         }
 
         // Handle general command results
-        self.process_general_execution_result(execution_outcome);
-        effects.push(Effect::ShowModal(Modal::Results)); // Show the data from the execution outcome
+        effects.extend(self.process_general_execution_result(execution_outcome));
 
         false
     }
@@ -392,7 +366,7 @@ impl App<'_> {
                     plugin_updates.push((name.to_string(), status.to_string(), latency, last_error));
                 }
             }
-            self.plugins.apply_refresh_updates(plugin_updates);
+            self.plugins.table.apply_refresh_updates(plugin_updates);
 
             // Also log, redacted
             let (summary, _) = summarize_execution_outcome(self.last_spec.as_ref(), raw_log);
@@ -544,14 +518,18 @@ impl App<'_> {
     /// # Arguments
     ///
     /// * `execution_outcome` - The result of the command execution
-    fn process_general_execution_result(&mut self, execution_outcome: ExecOutcome) {
+    fn process_general_execution_result(&mut self, execution_outcome: ExecOutcome) -> Vec<Effect> {
         let ExecOutcome {
             log: raw_log,
             result_json,
-            open_table: _,
+            open_table,
             pagination,
         } = execution_outcome;
 
+        // nothing to do
+        if !open_table && raw_log.is_empty() && result_json.is_none() {
+            return vec![];
+        }
         let (summary, status_code) = summarize_execution_outcome(self.last_spec.as_ref(), &raw_log);
 
         self.logs.entries.push(summary);
@@ -569,6 +547,8 @@ impl App<'_> {
         self.last_pagination = pagination;
 
         self.palette.reduce_clear_all();
+
+        vec![Effect::ShowModal(Modal::Results)]
     }
 
     /// Trims log entries if they exceed the maximum allowed size.
@@ -596,7 +576,8 @@ impl App<'_> {
             Route::Palette => (Box::new(PaletteComponent::default()), Box::new(&self.palette)),
             Route::Plugins => (Box::new(PluginsComponent::default()), Box::new(&self.plugins)),
         };
-        self.current_route = route;
+
+        self.current_route = self.nav_bar.set_route(route);
         self.main_view = Some(view);
         self.focus = rat_focus::FocusBuilder::build_for(self);
         self.focus.first_in(*state);
@@ -610,6 +591,7 @@ impl App<'_> {
                 Modal::Results => Box::new(TableComponent::default()),
                 Modal::Secrets => Box::new(PluginsSecretsComponent::default()),
                 Modal::LogDetails => Box::new(LogDetailsComponent::default()),
+                Modal::PluginDetails => Box::new(PluginsDetailsComponent::default()),
             };
             self.open_modal = Some(modal_view);
             // save the current focus to restore when the modal is closed
@@ -618,19 +600,6 @@ impl App<'_> {
             self.open_modal = None;
         }
         self.open_modal_kind = modal;
-    }
-
-    /// Enqueue an [`ExecOutcome`] for asynchronous processing by the runtime loop.
-    ///
-    /// This helper wraps the Tokio channel used to ferry execution results
-    /// back into the application. When the channel is full or closed we record
-    /// a log entry so the user can diagnose why results might be missing.
-    pub fn enqueue_exec_outcome(&mut self, outcome: ExecOutcome) {
-        if let Err(error) = self.exec_sender.try_send(outcome) {
-            self.logs
-                .entries
-                .push(format!("Failed to enqueue execution outcome: {error}"));
-        }
     }
 
     pub fn restore_focus(&mut self) {
@@ -667,11 +636,16 @@ fn summarize_execution_outcome(
         .next()
         .and_then(|code| code.parse::<u16>().ok());
 
+    let success = if status_code.is_some_and(|c| c.clamp(200, 399) == c) {
+        "success"
+    } else {
+        "failed"
+    };
     let summary = if status_line.is_empty() {
-        format!("{} - succeeded", label)
+        format!("{} - {}", label, success)
     } else {
         let sanitized_status = heroku_util::redact_sensitive(status_line);
-        format!("{} - succeeded ({})", label, sanitized_status)
+        format!("{} - {} ({})", label, success, sanitized_status)
     };
 
     (summary, status_code)
@@ -775,8 +749,8 @@ impl HasFocus for App<'_> {
                 Modal::LogDetails => {
                     builder.widget(&self.logs);
                 }
-                Modal::Help => {
-                    // Help has no focusable fields; leave ring empty
+                Modal::PluginDetails | Modal::Help => {
+                    // no focusable fields; leave ring empty
                 }
             }
             builder.end(tag);

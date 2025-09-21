@@ -18,7 +18,7 @@
 //! exact command names or syntax.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use heroku_types::Effect;
+use heroku_types::{Effect, Route};
 use ratatui::style::Modifier;
 use ratatui::{
     Frame,
@@ -28,8 +28,9 @@ use ratatui::{
 };
 
 use crate::app::App;
+use crate::ui::components::help::content::build_command_help_text;
 use crate::ui::{
-    components::{HelpComponent, browser::layout::BrowserLayout, component::Component},
+    components::{browser::layout::BrowserLayout, component::Component},
     theme::theme_helpers as th,
 };
 
@@ -116,7 +117,8 @@ impl Component for BrowserComponent {
     /// # Returns
     /// * `Vec<Effect>` - Effects to be processed by the runtime
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
-        self.handle_hot_keys(app, key);
+        let effects = self.handle_hot_keys(app, key);
+
         if app.browser.f_search.get() {
             self.handle_search_keys(app, key);
         } else if app.browser.f_commands.get() {
@@ -128,7 +130,7 @@ impl Component for BrowserComponent {
                 _ => false,
             };
         }
-        vec![]
+        effects
     }
 }
 
@@ -158,21 +160,29 @@ impl BrowserComponent {
             }
             KeyCode::Down => app.browser.move_selection(1),
             KeyCode::Up => app.browser.move_selection(-1),
-            KeyCode::Enter => {
-                app.browser.apply_enter();
-            }
             _ => {}
         }
     }
 
-    fn handle_hot_keys(&self, app: &mut App, key: KeyEvent) {
+    fn handle_hot_keys(&self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         match key.code {
             KeyCode::Enter => {
-                app.browser.apply_enter();
+                return self.apply_enter(app);
             }
-            KeyCode::Esc => app.browser.search_input_clear(),
-            _ => {}
+            KeyCode::Esc => {
+                app.browser.search_input_clear();
+                return vec![];
+            }
+            _ => return vec![],
         }
+    }
+
+    /// Handle Enter within the browser context (noop for now).
+    pub fn apply_enter(&self, app: &App) -> Vec<Effect> {
+        if let Some(spec) = app.browser.selected_command().cloned() {
+            return vec![Effect::SwitchTo(Route::Palette), Effect::SendToPalette(spec)];
+        }
+        vec![]
     }
 
     /// Handles keyboard input when the commands list panel has focus.
@@ -204,7 +214,7 @@ impl BrowserComponent {
         if let Some(selected_command_spec) = app.browser.selected_command() {
             let command_display_name = self.format_command_display_name(selected_command_spec);
             let help_title = format!("Help — {}", command_display_name);
-            let help_text = HelpComponent::build_command_help(&*app.ctx.theme, selected_command_spec);
+            let help_text = build_command_help_text(&*app.ctx.theme, selected_command_spec);
             (help_title, help_text)
         } else {
             let default_title = "Help".to_string();
@@ -290,7 +300,7 @@ impl BrowserComponent {
     fn create_search_title(&self, app: &App) -> Line<'_> {
         let theme = &*app.ctx.theme;
         Line::from(Span::styled(
-            "Search Commands",
+            "Browse Commands",
             theme.text_secondary_style().add_modifier(Modifier::BOLD),
         ))
     }

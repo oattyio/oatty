@@ -7,7 +7,6 @@
 use std::collections::{BTreeSet, HashMap};
 
 use heck::ToTitleCase;
-use heroku_mcp::McpLogEntry;
 use heroku_util::{format_date_mmddyyyy, is_date_like_key, redact_json, redact_sensitive};
 use ratatui::prelude::*;
 use serde_json::{Map, Value};

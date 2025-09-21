@@ -62,7 +62,7 @@ pub fn redact_sensitive_with(input: &str, replacement: &str) -> String {
 ///
 /// # Returns
 /// A vector of compiled regex patterns
-fn get_redact_patterns() -> &'static Vec<Regex> {
+pub fn get_redact_patterns() -> &'static Vec<Regex> {
     static REDACT_PATTERNS: Lazy<Vec<Regex>> = Lazy::new(|| {
         vec![
             // Authorization headers (keep prefix, redact value)

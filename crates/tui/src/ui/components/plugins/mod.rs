@@ -22,5 +22,5 @@ pub use plugins_component::PluginsComponent;
 pub use search_component::PluginsSearchComponent;
 pub use secrets::{PluginSecretsEditorState, PluginsSecretsComponent};
 pub use state::{PluginListItem, PluginsState};
-pub use table::PluginsTableComponent;
+pub use table::{PluginsTableComponent, PluginsTableState};
 pub use types::*;

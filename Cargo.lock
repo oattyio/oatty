@@ -1022,6 +1022,7 @@ dependencies = [
  "clap",
  "heroku-api",
  "heroku-engine",
+ "heroku-mcp",
  "heroku-registry",
  "heroku-tui",
  "heroku-util",

@@ -55,6 +55,46 @@ impl PluginsSecretsComponent {
             env.editing = false;
         }
     }
+
+    /// Render the environment editor table and title.
+    fn render_env_editor(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, env: &PluginSecretsEditorState) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme.border_style(true))
+            .style(th::panel_style(theme))
+            .title(Span::styled(
+                format!("Edit Secrets — {}", env.name),
+                theme.text_secondary_style().add_modifier(Modifier::BOLD),
+            ));
+        frame.render_widget(block.clone(), area);
+        let inner = block.inner(area);
+
+        // Build rows: mask secrets with bullets
+        let rows = env.rows.iter().enumerate().map(|(i, r)| {
+            let val = if r.is_secret {
+                "••••••••••••••••".to_string()
+            } else {
+                r.value.clone()
+            };
+            let name = if i == env.selected {
+                format!("› {}", r.key)
+            } else {
+                r.key.clone()
+            };
+            Row::new(vec![name, val]).style(theme.text_primary_style())
+        });
+
+        let table = Table::new(rows, [Constraint::Percentage(30), Constraint::Percentage(70)])
+            .header(
+                Row::new(vec![
+                    Span::styled("KEY", th::table_header_style(theme)),
+                    Span::styled("VALUE", th::table_header_style(theme)),
+                ])
+                .style(th::table_header_row_style(theme)),
+            )
+            .block(Block::default().style(th::panel_style(theme)));
+        frame.render_widget(table, inner);
+    }
 }
 
 impl Component for PluginsSecretsComponent {
@@ -99,48 +139,6 @@ impl Component for PluginsSecretsComponent {
             let theme = &*app.ctx.theme;
             self.render_env_editor(frame, area, theme, env);
         }
-    }
-}
-
-impl PluginsSecretsComponent {
-    /// Render the environment editor table and title.
-    fn render_env_editor(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, env: &PluginSecretsEditorState) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme.border_style(true))
-            .style(th::panel_style(theme))
-            .title(Span::styled(
-                format!("Edit Env — {}  [Enter] edit  [Ctrl-s] save  [b] back", env.name),
-                theme.text_secondary_style().add_modifier(Modifier::BOLD),
-            ));
-        frame.render_widget(block.clone(), area);
-        let inner = block.inner(area);
-
-        // Build rows: mask secrets with bullets
-        let rows = env.rows.iter().enumerate().map(|(i, r)| {
-            let val = if r.is_secret {
-                "••••••••••••••••".to_string()
-            } else {
-                r.value.clone()
-            };
-            let name = if i == env.selected {
-                format!("› {}", r.key)
-            } else {
-                r.key.clone()
-            };
-            Row::new(vec![name, val]).style(theme.text_primary_style())
-        });
-
-        let table = Table::new(rows, [Constraint::Percentage(30), Constraint::Percentage(70)])
-            .header(
-                Row::new(vec![
-                    Span::styled("KEY", th::table_header_style(theme)),
-                    Span::styled("VALUE", th::table_header_style(theme)),
-                ])
-                .style(th::table_header_row_style(theme)),
-            )
-            .block(Block::default().style(th::panel_style(theme)));
-        frame.render_widget(table, inner);
     }
 }
 

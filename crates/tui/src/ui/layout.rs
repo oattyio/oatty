@@ -3,9 +3,6 @@
 //! This module provides layout utilities and helpers for organizing the UI
 //! components in a consistent and maintainable way. It defines the main
 //! application layout structure and provides reusable layout functions.
-
-use std::{collections::vec_deque, rc::Rc};
-
 use ratatui::prelude::*;
 
 use crate::app::App;

@@ -1,7 +1,10 @@
 //! Reusable help content builder used by HelpComponent and the Command Browser.
 
 use heroku_types::CommandSpec;
-use ratatui::text::{Line, Span, Text};
+use ratatui::{
+    style::Modifier,
+    text::{Line, Span, Text},
+};
 
 /// Build comprehensive help text for a command specification.
 ///
@@ -10,14 +13,9 @@ pub(crate) fn build_command_help_text<'a>(
     theme: &'a dyn crate::ui::theme::roles::Theme,
     spec: &'a CommandSpec,
 ) -> Text<'a> {
-    let mut split = spec.name.splitn(2, ':');
-    let group = split.next().unwrap_or("");
-    let rest = split.next().unwrap_or("");
-    let cmd = if rest.is_empty() {
-        group.to_string()
-    } else {
-        format!("{} {}", group, rest)
-    };
+    let name = &spec.name;
+    let group = &spec.group;
+    let cmd = format!("{} {}", group, name);
 
     let mut lines: Vec<Line<'_>> = vec![Line::from("")];
     lines.push(Line::styled(
@@ -67,29 +65,29 @@ pub(crate) fn build_command_help_text<'a>(
 
     lines.push(Line::styled(
         " DESCRIPTION:",
-        theme
-            .text_secondary_style()
-            .add_modifier(ratatui::style::Modifier::BOLD),
+        theme.text_secondary_style().add_modifier(Modifier::BOLD),
     ));
     lines.push(Line::from(format!("  {}", spec.summary)));
-
+    let mut show_providers_note = false;
     if !spec.positional_args.is_empty() {
         lines.push(Line::from(""));
         lines.push(Line::styled(
             " ARGUMENTS:",
-            theme
-                .text_secondary_style()
-                .add_modifier(ratatui::style::Modifier::BOLD),
+            theme.text_secondary_style().add_modifier(Modifier::BOLD),
         ));
         for pa in &spec.positional_args {
+            let has_provider = if pa.provider.is_some() { "(*) " } else { "" };
+            show_providers_note |= pa.provider.is_some();
+
             if let Some(desc) = &pa.help {
                 let mut arg_line = Line::styled(
                     format!("  {} ", pa.name.to_uppercase()),
-                    theme
-                        .text_secondary_style()
-                        .add_modifier(ratatui::style::Modifier::BOLD),
+                    theme.text_secondary_style().add_modifier(Modifier::BOLD),
                 );
-                arg_line.push_span(Span::styled(desc.to_string(), theme.text_muted_style()));
+                arg_line.push_span(Span::styled(
+                    format!("{}{}", has_provider, desc.to_string()),
+                    theme.text_muted_style(),
+                ));
                 lines.push(arg_line);
             } else {
                 lines.push(Line::from(format!(
@@ -112,16 +110,12 @@ pub(crate) fn build_command_help_text<'a>(
             let mut flag_line = if let Some(short) = &flag.short_name {
                 Line::styled(
                     format!("  -{},  --{}", short, flag.name),
-                    theme
-                        .text_secondary_style()
-                        .add_modifier(ratatui::style::Modifier::BOLD),
+                    theme.text_secondary_style().add_modifier(Modifier::BOLD),
                 )
             } else {
                 Line::styled(
                     format!("  --{}", flag.name),
-                    theme
-                        .text_secondary_style()
-                        .add_modifier(ratatui::style::Modifier::BOLD),
+                    theme.text_secondary_style().add_modifier(Modifier::BOLD),
                 )
             };
 
@@ -141,10 +135,23 @@ pub(crate) fn build_command_help_text<'a>(
                 flag_line.push_span(Span::styled(format!("  [default: {}]", def), theme.text_muted_style()));
             }
             if let Some(desc) = &flag.description {
-                flag_line.push_span(Span::styled(format!(" — {}", desc), theme.text_muted_style()));
+                let has_provider = if flag.provider.is_some() { "(*) " } else { "" };
+                show_providers_note |= flag.provider.is_some();
+                flag_line.push_span(Span::styled(
+                    format!(" — {}{}", has_provider, desc),
+                    theme.text_muted_style(),
+                ));
             }
             lines.push(flag_line);
         }
+    }
+
+    if show_providers_note {
+        lines.push(Line::from(""));
+        lines.push(Line::styled(
+            "(*) Value options are provided to you from your account info (Tab to invoke)",
+            theme.text_muted_style(),
+        ));
     }
 
     Text::from(lines)

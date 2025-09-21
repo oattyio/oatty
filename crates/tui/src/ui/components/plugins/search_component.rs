@@ -44,8 +44,7 @@ impl PluginsSearchComponent {
 
     /// Removes the last character from the search filter and normalizes selection.
     fn remove_last_filter_character(application: &mut App) {
-        application.plugins.filter.pop();
-        application.plugins.selected = Some(0);
+        application.plugins.table.pop_filter_character();
     }
 
     /// Inserts a character into the search filter unless a control modifier is pressed.
@@ -53,18 +52,17 @@ impl PluginsSearchComponent {
         if key_event.modifiers.contains(KeyModifiers::CONTROL) {
             return;
         }
-        application.plugins.filter.push(character);
-        application.plugins.selected = Some(0);
+        application.plugins.table.push_filter_character(character);
     }
 
     /// Core key event processor shared by both inherent and trait implementations.
     fn process_key_event(application: &mut App, key_event: KeyEvent) -> Vec<Effect> {
         match key_event.code {
-            KeyCode::Backspace if application.plugins.search_flag.get() => {
+            KeyCode::Backspace if application.plugins.table.search_flag.get() => {
                 Self::remove_last_filter_character(application);
                 Vec::new()
             }
-            KeyCode::Char(character) if application.plugins.search_flag.get() => {
+            KeyCode::Char(character) if application.plugins.table.search_flag.get() => {
                 Self::insert_filter_character_unless_control(application, key_event, character);
                 Vec::new()
             }
@@ -97,19 +95,21 @@ impl PluginsSearchComponent {
     /// - `theme`: Active theme used for styles
     /// - `state`: Reference to the plugins view state
     fn render_search_panel(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, state: &PluginsState) {
-        let is_search_focused = state.search_flag.get();
+        let table_state = &state.table;
+        let is_search_focused = table_state.search_flag.get();
         let header_block = th::block(theme, Some("Search Plugins"), is_search_focused);
 
         // Render input inside the block
         let header_inner = header_block.inner(area);
-        let header = Paragraph::new(state.filter.as_str())
+        let filter_text = table_state.filter_text();
+        let header = Paragraph::new(filter_text)
             .style(theme.text_primary_style())
             .block(header_block);
         frame.render_widget(header, area);
 
         // Position cursor at end of input when focused
         if is_search_focused {
-            let x = header_inner.x.saturating_add(state.filter.chars().count() as u16);
+            let x = header_inner.x.saturating_add(filter_text.chars().count() as u16);
             let y = header_inner.y;
             frame.set_cursor_position((x, y));
         }

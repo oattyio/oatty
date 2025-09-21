@@ -16,7 +16,6 @@ pub struct PluginAddViewState {
     pub command: String,
     pub args: String,
     pub base_url: String,
-    /// Optional environment variables for Local (stdio) plugins as key/value rows.
     /// Editor state for environment variables on local transports.
     pub env_editor: KeyValueEditorState,
     /// Editor state for headers on remote transports.
@@ -30,8 +29,6 @@ pub struct PluginAddViewState {
     pub f_command: FocusFlag,
     pub f_args: FocusFlag,
     pub f_base_url: FocusFlag,
-    pub f_key_value_pairs: FocusFlag,
-    pub f_btn_secrets: FocusFlag,
     pub f_btn_validate: FocusFlag,
     pub f_btn_save: FocusFlag,
     pub f_btn_cancel: FocusFlag,
@@ -39,6 +36,8 @@ pub struct PluginAddViewState {
 
 impl PluginAddViewState {
     pub fn new() -> Self {
+        let env_editor = KeyValueEditorState::new("plugins.add.env");
+        let header_editor = KeyValueEditorState::new("plugins.add.header");
         let instance = Self {
             visible: true,
             transport: AddTransport::Local,
@@ -47,8 +46,8 @@ impl PluginAddViewState {
             command: String::new(),
             args: String::new(),
             base_url: String::new(),
-            env_editor: KeyValueEditorState::new(),
-            header_editor: KeyValueEditorState::new(),
+            env_editor,
+            header_editor,
             validation: None,
             preview: None,
             focus: FocusFlag::named("plugins.add"),
@@ -57,8 +56,6 @@ impl PluginAddViewState {
             f_command: FocusFlag::named("plugins.add.command"),
             f_args: FocusFlag::named("plugins.add.args"),
             f_base_url: FocusFlag::named("plugins.add.base_url"),
-            f_key_value_pairs: FocusFlag::named("plugins.add.key_value_pairs"),
-            f_btn_secrets: FocusFlag::named("plugins.add.btn.secrets"),
             f_btn_validate: FocusFlag::named("plugins.add.btn.validate"),
             f_btn_save: FocusFlag::named("plugins.add.btn.save"),
             f_btn_cancel: FocusFlag::named("plugins.add.btn.cancel"),
@@ -123,11 +120,22 @@ impl PluginAddViewState {
         }
     }
 
+    /// Returns the focus flag for the currently active key/value editor container.
+    pub fn active_key_value_focus_flag(&self) -> FocusFlag {
+        self.active_key_value_editor().focus_flag()
+    }
+
+    /// Indicates whether the key/value editor currently holds input focus.
+    pub fn is_key_value_editor_focused(&self) -> bool {
+        self.active_key_value_focus_flag().get()
+    }
+
     /// Replaces all environment variable rows.
     pub fn replace_environment_rows(&mut self, rows: Vec<EnvRow>) {
         self.env_editor.rows = rows;
         self.env_editor.selected_row_index = None;
         self.env_editor.mode = Default::default();
+        self.env_editor.focus_table_surface();
     }
 
     /// Replaces all header rows for remote transports.
@@ -135,6 +143,7 @@ impl PluginAddViewState {
         self.header_editor.rows = rows;
         self.header_editor.selected_row_index = None;
         self.header_editor.mode = Default::default();
+        self.header_editor.focus_table_surface();
     }
 
     /// Provides a transport-specific label for the key/value table.
@@ -173,16 +182,16 @@ impl HasFocus for PluginAddViewState {
             AddTransport::Local => {
                 builder.leaf_widget(&self.f_command);
                 builder.leaf_widget(&self.f_args);
+                builder.widget(&self.env_editor);
             }
             AddTransport::Remote => {
                 builder.leaf_widget(&self.f_base_url);
+                builder.widget(&self.header_editor);
             }
         }
-        builder.leaf_widget(&self.f_key_value_pairs);
 
         // Buttons (order matches rendered left→right); enablement handled in UI/actions
         // Secrets is always present
-        builder.leaf_widget(&self.f_btn_secrets);
         // Validate / Save are not always part of the focus ring; enablement is handled in UI/actions
         if validate_enabled {
             builder.leaf_widget(&self.f_btn_validate);
