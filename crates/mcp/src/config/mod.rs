@@ -27,10 +27,7 @@ pub fn default_config_path() -> PathBuf {
         return expand_tilde(&path);
     }
 
-    config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("heroku")
-        .join("mcp.json")
+    config_dir().unwrap_or_else(|| PathBuf::from(".")).join("heroku").join("mcp.json")
 }
 
 /// Load and parse the MCP configuration from the default location.

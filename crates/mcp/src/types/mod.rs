@@ -1,9 +1,8 @@
 //! Core types for MCP plugin management.
 
 pub mod errors;
-pub mod plugin;
-pub mod status;
 
 pub use errors::{LogError, McpError, PluginError};
-pub use plugin::{EnvVar, McpLogEntry, PluginDetail};
-pub use status::{HealthStatus, PluginStatus, TransportStatus};
+pub use heroku_types::plugin::{
+    AuthStatus, EnvSource, EnvVar, HealthStatus, LogLevel, LogSource, McpLogEntry, PluginDetail, PluginStatus, TransportStatus,
+};

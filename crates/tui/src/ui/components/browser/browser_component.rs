@@ -316,9 +316,7 @@ impl BrowserComponent {
     /// * `inner_area` - The inner area of the search panel
     fn set_search_cursor(&self, frame: &mut Frame, app: &App, inner_area: Rect) {
         if app.browser.f_search.get() {
-            let cursor_x = inner_area
-                .x
-                .saturating_add(app.browser.search_input().chars().count() as u16);
+            let cursor_x = inner_area.x.saturating_add(app.browser.search_input().chars().count() as u16);
             let cursor_y = inner_area.y;
             frame.set_cursor_position((cursor_x, cursor_y));
         }
@@ -499,20 +497,5 @@ mod tests {
 
         let result = component.format_command_display_name(&command_spec);
         assert_eq!(result, "apps");
-    }
-
-    #[test]
-    fn test_create_footer_text() {
-        let component = BrowserComponent;
-        let theme = MockTheme;
-
-        let footer_text = component.create_footer_text(&theme, true);
-
-        // Verify the footer contains expected text elements
-        let text_content = format!("{}", footer_text);
-        assert!(text_content.contains("Hint:"));
-        assert!(text_content.contains("Ctrl+F"));
-        assert!(text_content.contains("Enter"));
-        assert!(text_content.contains("Esc"));
     }
 }

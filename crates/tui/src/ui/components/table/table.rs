@@ -154,10 +154,7 @@ impl TableComponent<'_> {
                 for header in keys.iter().take(24) {
                     let val = render_value(header, map.get(header).unwrap_or(&Value::Null));
                     lines.push(Line::from(vec![
-                        Span::styled(
-                            normalize_header(header),
-                            theme.text_secondary_style().add_modifier(Modifier::BOLD),
-                        ),
+                        Span::styled(normalize_header(header), theme.text_secondary_style().add_modifier(Modifier::BOLD)),
                         Span::raw(": "),
                         Span::styled(val, theme.text_primary_style()),
                     ]));

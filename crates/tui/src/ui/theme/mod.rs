@@ -26,9 +26,7 @@ pub fn load_from_env() -> Box<dyn Theme> {
             Box::new(DraculaThemeHighContrast::new())
         }
         Some("dracula") => Box::new(DraculaTheme::new()),
-        Some("nord_hc") | Some("nord-high-contrast") | Some("nord-hc") | Some("nordhc") => {
-            Box::new(NordThemeHighContrast::new())
-        }
+        Some("nord_hc") | Some("nord-high-contrast") | Some("nord-hc") | Some("nordhc") => Box::new(NordThemeHighContrast::new()),
         Some("nord") => Box::new(NordTheme::new()),
         _ => Box::new(DraculaTheme::new()),
     }

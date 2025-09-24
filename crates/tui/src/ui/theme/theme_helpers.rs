@@ -17,10 +17,7 @@ pub fn block<'a, T: Theme + ?Sized>(theme: &'a T, title: Option<&'a str>, focuse
         .border_style(theme.border_style(focused))
         .style(panel_style(theme));
     if let Some(t) = title {
-        block = block.title(Span::styled(
-            t,
-            theme.text_secondary_style().add_modifier(Modifier::BOLD),
-        ));
+        block = block.title(Span::styled(t, theme.text_secondary_style().add_modifier(Modifier::BOLD)));
     }
     block
 }
@@ -39,9 +36,7 @@ pub fn table_header_style<T: Theme + ?Sized>(theme: &T) -> Style {
 
 /// Background style for the entire header row to avoid gaps between columns.
 pub fn table_header_row_style<T: Theme + ?Sized>(theme: &T) -> Style {
-    Style::default()
-        .bg(theme.roles().surface_muted)
-        .fg(theme.roles().text_secondary)
+    Style::default().bg(theme.roles().surface_muted).fg(theme.roles().text_secondary)
 }
 
 /// Darken an RGB color by a multiplicative factor (0.0..=1.0).
@@ -107,9 +102,7 @@ pub fn tabs<'a, T: Theme + ?Sized>(theme: &T, titles: Vec<Span<'a>>, index: usiz
 /// Style for input fields; caller sets the block border based on focus.
 #[allow(dead_code)]
 pub fn input_style<T: Theme + ?Sized>(theme: &T, valid: bool, focused: bool) -> Style {
-    let ThemeRoles {
-        surface, text, error, ..
-    } = *theme.roles();
+    let ThemeRoles { surface, text, error, .. } = *theme.roles();
     let mut style = Style::default().bg(surface).fg(text);
     if !valid {
         style = style.fg(error);
@@ -124,18 +117,11 @@ pub fn input_style<T: Theme + ?Sized>(theme: &T, valid: bool, focused: bool) -> 
 #[allow(dead_code)]
 pub fn button_primary_style<T: Theme + ?Sized>(theme: &T, enabled: bool) -> Style {
     if enabled {
-        let ThemeRoles {
-            accent_primary, text, ..
-        } = *theme.roles();
-        Style::default()
-            .bg(accent_primary)
-            .fg(text)
-            .add_modifier(Modifier::BOLD)
+        let ThemeRoles { accent_primary, text, .. } = *theme.roles();
+        Style::default().bg(accent_primary).fg(text).add_modifier(Modifier::BOLD)
     } else {
         let ThemeRoles {
-            surface_muted,
-            text_muted,
-            ..
+            surface_muted, text_muted, ..
         } = *theme.roles();
         Style::default().bg(surface_muted).fg(text_muted)
     }
@@ -204,12 +190,7 @@ pub fn render_button<T: Theme + ?Sized>(
     frame.render_widget(
         Paragraph::new(label)
             .centered()
-            .block(
-                Block::bordered()
-                    .borders(borders)
-                    .border_style(border_style)
-                    .padding(padding),
-            )
+            .block(Block::bordered().borders(borders).border_style(border_style).padding(padding))
             .style(button_style),
         area,
     );

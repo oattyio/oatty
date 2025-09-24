@@ -31,10 +31,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Layout: left rail for nav bar, right for active main view
     let chunks = ratatui::layout::Layout::default()
         .direction(ratatui::layout::Direction::Horizontal)
-        .constraints([
-            ratatui::layout::Constraint::Length(9),
-            ratatui::layout::Constraint::Min(1),
-        ])
+        .constraints([ratatui::layout::Constraint::Length(9), ratatui::layout::Constraint::Min(1)])
         .split(size);
 
     // Handle main view rendering
@@ -72,8 +69,5 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 fn render_overlay(frame: &mut Frame, app: &mut App) {
     // Draw the theme-specific modal overlay when any modal is visible
     let area = frame.area();
-    frame.render_widget(
-        Block::default().style(app.ctx.theme.modal_background_style()).dim(),
-        area,
-    );
+    frame.render_widget(Block::default().style(app.ctx.theme.modal_background_style()).dim(), area);
 }

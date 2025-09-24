@@ -10,11 +10,7 @@ use crate::config::McpServer;
 pub(crate) fn build_sse_url(server: &McpServer) -> Url {
     let base = server.base_url.clone().expect("base_url required for http");
     let segment = server.sse_path.as_deref().unwrap_or("sse");
-    let path = if segment.starts_with('/') {
-        &segment[1..]
-    } else {
-        segment
-    };
+    let path = if segment.starts_with('/') { &segment[1..] } else { segment };
     base.join(path).unwrap_or(base)
 }
 
@@ -31,9 +27,7 @@ pub(crate) async fn build_http_client_with_auth(server: &McpServer) -> Result<re
     // OAuth bearer from keyring (or fallback to config token) if configured
     if let Some(auth) = &server.auth {
         if auth.scheme.eq_ignore_ascii_case("oauth") || auth.scheme.eq_ignore_ascii_case("oauth2") {
-            let token_opt = load_oauth_token_from_keyring(server)
-                .await?
-                .or_else(|| auth.token.clone());
+            let token_opt = load_oauth_token_from_keyring(server).await?.or_else(|| auth.token.clone());
             if let Some(token) = token_opt {
                 if let Ok(v) = HeaderValue::from_str(&format!("Bearer {}", token)) {
                     headers.insert(AUTHORIZATION, v);

@@ -80,9 +80,7 @@ pub enum LogError {
 impl McpError {
     /// Create a transport error.
     pub fn transport(message: impl Into<String>) -> Self {
-        Self::Transport {
-            message: message.into(),
-        }
+        Self::Transport { message: message.into() }
     }
 
     /// Create a timeout error.
@@ -95,9 +93,7 @@ impl McpError {
 
     /// Create a handshake error.
     pub fn handshake(message: impl Into<String>) -> Self {
-        Self::Handshake {
-            message: message.into(),
-        }
+        Self::Handshake { message: message.into() }
     }
 
     /// Create a tool invocation error.

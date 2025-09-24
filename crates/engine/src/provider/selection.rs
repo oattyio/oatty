@@ -75,13 +75,9 @@ impl Default for FieldSelection {
 /// assert_eq!(sel.value_field, "uuid");
 /// assert_eq!(sel.display_field, "display");
 /// ```
-pub fn infer_selection(
-    explicit: Option<crate::model::SelectSpec>,
-    contract: Option<&ProviderContract>,
-) -> FieldSelection {
+pub fn infer_selection(explicit: Option<crate::model::SelectSpec>, contract: Option<&ProviderContract>) -> FieldSelection {
     if let Some(sel) = explicit {
-        return FieldSelection::explicit(sel.value_field, sel.display_field, sel.id_field)
-            .with_source(SelectionSource::Explicit);
+        return FieldSelection::explicit(sel.value_field, sel.display_field, sel.id_field).with_source(SelectionSource::Explicit);
     }
 
     let mut selection = FieldSelection {

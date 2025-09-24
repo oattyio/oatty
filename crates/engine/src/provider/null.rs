@@ -5,11 +5,7 @@ use super::contract::ProviderContract;
 pub struct NullProvider;
 
 impl crate::provider::ProviderRegistry for NullProvider {
-    fn fetch_values(
-        &self,
-        _provider_id: &str,
-        _arguments: &serde_json::Map<String, Value>,
-    ) -> anyhow::Result<Vec<Value>> {
+    fn fetch_values(&self, _provider_id: &str, _arguments: &serde_json::Map<String, Value>) -> anyhow::Result<Vec<Value>> {
         Ok(Vec::new())
     }
 

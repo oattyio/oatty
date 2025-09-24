@@ -17,9 +17,7 @@ use ratatui::{
 
 use crate::{app::App, ui::components::component::Component};
 
-use super::{
-    PluginsAddComponent, PluginsLogsComponent, PluginsSearchComponent, PluginsSecretsComponent, PluginsTableComponent,
-};
+use super::{PluginsEditComponent, PluginsLogsComponent, PluginsSearchComponent, PluginsSecretsComponent, PluginsTableComponent};
 
 /// Top-level Plugins view component that orchestrates all plugin-related UI elements.
 ///
@@ -45,7 +43,7 @@ pub struct PluginsComponent {
     /// Child component for editing plugin environment variables
     secrets_component: PluginsSecretsComponent,
     /// Child component for the add plugin plugin
-    add_component: PluginsAddComponent,
+    add_component: PluginsEditComponent,
 }
 
 impl Component for PluginsComponent {

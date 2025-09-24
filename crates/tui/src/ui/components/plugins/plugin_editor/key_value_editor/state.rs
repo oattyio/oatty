@@ -3,25 +3,6 @@ use ratatui::layout::Rect;
 
 use crate::ui::components::plugins::EnvRow;
 
-use std::fmt::{self, Display};
-
-/// Errors that can occur while committing key/value edits.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum KeyValueEditorCommitError {
-    /// The edited row is missing a key.
-    EmptyKey,
-}
-
-impl Display for KeyValueEditorCommitError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            KeyValueEditorCommitError::EmptyKey => {
-                write!(f, "Key is required")
-            }
-        }
-    }
-}
-
 /// Represents the interaction mode of the key/value editor.
 #[derive(Debug, Clone, Default)]
 pub enum KeyValueEditorMode {
@@ -114,26 +95,6 @@ impl KeyValueEditorState {
     /// Exposes the container focus flag for integration with other state.
     pub fn focus_flag(&self) -> FocusFlag {
         self.focus.clone()
-    }
-
-    /// Exposes the table focus flag so the caller can track whether the table is active.
-    pub fn table_focus_flag(&self) -> FocusFlag {
-        self.table_focus.clone()
-    }
-
-    /// Exposes the key field focus flag for callers that need to observe focus state.
-    pub fn key_field_focus_flag(&self) -> FocusFlag {
-        self.key_field_focus.clone()
-    }
-
-    /// Exposes the value field focus flag for callers that need to observe focus state.
-    pub fn value_field_focus_flag(&self) -> FocusFlag {
-        self.value_field_focus.clone()
-    }
-
-    /// Restores focus to the table surface, exiting inline editing mode.
-    pub fn focus_table_surface(&mut self) {
-        self.focus_table();
     }
 
     /// Selects the previous row when browsing.
@@ -237,15 +198,16 @@ impl KeyValueEditorState {
     }
 
     /// Commits the current edit session into the underlying row storage.
-    pub fn commit_edit(&mut self) -> Result<(), KeyValueEditorCommitError> {
+    pub fn commit_edit(&mut self) -> Result<String, String> {
+        let ok = Ok("✓ Looks good!".to_string());
         let KeyValueEditorMode::Editing(edit) = &self.mode else {
-            return Ok(());
+            return ok;
         };
         if edit.key_buffer.trim().is_empty() {
-            return Err(KeyValueEditorCommitError::EmptyKey);
+            return Err("✘ Key name missing".to_string());
         }
         if edit.row_index >= self.rows.len() {
-            return Ok(());
+            return ok;
         }
         let target = &mut self.rows[edit.row_index];
         target.key = edit.key_buffer.trim().to_string();
@@ -253,7 +215,8 @@ impl KeyValueEditorState {
         self.selected_row_index = Some(edit.row_index);
         self.mode = KeyValueEditorMode::Browsing;
         self.focus_table();
-        Ok(())
+
+        ok
     }
 
     /// Toggles the active editing field between key and value.

@@ -1,15 +1,17 @@
+use heroku_mcp::PluginDetail;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 
-use super::super::EnvRow;
+use crate::ui::components::plugins::EnvRow;
+
 use super::key_value_editor::KeyValueEditorState;
 
 /// Add Plugin view state
 #[derive(Debug, Clone)]
-pub struct PluginAddViewState {
+pub struct PluginEditViewState {
     pub visible: bool,
     /// Selected transport for the plugin: Local (stdio) or Remote (http/sse)
-    pub transport: AddTransport,
+    pub transport: PluginTransport,
     /// Index of the currently focused control (legacy; not used by add.rs)
     pub selected: usize,
     pub name: String,
@@ -17,10 +19,8 @@ pub struct PluginAddViewState {
     pub args: String,
     pub base_url: String,
     /// Editor state for environment variables on local transports.
-    pub env_editor: KeyValueEditorState,
-    /// Editor state for headers on remote transports.
-    pub header_editor: KeyValueEditorState,
-    pub validation: Option<String>,
+    pub kv_editor: KeyValueEditorState,
+    pub validation: Result<String, String>,
     pub preview: Option<String>,
     // Focus flags for focusable controls
     pub focus: FocusFlag,
@@ -34,21 +34,19 @@ pub struct PluginAddViewState {
     pub f_btn_cancel: FocusFlag,
 }
 
-impl PluginAddViewState {
+impl PluginEditViewState {
     pub fn new() -> Self {
-        let env_editor = KeyValueEditorState::new("plugins.add.env");
-        let header_editor = KeyValueEditorState::new("plugins.add.header");
+        let kv_editor = KeyValueEditorState::new("plugins.add.env");
         let instance = Self {
             visible: true,
-            transport: AddTransport::Local,
+            transport: PluginTransport::Local,
             selected: 1,
             name: String::new(),
             command: String::new(),
             args: String::new(),
             base_url: String::new(),
-            env_editor,
-            header_editor,
-            validation: None,
+            kv_editor,
+            validation: Ok(String::new()),
             preview: None,
             focus: FocusFlag::named("plugins.add"),
             f_transport: FocusFlag::named("plugins.add.transport"),
@@ -62,6 +60,29 @@ impl PluginAddViewState {
         };
         // Set initial focus to transport selector instead of name field
         instance.f_transport.set(true);
+        instance
+    }
+
+    pub fn from_detail(client: PluginDetail) -> Self {
+        let mut instance = Self::new();
+        instance.transport = PluginTransport::from(client.transport_type.as_str());
+        instance.name = client.name;
+
+        instance.args = client.args.unwrap_or_default();
+        instance.kv_editor.rows = client
+            .env
+            .iter()
+            .map(|e| EnvRow {
+                key: e.key.clone(),
+                value: e.value.clone(),
+                is_secret: e.is_secret(),
+            })
+            .collect();
+        if instance.transport == PluginTransport::Local {
+            instance.command = client.command_or_url;
+        } else {
+            instance.base_url = client.command_or_url;
+        }
         instance
     }
 
@@ -93,36 +114,20 @@ impl PluginAddViewState {
         let name_present = !self.name.trim().is_empty();
 
         match self.transport {
-            AddTransport::Local => {
+            PluginTransport::Local => {
                 let command_present = !self.command.trim().is_empty();
                 (command_present, name_present && command_present)
             }
-            AddTransport::Remote => {
+            PluginTransport::Remote => {
                 let base_url_present = !self.base_url.trim().is_empty();
                 (base_url_present, name_present && base_url_present)
             }
         }
     }
 
-    /// Returns the editor that should be used for the active transport mode.
-    pub fn active_key_value_editor(&self) -> &KeyValueEditorState {
-        match self.transport {
-            AddTransport::Local => &self.env_editor,
-            AddTransport::Remote => &self.header_editor,
-        }
-    }
-
-    /// Returns the editor that should be mutated for the active transport mode.
-    pub fn active_key_value_editor_mut(&mut self) -> &mut KeyValueEditorState {
-        match self.transport {
-            AddTransport::Local => &mut self.env_editor,
-            AddTransport::Remote => &mut self.header_editor,
-        }
-    }
-
     /// Returns the focus flag for the currently active key/value editor container.
     pub fn active_key_value_focus_flag(&self) -> FocusFlag {
-        self.active_key_value_editor().focus_flag()
+        self.kv_editor.focus_flag()
     }
 
     /// Indicates whether the key/value editor currently holds input focus.
@@ -130,33 +135,17 @@ impl PluginAddViewState {
         self.active_key_value_focus_flag().get()
     }
 
-    /// Replaces all environment variable rows.
-    pub fn replace_environment_rows(&mut self, rows: Vec<EnvRow>) {
-        self.env_editor.rows = rows;
-        self.env_editor.selected_row_index = None;
-        self.env_editor.mode = Default::default();
-        self.env_editor.focus_table_surface();
-    }
-
-    /// Replaces all header rows for remote transports.
-    pub fn replace_header_rows(&mut self, rows: Vec<EnvRow>) {
-        self.header_editor.rows = rows;
-        self.header_editor.selected_row_index = None;
-        self.header_editor.mode = Default::default();
-        self.header_editor.focus_table_surface();
-    }
-
     /// Provides a transport-specific label for the key/value table.
     pub fn key_value_table_label(&self) -> &'static str {
         match self.transport {
-            AddTransport::Local => "Env Vars",
-            AddTransport::Remote => "Headers",
+            PluginTransport::Local => "Env Vars",
+            PluginTransport::Remote => "Headers",
         }
     }
 
     /// Collects key/value pairs for the active transport, excluding empty keys.
     pub fn collected_key_value_pairs(&self) -> Vec<(String, String)> {
-        self.active_key_value_editor()
+        self.kv_editor
             .rows
             .iter()
             .filter(|row| !row.key.trim().is_empty())
@@ -167,28 +156,36 @@ impl PluginAddViewState {
 
 /// Transport selection for Add Plugin view
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum AddTransport {
+pub enum PluginTransport {
     Local,
     Remote,
 }
 
-impl HasFocus for PluginAddViewState {
+impl From<&str> for PluginTransport {
+    fn from(value: &str) -> Self {
+        match value {
+            "http" => Self::Remote,
+            _ => Self::Local,
+        }
+    }
+}
+
+impl HasFocus for PluginEditViewState {
     fn build(&self, builder: &mut FocusBuilder) {
         let (validate_enabled, save_enabled) = self.compute_button_enablement();
         let tag = builder.start(self);
         builder.leaf_widget(&self.f_transport);
         builder.leaf_widget(&self.f_name);
         match self.transport {
-            AddTransport::Local => {
+            PluginTransport::Local => {
                 builder.leaf_widget(&self.f_command);
                 builder.leaf_widget(&self.f_args);
-                builder.widget(&self.env_editor);
             }
-            AddTransport::Remote => {
+            PluginTransport::Remote => {
                 builder.leaf_widget(&self.f_base_url);
-                builder.widget(&self.header_editor);
             }
         }
+        builder.widget(&self.kv_editor);
 
         // Buttons (order matches rendered left→right); enablement handled in UI/actions
         // Secrets is always present

@@ -7,7 +7,7 @@
 use std::vec;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use heroku_types::{Effect, ItemKind, Modal, Msg};
+use heroku_types::{Effect, ItemKind, Modal};
 use rat_focus::HasFocus;
 use ratatui::{
     Frame,
@@ -83,10 +83,7 @@ impl PaletteComponent {
         let mut spans: Vec<Span<'a>> = Vec::new();
 
         // Add main input text
-        spans.push(Span::styled(
-            app.palette.input().to_string(),
-            theme.text_primary_style(),
-        ));
+        spans.push(Span::styled(app.palette.input().to_string(), theme.text_primary_style()));
 
         // Add ghost text if available
         if let Some(ghost) = app.palette.ghost_text()
@@ -262,11 +259,8 @@ impl PaletteComponent {
     /// * `app` - The application state to update
     fn handle_help_request(&self, app: &mut app::App) -> Vec<Effect> {
         // Ensure suggestions are up to date, then fetch effective command
-        let SharedCtx {
-            registry, providers, ..
-        } = &app.ctx;
-        app.palette
-            .apply_build_suggestions(registry, providers, &*app.ctx.theme);
+        let SharedCtx { registry, providers, .. } = &app.ctx;
+        app.palette.apply_build_suggestions(registry, providers, &*app.ctx.theme);
         let spec = app.palette.selected_command();
         if spec.is_some() {
             app.help.set_spec(spec.cloned());
@@ -349,12 +343,9 @@ impl PaletteComponent {
         if app.palette.is_input_empty() {
             return;
         }
-        let SharedCtx {
-            registry, providers, ..
-        } = &app.ctx;
+        let SharedCtx { registry, providers, .. } = &app.ctx;
 
-        app.palette
-            .apply_build_suggestions(registry, providers, &*app.ctx.theme);
+        app.palette.apply_build_suggestions(registry, providers, &*app.ctx.theme);
         // Open popup if we have suggestions or if provider-backed suggestions are loading
         let open = app.palette.suggestions_len() > 0 || app.palette.is_provider_loading();
         app.palette.set_is_suggestions_open(open);
@@ -448,9 +439,8 @@ impl Component for PaletteComponent {
         }
 
         // Render suggestions popup
-        let should_show_suggestions = app.palette.error_message().is_none()
-            && app.palette.is_suggestions_open()
-            && !app.palette.suggestions().is_empty();
+        let should_show_suggestions =
+            app.palette.error_message().is_none() && app.palette.is_suggestions_open() && !app.palette.suggestions().is_empty();
 
         if should_show_suggestions {
             let suggestions_list = self.create_suggestions_list(app, theme);

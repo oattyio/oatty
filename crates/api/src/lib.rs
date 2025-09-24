@@ -109,9 +109,7 @@ impl HerokuClient {
         let url = format!("{}{}", self.base_url, path);
         debug!(%url, "building request");
 
-        self.http
-            .request(method, url)
-            .header(header::USER_AGENT, &self.user_agent)
+        self.http.request(method, url).header(header::USER_AGENT, &self.user_agent)
     }
 }
 
@@ -129,10 +127,7 @@ fn validate_base_url(base: &str) -> Result<()> {
         .ok_or_else(|| anyhow!("HEROKU_API_BASE must include a host"))?;
 
     // Local development allowances: localhost/127.0.0.1 with any scheme.
-    if LOCALHOST_DOMAINS
-        .iter()
-        .any(|&allowed| host_name.eq_ignore_ascii_case(allowed))
-    {
+    if LOCALHOST_DOMAINS.iter().any(|&allowed| host_name.eq_ignore_ascii_case(allowed)) {
         return Ok(());
     }
 
@@ -144,9 +139,9 @@ fn validate_base_url(base: &str) -> Result<()> {
         ));
     }
 
-    let is_allowed_domain = ALLOWED_HEROKU_DOMAINS.iter().any(|&allowed_domain| {
-        host_name.eq_ignore_ascii_case(allowed_domain) || host_name.ends_with(&format!(".{}", allowed_domain))
-    });
+    let is_allowed_domain = ALLOWED_HEROKU_DOMAINS
+        .iter()
+        .any(|&allowed_domain| host_name.eq_ignore_ascii_case(allowed_domain) || host_name.ends_with(&format!(".{}", allowed_domain)));
     if !is_allowed_domain {
         return Err(anyhow!(
             "HEROKU_API_BASE host '{}' is not allowed; must be one of {:?} or a subdomain, or localhost",

@@ -6,6 +6,7 @@ use std::{
 };
 
 use heroku_registry::{CommandSpec, Registry};
+use heroku_types::ExecOutcome;
 use serde_json::{Map as JsonMap, Value};
 
 use super::{
@@ -90,18 +91,18 @@ impl crate::provider::ProviderRegistry for RegistryProvider {
                 Ok(rt) => rt.block_on(async move { heroku_util::http_exec::exec_remote(&spec_clone, body).await }),
                 Err(e) => Err(format!("runtime init failed: {}", e)),
             };
-            if let Ok(outcome) = result
-                && let Some(Value::Array(arr)) = outcome.result_json
-            {
-                let items = arr;
-                self.cache.lock().expect("cache lock").insert(
-                    key,
-                    CacheEntry {
-                        fetched_at: Instant::now(),
-                        items: items.clone(),
-                    },
-                );
-                return Ok(items);
+            
+            if let Some(ExecOutcome::Http(_, result, _, _)) = result.ok() {
+                if let Some(items) = result.as_array().cloned() {
+                    self.cache.lock().expect("cache lock").insert(
+                        key,
+                        CacheEntry {
+                            fetched_at: Instant::now(),
+                            items: items.clone(),
+                        },
+                    );
+                    return Ok(items);
+                }
             }
         }
 

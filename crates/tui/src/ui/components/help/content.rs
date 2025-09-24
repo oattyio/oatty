@@ -9,10 +9,7 @@ use ratatui::{
 /// Build comprehensive help text for a command specification.
 ///
 /// Produces a themed `Text` with sections: USAGE, DESCRIPTION, ARGUMENTS, OPTIONS.
-pub(crate) fn build_command_help_text<'a>(
-    theme: &'a dyn crate::ui::theme::roles::Theme,
-    spec: &'a CommandSpec,
-) -> Text<'a> {
+pub(crate) fn build_command_help_text<'a>(theme: &'a dyn crate::ui::theme::roles::Theme, spec: &'a CommandSpec) -> Text<'a> {
     let name = &spec.name;
     let group = &spec.group;
     let cmd = format!("{} {}", group, name);
@@ -20,9 +17,7 @@ pub(crate) fn build_command_help_text<'a>(
     let mut lines: Vec<Line<'_>> = vec![Line::from("")];
     lines.push(Line::styled(
         " USAGE:",
-        theme
-            .text_secondary_style()
-            .add_modifier(ratatui::style::Modifier::BOLD),
+        theme.text_secondary_style().add_modifier(ratatui::style::Modifier::BOLD),
     ));
 
     let mut usage_spans: Vec<Span<'_>> = vec![Span::styled(format!("  heroku {}", cmd), theme.text_primary_style())];
@@ -37,9 +32,7 @@ pub(crate) fn build_command_help_text<'a>(
         if flag.required {
             usage_spans.push(Span::styled(
                 format!(" --{}", flag.name),
-                theme
-                    .text_secondary_style()
-                    .add_modifier(ratatui::style::Modifier::BOLD),
+                theme.text_secondary_style().add_modifier(ratatui::style::Modifier::BOLD),
             ));
             if flag.r#type != "boolean" {
                 usage_spans.push(Span::styled(" <value>", theme.text_muted_style()));
@@ -48,9 +41,7 @@ pub(crate) fn build_command_help_text<'a>(
             usage_spans.push(Span::styled(" [", theme.text_muted_style()));
             usage_spans.push(Span::styled(
                 format!("--{}", flag.name),
-                theme
-                    .text_secondary_style()
-                    .add_modifier(ratatui::style::Modifier::BOLD),
+                theme.text_secondary_style().add_modifier(ratatui::style::Modifier::BOLD),
             ));
             if flag.r#type != "boolean" {
                 usage_spans.push(Span::styled(" <value>", theme.text_muted_style()));
@@ -90,10 +81,7 @@ pub(crate) fn build_command_help_text<'a>(
                 ));
                 lines.push(arg_line);
             } else {
-                lines.push(Line::from(format!(
-                    "  {}: Path parameter derived from the endpoint URL.",
-                    pa.name
-                )));
+                lines.push(Line::from(format!("  {}: Path parameter derived from the endpoint URL.", pa.name)));
             }
         }
     }
@@ -102,9 +90,7 @@ pub(crate) fn build_command_help_text<'a>(
         lines.push(Line::from(""));
         lines.push(Line::styled(
             " OPTIONS:",
-            theme
-                .text_secondary_style()
-                .add_modifier(ratatui::style::Modifier::BOLD),
+            theme.text_secondary_style().add_modifier(ratatui::style::Modifier::BOLD),
         ));
         for flag in &spec.flags {
             let mut flag_line = if let Some(short) = &flag.short_name {
@@ -137,10 +123,7 @@ pub(crate) fn build_command_help_text<'a>(
             if let Some(desc) = &flag.description {
                 let has_provider = if flag.provider.is_some() { "(*) " } else { "" };
                 show_providers_note |= flag.provider.is_some();
-                flag_line.push_span(Span::styled(
-                    format!(" — {}{}", has_provider, desc),
-                    theme.text_muted_style(),
-                ));
+                flag_line.push_span(Span::styled(format!(" — {}{}", has_provider, desc), theme.text_muted_style()));
             }
             lines.push(flag_line);
         }

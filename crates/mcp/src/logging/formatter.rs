@@ -151,7 +151,7 @@ impl Default for RedactionRules {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::plugin::{LogLevel, LogSource};
+    use crate::types::{LogLevel, LogSource};
 
     use super::*;
 

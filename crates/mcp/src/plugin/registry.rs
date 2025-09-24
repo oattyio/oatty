@@ -1,34 +1,15 @@
 //! Plugin registry for managing plugin metadata.
 
-use crate::types::PluginStatus;
-use serde::{Deserialize, Serialize};
+use crate::types::{PluginDetail, PluginStatus};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-/// Information about a plugin.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginInfo {
-    /// Plugin name.
-    pub name: String,
-
-    /// Command or base URL for the plugin.
-    pub command_or_url: String,
-
-    /// Transport type (stdio, http, etc.).
-    pub transport_type: String,
-
-    /// Tags associated with the plugin.
-    pub tags: Vec<String>,
-
-    /// Whether the plugin is enabled.
-    pub enabled: bool,
-}
-
 /// Registry for managing plugin metadata.
+#[derive(Clone)]
 pub struct PluginRegistry {
     /// Registered plugins.
-    plugins: Arc<Mutex<HashMap<String, PluginInfo>>>,
+    plugins: Arc<Mutex<HashMap<String, PluginDetail>>>,
 
     /// Plugin status.
     status: Arc<Mutex<HashMap<String, PluginStatus>>>,
@@ -44,8 +25,10 @@ impl PluginRegistry {
     }
 
     /// Register a plugin.
-    pub async fn register_plugin(&self, plugin: PluginInfo) -> Result<(), RegistryError> {
+    pub async fn register_plugin(&self, mut plugin: PluginDetail) -> Result<(), RegistryError> {
         let name = plugin.name.clone();
+        plugin.status = PluginStatus::Stopped;
+
         let mut plugins = self.plugins.lock().await;
         let mut status = self.status.lock().await;
 
@@ -67,13 +50,13 @@ impl PluginRegistry {
     }
 
     /// Get a plugin by name.
-    pub async fn get_plugin(&self, name: &str) -> Option<PluginInfo> {
+    pub async fn get_plugin(&self, name: &str) -> Option<PluginDetail> {
         let plugins = self.plugins.lock().await;
         plugins.get(name).cloned()
     }
 
     /// Get all plugins.
-    pub async fn get_all_plugins(&self) -> Vec<PluginInfo> {
+    pub async fn get_all_plugins(&self) -> Vec<PluginDetail> {
         let plugins = self.plugins.lock().await;
         plugins.values().cloned().collect()
     }
@@ -86,6 +69,13 @@ impl PluginRegistry {
 
     /// Set plugin status.
     pub async fn set_plugin_status(&self, name: &str, status: PluginStatus) -> Result<(), RegistryError> {
+        {
+            let mut plugins = self.plugins.lock().await;
+            if let Some(detail) = plugins.get_mut(name) {
+                detail.status = status;
+            }
+        }
+
         let mut status_map = self.status.lock().await;
         status_map.insert(name.to_string(), status);
         Ok(())
@@ -104,7 +94,7 @@ impl PluginRegistry {
     }
 
     /// Get plugins by tag.
-    pub async fn get_plugins_by_tag(&self, tag: &str) -> Vec<PluginInfo> {
+    pub async fn get_plugins_by_tag(&self, tag: &str) -> Vec<PluginDetail> {
         let plugins = self.plugins.lock().await;
         plugins
             .values()
@@ -114,21 +104,28 @@ impl PluginRegistry {
     }
 
     /// Get enabled plugins.
-    pub async fn get_enabled_plugins(&self) -> Vec<PluginInfo> {
+    pub async fn get_enabled_plugins(&self) -> Vec<PluginDetail> {
         let plugins = self.plugins.lock().await;
         plugins.values().filter(|plugin| plugin.enabled).cloned().collect()
     }
 
     /// Get disabled plugins.
-    pub async fn get_disabled_plugins(&self) -> Vec<PluginInfo> {
+    pub async fn get_disabled_plugins(&self) -> Vec<PluginDetail> {
         let plugins = self.plugins.lock().await;
         plugins.values().filter(|plugin| !plugin.enabled).cloned().collect()
     }
 
     /// Update plugin information.
-    pub async fn update_plugin(&self, name: &str, plugin: PluginInfo) -> Result<(), RegistryError> {
-        let mut plugins = self.plugins.lock().await;
-        plugins.insert(name.to_string(), plugin);
+    pub async fn update_plugin(&self, name: &str, plugin: PluginDetail) -> Result<(), RegistryError> {
+        let status_value = plugin.status;
+
+        {
+            let mut plugins = self.plugins.lock().await;
+            plugins.insert(name.to_string(), plugin);
+        }
+
+        let mut status = self.status.lock().await;
+        status.insert(name.to_string(), status_value);
         Ok(())
     }
 
@@ -150,15 +147,14 @@ impl PluginRegistry {
     }
 
     /// Search plugins by name or tag.
-    pub async fn search_plugins(&self, query: &str) -> Vec<PluginInfo> {
+    pub async fn search_plugins(&self, query: &str) -> Vec<PluginDetail> {
         let plugins = self.plugins.lock().await;
         let query_lower = query.to_lowercase();
 
         plugins
             .values()
             .filter(|plugin| {
-                plugin.name.to_lowercase().contains(&query_lower)
-                    || plugin.tags.iter().any(|tag| tag.to_lowercase().contains(&query_lower))
+                plugin.name.to_lowercase().contains(&query_lower) || plugin.tags.iter().any(|tag| tag.to_lowercase().contains(&query_lower))
             })
             .cloned()
             .collect()
@@ -195,16 +191,13 @@ mod tests {
     async fn test_plugin_registry() {
         let registry = PluginRegistry::new();
 
-        let plugin = PluginInfo {
-            name: "test-plugin".to_string(),
-            command_or_url: "node test.js".to_string(),
-            transport_type: "stdio".to_string(),
-            tags: vec!["test".to_string(), "example".to_string()],
-            enabled: true,
-        };
+        let mut plugin = PluginDetail::new("test-plugin".to_string(), "node test.js".to_string(), None);
+        plugin.transport_type = "stdio".to_string();
+        plugin.tags = vec!["test".to_string(), "example".to_string()];
+        plugin.enabled = true;
 
         // Register plugin
-        registry.register_plugin(plugin.clone()).await.unwrap();
+        registry.register_plugin(plugin).await.unwrap();
 
         // Check if registered
         assert!(registry.is_registered("test-plugin").await);
@@ -234,13 +227,8 @@ mod tests {
     async fn test_plugin_status() {
         let registry = PluginRegistry::new();
 
-        let plugin = PluginInfo {
-            name: "test-plugin".to_string(),
-            command_or_url: "node test.js".to_string(),
-            transport_type: "stdio".to_string(),
-            tags: vec![],
-            enabled: true,
-        };
+        let mut plugin = PluginDetail::new("test-plugin".to_string(), "node test.js".to_string(), None);
+        plugin.transport_type = "stdio".to_string();
 
         registry.register_plugin(plugin).await.unwrap();
 
@@ -249,10 +237,7 @@ mod tests {
         assert_eq!(status, PluginStatus::Stopped);
 
         // Update status
-        registry
-            .set_plugin_status("test-plugin", PluginStatus::Running)
-            .await
-            .unwrap();
+        registry.set_plugin_status("test-plugin", PluginStatus::Running).await.unwrap();
 
         let status = registry.get_plugin_status("test-plugin").await.unwrap();
         assert_eq!(status, PluginStatus::Running);

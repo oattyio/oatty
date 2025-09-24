@@ -143,15 +143,9 @@ fn looks_like_iso_date(s: &str) -> bool {
         return false;
     }
     let b = s.as_bytes();
-    b.get(0..4)
-        .map(|r| r.iter().all(|c| c.is_ascii_digit()))
-        .unwrap_or(false)
+    b.get(0..4).map(|r| r.iter().all(|c| c.is_ascii_digit())).unwrap_or(false)
         && matches!(b.get(4), Some(b'-' | b'/'))
-        && b.get(5..7)
-            .map(|r| r.iter().all(|c| c.is_ascii_digit()))
-            .unwrap_or(false)
+        && b.get(5..7).map(|r| r.iter().all(|c| c.is_ascii_digit())).unwrap_or(false)
         && matches!(b.get(7), Some(b'-' | b'/'))
-        && b.get(8..10)
-            .map(|r| r.iter().all(|c| c.is_ascii_digit()))
-            .unwrap_or(false)
+        && b.get(8..10).map(|r| r.iter().all(|c| c.is_ascii_digit())).unwrap_or(false)
 }

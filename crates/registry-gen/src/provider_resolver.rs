@@ -393,10 +393,7 @@ fn process_placeholder(
     }
 
     if let Some((provider_id, binds)) = best_provider
-        && let Some(positional_arg) = command_spec
-            .positional_args
-            .iter_mut()
-            .find(|arg| arg.name == placeholder_name)
+        && let Some(positional_arg) = command_spec.positional_args.iter_mut().find(|arg| arg.name == placeholder_name)
     {
         positional_arg.provider = Some(ValueProvider::Command {
             command_id: provider_id,
@@ -587,10 +584,7 @@ fn bind_required_flags(
             .unwrap_or_else(|| vec![required_flag.clone()]);
 
         // Try to bind from available positional inputs first
-        if let Some(found_name) = candidate_names
-            .iter()
-            .find(|candidate| available_inputs.contains(*candidate))
-        {
+        if let Some(found_name) = candidate_names.iter().find(|candidate| available_inputs.contains(*candidate)) {
             bindings.push(Bind {
                 provider_key: required_flag.clone(),
                 from: found_name.clone(),

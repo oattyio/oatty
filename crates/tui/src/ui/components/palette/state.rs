@@ -38,11 +38,7 @@ fn token_index_at_cursor(input: &str, cursor: usize) -> Option<usize> {
     if tokens.is_empty() {
         return None;
     }
-    if let Some((idx, _)) = tokens
-        .iter()
-        .enumerate()
-        .find(|(_, t)| t.start <= cursor && cursor <= t.end)
-    {
+    if let Some((idx, _)) = tokens.iter().enumerate().find(|(_, t)| t.start <= cursor && cursor <= t.end) {
         Some(idx)
     } else {
         Some(tokens.len() - 1)
@@ -380,11 +376,7 @@ impl PaletteState {
         if self.cursor_position == 0 {
             return;
         }
-        let prev_len = self.input[..self.cursor_position]
-            .chars()
-            .last()
-            .map(|c| c.len_utf8())
-            .unwrap_or(1);
+        let prev_len = self.input[..self.cursor_position].chars().last().map(|c| c.len_utf8()).unwrap_or(1);
         self.cursor_position = self.cursor_position.saturating_sub(prev_len);
     }
 
@@ -447,11 +439,7 @@ impl PaletteState {
         if self.cursor_position == 0 {
             return;
         }
-        let prev = self.input[..self.cursor_position]
-            .chars()
-            .last()
-            .map(|c| c.len_utf8())
-            .unwrap_or(1);
+        let prev = self.input[..self.cursor_position].chars().last().map(|c| c.len_utf8()).unwrap_or(1);
         let start = self.cursor_position - prev;
         self.input.drain(start..self.cursor_position);
         self.cursor_position = start;
@@ -710,9 +698,7 @@ impl PaletteState {
         // if present; otherwise insert suggestion. Also clean up stray '-'/'--'.
         if at_new_token || tokens.is_empty() {
             // Precompute cleanup range and optional placeholder range before mutating input
-            let remove_from: Option<usize> = tokens
-                .last()
-                .and_then(|t| (t.text == "-" || t.text == "--").then_some(t.start));
+            let remove_from: Option<usize> = tokens.last().and_then(|t| (t.text == "-" || t.text == "--").then_some(t.start));
             let placeholder_range: Option<(usize, usize)> = if tokens.len() >= 3 {
                 let mut first_flag_idx = tokens.len();
                 for (i, t) in tokens.iter().enumerate().skip(2) {
@@ -845,12 +831,7 @@ impl PaletteState {
     /// st.apply_build_suggestions(&Registry::from_embedded_schema().unwrap(), &[]);
     /// assert!(!st.selected_suggestions().is_empty());
     /// ```
-    pub fn apply_build_suggestions(
-        &mut self,
-        reg: &Registry,
-        providers: &[Box<dyn ValueProvider>],
-        theme: &dyn crate::ui::theme::Theme,
-    ) {
+    pub fn apply_build_suggestions(&mut self, reg: &Registry, providers: &[Box<dyn ValueProvider>], theme: &dyn crate::ui::theme::Theme) {
         let result = super::suggestion_engine::SuggestionEngine::build(reg, providers, &self.input);
         let mut items = result.items;
         self.provider_loading = result.provider_loading;

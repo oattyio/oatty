@@ -12,7 +12,7 @@ use std::{
     time::Duration,
 };
 
-use heroku_mcp::PluginEngine;
+use heroku_mcp::{PluginDetail, PluginEngine, PluginStatus};
 use heroku_registry::Registry;
 use heroku_types::{Effect, ExecOutcome, Modal, Msg, Route};
 use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
@@ -20,7 +20,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::ui::components::{
     BrowserComponent, HelpComponent, PluginsComponent, TableComponent,
-    logs::LogDetailsComponent,
+    logs::{LogDetailsComponent},
     nav_bar::VerticalNavBarState,
     plugins::{PluginsDetailsComponent, PluginsSecretsComponent},
 };
@@ -177,12 +177,8 @@ impl App<'_> {
         };
 
         // Initialize command browser and palette with all available commands
-        application
-            .browser
-            .set_all_commands(application.ctx.registry.commands.clone());
-        application
-            .palette
-            .set_all_commands(application.ctx.registry.commands.clone());
+        application.browser.set_all_commands(application.ctx.registry.commands.clone());
+        application.palette.set_all_commands(application.ctx.registry.commands.clone());
         application.browser.update_browser_filtered();
 
         // Initialize rat-focus and set a sensible starting focus inside palette
@@ -190,24 +186,6 @@ impl App<'_> {
         application.focus.first_in(&application.palette);
 
         application
-    }
-
-    /// Gets the available range fields for the currently selected command.
-    ///
-    /// This method returns the range fields that are available for the current
-    /// command, either from the last executed command or from the browser's
-    /// current selection.
-    ///
-    /// # Returns
-    ///
-    /// A vector of available range field names.
-    pub fn available_ranges(&self) -> Vec<String> {
-        if let Some(last_ranges) = &self.last_command_ranges
-            && !last_ranges.is_empty()
-        {
-            return last_ranges.clone();
-        }
-        self.browser.available_ranges()
     }
 
     /// Updates the application state based on a message.
@@ -231,27 +209,15 @@ impl App<'_> {
     /// // Example requires real App/Msg types; ignored to avoid compile in doctests.
     /// ```
     pub fn update(&mut self, message: Msg) -> Vec<Effect> {
-        let mut effects = Vec::new();
         match message {
-            Msg::Tick => {
-                self.handle_tick_message(&mut effects);
-            }
-            Msg::Resize(..) => {
-                // No-op for now; placeholder to enable TEA-style event
-            }
-            Msg::CopyToClipboard(text) => {
-                effects.push(Effect::CopyToClipboardRequested(text));
-            }
-            Msg::ExecCompleted(execution_outcome) => {
-                if self.handle_execution_completion(execution_outcome, &mut effects) {
-                    return effects;
-                }
-            }
+            Msg::Tick => self.handle_tick_message(),
+            Msg::Resize(..) => vec![],
+            Msg::CopyToClipboard(text) => vec![Effect::CopyToClipboardRequested(text)],
+            Msg::ExecCompleted(execution_outcome) => self.handle_execution_completion(execution_outcome),
             // Placeholder handlers for upcoming logs features
-            Msg::LogsUp | Msg::LogsDown | Msg::LogsExtendUp | Msg::LogsExtendDown => {}
-            Msg::LogsOpenDetail | Msg::LogsCloseDetail | Msg::LogsCopy | Msg::LogsTogglePretty => {}
+            Msg::LogsUp | Msg::LogsDown | Msg::LogsExtendUp | Msg::LogsExtendDown => vec![],
+            Msg::LogsOpenDetail | Msg::LogsCloseDetail | Msg::LogsCopy | Msg::LogsTogglePretty => vec![],
         }
-        effects
     }
 
     /// Handles tick messages for periodic updates and animations.
@@ -262,8 +228,7 @@ impl App<'_> {
     ///
     /// # Arguments
     ///
-    /// * `effects` - Mutable reference to the effects vector to add new effects
-    fn handle_tick_message(&mut self, effects: &mut Vec<Effect>) {
+    fn handle_tick_message(&mut self) -> Vec<Effect> {
         // Animate spinner while executing or while provider-backed suggestions are loading
         if self.executing || self.palette.is_provider_loading() {
             let previous_throbber_index = self.throbber_idx;
@@ -273,27 +238,17 @@ impl App<'_> {
 
         // Periodically refresh plugin statuses when overlay is visible
         if self.plugins.table.should_refresh() {
-            effects.push(Effect::PluginsRefresh);
-        }
-
-        // Refresh logs in follow mode
-        if let Some(logs_state) = &self.plugins.logs {
-            if logs_state.follow {
-                effects.push(Effect::PluginsRefreshLogs(logs_state.name.clone()));
-            }
+            return vec![Effect::PluginsRefresh];
         }
 
         // If provider-backed suggestions are loading and the popup is open,
         // rebuild suggestions to pick up newly cached results without requiring
         // another keypress
         if self.palette.is_suggestions_open() && self.palette.is_provider_loading() {
-            let SharedCtx {
-                registry, providers, ..
-            } = &self.ctx;
-            self.palette
-                .apply_build_suggestions(registry, providers, &*self.ctx.theme);
-            // Suggestions UI likely changed (new results); request redraw
+            let SharedCtx { registry, providers, .. } = &self.ctx;
+            self.palette.apply_build_suggestions(registry, providers, &*self.ctx.theme);
         }
+        vec![]
     }
 
     /// Handles execution completion messages and processes the results.
@@ -306,208 +261,65 @@ impl App<'_> {
     /// # Arguments
     ///
     /// * `execution_outcome` - The result of the command execution
-    /// * `effects` - Mutable reference to the effects vector to add new effects
     ///
     /// # Returns
     ///
     /// Returns `true` if the execution was handled as a special case (plugin response)
     /// and the caller should return early, `false` if normal processing should continue.
-    fn handle_execution_completion(&mut self, execution_outcome: ExecOutcome, effects: &mut Vec<Effect>) -> bool {
+    fn handle_execution_completion(&mut self, execution_outcome: ExecOutcome) -> Vec<Effect> {
         // Keep executing=true if other executions are still active
         let still_executing = self.active_exec_count.load(Ordering::Relaxed) > 0;
         self.executing = still_executing;
-
-        // Handle special plugin responses first
-        if let Some(ref result_json) = execution_outcome.result_json {
-            if self.handle_plugin_refresh_response(result_json, &execution_outcome.log) {
-                return true;
+        match execution_outcome {
+            ExecOutcome::Http(..) => self.process_general_execution_result(execution_outcome),
+            ExecOutcome::PluginDetail(log, maybe_detail) => self.handle_plugin_detail(log, maybe_detail),
+            ExecOutcome::PluginsRefresh(log, maybe_plugins ) => self.handle_plugin_refresh_response(log, maybe_plugins),
+            ExecOutcome::Log(log) => {
+                self.logs.entries.push(log);
+                vec![]
             }
-            if self.handle_plugin_logs_response(result_json, &execution_outcome.log) {
-                return true;
-            }
-            if self.handle_plugin_secrets_response(result_json, &execution_outcome.log) {
-                effects.push(Effect::ShowModal(Modal::Secrets));
-                return true;
-            }
-            if self.handle_plugin_add_preview_response(result_json, &execution_outcome.log) {
-                return true;
-            }
+            _ => vec![]
         }
+    }
 
-        // Handle general command results
-        effects.extend(self.process_general_execution_result(execution_outcome));
+    /// Handles plugin details responses from command execution.
+    ///
+    /// # Arguments
+    ///
+    /// * `log` - The raw log output for redaction
+    /// * `maybe_detail` - The plugin detail to apply
+    ///
+    /// # Returns
+    ///
+    /// Returns `Vec<Effect>` if follow up effects are needed
+    fn handle_plugin_detail(&mut self, log: String, maybe_detail:Option<PluginDetail>) -> Vec<Effect> {
+        self.logs.entries.push(log);
+        let Some(detail) = maybe_detail else {
+            return vec![]
+        };
 
-        false
+        self.plugins.table.update_item(detail);
+
+        vec![]
     }
 
     /// Handles plugin refresh responses from command execution.
     ///
     /// # Arguments
     ///
-    /// * `result_json` - The JSON result from the execution
-    /// * `raw_log` - The raw log output for redaction
+    /// * `log` - The raw log output for redaction
+    /// * `plugin_updates` - The updates to apply
     ///
     /// # Returns
     ///
-    /// Returns `true` if this was a plugin refresh response, `false` otherwise.
-    fn handle_plugin_refresh_response(&mut self, result_json: &JsonValue, raw_log: &str) -> bool {
-        if let Some(refresh_array) = result_json.get("plugins_refresh").and_then(|v| v.as_array()) {
-            let mut plugin_updates = Vec::new();
-            for plugin_data in refresh_array {
-                if let (Some(name), Some(status)) = (
-                    plugin_data.get("name").and_then(|s| s.as_str()),
-                    plugin_data.get("status").and_then(|s| s.as_str()),
-                ) {
-                    let latency = plugin_data.get("latency_ms").and_then(|l| l.as_u64());
-                    let last_error = plugin_data
-                        .get("last_error")
-                        .and_then(|e| e.as_str())
-                        .map(|s| s.to_string());
-                    plugin_updates.push((name.to_string(), status.to_string(), latency, last_error));
-                }
-            }
-            self.plugins.table.apply_refresh_updates(plugin_updates);
-
-            // Also log, redacted
-            let (summary, _) = summarize_execution_outcome(self.last_spec.as_ref(), raw_log);
-            self.logs.entries.push(summary);
-            return true;
-        }
-        false
-    }
-
-    /// Handles plugin logs responses from command execution.
-    ///
-    /// # Arguments
-    ///
-    /// * `result_json` - The JSON result from the execution
-    /// * `raw_log` - The raw log output for redaction
-    ///
-    /// # Returns
-    ///
-    /// Returns `true` if this was a plugin logs response, `false` otherwise.
-    fn handle_plugin_logs_response(&mut self, result_json: &JsonValue, raw_log: &str) -> bool {
-        if let Some(plugin_logs) = result_json.get("plugins_logs").and_then(|v| v.as_object()) {
-            if let (Some(plugin_name), Some(log_lines)) = (
-                plugin_logs.get("name").and_then(|s| s.as_str()),
-                plugin_logs.get("lines").and_then(|l| l.as_array()),
-            ) {
-                if let Some(logs_state) = &mut self.plugins.logs {
-                    if logs_state.name == plugin_name {
-                        let mut output_lines = Vec::with_capacity(log_lines.len());
-                        for line in log_lines {
-                            if let Some(line_str) = line.as_str() {
-                                output_lines.push(line_str.to_string());
-                            }
-                        }
-                        logs_state.set_lines(output_lines);
-
-                        let (summary, _) = summarize_execution_outcome(self.last_spec.as_ref(), raw_log);
-                        self.logs.entries.push(summary);
-                        return true;
-                    }
-                }
-            }
-        }
-        false
-    }
-
-    /// Handles plugin environment responses from command execution.
-    ///
-    /// # Arguments
-    ///
-    /// * `result_json` - The JSON result from the execution
-    /// * `raw_log` - The raw log output for redaction
-    ///
-    /// # Returns
-    ///
-    /// Returns `true` if this was a plugin environment response, `false` otherwise.
-    fn handle_plugin_secrets_response(&mut self, result_json: &JsonValue, raw_log: &str) -> bool {
-        if let Some(plugin_env) = result_json.get("plugins_env").and_then(|v| v.as_object()) {
-            if let (Some(plugin_name), Some(env_rows)) = (
-                plugin_env.get("name").and_then(|s| s.as_str()),
-                plugin_env.get("rows").and_then(|l| l.as_array()),
-            ) {
-                if let Some(environment_state) = &mut self.plugins.secrets {
-                    if environment_state.name == plugin_name {
-                        let mut output_rows = Vec::with_capacity(env_rows.len());
-                        for row in env_rows {
-                            if let (Some(key), Some(value), Some(is_secret)) = (
-                                row.get("key").and_then(|s| s.as_str()),
-                                row.get("value").and_then(|s| s.as_str()),
-                                row.get("is_secret").and_then(|b| b.as_bool()),
-                            ) {
-                                output_rows.push(crate::ui::components::plugins::EnvRow {
-                                    key: key.to_string(),
-                                    value: value.to_string(),
-                                    is_secret,
-                                });
-                            }
-                        }
-                        environment_state.set_rows(output_rows);
-
-                        let (summary, _) = summarize_execution_outcome(self.last_spec.as_ref(), raw_log);
-                        self.logs.entries.push(summary);
-                        return true;
-                    }
-                } else {
-                    // If environment editor not open yet, open and set rows
-                    self.plugins.open_secrets(plugin_name.to_string());
-                    if let Some(environment_state) = &mut self.plugins.secrets {
-                        let mut output_rows = Vec::new();
-                        for row in env_rows {
-                            if let (Some(key), Some(value), Some(is_secret)) = (
-                                row.get("key").and_then(|s| s.as_str()),
-                                row.get("value").and_then(|s| s.as_str()),
-                                row.get("is_secret").and_then(|b| b.as_bool()),
-                            ) {
-                                output_rows.push(crate::ui::components::plugins::EnvRow {
-                                    key: key.to_string(),
-                                    value: value.to_string(),
-                                    is_secret,
-                                });
-                            }
-                        }
-                        environment_state.set_rows(output_rows);
-
-                        let (summary, _) = summarize_execution_outcome(self.last_spec.as_ref(), raw_log);
-                        self.logs.entries.push(summary);
-                        return true;
-                    }
-                }
-            }
-        }
-        false
-    }
-
-    /// Handles plugin add preview responses from command execution.
-    ///
-    /// # Arguments
-    ///
-    /// * `result_json` - The JSON result from the execution
-    /// * `raw_log` - The raw log output for redaction
-    ///
-    /// # Returns
-    ///
-    /// Returns `true` if this was a plugin add preview response, `false` otherwise.
-    fn handle_plugin_add_preview_response(&mut self, result_json: &JsonValue, raw_log: &str) -> bool {
-        if let Some(preview_data) = result_json.get("plugins_add_preview").and_then(|v| v.as_object()) {
-            if let Some(add_plugin) = &mut self.plugins.add {
-                add_plugin.validation = preview_data
-                    .get("message")
-                    .and_then(|s| s.as_str())
-                    .map(|s| s.to_string());
-                add_plugin.preview = preview_data
-                    .get("patch")
-                    .and_then(|s| s.as_str())
-                    .map(|s| s.to_string());
-
-                let (summary, _) = summarize_execution_outcome(self.last_spec.as_ref(), raw_log);
-                self.logs.entries.push(summary);
-                return true;
-            }
-        }
-        false
+    /// Returns `Vec<Effect>` if follow up effects are needed
+    fn handle_plugin_refresh_response(&mut self, log: String, plugin_updates: Option<Vec<PluginDetail>>) -> Vec<Effect> {
+        self.logs.entries.push(log);
+        let Some(updated_plugins) = plugin_updates else {
+            return vec![];
+        };
+        self.plugins.table.replace_items(updated_plugins);
+        vec![]
     }
 
     /// Processes general command execution results (non-plugin specific).
@@ -519,36 +331,35 @@ impl App<'_> {
     ///
     /// * `execution_outcome` - The result of the command execution
     fn process_general_execution_result(&mut self, execution_outcome: ExecOutcome) -> Vec<Effect> {
-        let ExecOutcome {
-            log: raw_log,
-            result_json,
-            open_table,
-            pagination,
-        } = execution_outcome;
+        let ExecOutcome::Http(log, value, maybe_pagination, open_table ) = execution_outcome else {
+            return vec![];
+        };
 
         // nothing to do
-        if !open_table && raw_log.is_empty() && result_json.is_none() {
+        if !open_table || (log.is_empty() && value.is_null()) {
             return vec![];
         }
-        let (summary, status_code) = summarize_execution_outcome(self.last_spec.as_ref(), &raw_log);
+        let (summary, status_code) = summarize_execution_outcome(self.last_spec.as_ref(), &log);
 
         self.logs.entries.push(summary);
         self.logs.rich_entries.push(LogEntry::Api {
             status: status_code.unwrap_or(0),
-            raw: raw_log,
-            json: result_json.clone(),
+            raw: log,
+            json: Some(value.clone()),
         });
 
         self.trim_logs_if_needed();
 
-        self.table.apply_result_json(result_json, &*self.ctx.theme);
-        self.table.normalize();
+        if open_table {
+            self.table.apply_result_json(Some(value), &*self.ctx.theme);
+            self.table.normalize();
+            self.last_pagination = maybe_pagination;
+            self.palette.reduce_clear_all();
 
-        self.last_pagination = pagination;
+            return vec![Effect::ShowModal(Modal::Results)];
+        }
 
-        self.palette.reduce_clear_all();
-
-        vec![Effect::ShowModal(Modal::Results)]
+        vec![]
     }
 
     /// Trims log entries if they exceed the maximum allowed size.
@@ -616,12 +427,14 @@ impl App<'_> {
 
 const EXECUTION_SUMMARY_LIMIT: usize = 160;
 
-fn summarize_execution_outcome(
-    command_spec: Option<&heroku_registry::CommandSpec>,
-    raw_log: &str,
-) -> (String, Option<u16>) {
+fn summarize_execution_outcome(command_spec: Option<&heroku_registry::CommandSpec>, raw_log: &str) -> (String, Option<u16>) {
     let label = command_label(command_spec);
     let trimmed_log = raw_log.trim();
+
+    if trimmed_log.starts_with("Plugins:") {
+        let sanitized = heroku_util::redact_sensitive(trimmed_log);
+        return (sanitized, None);
+    }
 
     if let Some(error_message) = trimmed_log.strip_prefix("Error:") {
         let redacted = heroku_util::redact_sensitive(error_message.trim());
@@ -631,10 +444,7 @@ fn summarize_execution_outcome(
     }
 
     let status_line = trimmed_log.lines().next().unwrap_or_default().trim();
-    let status_code = status_line
-        .split_whitespace()
-        .next()
-        .and_then(|code| code.parse::<u16>().ok());
+    let status_code = status_line.split_whitespace().next().and_then(|code| code.parse::<u16>().ok());
 
     let success = if status_code.is_some_and(|c| c.clamp(200, 399) == c) {
         "success"
@@ -710,10 +520,7 @@ mod tests {
     #[test]
     fn summarize_error_marks_failure_and_truncates() {
         let spec = sample_spec();
-        let long_error = format!(
-            "Error: {}",
-            "SensitiveToken123".repeat((EXECUTION_SUMMARY_LIMIT / 5) + 10)
-        );
+        let long_error = format!("Error: {}", "SensitiveToken123".repeat((EXECUTION_SUMMARY_LIMIT / 5) + 10));
 
         let (summary, status) = summarize_execution_outcome(Some(&spec), &long_error);
 
@@ -728,6 +535,18 @@ mod tests {
 
         assert_eq!(summary, "Command - succeeded (200 OK)");
         assert_eq!(status, Some(200));
+    }
+
+    #[test]
+    fn parse_plugin_status_handles_known_variants() {
+        assert_eq!(parse_plugin_status("Running"), Some(PluginStatus::Running));
+        assert_eq!(parse_plugin_status("Stopped"), Some(PluginStatus::Stopped));
+        assert_eq!(parse_plugin_status("Warning"), Some(PluginStatus::Warning));
+        assert_eq!(parse_plugin_status("Error"), Some(PluginStatus::Error));
+        assert_eq!(parse_plugin_status("Starting"), Some(PluginStatus::Starting));
+        assert_eq!(parse_plugin_status("Stopping"), Some(PluginStatus::Stopping));
+        assert_eq!(parse_plugin_status("Unknown"), Some(PluginStatus::Unknown));
+        assert_eq!(parse_plugin_status("Bogus"), None);
     }
 }
 

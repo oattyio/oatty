@@ -37,9 +37,7 @@ impl Registry {
         let config = config::standard();
 
         // Decode the CommandSpec struct from the bytes
-        let vec: Vec<CommandSpec> = bincode::decode_from_slice(MANIFEST, config)
-            .context("decoding manifest failed")?
-            .0;
+        let vec: Vec<CommandSpec> = bincode::decode_from_slice(MANIFEST, config).context("decoding manifest failed")?.0;
         let commands: Arc<[CommandSpec]> = vec.into();
 
         Ok(Registry { commands })

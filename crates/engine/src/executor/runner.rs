@@ -133,10 +133,7 @@ impl CommandRunner for RegistryCommandRunner {
                 let headers = resp.headers().clone();
                 let val = resp.json::<Value>().await.unwrap_or(Value::Null);
                 let mut obj = serde_json::Map::new();
-                obj.insert(
-                    "status_code".into(),
-                    Value::Number(serde_json::Number::from(status.as_u16())),
-                );
+                obj.insert("status_code".into(), Value::Number(serde_json::Number::from(status.as_u16())));
                 if let Some(v) = headers
                     .get("Content-Range")
                     .and_then(|h| h.to_str().ok())

@@ -102,9 +102,7 @@ impl PluginsSearchComponent {
         // Render input inside the block
         let header_inner = header_block.inner(area);
         let filter_text = table_state.filter_text();
-        let header = Paragraph::new(filter_text)
-            .style(theme.text_primary_style())
-            .block(header_block);
+        let header = Paragraph::new(filter_text).style(theme.text_primary_style()).block(header_block);
         frame.render_widget(header, area);
 
         // Position cursor at end of input when focused

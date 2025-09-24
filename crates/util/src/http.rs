@@ -136,17 +136,9 @@ pub fn build_range_header_from_body(body: &Map<String, Value>) -> Option<String>
         .map(str::trim)
         .filter(|string| !string.is_empty())?;
 
-    let start = body
-        .get("range-start")
-        .and_then(|value| value.as_str())
-        .unwrap_or("")
-        .trim();
+    let start = body.get("range-start").and_then(|value| value.as_str()).unwrap_or("").trim();
 
-    let end = body
-        .get("range-end")
-        .and_then(|value| value.as_str())
-        .unwrap_or("")
-        .trim();
+    let end = body.get("range-end").and_then(|value| value.as_str()).unwrap_or("").trim();
 
     let order = body
         .get("order")
@@ -200,9 +192,7 @@ pub fn build_range_header_from_body(body: &Map<String, Value>) -> Option<String>
 /// ```
 pub fn status_error_message(status_code: u16) -> Option<String> {
     match status_code {
-        401 => Some(
-            "Unauthorized (401). Hint: set HEROKU_API_KEY=... or configure ~/.netrc with machine api.heroku.com".into(),
-        ),
+        401 => Some("Unauthorized (401). Hint: set HEROKU_API_KEY=... or configure ~/.netrc with machine api.heroku.com".into()),
         403 => Some("Forbidden (403). Hint: check team/app access, permissions, and role membership".into()),
         _ => None,
     }

@@ -175,11 +175,7 @@ fn build_link_schema_from_oas3(root: &Value, path_item: &Value, op: &Value) -> O
         if let Some(obj) = body_schema.as_object() {
             if obj.get("properties").is_some() {
                 // Merge object properties
-                let body_props = obj
-                    .get("properties")
-                    .and_then(Value::as_object)
-                    .cloned()
-                    .unwrap_or_default();
+                let body_props = obj.get("properties").and_then(Value::as_object).cloned().unwrap_or_default();
                 merge_properties(&mut props, Some(&body_props));
                 merge_required(&mut required, obj.get("required"));
             } else {
@@ -248,18 +244,10 @@ fn rewrite_href_and_collect_definitions(path: &str, params: &[Value], definition
             identity.insert("description".into(), d);
         }
 
-        let entry = definitions
-            .entry(name.to_string())
-            .or_insert_with(|| json!({"definitions": {}}));
+        let entry = definitions.entry(name.to_string()).or_insert_with(|| json!({"definitions": {}}));
         let obj = entry.as_object_mut().unwrap();
-        let defs_obj = obj
-            .entry("definitions")
-            .or_insert_with(|| json!({}))
-            .as_object_mut()
-            .unwrap();
-        defs_obj
-            .entry("identity")
-            .or_insert_with(|| Value::Object(identity.clone()));
+        let defs_obj = obj.entry("definitions").or_insert_with(|| json!({})).as_object_mut().unwrap();
+        defs_obj.entry("identity").or_insert_with(|| Value::Object(identity.clone()));
 
         // Rewrite {name} to {(%23%2Fdefinitions%2Fname%2Fdefinitions%2Fidentity)}
         let ptr = format!("#/definitions/{}/definitions/identity", name);
@@ -326,9 +314,7 @@ pub fn transform_openapi_to_links(doc: &Value) -> Result<Value> {
     } else if doc.get("swagger").is_some() {
         transform_swagger2(doc)
     } else {
-        Err(anyhow!(
-            "Unsupported OpenAPI document: expected v3 (openapi) or v2 (swagger)"
-        ))
+        Err(anyhow!("Unsupported OpenAPI document: expected v3 (openapi) or v2 (swagger)"))
     }
 }
 
@@ -344,9 +330,7 @@ fn transform_oas3(doc: &Value) -> Result<Value> {
 
     // Process each path and operation
     for (path, path_item) in paths.iter() {
-        let path_obj = path_item
-            .as_object()
-            .ok_or_else(|| anyhow!("Path item not an object: {}", path))?;
+        let path_obj = path_item.as_object().ok_or_else(|| anyhow!("Path item not an object: {}", path))?;
 
         for (method, operation) in path_obj.iter() {
             match method.as_str() {
@@ -387,15 +371,12 @@ fn transform_swagger2(doc: &Value) -> Result<Value> {
 
     // Process each path and operation
     for (path, path_item) in paths.iter() {
-        let path_obj = path_item
-            .as_object()
-            .ok_or_else(|| anyhow!("Path item not an object: {}", path))?;
+        let path_obj = path_item.as_object().ok_or_else(|| anyhow!("Path item not an object: {}", path))?;
 
         for (method, operation) in path_obj.iter() {
             match method.as_str() {
                 "get" | "post" | "put" | "patch" | "delete" => {
-                    let link =
-                        build_link_from_swagger2_operation(doc, path_item, operation, method, path, &mut definitions)?;
+                    let link = build_link_from_swagger2_operation(doc, path_item, operation, method, path, &mut definitions)?;
                     links.push(link);
                 }
                 _ => {} // Skip non-HTTP methods
@@ -446,11 +427,7 @@ fn build_link_from_operation(
         .unwrap_or("")
         .to_string();
 
-    let description = op
-        .get("description")
-        .and_then(Value::as_str)
-        .unwrap_or(&title)
-        .to_string();
+    let description = op.get("description").and_then(Value::as_str).unwrap_or(&title).to_string();
 
     let params = collect_parameters(doc, path_item, op);
     let href = rewrite_href_and_collect_definitions(path, &params, definitions);
@@ -496,11 +473,7 @@ fn build_link_from_swagger2_operation(
         .unwrap_or("")
         .to_string();
 
-    let description = op
-        .get("description")
-        .and_then(Value::as_str)
-        .unwrap_or(&title)
-        .to_string();
+    let description = op.get("description").and_then(Value::as_str).unwrap_or(&title).to_string();
 
     let all_params = collect_swagger2_parameters(doc, path_item, op);
     let href = rewrite_href_and_collect_definitions(path, &all_params, definitions);
@@ -629,9 +602,7 @@ fn build_swagger2_link_schema(root: &Value, params: &[Value]) -> Option<Value> {
             Some("query") => {
                 if let Some(name) = param.get("name").and_then(Value::as_str) {
                     // Mark as required if specified
-                    if param.get("required").and_then(Value::as_bool) == Some(true)
-                        && !required.contains(&name.to_string())
-                    {
+                    if param.get("required").and_then(Value::as_bool) == Some(true) && !required.contains(&name.to_string()) {
                         required.push(name.to_string());
                     }
 
@@ -683,11 +654,7 @@ fn build_swagger2_link_schema(root: &Value, params: &[Value]) -> Option<Value> {
 
                     if let Some(obj) = schema.as_object() {
                         if obj.get("properties").is_some() {
-                            let body_props = obj
-                                .get("properties")
-                                .and_then(Value::as_object)
-                                .cloned()
-                                .unwrap_or_default();
+                            let body_props = obj.get("properties").and_then(Value::as_object).cloned().unwrap_or_default();
                             merge_properties(&mut properties, Some(&body_props));
                             merge_required(&mut required, obj.get("required"));
                         } else {
@@ -745,21 +712,9 @@ mod tests {
         let href = links[0].get("href").and_then(|v| v.as_str()).expect("href string");
 
         // Ensure the static parts of the path carry over intact
-        assert!(
-            href.starts_with("/data/postgres/v1/"),
-            "href should preserve prefix: {}",
-            href
-        );
-        assert!(
-            href.contains("/credentials/"),
-            "href should preserve middle segment: {}",
-            href
-        );
-        assert!(
-            href.ends_with("/rotate"),
-            "href should preserve trailing segment: {}",
-            href
-        );
+        assert!(href.starts_with("/data/postgres/v1/"), "href should preserve prefix: {}", href);
+        assert!(href.contains("/credentials/"), "href should preserve middle segment: {}", href);
+        assert!(href.ends_with("/rotate"), "href should preserve trailing segment: {}", href);
 
         // Ensure href variables are rewritten to encoded definition pointers
         assert!(
@@ -810,19 +765,10 @@ mod tests {
 
         let out = transform_openapi_to_links(&doc).expect("transform should succeed");
         let links = out.get("links").and_then(|v| v.as_array()).expect("links array");
-        let schema = links[0]
-            .get("schema")
-            .and_then(|v| v.as_object())
-            .expect("schema object");
-        let props = schema
-            .get("properties")
-            .and_then(|v| v.as_object())
-            .expect("properties object");
+        let schema = links[0].get("schema").and_then(|v| v.as_object()).expect("schema object");
+        let props = schema.get("properties").and_then(|v| v.as_object()).expect("properties object");
         let owner = props.get("owner").and_then(|v| v.as_object()).expect("owner schema");
-        assert_eq!(
-            owner.get("description").and_then(|v| v.as_str()),
-            Some("Filter by owner")
-        );
+        assert_eq!(owner.get("description").and_then(|v| v.as_str()), Some("Filter by owner"));
         assert_eq!(owner.get("default").and_then(|v| v.as_str()), Some("me"));
     }
 
@@ -843,19 +789,10 @@ mod tests {
 
         let out = transform_openapi_to_links(&doc).expect("transform should succeed");
         let links = out.get("links").and_then(|v| v.as_array()).expect("links array");
-        let schema = links[0]
-            .get("schema")
-            .and_then(|v| v.as_object())
-            .expect("schema object");
-        let props = schema
-            .get("properties")
-            .and_then(|v| v.as_object())
-            .expect("properties object");
+        let schema = links[0].get("schema").and_then(|v| v.as_object()).expect("schema object");
+        let props = schema.get("properties").and_then(|v| v.as_object()).expect("properties object");
         let owner = props.get("owner").and_then(|v| v.as_object()).expect("owner schema");
-        assert_eq!(
-            owner.get("description").and_then(|v| v.as_str()),
-            Some("Filter by owner")
-        );
+        assert_eq!(owner.get("description").and_then(|v| v.as_str()), Some("Filter by owner"));
         assert_eq!(owner.get("default").and_then(|v| v.as_str()), Some("me"));
     }
 }

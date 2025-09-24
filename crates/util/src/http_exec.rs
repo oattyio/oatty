@@ -19,12 +19,8 @@ use serde_json::{Map as JsonMap, Value};
 /// - Sends the request and parses the response into [`ExecOutcome`].
 /// - Returns a user-friendly `Err(String)` on HTTP/auth/network issues.
 pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>) -> Result<ExecOutcome, String> {
-    let client = HerokuClient::new_from_service_id(spec.service_id).map_err(|e| {
-        format!(
-            "Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc",
-            e
-        )
-    })?;
+    let client = HerokuClient::new_from_service_id(spec.service_id)
+        .map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc", e))?;
 
     let method = Method::from_bytes(spec.method.as_bytes()).map_err(|e| e.to_string())?;
     let mut builder = client.request(method.clone(), &spec.path);
@@ -81,13 +77,7 @@ pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>) -> Re
 
     let log = format!("{}\n{}", status, text);
     let (result_json, open_table) = http::parse_response_json(&text);
-
-    Ok(ExecOutcome {
-        log,
-        result_json,
-        open_table,
-        pagination,
-    })
+    Ok(ExecOutcome::Http(log, result_json.unwrap_or(Value::Null), pagination, open_table))
 }
 
 /// Fetch a JSON array from the Heroku API at the given path.
@@ -95,23 +85,15 @@ pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>) -> Re
 /// Returns Ok(Vec<Value>) when the response body parses to a JSON array.
 /// On error or non-array response, returns Err with a user-friendly message.
 pub async fn fetch_json_array(spec: &CommandSpec) -> Result<Vec<Value>, String> {
-    let client = HerokuClient::new_from_service_id(spec.service_id).map_err(|e| {
+    let client = HerokuClient::new_from_service_id(spec.service_id)
+        .map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc", e))?;
+
+    let resp = client.request(reqwest::Method::GET, &spec.path).send().await.map_err(|e| {
         format!(
-            "Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc",
+            "Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY or ~/.netrc is set",
             e
         )
     })?;
-
-    let resp = client
-        .request(reqwest::Method::GET, &spec.path)
-        .send()
-        .await
-        .map_err(|e| {
-            format!(
-                "Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY or ~/.netrc is set",
-                e
-            )
-        })?;
 
     let status = resp.status();
     let text = resp.text().await.unwrap_or_else(|_| String::from("<no body>"));

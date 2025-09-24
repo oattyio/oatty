@@ -115,8 +115,7 @@ impl AuditLogger {
 
         // Redact sensitive fields in the audit entry before writing
         let redacted_entry = redact_audit_entry(entry);
-        let json_line =
-            serde_json::to_string(&redacted_entry).map_err(|e| AuditError::SerializationError(e.to_string()))?;
+        let json_line = serde_json::to_string(&redacted_entry).map_err(|e| AuditError::SerializationError(e.to_string()))?;
 
         let mut builder = OpenOptions::new();
         builder.create(true).append(true);
@@ -182,11 +181,7 @@ impl AuditLogger {
             .await
             .map_err(AuditError::IoError)?;
 
-        debug!(
-            "Rotated audit log: {} -> {}",
-            self.log_path.display(),
-            rotated_path.display()
-        );
+        debug!("Rotated audit log: {} -> {}", self.log_path.display(), rotated_path.display());
 
         Ok(())
     }
@@ -197,9 +192,7 @@ impl AuditLogger {
             return Ok(Vec::new());
         }
 
-        let content = tokio::fs::read_to_string(&self.log_path)
-            .await
-            .map_err(AuditError::IoError)?;
+        let content = tokio::fs::read_to_string(&self.log_path).await.map_err(AuditError::IoError)?;
 
         let mut entries = Vec::new();
 
@@ -335,11 +328,7 @@ impl AuditEntry {
             plugin_name,
             action: AuditAction::HealthCheck,
             metadata,
-            result: if healthy {
-                AuditResult::Success
-            } else {
-                AuditResult::Failure
-            },
+            result: if healthy { AuditResult::Success } else { AuditResult::Failure },
         }
     }
 }

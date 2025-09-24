@@ -15,7 +15,7 @@ use crate::{
     ui::{components::component::Component, utils::centered_rect},
 };
 
-use super::{PluginListItem, PluginsState};
+use super::{PluginDetail, PluginsState};
 
 /// Component for rendering the plugin details modal overlay.
 #[derive(Debug, Default)]
@@ -100,10 +100,10 @@ impl PluginsDetailsComponent {
     }
 
     /// Construct the full list of detail rows for a specific plugin.
-    fn build_selected_item_lines(&self, item: &PluginListItem, theme: &dyn Theme) -> Vec<Line<'static>> {
+    fn build_selected_item_lines(&self, item: &PluginDetail, theme: &dyn Theme) -> Vec<Line<'static>> {
         let mut lines = Vec::new();
         lines.push(self.label_value_line("Name", item.name.clone(), theme));
-        lines.push(self.label_value_line("Status", item.status.clone(), theme));
+        lines.push(self.label_value_line("Status", item.status.display().to_string(), theme));
         lines.push(self.label_value_line("Command/BaseUrl", item.command_or_url.clone(), theme));
 
         let tags_value = if item.tags.is_empty() {
@@ -114,12 +114,13 @@ impl PluginsDetailsComponent {
         lines.push(self.label_value_line("Tags", tags_value, theme));
 
         let latency_value = item
-            .latency_ms
+            .handshake_latency
+            .or(item.health.handshake_latency)
             .map(|milliseconds| format!("{milliseconds} ms"))
             .unwrap_or_else(|| "-".to_string());
         lines.push(self.label_value_line("Latency", latency_value, theme));
 
-        let last_error_value = item.last_error.clone().unwrap_or_else(|| "-".to_string());
+        let last_error_value = item.health.last_error.clone().unwrap_or_else(|| "-".to_string());
         lines.push(self.last_error_line("Last error", last_error_value, theme));
 
         lines

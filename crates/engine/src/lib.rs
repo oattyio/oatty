@@ -54,8 +54,8 @@ pub mod resolve;
 
 // Re-export commonly used types for convenience
 pub use executor::{
-    CommandRunner, Plan, PreparedStep, RegistryCommandRunner, StepResult, StepStatus, execute_workflow,
-    execute_workflow_with_runner, prepare_plan, run_step,
+    CommandRunner, Plan, PreparedStep, RegistryCommandRunner, StepResult, StepStatus, execute_workflow, execute_workflow_with_runner,
+    prepare_plan, run_step,
 };
 pub use model::{InputSpec, StepSpec, WorkflowBundle, WorkflowSpec};
 pub use provider::{ProviderContract, ProviderRegistry};
@@ -101,8 +101,7 @@ pub use resolve::RunContext;
 /// ```
 pub fn parse_workflow_file(file_path: impl AsRef<Path>) -> Result<WorkflowBundle> {
     let file_path = file_path.as_ref();
-    let file_content =
-        fs::read(file_path).with_context(|| format!("Failed to read workflow file: {}", file_path.display()))?;
+    let file_content = fs::read(file_path).with_context(|| format!("Failed to read workflow file: {}", file_path.display()))?;
 
     let content_string = String::from_utf8_lossy(&file_content);
 
@@ -121,10 +120,7 @@ pub fn parse_workflow_file(file_path: impl AsRef<Path>) -> Result<WorkflowBundle
 
     // Attempt to parse as single workflow specification
     if let Ok(workflow_specification) = serde_yaml::from_str::<WorkflowSpec>(&content_string) {
-        let workflow_name = workflow_specification
-            .workflow
-            .clone()
-            .unwrap_or_else(|| "default".to_string());
+        let workflow_name = workflow_specification.workflow.clone().unwrap_or_else(|| "default".to_string());
 
         let mut workflows = HashMap::new();
         workflows.insert(workflow_name, workflow_specification);

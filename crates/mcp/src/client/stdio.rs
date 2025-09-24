@@ -7,7 +7,7 @@ use tokio::process::Command;
 use crate::config::McpServer;
 use crate::logging::LogManager;
 use crate::types::McpLogEntry;
-use crate::types::plugin::{LogLevel, LogSource};
+use crate::types::{LogLevel, LogSource};
 use std::sync::Arc;
 
 /// Build a configured `tokio::process::Command` for stdio transport.
@@ -33,11 +33,7 @@ pub(crate) fn build_stdio_command(server: &McpServer) -> Result<Command> {
 }
 
 /// Spawn a background task that forwards stderr lines to the log manager.
-pub(crate) fn spawn_stderr_logger(
-    plugin_name: String,
-    log_manager: Arc<LogManager>,
-    stderr: tokio::process::ChildStderr,
-) {
+pub(crate) fn spawn_stderr_logger(plugin_name: String, log_manager: Arc<LogManager>, stderr: tokio::process::ChildStderr) {
     tokio::spawn(async move {
         let mut lines = BufReader::new(stderr).lines();
         while let Ok(Some(line)) = lines.next_line().await {

@@ -55,19 +55,13 @@ pub trait Theme: Send + Sync {
 
     // Borders and focus
     fn border_style(&self, focused: bool) -> Style {
-        let color = if focused {
-            self.roles().focus
-        } else {
-            self.roles().border
-        };
+        let color = if focused { self.roles().focus } else { self.roles().border };
         Style::default().fg(color)
     }
 
     // Selection
     fn selection_style(&self) -> Style {
-        Style::default()
-            .fg(self.roles().selection_fg)
-            .bg(self.roles().selection_bg)
+        Style::default().fg(self.roles().selection_fg).bg(self.roles().selection_bg)
     }
 
     /// Style used for the darkened background that appears behind modal dialogs.
@@ -94,8 +88,6 @@ pub trait Theme: Send + Sync {
         Style::default().fg(self.roles().accent_primary)
     }
     fn accent_emphasis_style(&self) -> Style {
-        Style::default()
-            .fg(self.roles().accent_primary)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(self.roles().accent_primary).add_modifier(Modifier::BOLD)
     }
 }

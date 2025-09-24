@@ -190,10 +190,7 @@ mod tests {
         let stdio = cfg.mcp_servers.get("server-name").unwrap();
         assert!(stdio.is_stdio());
         assert_eq!(stdio.command.as_deref(), Some("node"));
-        assert_eq!(
-            stdio.tags.as_ref().unwrap(),
-            &vec!["code".to_string(), "gh".to_string()]
-        );
+        assert_eq!(stdio.tags.as_ref().unwrap(), &vec!["code".to_string(), "gh".to_string()]);
 
         let http = cfg.mcp_servers.get("remote-example").unwrap();
         assert!(http.is_http());

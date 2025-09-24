@@ -99,9 +99,7 @@ impl Component for VerticalNavBarComponent {
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
         let maybe_idx = if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
             let VerticalNavBarState {
-                last_area,
-                per_item_areas,
-                ..
+                last_area, per_item_areas, ..
             } = &app.nav_bar;
             let x = mouse.column;
             let y = mouse.row;
@@ -155,25 +153,12 @@ impl Component for VerticalNavBarComponent {
 
         for (index, item) in state.items.iter().enumerate() {
             let is_selected = index == state.selected_index;
-            let is_focused = state
-                .item_focus_flags
-                .get(index)
-                .and_then(|f| Some(f.get()))
-                .unwrap_or_default();
+            let is_focused = state.item_focus_flags.get(index).and_then(|f| Some(f.get())).unwrap_or_default();
             // Safety: chunks length equals row_count; clamp if small area.
             if let Some(row_area) = chunks.get(index).copied() {
                 // reversal of selected and focus intentional
                 let borders = if is_focused { Borders::ALL } else { Borders::NONE };
-                render_button(
-                    frame,
-                    row_area,
-                    &item.icon,
-                    true,
-                    is_focused,
-                    is_selected,
-                    theme,
-                    borders,
-                );
+                render_button(frame, row_area, &item.icon, true, is_focused, is_selected, theme, borders);
             }
         }
     }

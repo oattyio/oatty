@@ -152,7 +152,12 @@ pub enum Cmd {
 - Applies any immediate state transitions (`ShowModal`, `CloseModal`,
   `SwitchTo`).
 - Converts the remaining effects into zero or more `Cmd`s.
-- Passes the command list to `run_cmds` for execution.
+- Passes the command list to `run_cmds`, which returns a `CommandBatch` with
+  immediate `ExecOutcome`s plus any spawned `JoinHandle<ExecOutcome>` for
+  long-running work.
+- The runtime owns a `FuturesUnordered` queue of those pending handles and
+  polls them alongside input/tick events so animations keep updating while
+  commands execute.
 
 Because modal routing mutates the app inside `run_from_effects`, the doc strings
 for these effects should note that they do not produce commands.

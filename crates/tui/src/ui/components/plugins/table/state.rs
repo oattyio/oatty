@@ -4,7 +4,7 @@ use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use std::time::{Duration, Instant};
 
-use crate::ui::components::plugins::PluginListItem;
+use crate::ui::components::plugins::PluginDetail;
 
 /// State container for the MCP plugins table including filtering logic and
 /// selection metadata.
@@ -23,7 +23,7 @@ pub struct PluginsTableState {
     /// Case-insensitive filter string entered by the user.
     pub filter: String,
     /// Flat list of plugin rows sourced from configuration or runtime updates.
-    pub items: Vec<PluginListItem>,
+    pub items: Vec<PluginDetail>,
     /// Current selection within the filtered view (index into `filtered_indices`).
     pub selected: Option<usize>,
     last_refresh: Option<Instant>,
@@ -44,9 +44,16 @@ impl PluginsTableState {
     }
 
     /// Replace the table rows and normalize the current selection accordingly.
-    pub fn replace_items(&mut self, rows: Vec<PluginListItem>) {
+    pub fn replace_items(&mut self, rows: Vec<PluginDetail>) {
         self.items = rows;
         self.selected = if self.items.is_empty() { None } else { Some(0) };
+    }
+
+    pub fn update_item(&mut self, item: PluginDetail) {
+        let Some(idx) = self.items.iter().position(|i| i.name == item.name) else {
+            return self.items.push(item);
+        };
+        self.items[idx] = item;
     }
 
     /// Compute the raw indices for rows that match the current quick-search filter.
@@ -69,6 +76,9 @@ impl PluginsTableState {
 
     /// Determine whether enough time has elapsed to trigger a refresh of plugin status.
     pub fn should_refresh(&mut self) -> bool {
+        if !self.focus.get() {
+            return false;
+        }
         const INTERVAL: Duration = Duration::from_millis(1000);
         let now = Instant::now();
         match self.last_refresh {
@@ -84,19 +94,8 @@ impl PluginsTableState {
         }
     }
 
-    /// Apply status update payloads to the existing table rows in-place.
-    pub fn apply_refresh_updates(&mut self, updates: Vec<(String, String, Option<u64>, Option<String>)>) {
-        for (name, status, latency, last_error) in updates {
-            if let Some(item) = self.items.iter_mut().find(|row| row.name == name) {
-                item.status = status;
-                item.latency_ms = latency;
-                item.last_error = last_error;
-            }
-        }
-    }
-
     /// Retrieve the currently selected item with respect to the filtered view.
-    pub fn selected_item(&self) -> Option<&PluginListItem> {
+    pub fn selected_item(&self) -> Option<&PluginDetail> {
         let filtered = self.filtered_indices();
         let position = self.selected?;
         let index = *filtered.get(position)?;

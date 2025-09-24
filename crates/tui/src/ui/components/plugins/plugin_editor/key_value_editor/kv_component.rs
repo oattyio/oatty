@@ -20,9 +20,12 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
 
-use crate::ui::{
-    components::{component::Component, plugins::add_plugin::state::PluginAddViewState},
-    theme::{Theme, theme_helpers},
+use crate::{
+    app::App,
+    ui::{
+        components::{component::Component, plugins::plugin_editor::state::PluginEditViewState},
+        theme::{Theme, theme_helpers},
+    },
 };
 
 /// Component responsible for rendering and editing key/value pairs.
@@ -39,60 +42,6 @@ use crate::ui::{
 pub struct KeyValueEditorComponent;
 
 impl KeyValueEditorComponent {
-    /// Process a key event for the key/value editor when it has focus.
-    ///
-    /// This method handles all keyboard interactions for the key/value editor,
-    /// including navigation, editing, and command shortcuts. The caller is
-    /// responsible for ensuring that the component should handle the event
-    /// (typically by checking the key/value focus flag).
-    ///
-    /// # Arguments
-    ///
-    /// * `add_state` - The plugin add view state containing the editor state
-    /// * `key_event` - The keyboard event to process
-    ///
-    /// # Returns
-    ///
-    /// A vector of effects that should be processed by the application runtime.
-    /// Most key events produce no effects, but some may trigger validation
-    /// updates or other side effects.
-    fn process_key_event(&mut self, add_state: &mut PluginAddViewState, key_event: &KeyEvent) -> Vec<Effect> {
-        if !add_state.is_key_value_editor_focused() {
-            return vec![];
-        }
-
-        let validation_message = self.handle_keyboard_input(add_state, key_event);
-
-        if let Some(message) = validation_message {
-            add_state.validation = Some(message);
-        }
-
-        vec![]
-    }
-
-    /// Handle keyboard input for the key/value editor.
-    ///
-    /// This method processes keyboard events and delegates to appropriate
-    /// handlers based on whether the editor is in editing mode or navigation mode.
-    ///
-    /// # Arguments
-    ///
-    /// * `add_state` - The plugin add view state containing the editor state
-    /// * `key_event` - The keyboard event to process
-    ///
-    /// # Returns
-    ///
-    /// An optional validation message if the input triggered validation.
-    fn handle_keyboard_input(&mut self, add_state: &mut PluginAddViewState, key_event: &KeyEvent) -> Option<String> {
-        let editor = add_state.active_key_value_editor_mut();
-
-        if editor.is_editing() {
-            self.handle_editing_mode_input(editor, key_event)
-        } else {
-            self.handle_navigation_mode_input(editor, key_event)
-        }
-    }
-
     /// Handle keyboard input when the editor is in editing mode.
     ///
     /// This method processes keyboard events for inline editing, including
@@ -106,42 +55,45 @@ impl KeyValueEditorComponent {
     /// # Returns
     ///
     /// An optional validation message if the input triggered validation.
-    fn handle_editing_mode_input(
-        &mut self,
-        editor: &mut crate::ui::components::plugins::add_plugin::key_value_editor::state::KeyValueEditorState,
-        key_event: &KeyEvent,
-    ) -> Option<String> {
+    fn handle_editing_mode_input(&mut self, app: &mut App, key_event: KeyEvent) -> Vec<Effect> {
+        let effects = vec![];
         let modifiers = key_event.modifiers;
 
         match key_event.code {
-            KeyCode::Esc => {
-                editor.cancel_edit();
-                None
+            KeyCode::Enter => {
+                self.commit_edit_with_validation(app);
             }
-            KeyCode::Enter => self.commit_edit_with_validation(editor),
-            KeyCode::Char('e') if modifiers.contains(KeyModifiers::CONTROL) => self.commit_edit_with_validation(editor),
+            KeyCode::Char('e') if modifiers.contains(KeyModifiers::CONTROL) => {
+                self.commit_edit_with_validation(app);
+            }
+            _ => {}
+        }
+
+        // avoid 2 mutable references to app
+        let Some(editor) = app.plugins.add.as_mut() else { return effects };
+
+        match key_event.code {
+            KeyCode::Esc => {
+                editor.kv_editor.cancel_edit();
+            }
             KeyCode::Backspace => {
-                editor.pop_character();
-                None
+                editor.kv_editor.pop_character();
             }
             KeyCode::Tab | KeyCode::BackTab => {
-                editor.toggle_field();
-                None
+                editor.kv_editor.toggle_field();
             }
             KeyCode::Up => {
-                editor.focus_key_input();
-                None
+                editor.kv_editor.focus_key_input();
             }
             KeyCode::Down => {
-                editor.focus_value_input();
-                None
+                editor.kv_editor.focus_value_input();
             }
             KeyCode::Char(character) if self.is_regular_character_input(modifiers) => {
-                editor.push_character(character);
-                None
+                editor.kv_editor.push_character(character);
             }
-            _ => None,
+            _ => {}
         }
+        effects
     }
 
     /// Handle keyboard input when the editor is in navigation mode.
@@ -157,63 +109,46 @@ impl KeyValueEditorComponent {
     /// # Returns
     ///
     /// An optional validation message if the input triggered validation.
-    fn handle_navigation_mode_input(
-        &mut self,
-        editor: &mut crate::ui::components::plugins::add_plugin::key_value_editor::state::KeyValueEditorState,
-        key_event: &KeyEvent,
-    ) -> Option<String> {
+    fn handle_navigation_mode_input(&mut self, app: &mut App, key_event: KeyEvent) {
+        let Some(add_state) = app.plugins.add.as_mut() else {
+            return;
+        };
         let modifiers = key_event.modifiers;
-        editor.ensure_selection();
+        add_state.kv_editor.ensure_selection();
 
         match key_event.code {
             KeyCode::Up => {
-                editor.select_previous();
-                None
+                add_state.kv_editor.select_previous();
             }
             KeyCode::Down => {
-                editor.select_next();
-                None
+                add_state.kv_editor.select_next();
             }
             KeyCode::Enter => {
-                editor.begin_editing_selected();
-                None
+                add_state.kv_editor.begin_editing_selected();
             }
             KeyCode::Char('e') if modifiers.contains(KeyModifiers::CONTROL) => {
-                editor.begin_editing_selected();
-                None
+                add_state.kv_editor.begin_editing_selected();
             }
             KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => {
-                editor.begin_editing_new_row();
-                None
+                add_state.kv_editor.begin_editing_new_row();
             }
             KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
-                if editor.delete_selected() {
-                    None
-                } else {
-                    None
-                }
+                add_state.kv_editor.delete_selected();
             }
             KeyCode::Delete => {
-                if editor.delete_selected() {
-                    None
-                } else {
-                    None
-                }
+                add_state.kv_editor.delete_selected();
             }
             KeyCode::Char(character) if self.is_regular_character_input(modifiers) => {
-                editor.begin_editing_selected();
-                editor.push_character(character);
-                None
+                add_state.kv_editor.begin_editing_selected();
+                add_state.kv_editor.push_character(character);
             }
             KeyCode::Home => {
-                self.navigate_to_first_row(editor);
-                None
+                self.navigate_to_first_row(&mut add_state.kv_editor);
             }
             KeyCode::End => {
-                self.navigate_to_last_row(editor);
-                None
+                self.navigate_to_last_row(&mut add_state.kv_editor);
             }
-            _ => None,
+            _ => {}
         }
     }
 
@@ -245,14 +180,9 @@ impl KeyValueEditorComponent {
     /// # Returns
     ///
     /// An optional validation message if the commit failed.
-    fn commit_edit_with_validation(
-        &mut self,
-        editor: &mut crate::ui::components::plugins::add_plugin::key_value_editor::state::KeyValueEditorState,
-    ) -> Option<String> {
-        match editor.commit_edit() {
-            Ok(()) => None,
-            Err(error) => Some(error.to_string()),
-        }
+    fn commit_edit_with_validation(&mut self, app: &mut App) {
+        let Some(add_state) = app.plugins.add.as_mut() else { return };
+        add_state.validation = add_state.kv_editor.commit_edit();
     }
 
     /// Navigate to the first row in the editor.
@@ -264,7 +194,7 @@ impl KeyValueEditorComponent {
     /// * `editor` - The mutable reference to the active key/value editor
     fn navigate_to_first_row(
         &mut self,
-        editor: &mut crate::ui::components::plugins::add_plugin::key_value_editor::state::KeyValueEditorState,
+        editor: &mut crate::ui::components::plugins::plugin_editor::key_value_editor::state::KeyValueEditorState,
     ) {
         if !editor.rows.is_empty() {
             editor.selected_row_index = Some(0);
@@ -280,7 +210,7 @@ impl KeyValueEditorComponent {
     /// * `editor` - The mutable reference to the active key/value editor
     fn navigate_to_last_row(
         &mut self,
-        editor: &mut crate::ui::components::plugins::add_plugin::key_value_editor::state::KeyValueEditorState,
+        editor: &mut crate::ui::components::plugins::plugin_editor::key_value_editor::state::KeyValueEditorState,
     ) {
         if !editor.rows.is_empty() {
             editor.selected_row_index = Some(editor.rows.len().saturating_sub(1));
@@ -299,14 +229,8 @@ impl KeyValueEditorComponent {
     /// * `area` - The available rendering area
     /// * `theme` - The theme for styling
     /// * `add_state` - The plugin add view state containing editor state
-    pub fn render_with_state(
-        &mut self,
-        frame: &mut Frame,
-        area: Rect,
-        theme: &dyn Theme,
-        add_state: &PluginAddViewState,
-    ) {
-        let editor = add_state.active_key_value_editor();
+    pub fn render_with_state(&mut self, frame: &mut Frame, area: Rect, theme: &dyn Theme, add_state: &PluginEditViewState) {
+        let editor = &add_state.kv_editor;
         let is_editing = editor.is_editing();
 
         let mut constraints = vec![Constraint::Min(4)];
@@ -340,8 +264,8 @@ impl KeyValueEditorComponent {
     /// * `area` - The available rendering area for the table
     /// * `theme` - The theme for styling
     /// * `add_state` - The plugin add view state containing editor state
-    fn render_table(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, add_state: &PluginAddViewState) {
-        let editor = add_state.active_key_value_editor();
+    fn render_table(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, add_state: &PluginEditViewState) {
+        let editor = &add_state.kv_editor;
         let label = add_state.key_value_table_label();
         let is_focused = add_state.is_key_value_editor_focused();
 
@@ -372,18 +296,13 @@ impl KeyValueEditorComponent {
     /// A formatted title string for the table.
     fn build_table_title(
         &self,
-        editor: &crate::ui::components::plugins::add_plugin::key_value_editor::state::KeyValueEditorState,
+        editor: &crate::ui::components::plugins::plugin_editor::key_value_editor::state::KeyValueEditorState,
         label: &str,
     ) -> String {
         let editing_row_index = editor.editing_row_index();
 
         if let Some(row_index) = editing_row_index {
-            format!(
-                "{} — editing row {} ({})",
-                label,
-                row_index + 1,
-                editor.active_field_label()
-            )
+            format!("{} — editing row {} ({})", label, row_index + 1, editor.active_field_label())
         } else {
             label.to_string()
         }
@@ -447,7 +366,7 @@ impl KeyValueEditorComponent {
     /// A vector of styled Row widgets for the table data.
     fn build_table_rows<'a>(
         &self,
-        editor: &crate::ui::components::plugins::add_plugin::key_value_editor::state::KeyValueEditorState,
+        editor: &crate::ui::components::plugins::plugin_editor::key_value_editor::state::KeyValueEditorState,
         theme: &'a dyn Theme,
     ) -> Vec<Row<'a>> {
         let editing_row_index = editor.editing_row_index();
@@ -527,8 +446,8 @@ impl KeyValueEditorComponent {
     /// * `area` - The available rendering area for the editor
     /// * `theme` - The theme for styling
     /// * `add_state` - The plugin add view state containing editor state
-    fn render_inline_editor(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, add_state: &PluginAddViewState) {
-        let editor = add_state.active_key_value_editor();
+    fn render_inline_editor(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, add_state: &PluginEditViewState) {
+        let editor = &add_state.kv_editor;
         let (key_buffer, value_buffer) = editor.editing_buffers().unwrap_or(("", ""));
         let row_number = editor.editing_row_index().map(|idx| idx + 1).unwrap_or(1);
 
@@ -552,24 +471,8 @@ impl KeyValueEditorComponent {
         let key_field_active = editor.is_key_field_focused();
         let value_field_active = editor.is_value_field_focused();
 
-        self.render_inline_field(
-            frame,
-            fields[0],
-            theme,
-            "Key",
-            key_buffer,
-            "(required)",
-            key_field_active,
-        );
-        self.render_inline_field(
-            frame,
-            fields[1],
-            theme,
-            "Value",
-            value_buffer,
-            "(optional)",
-            value_field_active,
-        );
+        self.render_inline_field(frame, fields[0], theme, "Key", key_buffer, "(required)", key_field_active);
+        self.render_inline_field(frame, fields[1], theme, "Value", value_buffer, "(optional)", value_field_active);
 
         self.position_cursor_for_inline_field(frame, &fields, key_field_active, key_buffer, value_buffer);
     }
@@ -600,10 +503,7 @@ impl KeyValueEditorComponent {
         focused: bool,
     ) {
         let mut spans = Vec::new();
-        spans.push(Span::styled(
-            if focused { "› " } else { "  " },
-            theme.text_secondary_style(),
-        ));
+        spans.push(Span::styled(if focused { "› " } else { "  " }, theme.text_secondary_style()));
         spans.push(Span::styled(format!("{}: ", label), theme.text_primary_style()));
         if value.is_empty() {
             spans.push(Span::styled(placeholder.to_string(), theme.text_muted_style()));
@@ -672,11 +572,15 @@ impl Component for KeyValueEditorComponent {
     /// # Returns
     ///
     /// A vector of effects that should be processed by the application runtime.
-    fn handle_key_events(&mut self, app: &mut crate::app::App, key_event: KeyEvent) -> Vec<Effect> {
-        let Some(add_state) = app.plugins.add.as_mut() else {
-            return Vec::new();
-        };
-        self.process_key_event(add_state, &key_event)
+    fn handle_key_events(&mut self, app: &mut App, key_event: KeyEvent) -> Vec<Effect> {
+        let editing = app.plugins.add.as_ref().and_then(|e| Some(e.kv_editor.is_editing()));
+        if editing.unwrap_or(false) {
+            self.handle_editing_mode_input(app, key_event);
+        } else {
+            self.handle_navigation_mode_input(app, key_event)
+        }
+
+        vec![]
     }
 
     /// Render the key/value editor component.
@@ -721,7 +625,7 @@ impl Component for KeyValueEditorComponent {
             spans.push(Span::styled("Hints: ", theme.text_muted_style()));
         }
 
-        let is_editing = add_state.active_key_value_editor().is_editing();
+        let is_editing = add_state.kv_editor.is_editing();
 
         // Add common navigation hints
         self.add_common_hints(&mut spans, theme.as_ref(), is_editing);
@@ -751,10 +655,7 @@ impl KeyValueEditorComponent {
     fn add_common_hints(&self, spans: &mut Vec<Span<'_>>, theme: &dyn Theme, is_editing: bool) {
         spans.extend([
             Span::styled("↑/↓", theme.accent_emphasis_style()),
-            Span::styled(
-                if is_editing { " Focus  " } else { " Navigate  " },
-                theme.text_muted_style(),
-            ),
+            Span::styled(if is_editing { " Focus  " } else { " Navigate  " }, theme.text_muted_style()),
         ]);
     }
 
@@ -803,7 +704,7 @@ impl KeyValueEditorComponent {
 mod tests {
     use super::*;
     use crate::ui::components::plugins::EnvRow;
-    use crate::ui::components::plugins::add_plugin::key_value_editor::state::KeyValueEditorState;
+    use crate::ui::components::plugins::plugin_editor::key_value_editor::state::KeyValueEditorState;
     use crossterm::event::KeyModifiers;
 
     #[test]

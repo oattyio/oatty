@@ -271,12 +271,7 @@ fn score_single_token(hay_data: &HaystackData, token: &[char], hay_index: &mut u
 ///
 /// # Returns
 /// The score contribution for this character match
-fn score_character_match(
-    absolute_index: usize,
-    previous_index: Option<usize>,
-    consecutive: &mut i64,
-    hay_data: &HaystackData,
-) -> i64 {
+fn score_character_match(absolute_index: usize, previous_index: Option<usize>, consecutive: &mut i64, hay_data: &HaystackData) -> i64 {
     let mut score = 0;
 
     // Handle consecutive matches

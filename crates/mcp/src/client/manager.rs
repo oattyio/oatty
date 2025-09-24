@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, broadcast};
 
 use crate::{
     config::McpConfig,
@@ -21,43 +21,83 @@ use super::client::McpClient;
 pub struct McpClientManager {
     /// Active client handles keyed by plugin name.
     active_clients: Arc<Mutex<HashMap<String, Arc<Mutex<McpClient>>>>>,
-    /// Names currently in the process of starting to avoid races.
+    /// Names currently in the process of starting to avoid races and report transitional status.
     starting: Arc<Mutex<HashSet<String>>>,
+    /// Names currently in the process of stopping for transitional status reporting.
+    stopping: Arc<Mutex<HashSet<String>>>,
     /// Parsed MCP configuration.
     config: McpConfig,
     /// Centralized logging manager (shared with engine/TUI).
     log_manager: Arc<LogManager>,
+    /// Broadcast channel for lifecycle events emitted to interested listeners.
+    event_tx: broadcast::Sender<ClientManagerEvent>,
 }
 
 impl McpClientManager {
     /// Create a new manager from config.
     pub fn new(config: McpConfig) -> Result<Self> {
+        let (event_tx, _rx) = broadcast::channel(64);
+
         Ok(Self {
             active_clients: Arc::new(Mutex::new(HashMap::new())),
             starting: Arc::new(Mutex::new(HashSet::new())),
+            stopping: Arc::new(Mutex::new(HashSet::new())),
             config,
             log_manager: Arc::new(LogManager::new()?),
+            event_tx,
         })
     }
 
     /// Start the manager and autostart all non-disabled plugins from config.
+    ///
+    /// Plugin startup is scheduled onto the async runtime so the caller does
+    /// not block on potentially slow handshake operations. Errors are logged
+    /// but do not stop initialization.
     pub async fn start(&self) -> Result<(), ClientManagerError> {
         for (name, server) in &self.config.mcp_servers {
             if !server.is_disabled() {
-                if let Err(err) = self.start_plugin(name).await {
-                    tracing::warn!("Autostart '{}' failed: {}", name, err);
-                }
+                let manager = self.clone();
+                let plugin_name = name.clone();
+                tokio::spawn(async move {
+                    if let Err(err) = manager.start_plugin(&plugin_name).await {
+                        tracing::warn!("Autostart '{}' failed: {}", plugin_name, err);
+                    }
+                });
             }
         }
         Ok(())
     }
 
+    /// Subscribe to lifecycle events emitted by this manager.
+    pub fn subscribe(&self) -> broadcast::Receiver<ClientManagerEvent> {
+        self.event_tx.subscribe()
+    }
+
     /// Disconnect all clients and clear the registry.
     pub async fn stop(&self) -> Result<(), ClientManagerError> {
         let mut clients = self.active_clients.lock().await;
-        for (_name, handle) in clients.drain() {
-            let mut client = handle.lock().await;
-            let _ = client.disconnect().await;
+        let clients_drain:Vec<(String, Arc<Mutex<McpClient>>)> = clients.drain().collect();
+        drop(clients);
+        let mut finished = vec![];
+        for (name, handle) in clients_drain {
+            {
+                let mut stopping = self.stopping.lock().await;
+                stopping.insert(name.clone());
+            }
+            let _ = self.event_tx.send(ClientManagerEvent::Stopping { name: name.clone() });
+            {
+                let mut client = handle.lock().await;
+                let _ = client.disconnect().await;
+            }
+            finished.push(name);
+        }
+
+        if !finished.is_empty() {
+            let mut stopping = self.stopping.lock().await;
+            for stopped in &finished {
+                stopping.remove(stopped);
+                let _ = self.event_tx.send(ClientManagerEvent::Stopped { name: stopped.clone() });
+            }
         }
         Ok(())
     }
@@ -80,6 +120,7 @@ impl McpClientManager {
             if !starting.insert(name.to_string()) {
                 return Err(ClientManagerError::ClientAlreadyExists { name: name.into() });
             }
+            
         }
 
         // Connect outside of global locks
@@ -99,30 +140,59 @@ impl McpClientManager {
             starting.remove(name);
         }
 
-        let client = connect_result?;
+        match connect_result {
+            Ok(client) => {
+                self.active_clients
+                    .lock()
+                    .await
+                    .insert(name.to_string(), Arc::new(Mutex::new(client)));
 
-        self.active_clients
-            .lock()
-            .await
-            .insert(name.to_string(), Arc::new(Mutex::new(client)));
+                let _ = self.event_tx.send(ClientManagerEvent::Started { name: name.to_string() });
 
-        // Audit start event (best-effort)
-        let _ = self
-            .log_manager
-            .log_audit(AuditEntry::plugin_start(name.to_string(), serde_json::Map::new()))
-            .await;
-        Ok(())
+                // Audit start event (best-effort)
+                let _ = self
+                    .log_manager
+                    .log_audit(AuditEntry::plugin_start(name.to_string(), serde_json::Map::new()))
+                    .await;
+                Ok(())
+            }
+            Err(err) => {
+                let error_message = err.to_string();
+                let _ = self.event_tx.send(ClientManagerEvent::StartFailed {
+                    name: name.to_string(),
+                    error: error_message,
+                });
+                Err(err)
+            }
+        }
     }
 
     /// Stop a running plugin by name.
     pub async fn stop_plugin(&self, name: &str) -> Result<(), ClientManagerError> {
-        let mut clients = self.active_clients.lock().await;
-        if let Some(handle) = clients.remove(name) {
-            let mut client = handle.lock().await;
-            client
-                .disconnect()
-                .await
-                .map_err(|e| ClientManagerError::ConnectionError { message: e.to_string() })?
+        let handle_opt = {
+            let mut clients = self.active_clients.lock().await;
+            clients.remove(name)
+        };
+
+        if let Some(handle) = handle_opt {
+            {
+                let mut stopping = self.stopping.lock().await;
+                stopping.insert(name.to_string());
+            }
+            let _ = self.event_tx.send(ClientManagerEvent::Stopping { name: name.to_string() });
+
+            let disconnect_result = {
+                let mut client = handle.lock().await;
+                client.disconnect().await
+            };
+            
+            disconnect_result.map_err(|e| ClientManagerError::ConnectionError { message: e.to_string() })?;
+
+            {
+                let mut stopping = self.stopping.lock().await;
+                stopping.remove(name);
+                let _ = self.event_tx.send(ClientManagerEvent::Stopped { name: name.to_string() });
+            }
         }
         // Audit stop event (best-effort)
         let _ = self
@@ -138,10 +208,35 @@ impl McpClientManager {
         self.start_plugin(name).await
     }
 
-    /// Return current status for a plugin (or Stopped if not running).
+    /// Return current status for a plugin.
+    ///
+    /// If the plugin is not defined in the configuration, `PluginStatus::Unknown`
+    /// is returned to signal that the request does not map to a known plugin.
+    /// When the plugin exists but is not running, `PluginStatus::Stopped` is
+    /// returned.
     pub async fn get_plugin_status(&self, name: &str) -> Result<PluginStatus, ClientManagerError> {
+        if !self.config.mcp_servers.contains_key(name) {
+            return Ok(PluginStatus::Unknown);
+        }
+
+        {
+            let starting = self.starting.lock().await;
+            if starting.contains(name) {
+                return Ok(PluginStatus::Starting);
+            }
+        }
+
+        {
+            let stopping = self.stopping.lock().await;
+            if stopping.contains(name) {
+                return Ok(PluginStatus::Stopping);
+            }
+        }
+
         let map = self.active_clients.lock().await;
-        if let Some(handle) = map.get(name) {
+        let maybe_handle = map.get(name).cloned();
+        drop(map);
+        if let Some(handle) = maybe_handle {
             let client = handle.lock().await;
             Ok(client.status())
         } else {
@@ -152,8 +247,10 @@ impl McpClientManager {
     /// Return current health snapshot for a plugin if known.
     pub async fn get_plugin_health(&self, name: &str) -> Option<HealthStatus> {
         let map = self.active_clients.lock().await;
-        if let Some(h) = map.get(name) {
-            let guard = h.lock().await;
+        let maybe_handle =  map.get(name).cloned();
+        drop(map);
+        if let Some(handle) = maybe_handle {
+            let guard = handle.lock().await;
             Some(guard.health().clone())
         } else {
             None
@@ -181,6 +278,21 @@ impl McpClientManager {
     pub fn log_manager(&self) -> &LogManager {
         &self.log_manager
     }
+}
+
+/// Lifecycle events emitted by [`McpClientManager`] for plugin state transitions.
+#[derive(Debug, Clone)]
+pub enum ClientManagerEvent {
+    /// A plugin has begun its startup sequence.
+    Starting { name: String },
+    /// A plugin finished connecting successfully.
+    Started { name: String },
+    /// A plugin failed to start.
+    StartFailed { name: String, error: String },
+    /// A plugin is in the process of shutting down.
+    Stopping { name: String },
+    /// A plugin has fully stopped.
+    Stopped { name: String },
 }
 
 /// Errors from the client manager lifecycle APIs.

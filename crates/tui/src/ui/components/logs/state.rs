@@ -13,11 +13,7 @@ use crate::ui::utils::ColumnWithSize;
 pub enum LogEntry {
     /// API response entry: keeps HTTP status, raw text, and optional parsed
     /// JSON.
-    Api {
-        status: u16,
-        raw: String,
-        json: Option<Value>,
-    },
+    Api { status: u16, raw: String, json: Option<Value> },
     /// Plain text log: optional level and message.
     Text { level: Option<String>, msg: String },
 }

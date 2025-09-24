@@ -11,4 +11,4 @@ mod stdio;
 
 pub use client::McpClient;
 pub use health::HealthCheckResult;
-pub use manager::{ClientManagerError, McpClientManager};
+pub use manager::{ClientManagerError, ClientManagerEvent, McpClientManager};

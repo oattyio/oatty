@@ -1,12 +1,12 @@
 //! McpClient: lifecycle and connections for rmcp-backed plugins.
 
-use std::sync::Arc;
+use std::{process::Stdio, sync::Arc};
 
 use anyhow::Result;
 use rmcp::{
     RoleClient,
     service::{RunningService, ServiceExt as _},
-    transport::{SseClientTransport, sse_client::SseClientConfig},
+    transport::{SseClientTransport, TokioChildProcess, sse_client::SseClientConfig},
 };
 
 use crate::{
@@ -32,7 +32,7 @@ pub struct McpClient {
     /// Aggregated health info for UI.
     pub(crate) health: HealthStatus,
     /// Underlying rmcp running service when connected.
-    pub(crate) running: Option<RunningService<RoleClient, ()>>,
+    pub(crate) service: Option<RunningService<RoleClient, ()>>,
     /// Shared log manager for capturing plugin logs (e.g., stderr).
     pub(crate) log_manager: Arc<LogManager>,
 }
@@ -45,7 +45,7 @@ impl McpClient {
             server,
             status: PluginStatus::Stopped,
             health: HealthStatus::default(),
-            running: None,
+            service: None,
             log_manager,
         }
     }
@@ -55,18 +55,15 @@ impl McpClient {
         self.status = PluginStatus::Starting;
         let start_time = std::time::Instant::now();
 
-        let running: RunningService<RoleClient, ()> = if self.server.is_stdio() {
+        let service: RunningService<RoleClient, ()> = if self.server.is_stdio() {
             self.connect_stdio().await?
         } else if self.server.is_http() {
             self.connect_http().await?
         } else {
-            anyhow::bail!(
-                "unsupported transport for plugin '{}': must be stdio or http",
-                self.name
-            )
+            anyhow::bail!("unsupported transport for plugin '{}': must be stdio or http", self.name)
         };
 
-        self.running = Some(running);
+        self.service = Some(service);
         self.status = PluginStatus::Running;
         self.health.mark_healthy();
         self.health.handshake_latency = Some(start_time.elapsed().as_millis() as u64);
@@ -75,7 +72,7 @@ impl McpClient {
 
     /// Disconnect from the server and mark the client as stopped.
     pub async fn disconnect(&mut self) -> Result<()> {
-        if let Some(running) = self.running.take() {
+        if let Some(running) = self.service.take() {
             let _ = running.cancel().await; // ignore
         }
         self.status = PluginStatus::Stopped;
@@ -106,9 +103,7 @@ impl McpClient {
     async fn connect_stdio(&self) -> Result<RunningService<RoleClient, ()>> {
         let command = build_stdio_command(&self.server)?;
         // Use builder to capture stderr for logging
-        let (transport, stderr_opt) = rmcp::transport::TokioChildProcess::builder(command)
-            .stderr(std::process::Stdio::piped())
-            .spawn()?;
+        let (transport, stderr_opt) = TokioChildProcess::builder(command).stderr(Stdio::piped()).spawn()?;
 
         if let Some(stderr) = stderr_opt {
             spawn_stderr_logger(self.name.clone(), self.log_manager.clone(), stderr);

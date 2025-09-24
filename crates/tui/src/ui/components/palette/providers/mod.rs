@@ -97,11 +97,7 @@ impl RegistryBackedProvider {
     ///
     /// Returns cached values if fresh, otherwise spawns a background fetch and returns
     /// an empty vector. Subsequent calls will use cached results after the fetch completes.
-    fn list_values_for_provider(
-        &self,
-        provider_id: &str,
-        variables: &serde_json::Map<String, serde_json::Value>,
-    ) -> Vec<String> {
+    fn list_values_for_provider(&self, provider_id: &str, variables: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
         if provider_id.is_empty() {
             return Vec::new();
         }

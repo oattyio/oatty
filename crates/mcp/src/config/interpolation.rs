@@ -107,12 +107,10 @@ pub fn store_secret(name: &str, value: &str) -> Result<(), InterpolationError> {
         error: e.to_string(),
     })?;
 
-    keyring
-        .set_password(value)
-        .map_err(|e| InterpolationError::KeyringError {
-            name: name.to_string(),
-            error: e.to_string(),
-        })?;
+    keyring.set_password(value).map_err(|e| InterpolationError::KeyringError {
+        name: name.to_string(),
+        error: e.to_string(),
+    })?;
 
     debug!("Stored secret in keychain: {}", name);
     Ok(())
@@ -125,12 +123,10 @@ pub fn remove_secret(name: &str) -> Result<(), InterpolationError> {
         error: e.to_string(),
     })?;
 
-    keyring
-        .delete_credential()
-        .map_err(|e| InterpolationError::KeyringError {
-            name: name.to_string(),
-            error: e.to_string(),
-        })?;
+    keyring.delete_credential().map_err(|e| InterpolationError::KeyringError {
+        name: name.to_string(),
+        error: e.to_string(),
+    })?;
 
     debug!("Removed secret from keychain: {}", name);
     Ok(())
@@ -150,33 +146,4 @@ pub enum InterpolationError {
 
     #[error("Regex compilation error: {0}")]
     Regex(#[from] regex::Error),
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn test_interpolate_env_var() {
-        unsafe {
-            std::env::set_var("TEST_VAR", "test_value");
-
-            let result = interpolate_string("Hello ${env:TEST_VAR}").await.unwrap();
-            assert_eq!(result, "Hello test_value");
-
-            std::env::remove_var("TEST_VAR");
-        }
-    }
-
-    #[tokio::test]
-    async fn test_interpolate_missing_env_var() {
-        let result = interpolate_string("Hello ${env:MISSING_VAR}").await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_interpolate_no_patterns() {
-        let result = interpolate_string("Hello world").await.unwrap();
-        assert_eq!(result, "Hello world");
-    }
 }

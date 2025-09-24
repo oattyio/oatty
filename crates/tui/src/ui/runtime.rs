@@ -27,9 +27,11 @@ use crossterm::{
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
+use futures_util::{StreamExt, stream::FuturesUnordered};
 use heroku_mcp::PluginEngine;
 use heroku_types::{Effect, ExecOutcome, Msg};
 use ratatui::{Terminal, prelude::*};
+use tokio::task::JoinHandle;
 use tokio::{
     signal,
     sync::mpsc,
@@ -112,7 +114,11 @@ fn render<'a>(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, applic
 
 /// Handle raw crossterm input events and update `App`/components.
 /// Returns `Exit` for Ctrl+C, otherwise `Continue`.
-async fn handle_input_event<'a>(app: &mut app::App<'_>, input_event: Event) -> Result<LoopAction> {
+async fn handle_input_event<'a>(
+    app: &mut app::App<'_>,
+    input_event: Event,
+    pending_execs: &mut FuturesUnordered<JoinHandle<ExecOutcome>>,
+) -> Result<LoopAction> {
     match input_event {
         Event::Key(key_event) => {
             // Ctrl-C: if plugins fullscreen active, exit that mode; otherwise exit app
@@ -128,8 +134,7 @@ async fn handle_input_event<'a>(app: &mut app::App<'_>, input_event: Event) -> R
                 modal.handle_key_events(app, key_event)
             } else if let Some(current) = main_view.as_mut() {
                 // Route to nav bar when it (or any of its items) has focus; otherwise to current view
-                let nav_has_focus =
-                    app.nav_bar.container_focus.get() || app.nav_bar.item_focus_flags.iter().any(|f| f.get());
+                let nav_has_focus = app.nav_bar.container_focus.get() || app.nav_bar.item_focus_flags.iter().any(|f| f.get());
                 if nav_has_focus {
                     let mut nav = VerticalNavBarComponent::new();
                     nav.handle_key_events(app, key_event)
@@ -149,7 +154,7 @@ async fn handle_input_event<'a>(app: &mut app::App<'_>, input_event: Event) -> R
             }
 
             // Run the effects
-            process_effects(app, effects).await;
+            process_effects(app, effects, pending_execs).await;
         }
         Event::Resize(width, height) => {
             let _ = app.update(Msg::Resize(width, height));
@@ -168,6 +173,7 @@ pub async fn run_app(registry: heroku_registry::Registry, plugin_engine: PluginE
 
     // Input comes from a dedicated blocking thread to ensure reliability.
     let mut input_receiver = spawn_input_thread().await;
+    let mut pending_execs: FuturesUnordered<JoinHandle<ExecOutcome>> = FuturesUnordered::new();
 
     // Ticking strategy: fast while animating, very slow when idle.
     let fast_interval = Duration::from_millis(125);
@@ -178,7 +184,7 @@ pub async fn run_app(registry: heroku_registry::Registry, plugin_engine: PluginE
 
     render(&mut terminal, &mut application)?;
     // run initialization effects
-    process_effects(&mut application, vec![Effect::PluginsLoadRequested]).await;
+    process_effects(&mut application, vec![Effect::PluginsLoadRequested], &mut pending_execs).await;
     // Track the last known terminal size to synthesize Resize messages when
     // some terminals fail to emit them reliably (e.g., certain iTerm2 setups).
     let mut last_size: Option<(u16, u16)> = crossterm::terminal::size().ok();
@@ -197,7 +203,7 @@ pub async fn run_app(registry: heroku_registry::Registry, plugin_engine: PluginE
             // Terminal input events
             maybe_event = input_receiver.recv() => {
                 if let Some(event) = maybe_event {
-                    match handle_input_event(&mut application, event).await? {
+                    match handle_input_event(&mut application, event, &mut pending_execs).await? {
                         LoopAction::Continue => {}
                         LoopAction::Exit => return Ok(()),
                     }
@@ -212,9 +218,19 @@ pub async fn run_app(registry: heroku_registry::Registry, plugin_engine: PluginE
             _ = ticker.tick() => {
                 if needs_animation {
                     let effects = application.update(Msg::Tick);
-                    process_effects(&mut application, effects).await;
+                    process_effects(&mut application, effects, &mut pending_execs).await;
                     needs_render = true;
                 }
+            }
+
+            Some(joined) = pending_execs.next(), if !pending_execs.is_empty() => {
+                let outcome = match joined {
+                    Ok(outcome) => outcome,
+                    Err(error) => ExecOutcome::Log(format!("Execution task failed: {error}")),
+                };
+                let follow_up = application.update(Msg::ExecCompleted(outcome));
+                process_effects(&mut application, follow_up, &mut pending_execs).await;
+                needs_render = true;
             }
 
             // Handle Ctrl+C
@@ -241,14 +257,26 @@ pub async fn run_app(registry: heroku_registry::Registry, plugin_engine: PluginE
     Ok(())
 }
 
-async fn process_effects(app: &mut App<'_>, effects: Vec<Effect>) {
-    let outcomes: Vec<ExecOutcome> = cmd::run_from_effects(app, effects).await;
-    let mut effects = vec![];
-    for outcome in outcomes {
-        effects.extend(app.update(Msg::ExecCompleted(outcome)));
-    }
+async fn process_effects(app: &mut App<'_>, effects: Vec<Effect>, pending_execs: &mut FuturesUnordered<JoinHandle<ExecOutcome>>) {
     if effects.is_empty() {
         return;
     }
-    Box::pin(process_effects(app, effects)).await;
+
+    let command_batch = cmd::run_from_effects(app, effects).await;
+    if !command_batch.pending.is_empty() {
+        pending_execs.extend(command_batch.pending);
+    }
+
+    if command_batch.immediate.is_empty() {
+        return;
+    }
+
+    let mut follow_up_effects: Vec<Effect> = Vec::new();
+    for outcome in command_batch.immediate {
+        follow_up_effects.extend(app.update(Msg::ExecCompleted(outcome)));
+    }
+    if follow_up_effects.is_empty() {
+        return;
+    }
+    Box::pin(process_effects(app, follow_up_effects, pending_execs)).await;
 }

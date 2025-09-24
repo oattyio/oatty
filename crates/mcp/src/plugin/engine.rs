@@ -1,11 +1,12 @@
 //! Plugin engine implementation.
 
-use crate::client::McpClientManager;
+use crate::client::{ClientManagerEvent, McpClientManager};
 use crate::config::McpConfig;
 use crate::logging::LogManager;
-use crate::plugin::{LifecycleManager, PluginRegistry};
+use crate::plugin::{LifecycleManager, PluginRegistry, RegistryError};
 use crate::types::{PluginDetail, PluginStatus};
 use std::sync::Arc;
+use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 
 /// Plugin engine that orchestrates all MCP plugin operations.
 pub struct PluginEngine {
@@ -15,14 +16,18 @@ pub struct PluginEngine {
     /// Log manager for plugin logs.
     log_manager: Arc<LogManager>,
 
-    /// Plugin registry for metadata.
-    registry: PluginRegistry,
+    /// Plugin registry for metadata as an interior, thread
+    /// safe mutable reference that's lockable across await points
+    registry: Arc<TokioMutex<Option<PluginRegistry>>>,
 
     /// Lifecycle manager for plugin lifecycle.
     lifecycle_manager: LifecycleManager,
 
     /// Configuration.
     config: McpConfig,
+
+    /// Background task that keeps the registry in sync with client status events.
+    status_listener: TokioMutex<Option<JoinHandle<()>>>,
 }
 
 impl PluginEngine {
@@ -30,16 +35,47 @@ impl PluginEngine {
     pub fn new(config: McpConfig) -> anyhow::Result<Self> {
         let client_manager = McpClientManager::new(config.clone())?;
         let log_manager = Arc::new(LogManager::new()?);
-        let registry = PluginRegistry::new();
         let lifecycle_manager = LifecycleManager::new();
 
         Ok(Self {
             client_manager,
             log_manager,
-            registry,
+            registry: Arc::new(TokioMutex::new(None)),
             lifecycle_manager,
             config,
+            status_listener: TokioMutex::new(None),
         })
+    }
+
+    pub async fn prepare_registry(&self) -> Result<PluginRegistry, PluginEngineError> {
+        let mut maybe_registry = self.registry.lock().await;
+        if maybe_registry.is_some() {
+            return Ok(maybe_registry.clone().unwrap());
+        }
+
+        let registry = PluginRegistry::new();
+
+        for (name, server) in &self.config.mcp_servers {
+            let mut plugin_detail = PluginDetail::new(
+                name.clone(),
+                if server.is_stdio() {
+                    server.command.as_ref().unwrap().clone()
+                } else {
+                    server.base_url.as_ref().unwrap().to_string()
+                },
+                server.args.clone().and_then(|a| Some(a.join(" "))),
+            );
+            plugin_detail.transport_type = server.transport_type().to_string();
+            plugin_detail.tags = server.tags.clone().unwrap_or_default();
+            plugin_detail.enabled = !server.is_disabled();
+
+            registry.register_plugin(plugin_detail).await?;
+            self.lifecycle_manager.register_plugin(name.clone()).await;
+        }
+
+        self.ensure_status_listener(registry.clone()).await;
+        maybe_registry.replace(registry);
+        Ok(maybe_registry.clone().unwrap())
     }
 
     /// Start the plugin engine.
@@ -50,26 +86,47 @@ impl PluginEngine {
             .await
             .map_err(|e| PluginEngineError::ClientManagerError(e.to_string()))?;
 
-        // Register all configured plugins
-        for (name, server) in &self.config.mcp_servers {
-            let plugin_info = crate::plugin::PluginInfo {
-                name: name.clone(),
-                command_or_url: if server.is_stdio() {
-                    server.command.as_ref().unwrap().clone()
-                } else {
-                    server.base_url.as_ref().unwrap().to_string()
-                },
-                transport_type: server.transport_type().to_string(),
-                tags: server.tags.clone().unwrap_or_default(),
-                enabled: !server.is_disabled(),
-            };
-
-            self.registry.register_plugin(plugin_info).await?;
-            self.lifecycle_manager.register_plugin(name.clone()).await;
-        }
-
         tracing::info!("Plugin engine started");
         Ok(())
+    }
+
+    /// Ensure the background status listener task is running so plugin status
+    /// updates from the client manager are reflected in the registry.
+    async fn ensure_status_listener(&self, registry: PluginRegistry) {
+        let mut guard = self.status_listener.lock().await;
+        if guard.is_some() {
+            return;
+        }
+
+        let mut receiver = self.client_manager.subscribe();
+
+        let handle = tokio::spawn(async move {
+            loop {
+                match receiver.recv().await {
+                    Ok(event) => {
+                        let (name, status) = match event {
+                            ClientManagerEvent::Starting { name } => (name, PluginStatus::Starting),
+                            ClientManagerEvent::Started { name } => (name, PluginStatus::Running),
+                            ClientManagerEvent::StartFailed { name, error } => {
+                                tracing::warn!(plugin = %name, error = %error, "Plugin failed to start");
+                                (name, PluginStatus::Error)
+                            }
+                            ClientManagerEvent::Stopping { name } => (name, PluginStatus::Stopping),
+                            ClientManagerEvent::Stopped { name } => (name, PluginStatus::Stopped),
+                        };
+                        if let Err(update_err) = registry.set_plugin_status(&name, status).await {
+                            tracing::warn!(plugin = %name, error = %update_err, "Failed to update registry status");
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                        tracing::warn!("Plugin status listener lagged by {} events", skipped);
+                    }
+                }
+            }
+        });
+
+        *guard = Some(handle);
     }
 
     /// Stop the plugin engine.
@@ -86,8 +143,13 @@ impl PluginEngine {
 
     /// Start a plugin.
     pub async fn start_plugin(&self, name: &str) -> Result<(), PluginEngineError> {
+        let Ok(registry) = self.prepare_registry().await else {
+            return Err(PluginEngineError::RegistryError(RegistryError::OperationFailed {
+                reason: "registry unavailable".into(),
+            }));
+        };
         // Check if plugin is registered
-        if !self.registry.is_registered(name).await {
+        if !registry.is_registered(name).await {
             return Err(PluginEngineError::PluginNotFound { name: name.to_string() });
         }
 
@@ -106,7 +168,7 @@ impl PluginEngine {
         self.lifecycle_manager.start_plugin(name, start_fn).await?;
 
         // Update registry
-        self.registry.set_plugin_status(name, PluginStatus::Running).await?;
+        registry.set_plugin_status(name, PluginStatus::Running).await?;
 
         tracing::info!("Started plugin: {}", name);
         Ok(())
@@ -114,8 +176,13 @@ impl PluginEngine {
 
     /// Stop a plugin.
     pub async fn stop_plugin(&self, name: &str) -> Result<(), PluginEngineError> {
+        let Ok(registry) = self.prepare_registry().await else {
+            return Err(PluginEngineError::RegistryError(RegistryError::OperationFailed {
+                reason: "registry unavailable".into(),
+            }));
+        };
         // Check if plugin is registered
-        if !self.registry.is_registered(name).await {
+        if !registry.is_registered(name).await {
             return Err(PluginEngineError::PluginNotFound { name: name.to_string() });
         }
 
@@ -134,7 +201,7 @@ impl PluginEngine {
         self.lifecycle_manager.stop_plugin(name, stop_fn).await?;
 
         // Update registry
-        self.registry.set_plugin_status(name, PluginStatus::Stopped).await?;
+        registry.set_plugin_status(name, PluginStatus::Stopped).await?;
 
         tracing::info!("Stopped plugin: {}", name);
         Ok(())
@@ -142,8 +209,13 @@ impl PluginEngine {
 
     /// Restart a plugin.
     pub async fn restart_plugin(&self, name: &str) -> Result<(), PluginEngineError> {
+        let Ok(registry) = self.prepare_registry().await else {
+            return Err(PluginEngineError::RegistryError(RegistryError::OperationFailed {
+                reason: "registry unavailable".into(),
+            }));
+        };
         // Check if plugin is registered
-        if !self.registry.is_registered(name).await {
+        if !registry.is_registered(name).await {
             return Err(PluginEngineError::PluginNotFound { name: name.to_string() });
         }
 
@@ -178,7 +250,7 @@ impl PluginEngine {
         self.lifecycle_manager.restart_plugin(name, stop_fn, start_fn).await?;
 
         // Update registry
-        self.registry.set_plugin_status(name, PluginStatus::Running).await?;
+        registry.set_plugin_status(name, PluginStatus::Running).await?;
 
         tracing::info!("Restarted plugin: {}", name);
         Ok(())
@@ -186,36 +258,35 @@ impl PluginEngine {
 
     /// Get plugin details.
     pub async fn get_plugin_detail(&self, name: &str) -> Result<PluginDetail, PluginEngineError> {
-        let plugin_info = self
-            .registry
+        let Ok(registry) = self.prepare_registry().await else {
+            return Err(PluginEngineError::RegistryError(RegistryError::OperationFailed {
+                reason: "registry unavailable".into(),
+            }));
+        };
+        let mut registry_detail = registry
             .get_plugin(name)
             .await
             .ok_or_else(|| PluginEngineError::PluginNotFound { name: name.to_string() })?;
 
-        let status = self
-            .registry
-            .get_plugin_status(name)
-            .await
-            .unwrap_or(PluginStatus::Stopped);
-
+        let status = registry.get_plugin_status(name).await.unwrap_or(PluginStatus::Stopped);
         let health = self.client_manager.get_plugin_health(name).await.unwrap_or_default();
-
         let logs = self.log_manager.get_recent_logs(name, 100).await;
 
-        let mut detail = PluginDetail::new(name.to_string(), plugin_info.command_or_url);
-        detail.status = status;
-        detail.health = health;
-        detail.tags = plugin_info.tags;
-        detail.logs = logs;
+        registry_detail.status = status;
+        registry_detail.health = health;
+        registry_detail.logs = logs;
 
-        Ok(detail)
+        Ok(registry_detail)
     }
 
     /// List all plugins.
     pub async fn list_plugins(&self) -> Vec<PluginDetail> {
+        let Ok(registry) = self.prepare_registry().await else {
+            return vec![];
+        };
         let mut plugins = Vec::new();
 
-        for name in self.registry.get_plugin_names().await {
+        for name in registry.get_plugin_names().await {
             if let Ok(detail) = self.get_plugin_detail(&name).await {
                 plugins.push(detail);
             }
@@ -226,7 +297,12 @@ impl PluginEngine {
 
     /// Get plugin status.
     pub async fn get_plugin_status(&self, name: &str) -> Result<PluginStatus, PluginEngineError> {
-        self.registry
+        let Ok(registry) = self.prepare_registry().await else {
+            return Err(PluginEngineError::RegistryError(RegistryError::OperationFailed {
+                reason: "registry unavailable".into(),
+            }));
+        };
+        registry
             .get_plugin_status(name)
             .await
             .ok_or_else(|| PluginEngineError::PluginNotFound { name: name.to_string() })
@@ -248,8 +324,8 @@ impl PluginEngine {
     }
 
     /// Get the plugin registry.
-    pub fn registry(&self) -> &PluginRegistry {
-        &self.registry
+    pub fn registry(&self) -> &TokioMutex<Option<PluginRegistry>> {
+        self.registry.as_ref()
     }
 
     /// Get the lifecycle manager.
@@ -259,8 +335,13 @@ impl PluginEngine {
 
     /// Update configuration.
     pub async fn update_config(&self, config: McpConfig) -> Result<(), PluginEngineError> {
+        let Ok(registry) = self.prepare_registry().await else {
+            return Err(PluginEngineError::RegistryError(RegistryError::OperationFailed {
+                reason: "registry unavailable".into(),
+            }));
+        };
         // Stop all existing plugins
-        for name in self.registry.get_plugin_names().await {
+        for name in registry.get_plugin_names().await {
             if let Err(e) = self.stop_plugin(&name).await {
                 tracing::warn!("Failed to stop plugin {} during config update: {}", name, e);
             }
@@ -273,22 +354,23 @@ impl PluginEngine {
             .map_err(|e| PluginEngineError::ClientManagerError(e.to_string()))?;
 
         // Clear and rebuild registry
-        self.registry.clear().await?;
+        registry.clear().await?;
 
         for (name, server) in &config.mcp_servers {
-            let plugin_info = crate::plugin::PluginInfo {
-                name: name.clone(),
-                command_or_url: if server.is_stdio() {
+            let mut plugin_detail = PluginDetail::new(
+                name.clone(),
+                if server.is_stdio() {
                     server.command.as_ref().unwrap().clone()
                 } else {
                     server.base_url.as_ref().unwrap().to_string()
                 },
-                transport_type: server.transport_type().to_string(),
-                tags: server.tags.clone().unwrap_or_default(),
-                enabled: !server.is_disabled(),
-            };
+                server.args.clone().and_then(|a| Some(a.join(" "))),
+            );
+            plugin_detail.transport_type = server.transport_type().to_string();
+            plugin_detail.tags = server.tags.clone().unwrap_or_default();
+            plugin_detail.enabled = !server.is_disabled();
 
-            self.registry.register_plugin(plugin_info).await?;
+            registry.register_plugin(plugin_detail).await?;
             self.lifecycle_manager.register_plugin(name.clone()).await;
         }
 

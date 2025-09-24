@@ -9,11 +9,11 @@ use ratatui::{
 };
 
 use crate::ui::{
-    components::plugins::{PluginListItem, PluginsTableState, add_plugin::state::PluginAddViewState},
+    components::plugins::{PluginDetail, PluginsTableState, plugin_editor::state::PluginEditViewState},
     theme::theme_helpers,
 };
 use crate::{app::App, ui::components::component::Component};
-use heroku_mcp::types::plugin::AuthStatus;
+use heroku_mcp::AuthStatus;
 
 /// Table column width constraints for the plugins table.
 const NAME_COLUMN_WIDTH: u16 = 18;
@@ -48,10 +48,7 @@ impl PluginsTableComponent {
             return;
         }
 
-        let current_selected_index = table_state
-            .selected
-            .unwrap_or(0)
-            .min(filtered_indices.len().saturating_sub(1));
+        let current_selected_index = table_state.selected.unwrap_or(0).min(filtered_indices.len().saturating_sub(1));
         let new_position = current_selected_index.saturating_sub(1);
         table_state.selected = Some(new_position);
     }
@@ -70,10 +67,7 @@ impl PluginsTableComponent {
             return;
         }
 
-        let current_selected_index = table_state
-            .selected
-            .unwrap_or(0)
-            .min(filtered_indices.len().saturating_sub(1));
+        let current_selected_index = table_state.selected.unwrap_or(0).min(filtered_indices.len().saturating_sub(1));
         let new_position = (current_selected_index + 1).min(filtered_indices.len().saturating_sub(1));
         table_state.selected = Some(new_position);
     }
@@ -110,22 +104,18 @@ impl PluginsTableComponent {
 
         for (row_index, &item_index) in filtered_indices.iter().enumerate() {
             if let Some(plugin_item) = state.items.get(item_index) {
-                let row_style = Self::determine_row_style(
-                    theme,
-                    row_index,
-                    is_focused,
-                    row_index == selected_row_index,
-                    selected_row_style,
-                );
+                let row_style =
+                    Self::determine_row_style(theme, row_index, is_focused, row_index == selected_row_index, selected_row_style);
 
                 let display_name = Self::format_display_name(plugin_item, is_focused, row_index == selected_row_index);
                 let formatted_tags = Self::format_tags(&plugin_item.tags);
                 let formatted_auth_status = format_auth_status(&plugin_item.auth_status);
+                let status_text = plugin_item.status.display().to_string();
 
                 table_rows.push(
                     Row::new(vec![
                         ratatui::text::Span::raw(display_name),
-                        ratatui::text::Span::raw(plugin_item.status.clone()),
+                        ratatui::text::Span::raw(status_text),
                         ratatui::text::Span::raw(plugin_item.command_or_url.clone()),
                         ratatui::text::Span::raw(formatted_auth_status),
                         ratatui::text::Span::raw(formatted_tags),
@@ -172,7 +162,7 @@ impl PluginsTableComponent {
     ///
     /// # Returns
     /// The formatted display name string
-    fn format_display_name(plugin_item: &PluginListItem, is_focused: bool, is_selected: bool) -> String {
+    fn format_display_name(plugin_item: &PluginDetail, is_focused: bool, is_selected: bool) -> String {
         if is_focused && is_selected {
             format!("› {}", plugin_item.name)
         } else {
@@ -249,11 +239,16 @@ impl Component for PluginsTableComponent {
                     let plugin_name = selected_item.name.clone();
                     app.plugins.open_logs(plugin_name.clone());
                     app.plugins.logs_open = true;
-                    effects.push(Effect::PluginsOpenLogs(plugin_name));
+                    // effects.push(Effect::PluginsOpenLogs(plugin_name));
                 }
             }
             KeyCode::Char('a') if control_pressed && app.plugins.can_open_add_plugin() => {
-                app.plugins.add = Some(PluginAddViewState::new());
+                app.plugins.add = Some(PluginEditViewState::new());
+            }
+            KeyCode::Char('e') if control_pressed && app.plugins.can_open_add_plugin() => {
+                if let Some(detail) = app.plugins.table.selected_item() {
+                    app.plugins.add = Some(PluginEditViewState::from_detail(detail.clone()));
+                }
             }
             _ => {}
         };
@@ -293,13 +288,22 @@ impl Component for PluginsTableComponent {
         let mut spans = Vec::with_capacity(10);
         if is_root {
             spans.push(Span::styled("Hints: ", theme.text_muted_style()));
+            // plugins component adds this
+            if app.plugins.can_open_add_plugin() {
+                spans.extend([
+                    Span::styled("Ctrl-A", theme.accent_emphasis_style()),
+                    Span::styled(" Add  ", theme.text_muted_style()),
+                ]);
+            }
         }
-        if app.plugins.can_open_add_plugin() {
+
+        if app.plugins.table.selected_item().is_some() {
             spans.extend([
-                Span::styled("Ctrl-A", theme.accent_emphasis_style()),
-                Span::styled(" Add  ", theme.text_muted_style()),
+                Span::styled("Ctrl-E", theme.accent_emphasis_style()),
+                Span::styled(" Edit  ", theme.text_muted_style()),
             ]);
         }
+
         spans.extend([
             Span::styled("Enter/Ctrl-D", theme.accent_emphasis_style()),
             Span::styled(" Details  ", theme.text_muted_style()),
@@ -338,8 +342,9 @@ fn format_auth_status(status: &AuthStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::components::plugins::PluginListItem;
-    use heroku_mcp::types::plugin::AuthStatus;
+    use crate::ui::components::plugins::PluginDetail;
+    use heroku_mcp::AuthStatus;
+    use heroku_mcp::PluginStatus;
 
     #[test]
     fn plugins_table_component_constructs() {
@@ -369,15 +374,8 @@ mod tests {
 
     #[test]
     fn format_display_name_adds_selection_indicator() {
-        let plugin_item = PluginListItem {
-            name: "test-plugin".to_string(),
-            status: "active".to_string(),
-            command_or_url: "test-command".to_string(),
-            auth_status: AuthStatus::Unknown,
-            tags: vec![],
-            latency_ms: None,
-            last_error: None,
-        };
+        let mut plugin_item = PluginDetail::new("test-plugin".to_string(), "test-command".to_string(), None);
+        plugin_item.status = PluginStatus::Running;
 
         let display_name_focused = PluginsTableComponent::format_display_name(&plugin_item, true, true);
         assert_eq!(display_name_focused, "› test-plugin");

@@ -67,10 +67,7 @@ impl SuggestionEngine {
                 .iter()
                 .any(|it| matches!(it.kind, ItemKind::Value) && it.meta.as_deref() != Some("enum"));
             let provider_loading = has_binding && !provider_found;
-            return Some(SuggestionResult {
-                items,
-                provider_loading,
-            });
+            return Some(SuggestionResult { items, provider_loading });
         }
         None
     }
@@ -193,8 +190,7 @@ impl SuggestionEngine {
         };
         let (user_flags, user_args, _flag_values) = parse_user_flags_args(spec, remaining_parts);
         let current_input = remaining_parts.last().map(|s| s.as_str()).unwrap_or("");
-        let ends_with_space =
-            input.ends_with(' ') || input.ends_with('\t') || input.ends_with('\n') || input.ends_with('\r');
+        let ends_with_space = input.ends_with(' ') || input.ends_with('\t') || input.ends_with('\n') || input.ends_with('\r');
         let current_is_flag = current_input.starts_with('-');
 
         if let Some(out) = Self::suggest_for_pending_flag(spec, remaining_parts, input, providers) {
@@ -218,10 +214,7 @@ impl SuggestionEngine {
         // Suggest required flags if needed (or if user is typing a flag)
         Self::extend_flag_suggestions(spec, &user_flags, current_input, current_is_flag, &mut items);
 
-        SuggestionResult {
-            items,
-            provider_loading,
-        }
+        SuggestionResult { items, provider_loading }
     }
 }
 
@@ -386,8 +379,7 @@ fn find_pending_flag(spec: &CommandSpec, parts: &[String], input: &str) -> Optio
             let name = token.trim_start_matches('-');
             if let Some(flag) = spec.flags.iter().find(|flag| flag.name == name)
                 && flag.r#type != "boolean"
-                && (((j as usize) == parts.len() - 1 || parts[(j as usize) + 1].starts_with('-'))
-                    && !is_flag_value_complete(input))
+                && (((j as usize) == parts.len() - 1 || parts[(j as usize) + 1].starts_with('-')) && !is_flag_value_complete(input))
             {
                 return Some(name.to_string());
             }
@@ -606,12 +598,7 @@ pub(crate) fn required_flags_remaining(spec: &CommandSpec, user_flags: &[String]
 /// # Returns
 ///
 /// A vector of suggestion items for the available flags.
-fn collect_flag_candidates(
-    spec: &CommandSpec,
-    user_flags: &[String],
-    current: &str,
-    required_only: bool,
-) -> Vec<SuggestionItem> {
+fn collect_flag_candidates(spec: &CommandSpec, user_flags: &[String], current: &str, required_only: bool) -> Vec<SuggestionItem> {
     let mut out: Vec<SuggestionItem> = Vec::new();
 
     for flag in &spec.flags {
@@ -836,11 +823,7 @@ mod tests {
         map.insert(("apps:info".into(), "app".into()), vec!["demo".into(), "prod".into()]);
         let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
         let result = SuggestionEngine::build(&reg, &[provider], "apps info --app ");
-        let values: Vec<_> = result
-            .items
-            .iter()
-            .filter(|item| matches!(item.kind, ItemKind::Value))
-            .collect();
+        let values: Vec<_> = result.items.iter().filter(|item| matches!(item.kind, ItemKind::Value)).collect();
         assert!(!values.is_empty());
         assert!(values.iter().any(|item| item.display == "demo"));
         assert!(!result.provider_loading);
@@ -883,10 +866,7 @@ mod tests {
         ]);
         // Provider embedded on positional in the spec
         let mut map = std::collections::HashMap::new();
-        map.insert(
-            ("addons:config:update".into(), "addon".into()),
-            vec!["redis-123".into()],
-        );
+        map.insert(("addons:config:update".into(), "addon".into()), vec!["redis-123".into()]);
         let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
         let result = SuggestionEngine::build(&reg, &[provider], "addons config:update ");
         assert!(result.items.iter().any(|item| item.display == "redis-123"));
@@ -933,9 +913,7 @@ mod tests {
             spec,
         ]);
         // provider already embedded on flag
-        let empty_provider: Box<dyn ValueProvider> = Box::new(TestProvider {
-            map: Default::default(),
-        });
+        let empty_provider: Box<dyn ValueProvider> = Box::new(TestProvider { map: Default::default() });
         let result = SuggestionEngine::build(&reg, &[empty_provider], "apps info --app ");
         assert!(result.provider_loading);
     }
@@ -980,10 +958,7 @@ mod tests {
         map.insert(("apps:info".into(), "app".into()), vec!["heroku-prod".into()]);
         let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
         let result = SuggestionEngine::build(&reg, &[provider], "apps info heroku-prod");
-        assert!(
-            result.items.is_empty(),
-            "should not echo current value as sole suggestion"
-        );
+        assert!(result.items.is_empty(), "should not echo current value as sole suggestion");
     }
 
     #[test]
@@ -1044,14 +1019,8 @@ mod tests {
             spec,
         ]);
         let mut map = std::collections::HashMap::new();
-        map.insert(
-            ("pipelines:ci:run".into(), "pipeline".into()),
-            vec!["api".into(), "web".into()],
-        );
-        map.insert(
-            ("pipelines:ci:run".into(), "branch".into()),
-            vec!["main".into(), "develop".into()],
-        );
+        map.insert(("pipelines:ci:run".into(), "pipeline".into()), vec!["api".into(), "web".into()]);
+        map.insert(("pipelines:ci:run".into(), "branch".into()), vec!["main".into(), "develop".into()]);
         let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
         // With first positional filled and trailing space, suggest second positional list
         let result = SuggestionEngine::build(&reg, &[provider], "pipelines ci:run api ");

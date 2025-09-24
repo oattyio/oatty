@@ -53,9 +53,8 @@ impl MainLayout {
     pub fn responsive_layout(size: Rect, app: &App) -> Vec<Rect> {
         // Dynamically expand the palette area when suggestions popup is visible
         let mut palette_extra: u16 = 0;
-        let show_popup = app.palette.error_message().is_none()
-            && app.palette.is_suggestions_open()
-            && !app.palette.suggestions().is_empty();
+        let show_popup =
+            app.palette.error_message().is_none() && app.palette.is_suggestions_open() && !app.palette.suggestions().is_empty();
 
         if show_popup {
             let rows = app.palette.suggestions().len().min(10) as u16; // match palette.rs max_rows

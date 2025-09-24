@@ -1,59 +1,9 @@
-use std::fmt::Display;
-
-use heroku_mcp::types::plugin::AuthStatus;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 
-use crate::ui::components::plugins::{
-    PluginSecretsEditorState, add_plugin::state::PluginAddViewState, logs::PluginLogsState,
-};
+use crate::ui::components::plugins::{PluginSecretsEditorState, logs::PluginLogsState, plugin_editor::state::PluginEditViewState};
 
 use super::table::PluginsTableState;
-
-/// A row in the Plugins table.
-#[derive(Debug, Clone, Default)]
-pub struct PluginListItem {
-    pub name: String,
-    pub status: String,
-    pub command_or_url: String,
-    pub tags: Vec<String>,
-    pub latency_ms: Option<u64>,
-    pub last_error: Option<String>,
-    pub auth_status: AuthStatus,
-}
-
-impl Display for PluginListItem {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // Format the basic plugin information
-        write!(f, "Plugin: {}", self.name)?;
-
-        // Add status information
-        write!(f, " | Status: {}", self.status)?;
-
-        // Add command or URL
-        write!(f, " | Command/URL: {}", self.command_or_url)?;
-
-        // Add authentication status
-        write!(f, " | Auth: {}", self.auth_status)?;
-
-        // Add latency if available
-        if let Some(latency) = self.latency_ms {
-            write!(f, " | Latency: {}ms", latency)?;
-        }
-
-        // Add tags if present
-        if !self.tags.is_empty() {
-            write!(f, " | Tags: [{}]", self.tags.join(", "))?;
-        }
-
-        // Add last error if present
-        if let Some(error) = &self.last_error {
-            write!(f, " | Last Error: {}", error)?;
-        }
-
-        Ok(())
-    }
-}
 
 /// UI state for the Plugins view.
 #[derive(Debug, Clone)]
@@ -66,7 +16,7 @@ pub struct PluginsState {
     /// Environment editor state, if open
     pub secrets: Option<PluginSecretsEditorState>,
     /// Add plugin view state
-    pub add: Option<PluginAddViewState>,
+    pub add: Option<PluginEditViewState>,
     /// Whether the plugin logs overlay is currently open
     pub logs_open: bool,
 }
@@ -97,9 +47,7 @@ impl PluginsState {
     }
 
     pub fn open_secrets(&mut self, name: String) {
-        self.secrets = Some(crate::ui::components::plugins::secrets::PluginSecretsEditorState::new(
-            name,
-        ));
+        self.secrets = Some(crate::ui::components::plugins::secrets::PluginSecretsEditorState::new(name));
     }
     pub fn close_secrets(&mut self) {
         self.secrets = None;

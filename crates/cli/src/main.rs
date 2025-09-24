@@ -40,16 +40,16 @@ use tracing_subscriber::fmt;
 /// ```
 async fn main() -> Result<()> {
     init_tracing();
+    let cfg = load_config()?;
+    let plugin_engine = PluginEngine::new(cfg)?;
+    plugin_engine.prepare_registry().await?;
+
     let registry = Registry::from_embedded_schema()?;
     let cli = build_clap(&registry);
     let matches = cli.get_matches();
 
     // No subcommands => TUI
     if matches.subcommand_name().is_none() {
-        let cfg = load_config()?;
-        let plugin_engine = PluginEngine::new(cfg)?;
-        plugin_engine.start().await?;
-
         heroku_tui::run(registry, plugin_engine).await?;
         return Ok(());
     }

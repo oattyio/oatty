@@ -78,11 +78,7 @@ pub fn derive_commands_from_schema(value: &Value, service_id: ServiceId) -> Resu
                 continue;
             };
             let title = link.get("title").and_then(Value::as_str).unwrap_or("").to_string();
-            let description = link
-                .get("description")
-                .and_then(Value::as_str)
-                .unwrap_or(&title)
-                .to_string();
+            let description = link.get("description").and_then(Value::as_str).unwrap_or(&title).to_string();
 
             if let Some((_, action)) = classify_command(href, method) {
                 let (path_template, positional_args) = path_and_vars_with_help(href, value);
@@ -793,25 +789,15 @@ mod tests {
         }"#;
         let value: Value = serde_json::from_str(json).unwrap();
         let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
-        let spec = commands
-            .iter()
-            .find(|c| c.method == "POST")
-            .expect("POST rotate command exists");
+        let spec = commands.iter().find(|c| c.method == "POST").expect("POST rotate command exists");
 
         assert_eq!(spec.path, "/data/postgres/v1/{addon}/credentials/{cred_name}/rotate");
 
         let arg_names: Vec<_> = spec.positional_args.iter().map(|a| a.name.as_str()).collect();
-        assert_eq!(
-            arg_names,
-            vec!["addon", "cred_name"],
-            "positional names derived from placeholders"
-        );
+        assert_eq!(arg_names, vec!["addon", "cred_name"], "positional names derived from placeholders");
 
         // Ensure command name does not include version segment
-        assert!(
-            !spec.name.contains(":v1:"),
-            "command name should ignore version segments"
-        );
+        assert!(!spec.name.contains(":v1:"), "command name should ignore version segments");
         assert!(
             spec.name.starts_with("postgres:credentials:rotate:"),
             "expected name to include resource path segments"
@@ -841,10 +827,7 @@ mod tests {
         }"##;
         let value: Value = serde_json::from_str(json).unwrap();
         let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
-        let spec = commands
-            .iter()
-            .find(|c| c.method == "PATCH")
-            .expect("PATCH command exists");
+        let spec = commands.iter().find(|c| c.method == "PATCH").expect("PATCH command exists");
 
         // Should produce flags for name and force, with descriptions and required status
         let mut fl_map: HashMap<&str, (&Option<String>, bool)> = HashMap::new();

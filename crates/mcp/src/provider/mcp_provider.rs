@@ -93,17 +93,11 @@ impl McpProvider {
         let mut args = Map::new();
 
         // Add tool input schema to args
-        args.insert(
-            "input_schema".to_string(),
-            serde_json::to_value(tool.input_schema.as_ref())?,
-        );
+        args.insert("input_schema".to_string(), serde_json::to_value(tool.input_schema.as_ref())?);
 
         // Add tool description
         if let Some(description) = &tool.description {
-            args.insert(
-                "description".to_string(),
-                serde_json::Value::String(description.to_string()),
-            );
+            args.insert("description".to_string(), serde_json::Value::String(description.to_string()));
         }
 
         Ok(ProviderContract {

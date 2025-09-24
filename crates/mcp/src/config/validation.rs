@@ -23,8 +23,7 @@ pub fn validate_server_name(name: &str) -> Result<(), ValidationError> {
     if !name_regex.is_match(name) {
         return Err(ValidationError::InvalidServerName {
             name: name.to_string(),
-            reason: "Server name must contain only lowercase letters, numbers, dots, underscores, and hyphens"
-                .to_string(),
+            reason: "Server name must contain only lowercase letters, numbers, dots, underscores, and hyphens".to_string(),
         });
     }
 

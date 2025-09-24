@@ -117,10 +117,7 @@ impl PaginationComponent {
         let field = Paragraph::new(self.state.field.as_str())
             .block(
                 Block::default()
-                    .title(Line::from(vec![Span::styled(
-                        field_label,
-                        theme.text_secondary_style(),
-                    )]))
+                    .title(Line::from(vec![Span::styled(field_label, theme.text_secondary_style())]))
                     .borders(Borders::ALL)
                     .border_style(theme.border_style(false)),
             )
@@ -147,15 +144,7 @@ impl PaginationComponent {
     /// * `value` - The current value to display in the input field
     /// * `focused` - Whether this input field currently has focus
     /// * `theme` - The theme to use for styling
-    fn render_range_input(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        label: &str,
-        value: &str,
-        focused: bool,
-        theme: &dyn UiTheme,
-    ) {
+    fn render_range_input(&self, frame: &mut Frame, area: Rect, label: &str, value: &str, focused: bool, theme: &dyn UiTheme) {
         let title_style = if focused {
             theme.accent_emphasis_style()
         } else {
@@ -184,10 +173,7 @@ impl PaginationComponent {
     /// * `area` - The rectangular area to render within
     /// * `theme` - The theme to use for styling
     fn render_divider(&self, frame: &mut Frame, area: Rect, theme: &dyn UiTheme) {
-        let divider = Line::from(vec![Span::styled(
-            "─".repeat(area.width as usize),
-            theme.text_muted_style(),
-        )]);
+        let divider = Line::from(vec![Span::styled("─".repeat(area.width as usize), theme.text_muted_style())]);
         let paragraph = Paragraph::new(divider);
         frame.render_widget(paragraph, area);
     }
@@ -298,15 +284,7 @@ impl PaginationComponent {
     /// * `enabled` - Whether the button should be enabled
     /// * `focused` - Whether the button currently has focus
     /// * `theme` - The theme to use for styling
-    fn render_nav_button(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        label: &str,
-        enabled: bool,
-        focused: bool,
-        theme: &dyn UiTheme,
-    ) {
+    fn render_nav_button(&self, frame: &mut Frame, area: Rect, label: &str, enabled: bool, focused: bool, theme: &dyn UiTheme) {
         let button_style = if enabled {
             // Keep size stable on focus by avoiding bold; rely on border color
             // for focus indication.
@@ -425,10 +403,8 @@ impl Component for PaginationComponent {
             return Vec::new();
         }
 
-        let nav_focused = self.state.nav_first_f.get()
-            || self.state.nav_prev_f.get()
-            || self.state.nav_next_f.get()
-            || self.state.nav_last_f.get();
+        let nav_focused =
+            self.state.nav_first_f.get() || self.state.nav_prev_f.get() || self.state.nav_next_f.get() || self.state.nav_last_f.get();
         if !nav_focused {
             return Vec::new();
         }

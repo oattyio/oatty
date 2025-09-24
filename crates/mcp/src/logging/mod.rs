@@ -67,7 +67,7 @@ impl LogManager {
     /// Get recent log entries for a plugin.
     pub async fn get_recent_logs(&self, plugin_name: &str, count: usize) -> Vec<McpLogEntry> {
         let buffers = self.buffers.lock().await;
-
+        
         if let Some(buffer) = buffers.get(plugin_name) {
             buffer.get_recent(count)
         } else {
@@ -100,12 +100,7 @@ impl LogManager {
     }
 
     /// Export logs with optional redaction.
-    pub async fn export_logs_with_redaction(
-        &self,
-        plugin_name: &str,
-        path: &std::path::Path,
-        redact: bool,
-    ) -> Result<(), LogError> {
+    pub async fn export_logs_with_redaction(&self, plugin_name: &str, path: &std::path::Path, redact: bool) -> Result<(), LogError> {
         let logs = self.get_all_logs(plugin_name).await;
 
         let mut content = String::new();
@@ -166,7 +161,7 @@ pub fn sanitize_log_text(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::plugin::{LogLevel, LogSource};
+    use crate::types::{LogLevel, LogSource};
 
     use super::*;
 
@@ -202,10 +197,7 @@ mod tests {
         let mut raw_path = std::env::temp_dir();
         raw_path.push("mcp_log_raw.txt");
 
-        manager
-            .export_logs_with_redaction("p", &redacted_path, true)
-            .await
-            .unwrap();
+        manager.export_logs_with_redaction("p", &redacted_path, true).await.unwrap();
         manager.export_logs_with_redaction("p", &raw_path, false).await.unwrap();
 
         let redacted = tokio::fs::read_to_string(&redacted_path).await.unwrap();

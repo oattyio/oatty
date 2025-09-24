@@ -158,10 +158,7 @@ impl BrowserState {
 
     /// Gets the available range fields for the selected command
     pub fn available_ranges(&self) -> Vec<String> {
-        self.selected_command
-            .as_ref()
-            .map(|cmd| cmd.ranges.clone())
-            .unwrap_or_default()
+        self.selected_command.as_ref().map(|cmd| cmd.ranges.clone()).unwrap_or_default()
     }
 
     // Internal helpers for managing field/selection state

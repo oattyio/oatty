@@ -22,13 +22,11 @@
 use anyhow::Result;
 use anyhow::anyhow;
 use heroku_mcp::McpConfig;
-use heroku_mcp::PluginDetail;
 use heroku_mcp::config::McpServer;
 use heroku_mcp::config::default_config_path;
 use heroku_mcp::config::save_config_to_path;
 use heroku_mcp::config::validate_config;
 use heroku_mcp::config::validate_server_name;
-use heroku_mcp::{client::HealthCheckResult, types::plugin::AuthStatus};
 use heroku_registry::CommandSpec;
 use heroku_types::ExecOutcome;
 use heroku_types::{Effect, Modal, Route};
@@ -39,20 +37,19 @@ use reqwest::Url;
 use serde_json::Map;
 use serde_json::Value;
 use serde_json::from_str;
-use serde_json::json;
-use serde_json::to_string_pretty;
-use serde_json::to_value;
 use std::collections::HashMap;
 use std::fs::read_to_string;
-use std::sync::atomic::Ordering;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::vec;
+use tokio::task::JoinHandle;
 
 use crate::app::App;
 use crate::ui::components::logs::state::LogEntry;
 use crate::ui::components::plugins::EnvRow;
 use crate::{
     app::{self},
-    ui::components::plugins::{AddTransport, PluginListItem},
+    ui::components::plugins::PluginTransport,
 };
 
 /// Represents side-effectful system commands executed outside of pure state
@@ -105,9 +102,7 @@ pub enum Cmd {
     PluginsStop(String),
     PluginsRestart(String),
     PluginsRefresh,
-    PluginsRefreshLogs(String),
     PluginsExportLogsDefault(String),
-    PluginsOpenSecrets(String),
     PluginsSaveEnv {
         name: String,
         rows: Vec<(String, String)>,
@@ -116,12 +111,23 @@ pub enum Cmd {
     PluginsApplyAdd,
 }
 
-/// Convert application [`Effect`]s into actual [`Cmd`] instances.
+/// Collection of immediate and background work generated while handling effects.
+#[derive(Default)]
+pub struct CommandBatch {
+    /// Outcomes that completed synchronously.
+    pub immediate: Vec<ExecOutcome>,
+    /// Background tasks still running.
+    pub pending: Vec<JoinHandle<ExecOutcome>>,
+}
+
+/// Convert application [`Effect`]s into actual [`Cmd`] instances and dispatch
+/// the resulting work.
 ///
-/// This enables a clean separation: effects represent "what should happen",
-/// while commands describe "how it should happen".
-///
-pub async fn run_from_effects(app: &mut app::App<'_>, effects: Vec<Effect>) -> Vec<ExecOutcome> {
+/// This maintains a clean separation: effects represent "what should happen",
+/// while commands describe "how it should happen". Synchronous commands yield
+/// `ExecOutcome`s immediately; long-running commands are spawned so the caller
+/// can poll them later.
+pub async fn run_from_effects(app: &mut app::App<'_>, effects: Vec<Effect>) -> CommandBatch {
     let mut commands = Vec::new();
 
     for effect in effects {
@@ -136,10 +142,7 @@ pub async fn run_from_effects(app: &mut app::App<'_>, effects: Vec<Effect>) -> V
             Effect::PluginsStop(name) => Some(vec![Cmd::PluginsStop(name)]),
             Effect::PluginsRestart(name) => Some(vec![Cmd::PluginsRestart(name)]),
             Effect::PluginsRefresh => Some(vec![Cmd::PluginsRefresh]),
-            Effect::PluginsOpenLogs(name) => Some(vec![Cmd::PluginsRefreshLogs(name)]),
-            Effect::PluginsRefreshLogs(name) => Some(vec![Cmd::PluginsRefreshLogs(name)]),
             Effect::PluginsExportLogsDefault(name) => Some(vec![Cmd::PluginsExportLogsDefault(name)]),
-            Effect::PluginsOpenSecrets(name) => Some(vec![Cmd::PluginsOpenSecrets(name)]),
             Effect::PluginsSaveEnv { name, rows } => Some(vec![Cmd::PluginsSaveEnv { name, rows }]),
             Effect::PluginsOpenAdd => Some(vec![]),
             Effect::PluginsValidateAdd => Some(vec![Cmd::PluginsValidateAdd]),
@@ -180,9 +183,7 @@ fn handle_next_page_requested(app: &mut app::App, next_raw: String) -> Option<Ve
 
         commands.push(Cmd::ExecuteHttp(spec, body));
     } else {
-        app.logs
-            .entries
-            .push("Cannot request next page: no prior command context".into());
+        app.logs.entries.push("Cannot request next page: no prior command context".into());
     }
 
     Some(commands)
@@ -253,9 +254,7 @@ fn handle_first_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
 
         commands.push(Cmd::ExecuteHttp(spec, body));
     } else {
-        app.logs
-            .entries
-            .push("Cannot request first page: no prior command context".into());
+        app.logs.entries.push("Cannot request first page: no prior command context".into());
     }
 
     Some(commands)
@@ -313,45 +312,46 @@ fn handle_send_to_palette(app: &mut app::App, command_spec: CommandSpec) -> Opti
     Some(vec![])
 }
 
-/// Execute a sequence of commands and update application logs.
+/// Execute a sequence of commands, splitting completed outcomes from spawned
+/// background work.
 ///
 /// Each command corresponds to a user-visible side effect, such as writing
-/// content to the clipboard or making a network call. Logs are appended with
-/// human-readable results.
-///
-/// # Example
-/// ```rust,ignore
-/// # use your_crate::{run_cmds, Cmd};
-/// # struct DummyApp { logs: Vec<String> }
-/// # impl DummyApp { fn new() -> Self { Self { logs: Vec::new() } } }
-/// # fn make_app() -> DummyApp { DummyApp::new() }
-/// let mut app = make_app();
-/// let commands = vec![Cmd::ClipboardSet("test".into())];
-/// run_cmds(&mut app, commands);
-/// // (In real case, app.logs would contain "Copied: test" after success.)
-/// ```
-pub async fn run_cmds(app: &mut app::App<'_>, commands: Vec<Cmd>) -> Vec<ExecOutcome> {
-    let mut outcomes: Vec<ExecOutcome> = vec![];
+/// content to the clipboard or making a network call. Commands that can finish
+/// synchronously push their [`ExecOutcome`]s immediately, while long-running
+/// commands return `JoinHandle`s so the caller can poll them later without
+/// blocking the UI loop.
+pub async fn run_cmds(app: &mut app::App<'_>, commands: Vec<Cmd>) -> CommandBatch {
+    let mut batch = CommandBatch::default();
     for command in commands {
         let outcome = match command {
             Cmd::ApplyPaletteError(error) => apply_palette_error(app, error),
             Cmd::ClipboardSet(text) => execute_clipboard_set(app, text),
-            Cmd::ExecuteHttp(spec, body) => execute_http(app, spec, body).await,
+            Cmd::ExecuteHttp(spec, body) => {
+                batch.pending.push(spawn_execute_http(app, spec, body));
+                continue;
+            }
+            Cmd::PluginsStart(name) => {
+                batch.pending.push(spawn_execute_plugin_action(app, PluginAction::Start, name));
+                continue;
+            }
+            Cmd::PluginsStop(name) => {
+                batch.pending.push(spawn_execute_plugin_action(app, PluginAction::Stop, name));
+                continue;
+            }
+            Cmd::PluginsRestart(name) => {
+                batch.pending.push(spawn_execute_plugin_action(app, PluginAction::Restart, name));
+                continue;
+            }
             Cmd::LoadPlugins => execute_load_plugins(app).await,
-            Cmd::PluginsStart(name) => execute_plugins_action(app, PluginAction::Start, name).await,
-            Cmd::PluginsStop(name) => execute_plugins_action(app, PluginAction::Stop, name).await,
-            Cmd::PluginsRestart(name) => execute_plugins_action(app, PluginAction::Restart, name).await,
             Cmd::PluginsRefresh => execute_plugins_refresh(app).await,
-            Cmd::PluginsRefreshLogs(name) => execute_plugins_refresh_logs(app, name).await,
             Cmd::PluginsExportLogsDefault(name) => execute_plugins_export_default(app, name).await,
-            Cmd::PluginsOpenSecrets(name) => execute_plugins_open_env(name),
             Cmd::PluginsSaveEnv { name, rows } => execute_plugins_save_env(name, rows),
             Cmd::PluginsValidateAdd => execute_plugins_validate_add(app),
             Cmd::PluginsApplyAdd => execute_plugins_apply_add(app).await,
         };
-        outcomes.push(outcome);
+        batch.immediate.push(outcome);
     }
-    outcomes
+    batch
 }
 
 /// Execute a clipboard set command by writing text to the system clipboard.
@@ -389,29 +389,10 @@ fn apply_palette_error(app: &mut App, error: String) -> ExecOutcome {
 
 /// Load MCP plugins from the user's config file and populate the PluginsState list.
 async fn execute_load_plugins(app: &mut app::App<'_>) -> ExecOutcome {
-    let mut items: Vec<PluginListItem> = Vec::new();
     let plugin_engine = app.ctx.plugin_engine.clone();
-    for plugin_detail in plugin_engine.list_plugins().await {
-        let PluginDetail {
-            command_or_url,
-            status,
-            tags,
-            name,
-            ..
-        } = plugin_detail.clone();
-        items.push(PluginListItem {
-            auth_status: AuthStatus::Unknown,
-            name,
-            status: String::from(status.display()),
-            command_or_url,
-            tags,
-            latency_ms: None,
-            last_error: None,
-        });
-    }
-
-    items.sort_by(|a, b| a.name.cmp(&b.name));
-    app.plugins.table.replace_items(items);
+    let mut plugin_details = plugin_engine.list_plugins().await;
+    plugin_details.sort_by(|lhs, rhs| lhs.name.cmp(&rhs.name));
+    app.plugins.table.replace_items(plugin_details);
 
     ExecOutcome::default()
 }
@@ -424,71 +405,37 @@ enum PluginAction {
 }
 
 /// Execute a plugin lifecycle action using the MCP supervisor.
-async fn execute_plugins_action(app: &mut app::App<'_>, action: PluginAction, name: String) -> ExecOutcome {
-    let plugin_engine = &*app.ctx.plugin_engine;
+fn spawn_execute_plugin_action(app: &mut app::App<'_>, action: PluginAction, name: String) -> JoinHandle<ExecOutcome> {
+    app.executing = true;
+    app.throbber_idx = 0;
 
-    let client_mgr = plugin_engine.client_manager();
-    let res = match action {
-        PluginAction::Start => client_mgr.start_plugin(&name).await,
-        PluginAction::Stop => client_mgr.stop_plugin(&name).await,
-        PluginAction::Restart => client_mgr.restart_plugin(&name).await,
-    };
-    let msg = match (action, res) {
-        (PluginAction::Start, Ok(_)) => format!("Plugins: started '{}'", name),
-        (PluginAction::Stop, Ok(_)) => format!("Plugins: stopped '{}'", name),
-        (PluginAction::Restart, Ok(_)) => format!("Plugins: restarted '{}'", name),
-        (PluginAction::Start, Err(e)) => format!("Plugins: start '{}' failed: {}", name, e),
-        (PluginAction::Stop, Err(e)) => format!("Plugins: stop '{}' failed: {}", name, e),
-        (PluginAction::Restart, Err(e)) => format!("Plugins: restart '{}' failed: {}", name, e),
-    };
-    ExecOutcome::new(msg)
+    let plugin_engine = app.ctx.plugin_engine.clone();
+    tokio::spawn(async move {
+        let client_mgr = plugin_engine.client_manager();
+        let res = match action {
+            PluginAction::Start => client_mgr.start_plugin(&name).await,
+            PluginAction::Stop => client_mgr.stop_plugin(&name).await,
+            PluginAction::Restart => client_mgr.restart_plugin(&name).await,
+        };
+        let msg = match (action, res) {
+            (PluginAction::Start, Ok(_)) => format!("Plugins: started '{}'", name),
+            (PluginAction::Stop, Ok(_)) => format!("Plugins: stopped '{}'", name),
+            (PluginAction::Restart, Ok(_)) => format!("Plugins: restarted '{}'", name),
+            (PluginAction::Start, Err(e)) => format!("Plugins: start '{}' failed: {}", name, e),
+            (PluginAction::Stop, Err(e)) => format!("Plugins: stop '{}' failed: {}", name, e),
+            (PluginAction::Restart, Err(e)) => format!("Plugins: restart '{}' failed: {}", name, e),
+        };
+        let detail_result = plugin_engine.get_plugin_detail(&name).await.ok();
+        ExecOutcome::PluginDetail(msg, detail_result)
+    })
 }
 
 /// Refresh plugin statuses/health and dispatch a payload through ExecOutcome.result_json.
 async fn execute_plugins_refresh(app: &mut app::App<'_>) -> ExecOutcome {
-    let plugin_engine = app.ctx.plugin_engine.clone();
-    let names: Vec<String> = app.plugins.table.items.iter().map(|item| item.name.clone()).collect();
-
-    let mut arr = Vec::new();
-    let client_mgr = plugin_engine.client_manager();
-    for name in names {
-        if let Some(client) = client_mgr.get_client(&name).await {
-            let mut _client = client.lock().await;
-            let status_result = client_mgr.get_plugin_status(&name).await;
-            let stat = status_result.expect("status not available");
-
-            let health_result = _client.health_check().await;
-            let HealthCheckResult { latency_ms, error, .. } = health_result.ok().unwrap_or_default();
-            arr.push(json!({
-                "name": name,
-                "status": stat.display(),
-                "latency_ms": latency_ms,
-                "last_error": error.unwrap_or_default(),
-            }));
-        }
-    }
-    let payload = json!({ "plugins_refresh": arr });
-    ExecOutcome {
-        log: "Plugins: refreshed".into(),
-        result_json: Some(payload),
-        open_table: false,
-        pagination: None,
-    }
-}
-
-/// Refresh recent logs for the given plugin and dispatch payload.
-async fn execute_plugins_refresh_logs(app: &mut app::App<'_>, name: String) -> ExecOutcome {
     let plugin_engine = &*app.ctx.plugin_engine;
-    let mcp_client_mgr = plugin_engine.client_manager();
-    let lines = mcp_client_mgr.log_manager().get_recent_logs(&name, 500).await;
-    let payload = json!({ "plugins_logs": { "name": name, "lines": lines } });
+    let plugins = plugin_engine.list_plugins().await;
 
-    ExecOutcome {
-        log: "Plugins: logs refreshed".into(),
-        result_json: Some(payload),
-        open_table: false,
-        pagination: None,
-    }
+    ExecOutcome::PluginsRefresh(format!("{} plugins refreshed", plugins.len()), Some(plugins))
 }
 
 /// Export logs to a default path in temp dir (redacted).
@@ -503,56 +450,7 @@ async fn execute_plugins_export_default(app: &mut app::App<'_>, name: String) ->
         Ok(_) => format!("Plugins: exported logs for '{}' to {}", name, path.display()),
         Err(e) => format!("Plugins: export logs for '{}' failed: {}", name, e),
     };
-    ExecOutcome {
-        log: msg,
-        result_json: None,
-        open_table: false,
-        pagination: None,
-    }
-}
-
-/// Open environment editor: load rows from config and dispatch a payload.
-fn execute_plugins_open_env(name: String) -> ExecOutcome {
-    let path = default_config_path();
-    let mut rows: Vec<EnvRow> = Vec::new();
-    if let Ok(text) = read_to_string(&path) {
-        if let Ok(cfg) = from_str::<McpConfig>(&text) {
-            if let Some(s) = cfg.mcp_servers.get(&name) {
-                if let Some(env) = &s.env {
-                    for (k, v) in env.iter() {
-                        rows.push(EnvRow {
-                            key: k.clone(),
-                            value: v.clone(),
-                            is_secret: v.trim().starts_with("${secret:")
-                                || k.contains("SECRET")
-                                || k.contains("TOKEN")
-                                || k.contains("PASSWORD"),
-                        });
-                    }
-                }
-            }
-        }
-    }
-    // Dispatch as result_json for App to apply
-    let payload = json!({
-        "plugins_env": {
-            "name": name,
-            "rows": rows
-                .iter()
-                .map(|row| json!({
-                    "key": row.key,
-                    "value": row.value,
-                    "is_secret": row.is_secret,
-                }))
-                .collect::<Vec<_>>(),
-        }
-    });
-    ExecOutcome {
-        log: "Plugins: env loaded".into(),
-        result_json: Some(payload),
-        open_table: false,
-        pagination: None,
-    }
+    ExecOutcome::Log(msg)
 }
 
 /// Save environment changes back to config (overwrites env map for the plugin).
@@ -572,20 +470,10 @@ fn execute_plugins_save_env(name: String, rows: Vec<(String, String)>) -> ExecOu
     }
     // Validate and save
     if let Err(e) = validate_config(&cfg) {
-        return ExecOutcome {
-            log: format!("Env save validation failed: {}", e),
-            result_json: None,
-            open_table: false,
-            pagination: None,
-        };
+        return ExecOutcome::Log(format!("Env save validation failed: {}", e));
     }
     let _ = save_config_to_path(&cfg, &path);
-    ExecOutcome {
-        log: format!("Plugins: saved env for '{}'", name),
-        result_json: None,
-        open_table: false,
-        pagination: None,
-    }
+    ExecOutcome::Log(format!("Plugins: saved env for '{}'", name))
 }
 
 /// Validate Add Plugin view input and emit a preview payload.
@@ -594,43 +482,36 @@ fn execute_plugins_validate_add(app: &mut app::App) -> ExecOutcome {
         return ExecOutcome::default();
     };
     let name = add_view_state.name.trim();
-    let mut message = String::from("Looks good");
-    let mut ok = true;
     if let Err(e) = validate_server_name(name) {
-        ok = false;
-        message = e.to_string();
+        return ExecOutcome::PluginValidationErr(e.to_string());
     }
 
     // Build server candidate based on selected transport
     let mut server = McpServer::default();
     match add_view_state.transport {
-        AddTransport::Remote => {
+        PluginTransport::Remote => {
             let base_url = add_view_state.base_url.trim();
             if base_url.is_empty() {
-                ok = false;
-                message = "Base URL is required for remote transport".into();
+                return ExecOutcome::PluginValidationErr("Base URL is required for remote transport".into());
             } else if let Ok(url) = Url::parse(base_url) {
                 server.base_url = Some(url);
             } else {
-                ok = false;
-                message = "Invalid Base URL".into();
+                return ExecOutcome::PluginValidationErr("Invalid Base URL".into());
             }
-            match collect_key_value_rows(&add_view_state.header_editor.rows) {
+            match collect_key_value_rows(&add_view_state.kv_editor.rows) {
                 Ok(Some(map)) => {
                     server.headers = Some(map);
                 }
                 Ok(None) => {}
                 Err(errors) => {
-                    ok = false;
-                    message = format!("Invalid headers: {}", errors.join("; "));
+                    return ExecOutcome::PluginValidationErr(format!("Invalid headers: {}", errors.join("; ")));
                 }
             }
         }
-        AddTransport::Local => {
+        PluginTransport::Local => {
             let command = add_view_state.command.trim();
             if command.is_empty() {
-                ok = false;
-                message = "Command is required for local transport".into();
+                return ExecOutcome::PluginValidationErr("Command is required for local transport".into());
             } else {
                 server.command = Some(command.to_string());
                 if !add_view_state.args.trim().is_empty() {
@@ -638,30 +519,19 @@ fn execute_plugins_validate_add(app: &mut app::App) -> ExecOutcome {
                     server.args = Some(parsed);
                 }
             }
-            match collect_key_value_rows(&add_view_state.env_editor.rows) {
+            match collect_key_value_rows(&add_view_state.kv_editor.rows) {
                 Ok(Some(map)) => {
                     server.env = Some(map);
                 }
                 Ok(None) => {}
                 Err(errors) => {
-                    ok = false;
-                    message = format!("Invalid env vars: {}", errors.join("; "));
+                    return ExecOutcome::PluginValidationErr(format!("Invalid env vars: {}", errors.join("; ")));
                 }
             }
         }
     }
 
-    // Build a preview payload; skip live health probe (rmcp connects at start).
-    let patch = build_add_patch(name, &server);
-    let payload = json!({
-        "plugins_add_preview": { "ok": ok, "message": message, "patch": patch }
-    });
-    ExecOutcome {
-        log: format!("Add validate: {}", name),
-        result_json: Some(payload),
-        open_table: false,
-        pagination: None,
-    }
+    ExecOutcome::PluginValidationOk("✓ Looks good!".to_string())
 }
 
 /// Apply Add Plugin view: write server to config and refresh plugins list.
@@ -672,60 +542,40 @@ async fn execute_plugins_apply_add(app: &mut app::App<'_>) -> ExecOutcome {
     let name = add_view_state.name.trim().to_string();
     let mut server = McpServer::default();
     match add_view_state.transport {
-        AddTransport::Remote => {
+        PluginTransport::Remote => {
             let base_url = add_view_state.base_url.trim();
             if let Ok(url) = Url::parse(base_url) {
                 server.base_url = Some(url);
             } else {
-                return ExecOutcome {
-                    log: "Add apply validation failed: invalid Base URL".into(),
-                    result_json: None,
-                    open_table: false,
-                    pagination: None,
-                };
+                return ExecOutcome::PluginValidationErr("Add apply validation failed: invalid Base URL".into());
             }
-            match collect_key_value_rows(&add_view_state.header_editor.rows) {
+            match collect_key_value_rows(&add_view_state.kv_editor.rows) {
                 Ok(Some(map)) => {
                     server.headers = Some(map);
                 }
                 Ok(None) => {}
                 Err(errors) => {
-                    return ExecOutcome {
-                        log: format!("Add apply validation failed: invalid headers: {}", errors.join("; ")),
-                        result_json: None,
-                        open_table: false,
-                        pagination: None,
-                    };
+                    return ExecOutcome::PluginValidationErr(format!("Add apply validation failed: invalid headers: {}", errors.join("; ")));
                 }
             }
         }
-        AddTransport::Local => {
+        PluginTransport::Local => {
             let command = add_view_state.command.trim();
             if command.is_empty() {
-                return ExecOutcome {
-                    log: "Add apply validation failed: command is required".into(),
-                    result_json: None,
-                    open_table: false,
-                    pagination: None,
-                };
+                return ExecOutcome::PluginValidationErr("Add apply validation failed: command is required".into());
             }
             server.command = Some(command.to_string());
             if !add_view_state.args.trim().is_empty() {
                 let parsed: Vec<String> = add_view_state.args.split_whitespace().map(|s| s.to_string()).collect();
                 server.args = Some(parsed);
             }
-            match collect_key_value_rows(&add_view_state.env_editor.rows) {
+            match collect_key_value_rows(&add_view_state.kv_editor.rows) {
                 Ok(Some(map)) => {
                     server.env = Some(map);
                 }
                 Ok(None) => {}
                 Err(errors) => {
-                    return ExecOutcome {
-                        log: format!("Add apply validation failed: invalid env vars: {}", errors.join("; ")),
-                        result_json: None,
-                        open_table: false,
-                        pagination: None,
-                    };
+                    return ExecOutcome::PluginValidationErr(format!("Add apply validation failed: invalid env vars: {}", errors.join("; ")));
                 }
             }
         }
@@ -740,12 +590,7 @@ async fn execute_plugins_apply_add(app: &mut app::App<'_>) -> ExecOutcome {
     };
     cfg.mcp_servers.insert(name.clone(), server);
     if let Err(e) = validate_config(&cfg) {
-        return ExecOutcome {
-            log: format!("Add apply validation failed: {}", e),
-            result_json: None,
-            open_table: false,
-            pagination: None,
-        };
+        return ExecOutcome::PluginValidationErr(format!("Add apply validation failed: {}", e))
     }
     let _ = save_config_to_path(&cfg, &path);
     // Refresh list
@@ -756,21 +601,7 @@ async fn execute_plugins_apply_add(app: &mut app::App<'_>) -> ExecOutcome {
     if let Some(index) = app.plugins.table.items.iter().position(|item| item.name == name) {
         app.plugins.table.selected = Some(index);
     }
-    ExecOutcome {
-        log: format!("Plugins: added '{}'", name),
-        result_json: None,
-        open_table: false,
-        pagination: None,
-    }
-}
-
-fn build_add_patch(name: &str, server: &heroku_mcp::config::McpServer) -> String {
-    let mut map = Map::new();
-    let v = to_value(server).unwrap_or(serde_json::json!({}));
-    let mut servers = Map::new();
-    servers.insert(name.to_string(), v);
-    map.insert("mcpServers".to_string(), Value::Object(servers));
-    to_string_pretty(&serde_json::Value::Object(map)).unwrap_or_default()
+    ExecOutcome::Log(format!("Plugins: added '{}'", name))
 }
 
 /// Strict validator for key/value rows captured in the Add Plugin editor.
@@ -794,52 +625,29 @@ fn collect_key_value_rows(rows: &[EnvRow]) -> Result<Option<std::collections::Ha
     if map.is_empty() { Ok(None) } else { Ok(Some(map)) }
 }
 
-/// Spawn a background thread to execute a Heroku API request.
-///
-/// Updates the application state to indicate execution has begun, attaches
-/// a channel receiver for results, and spawns a worker thread that runs a
-/// Tokio runtime for the async HTTP call.
-///
-/// # Example
-/// ```rust,ignore
-/// # use your_crate::execute_http;
-/// # use heroku_registry::CommandSpec;
-/// # useMap;
-/// # struct DummyApp { executing: bool, exec_receiver: Option<std::sync::mpsc::Receiver<()>>, throbber_idx: usize }
-/// # impl DummyApp { fn new() -> Self { Self { executing: false, exec_receiver: None, throbber_idx: 0 } } }
-/// let mut app = DummyApp::new();
-/// let spec = CommandSpec { method: "GET".into(), path: "/apps".into() };
-/// execute_http(&mut app, spec, "/apps".into(), Map::new());
-/// assert!(app.executing);
-/// ```
-///
-/// # Arguments
-/// * `app` - The application state to update with execution status
-/// * `spec` - The command specification for the HTTP request
-/// * `path` - The API endpoint path
-/// * `body` - The request body as a JSON map
-async fn execute_http(app: &mut app::App<'_>, spec: CommandSpec, body: Map<String, Value>) -> ExecOutcome {
-    // Live request: spawn async task and show throbber
+/// Spawn an HTTP execution on the Tokio scheduler while updating local state
+/// to show the spinner.
+fn spawn_execute_http(app: &mut app::App<'_>, spec: CommandSpec, body: Map<String, Value>) -> JoinHandle<ExecOutcome> {
     app.executing = true;
     app.throbber_idx = 0;
 
     let active = app.active_exec_count.clone();
     active.fetch_add(1, Ordering::Relaxed);
 
+    tokio::spawn(async move { execute_http_task(active, spec, body).await })
+}
+
+/// Background task body for executing an HTTP request and translating it into
+/// an [`ExecOutcome`].
+async fn execute_http_task(active_exec_count: Arc<AtomicUsize>, spec: CommandSpec, body: Map<String, Value>) -> ExecOutcome {
     let outcome = exec_remote(&spec, body).await;
 
     let outcome = match outcome {
         Ok(out) => out,
-        Err(err) => heroku_types::ExecOutcome {
-            log: format!("Error: {}", err),
-            result_json: None,
-            open_table: false,
-            pagination: None,
-        },
+        Err(err) => ExecOutcome::Log(format!("Error: {}", err)),
     };
 
-    // Mark one execution completed
-    active.fetch_sub(1, Ordering::Relaxed);
+    active_exec_count.fetch_sub(1, Ordering::Relaxed);
 
     outcome
 }
@@ -943,10 +751,7 @@ fn validate_command_arguments(
             .iter()
             .map(|arg| arg.name.to_string())
             .collect();
-        return Err(anyhow!(
-            "Missing required argument(s): {}",
-            missing_arguments.join(", ")
-        ));
+        return Err(anyhow!("Missing required argument(s): {}", missing_arguments.join(", ")));
     }
 
     // Validate required flags
@@ -1095,12 +900,7 @@ fn validate_command(application: &mut app::App) -> Result<(CommandSpec, Map<Stri
     Ok((command_spec, request_body, user_args))
 }
 
-fn persist_execution_context(
-    application: &mut app::App,
-    command_spec: &CommandSpec,
-    request_body: &Map<String, Value>,
-    input: &str,
-) {
+fn persist_execution_context(application: &mut app::App, command_spec: &CommandSpec, request_body: &Map<String, Value>, input: &str) {
     application.last_command_ranges = Some(command_spec.ranges.clone());
     application.last_spec = Some(command_spec.clone());
     application.last_body = Some(request_body.clone());
@@ -1110,16 +910,8 @@ fn persist_execution_context(
         .and_then(|v| v.as_str())
         .map(str::trim)
         .filter(|s| !s.is_empty());
-    let init_start = request_body
-        .get("range-start")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim();
-    let init_end = request_body
-        .get("range-end")
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .trim();
+    let init_start = request_body.get("range-start").and_then(|v| v.as_str()).unwrap_or("").trim();
+    let init_end = request_body.get("range-end").and_then(|v| v.as_str()).unwrap_or("").trim();
     let init_order = request_body
         .get("order")
         .and_then(|v| v.as_str())
@@ -1146,18 +938,11 @@ fn persist_execution_context(
     application.palette.push_history_if_needed(input);
 }
 
-fn execute_command(
-    command_spec: CommandSpec,
-    request_body: Map<String, Value>,
-    user_args: Vec<String>,
-) -> Option<Vec<Cmd>> {
+fn execute_command(command_spec: CommandSpec, request_body: Map<String, Value>, user_args: Vec<String>) -> Option<Vec<Cmd>> {
     let mut command_spec_to_run = command_spec.clone();
     let mut positional_argument_map: HashMap<String, String> = HashMap::new();
     for (index, positional_argument) in command_spec.positional_args.iter().enumerate() {
-        positional_argument_map.insert(
-            positional_argument.name.clone(),
-            user_args.get(index).cloned().unwrap_or_default(),
-        );
+        positional_argument_map.insert(positional_argument.name.clone(), user_args.get(index).cloned().unwrap_or_default());
     }
 
     command_spec_to_run.path = resolve_path(&command_spec.path, &positional_argument_map);

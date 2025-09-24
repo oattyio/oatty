@@ -6,4 +6,4 @@ mod registry;
 
 pub use engine::{PluginEngine, PluginEngineError};
 pub use lifecycle::{LifecycleError, LifecycleManager};
-pub use registry::{PluginInfo, PluginRegistry, RegistryError};
+pub use registry::{PluginRegistry, RegistryError};

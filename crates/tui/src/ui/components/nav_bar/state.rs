@@ -97,9 +97,7 @@ impl VerticalNavBarState {
     /// `selected_index` into range and focuses that item.
     pub fn rebuild_item_focus_flags(&mut self) {
         let length = self.items.len();
-        self.item_focus_flags = (0..length)
-            .map(|i| FocusFlag::named(&format!("nav.vertical.item.{i}")))
-            .collect();
+        self.item_focus_flags = (0..length).map(|i| FocusFlag::named(&format!("nav.vertical.item.{i}"))).collect();
         if length == 0 {
             self.selected_index = 0;
         } else if self.selected_index >= length {
