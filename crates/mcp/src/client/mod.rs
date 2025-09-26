@@ -3,12 +3,12 @@
 //! This module exposes a focused, public surface for managing MCP plugins via `rmcp`.
 //! Implementation is split across submodules for clarity and maintainability.
 
-mod client;
+mod core;
 mod health;
 mod http;
 mod manager;
 mod stdio;
 
-pub use client::McpClient;
+pub use core::McpClient;
 pub use health::HealthCheckResult;
 pub use manager::{ClientManagerError, ClientManagerEvent, McpClientManager};

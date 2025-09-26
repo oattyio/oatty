@@ -1,6 +1,6 @@
 # ASSISTANT_INSTRUCTIONS_DRACULA_THEME.md
 
-You are implementing the Heroku TUI using the **Dracula theme**. Follow these rules exactly to ensure a cohesive, accessible, and professional look.
+You are implementing the Heroku TUI using opinionated themes. The default is **Dracula**, with optional **Nord** and **Cyberpunk** palettes. Follow these rules exactly to ensure a cohesive, accessible, and professional look across themes.
 
 ---
 
@@ -207,6 +207,49 @@ fn status_color(s: &str) -> Color {
     }
 }
 ```
+
+---
+
+## Cyberpunk Theme (experimental)
+
+Set `TUI_THEME=cyberpunk` (or `cyberpunk_hc`) for a neon-forward palette. The theme balances luminous accents with deep purple surfaces and remains legible on dark terminals.
+
+**Core**
+- BG_MAIN:        `#0d0221` ← root background
+- BG_PANEL:       `#16063b` ← panel cards/inputs
+- SURFACE_MUTED:  `#240046` ← secondary fills, zebra striping
+- UI_BORDER:      `#41337a` ← borders/dividers/scrollbars
+- MODAL_OVERLAY:  `#09011b` ← backdrop behind modals
+
+**Foreground**
+- TEXT_PRIMARY:   `#f8eeff`
+- TEXT_SECONDARY: `#9a86fd`
+- TEXT_MUTED:     `#6a64a4`
+
+**Accents**
+- ACCENT_PRIMARY:   `#00f6ff` ← focus glow, prompts
+- ACCENT_SECONDARY: `#ff4ecd` ← interactive highlights, borders when focused
+- ACCENT_SUBTLE:    `#7cffcb` ← badges, subtle indicators
+
+**Status (semantic)**
+- STATUS_INFO:    `#00f6ff`
+- STATUS_SUCCESS: `#72f1b8`
+- STATUS_WARNING: `#ffd166`
+- STATUS_ERROR:   `#ff2965`
+
+**Selection and Focus**
+- Selection background: `#2a1a5e`
+- Selection text: `#f8eeff`
+- Focus border: `#ff4ecd` (standard) / `#00f6ff` (high contrast)
+
+**Guidance**
+- Keep large background areas on BG_MAIN/BG_PANEL to avoid eye fatigue.
+- Reserve ACCENT_SECONDARY for active focus rings, current navigation targets, and modal headers to create a neon edge without overuse.
+- Use ACCENT_PRIMARY for motion cues (spinners, progress) and informational callouts.
+- When rendering badges or chips, prefer ACCENT_SUBTLE with bold text to maintain readability.
+- High-contrast mode strengthens borders and keeps text at maximum brightness; rely on it when terminals reduce saturation.
+
+Always verify that contrasts meet accessibility requirements by previewing the TUI with `TUI_THEME=cyberpunk` in a dark terminal and checking selection states, zebra striping, and modal overlays.
 
 ---
 

@@ -6,7 +6,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Registry for managing plugin metadata.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PluginRegistry {
     /// Registered plugins.
     plugins: Arc<Mutex<HashMap<String, PluginDetail>>>,
@@ -79,6 +79,17 @@ impl PluginRegistry {
         let mut status_map = self.status.lock().await;
         status_map.insert(name.to_string(), status);
         Ok(())
+    }
+
+    /// Update the tracked tool count for a plugin.
+    pub async fn set_plugin_tool_count(&self, name: &str, count: usize) -> Result<(), RegistryError> {
+        let mut plugins = self.plugins.lock().await;
+        if let Some(detail) = plugins.get_mut(name) {
+            detail.tool_count = count;
+            Ok(())
+        } else {
+            Err(RegistryError::PluginNotFound { name: name.to_string() })
+        }
     }
 
     /// Get all plugin names.

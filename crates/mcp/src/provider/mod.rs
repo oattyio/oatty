@@ -127,11 +127,14 @@ pub enum McpProviderError {
 mod tests {
     use super::*;
     use crate::config::McpConfig;
+    use heroku_registry::Registry as CommandRegistry;
+    use std::sync::Mutex;
 
     #[tokio::test]
     async fn test_mcp_provider_registry() {
         let config = McpConfig::default();
-        let plugin_engine = Arc::new(PluginEngine::new(config).unwrap());
+        let registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&registry)).unwrap());
         let registry = McpProviderRegistry::new(plugin_engine);
 
         let providers = registry.list_providers().await;

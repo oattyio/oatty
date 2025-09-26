@@ -6,13 +6,13 @@
 
 use std::{
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
 };
 
-use heroku_mcp::{PluginDetail, PluginEngine, PluginStatus};
+use heroku_mcp::{PluginDetail, PluginEngine};
 use heroku_registry::Registry;
 use heroku_types::{Effect, ExecOutcome, Modal, Msg, Route};
 use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
@@ -20,7 +20,7 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::ui::components::{
     BrowserComponent, HelpComponent, PluginsComponent, TableComponent,
-    logs::{LogDetailsComponent},
+    logs::LogDetailsComponent,
     nav_bar::VerticalNavBarState,
     plugins::{PluginsDetailsComponent, PluginsSecretsComponent},
 };
@@ -42,9 +42,10 @@ use crate::ui::{
 /// Holds runtime-wide objects like the command registry and configuration
 /// flags. This avoids threading multiple references through components and
 /// helps reduce borrow complexity.
+#[derive(Debug)]
 pub struct SharedCtx {
     /// Global Heroku command registry
-    pub registry: Registry,
+    pub registry: Arc<Mutex<Registry>>,
     /// Global debug flag (from env)
     pub debug_enabled: bool,
     /// Value providers for suggestions
@@ -56,21 +57,18 @@ pub struct SharedCtx {
 }
 
 impl SharedCtx {
-    pub fn new(registry: Registry, plugin_engine: PluginEngine) -> Self {
+    pub fn new(registry: Arc<Mutex<Registry>>, plugin_engine: Arc<PluginEngine>) -> Self {
         let debug_enabled = std::env::var("DEBUG")
             .map(|v| !v.is_empty() && v != "0" && v.to_lowercase() != "false")
             .unwrap_or(false);
         // Add registry-backed provider with a small TTL cache
-        let providers: Vec<Box<dyn ValueProvider>> = vec![Box::new(RegistryBackedProvider::new(
-            Arc::new(registry.clone()),
-            Duration::from_secs(45),
-        ))];
+        let providers: Vec<Box<dyn ValueProvider>> = vec![Box::new(RegistryBackedProvider::new(Duration::from_secs(45)))];
         Self {
             registry,
             debug_enabled,
             providers,
             theme: theme::load_from_env(),
-            plugin_engine: Arc::new(plugin_engine),
+            plugin_engine,
         }
     }
 }
@@ -148,15 +146,15 @@ impl App<'_> {
     /// ```rust,ignore
     /// // Requires constructing a full Registry and App; ignored in doctests.
     /// ```
-    pub fn new(registry: heroku_registry::Registry, engine: PluginEngine) -> Self {
+    pub fn new(registry: Arc<Mutex<heroku_registry::Registry>>, engine: Arc<PluginEngine>) -> Self {
         let mut application = Self {
-            ctx: SharedCtx::new(registry, engine),
-            browser: BrowserState::default(),
+            ctx: SharedCtx::new(Arc::clone(&registry), engine),
+            browser: BrowserState::new(Arc::clone(&registry)),
             logs: LogsState::default(),
             help: HelpState::default(),
             plugins: PluginsState::new(),
             table: TableState::default(),
-            palette: PaletteState::default(),
+            palette: PaletteState::new(Arc::clone(&registry)),
             nav_bar: VerticalNavBarState::defaults_for_views(),
             executing: false,
             throbber_idx: 0,
@@ -175,10 +173,6 @@ impl App<'_> {
             current_route: Route::Palette,
             open_modal_kind: None,
         };
-
-        // Initialize command browser and palette with all available commands
-        application.browser.set_all_commands(application.ctx.registry.commands.clone());
-        application.palette.set_all_commands(application.ctx.registry.commands.clone());
         application.browser.update_browser_filtered();
 
         // Initialize rat-focus and set a sensible starting focus inside palette
@@ -245,8 +239,8 @@ impl App<'_> {
         // rebuild suggestions to pick up newly cached results without requiring
         // another keypress
         if self.palette.is_suggestions_open() && self.palette.is_provider_loading() {
-            let SharedCtx { registry, providers, .. } = &self.ctx;
-            self.palette.apply_build_suggestions(registry, providers, &*self.ctx.theme);
+            let SharedCtx { providers, .. } = &self.ctx;
+            self.palette.apply_build_suggestions(providers, &*self.ctx.theme);
         }
         vec![]
     }
@@ -266,19 +260,21 @@ impl App<'_> {
     ///
     /// Returns `true` if the execution was handled as a special case (plugin response)
     /// and the caller should return early, `false` if normal processing should continue.
-    fn handle_execution_completion(&mut self, execution_outcome: ExecOutcome) -> Vec<Effect> {
+    fn handle_execution_completion(&mut self, execution_outcome: Box<ExecOutcome>) -> Vec<Effect> {
+        let execution_outcome = *execution_outcome;
         // Keep executing=true if other executions are still active
         let still_executing = self.active_exec_count.load(Ordering::Relaxed) > 0;
         self.executing = still_executing;
         match execution_outcome {
             ExecOutcome::Http(..) => self.process_general_execution_result(execution_outcome),
+            ExecOutcome::Mcp(log, value) => self.process_mcp_execution_result(log, value),
             ExecOutcome::PluginDetail(log, maybe_detail) => self.handle_plugin_detail(log, maybe_detail),
-            ExecOutcome::PluginsRefresh(log, maybe_plugins ) => self.handle_plugin_refresh_response(log, maybe_plugins),
+            ExecOutcome::PluginsRefresh(log, maybe_plugins) => self.handle_plugin_refresh_response(log, maybe_plugins),
             ExecOutcome::Log(log) => {
                 self.logs.entries.push(log);
                 vec![]
             }
-            _ => vec![]
+            _ => vec![],
         }
     }
 
@@ -292,11 +288,9 @@ impl App<'_> {
     /// # Returns
     ///
     /// Returns `Vec<Effect>` if follow up effects are needed
-    fn handle_plugin_detail(&mut self, log: String, maybe_detail:Option<PluginDetail>) -> Vec<Effect> {
+    fn handle_plugin_detail(&mut self, log: String, maybe_detail: Option<PluginDetail>) -> Vec<Effect> {
         self.logs.entries.push(log);
-        let Some(detail) = maybe_detail else {
-            return vec![]
-        };
+        let Some(detail) = maybe_detail else { return vec![] };
 
         self.plugins.table.update_item(detail);
 
@@ -331,7 +325,7 @@ impl App<'_> {
     ///
     /// * `execution_outcome` - The result of the command execution
     fn process_general_execution_result(&mut self, execution_outcome: ExecOutcome) -> Vec<Effect> {
-        let ExecOutcome::Http(log, value, maybe_pagination, open_table ) = execution_outcome else {
+        let ExecOutcome::Http(log, value, maybe_pagination, open_table) = execution_outcome else {
             return vec![];
         };
 
@@ -356,6 +350,28 @@ impl App<'_> {
             self.last_pagination = maybe_pagination;
             self.palette.reduce_clear_all();
 
+            return vec![Effect::ShowModal(Modal::Results)];
+        }
+
+        vec![]
+    }
+
+    fn process_mcp_execution_result(&mut self, log: String, value: JsonValue) -> Vec<Effect> {
+        let label = command_label(self.last_spec.as_ref());
+        let success = if log.contains("failed") { "failed" } else { "succeeded" };
+        let summary = format!("{} - {}", label, success);
+
+        self.logs.entries.push(summary);
+        self.logs.rich_entries.push(LogEntry::Text {
+            level: Some(if success == "failed" { "error" } else { "info" }.into()),
+            msg: log.clone(),
+        });
+        self.trim_logs_if_needed();
+
+        if value.is_object() || value.is_array() {
+            self.table.apply_result_json(Some(value), &*self.ctx.theme);
+            self.table.normalize();
+            self.palette.reduce_clear_all();
             return vec![Effect::ShowModal(Modal::Results)];
         }
 
@@ -492,20 +508,17 @@ fn truncate_for_summary(text: &str, max_len: usize) -> String {
 mod tests {
     use super::*;
     use heroku_registry::CommandSpec;
-    use heroku_types::ServiceId;
+    use heroku_types::{ServiceId, command::HttpCommandSpec};
 
     fn sample_spec() -> CommandSpec {
-        CommandSpec {
-            group: "apps".to_string(),
-            name: "info".to_string(),
-            summary: String::new(),
-            positional_args: Vec::new(),
-            flags: Vec::new(),
-            method: "GET".to_string(),
-            path: "/apps".to_string(),
-            ranges: Vec::new(),
-            service_id: ServiceId::CoreApi,
-        }
+        CommandSpec::new_http(
+            "apps".to_string(),
+            "info".to_string(),
+            String::new(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new()),
+        )
     }
 
     #[test]
@@ -513,7 +526,7 @@ mod tests {
         let spec = sample_spec();
         let (summary, status) = summarize_execution_outcome(Some(&spec), "200 OK\n{\"foo\":\"bar\"}");
 
-        assert_eq!(summary, "apps info - succeeded (200 OK)");
+        assert_eq!(summary, "apps info - success (200 OK)");
         assert_eq!(status, Some(200));
     }
 
@@ -533,7 +546,7 @@ mod tests {
     fn summarize_without_spec_uses_generic_label() {
         let (summary, status) = summarize_execution_outcome(None, "200 OK\n{}");
 
-        assert_eq!(summary, "Command - succeeded (200 OK)");
+        assert_eq!(summary, "Command - success (200 OK)");
         assert_eq!(status, Some(200));
     }
 

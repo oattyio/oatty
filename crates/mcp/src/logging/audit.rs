@@ -10,6 +10,7 @@ use thiserror::Error;
 use tracing::debug;
 
 /// Audit logger for tracking plugin lifecycle events.
+#[derive(Debug)]
 pub struct AuditLogger {
     /// Path to the audit log file.
     log_path: PathBuf,

@@ -5,6 +5,7 @@ use std::{process::Stdio, sync::Arc};
 use anyhow::Result;
 use rmcp::{
     RoleClient,
+    model::CallToolRequestParam,
     service::{RunningService, ServiceExt as _},
     transport::{SseClientTransport, TokioChildProcess, sse_client::SseClientConfig},
 };
@@ -12,7 +13,7 @@ use rmcp::{
 use crate::{
     config::McpServer,
     logging::LogManager,
-    types::{HealthStatus, PluginStatus},
+    types::{HealthStatus, McpToolMetadata, PluginStatus},
 };
 
 use super::{
@@ -22,6 +23,7 @@ use super::{
 };
 
 /// rmcp-backed MCP client lifecycle wrapper.
+#[derive(Debug)]
 pub struct McpClient {
     /// Logical plugin name.
     pub(crate) name: String,
@@ -35,6 +37,8 @@ pub struct McpClient {
     pub(crate) service: Option<RunningService<RoleClient, ()>>,
     /// Shared log manager for capturing plugin logs (e.g., stderr).
     pub(crate) log_manager: Arc<LogManager>,
+    /// Last known list of tools exposed by the plugin.
+    pub(crate) tools: Arc<Vec<McpToolMetadata>>,
 }
 
 impl McpClient {
@@ -47,11 +51,12 @@ impl McpClient {
             health: HealthStatus::default(),
             service: None,
             log_manager,
+            tools: Arc::new(Vec::new()),
         }
     }
 
     /// Connect using rmcp via stdio or http transport.
-    pub async fn connect(&mut self) -> Result<()> {
+    pub async fn connect(&mut self) -> Result<Arc<Vec<McpToolMetadata>>> {
         self.status = PluginStatus::Starting;
         let start_time = std::time::Instant::now();
 
@@ -64,10 +69,11 @@ impl McpClient {
         };
 
         self.service = Some(service);
+        let tools = self.refresh_tools().await?;
         self.status = PluginStatus::Running;
         self.health.mark_healthy();
         self.health.handshake_latency = Some(start_time.elapsed().as_millis() as u64);
-        Ok(())
+        Ok(tools)
     }
 
     /// Disconnect from the server and mark the client as stopped.
@@ -77,7 +83,13 @@ impl McpClient {
         }
         self.status = PluginStatus::Stopped;
         self.health.mark_unhealthy("Disconnected".to_string());
+        self.tools = Arc::new(Vec::new());
         Ok(())
+    }
+
+    /// Latest discovered tools for this client.
+    pub fn tools(&self) -> Arc<Vec<McpToolMetadata>> {
+        Arc::clone(&self.tools)
     }
 
     /// Current plugin status.
@@ -124,5 +136,45 @@ impl McpClient {
             .await
             .map_err(|e| anyhow::anyhow!(e.to_string()))?;
         Ok(().serve(transport).await?)
+    }
+
+    /// Fetch the current tool list from the active service and update the local snapshot.
+    pub async fn refresh_tools(&mut self) -> Result<Arc<Vec<McpToolMetadata>>> {
+        let service = self
+            .service
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("plugin '{}' is not connected", self.name))?;
+
+        let tools = service
+            .list_all_tools()
+            .await
+            .map_err(|err| anyhow::anyhow!("list_tools failed for '{}': {err}", self.name))?
+            .into_iter()
+            .map(McpToolMetadata::from)
+            .collect::<Vec<_>>();
+
+        let snapshot = Arc::new(tools);
+        self.tools = Arc::clone(&snapshot);
+        Ok(snapshot)
+    }
+
+    /// Invoke a tool provided by this plugin and return the raw MCP response payload.
+    pub async fn call_tool(
+        &self,
+        tool_name: &str,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<rmcp::model::CallToolResult> {
+        let service = self
+            .service
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("plugin '{}' is not connected", self.name))?;
+
+        service
+            .call_tool(CallToolRequestParam {
+                name: tool_name.to_string().into(),
+                arguments: Some(arguments.clone()),
+            })
+            .await
+            .map_err(|err| anyhow::anyhow!("tool '{}' failed: {err}", tool_name))
     }
 }

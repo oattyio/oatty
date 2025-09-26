@@ -6,8 +6,9 @@
 //! requests. Fuzzy matching is applied to produce relevant, ranked suggestions.
 
 use crate::ui::components::palette::state::ValueProvider;
-use heroku_registry::Registry;
-use heroku_types::{ItemKind, SuggestionItem};
+use heroku_registry::find_by_group_and_cmd;
+use heroku_types::CommandSpec;
+use heroku_types::{ItemKind, SuggestionItem, command::CommandExecution};
 use heroku_util::http_path_resolution::build_path;
 use heroku_util::{fetch_json_array, fuzzy_score};
 use std::{
@@ -29,8 +30,6 @@ struct CacheEntry {
 /// and returns fuzzy-matched suggestions for a given field and partial input.
 #[derive(Debug, Clone)]
 pub struct RegistryBackedProvider {
-    /// Shared registry containing command specifications and provider bindings
-    registry: Arc<Registry>,
     /// Time-to-live duration for cached fetch results
     ttl: Duration,
     /// In-memory cache for provider results keyed by provider id
@@ -41,9 +40,8 @@ pub struct RegistryBackedProvider {
 
 impl RegistryBackedProvider {
     /// Creates a new provider with the given registry and cache TTL.
-    pub fn new(registry: Arc<Registry>, ttl: Duration) -> Self {
+    pub fn new(ttl: Duration) -> Self {
         Self {
-            registry,
             ttl,
             cache: Arc::new(Mutex::new(HashMap::new())),
             active_fetches: Arc::new(Mutex::new(HashSet::new())),
@@ -51,8 +49,14 @@ impl RegistryBackedProvider {
     }
 
     /// Finds the provider ID for a field within a command specified by group and name.
-    fn provider_for_field(&self, group: &str, name: &str, field: &str) -> Option<(String, Vec<heroku_types::Bind>)> {
-        let command_spec = self.registry.find_by_group_and_cmd(group, name).ok()?;
+    fn provider_for_field(
+        &self,
+        commands: &Vec<CommandSpec>,
+        group: &str,
+        name: &str,
+        field: &str,
+    ) -> Option<(String, Vec<heroku_types::Bind>)> {
+        let command_spec = find_by_group_and_cmd(commands, group, name).ok()?;
         // Check flags first
         if let Some(flag) = command_spec.flags.iter().find(|flag| flag.name == field)
             && let Some(heroku_types::ValueProvider::Command { command_id, binds }) = &flag.provider
@@ -97,7 +101,12 @@ impl RegistryBackedProvider {
     ///
     /// Returns cached values if fresh, otherwise spawns a background fetch and returns
     /// an empty vector. Subsequent calls will use cached results after the fetch completes.
-    fn list_values_for_provider(&self, provider_id: &str, variables: &serde_json::Map<String, serde_json::Value>) -> Vec<String> {
+    fn list_values_for_provider(
+        &self,
+        commands: &Vec<CommandSpec>,
+        provider_id: &str,
+        variables: &serde_json::Map<String, serde_json::Value>,
+    ) -> Vec<String> {
         if provider_id.is_empty() {
             return Vec::new();
         }
@@ -114,20 +123,30 @@ impl RegistryBackedProvider {
             _ => return Vec::new(),
         };
 
-        // Get command spec and path
-        let Ok(command_spec) = self.registry.find_by_group_and_cmd(group, name) else {
+        let Ok(command_spec) = find_by_group_and_cmd(commands, group, name) else {
+            return Vec::new();
+        };
+
+        if !matches!(command_spec.execution(), CommandExecution::Http(_)) {
+            return Vec::new();
+        }
+
+        let Some(command_http) = command_spec.http() else {
             return Vec::new();
         };
 
         // Build resolved path when variables provided and append query for leftover vars
         let mut resolved_spec = command_spec.clone();
+        let Some(resolved_http) = resolved_spec.http_mut() else {
+            return Vec::new();
+        };
         if !variables.is_empty() {
-            let path = build_path(&resolved_spec.path, variables);
+            let path = build_path(&command_http.path, variables);
             // Determine which keys were used in path placeholders by checking original path for `{key}`
             let mut unused_variables: Vec<(String, String)> = Vec::new();
             for (key, value) in variables.iter() {
                 let needle = format!("{{{}}}", key);
-                if !command_spec.path.contains(&needle) {
+                if !command_http.path.contains(&needle) {
                     let string_value = match value {
                         serde_json::Value::String(s) => s.clone(),
                         other => other.to_string(),
@@ -141,9 +160,9 @@ impl RegistryBackedProvider {
                     .map(|(key, value)| format!("{}={}", key, value))
                     .collect::<Vec<_>>()
                     .join("&");
-                resolved_spec.path = format!("{}?{}", path, query_string);
+                resolved_http.path = format!("{}?{}", path, query_string);
             } else {
-                resolved_spec.path = path;
+                resolved_http.path = path;
             }
         }
 
@@ -196,6 +215,7 @@ impl ValueProvider for RegistryBackedProvider {
     /// suggestions for the given `field` and `partial` input, sorted by score.
     fn suggest(
         &self,
+        commands: &Vec<CommandSpec>,
         command_key: &str,
         field: &str,
         partial: &str,
@@ -206,7 +226,7 @@ impl ValueProvider for RegistryBackedProvider {
             _ => return Vec::new(),
         };
 
-        let Some((provider_id, binds)) = self.provider_for_field(group, name, field) else {
+        let Some((provider_id, binds)) = self.provider_for_field(commands, group, name, field) else {
             return Vec::new();
         };
 
@@ -225,7 +245,7 @@ impl ValueProvider for RegistryBackedProvider {
             return Vec::new();
         }
 
-        let values = self.list_values_for_provider(&provider_id, &variables);
+        let values = self.list_values_for_provider(commands, &provider_id, &variables);
         let mut items: Vec<SuggestionItem> = values
             .into_iter()
             .filter_map(|value| {

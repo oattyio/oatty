@@ -193,14 +193,12 @@ pub enum ColumnFormatter {
 }
 
 /// Column metadata with measured maximum string length for rendering.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnWithSize {
     /// Display name (header label), typically Title Case of the key.
     pub name: String,
     /// JSON key to extract values from each row object.
     pub key: String,
-    /// Applied formatters for this column (header/value specific semantics).
-    pub formatters: Vec<ColumnFormatter>,
     /// Maximum string length among header and sampled, formatted cell values.
     pub max_len: usize,
 }
@@ -263,7 +261,6 @@ pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize) -> Vec
         out.push(ColumnWithSize {
             name: header,
             key: key.clone(),
-            formatters,
             max_len,
         });
     }

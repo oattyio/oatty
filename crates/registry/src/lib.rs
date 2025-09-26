@@ -6,10 +6,12 @@
 pub mod clap_builder;
 pub mod feat_gate;
 pub mod models;
+pub mod utils;
 
 pub use clap_builder::build_clap;
 pub use heroku_types::{CommandFlag, CommandSpec};
 pub use models::Registry;
+pub use utils::*;
 
 #[cfg(test)]
 mod tests {

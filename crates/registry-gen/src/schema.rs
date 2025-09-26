@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use heck::ToKebabCase;
-use heroku_types::{CommandFlag, CommandSpec, PositionalArgument, ServiceId};
+use heroku_types::{CommandFlag, CommandSpec, HttpCommandSpec, PositionalArgument, ServiceId};
+use heroku_util::sort_and_dedup_commands;
 use percent_encoding::percent_decode_str;
 use serde_json::Value;
 use std::{
@@ -96,30 +97,12 @@ pub fn derive_commands_from_schema(value: &Value, service_id: ServiceId) -> Resu
                     }
                 }
 
-                commands.push(CommandSpec {
-                    group,
-                    name,
-                    summary: description,
-                    positional_args,
-                    flags,
-                    method: method.to_string(),
-                    path: path_template,
-                    ranges,
-                    service_id,
-                });
+                let http_spec = HttpCommandSpec::new(method.to_string(), path_template, service_id, ranges);
+                commands.push(CommandSpec::new_http(group, name, description, positional_args, flags, http_spec));
             }
         }
     }
-
-    // multi-sort: group then name
-    commands.sort_by(|a, b| {
-        if a.group != b.group {
-            a.group.cmp(&b.group)
-        } else {
-            a.name.cmp(&b.name)
-        }
-    });
-    commands.dedup_by(|a, b| a.name == b.name && a.method == b.method && a.path == b.path);
+    sort_and_dedup_commands(&mut commands);
     // Two-pass provider resolution: build all commands, then resolve providers.
     // This enables 100% confidence verification using the constructed index.
     super::provider_resolver::resolve_and_infer_providers(&mut commands);
@@ -747,7 +730,11 @@ mod tests {
         let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
         let spec = commands
             .iter()
-            .find(|c| c.method == "PATCH" && c.path == "/addons/{addon}/config")
+            .find(|c| {
+                c.http()
+                    .map(|http| http.method == "PATCH" && http.path == "/addons/{addon}/config")
+                    .unwrap_or(false)
+            })
             .expect("config:update command exists");
         let pos = spec.positional_args.iter().find(|a| a.name == "addon").unwrap();
         match &pos.provider {
@@ -771,7 +758,7 @@ mod tests {
         let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
         let spec = commands
             .iter()
-            .find(|c| c.method == "GET" && c.path == "/config")
+            .find(|c| c.http().map(|http| http.method == "GET" && http.path == "/config").unwrap_or(false))
             .expect("GET /config command exists");
         let flag = spec.flags.iter().find(|f| f.name == "app").unwrap();
         match &flag.provider {
@@ -789,9 +776,13 @@ mod tests {
         }"#;
         let value: Value = serde_json::from_str(json).unwrap();
         let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
-        let spec = commands.iter().find(|c| c.method == "POST").expect("POST rotate command exists");
+        let spec = commands
+            .iter()
+            .find(|c| c.http().map(|http| http.method == "POST").unwrap_or(false))
+            .expect("POST rotate command exists");
 
-        assert_eq!(spec.path, "/data/postgres/v1/{addon}/credentials/{cred_name}/rotate");
+        let http = spec.http().expect("HTTP spec available");
+        assert_eq!(http.path, "/data/postgres/v1/{addon}/credentials/{cred_name}/rotate");
 
         let arg_names: Vec<_> = spec.positional_args.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(arg_names, vec!["addon", "cred_name"], "positional names derived from placeholders");
@@ -827,7 +818,10 @@ mod tests {
         }"##;
         let value: Value = serde_json::from_str(json).unwrap();
         let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
-        let spec = commands.iter().find(|c| c.method == "PATCH").expect("PATCH command exists");
+        let spec = commands
+            .iter()
+            .find(|c| c.http().map(|http| http.method == "PATCH").unwrap_or(false))
+            .expect("PATCH command exists");
 
         // Should produce flags for name and force, with descriptions and required status
         let mut fl_map: HashMap<&str, (&Option<String>, bool)> = HashMap::new();
@@ -849,10 +843,14 @@ mod tests {
         }"#;
         let value: Value = serde_json::from_str(json).unwrap();
         let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
-        let spec = commands.iter().find(|c| c.method == "GET").expect("GET command exists");
+        let spec = commands
+            .iter()
+            .find(|c| c.http().map(|http| http.method == "GET").unwrap_or(false))
+            .expect("GET command exists");
 
         // Path should be normalized to use the ref name for the placeholder
-        assert_eq!(spec.path, "/teams/{team}/addons");
+        let http = spec.http().expect("HTTP spec available");
+        assert_eq!(http.path, "/teams/{team}/addons");
 
         // Positional should use the ref name
         let arg_names: Vec<_> = spec.positional_args.iter().map(|a| a.name.as_str()).collect();

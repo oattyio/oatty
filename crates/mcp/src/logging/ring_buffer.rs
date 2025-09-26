@@ -4,6 +4,7 @@ use crate::types::{LogError, McpLogEntry};
 use std::collections::VecDeque;
 
 /// A ring buffer for storing log entries with a maximum capacity.
+#[derive(Debug)]
 pub struct LogRingBuffer {
     /// The underlying buffer.
     buffer: VecDeque<McpLogEntry>,

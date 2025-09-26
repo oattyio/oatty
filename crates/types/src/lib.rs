@@ -199,6 +199,50 @@ pub mod command {
     }
 
     /// Represents a complete Heroku CLI command specification.
+    ///
+    /// A `CommandSpec` now distinguishes between multiple execution backends via the
+    /// [`CommandExecution`] enum. HTTP-based commands remain the default, while MCP-backed
+    /// commands use the `Mcp` variant.
+    ///
+    /// # Examples
+    ///
+    /// Creating an HTTP-backed command:
+    /// ```rust
+    /// use heroku_types::{CommandExecution, CommandSpec, HttpCommandSpec, ServiceId};
+    ///
+    /// let http = HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new());
+    /// let spec = CommandSpec::new_http(
+    ///     "apps".into(),
+    ///     "apps:list".into(),
+    ///     "List apps".into(),
+    ///     Vec::new(),
+    ///     Vec::new(),
+    ///     http,
+    /// );
+    /// assert!(matches!(spec.execution(), CommandExecution::Http(_)));
+    /// ```
+    ///
+    /// Creating an MCP-backed command:
+    /// ```rust
+    /// use heroku_types::{CommandExecution, CommandSpec, McpCommandSpec};
+    ///
+    /// let mcp = McpCommandSpec {
+    ///     plugin_name: "demo-plugin".into(),
+    ///     tool_name: "demo_tool".into(),
+    ///     auth_summary: Some("Needs OAuth".into()),
+    ///     input_schema: None,
+    ///     render_hint: None,
+    /// };
+    /// let spec = CommandSpec::new_mcp(
+    ///     "mcp.demo".into(),
+    ///     "demo:tool".into(),
+    ///     "Needs OAuth — Demo tool".into(),
+    ///     Vec::new(),
+    ///     Vec::new(),
+    ///     mcp,
+    /// );
+    /// assert!(matches!(spec.execution(), CommandExecution::Mcp(_)));
+    /// ```
     #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
     pub struct CommandSpec {
         /// Resource group for the command (for example, "apps").
@@ -214,7 +258,142 @@ pub mod command {
         /// List of optional and required flags for this command.
         #[serde(default)]
         pub flags: Vec<CommandFlag>,
-        /// HTTP method used by this command (GET, POST, DELETE, and so on).
+        /// Execution metadata describing how this command should be fulfilled.
+        #[serde(default)]
+        pub execution: CommandExecution,
+    }
+
+    impl CommandSpec {
+        /// Access the execution configuration regardless of variant.
+        pub fn execution(&self) -> &CommandExecution {
+            &self.execution
+        }
+
+        /// Mutably access the execution configuration regardless of variant.
+        pub fn execution_mut(&mut self) -> &mut CommandExecution {
+            &mut self.execution
+        }
+
+        /// Returns the HTTP execution payload when this command targets an HTTP backend.
+        pub fn http(&self) -> Option<&HttpCommandSpec> {
+            match &self.execution {
+                CommandExecution::Http(http) => Some(http),
+                _ => None,
+            }
+        }
+
+        /// Returns a mutable HTTP execution payload when this command targets an HTTP backend.
+        pub fn http_mut(&mut self) -> Option<&mut HttpCommandSpec> {
+            match &mut self.execution {
+                CommandExecution::Http(http) => Some(http),
+                _ => None,
+            }
+        }
+
+        /// Returns the MCP execution payload when this command is backed by an MCP tool.
+        pub fn mcp(&self) -> Option<&McpCommandSpec> {
+            match &self.execution {
+                CommandExecution::Mcp(mcp) => Some(mcp),
+                _ => None,
+            }
+        }
+
+        /// Returns a mutable MCP execution payload when this command is backed by an MCP tool.
+        pub fn mcp_mut(&mut self) -> Option<&mut McpCommandSpec> {
+            match &mut self.execution {
+                CommandExecution::Mcp(mcp) => Some(mcp),
+                _ => None,
+            }
+        }
+
+        /// Construct a new HTTP-backed command specification.
+        pub fn new_http(
+            group: String,
+            name: String,
+            summary: String,
+            positional_args: Vec<PositionalArgument>,
+            flags: Vec<CommandFlag>,
+            http: HttpCommandSpec,
+        ) -> Self {
+            Self {
+                group,
+                name,
+                summary,
+                positional_args,
+                flags,
+                execution: CommandExecution::Http(http),
+            }
+        }
+
+        /// Construct a new MCP-backed command specification.
+        pub fn new_mcp(
+            group: String,
+            name: String,
+            summary: String,
+            positional_args: Vec<PositionalArgument>,
+            flags: Vec<CommandFlag>,
+            mcp: McpCommandSpec,
+        ) -> Self {
+            Self {
+                group,
+                name,
+                summary,
+                positional_args,
+                flags,
+                execution: CommandExecution::Mcp(mcp),
+            }
+        }
+    }
+
+    /// Execution metadata for a command.
+    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
+    #[serde(tag = "kind", rename_all = "snake_case")]
+    pub enum CommandExecution {
+        /// Command is fulfilled via an HTTP request described by [`HttpCommandSpec`].
+        Http(HttpCommandSpec),
+        /// Command is fulfilled by delegating to an MCP tool described by [`McpCommandSpec`].
+        Mcp(McpCommandSpec),
+    }
+
+    impl Default for CommandExecution {
+        fn default() -> Self {
+            Self::Http(HttpCommandSpec::default())
+        }
+    }
+
+    impl CommandExecution {
+        /// Convenience constructor for HTTP execution metadata.
+        pub fn http(method: impl Into<String>, path: impl Into<String>, service_id: ServiceId, ranges: Vec<String>) -> Self {
+            Self::Http(HttpCommandSpec {
+                method: method.into(),
+                path: path.into(),
+                ranges,
+                service_id,
+            })
+        }
+
+        /// Convenience constructor for MCP execution metadata.
+        pub fn mcp(
+            plugin_name: impl Into<String>,
+            tool_name: impl Into<String>,
+            auth_summary: Option<String>,
+            input_schema: Option<String>,
+            render_hint: Option<String>,
+        ) -> Self {
+            Self::Mcp(McpCommandSpec {
+                plugin_name: plugin_name.into(),
+                tool_name: tool_name.into(),
+                auth_summary,
+                input_schema,
+                render_hint,
+            })
+        }
+    }
+
+    /// HTTP execution metadata.
+    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq, Default)]
+    pub struct HttpCommandSpec {
+        /// HTTP method (GET, POST, DELETE, and so on).
         pub method: String,
         /// API endpoint path (for example, "/apps" or "/apps/{app}/dynos").
         pub path: String,
@@ -224,6 +403,40 @@ pub mod command {
         /// Identifier for the API service that owns the endpoint.
         #[serde(default)]
         pub service_id: ServiceId,
+    }
+
+    impl HttpCommandSpec {
+        /// Create a new HTTP execution payload with the provided metadata.
+        pub fn new(method: impl Into<String>, path: impl Into<String>, service_id: ServiceId, ranges: Vec<String>) -> Self {
+            Self {
+                method: method.into(),
+                path: path.into(),
+                ranges,
+                service_id,
+            }
+        }
+    }
+
+    /// MCP execution metadata capturing plugin delegation details.
+    ///
+    /// Instances of this struct are typically constructed from tool discovery metadata provided by
+    /// the MCP runtime. Consumers should propagate human-readable authentication requirements into
+    /// `auth_summary` so that downstream UIs can display them alongside command descriptions.
+    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq, Default)]
+    pub struct McpCommandSpec {
+        /// Name of the plugin that owns the tool.
+        pub plugin_name: String,
+        /// Identifier for the tool within the plugin.
+        pub tool_name: String,
+        /// Optional summary describing authentication requirements.
+        #[serde(default)]
+        pub auth_summary: Option<String>,
+        /// Optional JSON schema describing accepted inputs, encoded as a string for transport.
+        #[serde(default)]
+        pub input_schema: Option<String>,
+        /// Optional hint indicating how the UI should render results (for example, "table").
+        #[serde(default)]
+        pub render_hint: Option<String>,
     }
 
     /// Represents a single input field for a command parameter.
@@ -262,9 +475,11 @@ pub mod execution {
     #[derive(Debug, Clone, Serialize, Deserialize, Default)]
     pub enum ExecOutcome {
         /// Payload from an http call. Includes the deserialized value,
-        /// an optional pagination object and a boolean used to 
+        /// an optional pagination object and a boolean used to
         /// determine if the results should be displayed in a table modal.
         Http(String, Value, Option<Pagination>, bool),
+        /// Result from executing an MCP tool, containing a log summary and structured payload.
+        Mcp(String, Value),
         /// Result from performing an action on a plugin
         /// Contains a log message and the new plugin detail object
         PluginDetail(String, Option<PluginDetail>),
@@ -403,7 +618,7 @@ pub mod messaging {
         /// Terminal resized.
         Resize(u16, u16),
         /// Background execution completed with outcome.
-        ExecCompleted(ExecOutcome),
+        ExecCompleted(Box<ExecOutcome>),
         /// Move log selection cursor up.
         LogsUp,
         /// Move log selection cursor down.
@@ -608,9 +823,10 @@ pub mod plugin {
     }
 
     /// Authentication status for a plugin.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+    #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
     pub enum AuthStatus {
         /// Authentication status is unknown (not yet checked).
+        #[default]
         Unknown,
         /// Plugin is successfully authenticated.
         Authorized,
@@ -628,12 +844,6 @@ pub mod plugin {
                 AuthStatus::Required => write!(formatter, "Required"),
                 AuthStatus::Failed => write!(formatter, "Failed"),
             }
-        }
-    }
-
-    impl Default for AuthStatus {
-        fn default() -> Self {
-            AuthStatus::Unknown
         }
     }
 
@@ -666,6 +876,8 @@ pub mod plugin {
         pub handshake_latency: Option<u64>,
         /// Authentication status for the plugin.
         pub auth_status: AuthStatus,
+        /// Number of tools currently exposed by this plugin.
+        pub tool_count: usize,
     }
 
     impl PluginDetail {
@@ -685,6 +897,7 @@ pub mod plugin {
                 last_start: None,
                 handshake_latency: None,
                 auth_status: AuthStatus::default(),
+                tool_count: 0,
             }
         }
 
@@ -972,7 +1185,7 @@ pub mod plugin {
     }
 }
 
-pub use command::{CommandFlag, CommandSpec, Field, PositionalArgument};
+pub use command::{CommandExecution, CommandFlag, CommandSpec, Field, HttpCommandSpec, McpCommandSpec, PositionalArgument};
 pub use execution::{ExecOutcome, Pagination};
 pub use messaging::{Effect, Modal, Msg, Route};
 pub use plugin::{
@@ -991,8 +1204,11 @@ mod tests {
         let json = r#"{
             "name": "apps:list",
             "summary": "List apps",
-            "method": "GET",
-            "path": "/apps"
+            "execution": {
+                "kind": "http",
+                "method": "GET",
+                "path": "/apps"
+            }
         }"#;
 
         let spec: CommandSpec = serde_json::from_str(json).expect("deserialize CommandSpec");
@@ -1001,16 +1217,61 @@ mod tests {
         assert_eq!(spec.summary, "List apps");
         assert!(spec.positional_args.is_empty());
         assert!(spec.flags.is_empty());
-        assert_eq!(spec.method, "GET");
-        assert_eq!(spec.path, "/apps");
+        let http = spec.http().expect("http execution present");
+        assert_eq!(http.method, "GET");
+        assert_eq!(http.path, "/apps");
 
         let back = serde_json::to_string(&spec).expect("serialize CommandSpec");
         let spec2: CommandSpec = serde_json::from_str(&back).expect("round-trip deserialize");
         assert_eq!(spec2.name, spec.name);
-        assert_eq!(spec2.method, spec.method);
-        assert_eq!(spec2.path, spec.path);
+        let http2 = spec2.http().expect("http execution present");
+        assert_eq!(http2.method, http.method);
+        assert_eq!(http2.path, http.path);
         assert_eq!(spec2.positional_args.len(), spec.positional_args.len());
         assert_eq!(spec2.flags.len(), 0);
+    }
+
+    #[test]
+    fn command_spec_deserializes_mcp_variant() {
+        let json = r#"{
+            "group": "mcp.demo",
+            "name": "demo:tool",
+            "summary": "Needs OAuth — Run demo tool",
+            "execution": {
+                "kind": "mcp",
+                "plugin_name": "demo-plugin",
+                "tool_name": "demo_tool",
+                "auth_summary": "Needs OAuth",
+                "input_schema": "{\"type\":\"object\"}"
+            }
+        }"#;
+
+        let spec: CommandSpec = serde_json::from_str(json).expect("deserialize MCP CommandSpec");
+        assert_eq!(spec.group, "mcp.demo");
+        assert_eq!(spec.name, "demo:tool");
+        let mcp = spec.mcp().expect("mcp execution present");
+        assert_eq!(mcp.plugin_name, "demo-plugin");
+        assert_eq!(mcp.tool_name, "demo_tool");
+        assert_eq!(mcp.auth_summary.as_deref(), Some("Needs OAuth"));
+        assert_eq!(mcp.input_schema.as_deref(), Some("{\"type\":\"object\"}"));
+        assert!(mcp.render_hint.is_none());
+    }
+
+    #[test]
+    fn command_execution_defaults_to_http_variant() {
+        let spec = CommandSpec {
+            group: String::new(),
+            name: "apps:list".into(),
+            summary: "List apps".into(),
+            positional_args: Vec::new(),
+            flags: Vec::new(),
+            execution: CommandExecution::default(),
+        };
+
+        assert!(matches!(spec.execution(), CommandExecution::Http(_)));
+        let http = spec.http().expect("http execution present");
+        assert!(http.method.is_empty());
+        assert!(http.path.is_empty());
     }
 
     #[test]

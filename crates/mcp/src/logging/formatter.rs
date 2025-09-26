@@ -5,12 +5,14 @@ use heroku_util::redact_sensitive_with;
 use regex::{Captures, Regex};
 
 /// Formatter for log entries with redaction capabilities.
+#[derive(Debug)]
 pub struct LogFormatter {
     /// Rules for redacting sensitive information.
     redaction_rules: RedactionRules,
 }
 
 /// Rules for redacting sensitive information from logs.
+#[derive(Debug)]
 pub struct RedactionRules {
     /// Patterns to match sensitive values.
     patterns: Vec<Regex>,
@@ -119,12 +121,11 @@ impl RedactionRules {
 
     /// Check if text contains sensitive information.
     pub fn contains_sensitive(&self, text: &str) -> bool {
-        for pattern in &self.patterns {
-            if pattern.is_match(text) {
-                return true;
-            }
+        if redact_sensitive_with(text, &self.replacement) != text {
+            return true;
         }
-        false
+
+        self.patterns.iter().any(|pattern| pattern.is_match(text))
     }
 
     /// Get the number of redaction patterns.

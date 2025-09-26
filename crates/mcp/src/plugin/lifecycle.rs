@@ -9,6 +9,7 @@ use tokio::time::{sleep, timeout};
 use tracing::{debug, error, warn};
 
 /// Lifecycle manager for handling plugin startup, shutdown, and recovery.
+#[derive(Debug)]
 pub struct LifecycleManager {
     /// Plugin lifecycle states.
     states: Arc<Mutex<HashMap<String, LifecycleState>>>,

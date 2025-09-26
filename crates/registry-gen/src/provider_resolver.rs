@@ -101,7 +101,7 @@ fn precompute_provider_metadata(commands: &[CommandSpec]) -> ProviderMetadata {
         .iter()
         .map(|command| {
             let command_id = format!("{}:{}", command.group, command.name);
-            let extracted_placeholders = extract_path_placeholders(&command.path);
+            let extracted_placeholders = command.http().map(|http| extract_path_placeholders(&http.path)).unwrap_or_default();
             (command_id, extracted_placeholders)
         })
         .collect();
@@ -206,8 +206,11 @@ fn apply_positional_providers(
     provider_placeholders: &HashMap<String, Vec<String>>,
     provider_required_flags: &HashMap<String, Vec<String>>,
 ) {
+    let Some(http_spec) = command_spec.http() else {
+        return;
+    };
     let positional_name_to_index = build_positional_index(command_spec);
-    let path_segments = parse_path_segments(&command_spec.path);
+    let path_segments = parse_path_segments(&http_spec.path);
 
     let mut previous_concrete_segment: Option<String> = None;
 
@@ -290,7 +293,10 @@ fn find_provider_candidates(
     }
 
     // Then, look for scoped providers by examining earlier path segments
-    let path_segments = parse_path_segments(&command_spec.path);
+    let Some(http_spec) = command_spec.http() else {
+        return candidates;
+    };
+    let path_segments = parse_path_segments(&http_spec.path);
     let mut concrete_segments = Vec::new();
 
     for segment in path_segments {

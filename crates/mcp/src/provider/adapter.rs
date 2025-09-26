@@ -182,11 +182,14 @@ mod tests {
     use super::*;
     use crate::config::McpConfig;
     use crate::plugin::PluginEngine;
+    use heroku_registry::Registry as CommandRegistry;
+    use std::sync::Mutex;
 
     #[test]
     fn test_mcp_provider_adapter_creation() {
         let config = McpConfig::default();
-        let plugin_engine = Arc::new(PluginEngine::new(config).unwrap());
+        let command_registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&command_registry)).unwrap());
         let provider = Arc::new(McpProvider::new("test-plugin", "test-tool", plugin_engine).unwrap());
         let adapter = McpProviderAdapter::new(provider);
 
@@ -195,31 +198,33 @@ mod tests {
 
     #[test]
     fn test_mcp_provider_adapter_registry() {
-        let mut registry = McpProviderAdapterRegistry::new();
+        let mut adapter_registry = McpProviderAdapterRegistry::new();
 
         let config = McpConfig::default();
-        let plugin_engine = Arc::new(PluginEngine::new(config).unwrap());
+        let command_registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&command_registry)).unwrap());
         let provider = Arc::new(McpProvider::new("test-plugin", "test-tool", plugin_engine).unwrap());
         let adapter = Arc::new(McpProviderAdapter::new(provider));
 
-        registry.register_adapter("test-plugin:test-tool".to_string(), adapter);
+        adapter_registry.register_adapter("test-plugin:test-tool".to_string(), adapter);
 
-        assert!(registry.is_registered("test-plugin:test-tool"));
-        assert_eq!(registry.count(), 1);
+        assert!(adapter_registry.is_registered("test-plugin:test-tool"));
+        assert_eq!(adapter_registry.count(), 1);
 
-        let providers = registry.list_providers();
+        let providers = adapter_registry.list_providers();
         assert_eq!(providers.len(), 1);
         assert_eq!(providers[0], "test-plugin:test-tool");
 
-        registry.unregister_adapter("test-plugin:test-tool");
-        assert!(!registry.is_registered("test-plugin:test-tool"));
-        assert_eq!(registry.count(), 0);
+        adapter_registry.unregister_adapter("test-plugin:test-tool");
+        assert!(!adapter_registry.is_registered("test-plugin:test-tool"));
+        assert_eq!(adapter_registry.count(), 0);
     }
 
     #[test]
     fn test_provider_registry_implementation() {
         let config = McpConfig::default();
-        let plugin_engine = Arc::new(PluginEngine::new(config).unwrap());
+        let command_registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&command_registry)).unwrap());
         let provider = Arc::new(McpProvider::new("test-plugin", "test-tool", plugin_engine).unwrap());
         let adapter = McpProviderAdapter::new(provider);
 

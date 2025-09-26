@@ -1,4 +1,7 @@
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    sync::{Arc, Mutex},
+};
 
 use clap::{Arg, ArgAction, Command as ClapCommand};
 
@@ -32,9 +35,13 @@ use crate::{CommandFlag, CommandSpec, Registry};
 /// let registry = Registry::from_embedded_schema().unwrap();
 /// let _clap_command = build_clap(&registry);
 /// ```
-pub fn build_clap(registry: &Registry) -> ClapCommand {
+pub fn build_clap(registry: Arc<Mutex<Registry>>) -> ClapCommand {
     let mut root = create_root_command();
-    let groups = group_commands_by_resource(registry);
+    let Some(lock) = registry.lock().ok() else {
+        return root;
+    };
+    let commands = &lock.commands;
+    let groups = group_commands_by_resource(commands);
 
     for (group, cmds) in groups {
         let group_command = build_group_command(&group, cmds);
@@ -111,10 +118,9 @@ fn create_root_command() -> ClapCommand {
 /// // Commands like "apps:list" will be in groups["apps"]
 /// // Commands like "dynos:restart" will be in groups["dynos"]
 /// ```
-fn group_commands_by_resource(registry: &Registry) -> BTreeMap<String, Vec<&CommandSpec>> {
+fn group_commands_by_resource(commands: &Vec<CommandSpec>) -> BTreeMap<String, Vec<&CommandSpec>> {
     let mut groups: BTreeMap<String, Vec<&CommandSpec>> = BTreeMap::new();
-
-    for cmd in &*registry.commands {
+    for cmd in commands {
         let mut parts = cmd.name.splitn(2, ':');
         let group = parts.next().unwrap_or("misc").to_string();
         groups.entry(group).or_default().push(cmd);

@@ -54,7 +54,7 @@ pub enum Msg {
     CopyToClipboard(String),
     Tick,
     Resize(u16, u16),
-    ExecCompleted(ExecOutcome),
+    ExecCompleted(Box<ExecOutcome>),
     LogsUp,
     LogsDown,
     LogsExtendUp,

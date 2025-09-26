@@ -4,7 +4,7 @@ mod audit;
 mod formatter;
 mod ring_buffer;
 
-pub use audit::{AuditAction, AuditEntry, AuditLogger};
+pub use audit::{AuditAction, AuditEntry, AuditLogger, AuditResult};
 pub use formatter::{LogFormatter, RedactionRules};
 pub use ring_buffer::{LogBufferError, LogRingBuffer};
 
@@ -17,6 +17,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Manager for all plugin logs.
+#[derive(Debug)]
 pub struct LogManager {
     /// Ring buffers for each plugin.
     buffers: Arc<Mutex<HashMap<String, LogRingBuffer>>>,
@@ -67,7 +68,7 @@ impl LogManager {
     /// Get recent log entries for a plugin.
     pub async fn get_recent_logs(&self, plugin_name: &str, count: usize) -> Vec<McpLogEntry> {
         let buffers = self.buffers.lock().await;
-        
+
         if let Some(buffer) = buffers.get(plugin_name) {
             buffer.get_recent(count)
         } else {

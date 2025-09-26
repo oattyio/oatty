@@ -2,13 +2,7 @@
 
 use crate::plugin::PluginEngine;
 use crate::provider::{McpProviderError, McpProviderOps};
-// TODO: Replace with ultrafast-mcp types for tool metadata and calls
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, Default)]
-pub struct Tool {
-    pub name: String,
-    pub description: Option<String>,
-    pub input_schema: Option<serde_json::Value>,
-}
+
 use serde_json::{Map, Value};
 use std::sync::Arc;
 // Note: This would need to be implemented to integrate with the existing engine
@@ -47,9 +41,6 @@ pub struct McpProvider {
     /// Plugin engine.
     plugin_engine: Arc<PluginEngine>,
 
-    /// Tool metadata.
-    tool_metadata: Option<Tool>,
-
     /// Provider contract.
     contract: ProviderContract,
 }
@@ -64,7 +55,6 @@ impl McpProvider {
             tool_name: tool_name.to_string(),
             provider_id,
             plugin_engine,
-            tool_metadata: None,
             contract: ProviderContract::default(),
         })
     }
@@ -82,34 +72,7 @@ impl McpProvider {
             })?;
 
         let _client = client.lock().await;
-        // TODO: Query tool metadata via ultrafast-mcp client once wired.
-        // For now, leave metadata empty; contract remains default.
-
         Ok(())
-    }
-
-    /// Build a provider contract from tool metadata.
-    fn build_contract(&self, tool: &Tool) -> Result<ProviderContract, McpProviderError> {
-        let mut args = Map::new();
-
-        // Add tool input schema to args
-        args.insert("input_schema".to_string(), serde_json::to_value(tool.input_schema.as_ref())?);
-
-        // Add tool description
-        if let Some(description) = &tool.description {
-            args.insert("description".to_string(), serde_json::Value::String(description.to_string()));
-        }
-
-        Ok(ProviderContract {
-            args,
-            returns: ProviderReturns {
-                fields: vec![ReturnField {
-                    name: "result".to_string(),
-                    r#type: Some("object".to_string()),
-                    tags: vec!["mcp".to_string(), "tool".to_string()],
-                }],
-            },
-        })
     }
 
     /// Call the MCP tool with the given arguments.
@@ -123,9 +86,9 @@ impl McpProvider {
             .ok_or_else(|| McpProviderError::PluginNotFound {
                 name: self.plugin_name.clone(),
             })?;
-        // TODO: Execute tool via ultrafast-mcp client; for now, return an informative error
+
         Err(McpProviderError::ProviderError {
-            message: "MCP tool execution not yet wired to ultrafast-mcp".into(),
+            message: format!("MCP tool '{}' execution not yet wired", self.tool_name),
         })
     }
 }
@@ -175,20 +138,26 @@ impl McpProviderOps for McpProvider {
 mod tests {
     use super::*;
     use crate::config::McpConfig;
+    use heroku_registry::Registry as CommandRegistry;
+    use std::sync::Mutex;
 
     #[tokio::test]
     async fn test_mcp_provider_creation() {
         let config = McpConfig::default();
-        let plugin_engine = Arc::new(PluginEngine::new(config).unwrap());
+        let registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&registry)).unwrap());
 
         let provider = McpProvider::new("test-plugin", "test-tool", plugin_engine).unwrap();
         assert_eq!(provider.provider_id(), "test-plugin:test-tool");
+        assert_eq!(provider.plugin_name, "test-plugin");
+        assert_eq!(provider.tool_name, "test-tool");
     }
 
     #[tokio::test]
     async fn test_mcp_provider_availability() {
         let config = McpConfig::default();
-        let plugin_engine = Arc::new(PluginEngine::new(config).unwrap());
+        let registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&registry)).unwrap());
 
         let provider = McpProvider::new("test-plugin", "test-tool", plugin_engine).unwrap();
         assert!(!provider.is_available().await);

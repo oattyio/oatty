@@ -1,6 +1,6 @@
 //! Reusable help content builder used by HelpComponent and the Command Browser.
 
-use heroku_types::CommandSpec;
+use heroku_types::{CommandSpec, command::CommandExecution};
 use ratatui::{
     style::Modifier,
     text::{Line, Span, Text},
@@ -8,7 +8,7 @@ use ratatui::{
 
 /// Build comprehensive help text for a command specification.
 ///
-/// Produces a themed `Text` with sections: USAGE, DESCRIPTION, ARGUMENTS, OPTIONS.
+/// Produces a themed `Text` with sections: USAGE, DESCRIPTION, BACKEND, ARGUMENTS, OPTIONS.
 pub(crate) fn build_command_help_text<'a>(theme: &'a dyn crate::ui::theme::roles::Theme, spec: &'a CommandSpec) -> Text<'a> {
     let name = &spec.name;
     let group = &spec.group;
@@ -59,6 +59,25 @@ pub(crate) fn build_command_help_text<'a>(theme: &'a dyn crate::ui::theme::roles
         theme.text_secondary_style().add_modifier(Modifier::BOLD),
     ));
     lines.push(Line::from(format!("  {}", spec.summary)));
+
+    match spec.execution() {
+        CommandExecution::Http(http) => {
+            lines.push(Line::from(""));
+            lines.push(Line::styled(" BACKEND:", theme.text_secondary_style().add_modifier(Modifier::BOLD)));
+            lines.push(Line::from(format!(
+                "  HTTP {} {} (service: {:?})",
+                http.method, http.path, http.service_id
+            )));
+        }
+        CommandExecution::Mcp(mcp) => {
+            lines.push(Line::from(""));
+            lines.push(Line::styled(" BACKEND:", theme.text_secondary_style().add_modifier(Modifier::BOLD)));
+            lines.push(Line::from(format!("  MCP plugin '{}' tool '{}'", mcp.plugin_name, mcp.tool_name)));
+            if let Some(auth) = &mcp.auth_summary {
+                lines.push(Line::from(format!("  Auth: {}", auth)));
+            }
+        }
+    }
     let mut show_providers_note = false;
     if !spec.positional_args.is_empty() {
         lines.push(Line::from(""));

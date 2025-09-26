@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use heroku_types::{CommandSpec, Field};
 use heroku_util::fuzzy_score;
@@ -7,6 +7,7 @@ use ratatui::{layout::Rect, widgets::ListState};
 
 #[derive(Debug, Clone)]
 pub struct BrowserState {
+    pub registry: Arc<Mutex<heroku_registry::Registry>>,
     selected_command: Option<CommandSpec>,
     input_fields: Vec<Field>,
     current_field_idx: usize,
@@ -16,16 +17,16 @@ pub struct BrowserState {
     pub f_commands: FocusFlag,
 
     search_input: String,
-    all_commands: Arc<[CommandSpec]>,
     filtered: Vec<usize>,
     selected: usize,
     list_state: ListState,
     viewport_rows: usize,
 }
 
-impl Default for BrowserState {
-    fn default() -> Self {
+impl BrowserState {
+    pub fn new(registry: Arc<Mutex<heroku_registry::Registry>>) -> Self {
         Self {
+            registry,
             selected_command: None,
             input_fields: vec![],
             current_field_idx: 0,
@@ -33,7 +34,6 @@ impl Default for BrowserState {
             f_search: FocusFlag::named("browser.search"),
             f_commands: FocusFlag::named("browser.commands"),
             search_input: String::new(),
-            all_commands: Arc::from([]),
             filtered: vec![],
             selected: 0,
             list_state: ListState::default(),
@@ -68,12 +68,6 @@ impl BrowserState {
     pub fn list_state(&mut self) -> &mut ListState {
         &mut self.list_state
     }
-    pub fn all_commands(&self) -> Arc<[CommandSpec]> {
-        self.all_commands.clone()
-    }
-    pub fn set_all_commands(&mut self, commands: Arc<[CommandSpec]>) {
-        self.all_commands = commands;
-    }
 
     pub fn set_viewport_rows(&mut self, rows: usize) {
         let normalized = rows.max(1);
@@ -86,25 +80,30 @@ impl BrowserState {
     /// Updates the filtered command list based on the current search query.
     pub fn update_browser_filtered(&mut self) {
         // Rebuild the filtered list.
-        if self.search_input.is_empty() {
-            self.filtered = (0..self.all_commands.len()).collect();
-        } else {
-            let mut scored: Vec<(i64, usize)> = self
-                .all_commands
-                .iter()
-                .enumerate()
-                .filter_map(|(idx, command)| {
-                    let exec = if command.name.is_empty() {
-                        format!("{} {}", command.name, command.summary)
-                    } else {
-                        format!("{} {} {}", command.group, command.name, command.summary)
-                    };
-                    fuzzy_score(&exec, &self.search_input).map(|score| (score, idx))
-                })
-                .collect();
+        {
+            let Some(registry_lock) = self.registry.lock().ok() else {
+                return;
+            };
+            let all_commands = &registry_lock.commands;
+            if self.search_input.is_empty() {
+                self.filtered = (0..all_commands.len()).collect();
+            } else {
+                let mut scored: Vec<(i64, usize)> = all_commands
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(idx, command)| {
+                        let exec = if command.name.is_empty() {
+                            format!("{} {}", command.group, command.summary)
+                        } else {
+                            format!("{} {} {}", command.group, command.name, command.summary)
+                        };
+                        fuzzy_score(&exec, &self.search_input).map(|score| (score, idx))
+                    })
+                    .collect();
 
-            scored.sort_by(|a, b| b.0.cmp(&a.0));
-            self.filtered = scored.into_iter().map(|(_, idx)| idx).collect();
+                scored.sort_by(|a, b| b.0.cmp(&a.0));
+                self.filtered = scored.into_iter().map(|(_, idx)| idx).collect();
+            }
         }
 
         self.selected = 0;
@@ -126,8 +125,16 @@ impl BrowserState {
         self.ensure_selection_visible();
 
         let idx = self.filtered[self.selected];
-        let command = self.all_commands[idx].clone();
-        self.apply_command_selection(command);
+        let maybe_command = {
+            let Some(registry_lock) = self.registry.lock().ok() else {
+                return;
+            };
+            registry_lock.commands.get(idx).cloned()
+        };
+
+        if let Some(command) = maybe_command {
+            self.apply_command_selection(command);
+        }
     }
 
     // ======================
@@ -158,7 +165,10 @@ impl BrowserState {
 
     /// Gets the available range fields for the selected command
     pub fn available_ranges(&self) -> Vec<String> {
-        self.selected_command.as_ref().map(|cmd| cmd.ranges.clone()).unwrap_or_default()
+        self.selected_command
+            .as_ref()
+            .and_then(|cmd| cmd.http().map(|http| http.ranges.clone()))
+            .unwrap_or_default()
     }
 
     // Internal helpers for managing field/selection state

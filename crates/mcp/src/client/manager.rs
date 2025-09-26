@@ -6,18 +6,19 @@ use std::{
 };
 
 use anyhow::Result;
+use serde_json::Map as JsonMap;
 use tokio::sync::{Mutex, broadcast};
 
 use crate::{
     config::McpConfig,
     logging::{AuditEntry, LogManager},
-    types::{HealthStatus, PluginStatus},
+    types::{HealthStatus, McpToolMetadata, PluginStatus},
 };
 
-use super::client::McpClient;
+use super::core::McpClient;
 
 /// Registry and lifecycle manager for MCP clients.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct McpClientManager {
     /// Active client handles keyed by plugin name.
     active_clients: Arc<Mutex<HashMap<String, Arc<Mutex<McpClient>>>>>,
@@ -76,7 +77,7 @@ impl McpClientManager {
     /// Disconnect all clients and clear the registry.
     pub async fn stop(&self) -> Result<(), ClientManagerError> {
         let mut clients = self.active_clients.lock().await;
-        let clients_drain:Vec<(String, Arc<Mutex<McpClient>>)> = clients.drain().collect();
+        let clients_drain: Vec<(String, Arc<Mutex<McpClient>>)> = clients.drain().collect();
         drop(clients);
         let mut finished = vec![];
         for (name, handle) in clients_drain {
@@ -97,6 +98,10 @@ impl McpClientManager {
             for stopped in &finished {
                 stopping.remove(stopped);
                 let _ = self.event_tx.send(ClientManagerEvent::Stopped { name: stopped.clone() });
+                let _ = self.event_tx.send(ClientManagerEvent::ToolsUpdated {
+                    name: stopped.clone(),
+                    tools: Arc::new(Vec::new()),
+                });
             }
         }
         Ok(())
@@ -120,8 +125,9 @@ impl McpClientManager {
             if !starting.insert(name.to_string()) {
                 return Err(ClientManagerError::ClientAlreadyExists { name: name.into() });
             }
-            
         }
+
+        let _ = self.event_tx.send(ClientManagerEvent::Starting { name: name.to_string() });
 
         // Connect outside of global locks
         let connect_result = async {
@@ -129,7 +135,7 @@ impl McpClientManager {
             client
                 .connect()
                 .await
-                .map(|_| client)
+                .map(|tools| (client, tools))
                 .map_err(|e| ClientManagerError::ConnectionError { message: e.to_string() })
         }
         .await;
@@ -141,13 +147,17 @@ impl McpClientManager {
         }
 
         match connect_result {
-            Ok(client) => {
+            Ok((client, tools)) => {
                 self.active_clients
                     .lock()
                     .await
                     .insert(name.to_string(), Arc::new(Mutex::new(client)));
 
                 let _ = self.event_tx.send(ClientManagerEvent::Started { name: name.to_string() });
+                let _ = self.event_tx.send(ClientManagerEvent::ToolsUpdated {
+                    name: name.to_string(),
+                    tools,
+                });
 
                 // Audit start event (best-effort)
                 let _ = self
@@ -185,7 +195,7 @@ impl McpClientManager {
                 let mut client = handle.lock().await;
                 client.disconnect().await
             };
-            
+
             disconnect_result.map_err(|e| ClientManagerError::ConnectionError { message: e.to_string() })?;
 
             {
@@ -193,6 +203,10 @@ impl McpClientManager {
                 stopping.remove(name);
                 let _ = self.event_tx.send(ClientManagerEvent::Stopped { name: name.to_string() });
             }
+            let _ = self.event_tx.send(ClientManagerEvent::ToolsUpdated {
+                name: name.to_string(),
+                tools: Arc::new(Vec::new()),
+            });
         }
         // Audit stop event (best-effort)
         let _ = self
@@ -247,7 +261,7 @@ impl McpClientManager {
     /// Return current health snapshot for a plugin if known.
     pub async fn get_plugin_health(&self, name: &str) -> Option<HealthStatus> {
         let map = self.active_clients.lock().await;
-        let maybe_handle =  map.get(name).cloned();
+        let maybe_handle = map.get(name).cloned();
         drop(map);
         if let Some(handle) = maybe_handle {
             let guard = handle.lock().await;
@@ -278,6 +292,25 @@ impl McpClientManager {
     pub fn log_manager(&self) -> &LogManager {
         &self.log_manager
     }
+
+    /// Invoke a tool exposed by a running plugin.
+    pub async fn call_tool(
+        &self,
+        name: &str,
+        tool: &str,
+        arguments: &JsonMap<String, serde_json::Value>,
+    ) -> Result<rmcp::model::CallToolResult, ClientManagerError> {
+        let handle = self
+            .get_client(name)
+            .await
+            .ok_or_else(|| ClientManagerError::ClientNotFound { name: name.to_string() })?;
+
+        let client = handle.lock().await;
+        client
+            .call_tool(tool, arguments)
+            .await
+            .map_err(|err| ClientManagerError::ConnectionError { message: err.to_string() })
+    }
 }
 
 /// Lifecycle events emitted by [`McpClientManager`] for plugin state transitions.
@@ -287,6 +320,8 @@ pub enum ClientManagerEvent {
     Starting { name: String },
     /// A plugin finished connecting successfully.
     Started { name: String },
+    /// The available tool list for a plugin changed.
+    ToolsUpdated { name: String, tools: Arc<Vec<McpToolMetadata>> },
     /// A plugin failed to start.
     StartFailed { name: String, error: String },
     /// A plugin is in the process of shutting down.

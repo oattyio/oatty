@@ -49,9 +49,6 @@ impl<'a> TableState<'_> {
     pub fn rows(&self) -> Option<&Vec<Row<'_>>> {
         self.rows.as_ref()
     }
-    pub fn columns(&self) -> Option<&Vec<ColumnWithSize>> {
-        self.columns.as_ref()
-    }
     pub fn column_constraints(&self) -> Option<&Vec<Constraint>> {
         self.column_constraints.as_ref()
     }
@@ -176,10 +173,18 @@ impl<'a> TableState<'_> {
             if columns.is_empty() {
                 widths.push(Constraint::Percentage(100));
             } else {
+                // determine if we have any columns that exceed 60
+                // and switch to using a fixed value for all others
+                let large_cols: Vec<&ColumnWithSize> = columns.iter().filter(|c| c.max_len > 60).collect();
+                let use_fixed = !large_cols.is_empty();
                 for col in columns.iter() {
                     // Use measured max length with a small padding, with a sensible floor/ceiling
                     let w = (col.max_len + 2).clamp(4, 60) as u16;
-                    widths.push(Constraint::Min(w));
+                    if use_fixed && !large_cols.contains(&col) {
+                        widths.push(Constraint::Length(w))
+                    } else {
+                        widths.push(Constraint::Min(w));
+                    }
                 }
             }
             return Some(widths);

@@ -1,0 +1,82 @@
+MCP Tool → CommandSpec Synthesis Roadmap
+=======================================
+
+Overview
+--------
+This document tracks the work required to surface MCP plugin tools as dynamic `CommandSpec` entries within the CLI/TUI. The scope reflects the latest requirements: flat string/bool/enum inputs only, fallback JSON-string fields for complex types, no persisted cache, registry updates on plugin lifecycle events, auth metadata included in summaries, group/name derivation rules, and a follow-up item for streaming/binary support.
+
+TODO Checklist
+--------------
+1. Core Types & Serialization
+   - [x] Introduce `CommandExecution` enum and `McpCommandSpec` payload in `heroku_types::command`.
+   - [x] Update serde defaults/tests to keep legacy HTTP specs functional.
+   - [x] Extend doc comments/examples to cover MCP-backed commands.
+
+2. MCP Tool Metadata Harvesting
+   - [x] Implement tool discovery on `McpClient` (handshake → `Vec<McpToolMetadata>` cache).
+   - [x] Expose a read-only accessor for cached tools and ensure it refreshes on reconnect.
+   - [x] Emit `ClientManagerEvent::ToolsUpdated { plugin, tools }` after discovery completes.
+
+3. CommandSpec Synthesis Builder
+   - [x] Define `McpToolMetadata` struct capturing name, description, auth requirements, and JSON schema.
+   - [x] Derive command `group` (`tool_name.split('_').next()`) when unique per plugin, else fallback to plugin name.
+   - [x] Derive command `name` by replacing `_` with `:`.
+   - [ ] Prepend auth summary to `CommandSpec.summary` (for example, `"Needs OAuth — <description>"`).
+   - [x] Map JSON schema properties into `PositionalArgument` / `CommandFlag` (strings, booleans, enums only).
+   - [x] Convert unsupported or nested fields into single-string JSON payload inputs with descriptive help text.
+   - [ ] Carry through plugin-provided provider hints to `ValueProvider::Command` where applicable.
+
+4. Dynamic Registry Overlay
+   - [x] Add an overlay store in `PluginEngine` for synthesized MCP specs keyed by plugin.
+   - [x] Create helpers to upsert/replace specs on `ToolsUpdated` and remove them on plugin stop.
+   - [x] Expose merged spec view via `PluginEngine::command_specs()` for consumers.
+   - [x] Update `registry::Registry` (or wrap in `DynamicRegistry`) to merge static manifest with MCP overlay.
+
+5. Execution Path Wiring
+ - [x] Extend `RegistryCommandRunner` (or introduce `McpCommandRunner`) to branch on `CommandExecution::Mcp`.
+ - [x] Invoke MCP tool via `PluginEngine::client_manager()` and normalize response into existing `ExecOutcome`.
+  - [x] Log executions with `AuditAction::ToolInvoke` including plugin/tool identifiers.
+
+6. UI & CLI Integration
+   - [x] Feed merged specs into palette state (`PaletteState::set_all_commands`).
+   - [x] Ensure workflows, suggestion engine, and help views honor new execution metadata.
+   - [x] Add UX copy for JSON-string fallback inputs so operators understand expected payload format.
+
+7. Testing & Validation
+   - [x] Unit-test schema-to-spec conversion, including mixed required/optional fields and group/name derivation.
+   - [ ] Add integration test covering lifecycle: plugin start → specs registered; stop → specs removed.
+   - [ ] Manual verification checklist for CLI palette, workflows, and audit log outputs.
+
+8. Follow-up Tracking
+   - [ ] Add entry to `specs/FUTURE.md` documenting streaming/binary response support as a fast-follow.
+
+Execution Plan
+--------------
+Phase 1: Foundations (Types & Metadata)
+   * Owners: Types + MCP teams
+   * Deliverables: `CommandExecution`, `McpToolMetadata`, tool discovery events
+   * Dependencies: none
+
+Phase 2: Spec Builder & Registry Overlay
+   * Owners: MCP + Registry
+   * Deliverables: deterministic `CommandSpec` synthesis, overlay store, lifecycle hooks
+   * Dependencies: Phase 1 types/events
+
+Phase 3: Execution Path & UI Consumption
+   * Owners: Engine + CLI/TUI
+   * Deliverables: runner dispatch, palette/workflow updates, logging alignment
+   * Dependencies: Phases 1–2
+
+Phase 4: Testing & Hardening
+   * Owners: Cross-team QA
+   * Deliverables: automated tests, manual validation script, launch checklist
+   * Dependencies: Phases 1–3
+
+Decision Log & Notes
+--------------------
+- JSON Schema Support: limited to flat `string`/`boolean`/`enum`; nested object inputs collapse into JSON-string arguments until richer handling lands.
+- Registry Persistence: no disk cache; overlay lives in memory and rebuilds on plugin start/stop events.
+- Naming Rules: `group` derived from first `_` segment when unique; otherwise use plugin name. `name` replaces `_` with `:`.
+- Authentication Surfacing: plugin auth requirements must be prepended to the command summary.
+- Streaming/Binary I/O: tracked separately in `specs/FUTURE.md` (see TODO above).
+- Implementation Discipline: follow the guidance in AGENTS.md under `Code Organization & Refactoring` when implementing roadmap items.

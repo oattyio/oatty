@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use ratatui::style::{Color, Modifier, Style};
 
 /// Semantic color roles used throughout the UI.
@@ -38,7 +40,8 @@ pub struct ThemeRoles {
 }
 
 /// Theme trait exposes semantic roles and common style builders.
-pub trait Theme: Send + Sync {
+
+pub trait Theme: Send + Sync + Debug {
     fn roles(&self) -> &ThemeRoles;
 
     // Text styles

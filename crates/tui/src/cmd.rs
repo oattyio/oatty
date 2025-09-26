@@ -21,24 +21,27 @@
 
 use anyhow::Result;
 use anyhow::anyhow;
-use heroku_mcp::McpConfig;
 use heroku_mcp::config::McpServer;
 use heroku_mcp::config::default_config_path;
 use heroku_mcp::config::save_config_to_path;
 use heroku_mcp::config::validate_config;
 use heroku_mcp::config::validate_server_name;
+use heroku_mcp::{McpConfig, PluginEngine};
 use heroku_registry::CommandSpec;
-use heroku_types::ExecOutcome;
+use heroku_registry::find_by_group_and_cmd;
 use heroku_types::{Effect, Modal, Route};
+use heroku_types::{ExecOutcome, command::CommandExecution};
 use heroku_util::exec_remote;
 use heroku_util::lex_shell_like;
 use heroku_util::resolve_path;
 use reqwest::Url;
 use serde_json::Map;
+use serde_json::Number;
 use serde_json::Value;
 use serde_json::from_str;
 use std::collections::HashMap;
 use std::fs::read_to_string;
+use std::str::FromStr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::vec;
@@ -76,26 +79,36 @@ pub enum Cmd {
     /// Make an HTTP request to the Heroku API.
     ///
     /// Carries:
-    /// - [`CommandSpec`]: API request metadata
-    /// - `String`: URL path (such as `/apps`)
+    /// - [`CommandSpec`]: API request metadata (including path, method, and service)
     /// - `serde_json::Map`: JSON body
     ///
     /// # Example
     /// ```rust,ignore
     /// use your_crate::Cmd;
-    /// use heroku_registry::CommandSpec;
-    /// use{Map, Value};
+    /// use heroku_registry::{CommandSpec, HttpCommandSpec, ServiceId};
+    /// use heroku_types::CommandExecution;
+    /// use std::collections::HashMap;
+    /// use serde_json::{Map, Value};
     ///
-    /// let spec = CommandSpec { method: "GET".into(), path: "/apps".into() };
-    /// let cmd = Cmd::ExecuteHttp(spec.clone(), "/apps".into(), Map::new());
+    /// let http = HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new());
+    /// let spec = CommandSpec::new_http(
+    ///     "apps".into(),
+    ///     "apps:list".into(),
+    ///     "List apps".into(),
+    ///     Vec::new(),
+    ///     Vec::new(),
+    ///     http,
+    /// );
+    /// let cmd = Cmd::ExecuteHttp(spec.clone(), Map::new());
     ///
-    /// if let Cmd::ExecuteHttp(s, p, b) = cmd {
-    ///     assert_eq!(s.method, "GET");
-    ///     assert_eq!(p, "/apps");
+    /// if let Cmd::ExecuteHttp(s, b) = cmd {
+    ///     assert!(matches!(s.execution(), CommandExecution::Http(_)));
     ///     assert!(b.is_empty());
     /// }
     /// ```
     ExecuteHttp(CommandSpec, Map<String, Value>),
+    /// Invoke an MCP tool via the plugin engine.
+    ExecuteMcp(CommandSpec, Map<String, Value>),
     /// Load MCP plugins from config (synchronous file read) and populate UI state.
     LoadPlugins,
     PluginsStart(String),
@@ -307,8 +320,7 @@ fn handle_send_to_palette(app: &mut app::App, command_spec: CommandSpec) -> Opti
 
     app.palette.set_input(format!("{} {}", group, name));
     app.palette.set_cursor(app.palette.input().len());
-    app.palette
-        .apply_build_suggestions(&app.ctx.registry, &app.ctx.providers, &*app.ctx.theme);
+    app.palette.apply_build_suggestions(&app.ctx.providers, &*app.ctx.theme);
     Some(vec![])
 }
 
@@ -328,6 +340,10 @@ pub async fn run_cmds(app: &mut app::App<'_>, commands: Vec<Cmd>) -> CommandBatc
             Cmd::ClipboardSet(text) => execute_clipboard_set(app, text),
             Cmd::ExecuteHttp(spec, body) => {
                 batch.pending.push(spawn_execute_http(app, spec, body));
+                continue;
+            }
+            Cmd::ExecuteMcp(spec, body) => {
+                batch.pending.push(spawn_execute_mcp(app, spec, body));
                 continue;
             }
             Cmd::PluginsStart(name) => {
@@ -434,6 +450,8 @@ fn spawn_execute_plugin_action(app: &mut app::App<'_>, action: PluginAction, nam
 async fn execute_plugins_refresh(app: &mut app::App<'_>) -> ExecOutcome {
     let plugin_engine = &*app.ctx.plugin_engine;
     let plugins = plugin_engine.list_plugins().await;
+
+    app.browser.update_browser_filtered();
 
     ExecOutcome::PluginsRefresh(format!("{} plugins refreshed", plugins.len()), Some(plugins))
 }
@@ -555,7 +573,10 @@ async fn execute_plugins_apply_add(app: &mut app::App<'_>) -> ExecOutcome {
                 }
                 Ok(None) => {}
                 Err(errors) => {
-                    return ExecOutcome::PluginValidationErr(format!("Add apply validation failed: invalid headers: {}", errors.join("; ")));
+                    return ExecOutcome::PluginValidationErr(format!(
+                        "Add apply validation failed: invalid headers: {}",
+                        errors.join("; ")
+                    ));
                 }
             }
         }
@@ -575,7 +596,10 @@ async fn execute_plugins_apply_add(app: &mut app::App<'_>) -> ExecOutcome {
                 }
                 Ok(None) => {}
                 Err(errors) => {
-                    return ExecOutcome::PluginValidationErr(format!("Add apply validation failed: invalid env vars: {}", errors.join("; ")));
+                    return ExecOutcome::PluginValidationErr(format!(
+                        "Add apply validation failed: invalid env vars: {}",
+                        errors.join("; ")
+                    ));
                 }
             }
         }
@@ -590,7 +614,7 @@ async fn execute_plugins_apply_add(app: &mut app::App<'_>) -> ExecOutcome {
     };
     cfg.mcp_servers.insert(name.clone(), server);
     if let Err(e) = validate_config(&cfg) {
-        return ExecOutcome::PluginValidationErr(format!("Add apply validation failed: {}", e))
+        return ExecOutcome::PluginValidationErr(format!("Add apply validation failed: {}", e));
     }
     let _ = save_config_to_path(&cfg, &path);
     // Refresh list
@@ -637,10 +661,39 @@ fn spawn_execute_http(app: &mut app::App<'_>, spec: CommandSpec, body: Map<Strin
     tokio::spawn(async move { execute_http_task(active, spec, body).await })
 }
 
+fn spawn_execute_mcp(app: &mut app::App<'_>, spec: CommandSpec, arguments: Map<String, Value>) -> JoinHandle<ExecOutcome> {
+    app.executing = true;
+    app.throbber_idx = 0;
+
+    let active = app.active_exec_count.clone();
+    active.fetch_add(1, Ordering::Relaxed);
+    let engine = app.ctx.plugin_engine.clone();
+
+    tokio::spawn(async move { execute_mcp_task(active, engine, spec, arguments).await })
+}
+
 /// Background task body for executing an HTTP request and translating it into
 /// an [`ExecOutcome`].
 async fn execute_http_task(active_exec_count: Arc<AtomicUsize>, spec: CommandSpec, body: Map<String, Value>) -> ExecOutcome {
     let outcome = exec_remote(&spec, body).await;
+
+    let outcome = match outcome {
+        Ok(out) => out,
+        Err(err) => ExecOutcome::Log(format!("Error: {}", err)),
+    };
+
+    active_exec_count.fetch_sub(1, Ordering::Relaxed);
+
+    outcome
+}
+
+async fn execute_mcp_task(
+    active_exec_count: Arc<AtomicUsize>,
+    engine: Arc<PluginEngine>,
+    spec: CommandSpec,
+    arguments: Map<String, Value>,
+) -> ExecOutcome {
+    let outcome = engine.execute_tool(&spec, &arguments).await;
 
     let outcome = match outcome {
         Ok(out) => out,
@@ -802,7 +855,16 @@ fn build_request_body(user_flags: HashMap<String, Option<String>>, command_spec:
             if flag_spec.r#type == "boolean" {
                 request_body.insert(flag_name, Value::Bool(true));
             } else if let Some(value) = flag_value {
-                request_body.insert(flag_name, Value::String(value));
+                match flag_spec.r#type.as_str() {
+                    "number" => {
+                        if let Ok(number) = Number::from_str(value.as_str()) {
+                            request_body.insert(flag_name, Value::Number(number));
+                        }
+                    },
+                    _ => {
+                        request_body.insert(flag_name, Value::String(value));
+                    }
+                };
             }
         }
     }
@@ -880,11 +942,15 @@ fn validate_command(application: &mut app::App) -> Result<(CommandSpec, Map<Stri
     }
 
     // Step 2: Find the command specification in the registry
-    let command_spec = application
-        .ctx
-        .registry
-        .find_by_group_and_cmd(tokens[0].as_str(), tokens[1].as_str())?
-        .clone();
+    let command_spec = {
+        let lock = application
+            .ctx
+            .registry
+            .lock()
+            .map_err(|_| anyhow!("Could not obtain lock to registry"))?;
+        let commands = &lock.commands;
+        find_by_group_and_cmd(commands, tokens[0].as_str(), tokens[1].as_str())?
+    };
 
     // Step 3: Parse command arguments and flags from input tokens
     let (user_flags, user_args) = parse_command_arguments(&tokens[2..], &command_spec)?;
@@ -901,7 +967,10 @@ fn validate_command(application: &mut app::App) -> Result<(CommandSpec, Map<Stri
 }
 
 fn persist_execution_context(application: &mut app::App, command_spec: &CommandSpec, request_body: &Map<String, Value>, input: &str) {
-    application.last_command_ranges = Some(command_spec.ranges.clone());
+    application.last_command_ranges = match command_spec.execution() {
+        CommandExecution::Http(http) => Some(http.ranges.clone()),
+        _ => None,
+    };
     application.last_spec = Some(command_spec.clone());
     application.last_body = Some(request_body.clone());
 
@@ -939,13 +1008,29 @@ fn persist_execution_context(application: &mut app::App, command_spec: &CommandS
 }
 
 fn execute_command(command_spec: CommandSpec, request_body: Map<String, Value>, user_args: Vec<String>) -> Option<Vec<Cmd>> {
-    let mut command_spec_to_run = command_spec.clone();
-    let mut positional_argument_map: HashMap<String, String> = HashMap::new();
-    for (index, positional_argument) in command_spec.positional_args.iter().enumerate() {
-        positional_argument_map.insert(positional_argument.name.clone(), user_args.get(index).cloned().unwrap_or_default());
+    match command_spec.execution() {
+        CommandExecution::Http(http) => {
+            let mut command_spec_to_run = command_spec.clone();
+            let mut positional_argument_map: HashMap<String, String> = HashMap::new();
+            for (index, positional_argument) in command_spec.positional_args.iter().enumerate() {
+                positional_argument_map.insert(positional_argument.name.clone(), user_args.get(index).cloned().unwrap_or_default());
+            }
+
+            if let Some(http_spec) = command_spec_to_run.http_mut() {
+                http_spec.path = resolve_path(&http.path, &positional_argument_map);
+            }
+
+            Some(vec![Cmd::ExecuteHttp(command_spec_to_run, request_body)])
+        }
+        CommandExecution::Mcp(_) => {
+            let mut arguments = request_body;
+            for (index, positional_argument) in command_spec.positional_args.iter().enumerate() {
+                if let Some(value) = user_args.get(index) {
+                    arguments.insert(positional_argument.name.clone(), Value::String(value.clone()));
+                }
+            }
+
+            Some(vec![Cmd::ExecuteMcp(command_spec, arguments)])
+        }
     }
-
-    command_spec_to_run.path = resolve_path(&command_spec.path, &positional_argument_map);
-
-    return Some(vec![Cmd::ExecuteHttp(command_spec_to_run, request_body.clone())]);
 }

@@ -5,7 +5,7 @@ use regex::Regex;
 use thiserror::Error;
 use tracing::debug;
 
-static SERVICE: &'static str = "heroku";
+static SERVICE: &str = "heroku";
 
 /// Interpolate environment variables and secrets in the configuration.
 pub fn interpolate_config(config: &mut McpConfig) -> Result<(), InterpolationError> {
@@ -101,6 +101,7 @@ fn interpolate_auth(auth: &mut McpAuthConfig) -> Result<(), InterpolationError> 
 }
 
 /// Store a secret in the OS keychain.
+#[allow(dead_code)]
 pub fn store_secret(name: &str, value: &str) -> Result<(), InterpolationError> {
     let keyring = keyring::Entry::new(SERVICE, name).map_err(|e| InterpolationError::KeyringError {
         name: name.to_string(),
@@ -117,6 +118,7 @@ pub fn store_secret(name: &str, value: &str) -> Result<(), InterpolationError> {
 }
 
 /// Remove a secret from the OS keychain.
+#[allow(dead_code)]
 pub fn remove_secret(name: &str) -> Result<(), InterpolationError> {
     let keyring = keyring::Entry::new(SERVICE, name).map_err(|e| InterpolationError::KeyringError {
         name: name.to_string(),

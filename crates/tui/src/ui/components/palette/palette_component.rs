@@ -259,11 +259,11 @@ impl PaletteComponent {
     /// * `app` - The application state to update
     fn handle_help_request(&self, app: &mut app::App) -> Vec<Effect> {
         // Ensure suggestions are up to date, then fetch effective command
-        let SharedCtx { registry, providers, .. } = &app.ctx;
-        app.palette.apply_build_suggestions(registry, providers, &*app.ctx.theme);
+        let SharedCtx { providers, .. } = &app.ctx;
+        app.palette.apply_build_suggestions(providers, &*app.ctx.theme);
         let spec = app.palette.selected_command();
         if spec.is_some() {
-            app.help.set_spec(spec.cloned());
+            app.help.set_spec(spec);
             return vec![Effect::ShowModal(Modal::Help)];
         }
         vec![]
@@ -343,9 +343,9 @@ impl PaletteComponent {
         if app.palette.is_input_empty() {
             return;
         }
-        let SharedCtx { registry, providers, .. } = &app.ctx;
+        let SharedCtx { providers, .. } = &app.ctx;
 
-        app.palette.apply_build_suggestions(registry, providers, &*app.ctx.theme);
+        app.palette.apply_build_suggestions(providers, &*app.ctx.theme);
         // Open popup if we have suggestions or if provider-backed suggestions are loading
         let open = app.palette.suggestions_len() > 0 || app.palette.is_provider_loading();
         app.palette.set_is_suggestions_open(open);

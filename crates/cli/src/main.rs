@@ -1,10 +1,14 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::{Context, Result};
 use clap::ArgMatches;
 use heroku_api::HerokuClient;
 use heroku_mcp::{PluginEngine, config::load_config};
-use heroku_registry::{Registry, build_clap};
+use heroku_registry::{Registry, build_clap, find_by_group_and_cmd};
+use heroku_types::{ExecOutcome, command::CommandExecution};
 use heroku_util::resolve_path;
 use reqwest::Method;
 use serde_json::{Map, Value};
@@ -41,20 +45,24 @@ use tracing_subscriber::fmt;
 async fn main() -> Result<()> {
     init_tracing();
     let cfg = load_config()?;
-    let plugin_engine = PluginEngine::new(cfg)?;
+    let registry = Arc::new(Mutex::new(Registry::from_embedded_schema()?));
+    let plugin_engine = Arc::new(PluginEngine::new(cfg, Arc::clone(&registry))?);
     plugin_engine.prepare_registry().await?;
+    plugin_engine.start().await?;
 
-    let registry = Registry::from_embedded_schema()?;
-    let cli = build_clap(&registry);
+    let cli = build_clap(Arc::clone(&registry));
     let matches = cli.get_matches();
 
     // No subcommands => TUI
     if matches.subcommand_name().is_none() {
-        heroku_tui::run(registry, plugin_engine).await?;
+        heroku_tui::run(Arc::clone(&registry), Arc::clone(&plugin_engine)).await?;
+        plugin_engine.stop().await?;
         return Ok(());
     }
 
-    run_command(&registry, &matches).await
+    let result = run_command(Arc::clone(&registry), &matches, Arc::clone(&plugin_engine)).await;
+    plugin_engine.stop().await?;
+    result
 }
 
 /// Initializes the tracing system for logging and diagnostics.
@@ -131,7 +139,7 @@ fn init_tracing() {
 /// # Set config var
 /// heroku-cli config config:set KEY=value
 /// ```
-async fn run_command(registry: &Registry, matches: &ArgMatches) -> Result<()> {
+async fn run_command(registry: Arc<Mutex<Registry>>, matches: &ArgMatches, plugin_engine: Arc<PluginEngine>) -> Result<()> {
     // format is <group> <qualified subcommand> e.g. apps app:create
     let (group, sub) = matches.subcommand().context("expected a resource group subcommand")?;
 
@@ -142,7 +150,10 @@ async fn run_command(registry: &Registry, matches: &ArgMatches) -> Result<()> {
         return Ok(()); // unimplemented
     }
 
-    let cmd_spec = registry.find_by_group_and_cmd(group, cmd_name)?;
+    let cmd_spec = {
+        let registry_lock = registry.lock().expect("could not obtain lock on registry");
+        find_by_group_and_cmd(&registry_lock.commands, group, cmd_name)?
+    };
 
     // Collect positional values
     let mut pos_values: HashMap<String, String> = HashMap::new();
@@ -164,20 +175,39 @@ async fn run_command(registry: &Registry, matches: &ArgMatches) -> Result<()> {
         }
     }
 
-    let body_value = (!body.is_empty()).then_some(Value::Object(body));
+    let body_value = (!body.is_empty()).then_some(Value::Object(body.clone()));
 
-    let client = HerokuClient::new_from_service_id(cmd_spec.service_id)?;
-    let method = Method::from_bytes(cmd_spec.method.as_bytes())?;
-    let path = resolve_path(&cmd_spec.path, &pos_values);
-    let mut builder = client.request(method, &path);
-    if let Some(ref b) = body_value {
-        builder = builder.json(b);
+    match cmd_spec.execution() {
+        CommandExecution::Http(http) => {
+            let client = HerokuClient::new_from_service_id(http.service_id)?;
+            let method = Method::from_bytes(http.method.as_bytes())?;
+            let path = resolve_path(&http.path, &pos_values);
+            let mut builder = client.request(method, &path);
+            if let Some(ref b) = body_value {
+                builder = builder.json(b);
+            }
+
+            let resp = builder.send().await?;
+            let status = resp.status();
+            let text = resp.text().await.unwrap_or_default();
+            println!("{}\n{}", status, text);
+            Ok(())
+        }
+        CommandExecution::Mcp(_) => {
+            let mut arguments = body;
+            for pa in &cmd_spec.positional_args {
+                if let Some(value) = pos_values.get(&pa.name) {
+                    arguments.insert(pa.name.clone(), Value::String(value.clone()));
+                }
+            }
+
+            let outcome = plugin_engine.execute_tool(&cmd_spec, &arguments).await?;
+            match outcome {
+                ExecOutcome::Mcp(log, _) => println!("{}", log),
+                ExecOutcome::Log(log) => println!("{}", log),
+                other => println!("{:?}", other),
+            }
+            Ok(())
+        }
     }
-
-    // Execute
-    let resp = builder.send().await?;
-    let status = resp.status();
-    let text = resp.text().await.unwrap_or_default();
-    println!("{}\n{}", status, text);
-    Ok(())
 }

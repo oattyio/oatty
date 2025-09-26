@@ -19,7 +19,10 @@
 //! - `run_app(registry)` is called from `lib::run` and performs setup,
 //!   event processing, and teardown.
 
-use std::time::Duration;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use anyhow::Result;
 use crossterm::{
@@ -167,7 +170,7 @@ async fn handle_input_event<'a>(
 
 /// Entry point for the TUI runtime: sets up terminal, spawns the event
 /// producer, runs the async event loop, and performs cleanup on exit.
-pub async fn run_app(registry: heroku_registry::Registry, plugin_engine: PluginEngine) -> Result<()> {
+pub async fn run_app(registry: Arc<Mutex<heroku_registry::Registry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
     let mut application = app::App::new(registry, plugin_engine);
     let mut terminal = setup_terminal()?;
 
@@ -228,7 +231,7 @@ pub async fn run_app(registry: heroku_registry::Registry, plugin_engine: PluginE
                     Ok(outcome) => outcome,
                     Err(error) => ExecOutcome::Log(format!("Execution task failed: {error}")),
                 };
-                let follow_up = application.update(Msg::ExecCompleted(outcome));
+                let follow_up = application.update(Msg::ExecCompleted(Box::new(outcome)));
                 process_effects(&mut application, follow_up, &mut pending_execs).await;
                 needs_render = true;
             }
@@ -273,7 +276,7 @@ async fn process_effects(app: &mut App<'_>, effects: Vec<Effect>, pending_execs:
 
     let mut follow_up_effects: Vec<Effect> = Vec::new();
     for outcome in command_batch.immediate {
-        follow_up_effects.extend(app.update(Msg::ExecCompleted(outcome)));
+        follow_up_effects.extend(app.update(Msg::ExecCompleted(Box::new(outcome))));
     }
     if follow_up_effects.is_empty() {
         return;

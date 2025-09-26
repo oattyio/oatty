@@ -1,4 +1,3 @@
-use heroku_registry::Registry;
 use heroku_types::{CommandSpec, ItemKind, SuggestionItem};
 use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
 
@@ -27,9 +26,9 @@ pub(crate) struct SuggestionEngine;
 
 impl SuggestionEngine {
     // Breakout: if command is not yet resolved, return command suggestions
-    fn suggest_when_unresolved(registry: &Registry, tokens: &[String]) -> Option<SuggestionResult> {
-        if !is_command_resolved(registry, tokens) {
-            let items = suggest_commands(registry, &compute_command_prefix(tokens));
+    fn suggest_when_unresolved(commands: &Vec<CommandSpec>, tokens: &[String]) -> Option<SuggestionResult> {
+        if !is_command_resolved(commands, tokens) {
+            let items = suggest_commands(commands, &compute_command_prefix(tokens));
             return Some(SuggestionResult {
                 items,
                 provider_loading: false,
@@ -39,14 +38,15 @@ impl SuggestionEngine {
     }
 
     // Breakout: resolve spec reference from tokens
-    fn resolve_spec<'a>(registry: &'a Registry, tokens: &[String]) -> Option<&'a CommandSpec> {
+    fn resolve_spec<'a>(commands: &'a Vec<CommandSpec>, tokens: &[String]) -> Option<&'a CommandSpec> {
         let group: &str = tokens.first().map(|s| s.as_str()).unwrap_or("");
         let name: &str = tokens.get(1).map(|s| s.as_str()).unwrap_or("");
-        registry.commands.iter().find(|c| c.group == group && c.name == name)
+        commands.iter().find(|c| c.group == group && c.name == name)
     }
 
     // Breakout: handle case where a non-boolean flag value is pending
     fn suggest_for_pending_flag(
+        commands: &Vec<CommandSpec>,
         spec: &CommandSpec,
         remaining_parts: &[String],
         input: &str,
@@ -55,7 +55,7 @@ impl SuggestionEngine {
         let pending_flag = find_pending_flag(spec, remaining_parts, input);
         if let Some(flag_name) = pending_flag {
             let value_partial = flag_value_partial(remaining_parts);
-            let items = suggest_values_for_flag(spec, &flag_name, &value_partial, providers, remaining_parts);
+            let items = suggest_values_for_flag(commands, spec, &flag_name, &value_partial, providers, remaining_parts);
             // Signal loading when a provider is declared for this flag but no non-enum values yet
             let has_binding = spec
                 .flags
@@ -71,9 +71,34 @@ impl SuggestionEngine {
         }
         None
     }
-
+    fn build_for_index(
+        commands: &Vec<CommandSpec>,
+        spec: &CommandSpec,
+        index: usize,
+        current: &str,
+        providers: &[Box<dyn ValueProvider>],
+        remaining_parts: &[String],
+    ) -> (Vec<SuggestionItem>, bool) {
+        let mut values = suggest_positionals(commands, spec, index, current, providers, remaining_parts);
+        let mut loading = false;
+        if let Some(positional_arg) = spec.positional_args.get(index) {
+            // Keep provider suggestions only different from the current echo
+            if !current.is_empty() {
+                values.retain(|item| item.insert_text != current);
+            }
+            let has_binding = positional_arg.provider.is_some();
+            let provider_found = values
+                .iter()
+                .any(|item| matches!(item.kind, ItemKind::Value) && item.meta.as_deref() != Some("enum"));
+            if has_binding && !provider_found {
+                loading = true;
+            }
+        }
+        (values, loading)
+    }
     // Breakout: build positional suggestions and compute provider loading
     fn build_positional_suggestions(
+        commands: &Vec<CommandSpec>,
         spec: &CommandSpec,
         remaining_parts: &[String],
         current_input: &str,
@@ -83,30 +108,6 @@ impl SuggestionEngine {
         user_args_len: usize,
     ) -> (Vec<SuggestionItem>, bool) {
         // Helper: build values for a specific positional index and determine loading
-        fn build_for_index(
-            spec: &CommandSpec,
-            index: usize,
-            current: &str,
-            providers: &[Box<dyn ValueProvider>],
-            remaining_parts: &[String],
-        ) -> (Vec<SuggestionItem>, bool) {
-            let mut values = suggest_positionals(spec, index, current, providers, remaining_parts);
-            let mut loading = false;
-            if let Some(positional_arg) = spec.positional_args.get(index) {
-                // Keep provider suggestions only different from the current echo
-                if !current.is_empty() {
-                    values.retain(|item| item.insert_text != current);
-                }
-                let has_binding = positional_arg.provider.is_some();
-                let provider_found = values
-                    .iter()
-                    .any(|item| matches!(item.kind, ItemKind::Value) && item.meta.as_deref() != Some("enum"));
-                if has_binding && !provider_found {
-                    loading = true;
-                }
-            }
-            (values, loading)
-        }
 
         let first_flag_idx = remaining_parts
             .iter()
@@ -120,10 +121,10 @@ impl SuggestionEngine {
 
         if editing_positional {
             let arg_index = (remaining_parts.len() - 1).min(spec.positional_args.len().saturating_sub(1));
-            return build_for_index(spec, arg_index, current_input, providers, remaining_parts);
+            return Self::build_for_index(commands, spec, arg_index, current_input, providers, remaining_parts);
         }
         if user_args_len < spec.positional_args.len() && !current_is_flag {
-            return build_for_index(spec, user_args_len, "", providers, remaining_parts);
+            return Self::build_for_index(commands, spec, user_args_len, "", providers, remaining_parts);
         }
         (Vec::new(), false)
     }
@@ -168,14 +169,14 @@ impl SuggestionEngine {
     /// ```
     /// let result = SuggestionEngine::build(&registry, &providers, "apps info --app ");
     /// ```
-    pub fn build(registry: &Registry, providers: &[Box<dyn ValueProvider>], input: &str) -> SuggestionResult {
+    pub fn build(commands: &Vec<CommandSpec>, providers: &[Box<dyn ValueProvider>], input: &str) -> SuggestionResult {
         let input_tokens: Vec<String> = lex_shell_like(input);
 
-        if let Some(out) = Self::suggest_when_unresolved(registry, &input_tokens) {
+        if let Some(out) = Self::suggest_when_unresolved(commands, &input_tokens) {
             return out;
         }
 
-        let Some(spec) = Self::resolve_spec(registry, &input_tokens) else {
+        let Some(spec) = Self::resolve_spec(commands, &input_tokens) else {
             return SuggestionResult {
                 items: vec![],
                 provider_loading: false,
@@ -193,7 +194,7 @@ impl SuggestionEngine {
         let ends_with_space = input.ends_with(' ') || input.ends_with('\t') || input.ends_with('\n') || input.ends_with('\r');
         let current_is_flag = current_input.starts_with('-');
 
-        if let Some(out) = Self::suggest_for_pending_flag(spec, remaining_parts, input, providers) {
+        if let Some(out) = Self::suggest_for_pending_flag(commands, spec, remaining_parts, input, providers) {
             return out;
         }
 
@@ -202,6 +203,7 @@ impl SuggestionEngine {
         //   suggest values for that positional index.
         // - Otherwise, suggest for the next positional if any remain.
         let (mut items, provider_loading) = Self::build_positional_suggestions(
+            commands,
             spec,
             remaining_parts,
             current_input,
@@ -232,12 +234,12 @@ impl SuggestionEngine {
 ///
 /// `true` if the command is resolved, `false` otherwise.
 // ===== Command resolution helpers =====
-fn is_command_resolved(registry: &Registry, tokens: &[String]) -> bool {
+fn is_command_resolved(commands: &Vec<CommandSpec>, tokens: &[String]) -> bool {
     if tokens.len() < 2 {
         return false;
     }
     let (group, name) = (&tokens[0], &tokens[1]);
-    registry.commands.iter().any(|c| &c.group == group && &c.name == name)
+    commands.iter().any(|c| &c.group == group && &c.name == name)
 }
 
 /// Computes the command prefix from the input tokens.
@@ -273,13 +275,13 @@ fn compute_command_prefix(tokens: &[String]) -> String {
 /// # Returns
 ///
 /// A vector of suggestion items for matching commands.
-fn suggest_commands(registry: &Registry, prefix: &str) -> Vec<SuggestionItem> {
+fn suggest_commands(commands: &Vec<CommandSpec>, prefix: &str) -> Vec<SuggestionItem> {
     let mut items = Vec::new();
     if prefix.is_empty() {
         return items;
     }
 
-    for command in &*registry.commands {
+    for command in commands {
         let group = &command.group;
         let name = &command.name;
         let executable = if name.is_empty() {
@@ -434,6 +436,7 @@ fn flag_value_partial(parts: &[String]) -> String {
 /// A vector of suggestion items for the flag values.
 // ===== Suggestion builders =====
 fn suggest_values_for_flag(
+    commands: &Vec<CommandSpec>,
     spec: &CommandSpec,
     flag_name: &str,
     partial: &str,
@@ -461,7 +464,7 @@ fn suggest_values_for_flag(
     let command_key = format!("{}:{}", spec.group, spec.name);
     let inputs_map = build_inputs_map_for_flag(spec, remaining_parts, flag_name);
     for provider in providers {
-        let mut values = provider.suggest(&command_key, flag_name, partial, &inputs_map);
+        let mut values = provider.suggest(commands, &command_key, flag_name, partial, &inputs_map);
         items.append(&mut values);
     }
 
@@ -484,6 +487,7 @@ fn suggest_values_for_flag(
 ///
 /// A vector of suggestion items for the positional argument.
 fn suggest_positionals(
+    commands: &Vec<CommandSpec>,
     spec: &CommandSpec,
     arg_count: usize,
     current: &str,
@@ -498,7 +502,7 @@ fn suggest_positionals(
         // Query providers for dynamic suggestions
         let inputs_map = build_inputs_map_for_positional(spec, arg_count, remaining_parts);
         for provider in providers {
-            let mut values = provider.suggest(&command_key, &positional_arg.name, current, &inputs_map);
+            let mut values = provider.suggest(commands, &command_key, &positional_arg.name, current, &inputs_map);
             items.append(&mut values);
         }
 
@@ -695,7 +699,7 @@ pub(crate) fn is_flag_value_complete(input: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use heroku_types::{CommandFlag, PositionalArgument, ServiceId};
+    use heroku_types::{CommandExecution, CommandFlag, HttpCommandSpec, PositionalArgument, ServiceId};
     use std::sync::Arc;
 
     #[derive(Debug)]
@@ -706,6 +710,7 @@ mod tests {
     impl ValueProvider for TestProvider {
         fn suggest(
             &self,
+            commands: &Vec<CommandSpec>,
             command_key: &str,
             field: &str,
             _partial: &str,
@@ -737,26 +742,30 @@ mod tests {
     fn suggests_commands_before_resolution() {
         let reg = registry_with(vec![
             CommandSpec {
+                execution: CommandExecution::Http(HttpCommandSpec {
+                    method: "GET".into(),
+                    path: "/apps".into(),
+                    ranges: vec![],
+                    service_id: ServiceId::CoreApi,
+                }),
                 group: "apps".into(),
                 name: "list".into(),
                 summary: "list".into(),
                 positional_args: vec![],
                 flags: vec![],
-                method: "GET".into(),
-                path: "/apps".into(),
-                ranges: vec![],
-                service_id: ServiceId::CoreApi,
             },
             CommandSpec {
+                execution: CommandExecution::Http(HttpCommandSpec {
+                    method: "GET".into(),
+                    path: "/apps/{app}".into(),
+                    ranges: vec![],
+                    service_id: ServiceId::CoreApi,
+                }),
                 group: "apps".into(),
                 name: "info".into(),
                 summary: "info".into(),
                 positional_args: vec![],
                 flags: vec![],
-                method: "GET".into(),
-                path: "/apps/{app}".into(),
-                ranges: vec![],
-                service_id: ServiceId::CoreApi,
             },
         ]);
         let result = SuggestionEngine::build(&reg, &[], "ap");
@@ -769,6 +778,13 @@ mod tests {
     fn suggests_flag_values_enum_and_provider() {
         // apps:info with --region enum and --app provider
         let spec = CommandSpec {
+            execution: CommandExecution(HttpCommandSpec {
+                method: "GET".into(),
+                path: "/apps/{app}".into(),
+                ranges: vec![],
+                // Provider is now embedded on the field; legacy vector removed
+                service_id: ServiceId::CoreApi,
+            }),
             group: "apps".into(),
             name: "info".into(),
             summary: "info".into(),
@@ -798,23 +814,20 @@ mod tests {
                     }),
                 },
             ],
-            method: "GET".into(),
-            path: "/apps/{app}".into(),
-            ranges: vec![],
-            // Provider is now embedded on the field; legacy vector removed
-            service_id: ServiceId::CoreApi,
         };
         let reg = registry_with(vec![
             CommandSpec {
+                execution: CommandExecution::Http(HttpCommandSpec {
+                    method: "GET".into(),
+                    path: "/apps".into(),
+                    ranges: vec![],
+                    service_id: ServiceId::CoreApi,
+                }),
                 group: "apps".into(),
                 name: "list".into(),
                 summary: "list".into(),
                 positional_args: vec![],
                 flags: vec![],
-                method: "GET".into(),
-                path: "/apps".into(),
-                ranges: vec![],
-                service_id: ServiceId::CoreApi,
             },
             spec,
         ]);
@@ -844,11 +857,13 @@ mod tests {
                 }),
             }],
             flags: vec![],
-            method: "PATCH".into(),
-            path: "/addons/{addon}/config".into(),
-            ranges: vec![],
-            // No legacy providers vector
-            service_id: ServiceId::CoreApi,
+            execution: CommandExecution::Http(HttpCommandSpec {
+                method: "PATCH".into(),
+                path: "/addons/{addon}/config".into(),
+                ranges: vec![],
+                // No legacy providers vector
+                service_id: ServiceId::CoreApi,
+            }),
         };
         let reg = registry_with(vec![
             CommandSpec {
@@ -857,10 +872,12 @@ mod tests {
                 summary: "list".into(),
                 positional_args: vec![],
                 flags: vec![],
-                method: "GET".into(),
-                path: "/addons".into(),
-                ranges: vec![],
-                service_id: ServiceId::CoreApi,
+                execution: CommandExecution::Http(HttpCommandSpec {
+                    method: "GET".into(),
+                    path: "/addons".into(),
+                    ranges: vec![],
+                    service_id: ServiceId::CoreApi,
+                }),
             },
             spec,
         ]);
@@ -893,10 +910,12 @@ mod tests {
                     binds: vec![],
                 }),
             }],
-            method: "GET".into(),
-            path: "/apps/{app}".into(),
-            ranges: vec![],
-            service_id: ServiceId::CoreApi,
+            execution: CommandExecution::Http(HttpCommandSpec {
+                method: "GET".into(),
+                path: "/apps/{app}".into(),
+                ranges: vec![],
+                service_id: ServiceId::CoreApi,
+            }),
         };
         let reg = registry_with(vec![
             CommandSpec {
@@ -905,10 +924,12 @@ mod tests {
                 summary: "list".into(),
                 positional_args: vec![],
                 flags: vec![],
-                method: "GET".into(),
-                path: "/apps".into(),
-                ranges: vec![],
-                service_id: ServiceId::CoreApi,
+                execution: CommandExecution::Http(HttpCommandSpec {
+                    method: "GET".into(),
+                    path: "/apps".into(),
+                    ranges: vec![],
+                    service_id: ServiceId::CoreApi,
+                }),
             },
             spec,
         ]);
@@ -934,11 +955,13 @@ mod tests {
                 }),
             }],
             flags: vec![],
-            method: "GET".into(),
-            path: "/apps/{app}".into(),
-            ranges: vec![],
-            // No legacy providers vector
-            service_id: ServiceId::CoreApi,
+            execution: CommandExecution::Http(HttpCommandSpec {
+                method: "GET".into(),
+                path: "/apps/{app}".into(),
+                ranges: vec![],
+                // No legacy providers vector
+                service_id: ServiceId::CoreApi,
+            }),
         };
         let reg = registry_with(vec![
             CommandSpec {
@@ -947,10 +970,12 @@ mod tests {
                 summary: "list".into(),
                 positional_args: vec![],
                 flags: vec![],
-                method: "GET".into(),
-                path: "/apps".into(),
-                ranges: vec![],
-                service_id: ServiceId::CoreApi,
+                execution: CommandExecution::Http(HttpCommandSpec {
+                    method: "GET".into(),
+                    path: "/apps".into(),
+                    ranges: vec![],
+                    service_id: ServiceId::CoreApi,
+                }),
             },
             spec,
         ]);
@@ -987,11 +1012,13 @@ mod tests {
                 },
             ],
             flags: vec![],
-            method: "POST".into(),
-            path: "/pipelines/{pipeline}/ci".into(),
-            ranges: vec![],
-            // No legacy providers vector
-            service_id: ServiceId::CoreApi,
+            execution: CommandExecution::Http(HttpCommandSpec {
+                method: "POST".into(),
+                path: "/pipelines/{pipeline}/ci".into(),
+                ranges: vec![],
+                // No legacy providers vector
+                service_id: ServiceId::CoreApi,
+            }),
         };
         let reg = registry_with(vec![
             CommandSpec {
@@ -1000,10 +1027,12 @@ mod tests {
                 summary: "list".into(),
                 positional_args: vec![],
                 flags: vec![],
-                method: "GET".into(),
-                path: "/pipelines".into(),
-                ranges: vec![],
-                service_id: ServiceId::CoreApi,
+                execution: CommandExecution::Http(HttpCommandSpec {
+                    method: "GET".into(),
+                    path: "/pipelines".into(),
+                    ranges: vec![],
+                    service_id: ServiceId::CoreApi,
+                }),
             },
             CommandSpec {
                 group: "branches".into(),
@@ -1011,10 +1040,12 @@ mod tests {
                 summary: "list".into(),
                 positional_args: vec![],
                 flags: vec![],
-                method: "GET".into(),
-                path: "/branches".into(),
-                ranges: vec![],
-                service_id: ServiceId::CoreApi,
+                execution: CommandExecution::Http(HttpCommandSpec {
+                    method: "GET".into(),
+                    path: "/branches".into(),
+                    ranges: vec![],
+                    service_id: ServiceId::CoreApi,
+                }),
             },
             spec,
         ]);

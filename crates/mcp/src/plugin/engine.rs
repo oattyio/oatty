@@ -2,13 +2,21 @@
 
 use crate::client::{ClientManagerEvent, McpClientManager};
 use crate::config::McpConfig;
-use crate::logging::LogManager;
+use crate::logging::{AuditEntry, AuditResult, LogManager};
 use crate::plugin::{LifecycleManager, PluginRegistry, RegistryError};
-use crate::types::{PluginDetail, PluginStatus};
-use std::sync::Arc;
+use crate::types::{AuthStatus, McpToolMetadata, PluginDetail, PluginStatus};
+use heroku_registry::{CommandSpec, Registry as CommandRegistry};
+use heroku_types::{CommandFlag, ExecOutcome, PositionalArgument};
+use serde_json::Value;
+use std::sync::Mutex;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
 
 /// Plugin engine that orchestrates all MCP plugin operations.
+#[derive(Debug)]
 pub struct PluginEngine {
     /// Client manager for handling MCP connections.
     client_manager: McpClientManager,
@@ -18,7 +26,13 @@ pub struct PluginEngine {
 
     /// Plugin registry for metadata as an interior, thread
     /// safe mutable reference that's lockable across await points
-    registry: Arc<TokioMutex<Option<PluginRegistry>>>,
+    plugin_registry: Arc<TokioMutex<Option<PluginRegistry>>>,
+
+    /// Cache of tool metadata discovered per plugin.
+    tool_cache: Arc<TokioMutex<HashMap<String, Arc<Vec<McpToolMetadata>>>>>,
+
+    /// Synthetic command specifications synthesized from MCP tools.
+    synthetic_specs: Arc<TokioMutex<HashMap<String, Arc<[CommandSpec]>>>>,
 
     /// Lifecycle manager for plugin lifecycle.
     lifecycle_manager: LifecycleManager,
@@ -26,13 +40,16 @@ pub struct PluginEngine {
     /// Configuration.
     config: McpConfig,
 
+    /// Shared vec containing all commands
+    command_registry: Arc<Mutex<CommandRegistry>>,
+
     /// Background task that keeps the registry in sync with client status events.
     status_listener: TokioMutex<Option<JoinHandle<()>>>,
 }
 
 impl PluginEngine {
     /// Create a new plugin engine.
-    pub fn new(config: McpConfig) -> anyhow::Result<Self> {
+    pub fn new(config: McpConfig, command_registry: Arc<Mutex<CommandRegistry>>) -> anyhow::Result<Self> {
         let client_manager = McpClientManager::new(config.clone())?;
         let log_manager = Arc::new(LogManager::new()?);
         let lifecycle_manager = LifecycleManager::new();
@@ -40,15 +57,18 @@ impl PluginEngine {
         Ok(Self {
             client_manager,
             log_manager,
-            registry: Arc::new(TokioMutex::new(None)),
+            plugin_registry: Arc::new(TokioMutex::new(None)),
+            tool_cache: Arc::new(TokioMutex::new(HashMap::new())),
+            synthetic_specs: Arc::new(TokioMutex::new(HashMap::new())),
             lifecycle_manager,
             config,
+            command_registry,
             status_listener: TokioMutex::new(None),
         })
     }
 
     pub async fn prepare_registry(&self) -> Result<PluginRegistry, PluginEngineError> {
-        let mut maybe_registry = self.registry.lock().await;
+        let mut maybe_registry = self.plugin_registry.lock().await;
         if maybe_registry.is_some() {
             return Ok(maybe_registry.clone().unwrap());
         }
@@ -63,7 +83,7 @@ impl PluginEngine {
                 } else {
                     server.base_url.as_ref().unwrap().to_string()
                 },
-                server.args.clone().and_then(|a| Some(a.join(" "))),
+                server.args.clone().map(|a| a.join(" ")),
             );
             plugin_detail.transport_type = server.transport_type().to_string();
             plugin_detail.tags = server.tags.clone().unwrap_or_default();
@@ -99,10 +119,49 @@ impl PluginEngine {
         }
 
         let mut receiver = self.client_manager.subscribe();
+        let tool_cache = Arc::clone(&self.tool_cache);
+        let synthetic_specs = Arc::clone(&self.synthetic_specs);
+        let command_registry = self.command_registry.clone();
 
         let handle = tokio::spawn(async move {
             loop {
                 match receiver.recv().await {
+                    Ok(ClientManagerEvent::ToolsUpdated { name, tools }) => {
+                        if let Err(update_err) = registry.set_plugin_tool_count(&name, tools.len()).await {
+                            tracing::warn!(plugin = %name, error = %update_err, "Failed to update tool count");
+                        }
+
+                        {
+                            let mut cache = tool_cache.lock().await;
+                            if tools.is_empty() {
+                                cache.remove(&name);
+                            } else {
+                                cache.insert(name.clone(), Arc::clone(&tools));
+                            }
+                        }
+
+                        let auth_message = registry
+                            .get_plugin(&name)
+                            .await
+                            .and_then(|detail| PluginEngine::format_auth_summary(detail.auth_status));
+
+                        let synthesized = PluginEngine::synthesize_mcp_specs(&name, tools.as_ref(), auth_message.as_deref());
+                        {
+                            let mut synthetic_specs_lock = synthetic_specs.lock().await;
+                            if synthesized.is_empty() {
+                                let specs = synthetic_specs_lock.remove(&name);
+                                if let Ok(mut lock) = command_registry.lock() {
+                                    lock.remove_synthetic(specs);
+                                }
+
+                            } else {
+                                if let Ok(mut lock) = command_registry.lock() {
+                                    lock.insert_synthetic(synthesized.clone());
+                                }
+                                synthetic_specs_lock.insert(name.clone(), Arc::from(synthesized));
+                            }
+                        }
+                    }
                     Ok(event) => {
                         let (name, status) = match event {
                             ClientManagerEvent::Starting { name } => (name, PluginStatus::Starting),
@@ -113,6 +172,7 @@ impl PluginEngine {
                             }
                             ClientManagerEvent::Stopping { name } => (name, PluginStatus::Stopping),
                             ClientManagerEvent::Stopped { name } => (name, PluginStatus::Stopped),
+                            ClientManagerEvent::ToolsUpdated { .. } => unreachable!("tools updates handled above"),
                         };
                         if let Err(update_err) = registry.set_plugin_status(&name, status).await {
                             tracing::warn!(plugin = %name, error = %update_err, "Failed to update registry status");
@@ -325,7 +385,7 @@ impl PluginEngine {
 
     /// Get the plugin registry.
     pub fn registry(&self) -> &TokioMutex<Option<PluginRegistry>> {
-        self.registry.as_ref()
+        self.plugin_registry.as_ref()
     }
 
     /// Get the lifecycle manager.
@@ -347,6 +407,16 @@ impl PluginEngine {
             }
         }
 
+        {
+            let mut cache = self.tool_cache.lock().await;
+            cache.clear();
+        }
+
+        {
+            let mut overlay = self.synthetic_specs.lock().await;
+            overlay.clear();
+        }
+
         // Update client manager configuration
         self.client_manager
             .update_config(config.clone())
@@ -364,7 +434,7 @@ impl PluginEngine {
                 } else {
                     server.base_url.as_ref().unwrap().to_string()
                 },
-                server.args.clone().and_then(|a| Some(a.join(" "))),
+                server.args.clone().map(|a| a.join(" ")),
             );
             plugin_detail.transport_type = server.transport_type().to_string();
             plugin_detail.tags = server.tags.clone().unwrap_or_default();
@@ -377,6 +447,366 @@ impl PluginEngine {
         tracing::info!("Plugin engine configuration updated");
         Ok(())
     }
+
+    /// Return the current tool metadata snapshot for the requested plugin, if known.
+    pub async fn plugin_tools(&self, name: &str) -> Option<Arc<Vec<McpToolMetadata>>> {
+        let cache = self.tool_cache.lock().await;
+        cache.get(name).cloned()
+    }
+
+    /// Execute an MCP-backed command specification with the provided arguments.
+    pub async fn execute_tool(
+        &self,
+        spec: &CommandSpec,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<ExecOutcome, PluginEngineError> {
+        let mcp = spec.mcp().ok_or_else(|| PluginEngineError::ConfigurationError {
+            message: format!("command '{}' is not MCP-backed", spec.name),
+        })?;
+
+        let plugin_name = mcp.plugin_name.clone();
+        let tool_name = mcp.tool_name.clone();
+
+        let call_result = self.client_manager.call_tool(&plugin_name, &tool_name, arguments).await;
+
+        let (is_error, payload) = match call_result {
+            Ok(result) => {
+                let (is_error, payload) = Self::normalize_tool_result(result);
+                let audit_result = if is_error { AuditResult::Failure } else { AuditResult::Success };
+                let entry = AuditEntry::tool_invoke(plugin_name.clone(), tool_name.clone(), audit_result);
+                let _ = self.log_manager.log_audit(entry).await;
+                (is_error, payload)
+            }
+            Err(err) => {
+                let mut entry = AuditEntry::tool_invoke(plugin_name.clone(), tool_name.clone(), AuditResult::Failure);
+                entry.metadata.insert("error".to_string(), Value::String(err.to_string()));
+                let _ = self.log_manager.log_audit(entry).await;
+                return Err(PluginEngineError::ClientManagerError(err.to_string()));
+            }
+        };
+
+        let mut log = format!(
+            "MCP {}:{} {}",
+            mcp.plugin_name,
+            mcp.tool_name,
+            if is_error { "failed" } else { "succeeded" }
+        );
+
+        if !payload.is_null()
+            && let Ok(pretty) = serde_json::to_string_pretty(&payload)
+        {
+            log.push('\n');
+            log.push_str(&pretty);
+        }
+
+        Ok(ExecOutcome::Mcp(log, payload))
+    }
+
+    fn synthesize_mcp_specs(plugin_name: &str, tools: &[McpToolMetadata], auth_message: Option<&str>) -> Vec<CommandSpec> {
+        if tools.is_empty() {
+            return Vec::new();
+        }
+
+        // Extract first non-empty prefix for each tool and count occurrences
+        let mut prefix_counts: HashMap<String, usize> = HashMap::new();
+        for tool in tools {
+            if let Some(prefix) = tool.name.split('_').find(|s| !s.is_empty()) {
+                *prefix_counts.entry(prefix.to_string()).or_insert(0) += 1;
+            }
+        }
+
+        // Determine shared group prefix if all tools share the same first segment
+        let shared_group = tools.iter().next().and_then(|first_tool| {
+            let first_segment = first_tool.name.split('_').find(|s| !s.is_empty())?;
+            tools
+                .iter()
+                .all(|tool| tool.name.split('_').find(|s| !s.is_empty()) == Some(first_segment))
+                .then(|| first_segment.to_string())
+        });
+
+        let mut specs = Vec::with_capacity(tools.len());
+
+        for tool in tools {
+            let segments: Vec<&str> = tool.name.split('_').filter(|s| !s.is_empty()).collect();
+            let (group, command_name) = if let Some(shared_group_name) = &shared_group {
+                let action = segments.get(1..).map_or(String::new(), |s| s.join(":"));
+                let command = if action.is_empty() { shared_group_name.clone() } else { action };
+                (shared_group_name.clone(), command)
+            } else {
+                let group = Self::derive_group(plugin_name, tool, &prefix_counts);
+                let command_name = Self::derive_command_name(&group, tool);
+                (group, command_name)
+            };
+
+            let summary = Self::build_summary(tool, auth_message);
+            let (positionals, flags) = Self::convert_schema_to_inputs(tool);
+            let input_schema = serde_json::to_string(&tool.input_schema).ok();
+            let render_hint = tool.annotations.as_ref().and_then(|annotations| match annotations {
+                Value::Object(map) => map
+                    .get("render_hint")
+                    .or_else(|| map.get("renderHint"))
+                    .and_then(|value| value.as_str().map(String::from)),
+                _ => None,
+            });
+
+            let mcp_spec = heroku_types::command::McpCommandSpec {
+                plugin_name: plugin_name.to_string(),
+                tool_name: tool.name.clone(),
+                auth_summary: auth_message.map(String::from),
+                input_schema,
+                render_hint,
+            };
+
+            specs.push(CommandSpec::new_mcp(group, command_name, summary, positionals, flags, mcp_spec));
+        }
+
+        specs.sort_by(|a, b| a.name.cmp(&b.name));
+        specs
+    }
+
+    fn derive_group(plugin_name: &str, tool: &McpToolMetadata, prefix_counts: &HashMap<String, usize>) -> String {
+        let candidate = tool
+            .name
+            .split('_')
+            .next()
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_string);
+
+        match candidate {
+            Some(prefix) if prefix_counts.get(&prefix).copied().unwrap_or(0) == 1 => prefix,
+            _ => plugin_name.to_string(),
+        }
+    }
+
+    fn derive_command_name(group: &str, tool: &McpToolMetadata) -> String {
+        let segments: Vec<&str> = tool.name.split('_').collect();
+        let first_segment = segments.first().copied();
+        let same_prefix = first_segment == Some(group);
+
+        let action_segments: Vec<&str> = if same_prefix && segments.len() > 1 {
+            segments[1..].to_vec()
+        } else {
+            segments.clone()
+        };
+
+        let action = if action_segments.is_empty() {
+            tool.name.replace('_', ":")
+        } else {
+            action_segments.join(":")
+        };
+
+        if action.is_empty() {
+            group.to_string()
+        } else if action.starts_with(&format!("{group}:")) {
+            action
+        } else {
+            format!("{group}:{action}")
+        }
+    }
+
+    fn build_summary(tool: &McpToolMetadata, auth_message: Option<&str>) -> String {
+        let body = tool.description.as_deref().or(tool.title.as_deref()).unwrap_or(tool.name.as_str());
+
+        match auth_message {
+            Some(message) if !message.is_empty() => format!("{message} — {body}"),
+            _ => body.to_string(),
+        }
+    }
+
+    fn convert_schema_to_inputs(tool: &McpToolMetadata) -> (Vec<PositionalArgument>, Vec<CommandFlag>) {
+        let mut positional_args = Vec::new();
+        let mut flags = Vec::new();
+
+        let schema = &tool.input_schema;
+        let schema_object = schema.as_object();
+
+        let required_fields: HashSet<String> = schema_object
+            .and_then(|map| map.get("required"))
+            .and_then(|value| value.as_array())
+            .map(|items| {
+                items
+                    .iter()
+                    .filter_map(|value| value.as_str().map(str::to_string))
+                    .collect::<HashSet<String>>()
+            })
+            .unwrap_or_default();
+
+        let properties = schema_object
+            .and_then(|map| map.get("properties"))
+            .and_then(|value| value.as_object());
+
+        let mut fields = Vec::new();
+
+        if let Some(props) = properties {
+            for (name, definition) in props {
+                let required = required_fields.contains(name);
+                fields.push(Self::parse_field(name, definition, required));
+            }
+        }
+
+        if fields.is_empty() {
+            fields.push(FieldDescriptor::json_blob(
+                "payload".to_string(),
+                false,
+                Some("Structured inputs collapsed into JSON.".to_string()),
+            ));
+        }
+
+        for field in fields {
+            match field.kind {
+                FieldKind::Boolean => {
+                    flags.push(field.into_flag());
+                }
+                FieldKind::String | FieldKind::Json | FieldKind::Number => {
+                    if field.required {
+                        positional_args.push(field.into_positional());
+                    } else {
+                        flags.push(field.into_flag());
+                    }
+                }
+            }
+        }
+
+        (positional_args, flags)
+    }
+
+    fn parse_field(name: &str, definition: &Value, required: bool) -> FieldDescriptor {
+        let mut descriptor = FieldDescriptor::new(name.to_string(), required);
+
+        if let Some(description) = definition.get("description").and_then(|value| value.as_str()) {
+            descriptor.description = Some(description.to_string());
+        }
+
+        if let Some(default_value) = definition.get("default") {
+            descriptor.default_value = match default_value {
+                Value::String(value) => Some(value.clone()),
+                Value::Number(value) => Some(value.to_string()),
+                Value::Bool(value) => Some(value.to_string()),
+                _ => None,
+            };
+        }
+
+        if let Some(enum_values) = definition.get("enum").and_then(|value| value.as_array()) {
+            descriptor.enum_values = enum_values.iter().filter_map(|value| value.as_str().map(str::to_string)).collect();
+        }
+
+        let field_type = definition.get("type");
+        descriptor.kind = match field_type {
+            Some(Value::String(value)) if value == "boolean" => FieldKind::Boolean,
+            Some(Value::String(value)) if value == "string" => FieldKind::String,
+            Some(Value::String(value)) if value == "integer" => FieldKind::Number,
+            Some(Value::Array(values)) if values.iter().any(|entry| entry == "boolean") => FieldKind::Boolean,
+            Some(Value::Array(values)) if values.iter().any(|entry| entry == "string") => FieldKind::String,
+            Some(Value::Array(values)) if values.iter().any(|entry| entry == "integer") => FieldKind::Number,
+            _ => FieldKind::Json,
+        };
+
+        if matches!(descriptor.kind, FieldKind::Json) {
+            descriptor.description = Some(FieldDescriptor::json_help(descriptor.description.take()));
+        }
+
+        descriptor
+    }
+
+    fn format_auth_summary(status: AuthStatus) -> Option<String> {
+        match status {
+            AuthStatus::Unknown => None,
+            AuthStatus::Authorized => Some("Authenticated".to_string()),
+            AuthStatus::Required => Some("Authentication required".to_string()),
+            AuthStatus::Failed => Some("Authentication failed".to_string()),
+        }
+    }
+
+    fn normalize_tool_result(result: rmcp::model::CallToolResult) -> (bool, Value) {
+        let is_error = result.is_error.unwrap_or(false);
+
+        if let Some(structured) = result.structured_content {
+            return (is_error, structured);
+        }
+
+        match serde_json::to_value(&result.content) {
+            Ok(value) => (is_error, value),
+            Err(_) => (is_error, Value::Null),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct FieldDescriptor {
+    name: String,
+    description: Option<String>,
+    required: bool,
+    kind: FieldKind,
+    enum_values: Vec<String>,
+    default_value: Option<String>,
+}
+
+impl FieldDescriptor {
+    fn new(name: String, required: bool) -> Self {
+        Self {
+            name,
+            description: None,
+            required,
+            kind: FieldKind::String,
+            enum_values: Vec::new(),
+            default_value: None,
+        }
+    }
+
+    fn json_blob(name: String, required: bool, description: Option<String>) -> Self {
+        let mut descriptor = Self::new(name, required);
+        descriptor.kind = FieldKind::Json;
+        descriptor.description = Some(Self::json_help(description));
+        descriptor
+    }
+
+    fn into_flag(self) -> CommandFlag {
+        CommandFlag {
+            name: self.name,
+            short_name: None,
+            required: self.required,
+            r#type: match self.kind {
+                FieldKind::Boolean => "boolean".to_string(),
+                FieldKind::String | FieldKind::Json => "string".to_string(),
+                FieldKind::Number => "number".to_string(),
+            },
+            enum_values: self.enum_values,
+            default_value: self.default_value,
+            description: self.description,
+            provider: None,
+        }
+    }
+
+    fn into_positional(self) -> PositionalArgument {
+        PositionalArgument {
+            name: self.name,
+            help: self.description,
+            provider: None,
+        }
+    }
+
+    /// Compose a descriptive help message for JSON-backed inputs, appending a concrete usage hint.
+    fn json_help(base: Option<String>) -> String {
+        const JSON_HINT: &str = "Provide a JSON string payload (for example: '{\"key\":\"value\"}').";
+        match base {
+            Some(text) if !text.trim().is_empty() => {
+                if text.trim_end().ends_with('.') {
+                    format!("{} {}", text.trim_end(), JSON_HINT)
+                } else {
+                    format!("{}. {}", text.trim_end(), JSON_HINT)
+                }
+            }
+            _ => JSON_HINT.to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum FieldKind {
+    Boolean,
+    String,
+    Number,
+    Json,
 }
 
 /// Errors that can occur in the plugin engine.
@@ -405,12 +835,26 @@ pub enum PluginEngineError {
 mod tests {
     use super::*;
     use crate::config::McpConfig;
+    use serde_json::{Value, json};
     use url::Url;
+
+    fn tool_with_schema(schema: Value) -> McpToolMetadata {
+        McpToolMetadata {
+            name: "demo".to_string(),
+            title: None,
+            description: Some("demo tool".to_string()),
+            input_schema: schema,
+            output_schema: None,
+            annotations: None,
+            auth_summary: None,
+        }
+    }
 
     #[tokio::test]
     async fn test_plugin_engine_creation() {
         let config = McpConfig::default();
-        let engine = PluginEngine::new(config).unwrap();
+        let registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let engine = PluginEngine::new(config, Arc::clone(&registry)).unwrap();
 
         let plugins = engine.list_plugins().await;
         assert!(plugins.is_empty());
@@ -419,10 +863,291 @@ mod tests {
     #[tokio::test]
     async fn test_plugin_engine_start_stop() {
         let config = McpConfig::default();
-        let engine = PluginEngine::new(config).unwrap();
+        let registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let engine = PluginEngine::new(config, Arc::clone(&registry)).unwrap();
 
         engine.start().await.unwrap();
         engine.stop().await.unwrap();
+    }
+
+    #[test]
+    fn convert_schema_maps_required_and_optional_fields() {
+        let schema = json!({
+            "type": "object",
+            "required": ["app"],
+            "properties": {
+                "app": {
+                    "type": "string",
+                    "description": "Heroku application name"
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Confirm execution"
+                }
+            }
+        });
+
+        let tool = tool_with_schema(schema);
+        let (positionals, flags) = PluginEngine::convert_schema_to_inputs(&tool);
+
+        assert_eq!(positionals.len(), 1);
+        assert_eq!(positionals[0].name, "app");
+        assert_eq!(positionals[0].help.as_deref(), Some("Heroku application name"));
+
+        assert_eq!(flags.len(), 1);
+        let confirm = &flags[0];
+        assert_eq!(confirm.name, "confirm");
+        assert_eq!(confirm.r#type, "boolean");
+        assert_eq!(confirm.description.as_deref(), Some("Confirm execution"));
+    }
+
+    #[test]
+    fn convert_schema_converts_unknown_types_to_json_inputs() {
+        let schema = json!({
+            "type": "object",
+            "required": ["config"],
+            "properties": {
+                "config": {
+                    "type": "object",
+                    "description": "Detailed configuration"
+                },
+                "metadata": {
+                    "type": "array",
+                    "description": "Optional metadata"
+                }
+            }
+        });
+
+        let tool = tool_with_schema(schema);
+        let (positionals, flags) = PluginEngine::convert_schema_to_inputs(&tool);
+
+        assert_eq!(positionals.len(), 1);
+        assert_eq!(positionals[0].name, "config");
+        let help = positionals[0].help.as_ref().expect("help text present");
+        assert!(help.contains("Detailed configuration"));
+        assert!(help.contains("Provide a JSON string payload"));
+
+        assert_eq!(flags.len(), 1);
+        assert_eq!(flags[0].name, "metadata");
+        let flag_help = flags[0].description.as_ref().expect("flag JSON help present");
+        assert!(flag_help.contains("Optional metadata"));
+        assert!(flag_help.contains("Provide a JSON string payload"));
+    }
+
+    #[test]
+    fn convert_schema_adds_payload_fallback_when_properties_missing() {
+        let tool = tool_with_schema(json!({ "type": "object" }));
+
+        let (positionals, flags) = PluginEngine::convert_schema_to_inputs(&tool);
+
+        assert!(positionals.is_empty());
+        assert_eq!(flags.len(), 1);
+        let payload_flag = &flags[0];
+        assert_eq!(payload_flag.name, "payload");
+        let help = payload_flag.description.as_ref().expect("payload flag help present");
+        assert!(help.contains("Structured inputs collapsed into JSON"));
+        assert!(help.contains("Provide a JSON string payload"));
+    }
+
+    #[test]
+    fn synthesize_generates_command_spec_from_tool() {
+        let tools = vec![McpToolMetadata {
+            name: "demo_info".to_string(),
+            title: Some("Display info".to_string()),
+            description: Some("Show application details".to_string()),
+            input_schema: json!({
+                "type": "object",
+                "required": ["app"],
+                "properties": {
+                    "app": {
+                        "type": "string",
+                        "description": "Application name"
+                    },
+                    "verbose": {
+                        "type": "boolean",
+                        "description": "Verbose output"
+                    }
+                }
+            }),
+            output_schema: None,
+            annotations: None,
+            auth_summary: None,
+        }];
+
+        let specs = PluginEngine::synthesize_mcp_specs("demo-plugin", &tools, Some("Authentication required"));
+
+        assert_eq!(specs.len(), 1);
+        let spec = &specs[0];
+        assert_eq!(spec.group, "demo");
+        assert_eq!(spec.name, "info");
+        assert_eq!(spec.summary, "Authentication required — Show application details");
+        assert_eq!(spec.positional_args.len(), 1);
+        assert_eq!(spec.positional_args[0].name, "app");
+        assert_eq!(spec.flags.len(), 1);
+        assert_eq!(spec.flags[0].name, "verbose");
+        assert_eq!(spec.flags[0].r#type, "boolean");
+        assert!(matches!(spec.execution(), heroku_types::command::CommandExecution::Mcp(_)));
+        let mcp = spec.mcp().expect("mcp execution present");
+        assert_eq!(mcp.plugin_name, "demo-plugin");
+        assert_eq!(mcp.tool_name, "demo_info");
+        assert_eq!(mcp.auth_summary.as_deref(), Some("Authentication required"));
+    }
+
+    #[test]
+    fn synthesize_falls_back_to_plugin_group_when_prefix_collides() {
+        let tools = vec![
+            McpToolMetadata {
+                name: "deploy_start".to_string(),
+                title: None,
+                description: None,
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "app": { "type": "string" }
+                    }
+                }),
+                output_schema: None,
+                annotations: None,
+                auth_summary: None,
+            },
+            McpToolMetadata {
+                name: "deploy_stop".to_string(),
+                title: None,
+                description: None,
+                input_schema: json!({ "type": "object" }),
+                output_schema: None,
+                annotations: None,
+                auth_summary: None,
+            },
+        ];
+
+        let specs = PluginEngine::synthesize_mcp_specs("deploy-plugin", &tools, None);
+        assert_eq!(specs.len(), 2);
+        assert!(specs.iter().all(|spec| spec.group == "deploy"));
+        let mut names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
+        names.sort();
+        assert_eq!(names, vec!["start", "stop"]);
+    }
+
+    #[test]
+    fn synthesize_uses_multi_segment_shared_prefix() {
+        let tools = vec![
+            McpToolMetadata {
+                name: "org_settings_create_team".to_string(),
+                title: None,
+                description: None,
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "team_name": { "type": "string" }
+                    }
+                }),
+                output_schema: None,
+                annotations: None,
+                auth_summary: None,
+            },
+            McpToolMetadata {
+                name: "org_settings_delete_team".to_string(),
+                title: None,
+                description: None,
+                input_schema: json!({ "type": "object" }),
+                output_schema: None,
+                annotations: None,
+                auth_summary: None,
+            },
+        ];
+
+        let specs = PluginEngine::synthesize_mcp_specs("org-service", &tools, None);
+        assert_eq!(specs.len(), 2);
+        assert!(specs.iter().all(|spec| spec.group == "org"));
+        assert!(specs.iter().any(|spec| spec.name == "settings:create:team"));
+        assert!(specs.iter().any(|spec| spec.name == "settings:delete:team"));
+    }
+
+    #[test]
+    fn synthesize_shared_prefix_removed_from_command_name() {
+        let tools = vec![
+            McpToolMetadata {
+                name: "fleet_jobs_create".to_string(),
+                title: None,
+                description: None,
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "job_type": { "type": "string" }
+                    }
+                }),
+                output_schema: None,
+                annotations: None,
+                auth_summary: None,
+            },
+            McpToolMetadata {
+                name: "fleet_jobs_delete".to_string(),
+                title: None,
+                description: None,
+                input_schema: json!({ "type": "object" }),
+                output_schema: None,
+                annotations: None,
+                auth_summary: None,
+            },
+        ];
+
+        let specs = PluginEngine::synthesize_mcp_specs("fleet", &tools, None);
+        assert_eq!(specs.len(), 2);
+        assert!(specs.iter().all(|spec| spec.group == "fleet"));
+        assert!(specs.iter().any(|spec| spec.name == "jobs:create"));
+        assert!(specs.iter().any(|spec| spec.name == "jobs:delete"));
+    }
+
+    #[test]
+    fn synthesize_converts_complex_fields_to_json_string() {
+        let tools = vec![McpToolMetadata {
+            name: "config_set".to_string(),
+            title: None,
+            description: None,
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "config": {
+                        "type": "object",
+                        "description": "Configuration payload"
+                    }
+                }
+            }),
+            output_schema: None,
+            annotations: None,
+            auth_summary: None,
+        }];
+
+        let specs = PluginEngine::synthesize_mcp_specs("cfg", &tools, None);
+        assert_eq!(specs.len(), 1);
+        let spec = &specs[0];
+        assert_eq!(spec.flags.len(), 1);
+        let flag = &spec.flags[0];
+        assert_eq!(flag.r#type, "string");
+        assert!(
+            flag.description
+                .as_deref()
+                .unwrap_or_default()
+                .contains("Provide a JSON string payload")
+        );
+    }
+
+    #[test]
+    fn format_auth_summary_maps_status_to_message() {
+        assert_eq!(PluginEngine::format_auth_summary(AuthStatus::Unknown), None);
+        assert_eq!(
+            PluginEngine::format_auth_summary(AuthStatus::Authorized),
+            Some("Authenticated".to_string())
+        );
+        assert_eq!(
+            PluginEngine::format_auth_summary(AuthStatus::Required),
+            Some("Authentication required".to_string())
+        );
+        assert_eq!(
+            PluginEngine::format_auth_summary(AuthStatus::Failed),
+            Some("Authentication failed".to_string())
+        );
     }
 
     #[tokio::test]
@@ -434,10 +1159,12 @@ mod tests {
         server.disabled = Some(true);
         cfg.mcp_servers.insert("svc".into(), server);
 
-        let engine = PluginEngine::new(cfg).unwrap();
+        let registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let engine = PluginEngine::new(cfg, Arc::clone(&registry)).unwrap();
         engine.start().await.unwrap();
 
-        let info = engine.registry().get_plugin("svc").await.unwrap();
+        let registry = engine.prepare_registry().await.unwrap();
+        let info = registry.get_plugin("svc").await.unwrap();
         assert_eq!(info.tags, vec!["alpha", "beta"]);
         assert!(!info.enabled);
 

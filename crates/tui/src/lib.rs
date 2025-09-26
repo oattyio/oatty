@@ -26,6 +26,7 @@ mod ui;
 
 use anyhow::Result;
 use heroku_mcp::PluginEngine;
+use std::sync::{Arc, Mutex};
 
 // Runtime moved to ui::runtime
 
@@ -63,6 +64,6 @@ use heroku_mcp::PluginEngine;
 ///     run(registry).await
 /// }
 /// ```
-pub async fn run(registry: heroku_registry::Registry, plugin_engine: PluginEngine) -> Result<()> {
+pub async fn run(registry: Arc<Mutex<heroku_registry::Registry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
     crate::ui::runtime::run_app(registry, plugin_engine).await
 }

@@ -332,20 +332,23 @@ impl BrowserComponent {
     /// * `app` - The application state containing commands and theme information
     /// * `area` - The area to render the commands panel in
     fn render_commands_panel(&self, frame: &mut Frame, app: &mut App, area: Rect) {
-        let commands_title = format!("Commands ({})", app.browser.filtered().len());
-        let is_focused = app.browser.f_commands.get();
+        let browser = &mut app.browser;
+        let commands_title = format!("Commands ({})", browser.filtered().len());
+        let is_focused = browser.f_commands.get();
         let commands_block = th::block(&*app.ctx.theme, Some(&commands_title), is_focused);
         let inner_height = commands_block.inner(area).height as usize;
-        app.browser.set_viewport_rows(inner_height);
+        browser.set_viewport_rows(inner_height);
 
         // Create command items and get list state separately to avoid borrowing conflicts
         let command_items = {
-            let browser = &app.browser;
+            let Some(lock) = browser.registry.lock().ok() else {
+                return;
+            };
+            let all_commands = &lock.commands;
             browser
                 .filtered()
                 .iter()
                 .map(|command_index| {
-                    let all_commands = browser.all_commands();
                     let command_group = &all_commands[*command_index].group;
                     let command_name = &all_commands[*command_index].name;
                     let display_text = if command_name.is_empty() {
@@ -362,7 +365,7 @@ impl BrowserComponent {
             .block(commands_block)
             .highlight_style(app.ctx.theme.selection_style().add_modifier(Modifier::BOLD))
             .highlight_symbol("> ");
-        let list_state = app.browser.list_state();
+        let list_state = browser.list_state();
         frame.render_stateful_widget(commands_list, area, list_state);
     }
 
@@ -391,7 +394,7 @@ impl BrowserComponent {
 mod tests {
     use super::*;
     use crate::ui::theme::roles::ThemeRoles;
-    use heroku_types::{CommandSpec, ServiceId};
+    use heroku_types::{CommandSpec, ServiceId, command::HttpCommandSpec};
     use ratatui::style::Style;
 
     /// Mock theme for testing purposes
@@ -445,17 +448,14 @@ mod tests {
     #[test]
     fn test_format_command_display_name_with_colon() {
         let component = BrowserComponent;
-        let command_spec = CommandSpec {
-            name: "apps:create".to_string(),
-            group: "apps".to_string(),
-            summary: "Create a new app".to_string(),
-            method: "POST".to_string(),
-            path: "/apps".to_string(),
-            service_id: ServiceId::CoreApi,
-            flags: vec![],
-            positional_args: vec![],
-            ranges: vec![],
-        };
+        let command_spec = CommandSpec::new_http(
+            "apps".to_string(),
+            "apps:create".to_string(),
+            "Create a new app".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("POST", "/apps", ServiceId::CoreApi, Vec::new()),
+        );
 
         let result = component.format_command_display_name(&command_spec);
         assert_eq!(result, "apps create");
@@ -464,17 +464,14 @@ mod tests {
     #[test]
     fn test_format_command_display_name_without_colon() {
         let component = BrowserComponent;
-        let command_spec = CommandSpec {
-            name: "apps".to_string(),
-            group: "apps".to_string(),
-            summary: "List apps".to_string(),
-            method: "GET".to_string(),
-            path: "/apps".to_string(),
-            service_id: ServiceId::CoreApi,
-            flags: vec![],
-            positional_args: vec![],
-            ranges: vec![],
-        };
+        let command_spec = CommandSpec::new_http(
+            "apps".to_string(),
+            "apps".to_string(),
+            "List apps".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new()),
+        );
 
         let result = component.format_command_display_name(&command_spec);
         assert_eq!(result, "apps");
@@ -483,17 +480,14 @@ mod tests {
     #[test]
     fn test_format_command_display_name_empty_name() {
         let component = BrowserComponent;
-        let command_spec = CommandSpec {
-            name: "".to_string(),
-            group: "apps".to_string(),
-            summary: "Apps command".to_string(),
-            method: "GET".to_string(),
-            path: "/apps".to_string(),
-            service_id: ServiceId::CoreApi,
-            flags: vec![],
-            positional_args: vec![],
-            ranges: vec![],
-        };
+        let command_spec = CommandSpec::new_http(
+            "apps".to_string(),
+            "".to_string(),
+            "Apps command".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new()),
+        );
 
         let result = component.format_command_display_name(&command_spec);
         assert_eq!(result, "apps");

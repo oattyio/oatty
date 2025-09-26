@@ -17,7 +17,6 @@ pub use types::{
     AuthStatus, EnvSource, EnvVar, HealthStatus, LogLevel, LogSource, McpLogEntry, PluginDetail, PluginStatus, TransportStatus,
 };
 
-/// Local MCP error type (temporary while migrating to ultrafast-mcp APIs)
 #[derive(Debug, thiserror::Error, Clone)]
 pub enum McpError {
     #[error("Invalid request: {message}")]

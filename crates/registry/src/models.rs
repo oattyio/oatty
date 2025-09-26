@@ -1,15 +1,16 @@
-use std::sync::Arc;
+use std::{sync::Arc};
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use bincode::config;
 use heroku_types::CommandSpec;
+use heroku_util::sort_and_dedup_commands;
 
 static MANIFEST: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/heroku-manifest.bin"));
 /// The main registry containing all available Heroku CLI commands.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct Registry {
     /// Collection of all available command specifications
-    pub commands: Arc<[CommandSpec]>,
+    pub commands: Vec<CommandSpec>,
 }
 
 impl Registry {
@@ -37,41 +38,24 @@ impl Registry {
         let config = config::standard();
 
         // Decode the CommandSpec struct from the bytes
-        let vec: Vec<CommandSpec> = bincode::decode_from_slice(MANIFEST, config).context("decoding manifest failed")?.0;
-        let commands: Arc<[CommandSpec]> = vec.into();
+        let commands: Vec<CommandSpec> = bincode::decode_from_slice(MANIFEST, config).context("decoding manifest failed")?.0;
 
         Ok(Registry { commands })
     }
 
-    /// Finds a specific command by its group and command name.
-    ///
-    /// This method searches for a command using the format "group:command"
-    /// where group is the resource type (e.g., "apps", "dynos") and command
-    /// is the action (e.g., "list", "create").
-    ///
-    /// # Arguments
-    ///
-    /// * `group` - The resource group name (e.g., "apps", "dynos", "config")
-    /// * `cmd` - The command action name (e.g., "list", "create", "restart")
-    ///
-    /// # Returns
-    ///
-    /// - `Ok(&CommandSpec)` - The matching command specification
-    /// - `Err` - If no command is found with the given group and command name
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use heroku_registry::Registry;
-    ///
-    /// let registry = Registry::from_embedded_schema().expect("load registry from schema");
-    /// let apps_list = registry.find_by_group_and_cmd("apps", "list").expect("find by group and command");
-    /// println!("Found command: {}", apps_list.name);
-    /// ```
-    pub fn find_by_group_and_cmd(&self, group: &str, cmd: &str) -> Result<&CommandSpec> {
-        self.commands
-            .iter()
-            .find(|c| c.group == group && c.name == cmd)
-            .ok_or_else(|| anyhow!("command not found: {} {}", group, cmd))
+    /// Inserts the synthetic commands from an MCP client's
+    /// tool definitions and deduplicates them.
+    pub fn insert_synthetic(&mut self, synthesized: Vec<CommandSpec>) {
+        self.commands.extend(synthesized);
+        sort_and_dedup_commands(&mut self.commands);
+    }
+
+    /// Removes the synthetic commands from the vec
+    pub fn remove_synthetic(&mut self, maybe_synthesized: Option<Arc<[CommandSpec]>>) {
+        if maybe_synthesized.is_none() {
+            return;
+        }
+        let synthesized = &*maybe_synthesized.unwrap();
+        self.commands.retain(|c| !synthesized.contains(c));
     }
 }
