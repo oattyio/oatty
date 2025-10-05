@@ -1,25 +1,29 @@
 //! HTTP/SSE helpers for rmcp-backed MCP clients.
 
+use crate::config::McpServer;
 use anyhow::Result;
+use heroku_types::EnvVar;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use url::Url;
 
-use crate::config::McpServer;
-
 /// Build the SSE URL using `baseUrl` and optional `ssePath` (defaults to "sse").
-pub(crate) fn build_sse_url(server: &McpServer) -> Url {
-    let base = server.base_url.clone().expect("base_url required for http");
+pub(crate) fn build_sse_url(server: &McpServer) -> Result<Url> {
+    let base = server
+        .base_url
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("base_url required for http"))?;
     let segment = server.sse_path.as_deref().unwrap_or("sse");
     let path = segment.strip_prefix('/').unwrap_or(segment);
-    base.join(path).unwrap_or(base)
+    base.join(path)
+        .map_err(|error| anyhow::anyhow!("failed to join path '{}': {}", path, error))
 }
 
 /// Build a reqwest client injecting configured headers and OAuth bearer if available.
 pub(crate) async fn build_http_client_with_auth(server: &McpServer) -> Result<reqwest::Client> {
     let mut headers = HeaderMap::new();
     if let Some(map) = &server.headers {
-        for (k, v) in map {
-            if let (Ok(name), Ok(value)) = (HeaderName::try_from(k.as_str()), HeaderValue::try_from(v.as_str())) {
+        for EnvVar { key, value, .. } in map {
+            if let (Ok(name), Ok(value)) = (HeaderName::try_from(key.as_str()), HeaderValue::try_from(value.as_str())) {
                 headers.insert(name, value);
             }
         }

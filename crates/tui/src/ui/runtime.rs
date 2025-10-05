@@ -69,12 +69,12 @@ async fn spawn_input_thread() -> mpsc::Receiver<Event> {
                             continue;
                         }
                         if let Err(e) = sender.send(event).await {
-                            eprintln!("Failed to send event: {}", e);
+                            tracing::warn!("Failed to send event: {}", e);
                             break;
                         }
                     }
                     Err(e) => {
-                        eprintln!("Failed to read event: {}", e);
+                        tracing::warn!("Failed to read event: {}", e);
                         break;
                     }
                 }
@@ -124,7 +124,6 @@ async fn handle_input_event<'a>(
 ) -> Result<LoopAction> {
     match input_event {
         Event::Key(key_event) => {
-            // Ctrl-C: if plugins fullscreen active, exit that mode; otherwise exit app
             if key_event.code == KeyCode::Char('c') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
                 return Ok(LoopAction::Exit);
             }

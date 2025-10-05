@@ -180,6 +180,15 @@ inputs:
 │ created_at   : 2025-03-08                                              │
 └────────────────────────────────────────────────────────────────────────┘
   ↑↓ move  •  Space select  •  Enter confirm  •  / search  •  s sort  •  r refresh
+
+**Schema-aware badges**
+
+- Display the JSON type using the enriched `SchemaProperty` metadata (`object`, `array<uuid>`,
+  `enum`, etc.).
+- Surface tags (for example, `app_id`, `pipeline_slug`) next to each candidate to clarify why it
+  matches a provider requirement.
+- When `enum_values` exists, render the literal set in the detail pane to aid manual overrides.
+- Respect `required` keys by flagging missing fields before confirm.
 ```
 
 ### 2.4 Table Selector (Multi-select) with Chip Summary

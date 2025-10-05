@@ -5,6 +5,7 @@ use crate::{
             TableComponent,
             component::Component,
             logs::state::{LogDetailView, LogEntry},
+            table::build_key_value_entries,
         },
         theme::theme_helpers,
         utils::{build_copy_text, centered_rect},
@@ -42,24 +43,36 @@ impl LogDetailsComponent {
     /// * `f` - The terminal frame to render to
     /// * `area` - The rectangular area allocated for the detail content
     /// * `app` - The application state containing logs and selection
-    fn render_detail_content(&self, f: &mut Frame, area: Rect, app: &mut App) {
+    fn render_detail_content(&self, frame: &mut Frame, area: Rect, app: &mut App) {
         let (start, end) = app.logs.selection.range();
 
         // Handle single selection
         if start == end {
-            if let Some(LogEntry::Api { json: Some(j), .. }) = app.logs.rich_entries.get(start) {
-                // Use cached redacted JSON if available, otherwise redact on-the-fly
-                // Note: Only non-array JSON renders here; arrays are routed to global table
-                // modal
-                let red_ref: &Value = match app.logs.cached_detail_index {
-                    Some(i) if i == start => app.logs.cached_redacted_json.as_ref().unwrap_or(j),
-                    _ => j,
-                };
+            if let Some(entry) = app.logs.rich_entries.get(start) {
+                match entry {
+                    LogEntry::Api { json: Some(j), .. } | LogEntry::MCP { json: Some(j), .. } => {
+                        // Use cached redacted JSON if available, otherwise redact on-the-fly
+                        // Note: Only non-array JSON renders here; arrays are routed to global table
+                        // modal
+                        let red_ref: &Value = match app.logs.cached_detail_index {
+                            Some(i) if i == start => app.logs.cached_redacted_json.as_ref().unwrap_or(j),
+                            _ => j,
+                        };
 
-                // Render formatted JSON using TableComponent for better presentation
-                let table = TableComponent::default();
-                table.render_kv_or_text(f, area, red_ref, &*app.ctx.theme);
-                return;
+                        // Render formatted JSON using TableComponent for better presentation
+                        let table = TableComponent::default();
+                        let entries = build_key_value_entries(red_ref);
+                        let offset = match app.logs.detail {
+                            Some(LogDetailView::Table { offset }) => offset.min(entries.len().saturating_sub(1)),
+                            _ => 0,
+                        };
+                        let selection = if entries.is_empty() { None } else { Some(offset) };
+                        app.logs.detail = Some(LogDetailView::Table { offset });
+                        table.render_kv_or_text(frame, area, &entries, selection, offset, true, red_ref, &*app.ctx.theme);
+                        return;
+                    }
+                    _ => {}
+                }
             }
 
             // Handle single non-API entry or API without JSON
@@ -68,7 +81,7 @@ impl LogDetailsComponent {
                 .block(Block::default().borders(Borders::NONE))
                 .wrap(Wrap { trim: false })
                 .style(app.ctx.theme.text_primary_style());
-            f.render_widget(p, area);
+            frame.render_widget(p, area);
             return;
         }
 
@@ -87,7 +100,7 @@ impl LogDetailsComponent {
             .block(Block::default().borders(Borders::NONE))
             .wrap(Wrap { trim: false })
             .style(app.ctx.theme.text_primary_style());
-        f.render_widget(p, area);
+        frame.render_widget(p, area);
     }
 }
 
@@ -137,25 +150,39 @@ impl Component for LogDetailsComponent {
             _ => {}
         }
 
-        // keys dependent on the detail
-        if let Some(LogDetailView::Table { offset }) = app.logs.detail.as_ref() {
-            match key.code {
-                KeyCode::Up => {
-                    // Scroll up in table detail view
-                    app.logs.detail = Some(LogDetailView::Table {
-                        offset: offset.saturating_sub(1),
-                    });
+        if let Some(LogDetailView::Table { offset }) = app.logs.detail {
+            let detail_json = app.logs.cached_redacted_json.as_ref().or_else(|| {
+                let (start, end) = app.logs.selection.range();
+                if start == end {
+                    app.logs.rich_entries.get(start).and_then(|entry| match entry {
+                        LogEntry::Api { json: Some(value), .. } | LogEntry::MCP { json: Some(value), .. } => Some(value),
+                        _ => None,
+                    })
+                } else {
+                    None
                 }
-                KeyCode::Down => {
-                    // Scroll down in table detail view
-                    app.logs.detail = Some(LogDetailView::Table {
-                        offset: offset.saturating_add(1),
-                    });
+            });
+
+            if let Some(json) = detail_json {
+                let entries = build_key_value_entries(json);
+                if !entries.is_empty() {
+                    let max_index = entries.len().saturating_sub(1);
+                    match key.code {
+                        KeyCode::Up => {
+                            let next_offset = offset.saturating_sub(1);
+                            app.logs.detail = Some(LogDetailView::Table { offset: next_offset });
+                        }
+                        KeyCode::Down => {
+                            let next_offset = offset.saturating_add(1).min(max_index);
+                            app.logs.detail = Some(LogDetailView::Table { offset: next_offset });
+                        }
+                        _ => {}
+                    }
                 }
-                _ => {}
             }
         }
-        return effects;
+
+        effects
     }
 
     fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {

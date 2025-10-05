@@ -19,29 +19,21 @@ tracing = { workspace = true }
 url = { workspace = true }
 dirs-next = { workspace = true }
 chrono = { workspace = true }
-uuid = { workspace = true }
-ring_buffer = { workspace = true }
-bytes = { workspace = true }
-futures-util = { workspace = true }
-once_cell = { workspace = true }
 regex = { workspace = true }
-time = { workspace = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
-base64 = { workspace = true }
+once_cell = { workspace = true }
 heroku-util = { path = "../util" }
 heroku-types = { path = "../types" }
 heroku-registry = { path = "../registry" }
-libc = { version = "0.2", optional = true }
-tracing-subscriber = { workspace = true }
-rmcp = { version = "0.6", features = ["client", "transport-child-process", "transport-sse-client-reqwest", "auth"] }
+rmcp = { version = "0.7.0", features = ["client", "transport-child-process", "transport-sse-client-reqwest", "auth"] }
 
 [features]
 default = []
 
 [dev-dependencies]
+temp-env = "0.3"
 tempfile = "3.0"
-tokio-test = "0.4"
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2" }

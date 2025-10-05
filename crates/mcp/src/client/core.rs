@@ -1,6 +1,6 @@
 //! McpClient: lifecycle and connections for rmcp-backed plugins.
 
-use std::{process::Stdio, sync::Arc};
+use std::{process::Stdio, sync::Arc, time::Duration};
 
 use anyhow::Result;
 use rmcp::{
@@ -9,6 +9,7 @@ use rmcp::{
     service::{RunningService, ServiceExt as _},
     transport::{SseClientTransport, TokioChildProcess, sse_client::SseClientConfig},
 };
+use tokio::time::timeout;
 
 use crate::{
     config::McpServer,
@@ -40,6 +41,9 @@ pub struct McpClient {
     /// Last known list of tools exposed by the plugin.
     pub(crate) tools: Arc<Vec<McpToolMetadata>>,
 }
+
+/// Maximum amount of time to wait for a tool invocation before returning a timeout error.
+const TOOL_INVOCATION_TIMEOUT: Duration = Duration::from_secs(30);
 
 impl McpClient {
     /// Construct a new client from a name and server configuration.
@@ -126,7 +130,7 @@ impl McpClient {
 
     /// Connect via HTTP/SSE using rmcp's reqwest transport.
     async fn connect_http(&self) -> Result<RunningService<RoleClient, ()>> {
-        let sse_url = build_sse_url(&self.server);
+        let sse_url = build_sse_url(&self.server)?;
         let http_client = build_http_client_with_auth(&self.server).await?;
         let cfg = SseClientConfig {
             sse_endpoint: sse_url.as_str().into(),
@@ -169,12 +173,19 @@ impl McpClient {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("plugin '{}' is not connected", self.name))?;
 
-        service
-            .call_tool(CallToolRequestParam {
-                name: tool_name.to_string().into(),
-                arguments: Some(arguments.clone()),
-            })
-            .await
-            .map_err(|err| anyhow::anyhow!("tool '{}' failed: {err}", tool_name))
+        let call_future = service.call_tool(CallToolRequestParam {
+            name: tool_name.to_string().into(),
+            arguments: Some(arguments.clone()),
+        });
+
+        match timeout(TOOL_INVOCATION_TIMEOUT, call_future).await {
+            Ok(Ok(result)) => Ok(result),
+            Ok(Err(err)) => Err(anyhow::anyhow!("tool '{}' failed: {err}", tool_name)),
+            Err(_) => Err(anyhow::anyhow!(
+                "tool '{}' timed out after {:?}",
+                tool_name,
+                TOOL_INVOCATION_TIMEOUT
+            )),
+        }
     }
 }

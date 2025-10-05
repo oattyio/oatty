@@ -51,7 +51,7 @@ impl RegistryBackedProvider {
     /// Finds the provider ID for a field within a command specified by group and name.
     fn provider_for_field(
         &self,
-        commands: &Vec<CommandSpec>,
+        commands: &[CommandSpec],
         group: &str,
         name: &str,
         field: &str,
@@ -103,7 +103,7 @@ impl RegistryBackedProvider {
     /// an empty vector. Subsequent calls will use cached results after the fetch completes.
     fn list_values_for_provider(
         &self,
-        commands: &Vec<CommandSpec>,
+        commands: &[CommandSpec],
         provider_id: &str,
         variables: &serde_json::Map<String, serde_json::Value>,
     ) -> Vec<String> {
@@ -215,7 +215,7 @@ impl ValueProvider for RegistryBackedProvider {
     /// suggestions for the given `field` and `partial` input, sorted by score.
     fn suggest(
         &self,
-        commands: &Vec<CommandSpec>,
+        commands: &[CommandSpec],
         command_key: &str,
         field: &str,
         partial: &str,

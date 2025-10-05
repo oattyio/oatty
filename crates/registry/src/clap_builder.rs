@@ -118,7 +118,7 @@ fn create_root_command() -> ClapCommand {
 /// // Commands like "apps:list" will be in groups["apps"]
 /// // Commands like "dynos:restart" will be in groups["dynos"]
 /// ```
-fn group_commands_by_resource(commands: &Vec<CommandSpec>) -> BTreeMap<String, Vec<&CommandSpec>> {
+fn group_commands_by_resource(commands: &[CommandSpec]) -> BTreeMap<String, Vec<&CommandSpec>> {
     let mut groups: BTreeMap<String, Vec<&CommandSpec>> = BTreeMap::new();
     for cmd in commands {
         let mut parts = cmd.name.splitn(2, ':');

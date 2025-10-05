@@ -382,6 +382,16 @@ steps:
 
 These tags guide heuristics when a provider arg could be satisfied by multiple fields.
 
+`SchemaProperty` entries now mirror these contracts. During registry generation the resolver keeps
+track of JSON type, required keys, array item shape, enumerated literals, any `format` hint, and
+the tags surfaced through the workflow contracts. The Field Picker and auto-mapper consume this
+metadata to:
+
+* Prefer fields whose tags intersect with provider requirements (`app_id`, `pipeline_slug`, etc.).
+* Render nested objects and arrays with accurate type badges (for example, `array<uuid>`).
+* Show enum literals directly in the picker when manual disambiguation is needed.
+* Flag missing-but-required keys before prompting the user.
+
 ## 5.3 Runtime Resolution Order
 
 1. Use explicit templated path if present.

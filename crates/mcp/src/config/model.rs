@@ -1,5 +1,7 @@
 //! Data models for MCP configuration.
 
+use heroku_types::{EnvSource, EnvVar};
+use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -25,7 +27,12 @@ pub struct McpServer {
     pub args: Option<Vec<String>>,
 
     /// Environment variables to set for the process.
-    pub env: Option<HashMap<String, String>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_environment_variables",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub env: Option<Vec<EnvVar>>,
 
     /// Working directory for the process.
     pub cwd: Option<PathBuf>,
@@ -38,7 +45,12 @@ pub struct McpServer {
     pub sse_path: Option<String>,
 
     /// HTTP headers to include in requests.
-    pub headers: Option<HashMap<String, String>>,
+    #[serde(
+        default,
+        deserialize_with = "deserialize_environment_variables",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub headers: Option<Vec<EnvVar>>,
 
     /// Optional authorization configuration (e.g., Basic credentials).
     pub auth: Option<McpAuthConfig>,
@@ -48,6 +60,128 @@ pub struct McpServer {
 
     /// Optional tags for display/filtering in the UI.
     pub tags: Option<Vec<String>>,
+
+    /// Whether this server is valid.
+    pub err: Option<String>,
+}
+
+/// Default `effective` flag for configuration entries.
+fn default_effective_flag() -> bool {
+    true
+}
+
+/// Deserialize environment variables supporting both list and map formats.
+fn deserialize_environment_variables<'de, D>(deserializer: D) -> Result<Option<Vec<EnvVar>>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let raw_collection = Option::<RawEnvironmentVariableCollection>::deserialize(deserializer)?;
+    Ok(raw_collection.map(|collection| collection.into_environment_variables()))
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawEnvironmentVariableCollection {
+    List(Vec<RawEnvironmentVariable>),
+    Map(HashMap<String, RawEnvironmentVariableValue>),
+}
+
+impl RawEnvironmentVariableCollection {
+    fn into_environment_variables(self) -> Vec<EnvVar> {
+        match self {
+            RawEnvironmentVariableCollection::List(list) => {
+                list.into_iter().map(RawEnvironmentVariable::into_environment_variable).collect()
+            }
+            RawEnvironmentVariableCollection::Map(map) => {
+                let mut variables: Vec<EnvVar> = map.into_iter().map(|(key, value)| value.into_environment_variable(key)).collect();
+                variables.sort_by(|a, b| a.key.cmp(&b.key));
+                variables
+            }
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawEnvironmentVariable {
+    key: String,
+    value: String,
+    #[serde(default)]
+    source: Option<EnvSource>,
+    #[serde(default)]
+    effective: Option<bool>,
+}
+
+impl RawEnvironmentVariable {
+    fn into_environment_variable(self) -> EnvVar {
+        let RawEnvironmentVariable {
+            key,
+            value,
+            source,
+            effective,
+        } = self;
+
+        let environment_source = compute_environment_source(source, &value);
+        EnvVar {
+            key,
+            value,
+            source: environment_source,
+            effective: effective.unwrap_or_else(default_effective_flag),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawEnvironmentVariableValue {
+    Simple(String),
+    Detailed(RawEnvironmentVariableDetail),
+}
+
+impl RawEnvironmentVariableValue {
+    fn into_environment_variable(self, key: String) -> EnvVar {
+        match self {
+            RawEnvironmentVariableValue::Simple(value) => {
+                let environment_source = compute_environment_source(None, &value);
+                EnvVar {
+                    key,
+                    value,
+                    source: environment_source,
+                    effective: default_effective_flag(),
+                }
+            }
+            RawEnvironmentVariableValue::Detailed(detail) => detail.into_environment_variable(key),
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct RawEnvironmentVariableDetail {
+    value: String,
+    #[serde(default)]
+    source: Option<EnvSource>,
+    #[serde(default)]
+    effective: Option<bool>,
+}
+
+impl RawEnvironmentVariableDetail {
+    fn into_environment_variable(self, key: String) -> EnvVar {
+        let environment_source = compute_environment_source(self.source, &self.value);
+        EnvVar {
+            key,
+            value: self.value,
+            source: environment_source,
+            effective: self.effective.unwrap_or_else(default_effective_flag),
+        }
+    }
+}
+
+/// Determine the environment variable source, honoring explicitly provided metadata.
+fn compute_environment_source(provided_source: Option<EnvSource>, value: &str) -> EnvSource {
+    if let Some(source) = provided_source {
+        return source;
+    }
+
+    super::interpolation::determine_env_source(value)
 }
 
 impl Default for McpServer {
@@ -63,6 +197,7 @@ impl Default for McpServer {
             auth: None,
             disabled: Some(false),
             tags: None,
+            err: None,
         }
     }
 }
@@ -165,10 +300,16 @@ mod tests {
             "server-name": {
               "command": "node",
               "args": ["-e", "require('@mcp/server').start()"],
-              "env": {
-                "FOO": "bar",
-                "HEROKU_API_TOKEN": "${env:HEROKU_API_TOKEN}"
-              },
+              "env": [
+                {
+                    "key": "FOO",
+                    "value": "bar"
+                },
+                {
+                    "key": "HEROKU_API_TOKEN",
+                    "value": "${env:HEROKU_API_TOKEN}"
+                }
+               ],
               "cwd": "/path/optional",
               "disabled": false,
               "tags": ["code", "gh"]

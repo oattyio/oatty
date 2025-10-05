@@ -118,19 +118,25 @@ impl AuditLogger {
         let redacted_entry = redact_audit_entry(entry);
         let json_line = serde_json::to_string(&redacted_entry).map_err(|e| AuditError::SerializationError(e.to_string()))?;
 
-        let mut builder = OpenOptions::new();
-        builder.create(true).append(true);
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.log_path)
+            .await
+            .map_err(AuditError::IoError)?;
 
-        // On Unix, ensure restrictive permissions (0600)
         #[cfg(unix)]
         {
-            use std::os::unix::fs::OpenOptionsExt;
-            builder.mode(0o600);
+            use std::os::unix::fs::PermissionsExt;
+            let permissions = std::fs::Permissions::from_mode(0o600);
+            tokio::fs::set_permissions(&self.log_path, permissions)
+                .await
+                .map_err(AuditError::IoError)?;
         }
 
-        let mut file = builder.open(&self.log_path).map_err(AuditError::IoError)?;
-
-        writeln!(file, "{}", json_line).map_err(AuditError::IoError)?;
+        use tokio::io::AsyncWriteExt;
+        file.write_all(json_line.as_bytes()).await.map_err(AuditError::IoError)?;
+        file.write_all(b"\n").await.map_err(AuditError::IoError)?;
 
         debug!(
             "Audit log entry: {} {} {}",

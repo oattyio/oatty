@@ -6,7 +6,7 @@ mod ring_buffer;
 
 pub use audit::{AuditAction, AuditEntry, AuditLogger, AuditResult};
 pub use formatter::{LogFormatter, RedactionRules};
-pub use ring_buffer::{LogBufferError, LogRingBuffer};
+pub use ring_buffer::LogRingBuffer;
 
 use crate::types::{LogError, McpLogEntry};
 use dirs_next::config_dir;
@@ -58,9 +58,8 @@ impl LogManager {
         // Add the entry to the buffer
         buffer.add_entry(entry.clone())?;
 
-        // Format and log the entry
-        let formatted = self.formatter.format(&entry);
-        tracing::info!("Plugin {}: {}", plugin_name, formatted);
+        // Format for potential external sinks (kept internal only to avoid TUI overlay)
+        let _formatted = self.formatter.format(&entry);
 
         Ok(())
     }

@@ -338,13 +338,21 @@ impl PaginationComponent {
                     None
                 }
             }
-            KeyCode::Right | KeyCode::End => {
+            KeyCode::Right => {
                 // Use Raw Next-Range header to request the next page when available
                 if self.state.has_next_page() {
                     self.state.next_range.clone().map(|next_range| {
                         self.state.current_page = self.state.current_page.saturating_add(1);
                         Effect::NextPageRequested(next_range)
                     })
+                } else {
+                    None
+                }
+            }
+            KeyCode::End => {
+                if self.state.has_next_page() {
+                    self.state.last_page();
+                    Some(Effect::LastPageRequested)
                 } else {
                     None
                 }

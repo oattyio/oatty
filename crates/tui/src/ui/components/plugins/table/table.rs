@@ -114,11 +114,11 @@ impl PluginsTableComponent {
 
                 table_rows.push(
                     Row::new(vec![
-                        ratatui::text::Span::raw(display_name),
-                        ratatui::text::Span::raw(status_text),
-                        ratatui::text::Span::raw(plugin_item.command_or_url.clone()),
-                        ratatui::text::Span::raw(formatted_auth_status),
-                        ratatui::text::Span::raw(formatted_tags),
+                        Span::raw(display_name),
+                        Span::raw(status_text),
+                        Span::raw(plugin_item.command_or_url.clone()),
+                        Span::raw(formatted_auth_status),
+                        Span::raw(formatted_tags),
                     ])
                     .style(row_style),
                 );
@@ -217,8 +217,18 @@ impl Component for PluginsTableComponent {
             KeyCode::Down if app.plugins.table.grid_flag.get() => {
                 Self::move_selection_down(app);
             }
-            KeyCode::Enter => effects.push(Effect::ShowModal(Modal::PluginDetails)),
-            KeyCode::Char('d') if control_pressed => effects.push(Effect::ShowModal(Modal::PluginDetails)),
+            KeyCode::Enter => {
+                effects.push(Effect::ShowModal(Modal::PluginDetails));
+                if let Some(selected_item) = app.plugins.table.selected_item() {
+                    effects.push(Effect::PluginsLoadDetail(selected_item.name.clone()));
+                }
+            }
+            KeyCode::Char('d') if control_pressed => {
+                effects.push(Effect::ShowModal(Modal::PluginDetails));
+                if let Some(selected_item) = app.plugins.table.selected_item() {
+                    effects.push(Effect::PluginsLoadDetail(selected_item.name.clone()));
+                }
+            }
             KeyCode::Char('s') if control_pressed => {
                 if let Some(selected_item) = app.plugins.table.selected_item() {
                     effects.push(Effect::PluginsStart(selected_item.name.clone()));
@@ -239,7 +249,6 @@ impl Component for PluginsTableComponent {
                     let plugin_name = selected_item.name.clone();
                     app.plugins.open_logs(plugin_name.clone());
                     app.plugins.logs_open = true;
-                    // effects.push(Effect::PluginsOpenLogs(plugin_name));
                 }
             }
             KeyCode::Char('a') if control_pressed && app.plugins.can_open_add_plugin() => {

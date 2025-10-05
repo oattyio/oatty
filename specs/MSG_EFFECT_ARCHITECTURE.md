@@ -93,6 +93,7 @@ pub enum Effect {
     NextPageRequested(String),
     PrevPageRequested,
     FirstPageRequested,
+    LastPageRequested,
     PluginsLoadRequested,
     PluginsRefresh,
     PluginsStart(String),

@@ -59,7 +59,7 @@ impl Component for PluginsEditComponent {
     /// # Returns
     ///
     /// Returns a vector of effects that should be processed by the app.
-    fn handle_key_events(&mut self, app: &mut crate::app::App, key_event: crossterm::event::KeyEvent) -> Vec<Effect> {
+    fn handle_key_events(&mut self, app: &mut App, key_event: crossterm::event::KeyEvent) -> Vec<Effect> {
         let Some(add_state) = app.plugins.add.as_mut() else {
             return Vec::new();
         };
@@ -88,7 +88,7 @@ impl Component for PluginsEditComponent {
             KeyCode::Char('v') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 return vec![Effect::PluginsValidateAdd];
             }
-            KeyCode::Char('a') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('s') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 return vec![Effect::PluginsApplyAdd];
             }
             KeyCode::Enter => {
@@ -123,7 +123,7 @@ impl Component for PluginsEditComponent {
     /// * `frame` - Mutable reference to the terminal frame for rendering
     /// * `area` - The rectangular area available for rendering
     /// * `app` - Mutable reference to the app state
-    fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         let Some(add_state) = &app.plugins.add else { return };
 
         let theme = &*app.ctx.theme;
@@ -189,7 +189,7 @@ impl Component for PluginsEditComponent {
         position_cursor_in_active_field(frame, &form_layout, add_state);
     }
 
-    fn get_hint_spans(&self, app: &crate::app::App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
         let add_state = app.plugins.add.as_ref().expect("add state should be something");
         let mut spans = vec![];

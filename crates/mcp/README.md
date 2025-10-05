@@ -18,7 +18,7 @@ This crate provides the core building blocks to discover, configure, start/stop,
 - `lib.rs` — public API and re-exports
 - `client/` — transports, client wrapper, health monitor, client manager
   - `stdio.rs` — spawn MCP servers as local processes (Tokio child)
-  - `http.rs` — HTTP/SSE transport scaffolding with SSE listener
+  - `http.rs` — HTTP/SSE transport implementation with reqwest client + SSE listener
   - `manager.rs` — start/stop plugins, manage `McpClient`s
   - `health.rs` — periodic health checks and aggregation
 - `config/` — config models, interpolation, validation, file I/O
@@ -160,10 +160,12 @@ use std::sync::Arc;
 - `HealthMonitor` tracks plugin health with periodic checks.
 - Transports implement `health_check()`; `McpClient::health_check()` updates `HealthStatus` (latency, errors).
 
-## HTTP/SSE transport status
+## HTTP/SSE transport
 
-- `client/http.rs` includes an SSE listener and a request/response correlation mechanism.
-- The RPC/service wiring is scaffolded; adapt to your server’s RPC endpoints if needed.
+- `client/http.rs` builds reqwest clients with optional auth headers, resolves `ssePath`, and
+  constructs `SseClientTransport` handles.
+- OAuth-style tokens can be pulled from the OS keyring; Basic credentials support `${secret:}`
+  interpolation before request execution.
 
 ## Environment
 

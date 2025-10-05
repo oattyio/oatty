@@ -1,7 +1,6 @@
+use crate::ui::components::plugins::EnvRow;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
-
-use crate::ui::components::plugins::EnvRow;
 
 /// Represents the interaction mode of the key/value editor.
 #[derive(Debug, Clone, Default)]

@@ -1,4 +1,4 @@
-use heroku_types::{CommandSpec, ItemKind, SuggestionItem};
+use heroku_types::{CommandExecution, CommandSpec, ItemKind, SuggestionItem};
 use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
 
 use super::state::ValueProvider;
@@ -26,7 +26,7 @@ pub(crate) struct SuggestionEngine;
 
 impl SuggestionEngine {
     // Breakout: if command is not yet resolved, return command suggestions
-    fn suggest_when_unresolved(commands: &Vec<CommandSpec>, tokens: &[String]) -> Option<SuggestionResult> {
+    fn suggest_when_unresolved(commands: &[CommandSpec], tokens: &[String]) -> Option<SuggestionResult> {
         if !is_command_resolved(commands, tokens) {
             let items = suggest_commands(commands, &compute_command_prefix(tokens));
             return Some(SuggestionResult {
@@ -38,7 +38,7 @@ impl SuggestionEngine {
     }
 
     // Breakout: resolve spec reference from tokens
-    fn resolve_spec<'a>(commands: &'a Vec<CommandSpec>, tokens: &[String]) -> Option<&'a CommandSpec> {
+    fn resolve_spec<'a>(commands: &'a [CommandSpec], tokens: &[String]) -> Option<&'a CommandSpec> {
         let group: &str = tokens.first().map(|s| s.as_str()).unwrap_or("");
         let name: &str = tokens.get(1).map(|s| s.as_str()).unwrap_or("");
         commands.iter().find(|c| c.group == group && c.name == name)
@@ -46,7 +46,7 @@ impl SuggestionEngine {
 
     // Breakout: handle case where a non-boolean flag value is pending
     fn suggest_for_pending_flag(
-        commands: &Vec<CommandSpec>,
+        commands: &[CommandSpec],
         spec: &CommandSpec,
         remaining_parts: &[String],
         input: &str,
@@ -72,7 +72,7 @@ impl SuggestionEngine {
         None
     }
     fn build_for_index(
-        commands: &Vec<CommandSpec>,
+        commands: &[CommandSpec],
         spec: &CommandSpec,
         index: usize,
         current: &str,
@@ -98,7 +98,7 @@ impl SuggestionEngine {
     }
     // Breakout: build positional suggestions and compute provider loading
     fn build_positional_suggestions(
-        commands: &Vec<CommandSpec>,
+        commands: &[CommandSpec],
         spec: &CommandSpec,
         remaining_parts: &[String],
         current_input: &str,
@@ -169,7 +169,7 @@ impl SuggestionEngine {
     /// ```
     /// let result = SuggestionEngine::build(&registry, &providers, "apps info --app ");
     /// ```
-    pub fn build(commands: &Vec<CommandSpec>, providers: &[Box<dyn ValueProvider>], input: &str) -> SuggestionResult {
+    pub fn build(commands: &[CommandSpec], providers: &[Box<dyn ValueProvider>], input: &str) -> SuggestionResult {
         let input_tokens: Vec<String> = lex_shell_like(input);
 
         if let Some(out) = Self::suggest_when_unresolved(commands, &input_tokens) {
@@ -234,7 +234,7 @@ impl SuggestionEngine {
 ///
 /// `true` if the command is resolved, `false` otherwise.
 // ===== Command resolution helpers =====
-fn is_command_resolved(commands: &Vec<CommandSpec>, tokens: &[String]) -> bool {
+fn is_command_resolved(commands: &[CommandSpec], tokens: &[String]) -> bool {
     if tokens.len() < 2 {
         return false;
     }
@@ -275,15 +275,16 @@ fn compute_command_prefix(tokens: &[String]) -> String {
 /// # Returns
 ///
 /// A vector of suggestion items for matching commands.
-fn suggest_commands(commands: &Vec<CommandSpec>, prefix: &str) -> Vec<SuggestionItem> {
+fn suggest_commands(commands: &[CommandSpec], prefix: &str) -> Vec<SuggestionItem> {
     let mut items = Vec::new();
     if prefix.is_empty() {
         return items;
     }
 
     for command in commands {
-        let group = &command.group;
-        let name = &command.name;
+        let CommandSpec {
+            group, name, execution, ..
+        } = command;
         let executable = if name.is_empty() {
             group.to_string()
         } else {
@@ -291,8 +292,12 @@ fn suggest_commands(commands: &Vec<CommandSpec>, prefix: &str) -> Vec<Suggestion
         };
 
         if let Some(score) = fuzzy_score(&executable, prefix) {
+            let exec_type = match execution {
+                CommandExecution::Http { .. } => "[CMD]",
+                CommandExecution::Mcp(..) => "[MCP]",
+            };
             items.push(SuggestionItem {
-                display: format!("{:<28} [CMD] {}", executable, command.summary),
+                display: format!("{:<32} {} {:<98}", executable, exec_type, command.summary),
                 insert_text: executable,
                 kind: ItemKind::Command,
                 meta: None,
@@ -436,7 +441,7 @@ fn flag_value_partial(parts: &[String]) -> String {
 /// A vector of suggestion items for the flag values.
 // ===== Suggestion builders =====
 fn suggest_values_for_flag(
-    commands: &Vec<CommandSpec>,
+    commands: &[CommandSpec],
     spec: &CommandSpec,
     flag_name: &str,
     partial: &str,
@@ -487,7 +492,7 @@ fn suggest_values_for_flag(
 ///
 /// A vector of suggestion items for the positional argument.
 fn suggest_positionals(
-    commands: &Vec<CommandSpec>,
+    commands: &[CommandSpec],
     spec: &CommandSpec,
     arg_count: usize,
     current: &str,
@@ -699,6 +704,7 @@ pub(crate) fn is_flag_value_complete(input: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use heroku_registry::Registry;
     use heroku_types::{CommandExecution, CommandFlag, HttpCommandSpec, PositionalArgument, ServiceId};
     use std::sync::Arc;
 
@@ -710,7 +716,7 @@ mod tests {
     impl ValueProvider for TestProvider {
         fn suggest(
             &self,
-            commands: &Vec<CommandSpec>,
+            _commands: &[CommandSpec],
             command_key: &str,
             field: &str,
             _partial: &str,
@@ -732,10 +738,8 @@ mod tests {
         }
     }
 
-    fn registry_with(commands: Vec<heroku_types::CommandSpec>) -> Registry {
-        heroku_registry::Registry {
-            commands: Arc::from(commands.into_boxed_slice()),
-        }
+    fn registry_with(commands: Vec<CommandSpec>) -> Registry {
+        heroku_registry::Registry { commands }
     }
 
     #[test]
@@ -747,6 +751,7 @@ mod tests {
                     path: "/apps".into(),
                     ranges: vec![],
                     service_id: ServiceId::CoreApi,
+                    output_schema: None,
                 }),
                 group: "apps".into(),
                 name: "list".into(),
@@ -760,6 +765,7 @@ mod tests {
                     path: "/apps/{app}".into(),
                     ranges: vec![],
                     service_id: ServiceId::CoreApi,
+                    output_schema: None,
                 }),
                 group: "apps".into(),
                 name: "info".into(),
@@ -768,7 +774,7 @@ mod tests {
                 flags: vec![],
             },
         ]);
-        let result = SuggestionEngine::build(&reg, &[], "ap");
+        let result = SuggestionEngine::build(&reg.commands, &[], "ap");
         assert!(!result.items.is_empty());
         assert!(result.items.iter().any(|item| matches!(item.kind, ItemKind::Command)));
         assert!(!result.provider_loading);
@@ -778,12 +784,13 @@ mod tests {
     fn suggests_flag_values_enum_and_provider() {
         // apps:info with --region enum and --app provider
         let spec = CommandSpec {
-            execution: CommandExecution(HttpCommandSpec {
+            execution: CommandExecution::Http(HttpCommandSpec {
                 method: "GET".into(),
                 path: "/apps/{app}".into(),
                 ranges: vec![],
                 // Provider is now embedded on the field; legacy vector removed
                 service_id: ServiceId::CoreApi,
+                output_schema: None,
             }),
             group: "apps".into(),
             name: "info".into(),
@@ -822,6 +829,7 @@ mod tests {
                     path: "/apps".into(),
                     ranges: vec![],
                     service_id: ServiceId::CoreApi,
+                    output_schema: None,
                 }),
                 group: "apps".into(),
                 name: "list".into(),
@@ -835,7 +843,7 @@ mod tests {
         let mut map = std::collections::HashMap::new();
         map.insert(("apps:info".into(), "app".into()), vec!["demo".into(), "prod".into()]);
         let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
-        let result = SuggestionEngine::build(&reg, &[provider], "apps info --app ");
+        let result = SuggestionEngine::build(&reg.commands, &[provider], "apps info --app ");
         let values: Vec<_> = result.items.iter().filter(|item| matches!(item.kind, ItemKind::Value)).collect();
         assert!(!values.is_empty());
         assert!(values.iter().any(|item| item.display == "demo"));
@@ -863,6 +871,7 @@ mod tests {
                 ranges: vec![],
                 // No legacy providers vector
                 service_id: ServiceId::CoreApi,
+                output_schema: None,
             }),
         };
         let reg = registry_with(vec![
@@ -877,6 +886,7 @@ mod tests {
                     path: "/addons".into(),
                     ranges: vec![],
                     service_id: ServiceId::CoreApi,
+                    output_schema: None,
                 }),
             },
             spec,
@@ -885,7 +895,7 @@ mod tests {
         let mut map = std::collections::HashMap::new();
         map.insert(("addons:config:update".into(), "addon".into()), vec!["redis-123".into()]);
         let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
-        let result = SuggestionEngine::build(&reg, &[provider], "addons config:update ");
+        let result = SuggestionEngine::build(&reg.commands, &[provider], "addons config:update ");
         assert!(result.items.iter().any(|item| item.display == "redis-123"));
         assert!(!result.provider_loading);
     }
@@ -915,6 +925,7 @@ mod tests {
                 path: "/apps/{app}".into(),
                 ranges: vec![],
                 service_id: ServiceId::CoreApi,
+                output_schema: None,
             }),
         };
         let reg = registry_with(vec![
@@ -929,13 +940,14 @@ mod tests {
                     path: "/apps".into(),
                     ranges: vec![],
                     service_id: ServiceId::CoreApi,
+                    output_schema: None,
                 }),
             },
             spec,
         ]);
         // provider already embedded on flag
         let empty_provider: Box<dyn ValueProvider> = Box::new(TestProvider { map: Default::default() });
-        let result = SuggestionEngine::build(&reg, &[empty_provider], "apps info --app ");
+        let result = SuggestionEngine::build(&reg.commands, &[empty_provider], "apps info --app ");
         assert!(result.provider_loading);
     }
 
@@ -961,6 +973,7 @@ mod tests {
                 ranges: vec![],
                 // No legacy providers vector
                 service_id: ServiceId::CoreApi,
+                output_schema: None,
             }),
         };
         let reg = registry_with(vec![
@@ -975,6 +988,7 @@ mod tests {
                     path: "/apps".into(),
                     ranges: vec![],
                     service_id: ServiceId::CoreApi,
+                    output_schema: None,
                 }),
             },
             spec,
@@ -982,7 +996,7 @@ mod tests {
         let mut map = std::collections::HashMap::new();
         map.insert(("apps:info".into(), "app".into()), vec!["heroku-prod".into()]);
         let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
-        let result = SuggestionEngine::build(&reg, &[provider], "apps info heroku-prod");
+        let result = SuggestionEngine::build(&reg.commands, &[provider], "apps info heroku-prod");
         assert!(result.items.is_empty(), "should not echo current value as sole suggestion");
     }
 
@@ -1018,6 +1032,7 @@ mod tests {
                 ranges: vec![],
                 // No legacy providers vector
                 service_id: ServiceId::CoreApi,
+                output_schema: None,
             }),
         };
         let reg = registry_with(vec![
@@ -1032,6 +1047,7 @@ mod tests {
                     path: "/pipelines".into(),
                     ranges: vec![],
                     service_id: ServiceId::CoreApi,
+                    output_schema: None,
                 }),
             },
             CommandSpec {
@@ -1045,6 +1061,7 @@ mod tests {
                     path: "/branches".into(),
                     ranges: vec![],
                     service_id: ServiceId::CoreApi,
+                    output_schema: None,
                 }),
             },
             spec,
@@ -1054,7 +1071,7 @@ mod tests {
         map.insert(("pipelines:ci:run".into(), "branch".into()), vec!["main".into(), "develop".into()]);
         let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
         // With first positional filled and trailing space, suggest second positional list
-        let result = SuggestionEngine::build(&reg, &[provider], "pipelines ci:run api ");
+        let result = SuggestionEngine::build(&reg.commands, &[provider], "pipelines ci:run api ");
         let vals: Vec<_> = result
             .items
             .iter()

@@ -7,7 +7,10 @@ use std::{
 
 use anyhow::Result;
 use serde_json::Map as JsonMap;
-use tokio::sync::{Mutex, broadcast};
+use tokio::{
+    sync::{Mutex, broadcast},
+    task::JoinHandle,
+};
 
 use crate::{
     config::McpConfig,
@@ -26,6 +29,8 @@ pub struct McpClientManager {
     starting: Arc<Mutex<HashSet<String>>>,
     /// Names currently in the process of stopping for transitional status reporting.
     stopping: Arc<Mutex<HashSet<String>>>,
+    /// Join handles for autostart tasks that are still executing.
+    autostart_tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
     /// Parsed MCP configuration.
     config: McpConfig,
     /// Centralized logging manager (shared with engine/TUI).
@@ -43,6 +48,7 @@ impl McpClientManager {
             active_clients: Arc::new(Mutex::new(HashMap::new())),
             starting: Arc::new(Mutex::new(HashSet::new())),
             stopping: Arc::new(Mutex::new(HashSet::new())),
+            autostart_tasks: Arc::new(Mutex::new(Vec::new())),
             config,
             log_manager: Arc::new(LogManager::new()?),
             event_tx,
@@ -59,11 +65,12 @@ impl McpClientManager {
             if !server.is_disabled() {
                 let manager = self.clone();
                 let plugin_name = name.clone();
-                tokio::spawn(async move {
+                let autostart_handle = tokio::spawn(async move {
                     if let Err(err) = manager.start_plugin(&plugin_name).await {
                         tracing::warn!("Autostart '{}' failed: {}", plugin_name, err);
                     }
                 });
+                self.autostart_tasks.lock().await.push(autostart_handle);
             }
         }
         Ok(())
@@ -76,6 +83,17 @@ impl McpClientManager {
 
     /// Disconnect all clients and clear the registry.
     pub async fn stop(&self) -> Result<(), ClientManagerError> {
+        let autostart_handles = {
+            let mut handle_store = self.autostart_tasks.lock().await;
+            handle_store.drain(..).collect::<Vec<JoinHandle<()>>>()
+        };
+
+        for handle in autostart_handles {
+            if let Err(join_error) = handle.await {
+                tracing::warn!("Autostart task join failed: {}", join_error);
+            }
+        }
+
         let mut clients = self.active_clients.lock().await;
         let clients_drain: Vec<(String, Arc<Mutex<McpClient>>)> = clients.drain().collect();
         drop(clients);
@@ -116,22 +134,29 @@ impl McpClientManager {
             .cloned()
             .ok_or_else(|| ClientManagerError::ClientNotFound { name: name.into() })?;
 
+        if server.is_disabled() {
+            return Err(ClientManagerError::PluginDisabled { name: name.into() });
+        }
         // Prevent duplicates: if already running or in progress, bail
-        if self.active_clients.lock().await.contains_key(name) {
-            return Err(ClientManagerError::ClientAlreadyExists { name: name.into() });
-        }
-        {
-            let mut starting = self.starting.lock().await;
-            if !starting.insert(name.to_string()) {
-                return Err(ClientManagerError::ClientAlreadyExists { name: name.into() });
-            }
+        let plugin_name = name.to_string();
+        let (mut active_guard, mut starting_guard) = tokio::join!(self.active_clients.lock(), self.starting.lock());
+
+        if active_guard.contains_key(name) {
+            return Err(ClientManagerError::ClientAlreadyExists { name: plugin_name.clone() });
         }
 
-        let _ = self.event_tx.send(ClientManagerEvent::Starting { name: name.to_string() });
+        if !starting_guard.insert(plugin_name.clone()) {
+            return Err(ClientManagerError::ClientAlreadyExists { name: plugin_name.clone() });
+        }
 
-        // Connect outside of global locks
+        drop(active_guard);
+        drop(starting_guard);
+
+        let _ = self.event_tx.send(ClientManagerEvent::Starting { name: plugin_name.clone() });
+
+        // Connect outside global locks
         let connect_result = async {
-            let mut client = McpClient::new(name.to_string(), server, self.log_manager.clone());
+            let mut client = McpClient::new(plugin_name.clone(), server, self.log_manager.clone());
             client
                 .connect()
                 .await
@@ -151,25 +176,25 @@ impl McpClientManager {
                 self.active_clients
                     .lock()
                     .await
-                    .insert(name.to_string(), Arc::new(Mutex::new(client)));
+                    .insert(plugin_name.clone(), Arc::new(Mutex::new(client)));
 
-                let _ = self.event_tx.send(ClientManagerEvent::Started { name: name.to_string() });
+                let _ = self.event_tx.send(ClientManagerEvent::Started { name: plugin_name.clone() });
                 let _ = self.event_tx.send(ClientManagerEvent::ToolsUpdated {
-                    name: name.to_string(),
+                    name: plugin_name.clone(),
                     tools,
                 });
 
                 // Audit start event (best-effort)
                 let _ = self
                     .log_manager
-                    .log_audit(AuditEntry::plugin_start(name.to_string(), serde_json::Map::new()))
+                    .log_audit(AuditEntry::plugin_start(plugin_name.clone(), serde_json::Map::new()))
                     .await;
                 Ok(())
             }
             Err(err) => {
                 let error_message = err.to_string();
                 let _ = self.event_tx.send(ClientManagerEvent::StartFailed {
-                    name: name.to_string(),
+                    name: plugin_name.clone(),
                     error: error_message,
                 });
                 Err(err)
@@ -342,4 +367,7 @@ pub enum ClientManagerError {
     /// Failed to connect or disconnect a client.
     #[error("Connection error: {message}")]
     ConnectionError { message: String },
+    /// Action is not allowed: the plugin is disabled.
+    #[error("Not allowed: the plugin is disabled: {name}")]
+    PluginDisabled { name: String },
 }

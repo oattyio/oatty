@@ -2,6 +2,8 @@
 
 use crate::config::model::TransportType;
 use crate::config::{McpConfig, McpServer};
+use heroku_types::EnvVar;
+use once_cell::sync::Lazy;
 use regex::Regex;
 use thiserror::Error;
 use tracing::debug;
@@ -60,7 +62,7 @@ fn validate_stdio_server(server: &McpServer) -> Result<(), ValidationError> {
 
     // Validate environment variable names
     if let Some(env) = &server.env {
-        for key in env.keys() {
+        for EnvVar { key, .. } in env {
             validate_env_key(key)?;
         }
     }
@@ -90,7 +92,7 @@ fn validate_http_server(server: &McpServer) -> Result<(), ValidationError> {
 
     // Validate HTTP headers
     if let Some(headers) = &server.headers {
-        for key in headers.keys() {
+        for EnvVar { key, .. } in headers {
             validate_header_name(key)?;
         }
     }
@@ -99,10 +101,10 @@ fn validate_http_server(server: &McpServer) -> Result<(), ValidationError> {
 }
 
 /// Validate an environment variable key.
-fn validate_env_key(key: &str) -> Result<(), ValidationError> {
-    let env_key_regex = Regex::new(r"^[A-Z_][A-Z0-9_]*$")?;
+static ENV_KEY_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[A-Z_][A-Z0-9_]*$").expect("env key regex should compile"));
 
-    if !env_key_regex.is_match(key) {
+fn validate_env_key(key: &str) -> Result<(), ValidationError> {
+    if !ENV_KEY_REGEX.is_match(key) {
         return Err(ValidationError::InvalidEnvKey {
             key: key.to_string(),
             reason: "Environment variable keys must start with uppercase letter or underscore, followed by uppercase letters, numbers, or underscores".to_string(),

@@ -13,10 +13,11 @@
 //!
 //! The component follows the TEA (The Elm Architecture) pattern and integrates
 //! with the application's focus management system.
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use heroku_types::{Effect, Modal};
 use heroku_util::redact_json;
 use once_cell::sync::Lazy;
+use ratatui::prelude::Stylize;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -27,13 +28,16 @@ use ratatui::{
 use regex::Regex;
 use serde_json::Value;
 
-use super::state::{LogDetailView, LogEntry};
+use super::{
+    LogDetailsComponent,
+    state::{LogDetailView, LogEntry},
+};
 use crate::{
     app,
     ui::{
         components::component::Component,
         theme::{roles::Theme as UiTheme, theme_helpers as th},
-        utils::build_copy_text,
+        utils::{build_copy_text, centered_rect},
     },
 };
 
@@ -191,7 +195,11 @@ impl LogsComponent {
             }
         }
 
-        vec![Effect::ShowModal(modal_to_open)]
+        if matches!(modal_to_open, Modal::Results) {
+            vec![Effect::ShowModal(modal_to_open)]
+        } else {
+            vec![]
+        }
     }
 
     /// Checks if a JSON value contains array data suitable for table display.
@@ -261,8 +269,14 @@ impl LogsComponent {
 
         // Style remaining text with UUID/hex ID highlighting
         let rest = &line[i..];
+        let mut matches: Vec<_> = UUID_RE.find_iter(rest).chain(HEXID_RE.find_iter(rest)).collect();
+        matches.sort_by_key(|m| m.start());
+
         let mut last = 0usize;
-        for m in UUID_RE.find_iter(rest).chain(HEXID_RE.find_iter(rest)) {
+        for m in matches {
+            if m.start() < last {
+                continue; // Skip overlapping matches
+            }
             // Add text before the match
             if m.start() > last {
                 spans.push(Span::styled(&rest[last..m.start()], theme.text_primary_style()));
@@ -305,6 +319,11 @@ impl Component for LogsComponent {
     ///
     /// A vector of effects to be processed by the application
     fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
+        if app.logs.detail.is_some() {
+            let mut detail_component = LogDetailsComponent::default();
+            return detail_component.handle_key_events(app, key);
+        }
+
         let mut effects = Vec::new();
 
         // Handle main navigation and action keys
@@ -353,6 +372,27 @@ impl Component for LogsComponent {
             _ => {}
         }
         effects
+    }
+
+    fn handle_mouse_events(&mut self, app: &mut app::App, mouse: MouseEvent) -> Vec<Effect> {
+        if app.logs.detail.is_none() {
+            return Vec::new();
+        }
+
+        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+            if let Some(area) = app.logs.detail_rect {
+                let inside_horizontal = mouse.column >= area.x && mouse.column < area.x + area.width;
+                let inside_vertical = mouse.row >= area.y && mouse.row < area.y + area.height;
+                if inside_horizontal && inside_vertical {
+                    return Vec::new();
+                }
+            }
+            app.logs.detail = None;
+            app.logs.detail_rect = None;
+            return vec![Effect::CloseModal];
+        }
+
+        Vec::new()
     }
 
     /// Renders the logs component to the terminal frame.
@@ -425,7 +465,16 @@ impl Component for LogsComponent {
         }
 
         // Render detail modal overlay when open
-        if focused && app.logs.detail.is_some() {}
+        if focused && app.logs.detail.is_some() {
+            let overlay_area = frame.area();
+            let modal_area = centered_rect(80, 70, overlay_area);
+            app.logs.detail_rect = Some(modal_area);
+            frame.render_widget(Block::default().style(app.ctx.theme.modal_background_style()).dim(), overlay_area);
+            let mut detail_component = LogDetailsComponent::default();
+            detail_component.render(frame, overlay_area, app);
+        } else {
+            app.logs.detail_rect = None;
+        }
     }
 
     fn get_hint_spans(&self, app: &app::App, is_root: bool) -> Vec<Span<'_>> {

@@ -17,7 +17,7 @@ use ratatui::{
 
 use crate::{app::App, ui::components::component::Component};
 
-use super::{PluginsEditComponent, PluginsLogsComponent, PluginsSearchComponent, PluginsSecretsComponent, PluginsTableComponent};
+use super::{PluginsEditComponent, PluginsLogsComponent, PluginsSearchComponent, PluginsTableComponent};
 
 /// Top-level Plugins view component that orchestrates all plugin-related UI elements.
 ///
@@ -40,8 +40,6 @@ pub struct PluginsComponent {
     search_component: PluginsSearchComponent,
     /// Child component for displaying plugin logs
     logs_component: PluginsLogsComponent,
-    /// Child component for editing plugin environment variables
-    secrets_component: PluginsSecretsComponent,
     /// Child component for the add plugin plugin
     add_component: PluginsEditComponent,
 }
@@ -205,10 +203,6 @@ impl PluginsComponent {
         // This ensures consistent focus management whether overlays are open or not
         if matches!(key_event.code, KeyCode::Tab | KeyCode::BackTab) {
             return vec![];
-        }
-
-        if app.plugins.secrets.is_some() {
-            return self.secrets_component.handle_key_events(app, key_event);
         }
 
         if let Some(logs_state) = &mut app.plugins.logs {
@@ -431,12 +425,6 @@ impl PluginsComponent {
             } else {
                 app.plugins.logs_open = false;
             }
-        }
-
-        if app.plugins.secrets.is_some() {
-            let environment_area = create_centered_rectangle(outer_area, 90, 70);
-            frame.render_widget(Clear, environment_area);
-            self.secrets_component.render(frame, environment_area, app);
         }
     }
 }

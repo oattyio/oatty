@@ -145,7 +145,7 @@ impl PaletteState {
     }
 
     /// Derive the command spec from the current input tokens ("group sub").
-    fn selected_command_from_input(&self, commands: &Vec<CommandSpec>) -> Option<CommandSpec> {
+    fn selected_command_from_input(&self, commands: &[CommandSpec]) -> Option<CommandSpec> {
         let tokens: Vec<String> = lex_shell_like(&self.input);
         if tokens.len() < 2 {
             return None;
@@ -157,7 +157,7 @@ impl PaletteState {
 
     /// Derive the command spec from the currently selected suggestion when it
     /// is a command.
-    fn selected_command_from_suggestion(&self, commands: &Vec<CommandSpec>) -> Option<CommandSpec> {
+    fn selected_command_from_suggestion(&self, commands: &[CommandSpec]) -> Option<CommandSpec> {
         let item = self.suggestions.get(self.suggestion_index)?;
         if !matches!(item.kind, ItemKind::Command) {
             return None;
@@ -875,7 +875,7 @@ mod tests {
 
     #[test]
     fn replace_partial_positional_on_accept() {
-        let mut st = PaletteState::default();
+        let mut st = PaletteState::new(Arc::new(Mutex::new(Registry::from_embedded_schema().unwrap())));
         st.set_input("apps info hero".into());
         st.set_cursor(st.input().len());
         st.apply_accept_positional_suggestion("heroku-prod");
@@ -884,7 +884,7 @@ mod tests {
 
     #[test]
     fn replace_placeholder_positional_on_accept_value() {
-        let mut st = PaletteState::default();
+        let mut st = PaletteState::new(Arc::new(Mutex::new(Registry::from_embedded_schema().unwrap())));
         // Placeholder for positional arg
         st.set_input("apps info <app> ".into());
         st.set_cursor(st.input().len());
@@ -912,7 +912,7 @@ pub trait ValueProvider: Send + Sync + Debug {
     /// Vector of suggestion items that match the partial input.
     fn suggest(
         &self,
-        commands: &Vec<CommandSpec>,
+        commands: &[CommandSpec],
         command_key: &str,
         field: &str,
         partial: &str,
@@ -940,7 +940,7 @@ impl ValueProvider for StaticValuesProvider {
     /// field).
     fn suggest(
         &self,
-        _commands: &Vec<CommandSpec>,
+        _commands: &[CommandSpec],
         command_key: &str,
         field: &str,
         partial: &str,

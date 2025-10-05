@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use heck::ToKebabCase;
 use heroku_types::{CommandFlag, CommandSpec, HttpCommandSpec, PositionalArgument, ServiceId};
-use heroku_util::sort_and_dedup_commands;
+use heroku_util::{get_description, get_type, resolve_output_schema, sort_and_dedup_commands};
 use percent_encoding::percent_decode_str;
 use serde_json::Value;
 use std::{
@@ -80,6 +80,7 @@ pub fn derive_commands_from_schema(value: &Value, service_id: ServiceId) -> Resu
             };
             let title = link.get("title").and_then(Value::as_str).unwrap_or("").to_string();
             let description = link.get("description").and_then(Value::as_str).unwrap_or(&title).to_string();
+            let output_schema = resolve_output_schema(link.get("targetSchema"), value);
 
             if let Some((_, action)) = classify_command(href, method) {
                 let (path_template, positional_args) = path_and_vars_with_help(href, value);
@@ -97,7 +98,7 @@ pub fn derive_commands_from_schema(value: &Value, service_id: ServiceId) -> Resu
                     }
                 }
 
-                let http_spec = HttpCommandSpec::new(method.to_string(), path_template, service_id, ranges);
+                let http_spec = HttpCommandSpec::new(method.to_string(), path_template, service_id, ranges, output_schema);
                 commands.push(CommandSpec::new_http(group, name, description, positional_args, flags, http_spec));
             }
         }
@@ -566,86 +567,6 @@ fn add_range_flags(ranges: &[String]) -> Vec<CommandFlag> {
             provider: None,
         },
     ]
-}
-
-/// Recursively resolves the description from a schema, following `$ref` or combining `anyOf`/`oneOf`/`allOf`.
-///
-/// # Arguments
-///
-/// * `schema` - The schema JSON `Value`.
-/// * `root` - The root JSON schema `Value`.
-///
-/// # Returns
-///
-/// An optional resolved description string.
-fn get_description(schema: &Value, root: &Value) -> Option<String> {
-    if let Some(ptr) = schema.get("$ref").and_then(Value::as_str) {
-        let ptr = ptr.strip_prefix('#').unwrap_or(ptr);
-        return root.pointer(ptr).and_then(|t| get_description(t, root));
-    }
-
-    if let Some(desc) = schema.get("description").and_then(Value::as_str) {
-        return Some(desc.to_string());
-    }
-
-    for key in ["anyOf", "oneOf"] {
-        if let Some(arr) = schema.get(key).and_then(Value::as_array) {
-            let descs: Vec<String> = arr.iter().filter_map(|item| get_description(item, root)).collect();
-            if !descs.is_empty() {
-                return Some(descs.join(" or "));
-            }
-        }
-    }
-
-    if let Some(arr) = schema.get("allOf").and_then(Value::as_array) {
-        let descs: Vec<String> = arr.iter().filter_map(|item| get_description(item, root)).collect();
-        if !descs.is_empty() {
-            return Some(descs.join(" and "));
-        }
-    }
-
-    None
-}
-
-/// Recursively resolves the type from a schema, handling `$ref`, direct types, or `anyOf`/`oneOf`.
-///
-/// # Arguments
-///
-/// * `schema` - The schema JSON `Value`.
-/// * `root` - The root JSON schema `Value`.
-///
-/// # Returns
-///
-/// The resolved type string, defaulting to "string".
-fn get_type(schema: &Value, root: &Value) -> String {
-    if let Some(ptr) = schema.get("$ref").and_then(Value::as_str) {
-        let ptr = ptr.strip_prefix('#').unwrap_or(ptr);
-        return root.pointer(ptr).map_or("string".to_string(), |t| get_type(t, root));
-    }
-
-    if let Some(ty) = schema.get("type") {
-        if let Some(s) = ty.as_str() {
-            return s.to_string();
-        }
-        if let Some(arr) = ty.as_array() {
-            let types: HashSet<String> = arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
-            let types: HashSet<_> = types.into_iter().filter(|t| t != "null").collect();
-            if types.len() == 1 {
-                return types.into_iter().next().unwrap();
-            }
-        }
-    }
-
-    for key in ["anyOf", "oneOf"] {
-        if let Some(arr) = schema.get(key).and_then(Value::as_array) {
-            let types: HashSet<String> = arr.iter().map(|item| get_type(item, root)).collect();
-            if types.len() == 1 {
-                return types.into_iter().next().unwrap();
-            }
-        }
-    }
-
-    "string".to_string()
 }
 
 /// Recursively collects enum values from a schema, following `$ref` or combining `anyOf`/`oneOf`.

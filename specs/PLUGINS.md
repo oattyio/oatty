@@ -1,267 +1,282 @@
-MCP Plugin Management Specification (Minimal)
-This document specifies a Terminal User Interface (TUI) for managing Model Context Protocol (MCP) plugins within the Heroku CLI, aligned with foundational MCP client capabilities (e.g., Cursor/Claude compatibility). The TUI provides a fast, intuitive, and portable interface for discovering, installing, configuring, and monitoring plugins, using a minimal mcp.json configuration stored at ~/.config/heroku/mcp.json. Built with Ratatui (Rust) and the Nord theme, it prioritizes developer-friendliness, keyboard-driven navigation, and minimal latency (<50ms render time). The design supports stdio and http/sse transports and assumes permissions are managed externally via role-based access control (RBAC) or attribute-based access control (ABAC) systems, which define fine-grained authorization for MCP-connected tools or resources.
+# MCP Plugin Architecture Specification
 
-Implementation status (MVP)
-- Config: Uses ~/.config/heroku/mcp.json with camelCase keys (mcpServers, baseUrl). MCP_CONFIG_PATH override supported; ${env:} and ${secret:} interpolation implemented.
-- Transports: stdio implemented via rmcp child transport; http/sse transport health checks implemented, protocol connect is a stub (future work).
-- Lifecycle/Health: Lifecycle manager with backoff/timeouts; periodic health checks using each client’s real health_check().
-- Logging: Ring buffer + audit logs; redaction in display; export supports redacted or unredacted output.
-- Registry/Tags: Registry wired; tags parsed from config and propagated to engine/registry.
-- Validation: Server names and env keys validated; http baseUrl requires http/https.
+This document describes the current Model Context Protocol (MCP) plugin system that powers the
+Heroku CLI and Terminal UI (TUI). It covers the runtime architecture, configuration contract,
+transport support, lifecycle management, logging pipeline, provider integration, and user
+experience. The specification reflects the multi-crate implementation that ships today, spanning
+`crates/mcp`, `crates/registry`, `crates/tui`, and `crates/util`.
 
-1. Goals
+## Current Capabilities
 
-Portability: Use a minimal mcp.json schema compatible with all MCP clients, avoiding Heroku-specific extensions.
-Speed: Low-latency TUI interactions using core Ratatui widgets.
-Intuitive UX: Keyboard-first navigation, clear feedback (toasts, logs), and discoverable actions (hint bar, search).
-Safety: Out-of-process plugins (stdio) and remote execution (http/sse) to prevent crashes.
-Simplicity: Focus on core MCP features (plugin discovery, invocation, configuration) for fast adoption.
-Extensibility: Provide hooks for future enhancements without overcomplicating the MVP.
+- **Configuration:** Uses `~/.config/heroku/mcp.json` (override via `MCP_CONFIG_PATH`) with
+  camelCase fields under `mcpServers`. Supports `${env:}` and `${secret:}` interpolation during
+  load, and preserves redactions on write.
+- **Transports:** Fully supports stdio plugins (spawned child process) and HTTP/SSE transports via
+  `rmcp` with reqwest clients. SSE endpoints default to `sse` and can be overridden with
+  `ssePath`.
+- **Lifecycle:** `LifecycleManager` tracks start/stop state, startup/shutdown timeouts, restarts,
+  health, and handshake latency. Autostart runs for all enabled servers at engine boot.
+- **Command Registry:** Discovered MCP tools are converted into synthetic `CommandSpec` entries,
+  allowing the CLI command registry to expose plugin commands alongside native commands.
+- **Provider Bridge:** An `McpProviderRegistry` allows MCP tools to be surfaced as value providers
+  inside the workflow engine, enabling plugins to feed downstream automation.
+- **Logging & Audit:** Each plugin maintains a ring-buffer of logs with redaction helpers. All
+  lifecycle and invocation events are appended to a JSON Lines audit log (`mcp-audit.jsonl`) with
+  10MB/7-day rotation.
+- **Security & Secrets:** Sensitive values are redacted in UI, logs, and audit trails. `${secret:}`
+  entries resolve through `keyring-rs`, and OAuth tokens can be pulled from the OS keychain for
+  remote transports.
+- **TUI Experience:** Ratatui widgets provide plugin list, detail, logs, environment editor,
+  secrets editor, and add/edit workflows with keyboard-first navigation and responsive layouts.
 
+## Architecture
 
-2. Configuration (mcp.json)
-2.1 File Location
+### Configuration Layer (`crates/mcp::config`)
 
-Primary: ~/.config/heroku/mcp.json (read/write).
-No Fallback: No support for ~/.cursor/mcp.json to simplify configuration management.
+1. `load_config()` resolves the active file, interpolates environment/secret placeholders, and
+   validates the structure.
+2. Validation enforces server names (`^[a-z0-9._-]+$`), environment key casing, and required
+   transport fields (`command` for stdio, `baseUrl` for HTTP/SSE). Unsupported schemes or malformed
+   headers raise structured errors.
+3. Configuration writes (`save_config`) pretty-print the JSON and ensure directories exist with
+   restrictive permissions when possible.
 
-2.2 Schema
-The configuration uses the minimal MCP-standard mcpServers object, supporting only essential fields for maximum compatibility.
+### Engine Layer (`crates/mcp::plugin`)
+
+1. `PluginEngine` orchestrates the runtime using:
+   - `McpClientManager` (connection pool, autostart, broadcast events),
+   - `LifecycleManager` (timeouts, restart policies, health tracking),
+   - `PluginRegistry` (UI-facing plugin metadata with status/health/tool counts),
+   - `LogManager` (ring buffers, audit logger),
+   - `CommandRegistry` injection (register/unregister synthetic command specs).
+2. A background status listener subscribes to client events. Tool updates refresh caches and
+   rebuild synthetic command specs grouped by plugin/tool naming conventions.
+3. Tool invocations return `ExecOutcome::Mcp`, including pretty-printed JSON payloads. Failures are
+   audited and surfaced in plugin logs.
+
+### Provider Integration (`crates/mcp::provider`)
+
+1. `McpProviderRegistry` exposes MCP tools as value providers via adapters. Registered providers are
+   keyed by `plugin:tool` and hold a handle to the shared `PluginEngine`.
+2. Providers implement asynchronous `fetch_values` and availability checks, enabling workflows to
+   reuse MCP tools for data fetching.
+3. Discovery hooks are available for future work to auto-register providers when plugins expose
+   declarative contracts.
+
+### Logging and Audit (`crates/mcp::logging`)
+
+1. `LogManager` stores recent log entries per plugin (default capacity: 1000). Logs can be exported
+   with or without redaction.
+2. `AuditLogger` writes JSONL records with rotation after 10MB or seven days, ensuring restrictive
+   permissions. Entries capture action (`Start`, `ToolInvoke`, etc.), result, and metadata.
+3. All text output goes through `LogFormatter`, which applies `heroku_util::redact_sensitive_with`
+   to scrub tokens before rendering in the UI or terminal.
+
+## Configuration Reference
+
+### File Location
+
+- Default: `~/.config/heroku/mcp.json`.
+- Override: `MCP_CONFIG_PATH` environment variable (supports `~` expansion).
+- No fallback to `~/.cursor/mcp.json`; configuration remains local to the CLI.
+
+### Schema Overview
+
+```json
 {
   "mcpServers": {
-    "server-name": {
-      "command": "node",                       // for stdio
+    "plugin-name": {
+      "command": "node",
       "args": ["-e", "require('@mcp/server').start()"],
-      "env": {
-        "FOO": "bar",
-        "HEROKU_API_TOKEN": "${env:HEROKU_API_TOKEN}" // process env interpolation
-      },
-      "cwd": "/path/optional",
-      "disabled": false
+      "env": { "HEROKU_API_TOKEN": "${env:HEROKU_API_TOKEN}" },
+      "cwd": "/optional/path",
+      "disabled": false,
+      "tags": ["code", "gh"]
     },
     "remote-example": {
       "baseUrl": "https://mcp.example.com",
-      "headers": {
-        "Authorization": "Bearer ${secret:EXAMPLE_TOKEN}" // keychain interpolation
-      },
-      "disabled": false
+      "ssePath": "events",
+      "headers": { "Authorization": "Bearer ${secret:EXAMPLE_TOKEN}" },
+      "auth": {
+        "scheme": "basic",
+        "username": "${secret:REMOTE_USER}",
+        "password": "${secret:REMOTE_PASS}",
+        "interactive": true
+      }
     }
   }
 }
+```
 
-2.3 Notes
+### Supported Fields
 
-Fields: command, args, env, cwd for stdio; baseUrl, headers for http/sse; disabled for enabling/disabling plugins.
-Interpolation:
-${env:NAME}: Reads process environment at runtime, not persisted.
-${secret:NAME}: Resolves via OS keychain (e.g., keyring-rs); never persisted.
+- **Common:** `disabled`, `tags`.
+- **Stdio:** `command` (required), `args`, `env`, `cwd`.
+- **HTTP/SSE:** `baseUrl` (required), `ssePath`, `headers`, `auth` (Basic or OAuth-style). OAuth
+  tokens fall back to `${secret:}` but can be looked up in the OS keyring via the composed
+  `baseUrl` identifier.
+- **Interpolation:**
+  - `${env:NAME}` – loads from process environment at runtime.
+  - `${secret:NAME}` – resolves via OS keychain; never persisted.
 
+### Validation Rules
 
-Permissions: Handled externally via RBAC/ABAC systems, not defined in mcp.json or enforced by the TUI.
+- Server names: lowercase alphanumeric plus `.`, `_`, `-`.
+- Environment keys: uppercase snake case.
+- HTTP URLs: `http` or `https` only. SSE endpoints are normalized to avoid duplicate slashes.
+- Headers: must be non-empty and free of control characters.
 
-2.4 Validation
+## TUI Experience
 
-Name: ^[a-z0-9._-]+$.
-Fields:
-stdio: Requires command; optional args, env, cwd.
-http/sse: Requires baseUrl; optional headers.
+- **Global Shell:** Title bar with plugin counts, main body split among search/table/details views,
+  footer hint bar using Nord-inspired theming.
 
+  ```text
+  ┌══════════════════ Plugins — MCP ══════════════════┐
+  │ ▸ Search ▏github plugins           Plugins: 4 ✓   │
+  ├───────────────────────────────────────────────────┤
+  │ Name          Status   Transport      Tags        │
+  │ github        ✓        stdio          code,gh     │
+  │ remote-api    !        http/sse       api,prod    │
+  │ vector-store  ✗        stdio          ml,search   │
+  │ …                                                 │
+  ├───────────────────────────────────────────────────┤
+  │ Hints: Tab cycle • Ctrl-A add • Enter details     │
+  └───────────────────────────────────────────────────┘
+  ```
 
-Env Keys: ^[A-Z_][A-Z0-9_]*$.
+- **Search & Table:** `PluginsSearchComponent` filters by name and tags, while
+  `PluginsTableComponent` shows status (`✓ Running`, `✗ Stopped`, `! Error`), transport, auth
+  summary, and tags. Keyboard navigation supports `j/k`, `↑/↓`, and global focus cycling.
 
+  ```text
+  ┌─ Search ───────────────────────────────────────────┐
+  │ / search ▏vector                                   │
+  └────────────────────────────────────────────────────┘
+  ┌─ Plugins Table ─────────────────────────────────────┐
+  │ Name          Status   Transport   Auth    Tags     │
+  │ vector-store  !        http/sse    token   ml,search│
+  │ github        ✓        stdio       keyring code,gh  │
+  │ pg-remote     ✗        http/sse    basic   db       │
+  └─────────────────────────────────────────────────────┘
+  ```
 
-3. TUI Architecture
-3.1 Global Shell
+- **Details View:** `PluginsDetailsComponent` now renders a single, stacked details view. The left pane stacks Overview, Health, Env, and Logs separated by horizontal rules; the right pane shows Tools inside a block with a full-height left border. Logs are scrollable with ↑/↓ and display a vertical scrollbar. Quick actions are inline in Overview: [R] Restart, [S] Start, [T] Stop, and [Ctrl-R] Refresh.
 
-Regions: Title bar, hint bar (footer with keybindings), status line (top-right, e.g., "Plugins: 2").
-Colors (Nord):
-Background: #2E3440, Panels: #3B4252, Border: #434C5E.
-Text: Primary #D8DEE9, Secondary #E5E9F0, Muted #4C566A.
-Accents: Teal #88C0D0, Blue #81A1C1 (selected), Status: Green #A3BE8C (ok), Yellow #EBCB8B (warn), Red #BF616A (err).
+  ```text
+  ┌────────────────── Plugin Details — github ──────────────────┐
+  │ Command   npx -y @mcp/server-github            │ Tools      │
+  │ Transport stdio (local)                        │ list_repos │
+  │ Tags      code, gh                             │ create_pr  │
+  │ Actions   [R] Restart  [S] Start  [T] Stop     │ …          │
+  │           [Ctrl-R] Refresh                     │            │
+  ├────────────────────────────────────────────────┼────────────┤
+  │ Health: ✓ Healthy      Handshake: 180ms        │            │
+  │ Last start: 12:41:03   Restarts: -             │            │
+  ├────────────────────────────────────────────────┤            │
+  │ Env (masked)                                   │            │
+  │   GITHUB_TOKEN  •••••••••••  secret ✓          │            │
+  │   USER_AGENT    heroku-cli    file   ✓         │            │
+  ├────────────────────────────────────────────────┤            │
+  │ Logs (recent)                                  │            │
+  │   [12:41:03] info handshake ok (180ms)         │            │
+  │   ↑/↓ scroll • visible scrollbar ▮             │            │
+  └────────────────────────────────────────────────┴────────────┘
+  ```
 
+- **Logs Drawer:** `PluginsLogsComponent` displays live ring-buffer entries with follow mode,
+  search, OSC52 copy helpers, and export options.
 
-Keybindings (Global):
-Tab/Shift-Tab: Cycle focus.
-F1: Help screen.
-/: Quick search.
-q: Back/close.
-Esc: Cancel.
-:: Command palette.
+  ```text
+  ┌ Logs — github        [f] follow  [/] search  [Y] all ┐
+  │ [12:41:03] info handshake ok (180ms)                 │
+  │ [12:42:10] warn restart requested                    │
+  │ [12:42:15] info tool list_repos succeeded            │
+  ├──────────────────────────────────────────────────────┤
+  │ ↑↓ scroll • y copy line • Esc close                  │
+  └──────────────────────────────────────────────────────┘
+  ```
 
+- **Add/Edit Workflow:** `PluginsEditComponent` presents radio-select transport, validates
+  configuration (including handshake checks), previews registry impact, and writes through the
+  config module.
 
+  ```text
+  ┌ Plugins — MCP ─────────────────────────────────────────────┐
+  │ / search ▏                                                 │
+  ├────────────────────────────────────────────────────────────┤
+  │ ┌ Add Plugin ────────────────────────────────────────────┐ │
+  │ │ Name: github-local                                    │ │
+  │ │ Transport: (✓) Local   ( ) Remote                     │ │
+  │ │ Command: npx                                          │ │
+  │ │ Args: -y @mcp/server-github                           │ │
+  │ │ Tags: code,gh                                         │ │
+  │ │                                                       │ │
+  │ │ [Ctrl-V] validate   [Ctrl-A] apply   [Esc] cancel     │ │
+  │ └───────────────────────────────────────────────────────┘ │
+  │ ┌ Plugins Table ─────────────────────────────────────────┐ │
+  │ │ Name        Status   Transport      Tags               │ │
+  │ │ github      ✓        stdio          code,gh            │ │
+  │ │ remote-api  ✗        http/sse       api                │ │
+  │ └────────────────────────────────────────────────────────┘ │
+  └────────────────────────────────────────────────────────────┘
+  ```
 
-3.2 Screens and Widgets
+- **Overlays:** Components use centered modal rectangles with `widgets::Clear`, respecting focus
+  rings and global Escape handling.
 
-Plugins List
+## Workflows
 
-Purpose: List installed plugins, show status, jump to details.
-Layout (ASCII):┌ Plugins — MCP ────────────────────────────────────────┐
-│ / search ▎github ...                                                 │
-├──────────────────────────────────────────────────────────────────────┤
-│ Name       Status    Command/BaseUrl                  Tags           │
-├──────────────────────────────────────────────────────────────────────┤
-│ github     ✓ Running npx -y @mcp/server-gh            code,gh        │
-│ pg-remote  ✗ Stopped https://mcp.example.com          pg,db          │
-└──────────────────────────────────────────────────────────────────────┘
-Hints: Enter details • a add • d disable/enable • r restart • L logs
+### Plugin Lifecycle
 
+1. Engine boot autostarts enabled plugins asynchronously. Each start attempt is audited.
+2. `LifecycleManager` enforces startup/shutdown timeouts (30s/10s default) and exponential backoff
+   restarts with a maximum of three attempts.
+3. Manual actions (start, stop, restart) are delegated through the component tree to
+   `PluginEngine::start_plugin` / `stop_plugin`, ensuring registry and command catalogs stay in
+   sync.
 
-Behaviors: Arrow/j/k navigation, zebra striping, search (/) across name/tags, status icons (✓ ok, ✗ stopped, ! warn).
-Widget: ratatui::widgets::Table.
+### Installation & Editing
 
+1. Adding a plugin collects fields via the TUI overlay, validates the name and transport-specific
+   requirements, and saves the config.
+2. After save, the engine reloads configuration, registers lifecycle tracking, and triggers
+   autostart if the plugin is enabled.
+3. Editing secrets/env values respects masking and writes through the config module without leaking
+   sensitive data in logs.
 
-Plugin Details
+### Tool Invocation
 
-Purpose: Show configuration, health, environment, logs, and actions.
-Layout:┌ github — Details ──────────────────────────────────────────┐
-│ Overview    Health    Env    Logs                                 │
-├───────────────────────────────────────────────────────────────────┤
-│ Command: npx -y @mcp/server-gh       Timeout: 20s                 │
-│ Tags: code, gh                       Last start: 12:41:03         │
-│                                      Handshake: 180ms             │
-│                                                    [R] Restart    │
-├───────────────────────────────────────────────────────────────────┤
-│ Env: GITHUB_TOKEN=••••••     USER=heroku-mcp/2.1   [E] Edit       │
-├───────────────────────────────────────────────────────────────────┤
-│ Logs (recent):                                [L] View (follow)   │
-│ [12:41:03] info handshake ok (180ms)                              │
-└───────────────────────────────────────────────────────────────────┤
-Hints: Ctrl-a add • E env • R restart • L logs • b back
+1. When the CLI executes a synthetic command produced from MCP tools, it calls back into
+   `PluginEngine::invoke_tool`.
+2. The engine forwards the invocation to the corresponding `McpClient`, captures the JSON payload,
+   and returns an `ExecOutcome::Mcp` with both textual and structured results.
+3. Errors propagate with detailed audit records and `PluginStatus::Error` transitions in the
+   registry.
 
+### Logging & Observation
 
-Behaviors: Tab navigation, inline actions (e.g., [E]), health metrics.
-Widget: ratatui::widgets::Tabs, Paragraph, Table.
+1. Stdio plugins route stderr into the log ring buffer using spawned asynchronous readers.
+2. HTTP/SSE transports reuse the rmcp client for diagnostic logging and expose health probes via
+   `McpClient::health_check`.
+3. Log exports can be redacted (default) or raw and are written asynchronously to user-provided
+   paths.
 
+## Security and Compliance
 
-Add Plugin
+- Secrets never persist in plaintext within config files, logs, or audit entries.
+- Audit logs enforce restrictive permissions (0600 on Unix) and redact sensitive metadata.
+- OAuth token lookups rely on the OS keyring; missing entries fall back to config-provided tokens.
+- All remote transports validate scheme and rely on TLS (for `https`) via reqwest defaults.
 
-Purpose: Install plugins (stdio command or remote http/sse) with a simple, responsive panel.
-Layout (Responsive Panel):
-- Wide (≥120 cols): side-by-side Add panel (left) and Plugins table (right).
-- Narrow (<120 cols): full-body Add view replaces the table while open.
+## Future Enhancements
 
-Wide Example:
-┌ Plugins — MCP ───────────────────────────────────────────────────────────────┐
-│ / search ▎                                                                   │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ ┌ Add Plugin — [Ctrl+V] validate  [Ctrl+A] apply  [Esc] cancel ┐  Table …    │
-│ │   Transport: [✓] Local   [ ] Remote                          │             │
-│ │ › Name: github                                               │             │
-│ │   Command: npx                                               │             │
-│ │   Args: -y @modelcontextprotocol/server-github               │             │
-│ │   Base URL:                                                  │             │
-│ │                                                              │             │
-│ │ [ Validate ]   [ Save ]   [ Cancel ]                         │             │
-│ └──────────────────────────────────────────────────────────────┘             │
-├──────────────────────────────────────────────────────────────────────────────┤
-│ Hints: Ctrl-a add • Ctrl-v validate • Ctrl-a save • Ctrl-b back              │
-└──────────────────────────────────────────────────────────────────────────────┘
+- Automated provider discovery that registers value providers from tool metadata without manual
+  configuration.
+- Expanded auth schemes (e.g., OAuth device flow) surfaced through the `auth` block.
+- Additional health signals (e.g., uptime, request error rates) exposed in the details panel and
+  provider APIs.
 
-Fields:
-- Name: plugin key (^[a-z0-9._-]+$).
-- Transport (radio): single-select between Local (stdio) and Remote (http/sse).
-  - Local shows Command and Args fields.
-  - Remote shows Base URL field.
-  - Keyboard: Left/Right to change, Space/Enter to toggle when focused.
-
-Transport Selection:
-- The transport is chosen explicitly via the radio group (Local or Remote).
-- Validation enforces required fields for the selected transport.
-
-Behaviors: Validates via transport health check and previews mcp.json patch; Save applies, refreshes, closes, and selects the new plugin; Cancel closes without changes.
-Widget: ratatui::widgets::Block, Paragraph (form + radio group), Table (for concurrent table view on wide screens).
-
-
-Logs Drawer
-
-Purpose: View stdout/stderr with copy/export.
-Layout:┌ Logs — github [p] pager  [y] copy line  [Y] copy all ──────┐
-│ [12:41:03] info handshake ok (180ms)                              │
-│ [12:42:10] info tool invoked: list_repos                          │
-└───────────────────────────────────────────────────────────────────┘
-
-
-Behaviors: Follow mode (f), search (/), OSC52 clipboard.
-Widget: ratatui::widgets::List.
-
-
-Environment Editor
-
-Purpose: Edit environment variables with masking.
-Layout:┌ Edit Env — github ──────────────────────────────────────────┐
-│ KEY            VALUE (masked)         Source       Effective       │
-├────────────────────────────────────────────────────────────────────┤
-│ GITHUB_TOKEN   •••••••••••••••       secret        ✓               │
-│ USER_AGENT     heroku-mcp/2.1        file          ✓               │
-└────────────────────────────────────────────────────────────────────┤
-Hints: Ctrl-S save • Esc cancel
-
-
-Widget: ratatui::widgets::Table.
-
-4. Behaviors and Workflows
-4.1 Plugin Lifecycle
-
-Start: Lazy (on first use) or auto (on TUI open); default 20s timeout for handshake.
-Restart: On failure (exponential backoff); manual via [R].
-Isolation: Stdio plugins run out-of-process; http/sse are remote.
-Health: Monitor start time, handshake latency; display in Details.
-
-4.2 Installation
-
-Methods: npm (npx), pip (python -m), binary, http/sse.
-Example (npm):{
-  "mcpServers": {
-    "github": {
-      "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-github"],
-      "env": { "GITHUB_TOKEN": "${secret:GITHUB_TOKEN}" }
-    }
-  }
-}
-
-
-Validation: Run --version or handshake; preview mcp.json changes.
-
-4.3 UX Features
-
-Search: / filters names/tags; highlights in teal.
-Logs: Follow mode, copy/export (OSC52 fallback).
-Toasts: Green (success), yellow (warn), red (error); auto-dismiss.
-Errors: Show in Logs (e.g., "[err: handshake timeout]"); recovery actions (restart).
-Authorization: Managed externally via RBAC/ABAC; TUI assumes plugins handle access control.
-
-5. Implementation Notes
-5.1 Rust and Ratatui
-
-Components: List, Details, Logs, Environment Editor, Add Panel, Toasts.
-Rendering: Use ratatui::widgets (Table, List, Paragraph, Block); avoid blocking I/O.
-State: TEA (The Elm Architecture) for event handling; async channels for logs.
-Clipboard: System → OSC52 → file fallback.
-
-5.2 Data Model
-struct PluginDetail {
-    name: String,
-    status: Status, // Running | Stopped | Warn
-    command_or_url: String,
-    env: Vec<EnvVar>,
-    logs: LogRingBuffer,
-}
-
-struct EnvVar {
-    key: String,
-    value: String, // Masked for secrets
-    source: String, // file | secret | env
-}
-
-5.3 Security
-
-Secrets: Mask in UI/logs; resolve via keyring-rs.
-Audit Log: JSONL at ~/.config/heroku/mcp-audit.jsonl (e.g., {"server": "github", "action": "start", "time": "2025-09-07T15:55:03Z"}); rotate after 7 days or 10MB.
-Permissions: Handled externally; no TUI enforcement.
-
-5.4 Accessibility
-
-Monochrome Mode: Disable colors; use bold/icons.
-Keyboard-First: Focus rings, no mouse reliance.
-Icons: ✓ (ok), ✗ (stopped), ! (warn) for clarity.
+This specification should be kept in sync with crate-level documentation and any architectural
+decisions captured under `plans/` to ensure contributors have an accurate map of the MCP plugin
+system.

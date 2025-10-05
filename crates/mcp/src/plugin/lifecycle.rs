@@ -6,7 +6,7 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime};
 use tokio::sync::Mutex;
 use tokio::time::{sleep, timeout};
-use tracing::{debug, error, warn};
+use tracing::{debug, warn};
 
 /// Lifecycle manager for handling plugin startup, shutdown, and recovery.
 #[derive(Debug)]

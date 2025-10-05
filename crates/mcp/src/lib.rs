@@ -14,7 +14,8 @@ pub mod types;
 pub use config::{ConfigError, McpConfig, McpServer};
 pub use plugin::PluginEngine;
 pub use types::{
-    AuthStatus, EnvSource, EnvVar, HealthStatus, LogLevel, LogSource, McpLogEntry, PluginDetail, PluginStatus, TransportStatus,
+    AuthStatus, EnvSource, EnvVar, HealthStatus, LogLevel, LogSource, McpLogEntry, PluginDetail, PluginStatus, PluginToolSummary,
+    TransportStatus,
 };
 
 #[derive(Debug, thiserror::Error, Clone)]

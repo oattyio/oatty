@@ -8092,7 +8092,7 @@
           "type": [
             "string"
           ],
-          "description": "Current status of this resource.",
+          "description": "State/region for the invoice address.",
           "example": "WA"
         },
         "use_invoice_address": {

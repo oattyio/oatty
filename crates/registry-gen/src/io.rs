@@ -3,12 +3,11 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use crate::openapi::transform_openapi_to_links;
+use crate::schema::{derive_commands_from_schema, generate_commands};
 use anyhow::{Context, Result};
 use bincode::config;
 use heroku_types::ServiceId;
-
-use crate::openapi::transform_openapi_to_links;
-use crate::schema::{derive_commands_from_schema, generate_commands};
 
 pub struct ManifestInput {
     pub input: PathBuf,

@@ -27,21 +27,6 @@ use super::PluginsState;
 pub struct PluginsSearchComponent;
 
 impl PluginsSearchComponent {
-    /// Handles key events specific to the search input (convenience method).
-    ///
-    /// This mirrors the component trait handler and is provided as a thin
-    /// wrapper for callers that may not use the trait object directly.
-    ///
-    /// # Arguments
-    /// - `application`: Mutable reference to the application state
-    /// - `key_event`: The keyboard event to process
-    ///
-    /// # Returns
-    /// Returns a vector of effects to be processed by the application runtime.
-    pub fn handle_key_events(&self, application: &mut App, key_event: KeyEvent) -> Vec<Effect> {
-        Self::process_key_event(application, key_event)
-    }
-
     /// Removes the last character from the search filter and normalizes selection.
     fn remove_last_filter_character(application: &mut App) {
         application.plugins.table.pop_filter_character();
@@ -54,26 +39,40 @@ impl PluginsSearchComponent {
         }
         application.plugins.table.push_filter_character(character);
     }
-
-    /// Core key event processor shared by both inherent and trait implementations.
-    fn process_key_event(application: &mut App, key_event: KeyEvent) -> Vec<Effect> {
-        match key_event.code {
-            KeyCode::Backspace if application.plugins.table.search_flag.get() => {
-                Self::remove_last_filter_character(application);
-                Vec::new()
-            }
-            KeyCode::Char(character) if application.plugins.table.search_flag.get() => {
-                Self::insert_filter_character_unless_control(application, key_event, character);
-                Vec::new()
-            }
-            _ => Vec::new(),
-        }
-    }
 }
 
 impl Component for PluginsSearchComponent {
-    fn handle_key_events(&mut self, application: &mut App, key_event: KeyEvent) -> Vec<Effect> {
-        Self::process_key_event(application, key_event)
+    /// Handles key events specific to the search input (convenience method).
+    ///
+    /// This mirrors the component trait handler and is provided as a thin
+    /// wrapper for callers that may not use the trait object directly.
+    ///
+    /// # Arguments
+    /// - `application`: Mutable reference to the application state
+    /// - `key_event`: The keyboard event to process
+    ///
+    /// # Returns
+    /// Returns a vector of effects to be processed by the application runtime.
+    fn handle_key_events(&mut self, app: &mut App, key_event: KeyEvent) -> Vec<Effect> {
+        match key_event.code {
+            KeyCode::Backspace if app.plugins.table.search_flag.get() => {
+                Self::remove_last_filter_character(app);
+            }
+            KeyCode::Char(character) if app.plugins.table.search_flag.get() => {
+                Self::insert_filter_character_unless_control(app, key_event, character);
+            }
+            KeyCode::Left => {
+                app.plugins.table.reduce_move_cursor_left();
+            }
+            KeyCode::Right => {
+                app.plugins.table.reduce_move_cursor_right();
+            }
+            KeyCode::Char('a') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                return vec![Effect::PluginsApplyAdd];
+            }
+            _ => {}
+        }
+        Vec::new()
     }
 
     fn update(&mut self, _app: &mut App, _msg: &Msg) -> Vec<Effect> {
@@ -107,7 +106,7 @@ impl PluginsSearchComponent {
 
         // Position cursor at end of input when focused
         if is_search_focused {
-            let x = header_inner.x.saturating_add(filter_text.chars().count() as u16);
+            let x = header_inner.x.saturating_add(state.table.cursor_position as u16);
             let y = header_inner.y;
             frame.set_cursor_position((x, y));
         }

@@ -26,6 +26,8 @@ pub struct PluginsTableState {
     pub items: Vec<PluginDetail>,
     /// Current selection within the filtered view (index into `filtered_indices`).
     pub selected: Option<usize>,
+    // the position of the cursor in the search input
+    pub cursor_position: usize,
     last_refresh: Option<Instant>,
 }
 
@@ -40,6 +42,7 @@ impl PluginsTableState {
             items: Vec::new(),
             selected: None,
             last_refresh: None,
+            cursor_position: 0,
         }
     }
 
@@ -94,6 +97,47 @@ impl PluginsTableState {
         }
     }
 
+    /// Move the cursor one character to the left.
+    ///
+    /// This method handles UTF-8 character boundaries correctly,
+    /// ensuring the cursor moves by one Unicode character rather than
+    /// one byte.
+    ///
+    /// - No-op if the cursor is already at the start of the input.
+    ///
+    /// Returns: nothing; updates `self.cursor` in place.
+    pub fn reduce_move_cursor_left(&mut self) {
+        if self.cursor_position == 0 {
+            return;
+        }
+        let prev_len = self.filter[..self.cursor_position]
+            .chars()
+            .last()
+            .map(|c| c.len_utf8())
+            .unwrap_or(1);
+        self.cursor_position = self.cursor_position.saturating_sub(prev_len);
+    }
+
+    /// Move the cursor one character to the right.
+    ///
+    /// This method handles UTF-8 character boundaries correctly,
+    /// ensuring the cursor moves by one Unicode character rather than
+    /// one byte.
+    ///
+    /// - No-op if the cursor is already at the end of the input.
+    ///
+    /// Returns: nothing; updates `self.cursor` in place.
+    pub fn reduce_move_cursor_right(&mut self) {
+        if self.cursor_position >= self.filter.len() {
+            return;
+        }
+        // Advance by one Unicode scalar starting at current byte offset
+        let mut iter = self.filter[self.cursor_position..].chars();
+        if let Some(next) = iter.next() {
+            self.cursor_position = self.cursor_position.saturating_add(next.len_utf8());
+        }
+    }
+
     /// Retrieve the currently selected item with respect to the filtered view.
     pub fn selected_item(&self) -> Option<&PluginDetail> {
         let filtered = self.filtered_indices();
@@ -104,19 +148,24 @@ impl PluginsTableState {
 
     /// Remove the trailing character from the filter and reset the selection.
     pub fn pop_filter_character(&mut self) {
-        self.filter.pop();
+        if self.cursor_position > 0 {
+            self.reduce_move_cursor_left();
+            self.filter.remove(self.cursor_position);
+        }
         self.selected = Some(0);
     }
 
     /// Append a character to the filter and reset the selection to the top.
     pub fn push_filter_character(&mut self, value: char) {
-        self.filter.push(value);
+        self.filter.insert(self.cursor_position, value);
+        self.cursor_position += value.len_utf8();
         self.selected = Some(0);
     }
 
     /// Clear the filter entirely, preserving existing rows but normalizing selection.
     pub fn clear_filter(&mut self) {
         self.filter.clear();
+        self.cursor_position = 0;
         self.selected = Some(0);
     }
 

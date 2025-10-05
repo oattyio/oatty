@@ -116,6 +116,18 @@ If a later input is bound to `${{tasks.create_app.output.name}}`, the TUI shows 
 App: demo-1234   [from task: create_app]
 ```
 
+### d) Schema-driven context
+
+- The viewer and pickers rely on the enriched `SchemaProperty` payload captured during registry
+  generation. It retains type, `required` keys, array `items`, enumerated literals, and any
+  workflow-provided tags.
+- Tags are shown as dimmed chips (for example, `app_id`, `addon_name`) to explain provider matches
+  and guide manual overrides.
+- Enumerated values are listed inline when present, while complex nested structures surface their
+  child keys with type badges derived from `SchemaProperty`.
+- These hints appear both in auto-generated badges (`auto→ steps.create_app.output.id`) and inside
+  the Field Picker to reduce ambiguity when auto-mapping fails.
+
 ---
 
 ## 3. UX Notes
@@ -134,4 +146,3 @@ App: demo-1234   [from task: create_app]
 - Extend existing table & key/value viewers with select/toggle.
 - Add Guided Mode renderer for dropdowns/multi-selects.
 - Design error-handling views for provider failures.
-

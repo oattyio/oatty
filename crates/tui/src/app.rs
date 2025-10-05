@@ -16,13 +16,12 @@ use heroku_mcp::{PluginDetail, PluginEngine};
 use heroku_registry::Registry;
 use heroku_types::{Effect, ExecOutcome, Modal, Msg, Route};
 use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
+use ratatui::layout::Rect;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::ui::components::{
-    BrowserComponent, HelpComponent, PluginsComponent, TableComponent,
-    logs::LogDetailsComponent,
-    nav_bar::VerticalNavBarState,
-    plugins::{PluginsDetailsComponent, PluginsSecretsComponent},
+    BrowserComponent, HelpComponent, PluginsComponent, TableComponent, logs::LogDetailsComponent, nav_bar::VerticalNavBarState,
+    plugins::PluginsDetailsComponent,
 };
 use crate::ui::{
     components::{
@@ -61,7 +60,7 @@ impl SharedCtx {
         let debug_enabled = std::env::var("DEBUG")
             .map(|v| !v.is_empty() && v != "0" && v.to_lowercase() != "false")
             .unwrap_or(false);
-        // Add registry-backed provider with a small TTL cache
+        // Add a registry-backed provider with a small TTL cache
         let providers: Vec<Box<dyn ValueProvider>> = vec![Box::new(RegistryBackedProvider::new(Duration::from_secs(45)))];
         Self {
             registry,
@@ -84,7 +83,7 @@ pub struct App<'a> {
     pub table: TableState<'a>,
     /// Help modal state
     pub help: HelpState,
-    /// Plugins overlay state (MCP management)
+    /// Plugins state (MCP management)
     pub plugins: PluginsState,
     /// Application logs and status messages
     pub logs: LogsState,
@@ -139,15 +138,15 @@ impl App<'_> {
     ///
     /// # Returns
     ///
-    /// A new App instance with initialized state.
+    /// A new App instance with an initialized state.
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// // Requires constructing a full Registry and App; ignored in doctests.
     /// ```
-    pub fn new(registry: Arc<Mutex<heroku_registry::Registry>>, engine: Arc<PluginEngine>) -> Self {
-        let mut application = Self {
+    pub fn new(registry: Arc<Mutex<Registry>>, engine: Arc<PluginEngine>) -> Self {
+        let mut app = Self {
             ctx: SharedCtx::new(Arc::clone(&registry), engine),
             browser: BrowserState::new(Arc::clone(&registry)),
             logs: LogsState::default(),
@@ -173,13 +172,13 @@ impl App<'_> {
             current_route: Route::Palette,
             open_modal_kind: None,
         };
-        application.browser.update_browser_filtered();
+        app.browser.update_browser_filtered();
 
-        // Initialize rat-focus and set a sensible starting focus inside palette
-        application.focus = FocusBuilder::build_for(&application);
-        application.focus.first_in(&application.palette);
+        // Initialize rat-focus and set a sensible starting focus inside the palette
+        app.focus = FocusBuilder::build_for(&app);
+        app.focus.focus(&app.palette);
 
-        application
+        app
     }
 
     /// Updates the application state based on a message.
@@ -268,6 +267,7 @@ impl App<'_> {
         match execution_outcome {
             ExecOutcome::Http(..) => self.process_general_execution_result(execution_outcome),
             ExecOutcome::Mcp(log, value) => self.process_mcp_execution_result(log, value),
+            ExecOutcome::PluginDetailLoad(name, result) => self.handle_plugin_detail_load(name, result),
             ExecOutcome::PluginDetail(log, maybe_detail) => self.handle_plugin_detail(log, maybe_detail),
             ExecOutcome::PluginsRefresh(log, maybe_plugins) => self.handle_plugin_refresh_response(log, maybe_plugins),
             ExecOutcome::Log(log) => {
@@ -291,8 +291,39 @@ impl App<'_> {
     fn handle_plugin_detail(&mut self, log: String, maybe_detail: Option<PluginDetail>) -> Vec<Effect> {
         self.logs.entries.push(log);
         let Some(detail) = maybe_detail else { return vec![] };
+        if let Some(state) = self.plugins.details.as_mut()
+            && state.selected_plugin().is_some_and(|selected| selected == detail.name)
+        {
+            state.apply_detail(detail.clone());
+        }
 
         self.plugins.table.update_item(detail);
+
+        vec![]
+    }
+
+    fn handle_plugin_detail_load(&mut self, name: String, result: Result<PluginDetail, String>) -> Vec<Effect> {
+        match result {
+            Ok(detail) => {
+                self.logs.entries.push(format!("Plugins: loaded details for '{name}'"));
+                if let Some(state) = self.plugins.details.as_mut()
+                    && state.selected_plugin().is_some_and(|selected| selected == name)
+                {
+                    state.apply_detail(detail.clone());
+                }
+                self.plugins.table.update_item(detail);
+            }
+            Err(error) => {
+                self.logs
+                    .entries
+                    .push(format!("Plugins: failed to load details for '{name}': {error}"));
+                if let Some(state) = self.plugins.details.as_mut()
+                    && state.selected_plugin().is_some_and(|selected| selected == name)
+                {
+                    state.mark_error(error);
+                }
+            }
+        }
 
         vec![]
     }
@@ -335,17 +366,19 @@ impl App<'_> {
         }
         let (summary, status_code) = summarize_execution_outcome(self.last_spec.as_ref(), &log);
 
+        let normalized_value = Self::normalize_result_payload(value);
+
         self.logs.entries.push(summary);
         self.logs.rich_entries.push(LogEntry::Api {
             status: status_code.unwrap_or(0),
             raw: log,
-            json: Some(value.clone()),
+            json: Some(normalized_value.clone()),
         });
 
         self.trim_logs_if_needed();
 
         if open_table {
-            self.table.apply_result_json(Some(value), &*self.ctx.theme);
+            self.table.apply_result_json(Some(normalized_value), &*self.ctx.theme);
             self.table.normalize();
             self.last_pagination = maybe_pagination;
             self.palette.reduce_clear_all();
@@ -361,21 +394,50 @@ impl App<'_> {
         let success = if log.contains("failed") { "failed" } else { "succeeded" };
         let summary = format!("{} - {}", label, success);
 
+        let normalized_value = Self::normalize_result_payload(value);
+        let raw_payload = Self::stringify_result_payload(&normalized_value);
+
         self.logs.entries.push(summary);
-        self.logs.rich_entries.push(LogEntry::Text {
-            level: Some(if success == "failed" { "error" } else { "info" }.into()),
-            msg: log.clone(),
+        self.logs.rich_entries.push(LogEntry::MCP {
+            raw: raw_payload,
+            json: Some(normalized_value.clone()),
         });
         self.trim_logs_if_needed();
 
-        if value.is_object() || value.is_array() {
-            self.table.apply_result_json(Some(value), &*self.ctx.theme);
+        if normalized_value.is_object() || normalized_value.is_array() {
+            self.table.apply_result_json(Some(normalized_value), &*self.ctx.theme);
             self.table.normalize();
             self.palette.reduce_clear_all();
             return vec![Effect::ShowModal(Modal::Results)];
         }
 
         vec![]
+    }
+
+    /// Normalize execution payloads to ensure single-key collections render in the results table.
+    ///
+    /// Some APIs return objects shaped as `{ "items": [ ... ] }`. The table expects an array at
+    /// the root level, so this helper unwraps objects that meet this pattern. All other payloads
+    /// are returned unchanged.
+    fn normalize_result_payload(value: JsonValue) -> JsonValue {
+        if let JsonValue::Object(map) = &value {
+            if map.len() == 1 {
+                if let Some(inner_value) = map.values().next() {
+                    if inner_value.is_array() {
+                        return inner_value.clone();
+                    }
+                }
+            }
+        }
+        value
+    }
+
+    /// Produce a human-readable string representation of a JSON payload for logging.
+    fn stringify_result_payload(value: &JsonValue) -> String {
+        match value {
+            JsonValue::String(text) => text.clone(),
+            _ => value.to_string(),
+        }
     }
 
     /// Trims log entries if they exceed the maximum allowed size.
@@ -406,17 +468,17 @@ impl App<'_> {
 
         self.current_route = self.nav_bar.set_route(route);
         self.main_view = Some(view);
-        self.focus = rat_focus::FocusBuilder::build_for(self);
-        self.focus.first_in(*state);
+        self.focus = FocusBuilder::build_for(self);
+        self.focus.focus(*state);
     }
 
     /// Update the open modal kind (use None to clear).
     pub fn set_open_modal_kind(&mut self, modal: Option<Modal>) {
+        let previous = self.open_modal_kind.clone();
         if let Some(modal_kind) = modal.clone() {
             let modal_view: Box<dyn Component> = match modal_kind {
                 Modal::Help => Box::new(HelpComponent::default()),
                 Modal::Results => Box::new(TableComponent::default()),
-                Modal::Secrets => Box::new(PluginsSecretsComponent::default()),
                 Modal::LogDetails => Box::new(LogDetailsComponent::default()),
                 Modal::PluginDetails => Box::new(PluginsDetailsComponent::default()),
             };
@@ -427,6 +489,14 @@ impl App<'_> {
             self.open_modal = None;
         }
         self.open_modal_kind = modal;
+
+        if matches!(self.open_modal_kind, Some(Modal::PluginDetails)) {
+            self.plugins.ensure_details_state();
+        }
+
+        if matches!(previous, Some(Modal::PluginDetails)) && !matches!(self.open_modal_kind, Some(Modal::PluginDetails)) {
+            self.plugins.clear_details_state();
+        }
     }
 
     pub fn restore_focus(&mut self) {
@@ -517,7 +587,7 @@ mod tests {
             String::new(),
             Vec::new(),
             Vec::new(),
-            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new()),
+            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new(), None),
         )
     }
 
@@ -549,18 +619,6 @@ mod tests {
         assert_eq!(summary, "Command - success (200 OK)");
         assert_eq!(status, Some(200));
     }
-
-    #[test]
-    fn parse_plugin_status_handles_known_variants() {
-        assert_eq!(parse_plugin_status("Running"), Some(PluginStatus::Running));
-        assert_eq!(parse_plugin_status("Stopped"), Some(PluginStatus::Stopped));
-        assert_eq!(parse_plugin_status("Warning"), Some(PluginStatus::Warning));
-        assert_eq!(parse_plugin_status("Error"), Some(PluginStatus::Error));
-        assert_eq!(parse_plugin_status("Starting"), Some(PluginStatus::Starting));
-        assert_eq!(parse_plugin_status("Stopping"), Some(PluginStatus::Stopping));
-        assert_eq!(parse_plugin_status("Unknown"), Some(PluginStatus::Unknown));
-        assert_eq!(parse_plugin_status("Bogus"), None);
-    }
 }
 
 impl HasFocus for App<'_> {
@@ -574,9 +632,6 @@ impl HasFocus for App<'_> {
             match kind {
                 Modal::Results => {
                     builder.widget(&self.table);
-                }
-                Modal::Secrets => {
-                    builder.widget(&self.plugins);
                 }
                 Modal::LogDetails => {
                     builder.widget(&self.logs);
@@ -612,7 +667,7 @@ impl HasFocus for App<'_> {
         self.app_container_focus.clone()
     }
 
-    fn area(&self) -> ratatui::layout::Rect {
-        ratatui::layout::Rect::default()
+    fn area(&self) -> Rect {
+        Rect::default()
     }
 }

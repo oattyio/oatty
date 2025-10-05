@@ -1,7 +1,6 @@
+use crate::ui::components::plugins::{PluginDetailsModalState, logs::PluginLogsState, plugin_editor::state::PluginEditViewState};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
-use ratatui::layout::Rect;
-
-use crate::ui::components::plugins::{PluginSecretsEditorState, logs::PluginLogsState, plugin_editor::state::PluginEditViewState};
+use ratatui::prelude::Rect;
 
 use super::table::PluginsTableState;
 
@@ -13,12 +12,12 @@ pub struct PluginsState {
     pub table: PluginsTableState,
     /// Logs drawer state, if open.
     pub logs: Option<PluginLogsState>,
-    /// Environment editor state, if open
-    pub secrets: Option<PluginSecretsEditorState>,
     /// Add plugin view state
     pub add: Option<PluginEditViewState>,
     /// Whether the plugin logs overlay is currently open
     pub logs_open: bool,
+    /// Plugin details modal state, if open
+    pub details: Option<PluginDetailsModalState>,
 }
 
 impl PluginsState {
@@ -27,30 +26,30 @@ impl PluginsState {
             focus: FocusFlag::named("plugins"),
             table: PluginsTableState::new(),
             logs: None,
-            secrets: None,
             add: None,
             logs_open: false,
+            details: None,
         }
     }
 
     /// Checks if the add plugin can be opened (no other overlays are open).
     pub fn can_open_add_plugin(&self) -> bool {
-        self.secrets.is_none() && self.logs.is_none()
+        self.logs.is_none()
     }
 
     pub fn open_logs(&mut self, name: String) {
-        self.logs = Some(crate::ui::components::plugins::logs::PluginLogsState::new(name));
+        self.logs = Some(PluginLogsState::new(name));
     }
 
-    pub fn close_logs(&mut self) {
-        self.logs = None;
+    pub fn ensure_details_state(&mut self) -> &mut PluginDetailsModalState {
+        if self.details.is_none() {
+            self.details = Some(PluginDetailsModalState::new());
+        }
+        self.details.as_mut().expect("details state should be present")
     }
 
-    pub fn open_secrets(&mut self, name: String) {
-        self.secrets = Some(crate::ui::components::plugins::secrets::PluginSecretsEditorState::new(name));
-    }
-    pub fn close_secrets(&mut self) {
-        self.secrets = None;
+    pub fn clear_details_state(&mut self) {
+        self.details = None;
     }
 }
 
@@ -72,9 +71,6 @@ impl HasFocus for PluginsState {
         // Include overlays if open
         if let Some(logs) = &self.logs {
             builder.widget(logs);
-        }
-        if let Some(env) = &self.secrets {
-            builder.widget(env);
         }
         builder.leaf_widget(&self.table.grid_flag);
         builder.end(tag);

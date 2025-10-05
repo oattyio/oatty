@@ -60,7 +60,7 @@ impl Component for VerticalNavBarComponent {
             st.container_focus.get() && !st.item_focus_flags.iter().any(|f| f.get())
         };
         if needs_init {
-            app.focus.first_in(&app.nav_bar);
+            app.focus.focus(&app.nav_bar);
         }
 
         let state = &mut app.nav_bar;

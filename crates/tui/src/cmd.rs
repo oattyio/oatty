@@ -3,7 +3,7 @@
 //! This module translates high-level application effects (`Effect`) into
 //! imperative commands (`Cmd`) and executes them. It provides the "boundary"
 //! where the pure state management of the app interacts with side effects
-//! such as:
+//! such as
 //! - Writing to the system clipboard
 //! - Making live API calls to Heroku
 //! - Spawning background tasks and recording logs
@@ -21,15 +21,15 @@
 
 use anyhow::Result;
 use anyhow::anyhow;
-use heroku_mcp::config::McpServer;
 use heroku_mcp::config::default_config_path;
 use heroku_mcp::config::save_config_to_path;
 use heroku_mcp::config::validate_config;
 use heroku_mcp::config::validate_server_name;
+use heroku_mcp::config::{McpServer, determine_env_source};
 use heroku_mcp::{McpConfig, PluginEngine};
 use heroku_registry::CommandSpec;
 use heroku_registry::find_by_group_and_cmd;
-use heroku_types::{Effect, Modal, Route};
+use heroku_types::{Effect, EnvVar, Modal, Route};
 use heroku_types::{ExecOutcome, command::CommandExecution};
 use heroku_util::exec_remote;
 use heroku_util::lex_shell_like;
@@ -50,12 +50,9 @@ use tokio::task::JoinHandle;
 use crate::app::App;
 use crate::ui::components::logs::state::LogEntry;
 use crate::ui::components::plugins::EnvRow;
-use crate::{
-    app::{self},
-    ui::components::plugins::PluginTransport,
-};
+use crate::ui::components::plugins::PluginTransport;
 
-/// Represents side-effectful system commands executed outside of pure state
+/// Represents side-effectful system commands executed outside pure state
 /// updates.
 ///
 /// These commands bridge between the application's functional state model
@@ -114,14 +111,11 @@ pub enum Cmd {
     PluginsStart(String),
     PluginsStop(String),
     PluginsRestart(String),
+    PluginsLoadDetail(String),
     PluginsRefresh,
     PluginsExportLogsDefault(String),
-    PluginsSaveEnv {
-        name: String,
-        rows: Vec<(String, String)>,
-    },
-    PluginsValidateAdd,
-    PluginsApplyAdd,
+    PluginsValidate,
+    PluginsSave,
 }
 
 /// Collection of immediate and background work generated while handling effects.
@@ -140,7 +134,7 @@ pub struct CommandBatch {
 /// while commands describe "how it should happen". Synchronous commands yield
 /// `ExecOutcome`s immediately; long-running commands are spawned so the caller
 /// can poll them later.
-pub async fn run_from_effects(app: &mut app::App<'_>, effects: Vec<Effect>) -> CommandBatch {
+pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> CommandBatch {
     let mut commands = Vec::new();
 
     for effect in effects {
@@ -150,16 +144,21 @@ pub async fn run_from_effects(app: &mut app::App<'_>, effects: Vec<Effect>) -> C
             Effect::NextPageRequested(next_raw) => handle_next_page_requested(app, next_raw),
             Effect::PrevPageRequested => handle_prev_page_requested(app),
             Effect::FirstPageRequested => handle_first_page_requested(app),
+            Effect::LastPageRequested => handle_last_page_requested(app),
             Effect::PluginsLoadRequested => Some(vec![Cmd::LoadPlugins]),
             Effect::PluginsStart(name) => Some(vec![Cmd::PluginsStart(name)]),
             Effect::PluginsStop(name) => Some(vec![Cmd::PluginsStop(name)]),
             Effect::PluginsRestart(name) => Some(vec![Cmd::PluginsRestart(name)]),
+            Effect::PluginsLoadDetail(name) => {
+                let state = app.plugins.ensure_details_state();
+                state.begin_load(name.clone());
+                Some(vec![Cmd::PluginsLoadDetail(name)])
+            }
             Effect::PluginsRefresh => Some(vec![Cmd::PluginsRefresh]),
             Effect::PluginsExportLogsDefault(name) => Some(vec![Cmd::PluginsExportLogsDefault(name)]),
-            Effect::PluginsSaveEnv { name, rows } => Some(vec![Cmd::PluginsSaveEnv { name, rows }]),
             Effect::PluginsOpenAdd => Some(vec![]),
-            Effect::PluginsValidateAdd => Some(vec![Cmd::PluginsValidateAdd]),
-            Effect::PluginsApplyAdd => Some(vec![Cmd::PluginsApplyAdd]),
+            Effect::PluginsValidateAdd => Some(vec![Cmd::PluginsValidate]),
+            Effect::PluginsApplyAdd => Some(vec![Cmd::PluginsSave]),
             Effect::ShowModal(modal) => handle_show_modal(app, modal),
             Effect::CloseModal => handle_close_modal(app),
             Effect::SwitchTo(route) => handle_switch_to(app, route),
@@ -184,7 +183,7 @@ pub async fn run_from_effects(app: &mut app::App<'_>, effects: Vec<Effect>) -> C
 ///
 /// # Returns
 /// A vector containing an HTTP execution command if context is available
-fn handle_next_page_requested(app: &mut app::App, next_raw: String) -> Option<Vec<Cmd>> {
+fn handle_next_page_requested(app: &mut App, next_raw: String) -> Option<Vec<Cmd>> {
     let mut commands = Vec::new();
 
     if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
@@ -211,7 +210,7 @@ fn handle_next_page_requested(app: &mut app::App, next_raw: String) -> Option<Ve
 ///
 /// # Returns
 /// A vector containing an HTTP execution command if navigation is possible
-fn handle_prev_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
+fn handle_prev_page_requested(app: &mut App) -> Option<Vec<Cmd>> {
     let mut commands = Vec::new();
 
     if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
@@ -249,7 +248,7 @@ fn handle_prev_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
 ///
 /// # Returns
 /// A vector containing an HTTP execution command if context is available
-fn handle_first_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
+fn handle_first_page_requested(app: &mut App) -> Option<Vec<Cmd>> {
     let mut commands = Vec::new();
 
     if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
@@ -273,6 +272,16 @@ fn handle_first_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
     Some(commands)
 }
 
+/// Handle the last page requested effect by attempting to navigate to the final page.
+fn handle_last_page_requested(app: &mut App) -> Option<Vec<Cmd>> {
+    let next_range = app.last_pagination.as_ref().and_then(|pagination| pagination.next_range.clone());
+
+    match next_range {
+        Some(range) => handle_next_page_requested(app, range),
+        None => Some(Vec::new()),
+    }
+}
+
 /// Handle the show modal effect by setting the appropriate modal component.
 ///
 /// # Arguments
@@ -281,7 +290,10 @@ fn handle_first_page_requested(app: &mut app::App) -> Option<Vec<Cmd>> {
 ///
 /// # Returns
 /// A vector containing no commands (modal changes are direct UI state updates)
-fn handle_show_modal(app: &mut app::App, modal: Modal) -> Option<Vec<Cmd>> {
+fn handle_show_modal(app: &mut App, modal: Modal) -> Option<Vec<Cmd>> {
+    if matches!(modal, Modal::PluginDetails) {
+        app.plugins.ensure_details_state();
+    }
     app.set_open_modal_kind(Some(modal));
     None // No commands needed for direct UI state update
 }
@@ -293,13 +305,13 @@ fn handle_show_modal(app: &mut app::App, modal: Modal) -> Option<Vec<Cmd>> {
 ///
 /// # Returns
 /// A vector containing no commands (modal changes are direct UI state updates)
-fn handle_close_modal(app: &mut app::App) -> Option<Vec<Cmd>> {
+fn handle_close_modal(app: &mut App) -> Option<Vec<Cmd>> {
     // retain focus so it can be restored when the modal closes
     app.set_open_modal_kind(None);
     None // No commands needed for direct UI state update
 }
 
-/// Handle the switch to route effect by setting the appropriate main view component.
+/// Handle the switch to route effect by setting the appropriate main view.
 ///
 /// # Arguments
 /// * `app` - The application state
@@ -307,14 +319,14 @@ fn handle_close_modal(app: &mut app::App) -> Option<Vec<Cmd>> {
 ///
 /// # Returns
 /// A vector containing no commands (view changes are direct UI state updates)
-fn handle_switch_to(app: &mut app::App, route: Route) -> Option<Vec<Cmd>> {
+fn handle_switch_to(app: &mut App, route: Route) -> Option<Vec<Cmd>> {
     app.set_current_route(route);
     Some(vec![])
 }
 
 /// When pressing Enter in the browser, populate the palette with the
 /// constructed command and close the command browser.
-fn handle_send_to_palette(app: &mut app::App, command_spec: CommandSpec) -> Option<Vec<Cmd>> {
+fn handle_send_to_palette(app: &mut App, command_spec: CommandSpec) -> Option<Vec<Cmd>> {
     let name = command_spec.name;
     let group = command_spec.group;
 
@@ -332,7 +344,7 @@ fn handle_send_to_palette(app: &mut app::App, command_spec: CommandSpec) -> Opti
 /// synchronously push their [`ExecOutcome`]s immediately, while long-running
 /// commands return `JoinHandle`s so the caller can poll them later without
 /// blocking the UI loop.
-pub async fn run_cmds(app: &mut app::App<'_>, commands: Vec<Cmd>) -> CommandBatch {
+pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
     let mut batch = CommandBatch::default();
     for command in commands {
         let outcome = match command {
@@ -358,12 +370,15 @@ pub async fn run_cmds(app: &mut app::App<'_>, commands: Vec<Cmd>) -> CommandBatc
                 batch.pending.push(spawn_execute_plugin_action(app, PluginAction::Restart, name));
                 continue;
             }
+            Cmd::PluginsLoadDetail(name) => {
+                batch.pending.push(spawn_load_plugin_detail(app, name));
+                continue;
+            }
             Cmd::LoadPlugins => execute_load_plugins(app).await,
             Cmd::PluginsRefresh => execute_plugins_refresh(app).await,
             Cmd::PluginsExportLogsDefault(name) => execute_plugins_export_default(app, name).await,
-            Cmd::PluginsSaveEnv { name, rows } => execute_plugins_save_env(name, rows),
-            Cmd::PluginsValidateAdd => execute_plugins_validate_add(app),
-            Cmd::PluginsApplyAdd => execute_plugins_apply_add(app).await,
+            Cmd::PluginsValidate => execute_plugins_validate(app),
+            Cmd::PluginsSave => execute_plugins_save(app).await,
         };
         batch.immediate.push(outcome);
     }
@@ -378,7 +393,7 @@ pub async fn run_cmds(app: &mut app::App<'_>, commands: Vec<Cmd>) -> CommandBatc
 /// # Arguments
 /// * `app` - The application state for logging
 /// * `text` - The text content to write to the clipboard
-fn execute_clipboard_set(app: &mut app::App, text: String) -> ExecOutcome {
+fn execute_clipboard_set(app: &mut App, text: String) -> ExecOutcome {
     // Perform clipboard write and log outcome
     match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
         Ok(()) => {
@@ -404,7 +419,7 @@ fn apply_palette_error(app: &mut App, error: String) -> ExecOutcome {
 }
 
 /// Load MCP plugins from the user's config file and populate the PluginsState list.
-async fn execute_load_plugins(app: &mut app::App<'_>) -> ExecOutcome {
+async fn execute_load_plugins(app: &mut App<'_>) -> ExecOutcome {
     let plugin_engine = app.ctx.plugin_engine.clone();
     let mut plugin_details = plugin_engine.list_plugins().await;
     plugin_details.sort_by(|lhs, rhs| lhs.name.cmp(&rhs.name));
@@ -421,7 +436,7 @@ enum PluginAction {
 }
 
 /// Execute a plugin lifecycle action using the MCP supervisor.
-fn spawn_execute_plugin_action(app: &mut app::App<'_>, action: PluginAction, name: String) -> JoinHandle<ExecOutcome> {
+fn spawn_execute_plugin_action(app: &mut App<'_>, action: PluginAction, name: String) -> JoinHandle<ExecOutcome> {
     app.executing = true;
     app.throbber_idx = 0;
 
@@ -446,8 +461,18 @@ fn spawn_execute_plugin_action(app: &mut app::App<'_>, action: PluginAction, nam
     })
 }
 
+fn spawn_load_plugin_detail(app: &mut App<'_>, name: String) -> JoinHandle<ExecOutcome> {
+    let plugin_engine = app.ctx.plugin_engine.clone();
+    tokio::spawn(async move {
+        match plugin_engine.get_plugin_detail(&name).await {
+            Ok(detail) => ExecOutcome::PluginDetailLoad(name, Ok(detail)),
+            Err(error) => ExecOutcome::PluginDetailLoad(name, Err(error.to_string())),
+        }
+    })
+}
+
 /// Refresh plugin statuses/health and dispatch a payload through ExecOutcome.result_json.
-async fn execute_plugins_refresh(app: &mut app::App<'_>) -> ExecOutcome {
+async fn execute_plugins_refresh(app: &mut App<'_>) -> ExecOutcome {
     let plugin_engine = &*app.ctx.plugin_engine;
     let plugins = plugin_engine.list_plugins().await;
 
@@ -457,7 +482,7 @@ async fn execute_plugins_refresh(app: &mut app::App<'_>) -> ExecOutcome {
 }
 
 /// Export logs to a default path in temp dir (redacted).
-async fn execute_plugins_export_default(app: &mut app::App<'_>, name: String) -> ExecOutcome {
+async fn execute_plugins_export_default(app: &mut App<'_>, name: String) -> ExecOutcome {
     let plugin_engine = &*app.ctx.plugin_engine;
     let mcp_client_mgr = plugin_engine.client_manager();
     // Default temp path
@@ -471,31 +496,8 @@ async fn execute_plugins_export_default(app: &mut app::App<'_>, name: String) ->
     ExecOutcome::Log(msg)
 }
 
-/// Save environment changes back to config (overwrites env map for the plugin).
-fn execute_plugins_save_env(name: String, rows: Vec<(String, String)>) -> ExecOutcome {
-    let path = default_config_path();
-    let mut cfg = if let Ok(text) = read_to_string(&path) {
-        from_str::<McpConfig>(&text).unwrap_or_default()
-    } else {
-        McpConfig::default()
-    };
-    if let Some(srv) = cfg.mcp_servers.get_mut(&name) {
-        let mut map = std::collections::HashMap::new();
-        for (k, v) in rows.into_iter() {
-            map.insert(k, v);
-        }
-        srv.env = Some(map);
-    }
-    // Validate and save
-    if let Err(e) = validate_config(&cfg) {
-        return ExecOutcome::Log(format!("Env save validation failed: {}", e));
-    }
-    let _ = save_config_to_path(&cfg, &path);
-    ExecOutcome::Log(format!("Plugins: saved env for '{}'", name))
-}
-
 /// Validate Add Plugin view input and emit a preview payload.
-fn execute_plugins_validate_add(app: &mut app::App) -> ExecOutcome {
+fn execute_plugins_validate(app: &mut App) -> ExecOutcome {
     let Some(add_view_state) = &app.plugins.add else {
         return ExecOutcome::default();
     };
@@ -553,7 +555,7 @@ fn execute_plugins_validate_add(app: &mut app::App) -> ExecOutcome {
 }
 
 /// Apply Add Plugin view: write server to config and refresh plugins list.
-async fn execute_plugins_apply_add(app: &mut app::App<'_>) -> ExecOutcome {
+async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
     let Some(add_view_state) = &app.plugins.add else {
         return ExecOutcome::default();
     };
@@ -565,25 +567,22 @@ async fn execute_plugins_apply_add(app: &mut app::App<'_>) -> ExecOutcome {
             if let Ok(url) = Url::parse(base_url) {
                 server.base_url = Some(url);
             } else {
-                return ExecOutcome::PluginValidationErr("Add apply validation failed: invalid Base URL".into());
+                return ExecOutcome::PluginValidationErr("Plugin validation failed: invalid Base URL".into());
             }
             match collect_key_value_rows(&add_view_state.kv_editor.rows) {
-                Ok(Some(map)) => {
-                    server.headers = Some(map);
+                Ok(Some(envs)) => {
+                    server.headers = Some(envs);
                 }
                 Ok(None) => {}
                 Err(errors) => {
-                    return ExecOutcome::PluginValidationErr(format!(
-                        "Add apply validation failed: invalid headers: {}",
-                        errors.join("; ")
-                    ));
+                    return ExecOutcome::PluginValidationErr(format!("plugin validation failed: invalid headers: {}", errors.join("; ")));
                 }
             }
         }
         PluginTransport::Local => {
             let command = add_view_state.command.trim();
             if command.is_empty() {
-                return ExecOutcome::PluginValidationErr("Add apply validation failed: command is required".into());
+                return ExecOutcome::PluginValidationErr("Plugin validation failed: command is required".into());
             }
             server.command = Some(command.to_string());
             if !add_view_state.args.trim().is_empty() {
@@ -596,10 +595,7 @@ async fn execute_plugins_apply_add(app: &mut app::App<'_>) -> ExecOutcome {
                 }
                 Ok(None) => {}
                 Err(errors) => {
-                    return ExecOutcome::PluginValidationErr(format!(
-                        "Add apply validation failed: invalid env vars: {}",
-                        errors.join("; ")
-                    ));
+                    return ExecOutcome::PluginValidationErr(format!("Plugin validation failed: invalid env vars: {}", errors.join("; ")));
                 }
             }
         }
@@ -614,9 +610,9 @@ async fn execute_plugins_apply_add(app: &mut app::App<'_>) -> ExecOutcome {
     };
     cfg.mcp_servers.insert(name.clone(), server);
     if let Err(e) = validate_config(&cfg) {
-        return ExecOutcome::PluginValidationErr(format!("Add apply validation failed: {}", e));
+        return ExecOutcome::PluginValidationErr(format!("Plugin validation failed: {}", e));
     }
-    let _ = save_config_to_path(&cfg, &path);
+    let _ = save_config_to_path(&mut cfg, &path);
     // Refresh list
     execute_load_plugins(app).await;
 
@@ -629,8 +625,8 @@ async fn execute_plugins_apply_add(app: &mut app::App<'_>) -> ExecOutcome {
 }
 
 /// Strict validator for key/value rows captured in the Add Plugin editor.
-fn collect_key_value_rows(rows: &[EnvRow]) -> Result<Option<std::collections::HashMap<String, String>>, Vec<String>> {
-    let mut map = std::collections::HashMap::new();
+fn collect_key_value_rows(rows: &[EnvRow]) -> Result<Option<Vec<EnvVar>>, Vec<String>> {
+    let mut envs = Vec::new();
     let mut errors: Vec<String> = Vec::new();
 
     for (index, row) in rows.iter().enumerate() {
@@ -639,19 +635,22 @@ fn collect_key_value_rows(rows: &[EnvRow]) -> Result<Option<std::collections::Ha
             errors.push(format!("row {} has empty key", index + 1));
             continue;
         }
-        map.insert(key.to_string(), row.value.trim().to_string());
+        let value = row.value.trim().to_string();
+        let env_source = determine_env_source(&value);
+        let env = EnvVar::new(key.to_string(), value, env_source);
+        envs.push(env);
     }
 
     if !errors.is_empty() {
         return Err(errors);
     }
 
-    if map.is_empty() { Ok(None) } else { Ok(Some(map)) }
+    if envs.is_empty() { Ok(None) } else { Ok(Some(envs)) }
 }
 
 /// Spawn an HTTP execution on the Tokio scheduler while updating local state
 /// to show the spinner.
-fn spawn_execute_http(app: &mut app::App<'_>, spec: CommandSpec, body: Map<String, Value>) -> JoinHandle<ExecOutcome> {
+fn spawn_execute_http(app: &mut App<'_>, spec: CommandSpec, body: Map<String, Value>) -> JoinHandle<ExecOutcome> {
     app.executing = true;
     app.throbber_idx = 0;
 
@@ -661,7 +660,7 @@ fn spawn_execute_http(app: &mut app::App<'_>, spec: CommandSpec, body: Map<Strin
     tokio::spawn(async move { execute_http_task(active, spec, body).await })
 }
 
-fn spawn_execute_mcp(app: &mut app::App<'_>, spec: CommandSpec, arguments: Map<String, Value>) -> JoinHandle<ExecOutcome> {
+fn spawn_execute_mcp(app: &mut App<'_>, spec: CommandSpec, arguments: Map<String, Value>) -> JoinHandle<ExecOutcome> {
     app.executing = true;
     app.throbber_idx = 0;
 
@@ -675,12 +674,8 @@ fn spawn_execute_mcp(app: &mut app::App<'_>, spec: CommandSpec, arguments: Map<S
 /// Background task body for executing an HTTP request and translating it into
 /// an [`ExecOutcome`].
 async fn execute_http_task(active_exec_count: Arc<AtomicUsize>, spec: CommandSpec, body: Map<String, Value>) -> ExecOutcome {
-    let outcome = exec_remote(&spec, body).await;
-
-    let outcome = match outcome {
-        Ok(out) => out,
-        Err(err) => ExecOutcome::Log(format!("Error: {}", err)),
-    };
+    let result = exec_remote(&spec, body).await;
+    let outcome = result.unwrap_or_else(|err| ExecOutcome::Log(format!("Error: {}", err)));
 
     active_exec_count.fetch_sub(1, Ordering::Relaxed);
 
@@ -693,12 +688,8 @@ async fn execute_mcp_task(
     spec: CommandSpec,
     arguments: Map<String, Value>,
 ) -> ExecOutcome {
-    let outcome = engine.execute_tool(&spec, &arguments).await;
-
-    let outcome = match outcome {
-        Ok(out) => out,
-        Err(err) => ExecOutcome::Log(format!("Error: {}", err)),
-    };
+    let result = engine.execute_tool(&spec, &arguments).await;
+    let outcome = result.unwrap_or_else(|err| ExecOutcome::Log(format!("Error: {}", err)));
 
     active_exec_count.fetch_sub(1, Ordering::Relaxed);
 
@@ -860,7 +851,7 @@ fn build_request_body(user_flags: HashMap<String, Option<String>>, command_spec:
                         if let Ok(number) = Number::from_str(value.as_str()) {
                             request_body.insert(flag_name, Value::Number(number));
                         }
-                    },
+                    }
                     _ => {
                         request_body.insert(flag_name, Value::String(value));
                     }
@@ -909,7 +900,7 @@ fn build_request_body(user_flags: HashMap<String, Option<String>>, command_spec:
 /// // For input "apps info my-app --verbose"
 /// // Validates command exists, app_id is provided, starts execution
 /// ```
-fn start_palette_execution(application: &mut app::App) -> Option<Vec<Cmd>> {
+fn start_palette_execution(application: &mut App) -> Option<Vec<Cmd>> {
     let valid = validate_command(application);
     match valid {
         Ok((command_spec, request_body, user_args)) => {
@@ -919,13 +910,13 @@ fn start_palette_execution(application: &mut app::App) -> Option<Vec<Cmd>> {
                 level: Some("info".into()),
                 msg: format!("Running: {}", command_input),
             });
-            return execute_command(command_spec, request_body, user_args);
+            execute_command(command_spec, request_body, user_args)
         }
         Err(error) => Some(vec![Cmd::ApplyPaletteError(error.to_string())]),
     }
 }
 
-fn validate_command(application: &mut app::App) -> Result<(CommandSpec, Map<String, Value>, Vec<String>)> {
+fn validate_command(application: &mut App) -> Result<(CommandSpec, Map<String, Value>, Vec<String>)> {
     // Step 1: Parse and validate the palette input
     let input_owned = application.palette.input().to_string();
     let input = input_owned.trim().to_string();
@@ -966,7 +957,7 @@ fn validate_command(application: &mut app::App) -> Result<(CommandSpec, Map<Stri
     Ok((command_spec, request_body, user_args))
 }
 
-fn persist_execution_context(application: &mut app::App, command_spec: &CommandSpec, request_body: &Map<String, Value>, input: &str) {
+fn persist_execution_context(application: &mut App, command_spec: &CommandSpec, request_body: &Map<String, Value>, input: &str) {
     application.last_command_ranges = match command_spec.execution() {
         CommandExecution::Http(http) => Some(http.ranges.clone()),
         _ => None,

@@ -228,7 +228,7 @@ impl KeyValueEditorComponent {
     /// * `frame` - The Ratatui frame for rendering
     /// * `area` - The available rendering area
     /// * `theme` - The theme for styling
-    /// * `add_state` - The plugin add view state containing editor state
+    /// * `add_state` - The plugin "add view" state containing editor state
     pub fn render_with_state(&mut self, frame: &mut Frame, area: Rect, theme: &dyn Theme, add_state: &PluginEditViewState) {
         let editor = &add_state.kv_editor;
         let is_editing = editor.is_editing();
@@ -255,7 +255,7 @@ impl KeyValueEditorComponent {
     /// Render the key/value table with proper styling and selection indicators.
     ///
     /// This method renders the main table view showing all key/value pairs.
-    /// It handles different display modes for editing vs browsing, and applies
+    /// It handles different display modes for editing vs. browsing and applies
     /// appropriate styling based on focus and selection state.
     ///
     /// # Arguments
@@ -594,7 +594,7 @@ impl Component for KeyValueEditorComponent {
     /// * `frame` - The Ratatui frame for rendering
     /// * `area` - The available rendering area
     /// * `app` - The application state containing the plugin add view state
-    fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut crate::app::App) {
+    fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         let Some(add_state) = app.plugins.add.as_ref() else {
             return;
         };
@@ -616,7 +616,7 @@ impl Component for KeyValueEditorComponent {
     /// # Returns
     ///
     /// A vector of styled spans representing the available keyboard shortcuts.
-    fn get_hint_spans(&self, app: &crate::app::App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
         let add_state = app.plugins.add.as_ref().expect("add state should be something");
         let theme = &app.ctx.theme;
         let mut spans = vec![];
@@ -706,7 +706,6 @@ mod tests {
     use crate::ui::components::plugins::EnvRow;
     use crate::ui::components::plugins::plugin_editor::key_value_editor::state::KeyValueEditorState;
     use crossterm::event::KeyModifiers;
-
     #[test]
     fn test_is_regular_character_input_with_control_modifier() {
         let component = KeyValueEditorComponent;
@@ -794,54 +793,5 @@ mod tests {
 
         assert_eq!(key, "NEW_KEY");
         assert_eq!(value, "new_value");
-    }
-
-    #[test]
-    fn test_hints_match_key_events_navigation_mode() {
-        // Test that all key events in navigation mode have corresponding hints
-        // This is a documentation test to ensure hints stay in sync with key handling
-
-        // Key events handled in navigation mode:
-        // - ↑/↓ (Navigate) ✅
-        // - Home/End (First/Last) ✅
-        // - Enter/Ctrl+E (Edit) ✅
-        // - Ctrl+N (New) ✅
-        // - Delete/Ctrl+D (Delete) ✅
-        // - Regular character input (Begin editing) - Not shown in hints (by design)
-
-        // This test serves as documentation that these key events should be reflected in hints
-        assert!(true, "Navigation mode hints should match key events");
-    }
-
-    #[test]
-    fn test_hints_match_key_events_editing_mode() {
-        // Test that all key events in editing mode have corresponding hints
-        // This is a documentation test to ensure hints stay in sync with key handling
-
-        // Key events handled in editing mode:
-        // - ↑/↓ (Focus key/value) ✅
-        // - Tab/BackTab (Toggle fields) ✅
-        // - Enter/Ctrl+E (Save/Commit) ✅
-        // - Esc (Cancel) ✅
-        // - Backspace (Delete character) ✅
-        // - Regular character input (Type) - Not shown in hints (by design)
-
-        // This test serves as documentation that these key events should be reflected in hints
-        assert!(true, "Editing mode hints should match key events");
-    }
-
-    #[test]
-    fn test_hint_helper_methods_exist() {
-        // Test that the hint helper methods are properly implemented
-        // This is a basic smoke test to ensure the methods can be called
-        let component = KeyValueEditorComponent;
-        let mut spans = Vec::new();
-
-        // We can't easily mock the Theme trait in tests due to its complexity,
-        // so we'll just verify the methods exist and can be called
-        // The actual functionality is tested through integration tests
-
-        // This test serves as documentation that these methods should exist
-        assert!(true, "Hint helper methods should be implemented");
     }
 }

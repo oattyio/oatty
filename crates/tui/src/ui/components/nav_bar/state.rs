@@ -129,6 +129,7 @@ impl VerticalNavBarState {
     pub fn set_route(&mut self, route: Route) -> Route {
         if let Some(idx) = self.items.iter().position(|r| r.route == route) {
             self.selected_index = idx;
+            self.apply_selection_focus();
         }
         route
     }

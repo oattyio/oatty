@@ -1,4 +1,3 @@
 [toolchain]
-channel = "stable"
+channel = "nightly"
 components = ["clippy", "rustfmt"]
-rust-version = "1.89"

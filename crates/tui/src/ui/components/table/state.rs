@@ -1,4 +1,5 @@
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
+use ratatui::layout::Rect;
 use ratatui::{
     layout::Constraint,
     style::Style,
@@ -11,7 +12,10 @@ use crate::ui::{
         roles::Theme as UiTheme,
         theme_helpers::{table_header_style, table_row_style},
     },
-    utils::{ColumnWithSize, infer_columns_with_sizes_from_json, is_status_like, render_value, status_color_for_value},
+    utils::{
+        ColumnWithSize, get_scored_keys, infer_columns_with_sizes_from_json, is_status_like, normalize_header, render_value,
+        status_color_for_value,
+    },
 };
 
 #[derive(Debug, Default)]
@@ -19,11 +23,12 @@ pub struct TableState<'a> {
     offset: usize,
     selected: usize,
     visible_rows: usize,
-    result_json: Option<serde_json::Value>,
+    result_json: Option<Value>,
     rows: Option<Vec<Row<'a>>>,
     columns: Option<Vec<ColumnWithSize>>,
     column_constraints: Option<Vec<Constraint>>,
     headers: Option<Vec<Cell<'a>>>,
+    kv_entries: Vec<KeyValueEntry>,
     pub grid_f: FocusFlag,
 }
 
@@ -43,7 +48,7 @@ impl<'a> TableState<'_> {
     pub fn set_visible_rows(&mut self, rows: usize) {
         self.visible_rows = rows;
     }
-    pub fn selected_result_json(&self) -> Option<&serde_json::Value> {
+    pub fn selected_result_json(&self) -> Option<&Value> {
         self.result_json.as_ref()
     }
     pub fn rows(&self) -> Option<&Vec<Row<'_>>> {
@@ -65,6 +70,18 @@ impl<'a> TableState<'_> {
         None
     }
 
+    pub fn kv_entries(&self) -> &[KeyValueEntry] {
+        &self.kv_entries
+    }
+
+    pub fn selected_kv_entry(&self) -> Option<&KeyValueEntry> {
+        if self.kv_entries.is_empty() {
+            return None;
+        }
+        let index = self.selected.min(self.kv_entries.len() - 1);
+        self.kv_entries.get(index)
+    }
+
     pub fn normalize(&mut self) {
         self.offset = 0;
         self.selected = 0;
@@ -72,42 +89,42 @@ impl<'a> TableState<'_> {
     }
 
     pub fn apply_result_json(&mut self, value: Option<Value>, theme: &dyn UiTheme) {
-        let json_array = Self::array_from_json(value.as_ref());
+        self.result_json = value;
+        let json_array = Self::array_from_json(self.result_json.as_ref());
         self.columns = self.create_columns(json_array);
         self.rows = self.create_rows(json_array, theme);
         self.headers = self.create_headers(theme);
         self.column_constraints = self.create_constraints();
-        self.result_json = value;
+        self.kv_entries = self.create_kv_entries(self.result_json.as_ref());
         self.offset = 0;
         self.selected = 0;
     }
 
     pub fn reduce_scroll(&mut self, delta: isize) {
-        if let Some(rows) = self.rows.as_ref() {
-            let len = rows.len();
-            if len == 0 {
-                self.offset = 0;
-                self.selected = 0;
-                return;
-            }
-            let new_selected = if delta >= 0 {
-                self.selected.saturating_add(delta as usize).min(len.saturating_sub(1))
-            } else {
-                self.selected.saturating_sub((-delta) as usize)
-            };
-
-            // Adjust offset only if selection moves outside the viewport
-            let vis = self.visible_rows.max(1);
-            let mut new_offset = self.offset;
-            if new_selected < self.offset {
-                new_offset = new_selected;
-            } else if new_selected >= self.offset + vis {
-                new_offset = new_selected.saturating_sub(vis - 1);
-            }
-
-            self.selected = new_selected;
-            self.offset = new_offset;
+        let len = self.current_len();
+        if len == 0 {
+            self.offset = 0;
+            self.selected = 0;
+            return;
         }
+
+        let new_selected = if delta >= 0 {
+            self.selected.saturating_add(delta as usize).min(len.saturating_sub(1))
+        } else {
+            self.selected.saturating_sub((-delta) as usize)
+        };
+
+        let visible = self.visible_rows.max(1);
+        let mut new_offset = self.offset;
+        if new_selected < self.offset {
+            new_offset = new_selected;
+        } else if new_selected >= self.offset.saturating_add(visible) {
+            new_offset = new_selected.saturating_sub(visible - 1);
+        }
+
+        let max_offset = len.saturating_sub(visible);
+        self.offset = new_offset.min(max_offset);
+        self.selected = new_selected;
     }
 
     pub fn reduce_home(&mut self) {
@@ -116,18 +133,19 @@ impl<'a> TableState<'_> {
     }
 
     pub fn reduce_end(&mut self) {
-        if let Some(rows) = self.rows.as_ref() {
-            let len = rows.len();
-            if len == 0 {
-                self.offset = 0;
-                self.selected = 0;
-            } else {
-                self.offset = len.saturating_sub(1);
-                self.selected = self.offset;
-            }
-        } else {
+        let len = self.current_len();
+        if len == 0 {
             self.offset = 0;
             self.selected = 0;
+            return;
+        }
+
+        self.selected = len.saturating_sub(1);
+        let visible = self.visible_rows.max(1);
+        if len > visible {
+            self.offset = len.saturating_sub(visible);
+        } else {
+            self.offset = 0;
         }
     }
 
@@ -204,6 +222,13 @@ impl<'a> TableState<'_> {
         None
     }
 
+    fn create_kv_entries(&self, value: Option<&Value>) -> Vec<KeyValueEntry> {
+        if let Some(json) = value {
+            return build_key_value_entries(json);
+        }
+        Vec::new()
+    }
+
     fn array_from_json(value: Option<&Value>) -> Option<&[Value]> {
         if let Some(json) = value {
             let arr_opt = match json {
@@ -214,6 +239,43 @@ impl<'a> TableState<'_> {
         }
         None
     }
+
+    fn current_len(&self) -> usize {
+        if let Some(rows) = self.rows.as_ref() {
+            return rows.len();
+        }
+        self.kv_entries.len()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct KeyValueEntry {
+    pub key: String,
+    pub display_key: String,
+    pub display_value: String,
+    pub raw_value: Value,
+}
+
+pub fn build_key_value_entries(value: &Value) -> Vec<KeyValueEntry> {
+    if let Value::Object(map) = value {
+        let keys = get_scored_keys(map);
+        return keys
+            .into_iter()
+            .take(24)
+            .map(|key| {
+                let raw_value = map.get(&key).cloned().unwrap_or(Value::Null);
+                let display_value = render_value(&key, &raw_value);
+                KeyValueEntry {
+                    key: key.clone(),
+                    display_key: normalize_header(&key),
+                    display_value,
+                    raw_value,
+                }
+            })
+            .collect();
+    }
+
+    Vec::new()
 }
 
 impl HasFocus for TableState<'_> {
@@ -226,7 +288,7 @@ impl HasFocus for TableState<'_> {
         self.grid_f.clone()
     }
 
-    fn area(&self) -> ratatui::layout::Rect {
-        ratatui::layout::Rect::default()
+    fn area(&self) -> Rect {
+        Rect::default()
     }
 }

@@ -12,7 +12,30 @@ use heroku_types::{ExecOutcome, command::CommandExecution};
 use heroku_util::resolve_path;
 use reqwest::Method;
 use serde_json::{Map, Value};
+use std::io::{self, Write};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tracing_subscriber::fmt;
+
+static TUI_ACTIVE: AtomicBool = AtomicBool::new(false);
+
+struct GatedStderr;
+impl Write for GatedStderr {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        if TUI_ACTIVE.load(Ordering::Relaxed) {
+            // Pretend everything was written successfully, but drop output
+            Ok(buf.len())
+        } else {
+            io::stderr().write(buf)
+        }
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        if TUI_ACTIVE.load(Ordering::Relaxed) {
+            Ok(())
+        } else {
+            io::stderr().flush()
+        }
+    }
+}
 
 #[tokio::main]
 /// Entrypoint for the CLI application.
@@ -55,9 +78,12 @@ async fn main() -> Result<()> {
 
     // No subcommands => TUI
     if matches.subcommand_name().is_none() {
-        heroku_tui::run(Arc::clone(&registry), Arc::clone(&plugin_engine)).await?;
+        // Silence tracing output to stderr while the TUI is active to avoid overlay
+        TUI_ACTIVE.store(true, Ordering::Relaxed);
+        let tui_result = heroku_tui::run(Arc::clone(&registry), Arc::clone(&plugin_engine)).await;
+        TUI_ACTIVE.store(false, Ordering::Relaxed);
         plugin_engine.stop().await?;
-        return Ok(());
+        return tui_result;
     }
 
     let result = run_command(Arc::clone(&registry), &matches, Arc::clone(&plugin_engine)).await;
@@ -97,7 +123,7 @@ fn init_tracing() {
     // Respect HEROKU_LOG without imposing a lower max level ceiling.
     // Example: HEROKU_LOG=debug will now allow `tracing::debug!` to emit.
     let filter = std::env::var("HEROKU_LOG").unwrap_or_else(|_| "info".into());
-    let _ = fmt().with_env_filter(filter).try_init();
+    let _ = fmt().with_env_filter(filter).with_writer(|| GatedStderr).try_init();
 }
 
 /// Executes a Heroku API command in CLI mode.

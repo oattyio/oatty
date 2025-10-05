@@ -4,9 +4,10 @@ use crate::client::{ClientManagerEvent, McpClientManager};
 use crate::config::McpConfig;
 use crate::logging::{AuditEntry, AuditResult, LogManager};
 use crate::plugin::{LifecycleManager, PluginRegistry, RegistryError};
-use crate::types::{AuthStatus, McpToolMetadata, PluginDetail, PluginStatus};
+use crate::types::{AuthStatus, McpToolMetadata, PluginDetail, PluginStatus, PluginToolSummary};
 use heroku_registry::{CommandSpec, Registry as CommandRegistry};
-use heroku_types::{CommandFlag, ExecOutcome, PositionalArgument};
+use heroku_types::{CommandFlag, ExecOutcome, McpCommandSpec, PositionalArgument};
+use heroku_util::resolve_output_schema;
 use serde_json::Value;
 use std::sync::Mutex;
 use std::{
@@ -88,6 +89,7 @@ impl PluginEngine {
             plugin_detail.transport_type = server.transport_type().to_string();
             plugin_detail.tags = server.tags.clone().unwrap_or_default();
             plugin_detail.enabled = !server.is_disabled();
+            plugin_detail.env = server.env.clone().unwrap_or_default();
 
             registry.register_plugin(plugin_detail).await?;
             self.lifecycle_manager.register_plugin(name.clone()).await;
@@ -121,7 +123,7 @@ impl PluginEngine {
         let mut receiver = self.client_manager.subscribe();
         let tool_cache = Arc::clone(&self.tool_cache);
         let synthetic_specs = Arc::clone(&self.synthetic_specs);
-        let command_registry = self.command_registry.clone();
+        let command_registry = Arc::clone(&self.command_registry);
 
         let handle = tokio::spawn(async move {
             loop {
@@ -148,17 +150,14 @@ impl PluginEngine {
                         let synthesized = PluginEngine::synthesize_mcp_specs(&name, tools.as_ref(), auth_message.as_deref());
                         {
                             let mut synthetic_specs_lock = synthetic_specs.lock().await;
-                            if synthesized.is_empty() {
-                                let specs = synthetic_specs_lock.remove(&name);
-                                if let Ok(mut lock) = command_registry.lock() {
-                                    lock.remove_synthetic(specs);
+                            if let Ok(mut registry_lock) = command_registry.lock() {
+                                if synthesized.is_empty() {
+                                    let removed_specs = synthetic_specs_lock.remove(&name);
+                                    registry_lock.remove_synthetic(removed_specs);
+                                } else {
+                                    registry_lock.insert_synthetic(synthesized.clone());
+                                    synthetic_specs_lock.insert(name.clone(), Arc::from(synthesized));
                                 }
-
-                            } else {
-                                if let Ok(mut lock) = command_registry.lock() {
-                                    lock.insert_synthetic(synthesized.clone());
-                                }
-                                synthetic_specs_lock.insert(name.clone(), Arc::from(synthesized));
                             }
                         }
                     }
@@ -191,7 +190,15 @@ impl PluginEngine {
 
     /// Stop the plugin engine.
     pub async fn stop(&self) -> Result<(), PluginEngineError> {
-        // Stop the client manager
+        if let Some(handle) = self.status_listener.lock().await.take() {
+            handle.abort();
+            if let Err(join_error) = handle.await {
+                if !join_error.is_cancelled() {
+                    tracing::warn!("Status listener task ended with error: {}", join_error);
+                }
+            }
+        }
+
         self.client_manager
             .stop()
             .await
@@ -221,7 +228,7 @@ impl PluginEngine {
                 let client_manager = client_manager.clone();
                 let name = name.clone();
                 Box::pin(async move { client_manager.start_plugin(&name).await.map_err(|e| e.to_string()) })
-                    as std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
+                    as std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
             }
         };
 
@@ -254,7 +261,7 @@ impl PluginEngine {
                 let client_manager = client_manager.clone();
                 let name = name.clone();
                 Box::pin(async move { client_manager.stop_plugin(&name).await.map_err(|e| e.to_string()) })
-                    as std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
+                    as std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
             }
         };
 
@@ -292,7 +299,7 @@ impl PluginEngine {
                 let client_manager = client_manager.clone();
                 let name = name.clone();
                 Box::pin(async move { client_manager.stop_plugin(&name).await.map_err(|e| e.to_string()) })
-                    as std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
+                    as std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
             }
         };
 
@@ -303,7 +310,7 @@ impl PluginEngine {
                 let client_manager = client_manager.clone();
                 let name = name.clone();
                 Box::pin(async move { client_manager.start_plugin(&name).await.map_err(|e| e.to_string()) })
-                    as std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>
+                    as std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
             }
         };
 
@@ -323,7 +330,7 @@ impl PluginEngine {
                 reason: "registry unavailable".into(),
             }));
         };
-        let mut registry_detail = registry
+        let mut plugin_detail = registry
             .get_plugin(name)
             .await
             .ok_or_else(|| PluginEngineError::PluginNotFound { name: name.to_string() })?;
@@ -331,12 +338,20 @@ impl PluginEngine {
         let status = registry.get_plugin_status(name).await.unwrap_or(PluginStatus::Stopped);
         let health = self.client_manager.get_plugin_health(name).await.unwrap_or_default();
         let logs = self.log_manager.get_recent_logs(name, 100).await;
+        let tool_summaries = {
+            let cache = self.tool_cache.lock().await;
+            cache
+                .get(name)
+                .map(|tools| tools.iter().map(PluginEngine::summarize_tool).collect())
+                .unwrap_or_default()
+        };
 
-        registry_detail.status = status;
-        registry_detail.health = health;
-        registry_detail.logs = logs;
+        plugin_detail.status = status;
+        plugin_detail.health = health;
+        plugin_detail.logs = logs;
+        plugin_detail.tools = tool_summaries;
 
-        Ok(registry_detail)
+        Ok(plugin_detail)
     }
 
     /// List all plugins.
@@ -458,7 +473,7 @@ impl PluginEngine {
     pub async fn execute_tool(
         &self,
         spec: &CommandSpec,
-        arguments: &serde_json::Map<String, serde_json::Value>,
+        arguments: &serde_json::Map<String, Value>,
     ) -> Result<ExecOutcome, PluginEngineError> {
         let mcp = spec.mcp().ok_or_else(|| PluginEngineError::ConfigurationError {
             message: format!("command '{}' is not MCP-backed", spec.name),
@@ -502,45 +517,39 @@ impl PluginEngine {
         Ok(ExecOutcome::Mcp(log, payload))
     }
 
+    /// Convert MCP tool metadata into synthetic CLI command specifications.
+    ///
+    /// When every tool name shares the same prefix (up to the first underscore), the prefix is
+    /// treated as a common command group. The prefix is removed from each command name so that
+    /// the resulting command identifiers focus on the actionable portion of the tool name. If
+    /// the tools do not share a common prefix, the synthetic commands are grouped under the MCP
+    /// server name provided by configuration.
     fn synthesize_mcp_specs(plugin_name: &str, tools: &[McpToolMetadata], auth_message: Option<&str>) -> Vec<CommandSpec> {
         if tools.is_empty() {
             return Vec::new();
         }
 
-        // Extract first non-empty prefix for each tool and count occurrences
-        let mut prefix_counts: HashMap<String, usize> = HashMap::new();
-        for tool in tools {
-            if let Some(prefix) = tool.name.split('_').find(|s| !s.is_empty()) {
-                *prefix_counts.entry(prefix.to_string()).or_insert(0) += 1;
-            }
-        }
-
-        // Determine shared group prefix if all tools share the same first segment
-        let shared_group = tools.iter().next().and_then(|first_tool| {
-            let first_segment = first_tool.name.split('_').find(|s| !s.is_empty())?;
-            tools
-                .iter()
-                .all(|tool| tool.name.split('_').find(|s| !s.is_empty()) == Some(first_segment))
-                .then(|| first_segment.to_string())
-        });
+        let shared_group = Self::determine_shared_group(tools);
 
         let mut specs = Vec::with_capacity(tools.len());
 
         for tool in tools {
-            let segments: Vec<&str> = tool.name.split('_').filter(|s| !s.is_empty()).collect();
-            let (group, command_name) = if let Some(shared_group_name) = &shared_group {
-                let action = segments.get(1..).map_or(String::new(), |s| s.join(":"));
-                let command = if action.is_empty() { shared_group_name.clone() } else { action };
-                (shared_group_name.clone(), command)
+            let group = shared_group.clone().unwrap_or_else(|| plugin_name.to_string());
+            let command_name = if let Some(shared_prefix) = &shared_group {
+                let remainder = Self::trim_shared_prefix(&tool.name, shared_prefix);
+                let formatted = Self::format_command_segments(&remainder);
+                if formatted.is_empty() { shared_prefix.clone() } else { formatted }
             } else {
-                let group = Self::derive_group(plugin_name, tool, &prefix_counts);
-                let command_name = Self::derive_command_name(&group, tool);
-                (group, command_name)
+                let formatted = Self::format_command_segments(&tool.name);
+                if formatted.is_empty() { tool.name.clone() } else { formatted }
             };
 
             let summary = Self::build_summary(tool, auth_message);
             let (positionals, flags) = Self::convert_schema_to_inputs(tool);
-            let input_schema = serde_json::to_string(&tool.input_schema).ok();
+            let output_schema = tool
+                .output_schema
+                .as_ref()
+                .and_then(|schema| resolve_output_schema(Some(schema), schema));
             let render_hint = tool.annotations.as_ref().and_then(|annotations| match annotations {
                 Value::Object(map) => map
                     .get("render_hint")
@@ -549,11 +558,11 @@ impl PluginEngine {
                 _ => None,
             });
 
-            let mcp_spec = heroku_types::command::McpCommandSpec {
+            let mcp_spec = McpCommandSpec {
                 plugin_name: plugin_name.to_string(),
                 tool_name: tool.name.clone(),
                 auth_summary: auth_message.map(String::from),
-                input_schema,
+                output_schema,
                 render_hint,
             };
 
@@ -564,43 +573,40 @@ impl PluginEngine {
         specs
     }
 
-    fn derive_group(plugin_name: &str, tool: &McpToolMetadata, prefix_counts: &HashMap<String, usize>) -> String {
-        let candidate = tool
-            .name
-            .split('_')
-            .next()
-            .filter(|segment| !segment.is_empty())
-            .map(str::to_string);
-
-        match candidate {
-            Some(prefix) if prefix_counts.get(&prefix).copied().unwrap_or(0) == 1 => prefix,
-            _ => plugin_name.to_string(),
+    /// Determine whether all tools share the same prefix up to the first underscore.
+    fn determine_shared_group(tools: &[McpToolMetadata]) -> Option<String> {
+        let (first_prefix, _) = tools.iter().find_map(|tool| tool.name.split_once('_'))?;
+        if first_prefix.is_empty() {
+            return None;
         }
+
+        tools
+            .iter()
+            .all(|tool| tool.name.split_once('_').map(|(prefix, _)| prefix) == Some(first_prefix))
+            .then(|| first_prefix.to_string())
     }
 
-    fn derive_command_name(group: &str, tool: &McpToolMetadata) -> String {
-        let segments: Vec<&str> = tool.name.split('_').collect();
-        let first_segment = segments.first().copied();
-        let same_prefix = first_segment == Some(group);
+    /// Remove the shared prefix (and following underscore) from a tool name.
+    fn trim_shared_prefix(tool_name: &str, shared_prefix: &str) -> String {
+        tool_name
+            .strip_prefix(shared_prefix)
+            .map(|remainder| remainder.strip_prefix('_').unwrap_or(remainder))
+            .unwrap_or("")
+            .to_string()
+    }
 
-        let action_segments: Vec<&str> = if same_prefix && segments.len() > 1 {
-            segments[1..].to_vec()
-        } else {
-            segments.clone()
-        };
+    /// Convert underscore separated tool identifiers into colon delimited command names.
+    fn format_command_segments(raw_name: &str) -> String {
+        let segments: Vec<&str> = raw_name.split('_').filter(|segment| !segment.is_empty()).collect();
+        if segments.is_empty() { String::new() } else { segments.join(":") }
+    }
 
-        let action = if action_segments.is_empty() {
-            tool.name.replace('_', ":")
-        } else {
-            action_segments.join(":")
-        };
-
-        if action.is_empty() {
-            group.to_string()
-        } else if action.starts_with(&format!("{group}:")) {
-            action
-        } else {
-            format!("{group}:{action}")
+    fn summarize_tool(tool: &McpToolMetadata) -> PluginToolSummary {
+        PluginToolSummary {
+            name: tool.name.clone(),
+            title: tool.title.clone(),
+            description: tool.description.clone(),
+            auth_summary: tool.auth_summary.clone(),
         }
     }
 
@@ -819,7 +825,7 @@ pub enum PluginEngineError {
     ClientManagerError(String),
 
     #[error("Registry error: {0}")]
-    RegistryError(#[from] crate::plugin::RegistryError),
+    RegistryError(#[from] RegistryError),
 
     #[error("Lifecycle error: {0}")]
     LifecycleError(#[from] crate::plugin::LifecycleError),
@@ -1027,6 +1033,36 @@ mod tests {
         let mut names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
         names.sort();
         assert_eq!(names, vec!["start", "stop"]);
+    }
+
+    #[test]
+    fn synthesize_without_shared_prefix_defaults_to_plugin_name_group() {
+        let tools = vec![
+            McpToolMetadata {
+                name: "alpha_sync".to_string(),
+                title: None,
+                description: None,
+                input_schema: json!({ "type": "object" }),
+                output_schema: None,
+                annotations: None,
+                auth_summary: None,
+            },
+            McpToolMetadata {
+                name: "beta_sync".to_string(),
+                title: None,
+                description: None,
+                input_schema: json!({ "type": "object" }),
+                output_schema: None,
+                annotations: None,
+                auth_summary: None,
+            },
+        ];
+
+        let specs = PluginEngine::synthesize_mcp_specs("multi-plugin", &tools, None);
+        assert_eq!(specs.len(), 2);
+        assert!(specs.iter().all(|spec| spec.group == "multi-plugin"));
+        assert!(specs.iter().any(|spec| spec.name == "alpha:sync"));
+        assert!(specs.iter().any(|spec| spec.name == "beta:sync"));
     }
 
     #[test]

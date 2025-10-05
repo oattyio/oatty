@@ -7,7 +7,6 @@ pub mod provider_resolver;
 pub mod schema;
 
 pub use io::{write_manifest, write_manifest_json};
-pub use schema::generate_commands;
 use serde::{Deserialize, Serialize};
 
 /// A registry containing a list of command specifications.

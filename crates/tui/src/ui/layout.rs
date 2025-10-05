@@ -18,7 +18,7 @@ impl MainLayout {
     ///
     /// # Layout Structure
     ///
-    /// The main layout consists of four vertical sections:
+    /// The main layout consists of 3 vertical sections:
     ///
     /// 1. **Command Palette Area** - Input field and suggestions
     /// 2. **Hints Area** - Keyboard shortcuts and help text

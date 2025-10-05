@@ -1,4 +1,4 @@
-# ASSISTANT_INSTRUCTIONS_DRACULA_THEME.md
+# THEME.md
 
 You are implementing the Heroku TUI using opinionated themes. The default is **Dracula**, with optional **Nord** and **Cyberpunk** palettes. Follow these rules exactly to ensure a cohesive, accessible, and professional look across themes.
 
@@ -268,30 +268,30 @@ Always verify that contrasts meet accessibility requirements by previewing the T
 ## 8) Example Snapshots (authoritative look)
 
 **Search + Suggestions**
-```
+```plaintext
 BG: BG_MAIN
-Input (BG_PANEL, underline ACCENT_TEAL)
+Input (BG_PANEL, underline ACCENT_PRIMARY)
 Ghost: TEXT_MUTED
-Popup items: TEXT_PRIMARY; selected row BG ACCENT_DARK / FG TEXT_SELECTED
-Matched spans: ACCENT_TEAL BOLD UNDERLINE
-Badges: CMD=ACCENT_BLUE, WF=ACCENT_TEAL, PLG=STATUS_NOTE
+Popup items: TEXT_PRIMARY; selected row BG UI_BORDER / FG TEXT_SELECTED
+Matched spans: ACCENT_PRIMARY BOLD UNDERLINE
+Badges: CMD=ACCENT_SECONDARY, WF=ACCENT_PRIMARY, PLG=ACCENT_PRIMARY
 ```
 
 **Logs**
-```
+```plaintext
 Text: TEXT_PRIMARY
-Timestamp: ACCENT_BLUE (dim)
-ID: ACCENT_DARK (bold)
-Status badges: OK=STATUS_OK, WARN=STATUS_PENDING or STATUS_WARN, ERROR=STATUS_ERROR
+Timestamp: ACCENT_SECONDARY (dim)
+ID: ACCENT_PRIMARY (bold)
+Status badges: OK=STATUS_OK, WARN=STATUS_WARN, ERROR=STATUS_ERROR
 Copy toast: bg STATUS_OK/ERROR, fg TEXT_SELECTED
 ```
 
 **Table**
-```
+```plaintext
 Header: TEXT_SECONDARY (bold), border UI_BORDER
 Body: TEXT_PRIMARY
-Selected row: BG ACCENT_DARK, FG TEXT_SELECTED
-Sort arrow: ACCENT_BLUE
+Selected row: BG UI_BORDER, FG TEXT_SELECTED
+Sort arrow: ACCENT_SECONDARY
 State chips: Aurora colors
 ```
 

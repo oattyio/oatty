@@ -31,6 +31,7 @@ pub mod date_handling;
 pub mod http;
 pub mod http_exec;
 pub mod http_path_resolution;
+pub mod schema;
 pub mod shell_lexing;
 pub mod text_processing;
 
@@ -40,6 +41,7 @@ pub use date_handling::*;
 pub use http::*;
 pub use http_exec::*;
 pub use http_path_resolution::*;
+pub use schema::*;
 pub use shell_lexing::*;
 pub use text_processing::*;
 

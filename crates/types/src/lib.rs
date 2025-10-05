@@ -154,6 +154,8 @@ pub mod service {
 pub mod command {
     //! Command metadata describing CLI commands and their inputs.
 
+    use std::collections::HashMap;
+
     use bincode::{Decode, Encode};
     use serde::{Deserialize, Serialize};
 
@@ -196,6 +198,39 @@ pub mod command {
         /// Optional `ValueProvider` that supplies dynamic values for this positional.
         #[serde(default)]
         pub provider: Option<ValueProvider>,
+    }
+
+    /// Shape metadata describing the structure of command outputs.
+    ///
+    /// This schema summary is designed for UI consumption. It retains enough detail to render the
+    /// Field Picker, disambiguate auto-mapping targets, and surface the semantic meaning of leaf
+    /// values without requiring the full JSON schema. Additional annotations may be layered on by
+    /// workflow output contracts or provider metadata.
+    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
+    pub struct SchemaProperty {
+        /// JSON type reported by the upstream schema (object, array, string, and so on).
+        pub r#type: String,
+        /// Human-readable description for the property. Empty string when omitted upstream.
+        pub description: String,
+        /// Nested fields when the property is an object. Keys are property names.
+        #[serde(default)]
+        pub properties: Option<HashMap<String, Box<Self>>>,
+        /// Names of required child properties. Applies when `r#type == "object"`.
+        #[serde(default)]
+        pub required: Vec<String>,
+        /// Schema definition for array items when `r#type == "array"`.
+        #[serde(default)]
+        pub items: Option<Box<Self>>,
+        /// Enumerated literal values allowed for this property.
+        #[serde(default)]
+        pub enum_values: Vec<String>,
+        /// Optional format hint supplied by the schema (for example, `uuid`, `date-time`).
+        #[serde(default)]
+        pub format: Option<String>,
+        /// Semantic tags carried alongside the property. Currently populated by workflow
+        /// annotations to influence auto-mapping heuristics.
+        #[serde(default)]
+        pub tags: Vec<String>,
     }
 
     /// Represents a complete Heroku CLI command specification.
@@ -361,35 +396,6 @@ pub mod command {
         }
     }
 
-    impl CommandExecution {
-        /// Convenience constructor for HTTP execution metadata.
-        pub fn http(method: impl Into<String>, path: impl Into<String>, service_id: ServiceId, ranges: Vec<String>) -> Self {
-            Self::Http(HttpCommandSpec {
-                method: method.into(),
-                path: path.into(),
-                ranges,
-                service_id,
-            })
-        }
-
-        /// Convenience constructor for MCP execution metadata.
-        pub fn mcp(
-            plugin_name: impl Into<String>,
-            tool_name: impl Into<String>,
-            auth_summary: Option<String>,
-            input_schema: Option<String>,
-            render_hint: Option<String>,
-        ) -> Self {
-            Self::Mcp(McpCommandSpec {
-                plugin_name: plugin_name.into(),
-                tool_name: tool_name.into(),
-                auth_summary,
-                input_schema,
-                render_hint,
-            })
-        }
-    }
-
     /// HTTP execution metadata.
     #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq, Default)]
     pub struct HttpCommandSpec {
@@ -403,16 +409,25 @@ pub mod command {
         /// Identifier for the API service that owns the endpoint.
         #[serde(default)]
         pub service_id: ServiceId,
+        // Schema expected from API
+        pub output_schema: Option<SchemaProperty>,
     }
 
     impl HttpCommandSpec {
         /// Create a new HTTP execution payload with the provided metadata.
-        pub fn new(method: impl Into<String>, path: impl Into<String>, service_id: ServiceId, ranges: Vec<String>) -> Self {
+        pub fn new(
+            method: impl Into<String>,
+            path: impl Into<String>,
+            service_id: ServiceId,
+            ranges: Vec<String>,
+            output_schema: Option<SchemaProperty>,
+        ) -> Self {
             Self {
                 method: method.into(),
                 path: path.into(),
                 ranges,
                 service_id,
+                output_schema,
             }
         }
     }
@@ -431,9 +446,8 @@ pub mod command {
         /// Optional summary describing authentication requirements.
         #[serde(default)]
         pub auth_summary: Option<String>,
-        /// Optional JSON schema describing accepted inputs, encoded as a string for transport.
-        #[serde(default)]
-        pub input_schema: Option<String>,
+        /// Optional JSON schema describing tool output, encoded as a string for transport.
+        pub output_schema: Option<SchemaProperty>,
         /// Optional hint indicating how the UI should render results (for example, "table").
         #[serde(default)]
         pub render_hint: Option<String>,
@@ -475,7 +489,7 @@ pub mod execution {
     #[derive(Debug, Clone, Serialize, Deserialize, Default)]
     pub enum ExecOutcome {
         /// Payload from an http call. Includes the deserialized value,
-        /// an optional pagination object and a boolean used to
+        /// an optional pagination object, and a boolean used to
         /// determine if the results should be displayed in a table modal.
         Http(String, Value, Option<Pagination>, bool),
         /// Result from executing an MCP tool, containing a log summary and structured payload.
@@ -483,6 +497,8 @@ pub mod execution {
         /// Result from performing an action on a plugin
         /// Contains a log message and the new plugin detail object
         PluginDetail(String, Option<PluginDetail>),
+        /// Result from fetching detailed plugin information for the modal.
+        PluginDetailLoad(String, Result<PluginDetail, String>),
         /// Result from refreshing the plugins.
         /// Contains a log message and the entire
         /// list of PluginDetail objects.
@@ -541,8 +557,6 @@ pub mod messaging {
     pub enum Modal {
         /// Help modal displaying shortcuts and usage tips.
         Help,
-        /// Secrets editor modal for plugin environment variables.
-        Secrets,
         /// Results modal showing API responses in a table.
         Results,
         /// Log details modal revealing the full log entry.
@@ -570,6 +584,8 @@ pub mod messaging {
         PrevPageRequested,
         /// Request the first page using the initial `Range` header (or none).
         FirstPageRequested,
+        /// Request navigation to the last available page.
+        LastPageRequested,
         /// Load MCP plugins from config into `PluginsState`.
         PluginsLoadRequested,
         /// Refresh plugin statuses and health.
@@ -582,19 +598,14 @@ pub mod messaging {
         PluginsRestart(String),
         /// Export logs for a plugin to a default location (redacted).
         PluginsExportLogsDefault(String),
-        /// Save environment changes for a plugin (key/value pairs).
-        PluginsSaveEnv {
-            /// Name of the plugin being updated.
-            name: String,
-            /// Key/value pairs to persist.
-            rows: Vec<(String, String)>,
-        },
         /// Open add plugin view.
         PluginsOpenAdd,
         /// Validate fields in the add plugin view.
         PluginsValidateAdd,
         /// Apply add plugin patch.
         PluginsApplyAdd,
+        /// Load detailed information for a plugin when opening the details modal.
+        PluginsLoadDetail(String),
         /// Change the main view.
         SwitchTo(Route),
         /// Display a modal view.
@@ -848,6 +859,22 @@ pub mod plugin {
     }
 
     /// Detailed information about a plugin.
+    /// Summary information describing a tool exposed by a plugin.
+    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+    pub struct PluginToolSummary {
+        /// Tool identifier returned by the MCP server.
+        pub name: String,
+        /// Optional human-friendly title supplied by the server.
+        #[serde(default)]
+        pub title: Option<String>,
+        /// Optional description explaining the tool's behavior.
+        #[serde(default)]
+        pub description: Option<String>,
+        /// Optional authentication summary supplied by the CLI.
+        #[serde(default)]
+        pub auth_summary: Option<String>,
+    }
+
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct PluginDetail {
         /// Plugin name.
@@ -878,6 +905,9 @@ pub mod plugin {
         pub auth_status: AuthStatus,
         /// Number of tools currently exposed by this plugin.
         pub tool_count: usize,
+        /// Summaries for tools currently exposed by this plugin.
+        #[serde(default)]
+        pub tools: Vec<PluginToolSummary>,
     }
 
     impl PluginDetail {
@@ -898,6 +928,7 @@ pub mod plugin {
                 handshake_latency: None,
                 auth_status: AuthStatus::default(),
                 tool_count: 0,
+                tools: Vec::new(),
             }
         }
 
@@ -1001,12 +1032,14 @@ pub mod plugin {
     /// Source of an environment variable.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub enum EnvSource {
-        /// From the configuration file.
+        /// From the configuration file (plain text).
         File,
         /// From a secret stored in the keychain.
         Secret,
         /// From the process environment.
         Env,
+        /// From a raw text value
+        Raw,
     }
 
     impl fmt::Display for EnvSource {
@@ -1015,6 +1048,7 @@ pub mod plugin {
                 EnvSource::File => write!(formatter, "file"),
                 EnvSource::Secret => write!(formatter, "secret"),
                 EnvSource::Env => write!(formatter, "env"),
+                EnvSource::Raw => write!(formatter, "raw"),
             }
         }
     }
@@ -1253,7 +1287,6 @@ mod tests {
         assert_eq!(mcp.plugin_name, "demo-plugin");
         assert_eq!(mcp.tool_name, "demo_tool");
         assert_eq!(mcp.auth_summary.as_deref(), Some("Needs OAuth"));
-        assert_eq!(mcp.input_schema.as_deref(), Some("{\"type\":\"object\"}"));
         assert!(mcp.render_hint.is_none());
     }
 

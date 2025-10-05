@@ -80,30 +80,6 @@ impl Component for BrowserComponent {
         frame.render_widget(paragraph, layout_chunks[2]);
     }
 
-    /// Renders the footer with keyboard shortcut hints.
-    ///
-    /// This method displays helpful keyboard shortcuts at the bottom of the
-    /// browser modal to guide user interaction.
-    ///
-    /// # Arguments
-    /// * `frame` - The Ratatui frame to render to
-    /// * `app` - The application state containing theme information
-    /// * `area` - The area to render the footer in
-    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
-        let theme = &*app.ctx.theme;
-        let mut spans = vec![];
-        if is_root {
-            spans.push(Span::styled("Hint: ", theme.text_muted_style()));
-        }
-        spans.extend([
-            Span::styled("Esc", theme.accent_emphasis_style()),
-            Span::styled(" Clear ", theme.text_muted_style()),
-            Span::styled("Enter", theme.accent_emphasis_style()),
-            Span::styled(" Send to palette  ", theme.text_muted_style()),
-        ]);
-        spans
-    }
-
     /// Handles keyboard events for the browser component.
     ///
     /// This method routes keyboard events to the appropriate handler based on
@@ -131,6 +107,30 @@ impl Component for BrowserComponent {
             };
         }
         effects
+    }
+
+    /// Renders the footer with keyboard shortcut hints.
+    ///
+    /// This method displays helpful keyboard shortcuts at the bottom of the
+    /// browser modal to guide user interaction.
+    ///
+    /// # Arguments
+    /// * `frame` - The Ratatui frame to render to
+    /// * `app` - The application state containing theme information
+    /// * `area` - The area to render the footer in
+    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+        let theme = &*app.ctx.theme;
+        let mut spans = vec![];
+        if is_root {
+            spans.push(Span::styled("Hint: ", theme.text_muted_style()));
+        }
+        spans.extend([
+            Span::styled("Esc", theme.accent_emphasis_style()),
+            Span::styled(" Clear ", theme.text_muted_style()),
+            Span::styled("Enter", theme.accent_emphasis_style()),
+            Span::styled(" Send to palette  ", theme.text_muted_style()),
+        ]);
+        spans
     }
 }
 
@@ -166,14 +166,12 @@ impl BrowserComponent {
 
     fn handle_hot_keys(&self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         match key.code {
-            KeyCode::Enter => {
-                return self.apply_enter(app);
-            }
+            KeyCode::Enter => self.apply_enter(app),
             KeyCode::Esc => {
                 app.browser.search_input_clear();
-                return vec![];
+                vec![]
             }
-            _ => return vec![],
+            _ => vec![],
         }
     }
 
@@ -393,58 +391,7 @@ impl BrowserComponent {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::theme::roles::ThemeRoles;
     use heroku_types::{CommandSpec, ServiceId, command::HttpCommandSpec};
-    use ratatui::style::Style;
-
-    /// Mock theme for testing purposes
-    struct MockTheme;
-    impl crate::ui::theme::Theme for MockTheme {
-        fn roles(&self) -> &ThemeRoles {
-            &ThemeRoles {
-                modal_bg: ratatui::style::Color::Black,
-                background: ratatui::style::Color::Black,
-                surface: ratatui::style::Color::DarkGray,
-                surface_muted: ratatui::style::Color::Gray,
-                border: ratatui::style::Color::Gray,
-                divider: ratatui::style::Color::DarkGray,
-                text: ratatui::style::Color::White,
-                text_secondary: ratatui::style::Color::Gray,
-                text_muted: ratatui::style::Color::DarkGray,
-                accent_primary: ratatui::style::Color::Blue,
-                accent_secondary: ratatui::style::Color::Cyan,
-                accent_subtle: ratatui::style::Color::DarkGray,
-                info: ratatui::style::Color::Blue,
-                success: ratatui::style::Color::Green,
-                warning: ratatui::style::Color::Yellow,
-                error: ratatui::style::Color::Red,
-                selection_bg: ratatui::style::Color::Blue,
-                selection_fg: ratatui::style::Color::White,
-                focus: ratatui::style::Color::Blue,
-                scrollbar_track: ratatui::style::Color::DarkGray,
-                scrollbar_thumb: ratatui::style::Color::Gray,
-            }
-        }
-        fn text_primary_style(&self) -> Style {
-            Style::default()
-        }
-        fn text_secondary_style(&self) -> Style {
-            Style::default()
-        }
-        fn text_muted_style(&self) -> Style {
-            Style::default()
-        }
-        fn accent_emphasis_style(&self) -> Style {
-            Style::default()
-        }
-        fn selection_style(&self) -> Style {
-            Style::default()
-        }
-        fn border_style(&self, _focused: bool) -> Style {
-            Style::default()
-        }
-    }
-
     #[test]
     fn test_format_command_display_name_with_colon() {
         let component = BrowserComponent;
@@ -454,7 +401,7 @@ mod tests {
             "Create a new app".to_string(),
             Vec::new(),
             Vec::new(),
-            HttpCommandSpec::new("POST", "/apps", ServiceId::CoreApi, Vec::new()),
+            HttpCommandSpec::new("POST", "/apps", ServiceId::CoreApi, Vec::new(), None),
         );
 
         let result = component.format_command_display_name(&command_spec);
@@ -470,7 +417,7 @@ mod tests {
             "List apps".to_string(),
             Vec::new(),
             Vec::new(),
-            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new()),
+            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new(), None),
         );
 
         let result = component.format_command_display_name(&command_spec);
@@ -486,7 +433,7 @@ mod tests {
             "Apps command".to_string(),
             Vec::new(),
             Vec::new(),
-            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new()),
+            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new(), None),
         );
 
         let result = component.format_command_display_name(&command_spec);

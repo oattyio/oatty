@@ -130,19 +130,6 @@ impl Default for LogRingBuffer {
     }
 }
 
-/// Errors that can occur with the log ring buffer.
-#[derive(Debug, thiserror::Error)]
-pub enum LogBufferError {
-    #[error("Buffer is full and cannot accept more entries")]
-    BufferFull,
-
-    #[error("Invalid buffer size: {size}")]
-    InvalidSize { size: usize },
-
-    #[error("Buffer operation failed: {reason}")]
-    OperationFailed { reason: String },
-}
-
 #[cfg(test)]
 mod tests {
     use crate::types::{LogLevel, LogSource};

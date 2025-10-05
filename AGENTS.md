@@ -18,7 +18,7 @@
 - Tests: `cargo test --workspace` — run unit/integration tests.
 - Lint: `cargo clippy --workspace -- -D warnings` — fail on warnings.
 - Format: `cargo fmt --all` — apply repo `rustfmt` settings.
-- Helpful env: `RUST_LOG=debug`, `HEROKU_API_KEY=…`, `FEATURE_WORKFLOWS=1`, `DEBUG=1`, `MCP_CONFIG_PATH=~/.config/heroku/mcp.json`.
+- Helpful env: `HEROKU_LOG=debug` (stderr logs are silenced during TUI), `HEROKU_API_KEY=…`, `FEATURE_WORKFLOWS=1`, `DEBUG=1`, `MCP_CONFIG_PATH=~/.config/heroku/mcp.json`.
 
 ## Coding Style & Naming Conventions
 - Edition: Rust 2024; indent 4 spaces; max width 100 (see `rustfmt.toml`).
@@ -40,14 +40,14 @@
 ## Security & Configuration Tips
 - Never commit secrets; prefer `HEROKU_API_KEY` to `~/.netrc`.
 - Redaction utilities mask sensitive values in logs; still avoid pasting tokens.
-- Network via `reqwest` + TLS; set `RUST_LOG=info|debug` for diagnostics.
+- Network via `reqwest` + TLS; set `HEROKU_LOG=error|warn|info|debug|trace` for diagnostics (stderr logs are silenced during TUI).
 - MCP plugins: Use `${secret:NAME}` interpolation for sensitive values; secrets stored in OS keychain via `keyring-rs`.
 - MCP config: Located at `~/.config/heroku/mcp.json`; supports stdio and HTTP/SSE transports.
 
 ## Architecture Overview
 See [ARCHITECTURE.md](ARCHITECTURE.md) for a full overview of crates, command/registry design, ValueProviders, execution flow, TUI UX, and security/caching.
 
-**TUI Components**
+## TUI Components
 - **Location:** `crates/tui/src/ui/components/` with one folder per feature (e.g., `palette/`, `table/`, `logs/`, `browser/`, `help/`, `pagination/`). Each submodule typically has `mod.rs`, a main component file (e.g., `palette.rs`), and an optional `state.rs` plus helpers.
 - **Trait:** All renderable pieces implement `ui::components::component::Component`, which defines `init()`, `handle_events()`, `handle_key_events()`, `handle_mouse_events()`, `update()`, and `render(frame, area, app)`. Most components implement `handle_key_events` and `render` and mutate local state under `app.*` directly; cross-cutting actions go through `app.update(Msg)` and return `Vec<Effect>`.
 - **State:** App-level owns state structs (e.g., `PaletteState`, `BrowserState`, `TableState`) in `app::App`. Components are thin, mostly stateless render/controllers that read/write `app.*`. Put UI-specific state in `state.rs` under each component folder.
@@ -83,15 +83,15 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a full overview of crates, command/re
 - **Pagination Pattern:**
   - If your view shows pageable API data, compose `PaginationComponent` like `TableComponent` does and expose focus items via `FocusFlag`s for Tab/BackTab cycling.
 
-**Design Conventions**
+## Design Conventions
 - **Local-first updates:** UI interactions update `app.<feature>` state directly; reserve `Msg` + `Effect` for cross-feature actions (open/close modals, run, copy, pagination fetch).
 - **Focus-normalization:** Provide a `normalize_focus()` on state to ensure a valid initial focus when made visible (see `BrowserState::normalize_focus`).
 - **Performance:** Precompute expensive view models in state reducers (`apply_result_json` builds table rows/columns once), then keep `render()` side-effect free except drawing.
 - **Security:** Redact sensitive values before display/copy (`heroku_util::redact_sensitive`). This is enforced in logs and detail views; reuse that pattern for new components.
 
-**Testing Tips**
+## Testing Tips
 - **Unit tests:** Co-locate simple reducers/selectors under `#[cfg(test)]` in `state.rs` or the component module. Favor pure functions for parsing/formatting.
-- **Manual checks:** Run `cargo run -p heroku-cli` and verify focus, key handling, and styling in a small terminal. Use `RUST_LOG=debug` and `DEBUG=1` to surface useful info.
+- **Manual checks:** Run `cargo run -p heroku-cli` and verify focus, key handling, and styling in a small terminal. Use `HEROKU_LOG=debug` and `DEBUG=1` to surface useful info.
 - **CI hygiene:** `cargo fmt --all`, `cargo clippy --workspace -- -D warnings`, and `cargo test --workspace` must be clean.
 
 ## General Use Instructions for AI Assistants

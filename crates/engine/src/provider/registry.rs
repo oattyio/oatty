@@ -9,6 +9,7 @@ use anyhow::{Result, anyhow};
 use heroku_registry::{CommandSpec, Registry, find_by_group_and_cmd};
 use heroku_types::ExecOutcome;
 use serde_json::{Map as JsonMap, Value};
+use tokio::runtime::Runtime;
 
 use crate::ProviderRegistry;
 
@@ -39,20 +40,24 @@ pub struct RegistryProvider {
     pub(crate) cache_ttl: Duration,
     cache: Mutex<HashMap<String, CacheEntry>>,
     choices: Mutex<HashMap<String, FieldSelection>>, // persisted user choices
+    runtime: Arc<Runtime>,
 }
 
 impl RegistryProvider {
-    pub fn new(registry: Arc<Mutex<Registry>>, fetcher: Box<dyn ProviderValueFetcher>, cache_ttl: Duration) -> Self {
-        Self {
+    pub fn new(registry: Arc<Mutex<Registry>>, fetcher: Box<dyn ProviderValueFetcher>, cache_ttl: Duration) -> Result<Self> {
+        let runtime = Runtime::new().map_err(|error| anyhow!("failed to create provider runtime: {error}"))?;
+
+        Ok(Self {
             registry,
             fetcher,
             cache_ttl,
             cache: Mutex::new(HashMap::new()),
             choices: Mutex::new(HashMap::new()),
-        }
+            runtime: Arc::new(runtime),
+        })
     }
 
-    pub fn with_default_http(registry: Arc<Mutex<Registry>>, cache_ttl: Duration) -> Self {
+    pub fn with_default_http(registry: Arc<Mutex<Registry>>, cache_ttl: Duration) -> Result<Self> {
         Self::new(registry, Box::new(super::fetch::DefaultHttpFetcher), cache_ttl)
     }
 
@@ -100,10 +105,9 @@ impl ProviderRegistry for RegistryProvider {
         } else {
             return Err(anyhow::anyhow!("provider '{}' is not backed by an HTTP command", provider_id));
         }
-        let result = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt.block_on(async move { heroku_util::http_exec::exec_remote(&spec_clone, body).await }),
-            Err(e) => Err(format!("runtime init failed: {}", e)),
-        };
+        let result = self
+            .runtime
+            .block_on(async move { heroku_util::http_exec::exec_remote(&spec_clone, body).await });
 
         if let Some(ExecOutcome::Http(_, result, _, _)) = result.ok() {
             if let Some(items) = result.as_array().cloned() {

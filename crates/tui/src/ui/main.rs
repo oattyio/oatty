@@ -29,9 +29,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let mut open_modal = std::mem::replace(&mut app.open_modal, None);
 
     // Layout: left rail for nav bar, right for active main view
-    let chunks = ratatui::layout::Layout::default()
-        .direction(ratatui::layout::Direction::Horizontal)
-        .constraints([ratatui::layout::Constraint::Length(9), ratatui::layout::Constraint::Min(1)])
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(9), Constraint::Min(1)])
         .split(size);
 
     // Handle main view rendering

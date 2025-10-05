@@ -1,5 +1,3 @@
-//! Adapter to bridge MCP providers with the engine's provider system.
-
 use crate::provider::{McpProvider, McpProviderError, McpProviderOps};
 use serde_json::{Map, Value};
 use std::sync::Arc;
@@ -64,14 +62,20 @@ impl ProviderRegistry for McpProviderAdapter {
             ));
         }
 
-        // Use tokio runtime to run async code
-        let rt = tokio::runtime::Handle::current();
-        rt.block_on(async {
+        let fetch_future = async {
             self.provider
                 .fetch_values(arguments)
                 .await
                 .map_err(|e| anyhow::anyhow!("MCP provider error: {}", e))
-        })
+        };
+
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => handle.block_on(fetch_future),
+            Err(_) => {
+                let runtime = tokio::runtime::Runtime::new().map_err(|error| anyhow::anyhow!("failed to create runtime: {}", error))?;
+                runtime.block_on(fetch_future)
+            }
+        }
     }
 
     fn get_contract(&self, provider_id: &str) -> Option<ProviderContract> {

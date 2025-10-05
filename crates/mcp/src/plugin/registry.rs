@@ -73,6 +73,8 @@ impl PluginRegistry {
             let mut plugins = self.plugins.lock().await;
             if let Some(detail) = plugins.get_mut(name) {
                 detail.status = status;
+            } else {
+                return Err(RegistryError::PluginNotFound { name: name.to_string() });
             }
         }
 
@@ -128,6 +130,13 @@ impl PluginRegistry {
 
     /// Update plugin information.
     pub async fn update_plugin(&self, name: &str, plugin: PluginDetail) -> Result<(), RegistryError> {
+        if plugin.name != name {
+            return Err(RegistryError::InvalidPluginName {
+                expected: name.to_string(),
+                received: plugin.name.clone(),
+            });
+        }
+
         let status_value = plugin.status;
 
         {
@@ -192,6 +201,9 @@ pub enum RegistryError {
 
     #[error("Registry operation failed: {reason}")]
     OperationFailed { reason: String },
+
+    #[error("Plugin name mismatch: expected {expected}, received {received}")]
+    InvalidPluginName { expected: String, received: String },
 }
 
 #[cfg(test)]
@@ -252,5 +264,24 @@ mod tests {
 
         let status = registry.get_plugin_status("test-plugin").await.unwrap();
         assert_eq!(status, PluginStatus::Running);
+    }
+
+    #[tokio::test]
+    async fn update_plugin_rejects_mismatched_name() {
+        let registry = PluginRegistry::new();
+
+        let mut original_plugin = PluginDetail::new("alpha".to_string(), "node alpha.js".to_string(), None);
+        original_plugin.transport_type = "stdio".to_string();
+        registry.register_plugin(original_plugin).await.unwrap();
+
+        let mut mismatched_plugin = PluginDetail::new("beta".to_string(), "node beta.js".to_string(), None);
+        mismatched_plugin.transport_type = "stdio".to_string();
+
+        let result = registry.update_plugin("alpha", mismatched_plugin).await;
+        assert!(matches!(
+            result,
+            Err(RegistryError::InvalidPluginName { expected, received })
+                if expected == "alpha" && received == "beta"
+        ));
     }
 }
