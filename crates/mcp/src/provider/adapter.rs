@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderContract {
-    pub args: serde_json::Map<String, serde_json::Value>,
+    pub args: Map<String, Value>,
     pub returns: ProviderReturns,
 }
 
@@ -25,11 +25,7 @@ pub struct ReturnField {
 
 #[allow(dead_code)]
 pub trait ProviderRegistry: Send + Sync {
-    fn fetch_values(
-        &self,
-        provider_id: &str,
-        arguments: &serde_json::Map<String, serde_json::Value>,
-    ) -> anyhow::Result<Vec<serde_json::Value>>;
+    fn fetch_values(&self, provider_id: &str, arguments: &Map<String, Value>) -> anyhow::Result<Vec<Value>>;
     fn get_contract(&self, provider_id: &str) -> Option<ProviderContract>;
 }
 
@@ -192,7 +188,11 @@ mod tests {
     #[test]
     fn test_mcp_provider_adapter_creation() {
         let config = McpConfig::default();
-        let command_registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let command_registry = Arc::new(Mutex::new(CommandRegistry {
+            commands: Vec::new(),
+            workflows: vec![],
+            provider_contracts: Default::default(),
+        }));
         let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&command_registry)).unwrap());
         let provider = Arc::new(McpProvider::new("test-plugin", "test-tool", plugin_engine).unwrap());
         let adapter = McpProviderAdapter::new(provider);
@@ -205,7 +205,11 @@ mod tests {
         let mut adapter_registry = McpProviderAdapterRegistry::new();
 
         let config = McpConfig::default();
-        let command_registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let command_registry = Arc::new(Mutex::new(CommandRegistry {
+            commands: Vec::new(),
+            workflows: vec![],
+            provider_contracts: Default::default(),
+        }));
         let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&command_registry)).unwrap());
         let provider = Arc::new(McpProvider::new("test-plugin", "test-tool", plugin_engine).unwrap());
         let adapter = Arc::new(McpProviderAdapter::new(provider));
@@ -227,7 +231,11 @@ mod tests {
     #[test]
     fn test_provider_registry_implementation() {
         let config = McpConfig::default();
-        let command_registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let command_registry = Arc::new(Mutex::new(CommandRegistry {
+            commands: Vec::new(),
+            workflows: vec![],
+            provider_contracts: Default::default(),
+        }));
         let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&command_registry)).unwrap());
         let provider = Arc::new(McpProvider::new("test-plugin", "test-tool", plugin_engine).unwrap());
         let adapter = McpProviderAdapter::new(provider);

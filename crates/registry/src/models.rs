@@ -1,16 +1,20 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use bincode::config;
-use heroku_types::CommandSpec;
+use heroku_types::{CommandSpec, ProviderContract, manifest::RegistryManifest, workflow::WorkflowDefinition};
 use heroku_util::sort_and_dedup_commands;
+use indexmap::IndexMap;
 
-static MANIFEST: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/heroku-manifest.bin"));
+static MANIFEST: &str = include_str!(concat!(env!("OUT_DIR"), "/heroku-manifest.json"));
 /// The main registry containing all available Heroku CLI commands.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct Registry {
     /// Collection of all available command specifications
     pub commands: Vec<CommandSpec>,
+    /// Workflow definitions bundled with the registry manifest
+    pub workflows: Vec<WorkflowDefinition>,
+    /// Provider argument and return contracts keyed by command identifier
+    pub provider_contracts: IndexMap<String, ProviderContract>,
 }
 
 impl Registry {
@@ -35,12 +39,19 @@ impl Registry {
     /// println!("Loaded {} commands", registry.commands.len());
     /// ```
     pub fn from_embedded_schema() -> Result<Self> {
-        let config = config::standard();
+        let manifest: RegistryManifest = serde_json::from_str(MANIFEST).context("decoding manifest failed")?;
 
-        // Decode the CommandSpec struct from the bytes
-        let commands: Vec<CommandSpec> = bincode::decode_from_slice(MANIFEST, config).context("decoding manifest failed")?.0;
+        let provider_contracts = manifest
+            .provider_contracts
+            .into_iter()
+            .map(|entry| (entry.command_id, entry.contract))
+            .collect();
 
-        Ok(Registry { commands })
+        Ok(Registry {
+            commands: manifest.commands,
+            workflows: manifest.workflows,
+            provider_contracts,
+        })
     }
 
     /// Inserts the synthetic commands from an MCP client's

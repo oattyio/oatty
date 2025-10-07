@@ -137,22 +137,34 @@ impl ProviderRegistry for RegistryProvider {
     }
 
     fn get_contract(&self, provider_id: &str) -> Option<ProviderContract> {
-        self.resolve_spec(provider_id).map(|_| ProviderContract {
-            args: JsonMap::new(),
-            returns: ProviderReturns {
-                fields: vec![
-                    ReturnField {
-                        name: "id".into(),
-                        r#type: Some("string".into()),
-                        tags: vec!["id".into(), "identifier".into()],
-                    },
-                    ReturnField {
-                        name: "name".into(),
-                        r#type: Some("string".into()),
-                        tags: vec!["display".into(), "name".into()],
-                    },
-                ],
-            },
-        })
+        {
+            let registry = self.registry.lock().ok()?;
+            if let Some(contract) = registry.provider_contracts.get(provider_id) {
+                return Some(contract.clone());
+            }
+        }
+
+        self.resolve_spec(provider_id)?;
+        Some(default_provider_contract())
+    }
+}
+
+fn default_provider_contract() -> ProviderContract {
+    ProviderContract {
+        arguments: Vec::new(),
+        returns: ProviderReturns {
+            fields: vec![
+                ReturnField {
+                    name: "id".into(),
+                    r#type: Some("string".into()),
+                    tags: vec!["id".into(), "identifier".into()],
+                },
+                ReturnField {
+                    name: "name".into(),
+                    r#type: Some("string".into()),
+                    tags: vec!["display".into(), "name".into()],
+                },
+            ],
+        },
     }
 }

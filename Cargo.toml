@@ -47,3 +47,4 @@ keyring = { version = "3.6.3", default-features = false, features = ["apple-nati
 async-trait = "0.1.89"
 reqwest = { version = "0.12.23", default-features = false, features = ["json", "cookies", "gzip", "brotli", "deflate", "rustls-tls", "stream"] }
 textwrap = { version = "0.16.2" }
+indexmap = { version = "2.6.0", features = ["serde"] }

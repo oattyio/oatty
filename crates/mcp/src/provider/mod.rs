@@ -89,7 +89,7 @@ pub trait McpProviderOps: Send + Sync {
     async fn fetch_values(&self, arguments: &Map<String, Value>) -> Result<Vec<Value>, McpProviderError>;
 
     /// Get the provider contract.
-    fn get_contract(&self) -> crate::provider::mcp_provider::ProviderContract;
+    fn get_contract(&self) -> mcp_provider::ProviderContract;
 
     /// Check if the provider is available.
     async fn is_available(&self) -> bool;
@@ -133,7 +133,11 @@ mod tests {
     #[tokio::test]
     async fn test_mcp_provider_registry() {
         let config = McpConfig::default();
-        let registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let registry = Arc::new(Mutex::new(CommandRegistry {
+            commands: Vec::new(),
+            workflows: vec![],
+            provider_contracts: Default::default(),
+        }));
         let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&registry)).unwrap());
         let registry = McpProviderRegistry::new(plugin_engine);
 

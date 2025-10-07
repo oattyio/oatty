@@ -11,7 +11,7 @@
 //! - Dedicated input thread blocks on `crossterm::event::read()` and forwards
 //!   events over a channel, avoiding cross-thread poll/read issues and ensuring
 //!   reliable resize delivery across terminals (including iTerm2).
-//! - Smart ticking: fast interval (125ms) only while animating; long interval
+//! - Smart ticking: fast interval (125 ms) only while animating; long interval
 //!   (5s) when idle. `App::update(Msg::Tick)` marks dirty only on visible
 //!   changes.
 //!
@@ -42,8 +42,8 @@ use tokio::{
 };
 
 use crate::ui::components::nav_bar::VerticalNavBarComponent;
-use crate::{app, cmd, ui::main};
 use crate::{app::App, ui::components::component::Component};
+use crate::{cmd, ui::main};
 use rat_focus::FocusBuilder;
 
 /// Control flow signal for the main loop
@@ -104,7 +104,7 @@ fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) 
 }
 
 /// Renders a frame by delegating to `ui::main::draw`.
-fn render<'a>(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, application: &mut app::App) -> Result<()> {
+fn render<'a>(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, application: &mut App) -> Result<()> {
     // Rebuild focus just before rendering so structure changes are reflected
     let old_focus = std::mem::take(&mut application.focus);
     application.focus = FocusBuilder::rebuild_for(application, Some(old_focus));
@@ -118,7 +118,7 @@ fn render<'a>(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, applic
 /// Handle raw crossterm input events and update `App`/components.
 /// Returns `Exit` for Ctrl+C, otherwise `Continue`.
 async fn handle_input_event<'a>(
-    app: &mut app::App<'_>,
+    app: &mut App<'_>,
     input_event: Event,
     pending_execs: &mut FuturesUnordered<JoinHandle<ExecOutcome>>,
 ) -> Result<LoopAction> {
@@ -147,7 +147,7 @@ async fn handle_input_event<'a>(
                 Vec::new()
             };
 
-            // Move components back if they were't replaced
+            // Move components back if they weren't replaced
             if app.main_view.is_none() {
                 app.main_view = main_view;
             }
@@ -170,7 +170,7 @@ async fn handle_input_event<'a>(
 /// Entry point for the TUI runtime: sets up terminal, spawns the event
 /// producer, runs the async event loop, and performs cleanup on exit.
 pub async fn run_app(registry: Arc<Mutex<heroku_registry::Registry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
-    let mut application = app::App::new(registry, plugin_engine);
+    let mut application = App::new(registry, plugin_engine);
     let mut terminal = setup_terminal()?;
 
     // Input comes from a dedicated blocking thread to ensure reliability.
@@ -226,10 +226,7 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::Registry>>, plugin_eng
             }
 
             Some(joined) = pending_execs.next(), if !pending_execs.is_empty() => {
-                let outcome = match joined {
-                    Ok(outcome) => outcome,
-                    Err(error) => ExecOutcome::Log(format!("Execution task failed: {error}")),
-                };
+                let outcome = joined.unwrap_or_else(|error| ExecOutcome::Log(format!("Execution task failed: {error}")));
                 let follow_up = application.update(Msg::ExecCompleted(Box::new(outcome)));
                 process_effects(&mut application, follow_up, &mut pending_execs).await;
                 needs_render = true;

@@ -63,6 +63,89 @@ pub mod provider {
         /// The consumer field name to source the value from (positional or flag name).
         pub from: String,
     }
+
+    /// Describes the argument and return contracts for a provider command.
+    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq, Default)]
+    pub struct ProviderContract {
+        /// Provider arguments in the order they should be considered for auto-mapping.
+        #[serde(default)]
+        pub arguments: Vec<ProviderArgumentContract>,
+        /// Metadata describing the returned item fields from the provider.
+        #[serde(default)]
+        pub returns: ProviderReturnContract,
+    }
+
+    /// Contract metadata for a single provider argument.
+    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq, Default)]
+    pub struct ProviderArgumentContract {
+        /// Name of the argument (for example, `app`).
+        pub name: String,
+        /// Semantic tags that the provider accepts for this argument (for example, `app_id`).
+        #[serde(default)]
+        pub accepts: Vec<String>,
+        /// Preferred tag to use when multiple accepted tags are available.
+        #[serde(default)]
+        pub prefer: Option<String>,
+        /// Indicates whether the argument is required by the provider.
+        #[serde(default)]
+        pub required: bool,
+    }
+
+    /// Declarative return metadata for provider results.
+    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq, Default)]
+    pub struct ProviderReturnContract {
+        /// Fields that the provider returns for each item.
+        #[serde(default)]
+        pub fields: Vec<ProviderFieldContract>,
+    }
+
+    /// Metadata about an individual provider return field.
+    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
+    pub struct ProviderFieldContract {
+        /// Name of the field returned in the provider payload.
+        pub name: String,
+        /// Optional JSON type hint (for example, `string`, `array`, `object`).
+        #[serde(default)]
+        pub r#type: Option<String>,
+        /// Semantic tags describing how the field can be used for auto-mapping.
+        #[serde(default)]
+        pub tags: Vec<String>,
+    }
+}
+
+/// Rich workflow schema models used by the registry, engine, and TUI layers.
+pub mod workflow;
+
+pub mod manifest {
+    //! Registry manifest structures embedded into the generated binary artifact.
+
+    use serde::{Deserialize, Serialize};
+
+    use crate::{command::CommandSpec, provider::ProviderContract, workflow::WorkflowDefinition};
+    use bincode::{Decode, Encode};
+
+    /// Serialized manifest housing both command specifications and workflow definitions.
+    #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+    pub struct RegistryManifest {
+        /// All command specifications generated from the platform schemas.
+        #[serde(default)]
+        pub commands: Vec<CommandSpec>,
+        /// Workflow definitions bundled alongside the command registry.
+        #[serde(default)]
+        pub workflows: Vec<WorkflowDefinition>,
+        /// Provider argument and return contracts keyed by command identifier.
+        #[serde(default)]
+        pub provider_contracts: Vec<ProviderContractEntry>,
+    }
+
+    /// Manifest entry storing a provider contract alongside its command identifier.
+    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
+    pub struct ProviderContractEntry {
+        /// Identifier of the provider command (for example, `apps:list`).
+        pub command_id: String,
+        /// Declarative contract describing arguments and return fields.
+        pub contract: ProviderContract,
+    }
 }
 
 pub mod service {
@@ -245,7 +328,7 @@ pub mod command {
     /// ```rust
     /// use heroku_types::{CommandExecution, CommandSpec, HttpCommandSpec, ServiceId};
     ///
-    /// let http = HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new());
+    /// let http = HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new(), None);
     /// let spec = CommandSpec::new_http(
     ///     "apps".into(),
     ///     "apps:list".into(),
@@ -265,7 +348,7 @@ pub mod command {
     ///     plugin_name: "demo-plugin".into(),
     ///     tool_name: "demo_tool".into(),
     ///     auth_summary: Some("Needs OAuth".into()),
-    ///     input_schema: None,
+    ///     output_schema: None,
     ///     render_hint: None,
     /// };
     /// let spec = CommandSpec::new_mcp(
@@ -1225,7 +1308,7 @@ pub use messaging::{Effect, Modal, Msg, Route};
 pub use plugin::{
     AuthStatus, EnvSource, EnvVar, HealthStatus, LogLevel, LogSource, McpLogEntry, PluginDetail, PluginStatus, TransportStatus,
 };
-pub use provider::{Bind, ValueProvider};
+pub use provider::{Bind, ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract, ValueProvider};
 pub use service::{ParseServiceIdError, ServiceId, ToServiceIdInfo};
 pub use suggestion::{ItemKind, SuggestionItem};
 

@@ -9,7 +9,9 @@ pub mod models;
 pub mod utils;
 
 pub use clap_builder::build_clap;
-pub use heroku_types::{CommandFlag, CommandSpec};
+pub use heroku_types::{
+    CommandFlag, CommandSpec, ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract,
+};
 pub use models::Registry;
 pub use utils::*;
 
@@ -40,5 +42,6 @@ mod tests {
             seen.insert(group_name);
         }
         assert!(duplicates.is_empty(), "duplicates seen: {}", duplicates.len());
+        assert!(!registry.provider_contracts.is_empty(), "provider contracts should not be empty");
     }
 }

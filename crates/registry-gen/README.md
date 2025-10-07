@@ -113,7 +113,7 @@ Examples:
 
 ### Notes on Workflows
 
-This generator focuses on API-derived commands. If workflow features are enabled elsewhere, they may be added as synthetic commands by the caller or a feature module.
+The generator can now bundle authored workflows alongside command specs. Pass the `--workflows <dir>` flag when invoking the CLI, or supply `Some(PathBuf::from("workflows"))` when calling `write_manifest*` programmatically. Every `.yaml`, `.yml`, or `.json` file found in the directory tree is deserialized into the strongly typed structures defined in `heroku-types::workflow::WorkflowDefinition`.
 
 ### JSON Hyper-Schema Requirements
 

@@ -3,11 +3,11 @@
 use chrono::{DateTime, Utc};
 use heroku_util::redact_sensitive_with;
 use serde::{Deserialize, Serialize};
-use std::fs::OpenOptions;
-use std::io::Write;
+use tokio::fs::OpenOptions;
 use std::path::PathBuf;
 use thiserror::Error;
 use tracing::debug;
+use tokio::io::AsyncWriteExt;
 
 /// Audit logger for tracking plugin lifecycle events.
 #[derive(Debug)]
@@ -118,7 +118,7 @@ impl AuditLogger {
         let redacted_entry = redact_audit_entry(entry);
         let json_line = serde_json::to_string(&redacted_entry).map_err(|e| AuditError::SerializationError(e.to_string()))?;
 
-        let mut file = tokio::fs::OpenOptions::new()
+        let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.log_path)
@@ -134,7 +134,6 @@ impl AuditLogger {
                 .map_err(AuditError::IoError)?;
         }
 
-        use tokio::io::AsyncWriteExt;
         file.write_all(json_line.as_bytes()).await.map_err(AuditError::IoError)?;
         file.write_all(b"\n").await.map_err(AuditError::IoError)?;
 

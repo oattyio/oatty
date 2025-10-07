@@ -88,12 +88,21 @@ Generate a manifest file (bincode):
 
 ```rust
 use std::path::PathBuf;
-use heroku_registry_gen::write_manifest;
+use heroku_registry_gen::{io::ManifestInput, write_manifest};
+use heroku_types::ServiceId;
 
 fn main() -> anyhow::Result<()> {
-    let input = PathBuf::from("schemas/heroku-schema.json");
+    let schema = PathBuf::from("schemas/heroku-schema.json");
+    let workflows = Some(PathBuf::from("workflows"));
     let output = PathBuf::from("target/manifest.bin");
-    write_manifest(input, output)?;
+    write_manifest(
+        vec![ManifestInput {
+            input: schema,
+            service_id: ServiceId::CoreApi,
+        }],
+        workflows,
+        output,
+    )?;
     Ok(())
 }
 ```
@@ -102,12 +111,21 @@ Generate a manifest file (JSON):
 
 ```rust
 use std::path::PathBuf;
-use heroku_registry_gen::write_manifest_json;
+use heroku_registry_gen::{io::ManifestInput, write_manifest_json};
+use heroku_types::ServiceId;
 
 fn main() -> anyhow::Result<()> {
-    let input = PathBuf::from("schemas/heroku-schema.json");
+    let schema = PathBuf::from("schemas/heroku-schema.json");
+    let workflows = Some(PathBuf::from("workflows"));
     let output = PathBuf::from("target/manifest.json");
-    write_manifest_json(input, output)?;
+    write_manifest_json(
+        vec![ManifestInput {
+            input: schema,
+            service_id: ServiceId::CoreApi,
+        }],
+        workflows,
+        output,
+    )?;
     Ok(())
 }
 ```

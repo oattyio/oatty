@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderContract {
-    pub args: serde_json::Map<String, serde_json::Value>,
+    pub args: Map<String, Value>,
     pub returns: ProviderReturns,
 }
 
@@ -144,7 +144,11 @@ mod tests {
     #[tokio::test]
     async fn test_mcp_provider_creation() {
         let config = McpConfig::default();
-        let registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let registry = Arc::new(Mutex::new(CommandRegistry {
+            commands: Vec::new(),
+            workflows: vec![],
+            provider_contracts: Default::default(),
+        }));
         let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&registry)).unwrap());
 
         let provider = McpProvider::new("test-plugin", "test-tool", plugin_engine).unwrap();
@@ -156,7 +160,11 @@ mod tests {
     #[tokio::test]
     async fn test_mcp_provider_availability() {
         let config = McpConfig::default();
-        let registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let registry = Arc::new(Mutex::new(CommandRegistry {
+            commands: Vec::new(),
+            workflows: vec![],
+            provider_contracts: Default::default(),
+        }));
         let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&registry)).unwrap());
 
         let provider = McpProvider::new("test-plugin", "test-tool", plugin_engine).unwrap();

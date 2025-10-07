@@ -20,7 +20,7 @@ use heroku_types::CommandSpec;
 /// # Examples
 ///
 /// ```rust
-/// use heroku_registry::Registry;
+/// use heroku_registry::{Registry, utils::find_by_group_and_cmd};
 ///
 /// let registry = Registry::from_embedded_schema().expect("load registry from schema");
 /// let apps_list = find_by_group_and_cmd(&registry.commands, "apps", "list").expect("find by group and command");

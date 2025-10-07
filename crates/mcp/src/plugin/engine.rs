@@ -859,7 +859,11 @@ mod tests {
     #[tokio::test]
     async fn test_plugin_engine_creation() {
         let config = McpConfig::default();
-        let registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let registry = Arc::new(Mutex::new(CommandRegistry {
+            commands: Vec::new(),
+            workflows: vec![],
+            provider_contracts: Default::default(),
+        }));
         let engine = PluginEngine::new(config, Arc::clone(&registry)).unwrap();
 
         let plugins = engine.list_plugins().await;
@@ -869,7 +873,11 @@ mod tests {
     #[tokio::test]
     async fn test_plugin_engine_start_stop() {
         let config = McpConfig::default();
-        let registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let registry = Arc::new(Mutex::new(CommandRegistry {
+            commands: Vec::new(),
+            workflows: vec![],
+            provider_contracts: Default::default(),
+        }));
         let engine = PluginEngine::new(config, Arc::clone(&registry)).unwrap();
 
         engine.start().await.unwrap();
@@ -1195,7 +1203,11 @@ mod tests {
         server.disabled = Some(true);
         cfg.mcp_servers.insert("svc".into(), server);
 
-        let registry = Arc::new(Mutex::new(CommandRegistry { commands: Vec::new() }));
+        let registry = Arc::new(Mutex::new(CommandRegistry {
+            commands: Vec::new(),
+            workflows: vec![],
+            provider_contracts: Default::default(),
+        }));
         let engine = PluginEngine::new(cfg, Arc::clone(&registry)).unwrap();
         engine.start().await.unwrap();
 

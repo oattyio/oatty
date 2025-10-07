@@ -478,7 +478,7 @@ fn suggest_values_for_flag(
 
 /// Generates suggestions for positional arguments.
 ///
-/// Queries value providers for suggestions and falls back to a generic
+/// Queries value providers for suggestions and fall back to a generic
 /// placeholder if no provider suggestions are available.
 ///
 /// # Arguments
@@ -706,7 +706,6 @@ mod tests {
     use super::*;
     use heroku_registry::Registry;
     use heroku_types::{CommandExecution, CommandFlag, HttpCommandSpec, PositionalArgument, ServiceId};
-    use std::sync::Arc;
 
     #[derive(Debug)]
     struct TestProvider {
@@ -739,7 +738,11 @@ mod tests {
     }
 
     fn registry_with(commands: Vec<CommandSpec>) -> Registry {
-        heroku_registry::Registry { commands }
+        heroku_registry::Registry {
+            commands,
+            workflows: vec![],
+            provider_contracts: Default::default(),
+        }
     }
 
     #[test]

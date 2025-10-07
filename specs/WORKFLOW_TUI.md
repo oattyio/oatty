@@ -226,23 +226,62 @@ inputs:
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.7 Run View (Steps, Logs, Outputs)
-
+### 2.7.1 Run View (Steps, Logs, Outputs)
+* **Sticky headers**: the Steps, Logs, and Outputs section headers and column headers remain fixed while the panel content scrolls.
+* **Independent pagination**: each panel has its own paging controls and indicators.
 ```
-┌ Steps ─────────────────────────────────────────────────────────────────┐
-│ ● create_sources       (ok 1.2s)                                       │
-│ ● upload_source        (ok 0.8s)                                       │
-│ ● start_build          (ok 0.5s)                                       │
-│ ○ poll_build           (running 12s)                                   │
-└────────────────────────────────────────────────────────────────────────┘
-┌ Logs ──────────────────────────────────────────────────────────────────┐
-│ [poll_build] status=pending …                                          │
-│ [poll_build] status=pending …                                          │
-└────────────────────────────────────────────────────────────────────────┘
-┌ Outputs (Key/Value) ───────────────────────────────────────────────────┐
-│ start_build.id   : bld-9876                                            │
-│ start_build.slug : slug-3333                                           │
-└────────────────────────────────────────────────────────────────────────┘
+┌─ Workflow: provision_and_promote ───────────────────────────────────────────────────────────────┐
+│ Status: running • Started: 10:12:03 • Elapsed: 00:01:42 • [F1] Help • [q] Quit                  │
+├──────────────────────────── Steps (Page 2/5) ───────────────────────────┬─ Logs (Page 1/8) ─────┤
+│ Step                 │ Status     │ Details                            │ [↑/↓] scroll  [PgUp]   │
+│──────────────────────┼────────────┼────────────────────────────────────│ [PgDn] page  [g/G]     │
+│ ● upload_source      │ ok 0.8s    │ bytes=14.2MB, sha=…                │ top/bottom   [L] last  │
+│ ● start_build        │ ok 0.5s    │ app=staging-app                    │ page         [r] foll  │
+│ ● poll_build (3/?)   │ running    │ status=pending                     │ ow tail      [f] filt  │
+│ ○ create_release     │ pending    │                                    │ er            [c] clr  │
+│ ○ promote            │ pending    │                                    │                  log   │
+│ ○ verify_release     │ pending    │                                    │ s                      │
+│ ○ cleanup            │ pending    │                                    │                        │
+│ … (11 items hidden)  │            │                                    │                        │
+│────────────────────────────────────────────────────────────────────────│────────────────────────│
+│ [First] [Prev]  Page 2/5  [Next] [Last]   •   [/] filter steps   •   [s] sort                   │
+├──────────────────────────── Outputs (Page 1/3) ─────────────────────────────────────────────────┤
+│ Key                  │ Value                                                                    │
+│──────────────────────┼──────────────────────────────────────────────────────────────────────────│
+│ start_build.id       │ bld-9876                                                                 │
+│ start_build.slug     │ slug-3333                                                                │
+│ source_blob.get_url  │ https://sources.heroku.com/...                                           │
+│ … (more)                                                                                        │
+│─────────────────────────────────────────────────────────────────────────────────────────────────│
+│ [First] [Prev]  Page 1/3  [Next] [Last]   •   [y] copy value   •   [Enter] expand details       │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
+### 2.7.2 Run View — Wide Mode (side panel paging + sticky column headers)
+```
+┌─ Workflow: build_from_tarball ──────────────────────────────────────────────────────────────────┐
+│ Status: running • Build: bld-9876 • Elapsed: 00:00:57 • [t] Toggle layout • [q] Quit            │
+├──────── Steps (Pg 1/4) ────────┬──────────────────────────────── Logs (Pg 3/12) ────────────────┤
+│ Step            │ Status │Dur │ [↑/↓] move  [Space] details  │ [PgUp/PgDn] page  [End] tail     │
+│─────────────────┼────────┼────┤──────────────────────────────┼──────────────────────────────────│
+│ ● create_sources│ ok     │1.2s│ [f] filter                   │ [poll_build] status=pending …    │
+│ ● upload        │ ok     │0.8s│                              │ [poll_build] status=pending …    │
+│ ● start_build   │ ok     │0.5s│                              │ [poll_build] status=running …    │
+│ ● poll_build    │ run    │12s │                              │ [build] slug=slug-3333           │
+│ ○ finalize      │ pend   │    │                              │ …                                │
+│ …               │        │    │                              │                                  │
+│──────────────────────────────────────────────────────────────┼──────────────────────────────────│
+│ [First] [Prev] Page 1/4 [Next] [Last]  • [s] sort by Status  │ [First] [Prev] Page 3/12 [Next]  │
+│                                                         [Last]                                  │
+├────────────────────────── Outputs (Pg 1/2, sticky head) ────────────────────────────────────────┤
+│ Key                │ Value                                                                      │
+│────────────────────┼────────────────────────────────────────────────────────────────────────────│
+│ start_build.id     │ bld-9876                                                                   │
+│ start_build.slug   │ slug-3333                                                                  │
+│ source_blob.get_url│ https://sources.heroku.com/...                                             │
+│ …                                                                                            ▼  │
+│─────────────────────────────────────────────────────────────────────────────────────────────────│
+│ [First] [Prev] Page 1/2 [Next] [Last]  • [y] copy  • [Enter] expand  • [/] filter outputs       │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -346,7 +385,9 @@ inputs:
 * **Table**: add selection state (☑/☐), sticky header, column resize, and a right-side detail pane toggle (`d`).
 * **Key/Value Viewer**: add selectable rows; `Space` toggles active item; `Enter` confirms; supports copy-to-clipboard for value.
 * **Status line**: shows provider id, cache age, and pagination state.
-
+* **Progressive Disclosure** :For first-time users, the Workflow Picker + Input Collection views may feel dense. Consider collapsing advanced provider details behind an “info” key (e.g., i for inline docs, which is already specified for popovers).
+* **Long Scroll Runs**: Complex workflows (like pipeline_bootstrap) could produce 10+ inputs and steps. Pagination and sticky headers in the Run View will be crucial for usability.
+* **Error Recovery**: The fallback UX (manual entry, cached, retry) is sound, but the visual hierarchy of these actions should emphasize the recommended next step (perhaps color-coded: [R] green, [F2] gray, [C] dimmed).
 ---
 
 ## 7) Accessibility & Internationalization

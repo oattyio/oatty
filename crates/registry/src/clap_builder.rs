@@ -30,10 +30,12 @@ use crate::{CommandFlag, CommandSpec, Registry};
 /// # Examples
 ///
 /// ```rust
+/// use std::sync::{Arc, Mutex};
 /// use heroku_registry::{Registry, build_clap};
 ///
 /// let registry = Registry::from_embedded_schema().unwrap();
-/// let _clap_command = build_clap(&registry);
+/// let registry = Arc::new(Mutex::new(registry));
+/// let _clap_command = build_clap(Arc::clone(&registry));
 /// ```
 pub fn build_clap(registry: Arc<Mutex<Registry>>) -> ClapCommand {
     let mut root = create_root_command();
