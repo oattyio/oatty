@@ -4,12 +4,13 @@
 //! modular UI development. Components are self-contained UI elements that
 //! handle their own state, events, and rendering while integrating with the
 //! main application through a consistent interface.
+use std::fmt::Debug;
 
-use anyhow::Result;
 use crossterm::event::{KeyEvent, MouseEvent};
-use ratatui::{Frame, layout::Rect};
+use heroku_types::{Effect, Msg};
+use ratatui::{Frame, layout::Rect, text::Span};
 
-use crate::app::{Effect, Msg};
+use crate::app::App;
 
 /// A trait representing a UI component with its own state and behavior.
 ///
@@ -22,7 +23,7 @@ use crate::app::{Effect, Msg};
 /// - **Separation of concerns**: Components own only local UI behavior and
 ///   state
 /// - **Single responsibility**: Each component handles one specific area (e.g.,
-///   palette, builder, help)
+///   palette, browser, help)
 /// - **Consistent patterns**: All components expose `init`, event handlers,
 ///   `update`, and `render`
 /// - **Event-driven**: Components respond to application messages and user
@@ -76,30 +77,7 @@ use crate::app::{Effect, Msg};
 ///     }
 /// }
 /// ```
-pub(crate) trait Component {
-    /// Initialize any internal state.
-    ///
-    /// This method is called once when the component is created, allowing
-    /// it to set up any internal state, load resources, or perform other
-    /// initialization tasks.
-    ///
-    /// # Returns
-    ///
-    /// `Result<()>` indicating success or failure of initialization
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// fn init(&mut self) -> Result<()> {
-    ///     self.load_configuration()?;
-    ///     self.initialize_widgets()?;
-    ///     Ok(())
-    /// }
-    /// ```
-    fn init(&mut self) -> Result<()> {
-        Ok(())
-    }
-
+pub trait Component: Debug {
     /// Handle a generic application-level message the component cares about.
     ///
     /// This method allows components to respond to application-wide messages
@@ -114,21 +92,6 @@ pub(crate) trait Component {
     /// # Returns
     ///
     /// Vector of effects that the application should process
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// fn handle_events(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-    ///     match msg {
-    ///         Msg::ToggleHelp => {
-    ///             self.show_help = !self.show_help;
-    ///             vec![]
-    ///         }
-    ///         _ => vec![]
-    ///     }
-    /// }
-    /// ```
-    #[allow(dead_code)]
     fn handle_events(&mut self, _app: &mut crate::app::App, _msg: &Msg) -> Vec<Effect> {
         Vec::new()
     }
@@ -262,5 +225,35 @@ pub(crate) trait Component {
     ///     frame.render_widget(widget, rect);
     /// }
     /// ```
-    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut crate::app::App);
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App);
+
+    /// Optionally render the hints bar into the given area.
+    ///
+    /// This method is responsible for drawing the component's hints
+    /// into the provided frame area. Implementations should be side-effect
+    /// free. Any state changes should happen in `update` or event handlers.
+    ///
+    /// If the component contains children, the child's render_hints_bar
+    /// should be called by the parent only when the child has focus or
+    /// when it is expected to received key events. This prevents a
+    /// scenario where the child specifies key combinations in it's hints
+    /// but is unable to act on them.
+    ///
+    ///
+    /// # Arguments
+    ///
+    /// * `frame` - The frame to render to
+    /// * `rect` - The rectangular area allocated for this component
+    /// * `app` - The application state (read-only during rendering)
+    /// * `is_root` - Indicates if this should be rendered as a root hints bar
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// fn render_hints_bar(&mut self, frame: &mut Frame, rect: Rect, app: &App) {
+    /// }
+    /// ```
+    fn get_hint_spans(&self, _app: &App, _is_root: bool) -> Vec<Span<'_>> {
+        vec![]
+    }
 }

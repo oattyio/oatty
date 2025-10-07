@@ -4,29 +4,36 @@
 //! business logic for the TUI interface. It manages the application lifecycle,
 //! user interactions, and coordinates between different UI components.
 
-use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
+use std::{
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    },
+    time::Duration,
 };
 
+use heroku_mcp::{PluginDetail, PluginEngine};
 use heroku_registry::Registry;
-use heroku_types::{ExecOutcome, Screen};
-use rat_focus::FocusBuilder;
+use heroku_types::{Effect, ExecOutcome, Modal, Msg, Route};
+use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
+use ratatui::layout::Rect;
 use serde_json::{Map as JsonMap, Value as JsonValue};
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
-use crate::{
-    start_palette_execution,
-    ui::{
-        components::{
-            builder::BuilderState,
-            help::HelpState,
-            logs::{LogsState, state::LogEntry},
-            palette::{PaletteState, providers::RegistryBackedProvider, state::ValueProvider},
-            table::TableState,
-        },
-        theme,
+use crate::ui::components::{
+    BrowserComponent, HelpComponent, PluginsComponent, TableComponent, logs::LogDetailsComponent, nav_bar::VerticalNavBarState,
+    plugins::PluginsDetailsComponent,
+};
+use crate::ui::{
+    components::{
+        browser::BrowserState,
+        component::Component,
+        help::HelpState,
+        logs::{LogsState, state::LogEntry},
+        palette::{PaletteComponent, PaletteState, providers::RegistryBackedProvider, state::ValueProvider},
+        plugins::PluginsState,
+        table::TableState,
     },
+    theme,
 };
 
 /// Cross-cutting shared context owned by the App.
@@ -34,60 +41,59 @@ use crate::{
 /// Holds runtime-wide objects like the command registry and configuration
 /// flags. This avoids threading multiple references through components and
 /// helps reduce borrow complexity.
+#[derive(Debug)]
 pub struct SharedCtx {
     /// Global Heroku command registry
-    pub registry: Registry,
+    pub registry: Arc<Mutex<Registry>>,
     /// Global debug flag (from env)
     pub debug_enabled: bool,
     /// Value providers for suggestions
     pub providers: Vec<Box<dyn ValueProvider>>,
     /// Active UI theme (Dracula by default) loaded from env
     pub theme: Box<dyn theme::Theme>,
+    /// MCP plugin engine (None until initialized in main.rs)
+    pub plugin_engine: Arc<PluginEngine>,
 }
 
 impl SharedCtx {
-    pub fn new(registry: Registry) -> Self {
+    pub fn new(registry: Arc<Mutex<Registry>>, plugin_engine: Arc<PluginEngine>) -> Self {
         let debug_enabled = std::env::var("DEBUG")
             .map(|v| !v.is_empty() && v != "0" && v.to_lowercase() != "false")
             .unwrap_or(false);
-        // Add registry-backed provider with a small TTL cache
-        let providers: Vec<Box<dyn ValueProvider>> = vec![Box::new(RegistryBackedProvider::new(
-            std::sync::Arc::new(registry.clone()),
-            std::time::Duration::from_secs(45),
-        ))];
+        // Add a registry-backed provider with a small TTL cache
+        let providers: Vec<Box<dyn ValueProvider>> = vec![Box::new(RegistryBackedProvider::new(Duration::from_secs(45)))];
         Self {
             registry,
             debug_enabled,
             providers,
             theme: theme::load_from_env(),
+            plugin_engine,
         }
     }
 }
 
 pub struct App<'a> {
-    /// Current primary route
-    pub route: Screen,
     /// Shared, cross-cutting context (registry, config)
     pub ctx: SharedCtx,
     /// State for the command palette input
     pub palette: PaletteState,
-    /// Builder modal state
-    pub builder: BuilderState,
+    /// Command browser state
+    pub browser: BrowserState,
     /// Table modal state
     pub table: TableState<'a>,
     /// Help modal state
     pub help: HelpState,
+    /// Plugins state (MCP management)
+    pub plugins: PluginsState,
     /// Application logs and status messages
     pub logs: LogsState,
+    /// Vertical navigation bar state (left rail)
+    pub nav_bar: VerticalNavBarState,
     // moved to ctx: dry_run, debug_enabled, providers
     /// Whether a command is currently executing
     pub executing: bool,
     /// Animation frame for the execution throbber
     pub throbber_idx: usize,
-    /// Sender for async execution results
-    pub exec_sender: UnboundedSender<ExecOutcome>,
-    /// Receiver for async execution results
-    pub exec_receiver: UnboundedReceiver<ExecOutcome>,
     /// Active execution count used by the event pump to decide whether to
     /// animate
     pub active_exec_count: Arc<AtomicUsize>,
@@ -103,104 +109,21 @@ pub struct App<'a> {
     pub pagination_history: Vec<Option<String>>,
     /// Initial Range header used (if any)
     pub initial_range: Option<String>,
-    /// Internal dirty flag to indicate UI should re-render
-    dirty: bool,
+    /// Current main view component
+    pub main_view: Option<Box<dyn Component>>,
+    /// Currently open modal component
+    pub open_modal: Option<Box<dyn Component>>,
+    /// Global focus tree for keyboard/mouse traversal
+    pub focus: Focus,
+    // the widget_id of the focus just before a modal is opened
+    transient_focus_id: Option<usize>,
+    /// Container focus flag for the top-level app focus scope
+    app_container_focus: FocusFlag,
+    /// Currently active main route for dynamic focus ring building
+    current_route: Route,
+    /// Currently open modal kind (when Some, modal owns focus)
+    open_modal_kind: Option<Modal>,
 }
-
-impl<'a> App<'a> {
-    /// Gets the available range fields for the currently selected command
-    pub fn available_ranges(&self) -> Vec<String> {
-        if let Some(r) = &self.last_command_ranges
-            && !r.is_empty()
-        {
-            return r.clone();
-        }
-        self.builder.available_ranges()
-    }
-}
-
-impl App<'_> {
-    /// Marks the application state as changed, signaling a redraw is needed.
-    pub fn mark_dirty(&mut self) {
-        self.dirty = true;
-    }
-
-    /// Returns whether the application is currently marked dirty.
-    pub fn is_dirty(&self) -> bool {
-        self.dirty
-    }
-
-    /// Returns the dirty state and resets it to clean in one call.
-    pub fn take_dirty(&mut self) -> bool {
-        let was_dirty = self.dirty;
-        self.dirty = false;
-        was_dirty
-    }
-}
-
-/// Messages that can be sent to update the application state.
-///
-/// This enum defines all the possible user actions and system events
-/// that can trigger state changes in the application.
-#[derive(Debug, Clone)]
-pub enum Msg {
-    /// Toggle the help modal visibility
-    ToggleHelp,
-    /// Toggle the table modal visibility
-    ToggleTable,
-    /// Toggle the builder modal visibility
-    ToggleBuilder,
-    /// Close any currently open modal
-    CloseModal,
-    /// Execute the current command
-    Run,
-    /// Copy the current command to clipboard
-    CopyCommand,
-    /// Periodic UI tick (e.g., throbbers)
-    Tick,
-    /// Terminal resized
-    Resize(u16, u16),
-    /// Background execution completed with outcome
-    ExecCompleted(ExecOutcome),
-    // Logs interactions
-    /// Move log selection cursor up
-    LogsUp,
-    /// Move log selection cursor down
-    LogsDown,
-    /// Extend selection upwards (Shift+Up)
-    LogsExtendUp,
-    /// Extend selection downwards (Shift+Down)
-    LogsExtendDown,
-    /// Open details for the current selection
-    LogsOpenDetail,
-    /// Close details view and return to list
-    LogsCloseDetail,
-    /// Copy current selection (redacted)
-    LogsCopy,
-    /// Toggle pretty/raw for single API response
-    LogsTogglePretty,
-}
-
-/// Side effects that can be triggered by state changes.
-///
-/// This enum defines actions that should be performed as a result
-/// of state changes, such as copying to clipboard or showing notifications.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(clippy::enum_variant_names)]
-pub enum Effect {
-    /// Request to copy the current command to clipboard
-    CopyCommandRequested,
-    /// Request to copy the current logs selection (already rendered/redacted)
-    CopyLogsRequested(String),
-    /// Request the next page using the Raw Next-Range header
-    NextPageRequested(String),
-    /// Request the previous page using the prior Range header, if any
-    PrevPageRequested,
-    /// Request the first page using the initial Range header (or none)
-    FirstPageRequested,
-}
-
-// Legacy MainFocus removed; focus is handled via ui::focus::FocusStore
 
 impl App<'_> {
     /// Creates a new application instance with the given registry.
@@ -215,27 +138,25 @@ impl App<'_> {
     ///
     /// # Returns
     ///
-    /// A new App instance with initialized state.
+    /// A new App instance with an initialized state.
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// // Requires constructing a full Registry and App; ignored in doctests.
     /// ```
-    pub fn new(registry: heroku_registry::Registry) -> Self {
-        let (exec_sender, exec_receiver) = unbounded_channel();
+    pub fn new(registry: Arc<Mutex<Registry>>, engine: Arc<PluginEngine>) -> Self {
         let mut app = Self {
-            route: Screen::default(),
-            ctx: SharedCtx::new(registry),
-            builder: BuilderState::default(),
+            ctx: SharedCtx::new(Arc::clone(&registry), engine),
+            browser: BrowserState::new(Arc::clone(&registry)),
             logs: LogsState::default(),
             help: HelpState::default(),
+            plugins: PluginsState::new(),
             table: TableState::default(),
-            palette: PaletteState::default(),
+            palette: PaletteState::new(Arc::clone(&registry)),
+            nav_bar: VerticalNavBarState::defaults_for_views(),
             executing: false,
             throbber_idx: 0,
-            exec_sender,
-            exec_receiver,
             active_exec_count: Arc::new(AtomicUsize::new(0)),
             last_pagination: None,
             last_command_ranges: None,
@@ -243,19 +164,20 @@ impl App<'_> {
             last_body: None,
             pagination_history: Vec::new(),
             initial_range: None,
-            dirty: false,
+            main_view: Some(Box::new(PaletteComponent::default())),
+            open_modal: None,
+            focus: Focus::default(),
+            transient_focus_id: None,
+            app_container_focus: FocusFlag::named("app.container"),
+            current_route: Route::Palette,
+            open_modal_kind: None,
         };
-        app.builder.set_all_commands(app.ctx.registry.commands.clone());
-        app.palette.set_all_commands(app.ctx.registry.commands.clone());
-        app.builder.update_browser_filtered();
-        // Initialize rat-focus: start with the palette focused at root
-        {
-            let mut focus_builder = FocusBuilder::new(None);
-            focus_builder.widget(&app.palette);
-            focus_builder.widget(&app.logs);
-            let f = focus_builder.build();
-            f.focus(&app.palette);
-        }
+        app.browser.update_browser_filtered();
+
+        // Initialize rat-focus and set a sensible starting focus inside the palette
+        app.focus = FocusBuilder::build_for(&app);
+        app.focus.focus(&app.palette);
+
         app
     }
 
@@ -263,11 +185,12 @@ impl App<'_> {
     ///
     /// This method processes messages and updates the application state
     /// accordingly. It handles user interactions, navigation, and state
-    /// changes.
+    /// changes. The method delegates to specialized handlers for different
+    /// types of messages to keep the logic organized and maintainable.
     ///
     /// # Arguments
     ///
-    /// * `msg` - The message to process
+    /// * `message` - The message to process
     ///
     /// # Returns
     ///
@@ -278,117 +201,473 @@ impl App<'_> {
     /// ```rust,ignore
     /// // Example requires real App/Msg types; ignored to avoid compile in doctests.
     /// ```
-    pub fn update(&mut self, msg: Msg) -> Vec<Effect> {
-        let mut effects = Vec::new();
-        match msg {
-            Msg::Tick => {
-                // Animate spinner while executing or while provider-backed suggestions are loading
-                if self.executing || self.palette.is_provider_loading() {
-                    let before = self.throbber_idx;
-                    self.throbber_idx = (self.throbber_idx + 1) % 10;
-                    if self.throbber_idx != before {
-                        self.mark_dirty();
-                    }
-                }
-                // If provider-backed suggestions are loading and the popup is open,
-                // rebuild suggestions to pick up newly cached results without requiring
-                // another keypress.
-                if self.palette.is_suggestions_open() && self.palette.is_provider_loading() {
-                    let SharedCtx {
-                        registry, providers, ..
-                    } = &self.ctx;
-                    self.palette
-                        .apply_build_suggestions(registry, providers, &*self.ctx.theme);
-                    // Suggestions UI likely changed (new results); request redraw
-                    self.mark_dirty();
-                }
-            }
-            Msg::Resize(..) => {
-                // No-op for now; placeholder to enable TEA-style event
-                self.mark_dirty();
-            }
-            Msg::ToggleHelp => {
-                let spec = if self.builder.is_visible() {
-                    self.builder.selected_command()
-                } else {
-                    self.palette.selected_command()
-                };
-                self.help.toggle_visibility(spec.cloned());
-                self.mark_dirty();
-            }
-            Msg::ToggleTable => {
-                self.table.toggle_show();
-                self.mark_dirty();
-            }
-            Msg::ToggleBuilder => {
-                self.builder.toggle_visibility();
-                if self.builder.is_visible() {
-                    self.builder.normalize_focus();
-                }
-                self.mark_dirty();
-            }
-            Msg::CloseModal => {
-                self.help.set_visibility(false);
-                self.table.apply_visible(false);
-                self.builder.apply_visibility(false);
-                self.mark_dirty();
-            }
-            Msg::Run => {
-                // always execute from palette
-                if !self.palette.is_input_empty() {
-                    match start_palette_execution(self) {
-                        // Execution started successfully
-                        Ok(_) => {
-                            let input = &self.palette.input();
-                            self.logs.entries.push(format!("Running: {}", input));
-                            self.logs.rich_entries.push(LogEntry::Text {
-                                level: Some("info".into()),
-                                msg: format!("Running: {}", input),
-                            });
-                            self.mark_dirty();
-                        }
-                        Err(e) => {
-                            self.palette.apply_error(e);
-                            self.mark_dirty();
-                        }
-                    }
-                }
-            }
-            Msg::CopyCommand => {
-                effects.push(Effect::CopyCommandRequested);
-            }
-            Msg::ExecCompleted(out) => {
-                let raw = out.log;
-                // Keep executing=true if other executions are still active
-                let still_active = self.active_exec_count.load(Ordering::Relaxed) > 0;
-                self.executing = still_active;
-                // Pre-redact for list display to avoid per-frame redaction
-                self.logs.entries.push(heroku_util::redact_sensitive(&raw));
-                self.logs.rich_entries.push(LogEntry::Api {
-                    status: 0,
-                    raw,
-                    json: out.result_json.clone(),
-                });
-                let log_len = self.logs.entries.len();
-                if log_len > 500 {
-                    let _ = self.logs.entries.drain(0..log_len - 500);
-                }
-                let rich_len = self.logs.rich_entries.len();
-                if rich_len > 500 {
-                    let _ = self.logs.rich_entries.drain(0..rich_len - 500);
-                }
-                self.table.apply_result_json(out.result_json, &*self.ctx.theme);
-                self.table.apply_visible(out.open_table);
-                // Update last seen pagination info for the table/pagination component
-                self.last_pagination = out.pagination;
-                // Clear palette input and suggestion state
-                self.palette.reduce_clear_all();
-                self.mark_dirty();
-            }
+    pub fn update(&mut self, message: Msg) -> Vec<Effect> {
+        match message {
+            Msg::Tick => self.handle_tick_message(),
+            Msg::Resize(..) => vec![],
+            Msg::CopyToClipboard(text) => vec![Effect::CopyToClipboardRequested(text)],
+            Msg::ExecCompleted(execution_outcome) => self.handle_execution_completion(execution_outcome),
             // Placeholder handlers for upcoming logs features
-            Msg::LogsUp | Msg::LogsDown | Msg::LogsExtendUp | Msg::LogsExtendDown => {}
-            Msg::LogsOpenDetail | Msg::LogsCloseDetail | Msg::LogsCopy | Msg::LogsTogglePretty => {}
+            Msg::LogsUp | Msg::LogsDown | Msg::LogsExtendUp | Msg::LogsExtendDown => vec![],
+            Msg::LogsOpenDetail | Msg::LogsCloseDetail | Msg::LogsCopy | Msg::LogsTogglePretty => vec![],
         }
-        effects
+    }
+
+    /// Handles tick messages for periodic updates and animations.
+    ///
+    /// This method manages periodic tasks such as animating the execution
+    /// throbber, refreshing plugin statuses, updating logs in follow mode,
+    /// and rebuilding suggestions when provider-backed results are available.
+    ///
+    /// # Arguments
+    ///
+    fn handle_tick_message(&mut self) -> Vec<Effect> {
+        // Animate spinner while executing or while provider-backed suggestions are loading
+        if self.executing || self.palette.is_provider_loading() {
+            let previous_throbber_index = self.throbber_idx;
+            self.throbber_idx = (self.throbber_idx + 1) % 10;
+            if self.throbber_idx != previous_throbber_index {}
+        }
+
+        // Periodically refresh plugin statuses when overlay is visible
+        if self.plugins.table.should_refresh() {
+            return vec![Effect::PluginsRefresh];
+        }
+
+        // If provider-backed suggestions are loading and the popup is open,
+        // rebuild suggestions to pick up newly cached results without requiring
+        // another keypress
+        if self.palette.is_suggestions_open() && self.palette.is_provider_loading() {
+            let SharedCtx { providers, .. } = &self.ctx;
+            self.palette.apply_build_suggestions(providers, &*self.ctx.theme);
+        }
+        vec![]
+    }
+
+    /// Handles execution completion messages and processes the results.
+    ///
+    /// This method processes the results of command execution, including
+    /// plugin-specific responses, logs updates, and general command results.
+    /// It handles special plugin responses and falls back to general result
+    /// processing for regular commands.
+    ///
+    /// # Arguments
+    ///
+    /// * `execution_outcome` - The result of the command execution
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the execution was handled as a special case (plugin response)
+    /// and the caller should return early, `false` if normal processing should continue.
+    fn handle_execution_completion(&mut self, execution_outcome: Box<ExecOutcome>) -> Vec<Effect> {
+        let execution_outcome = *execution_outcome;
+        // Keep executing=true if other executions are still active
+        let still_executing = self.active_exec_count.load(Ordering::Relaxed) > 0;
+        self.executing = still_executing;
+        match execution_outcome {
+            ExecOutcome::Http(..) => self.process_general_execution_result(execution_outcome),
+            ExecOutcome::Mcp(log, value) => self.process_mcp_execution_result(log, value),
+            ExecOutcome::PluginDetailLoad(name, result) => self.handle_plugin_detail_load(name, result),
+            ExecOutcome::PluginDetail(log, maybe_detail) => self.handle_plugin_detail(log, maybe_detail),
+            ExecOutcome::PluginsRefresh(log, maybe_plugins) => self.handle_plugin_refresh_response(log, maybe_plugins),
+            ExecOutcome::Log(log) => {
+                self.logs.entries.push(log);
+                vec![]
+            }
+            _ => vec![],
+        }
+    }
+
+    /// Handles plugin details responses from command execution.
+    ///
+    /// # Arguments
+    ///
+    /// * `log` - The raw log output for redaction
+    /// * `maybe_detail` - The plugin detail to apply
+    ///
+    /// # Returns
+    ///
+    /// Returns `Vec<Effect>` if follow up effects are needed
+    fn handle_plugin_detail(&mut self, log: String, maybe_detail: Option<PluginDetail>) -> Vec<Effect> {
+        self.logs.entries.push(log);
+        let Some(detail) = maybe_detail else { return vec![] };
+        if let Some(state) = self.plugins.details.as_mut()
+            && state.selected_plugin().is_some_and(|selected| selected == detail.name)
+        {
+            state.apply_detail(detail.clone());
+        }
+
+        self.plugins.table.update_item(detail);
+
+        vec![]
+    }
+
+    fn handle_plugin_detail_load(&mut self, name: String, result: Result<PluginDetail, String>) -> Vec<Effect> {
+        match result {
+            Ok(detail) => {
+                self.logs.entries.push(format!("Plugins: loaded details for '{name}'"));
+                if let Some(state) = self.plugins.details.as_mut()
+                    && state.selected_plugin().is_some_and(|selected| selected == name)
+                {
+                    state.apply_detail(detail.clone());
+                }
+                self.plugins.table.update_item(detail);
+            }
+            Err(error) => {
+                self.logs
+                    .entries
+                    .push(format!("Plugins: failed to load details for '{name}': {error}"));
+                if let Some(state) = self.plugins.details.as_mut()
+                    && state.selected_plugin().is_some_and(|selected| selected == name)
+                {
+                    state.mark_error(error);
+                }
+            }
+        }
+
+        vec![]
+    }
+
+    /// Handles plugin refresh responses from command execution.
+    ///
+    /// # Arguments
+    ///
+    /// * `log` - The raw log output for redaction
+    /// * `plugin_updates` - The updates to apply
+    ///
+    /// # Returns
+    ///
+    /// Returns `Vec<Effect>` if follow up effects are needed
+    fn handle_plugin_refresh_response(&mut self, log: String, plugin_updates: Option<Vec<PluginDetail>>) -> Vec<Effect> {
+        self.logs.entries.push(log);
+        let Some(updated_plugins) = plugin_updates else {
+            return vec![];
+        };
+        self.plugins.table.replace_items(updated_plugins);
+        vec![]
+    }
+
+    /// Processes general command execution results (non-plugin specific).
+    ///
+    /// This method handles the standard processing of command results including
+    /// logging, table updates, and pagination information.
+    ///
+    /// # Arguments
+    ///
+    /// * `execution_outcome` - The result of the command execution
+    fn process_general_execution_result(&mut self, execution_outcome: ExecOutcome) -> Vec<Effect> {
+        let ExecOutcome::Http(log, value, maybe_pagination, open_table) = execution_outcome else {
+            return vec![];
+        };
+
+        // nothing to do
+        if !open_table || (log.is_empty() && value.is_null()) {
+            return vec![];
+        }
+        let (summary, status_code) = summarize_execution_outcome(self.last_spec.as_ref(), &log);
+
+        let normalized_value = Self::normalize_result_payload(value);
+
+        self.logs.entries.push(summary);
+        self.logs.rich_entries.push(LogEntry::Api {
+            status: status_code.unwrap_or(0),
+            raw: log,
+            json: Some(normalized_value.clone()),
+        });
+
+        self.trim_logs_if_needed();
+
+        if open_table {
+            self.table.apply_result_json(Some(normalized_value), &*self.ctx.theme);
+            self.table.normalize();
+            self.last_pagination = maybe_pagination;
+            self.palette.reduce_clear_all();
+
+            return vec![Effect::ShowModal(Modal::Results)];
+        }
+
+        vec![]
+    }
+
+    fn process_mcp_execution_result(&mut self, log: String, value: JsonValue) -> Vec<Effect> {
+        let label = command_label(self.last_spec.as_ref());
+        let success = if log.contains("failed") { "failed" } else { "succeeded" };
+        let summary = format!("{} - {}", label, success);
+
+        let normalized_value = Self::normalize_result_payload(value);
+        let raw_payload = Self::stringify_result_payload(&normalized_value);
+
+        self.logs.entries.push(summary);
+        self.logs.rich_entries.push(LogEntry::MCP {
+            raw: raw_payload,
+            json: Some(normalized_value.clone()),
+        });
+        self.trim_logs_if_needed();
+
+        if normalized_value.is_object() || normalized_value.is_array() {
+            self.table.apply_result_json(Some(normalized_value), &*self.ctx.theme);
+            self.table.normalize();
+            self.palette.reduce_clear_all();
+            return vec![Effect::ShowModal(Modal::Results)];
+        }
+
+        vec![]
+    }
+
+    /// Normalize execution payloads to ensure single-key collections render in the results table.
+    ///
+    /// Some APIs return objects shaped as `{ "items": [ ... ] }`. The table expects an array at
+    /// the root level, so this helper unwraps objects that meet this pattern. All other payloads
+    /// are returned unchanged.
+    fn normalize_result_payload(value: JsonValue) -> JsonValue {
+        if let JsonValue::Object(map) = &value {
+            if map.len() == 1 {
+                if let Some(inner_value) = map.values().next() {
+                    if inner_value.is_array() {
+                        return inner_value.clone();
+                    }
+                }
+            }
+        }
+        value
+    }
+
+    /// Produce a human-readable string representation of a JSON payload for logging.
+    fn stringify_result_payload(value: &JsonValue) -> String {
+        match value {
+            JsonValue::String(text) => text.clone(),
+            _ => value.to_string(),
+        }
+    }
+
+    /// Trims log entries if they exceed the maximum allowed size.
+    ///
+    /// This method maintains reasonable memory usage by limiting the number
+    /// of log entries stored in memory.
+    fn trim_logs_if_needed(&mut self) {
+        const MAX_LOG_ENTRIES: usize = 500;
+
+        let log_length = self.logs.entries.len();
+        if log_length > MAX_LOG_ENTRIES {
+            let _ = self.logs.entries.drain(0..log_length - MAX_LOG_ENTRIES);
+        }
+
+        let rich_log_length = self.logs.rich_entries.len();
+        if rich_log_length > MAX_LOG_ENTRIES {
+            let _ = self.logs.rich_entries.drain(0..rich_log_length - MAX_LOG_ENTRIES);
+        }
+    }
+
+    /// Update the current main route for focus building.
+    pub fn set_current_route(&mut self, route: Route) {
+        let (view, state): (Box<dyn Component>, Box<&dyn HasFocus>) = match route {
+            Route::Browser => (Box::new(BrowserComponent::default()), Box::new(&self.browser)),
+            Route::Palette => (Box::new(PaletteComponent::default()), Box::new(&self.palette)),
+            Route::Plugins => (Box::new(PluginsComponent::default()), Box::new(&self.plugins)),
+        };
+
+        self.current_route = self.nav_bar.set_route(route);
+        self.main_view = Some(view);
+        self.focus = FocusBuilder::build_for(self);
+        self.focus.focus(*state);
+    }
+
+    /// Update the open modal kind (use None to clear).
+    pub fn set_open_modal_kind(&mut self, modal: Option<Modal>) {
+        let previous = self.open_modal_kind.clone();
+        if let Some(modal_kind) = modal.clone() {
+            let modal_view: Box<dyn Component> = match modal_kind {
+                Modal::Help => Box::new(HelpComponent::default()),
+                Modal::Results => Box::new(TableComponent::default()),
+                Modal::LogDetails => Box::new(LogDetailsComponent::default()),
+                Modal::PluginDetails => Box::new(PluginsDetailsComponent::default()),
+            };
+            self.open_modal = Some(modal_view);
+            // save the current focus to restore when the modal is closed
+            self.transient_focus_id = self.focus.focused().and_then(|f| Some(f.widget_id()));
+        } else {
+            self.open_modal = None;
+        }
+        self.open_modal_kind = modal;
+
+        if matches!(self.open_modal_kind, Some(Modal::PluginDetails)) {
+            self.plugins.ensure_details_state();
+        }
+
+        if matches!(previous, Some(Modal::PluginDetails)) && !matches!(self.open_modal_kind, Some(Modal::PluginDetails)) {
+            self.plugins.clear_details_state();
+        }
+    }
+
+    pub fn restore_focus(&mut self) {
+        if let Some(id) = self.transient_focus_id
+            && self.open_modal.is_none()
+        {
+            self.focus.by_widget_id(id);
+            self.transient_focus_id = None;
+        } else {
+            self.focus.first();
+        }
+    }
+}
+
+const EXECUTION_SUMMARY_LIMIT: usize = 160;
+
+fn summarize_execution_outcome(command_spec: Option<&heroku_registry::CommandSpec>, raw_log: &str) -> (String, Option<u16>) {
+    let label = command_label(command_spec);
+    let trimmed_log = raw_log.trim();
+
+    if trimmed_log.starts_with("Plugins:") {
+        let sanitized = heroku_util::redact_sensitive(trimmed_log);
+        return (sanitized, None);
+    }
+
+    if let Some(error_message) = trimmed_log.strip_prefix("Error:") {
+        let redacted = heroku_util::redact_sensitive(error_message.trim());
+        let truncated = truncate_for_summary(&redacted, EXECUTION_SUMMARY_LIMIT);
+        let summary = format!("{} - failed: {}", label, truncated);
+        return (summary, None);
+    }
+
+    let status_line = trimmed_log.lines().next().unwrap_or_default().trim();
+    let status_code = status_line.split_whitespace().next().and_then(|code| code.parse::<u16>().ok());
+
+    let success = if status_code.is_some_and(|c| c.clamp(200, 399) == c) {
+        "success"
+    } else {
+        "failed"
+    };
+    let summary = if status_line.is_empty() {
+        format!("{} - {}", label, success)
+    } else {
+        let sanitized_status = heroku_util::redact_sensitive(status_line);
+        format!("{} - {} ({})", label, success, sanitized_status)
+    };
+
+    (summary, status_code)
+}
+
+fn command_label(command_spec: Option<&heroku_registry::CommandSpec>) -> String {
+    match command_spec {
+        Some(spec) if spec.name.is_empty() => spec.group.clone(),
+        Some(spec) => format!("{} {}", spec.group, spec.name),
+        None => "Command".to_string(),
+    }
+}
+
+fn truncate_for_summary(text: &str, max_len: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max_len {
+        return trimmed.to_string();
+    }
+
+    // Reserve space for the trailing ellipsis ("...").
+    let target_len = max_len.saturating_sub(3);
+    let mut truncated = String::new();
+    for (idx, ch) in trimmed.chars().enumerate() {
+        if idx >= target_len {
+            break;
+        }
+        truncated.push(ch);
+    }
+    let trimmed_truncated = truncated.trim_end();
+    format!("{}...", trimmed_truncated)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use heroku_registry::CommandSpec;
+    use heroku_types::{ServiceId, command::HttpCommandSpec};
+
+    fn sample_spec() -> CommandSpec {
+        CommandSpec::new_http(
+            "apps".to_string(),
+            "info".to_string(),
+            String::new(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new(), None),
+        )
+    }
+
+    #[test]
+    fn summarize_success_includes_status_code() {
+        let spec = sample_spec();
+        let (summary, status) = summarize_execution_outcome(Some(&spec), "200 OK\n{\"foo\":\"bar\"}");
+
+        assert_eq!(summary, "apps info - success (200 OK)");
+        assert_eq!(status, Some(200));
+    }
+
+    #[test]
+    fn summarize_error_marks_failure_and_truncates() {
+        let spec = sample_spec();
+        let long_error = format!("Error: {}", "SensitiveToken123".repeat((EXECUTION_SUMMARY_LIMIT / 5) + 10));
+
+        let (summary, status) = summarize_execution_outcome(Some(&spec), &long_error);
+
+        assert!(summary.starts_with("apps info - failed: "));
+        assert!(summary.ends_with("..."));
+        assert_eq!(status, None);
+    }
+
+    #[test]
+    fn summarize_without_spec_uses_generic_label() {
+        let (summary, status) = summarize_execution_outcome(None, "200 OK\n{}");
+
+        assert_eq!(summary, "Command - success (200 OK)");
+        assert_eq!(status, Some(200));
+    }
+}
+
+impl HasFocus for App<'_> {
+    /// Build the top-level focus container for the application.
+    ///
+    /// Order matters: traversal follows the order widgets are added here.
+    fn build(&self, builder: &mut FocusBuilder) {
+        let tag = builder.start(self);
+        // If a modal is open, it is the sole focus scope.
+        if let Some(kind) = &self.open_modal_kind {
+            match kind {
+                Modal::Results => {
+                    builder.widget(&self.table);
+                }
+                Modal::LogDetails => {
+                    builder.widget(&self.logs);
+                }
+                Modal::PluginDetails | Modal::Help => {
+                    // no focusable fields; leave ring empty
+                }
+            }
+            builder.end(tag);
+            return;
+        }
+
+        // Otherwise, include the nav bar, active main view, and sibling logs for Tab
+        builder.widget(&self.nav_bar);
+
+        match self.current_route {
+            Route::Palette => {
+                builder.widget(&self.palette);
+                builder.widget(&self.logs);
+            }
+            Route::Browser => {
+                builder.widget(&self.browser);
+            }
+            Route::Plugins => {
+                builder.widget(&self.plugins);
+            }
+        }
+
+        builder.end(tag);
+    }
+
+    fn focus(&self) -> FocusFlag {
+        self.app_container_focus.clone()
+    }
+
+    fn area(&self) -> Rect {
+        Rect::default()
     }
 }

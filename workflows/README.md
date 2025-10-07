@@ -1,21 +1,30 @@
 # Workflows
 
-Place curated YAML/JSON workflows here. Example structure:
+Place curated YAML or JSON workflows here. Files are loaded recursively and must conform to the
+schema described in `specs/WORKFLOWS.md`. A minimal example:
 
 ```yaml
+workflow: app_with_db
+inputs:
+  app_name:
+    description: "Name for new app"
+    type: string
+  region:
+    provider: regions:list
+    select:
+      value_field: name
+      display_field: name
 steps:
   - id: create_app
-    op: http.post
-    params:
-      path: /apps
-      body:
-        name: my-app
-  - id: set_config
-    op: http.patch
-    depends_on: [create_app]
-    params:
-      path: /apps/{{ steps.create_app.response.name }}/config-vars
-      body:
-        FOO: bar
+    run: apps:create
+    body:
+      name: ${{ inputs.app_name }}
+      region: ${{ inputs.region }}
+  - id: confirm
+    run: apps:info
+    with:
+      app: ${{ inputs.app_name }}
 ```
 
+During the build, every workflow is parsed via `heroku_types::workflow::WorkflowDefinition` and
+bundled into the manifest. Validation errors surface with the offending file path.

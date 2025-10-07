@@ -30,6 +30,7 @@ pub const A_PURPLE: Color = Color::Rgb(0xB4, 0x8E, 0xAD); // #B48EAD
 // THEME.md authoritative aliases
 pub const BG_MAIN: Color = N0; // App/root background
 pub const BG_PANEL: Color = N1; // Secondary panels/cards/inputs
+pub const BG_MODAL_OVERLAY: Color = Color::Rgb(0x21, 0x26, 0x33); // Darkened overlay for modals
 pub const UI_BORDER: Color = N2; // Borders/dividers/scrollbars
 pub const TEXT_MUTED: Color = N3; // Ghost text/hints/placeholders
 
@@ -84,6 +85,7 @@ impl NordTheme {
                 selection_fg: TEXT_SELECTED,
                 // Focus underline/border
                 focus: ACCENT_TEAL,
+                modal_bg: BG_MODAL_OVERLAY,
 
                 // Scrollbars
                 scrollbar_track: UI_BORDER,
@@ -131,6 +133,7 @@ impl NordThemeHighContrast {
                 selection_bg: N3, // darker neutral surface selection
                 selection_fg: TEXT_SELECTED,
                 focus: ACCENT_DARK,
+                modal_bg: BG_MODAL_OVERLAY,
 
                 scrollbar_track: UI_BORDER,
                 scrollbar_thumb: ACCENT_DARK,

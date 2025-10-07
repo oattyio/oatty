@@ -36,8 +36,11 @@ A schema-driven Heroku CLI with both non-interactive and interactive TUI modes. 
 
 ## Environment
 - `HEROKU_API_KEY`: Bearer token for Heroku API (preferred over `~/.netrc`).
-- `DEBUG`: when truthy (non-empty, not `0`/`false`)
-- `RUST_LOG`: set to `info`/`debug` to see logs.
+- `HEROKU_LOG`: set log level for tracing output (`error`, `warn`, `info` [default], `debug`, `trace`).
+
+### Logging behavior
+- When running the TUI (no subcommands), tracing output to stderr is silenced while the TUI is active to prevent overlaying the UI. Logs from MCP plugins and internal components are routed to in-app log panes instead.
+- When running in CLI mode (with subcommands), logs follow `HEROKU_LOG` and are written to stderr as usual.
 
 ## Development
 - Workspace: `cli`, `tui`, `registry`, `engine`, `api`, `util`, `registry-gen`.
@@ -85,12 +88,21 @@ Generate a manifest file (bincode):
 
 ```rust
 use std::path::PathBuf;
-use heroku_registry_gen::write_manifest;
+use heroku_registry_gen::{io::ManifestInput, write_manifest};
+use heroku_types::ServiceId;
 
 fn main() -> anyhow::Result<()> {
-    let input = PathBuf::from("schemas/heroku-schema.json");
+    let schema = PathBuf::from("schemas/heroku-schema.json");
+    let workflows = Some(PathBuf::from("workflows"));
     let output = PathBuf::from("target/manifest.bin");
-    write_manifest(input, output)?;
+    write_manifest(
+        vec![ManifestInput {
+            input: schema,
+            service_id: ServiceId::CoreApi,
+        }],
+        workflows,
+        output,
+    )?;
     Ok(())
 }
 ```
@@ -99,12 +111,21 @@ Generate a manifest file (JSON):
 
 ```rust
 use std::path::PathBuf;
-use heroku_registry_gen::write_manifest_json;
+use heroku_registry_gen::{io::ManifestInput, write_manifest_json};
+use heroku_types::ServiceId;
 
 fn main() -> anyhow::Result<()> {
-    let input = PathBuf::from("schemas/heroku-schema.json");
+    let schema = PathBuf::from("schemas/heroku-schema.json");
+    let workflows = Some(PathBuf::from("workflows"));
     let output = PathBuf::from("target/manifest.json");
-    write_manifest_json(input, output)?;
+    write_manifest_json(
+        vec![ManifestInput {
+            input: schema,
+            service_id: ServiceId::CoreApi,
+        }],
+        workflows,
+        output,
+    )?;
     Ok(())
 }
 ```
@@ -168,3 +189,35 @@ flowchart LR
   - `dracula` (default), `dracula_hc`
   - `nord`, `nord_hc`
   - Example: `TUI_THEME=dracula cargo run -p heroku-cli`
+
+## Code Signing (macOS)
+To avoid repeated Keychain prompts (the CLI uses the macOS Keychain via `keyring`), sign the binary with a stable identity. You can use a self-signed certificate for local development or a Developer ID for distribution.
+
+- Create a self-signed identity (one-time):
+  - `KEYCHAIN_PASSWORD='<login password>' scripts/macos/create-dev-cert.sh "next-gen-cli-dev (LOCAL)"`
+  - The script imports both the certificate and private key, updates the keychain partition list when `KEYCHAIN_PASSWORD` is provided, and prints the codesign identity string.
+
+- Build and sign the binary:
+  - `cargo build -p heroku-cli`
+  - `NEXTGEN_CODESIGN_ID="<identity name>" NEXTGEN_CODESIGN_BIN=target/debug/heroku-cli scripts/macos/sign.sh`
+    - Optional variables: `NEXTGEN_ENTITLEMENTS` to override the entitlements path, `NEXTGEN_CODESIGN_TIMESTAMP=true|false` to force timestamping, `NEXTGEN_CODESIGN_HARDENED=false` (or comment the option) if you need to skip hardened runtime temporarily.
+
+- After the first secrets access prompt, adjust Keychain Access Control to avoid future prompts:
+  - Open Keychain Access → search for the item (service usually `heroku`).
+  - Double-click → Access Control tab → either allow all apps signed by your certificate or add the binary path explicitly.
+
+### Debugging signed binaries
+- Hardened runtime blocks debugger attachments unless `com.apple.security.get-task-allow` is present. For local debugging, set this entitlement to `true` in `macos/entitlements.plist` before signing:
+
+  ```xml
+  <key>com.apple.security.get-task-allow</key>
+  <true/>
+  ```
+
+- Re-sign the binary after changing entitlements. For release builds, remove or disable this entitlement to keep hardened runtime strict.
+
+- Gatekeeper (`spctl --assess`) will report self-signed binaries as “rejected”; the signing script already ignores that result. Developer ID builds will pass the assessment.
+
+- If signing fails with “item not found,” ensure the identity exists via `security find-identity -p codesigning -v ~/Library/Keychains/login.keychain-db` and that the keychain is unlocked and in your `security list-keychains` output.
+
+- For CI or releases, use a Developer ID certificate or coordinate a Sigstore workflow; self-signed identities are only intended for local development.

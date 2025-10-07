@@ -15,7 +15,6 @@ chrono = { workspace = true }
 heroku-types = { path = "../types" }
 reqwest = { workspace = true }
 heroku-api = { path = "../api" }
-heroku-registry = { path = "../registry" }
 serde_json = { workspace = true }
 percent-encoding = { workspace = true }
 

@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use heck::ToKebabCase;
-use heroku_types::{CommandFlag, CommandSpec, PositionalArgument, ServiceId};
+use heroku_types::{CommandFlag, CommandSpec, HttpCommandSpec, PositionalArgument, ServiceId};
+use heroku_util::{get_description, get_type, resolve_output_schema, sort_and_dedup_commands};
 use percent_encoding::percent_decode_str;
 use serde_json::Value;
 use std::{
@@ -78,11 +79,8 @@ pub fn derive_commands_from_schema(value: &Value, service_id: ServiceId) -> Resu
                 continue;
             };
             let title = link.get("title").and_then(Value::as_str).unwrap_or("").to_string();
-            let description = link
-                .get("description")
-                .and_then(Value::as_str)
-                .unwrap_or(&title)
-                .to_string();
+            let description = link.get("description").and_then(Value::as_str).unwrap_or(&title).to_string();
+            let output_schema = resolve_output_schema(link.get("targetSchema"), value);
 
             if let Some((_, action)) = classify_command(href, method) {
                 let (path_template, positional_args) = path_and_vars_with_help(href, value);
@@ -100,30 +98,12 @@ pub fn derive_commands_from_schema(value: &Value, service_id: ServiceId) -> Resu
                     }
                 }
 
-                commands.push(CommandSpec {
-                    group,
-                    name,
-                    summary: description,
-                    positional_args,
-                    flags,
-                    method: method.to_string(),
-                    path: path_template,
-                    ranges,
-                    service_id,
-                });
+                let http_spec = HttpCommandSpec::new(method.to_string(), path_template, service_id, ranges, output_schema);
+                commands.push(CommandSpec::new_http(group, name, description, positional_args, flags, http_spec));
             }
         }
     }
-
-    // multi-sort: group then name
-    commands.sort_by(|a, b| {
-        if a.group != b.group {
-            a.group.cmp(&b.group)
-        } else {
-            a.name.cmp(&b.name)
-        }
-    });
-    commands.dedup_by(|a, b| a.name == b.name && a.method == b.method && a.path == b.path);
+    sort_and_dedup_commands(&mut commands);
     // Two-pass provider resolution: build all commands, then resolve providers.
     // This enables 100% confidence verification using the constructed index.
     super::provider_resolver::resolve_and_infer_providers(&mut commands);
@@ -589,86 +569,6 @@ fn add_range_flags(ranges: &[String]) -> Vec<CommandFlag> {
     ]
 }
 
-/// Recursively resolves the description from a schema, following `$ref` or combining `anyOf`/`oneOf`/`allOf`.
-///
-/// # Arguments
-///
-/// * `schema` - The schema JSON `Value`.
-/// * `root` - The root JSON schema `Value`.
-///
-/// # Returns
-///
-/// An optional resolved description string.
-fn get_description(schema: &Value, root: &Value) -> Option<String> {
-    if let Some(ptr) = schema.get("$ref").and_then(Value::as_str) {
-        let ptr = ptr.strip_prefix('#').unwrap_or(ptr);
-        return root.pointer(ptr).and_then(|t| get_description(t, root));
-    }
-
-    if let Some(desc) = schema.get("description").and_then(Value::as_str) {
-        return Some(desc.to_string());
-    }
-
-    for key in ["anyOf", "oneOf"] {
-        if let Some(arr) = schema.get(key).and_then(Value::as_array) {
-            let descs: Vec<String> = arr.iter().filter_map(|item| get_description(item, root)).collect();
-            if !descs.is_empty() {
-                return Some(descs.join(" or "));
-            }
-        }
-    }
-
-    if let Some(arr) = schema.get("allOf").and_then(Value::as_array) {
-        let descs: Vec<String> = arr.iter().filter_map(|item| get_description(item, root)).collect();
-        if !descs.is_empty() {
-            return Some(descs.join(" and "));
-        }
-    }
-
-    None
-}
-
-/// Recursively resolves the type from a schema, handling `$ref`, direct types, or `anyOf`/`oneOf`.
-///
-/// # Arguments
-///
-/// * `schema` - The schema JSON `Value`.
-/// * `root` - The root JSON schema `Value`.
-///
-/// # Returns
-///
-/// The resolved type string, defaulting to "string".
-fn get_type(schema: &Value, root: &Value) -> String {
-    if let Some(ptr) = schema.get("$ref").and_then(Value::as_str) {
-        let ptr = ptr.strip_prefix('#').unwrap_or(ptr);
-        return root.pointer(ptr).map_or("string".to_string(), |t| get_type(t, root));
-    }
-
-    if let Some(ty) = schema.get("type") {
-        if let Some(s) = ty.as_str() {
-            return s.to_string();
-        }
-        if let Some(arr) = ty.as_array() {
-            let types: HashSet<String> = arr.iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
-            let types: HashSet<_> = types.into_iter().filter(|t| t != "null").collect();
-            if types.len() == 1 {
-                return types.into_iter().next().unwrap();
-            }
-        }
-    }
-
-    for key in ["anyOf", "oneOf"] {
-        if let Some(arr) = schema.get(key).and_then(Value::as_array) {
-            let types: HashSet<String> = arr.iter().map(|item| get_type(item, root)).collect();
-            if types.len() == 1 {
-                return types.into_iter().next().unwrap();
-            }
-        }
-    }
-
-    "string".to_string()
-}
-
 /// Recursively collects enum values from a schema, following `$ref` or combining `anyOf`/`oneOf`.
 ///
 /// # Arguments
@@ -751,7 +651,11 @@ mod tests {
         let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
         let spec = commands
             .iter()
-            .find(|c| c.method == "PATCH" && c.path == "/addons/{addon}/config")
+            .find(|c| {
+                c.http()
+                    .map(|http| http.method == "PATCH" && http.path == "/addons/{addon}/config")
+                    .unwrap_or(false)
+            })
             .expect("config:update command exists");
         let pos = spec.positional_args.iter().find(|a| a.name == "addon").unwrap();
         match &pos.provider {
@@ -775,7 +679,7 @@ mod tests {
         let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
         let spec = commands
             .iter()
-            .find(|c| c.method == "GET" && c.path == "/config")
+            .find(|c| c.http().map(|http| http.method == "GET" && http.path == "/config").unwrap_or(false))
             .expect("GET /config command exists");
         let flag = spec.flags.iter().find(|f| f.name == "app").unwrap();
         match &flag.provider {
@@ -795,23 +699,17 @@ mod tests {
         let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
         let spec = commands
             .iter()
-            .find(|c| c.method == "POST")
+            .find(|c| c.http().map(|http| http.method == "POST").unwrap_or(false))
             .expect("POST rotate command exists");
 
-        assert_eq!(spec.path, "/data/postgres/v1/{addon}/credentials/{cred_name}/rotate");
+        let http = spec.http().expect("HTTP spec available");
+        assert_eq!(http.path, "/data/postgres/v1/{addon}/credentials/{cred_name}/rotate");
 
         let arg_names: Vec<_> = spec.positional_args.iter().map(|a| a.name.as_str()).collect();
-        assert_eq!(
-            arg_names,
-            vec!["addon", "cred_name"],
-            "positional names derived from placeholders"
-        );
+        assert_eq!(arg_names, vec!["addon", "cred_name"], "positional names derived from placeholders");
 
         // Ensure command name does not include version segment
-        assert!(
-            !spec.name.contains(":v1:"),
-            "command name should ignore version segments"
-        );
+        assert!(!spec.name.contains(":v1:"), "command name should ignore version segments");
         assert!(
             spec.name.starts_with("postgres:credentials:rotate:"),
             "expected name to include resource path segments"
@@ -843,7 +741,7 @@ mod tests {
         let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
         let spec = commands
             .iter()
-            .find(|c| c.method == "PATCH")
+            .find(|c| c.http().map(|http| http.method == "PATCH").unwrap_or(false))
             .expect("PATCH command exists");
 
         // Should produce flags for name and force, with descriptions and required status
@@ -866,10 +764,14 @@ mod tests {
         }"#;
         let value: Value = serde_json::from_str(json).unwrap();
         let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
-        let spec = commands.iter().find(|c| c.method == "GET").expect("GET command exists");
+        let spec = commands
+            .iter()
+            .find(|c| c.http().map(|http| http.method == "GET").unwrap_or(false))
+            .expect("GET command exists");
 
         // Path should be normalized to use the ref name for the placeholder
-        assert_eq!(spec.path, "/teams/{team}/addons");
+        let http = spec.http().expect("HTTP spec available");
+        assert_eq!(http.path, "/teams/{team}/addons");
 
         // Positional should use the ref name
         let arg_names: Vec<_> = spec.positional_args.iter().map(|a| a.name.as_str()).collect();

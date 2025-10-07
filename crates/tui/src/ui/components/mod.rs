@@ -1,15 +1,18 @@
-//! UI components: palette, builder, help, table, pagination.
+//! UI components: palette, browser, help, table, pagination.
 
-pub mod builder;
+pub mod browser;
 pub mod component;
 pub mod help;
 pub mod logs;
+pub mod nav_bar;
 pub mod pagination;
 pub mod palette;
+pub mod plugins;
 pub mod table;
 
-pub use builder::BuilderComponent;
+pub use browser::BrowserComponent;
 pub use help::HelpComponent;
 pub use logs::LogsComponent;
 pub use pagination::PaginationComponent;
+pub use plugins::PluginsComponent;
 pub use table::TableComponent;

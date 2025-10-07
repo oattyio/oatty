@@ -233,8 +233,7 @@ pub fn run_step_repeating_with(step: &PreparedStep, ctx: &mut RunContext, runner
         if attempts >= max_attempts {
             let mut sr = single;
             sr.status = StepStatus::Failed;
-            sr.logs
-                .push(format!("repeat guard tripped at {} attempts; stopping", attempts));
+            sr.logs.push(format!("repeat guard tripped at {} attempts; stopping", attempts));
             sr.attempts = attempts;
             break sr;
         }
@@ -277,11 +276,7 @@ pub fn execute_workflow(spec: &WorkflowSpec, ctx: &mut RunContext) -> Vec<StepRe
 /// Execute all steps using a custom command runner.
 ///
 /// Use this to run real commands via `RegistryCommandRunner` or a custom implementation.
-pub fn execute_workflow_with_runner(
-    spec: &WorkflowSpec,
-    ctx: &mut RunContext,
-    runner: &dyn CommandRunner,
-) -> Vec<StepResult> {
+pub fn execute_workflow_with_runner(spec: &WorkflowSpec, ctx: &mut RunContext, runner: &dyn CommandRunner) -> Vec<StepResult> {
     let plan = prepare_plan(spec, ctx);
     let mut results = Vec::with_capacity(plan.steps.len());
     for step in plan.steps.iter() {
@@ -325,13 +320,7 @@ mod tests {
 
     struct EchoRunner;
     impl CommandRunner for EchoRunner {
-        fn run(
-            &self,
-            run: &str,
-            with: Option<&Value>,
-            body: Option<&Value>,
-            _ctx: &RunContext,
-        ) -> anyhow::Result<Value> {
+        fn run(&self, run: &str, with: Option<&Value>, body: Option<&Value>, _ctx: &RunContext) -> anyhow::Result<Value> {
             Ok(json!({
                 "cmd": run,
                 "with": with.cloned().unwrap_or(Value::Null),

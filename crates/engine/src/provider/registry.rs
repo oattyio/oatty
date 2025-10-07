@@ -1,12 +1,17 @@
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
-    sync::Mutex,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
-use heroku_registry::{CommandSpec, Registry};
+use anyhow::{Result, anyhow};
+use heroku_registry::{CommandSpec, Registry, find_by_group_and_cmd};
+use heroku_types::ExecOutcome;
 use serde_json::{Map as JsonMap, Value};
+use tokio::runtime::Runtime;
+
+use crate::ProviderRegistry;
 
 use super::{
     contract::{ProviderContract, ProviderReturns, ReturnField},
@@ -30,31 +35,38 @@ fn cache_key(provider_id: &str, args: &JsonMap<String, Value>) -> String {
 }
 
 pub struct RegistryProvider {
-    pub(crate) registry: Registry,
+    pub(crate) registry: Arc<Mutex<Registry>>,
     pub(crate) fetcher: Box<dyn ProviderValueFetcher>,
     pub(crate) cache_ttl: Duration,
     cache: Mutex<HashMap<String, CacheEntry>>,
     choices: Mutex<HashMap<String, FieldSelection>>, // persisted user choices
+    runtime: Arc<Runtime>,
 }
 
 impl RegistryProvider {
-    pub fn new(registry: Registry, fetcher: Box<dyn ProviderValueFetcher>, cache_ttl: Duration) -> Self {
-        Self {
+    pub fn new(registry: Arc<Mutex<Registry>>, fetcher: Box<dyn ProviderValueFetcher>, cache_ttl: Duration) -> Result<Self> {
+        let runtime = Runtime::new().map_err(|error| anyhow!("failed to create provider runtime: {error}"))?;
+
+        Ok(Self {
             registry,
             fetcher,
             cache_ttl,
             cache: Mutex::new(HashMap::new()),
             choices: Mutex::new(HashMap::new()),
-        }
+            runtime: Arc::new(runtime),
+        })
     }
 
-    pub fn with_default_http(registry: Registry, cache_ttl: Duration) -> Self {
+    pub fn with_default_http(registry: Arc<Mutex<Registry>>, cache_ttl: Duration) -> Result<Self> {
         Self::new(registry, Box::new(super::fetch::DefaultHttpFetcher), cache_ttl)
     }
 
-    fn resolve_spec(&self, provider_id: &str) -> Option<&CommandSpec> {
+    fn resolve_spec(&self, provider_id: &str) -> Option<CommandSpec> {
         let (group, name) = provider_id.split_once(':')?;
-        self.registry.find_by_group_and_cmd(group, name).ok()
+        self.registry
+            .lock()
+            .ok()
+            .and_then(|lock| find_by_group_and_cmd(&lock.commands, group, name).ok())
     }
 
     pub fn persist_choice(&self, provider_id: &str, selection: FieldSelection) {
@@ -68,8 +80,8 @@ impl RegistryProvider {
     }
 }
 
-impl crate::provider::ProviderRegistry for RegistryProvider {
-    fn fetch_values(&self, provider_id: &str, args: &JsonMap<String, Value>) -> anyhow::Result<Vec<Value>> {
+impl ProviderRegistry for RegistryProvider {
+    fn fetch_values(&self, provider_id: &str, args: &JsonMap<String, Value>) -> Result<Vec<Value>> {
         let key = cache_key(provider_id, args);
         if let Some(entry) = self.cache.lock().expect("cache lock").get(&key).cloned()
             && entry.fetched_at.elapsed() < self.cache_ttl
@@ -77,23 +89,28 @@ impl crate::provider::ProviderRegistry for RegistryProvider {
             return Ok(entry.items);
         }
 
-        if let Some((group, name)) = provider_id.split_once(':')
-            && let Ok(spec_ref) = self.registry.find_by_group_and_cmd(group, name)
-        {
-            let body = args.clone();
-            // Resolve path placeholders before exec
-            let mut spec_clone = spec_ref.clone();
+        let (group, name) = provider_id.split_once(':').ok_or(anyhow!("cannot split {}", provider_id))?;
+
+        let spec_ref = {
+            let registry_lock = self.registry.lock().map_err(|e| anyhow!(e.to_string()))?;
+            find_by_group_and_cmd(&registry_lock.commands, group, name)?
+        };
+        let body = args.clone();
+        // Resolve path placeholders before exec
+        let mut spec_clone = spec_ref.clone();
+        if let Some(http_spec) = spec_clone.http_mut() {
             if !args.is_empty() {
-                spec_clone.path = heroku_util::http_path_resolution::build_path(&spec_clone.path, &body);
+                http_spec.path = heroku_util::http_path_resolution::build_path(&http_spec.path, &body);
             }
-            let result = match tokio::runtime::Runtime::new() {
-                Ok(rt) => rt.block_on(async move { heroku_util::http_exec::exec_remote(&spec_clone, body).await }),
-                Err(e) => Err(format!("runtime init failed: {}", e)),
-            };
-            if let Ok(outcome) = result
-                && let Some(Value::Array(arr)) = outcome.result_json
-            {
-                let items = arr;
+        } else {
+            return Err(anyhow::anyhow!("provider '{}' is not backed by an HTTP command", provider_id));
+        }
+        let result = self
+            .runtime
+            .block_on(async move { heroku_util::http_exec::exec_remote(&spec_clone, body).await });
+
+        if let Some(ExecOutcome::Http(_, result, _, _)) = result.ok() {
+            if let Some(items) = result.as_array().cloned() {
                 self.cache.lock().expect("cache lock").insert(
                     key,
                     CacheEntry {
@@ -107,7 +124,7 @@ impl crate::provider::ProviderRegistry for RegistryProvider {
 
         let resolved_spec = self
             .resolve_spec(provider_id)
-            .ok_or_else(|| anyhow::anyhow!("unknown provider: {}", provider_id))?;
+            .ok_or_else(|| anyhow!("unknown provider: {}", provider_id))?;
         let items = self.fetcher.fetch_list(resolved_spec, args)?;
         self.cache.lock().expect("cache lock").insert(
             key,
@@ -120,22 +137,34 @@ impl crate::provider::ProviderRegistry for RegistryProvider {
     }
 
     fn get_contract(&self, provider_id: &str) -> Option<ProviderContract> {
-        self.resolve_spec(provider_id).map(|_| ProviderContract {
-            args: JsonMap::new(),
-            returns: ProviderReturns {
-                fields: vec![
-                    ReturnField {
-                        name: "id".into(),
-                        r#type: Some("string".into()),
-                        tags: vec!["id".into(), "identifier".into()],
-                    },
-                    ReturnField {
-                        name: "name".into(),
-                        r#type: Some("string".into()),
-                        tags: vec!["display".into(), "name".into()],
-                    },
-                ],
-            },
-        })
+        {
+            let registry = self.registry.lock().ok()?;
+            if let Some(contract) = registry.provider_contracts.get(provider_id) {
+                return Some(contract.clone());
+            }
+        }
+
+        self.resolve_spec(provider_id)?;
+        Some(default_provider_contract())
+    }
+}
+
+fn default_provider_contract() -> ProviderContract {
+    ProviderContract {
+        arguments: Vec::new(),
+        returns: ProviderReturns {
+            fields: vec![
+                ReturnField {
+                    name: "id".into(),
+                    r#type: Some("string".into()),
+                    tags: vec!["id".into(), "identifier".into()],
+                },
+                ReturnField {
+                    name: "name".into(),
+                    r#type: Some("string".into()),
+                    tags: vec!["display".into(), "name".into()],
+                },
+            ],
+        },
     }
 }

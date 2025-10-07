@@ -1,22 +1,40 @@
+workflow: app_with_db
+description: "Create an app, provision Postgres, and seed config."
+inputs:
+  app_name:
+    description: "Name for the application"
+    type: string
+  region:
+    provider: regions:list
+    select:
+      value_field: name
+      display_field: name
+    default:
+      from: literal
+      value: "us"
+  addon_plan:
+    description: "Heroku Postgres plan"
+    provider: addons:services:list
+    select:
+      value_field: name
+      display_field: name
 steps:
   - id: create_app
-    op: http.post
-    params:
-      path: /apps
-      body:
-        name: example-app
-  - id: provision_pg
-    op: http.post
-    depends_on: [create_app]
-    params:
-      path: /apps/{{ steps.create_app.response.name }}/addons
-      body:
-        plan: heroku-postgresql:hobby-dev
-  - id: set_config
-    op: http.patch
-    depends_on: [create_app]
-    params:
-      path: /apps/{{ steps.create_app.response.name }}/config-vars
-      body:
-        RUST_LOG: info
+    run: apps:create
+    body:
+      name: ${{ inputs.app_name }}
+      region: ${{ inputs.region }}
 
+  - id: add_pg
+    run: apps:addons:create
+    with:
+      app: ${{ inputs.app_name }}
+    body:
+      plan: ${{ inputs.addon_plan }}
+
+  - id: set_config
+    run: apps:config-vars:update
+    with:
+      app: ${{ inputs.app_name }}
+    body:
+      RUST_LOG: info

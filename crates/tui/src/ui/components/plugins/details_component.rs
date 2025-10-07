@@ -1,0 +1,564 @@
+//! Plugins details component for displaying rich plugin information in a modal overlay.
+
+use super::{PluginDetailsData, PluginDetailsModalState, PluginToolSummary};
+use crate::{
+    app::App,
+    ui::{
+        components::{component::Component, plugins::PluginDetailsLoadState},
+        theme::{Theme, theme_helpers as th},
+        utils::centered_rect,
+    },
+};
+use chrono::{DateTime, Local};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use heroku_mcp::{EnvVar, McpLogEntry, PluginDetail, PluginStatus};
+use heroku_types::Effect;
+use ratatui::{
+    Frame,
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Wrap},
+};
+use textwrap::wrap;
+
+const MODAL_WIDTH_PERCENT: u16 = 90;
+const MODAL_HEIGHT_PERCENT: u16 = 80;
+
+/// Renderable implementation of the plugin details modal, including tab navigation and
+/// lifecycle management shortcuts.
+#[derive(Debug, Default)]
+pub struct PluginsDetailsComponent;
+
+impl Component for PluginsDetailsComponent {
+    fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        let Some(details_state) = app.plugins.details.as_mut() else {
+            if matches!(key.code, KeyCode::Esc) {
+                effects.push(Effect::CloseModal);
+            }
+            return effects;
+        };
+
+        let control_pressed = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Esc => effects.push(Effect::CloseModal),
+            KeyCode::Up => {
+                if let PluginDetailsLoadState::Loaded(data) = details_state.load_state() {
+                    let total = data.logs.len();
+                    if total > 0 {
+                        details_state.scroll_logs_up(1);
+                    }
+                }
+            }
+            KeyCode::Down => {
+                if let PluginDetailsLoadState::Loaded(data) = details_state.load_state() {
+                    let total = data.logs.len();
+                    if total > 0 {
+                        // We don't know visible height here; clamp in render
+                        details_state.scroll_logs_down(1, total.saturating_sub(1));
+                    }
+                }
+            }
+            KeyCode::Char('r') if control_pressed => {
+                if let Some(name) = details_state.selected_plugin().map(ToOwned::to_owned) {
+                    details_state.begin_load(name.clone());
+                    effects.push(Effect::PluginsLoadDetail(name));
+                }
+            }
+            KeyCode::Char('r') => {
+                if let Some(name) = details_state.selected_plugin() {
+                    effects.push(Effect::PluginsRestart(name.to_string()));
+                }
+            }
+            KeyCode::Char('s') => {
+                if let Some(name) = details_state.selected_plugin() {
+                    effects.push(Effect::PluginsStart(name.to_string()));
+                }
+            }
+            KeyCode::Char('t') => {
+                if let Some(name) = details_state.selected_plugin() {
+                    effects.push(Effect::PluginsStop(name.to_string()));
+                }
+            }
+            _ => {}
+        }
+
+        effects
+    }
+
+    fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
+        let theme = &*app.ctx.theme;
+        let modal_area = centered_rect(MODAL_WIDTH_PERCENT, MODAL_HEIGHT_PERCENT, area);
+        frame.render_widget(Clear, modal_area);
+
+        let title = modal_title(app.plugins.details.as_ref());
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme.border_style(true))
+            .style(th::panel_style(theme))
+            .title(Span::styled(title, theme.text_secondary_style().add_modifier(Modifier::BOLD)));
+
+        let inner = block.inner(modal_area);
+        frame.render_widget(block, modal_area);
+
+        // First, split the full inner area into left (main) and right (tools) panes so the
+        // tools border can span the entire height of the modal contents.
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+            .split(inner);
+
+        // Draw a full-height left border for the tools pane
+        let tools_border_block = Block::default().borders(Borders::LEFT).border_style(theme.border_style(true));
+        let tools_inner = tools_border_block.inner(cols[1]);
+        frame.render_widget(tools_border_block, cols[1]);
+
+        // Then, split only the left pane vertically for header/content/footer
+        let left_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // header
+                Constraint::Min(6),    // content
+                Constraint::Length(1), // footer
+            ])
+            .split(cols[0]);
+
+        self.render_header(frame, left_layout[0], theme, app.plugins.details.as_ref());
+        self.render_content(frame, left_layout[1], theme, app.plugins.details.as_ref());
+
+        // Render tools list spanning the full right column height when data is loaded
+        if let Some(state) = app.plugins.details.as_ref() {
+            if let PluginDetailsLoadState::Loaded(data) = state.load_state() {
+                self.render_tools(frame, tools_inner, theme, data);
+            }
+        }
+
+        let hints = Line::from(self.get_hint_spans(app, true)).style(theme.text_muted_style());
+        frame.render_widget(Paragraph::new(hints), left_layout[2]);
+    }
+
+    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+        let theme = &*app.ctx.theme;
+        let mut spans = Vec::new();
+        if is_root {
+            spans.push(Span::styled("Hints: ", theme.text_muted_style()));
+        }
+        spans.extend([
+            Span::styled("Esc", theme.accent_emphasis_style()),
+            Span::styled(" Close  ", theme.text_muted_style()),
+            Span::styled("↑/↓", theme.accent_emphasis_style()),
+            Span::styled(" Scroll logs  ", theme.text_muted_style()),
+            Span::styled("Ctrl-R", theme.accent_emphasis_style()),
+            Span::styled(" Refresh  ", theme.text_muted_style()),
+        ]);
+
+        if let Some(details) = app.plugins.details.as_ref()
+            && matches!(details.load_state(), PluginDetailsLoadState::Loaded(_))
+        {
+            spans.extend([
+                Span::styled("R", theme.accent_emphasis_style()),
+                Span::styled(" Restart  ", theme.text_muted_style()),
+                Span::styled("S", theme.accent_emphasis_style()),
+                Span::styled(" Start  ", theme.text_muted_style()),
+                Span::styled("T", theme.accent_emphasis_style()),
+                Span::styled(" Stop  ", theme.text_muted_style()),
+            ]);
+        }
+
+        spans
+    }
+}
+
+impl PluginsDetailsComponent {
+    fn render_header(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, details_state: Option<&PluginDetailsModalState>) {
+        // Header remains unchanged
+        let mut lines = Vec::new();
+        if let Some(state) = details_state {
+            match state.load_state() {
+                PluginDetailsLoadState::Loaded(data) => {
+                    lines.push(self.header_line(theme, &data.detail));
+                    lines.push(self.sub_header_line(theme, &data.detail));
+                }
+                _ => {
+                    if let Some(name) = state.selected_plugin() {
+                        lines.push(Line::from(vec![
+                            Span::styled(name.to_string(), theme.accent_emphasis_style()),
+                            Span::styled(" (loading)", theme.text_muted_style()),
+                        ]));
+                    } else {
+                        lines.push(Line::from(Span::styled("No plugin selected", theme.text_muted_style())));
+                    }
+                }
+            }
+        } else {
+            lines.push(Line::from(Span::styled("No plugin selected", theme.text_muted_style())));
+        }
+
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
+    }
+
+    fn render_content(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, details_state: Option<&PluginDetailsModalState>) {
+        let Some(state) = details_state else {
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "Open plugin details from the table to view information",
+                    theme.text_muted_style(),
+                ))),
+                area,
+            );
+            return;
+        };
+
+        match state.load_state() {
+            PluginDetailsLoadState::Idle => frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "Select a plugin to load details",
+                    theme.text_muted_style(),
+                ))),
+                area,
+            ),
+            PluginDetailsLoadState::Loading => frame.render_widget(
+                Paragraph::new(Line::from(Span::styled("Loading plugin details…", theme.accent_primary_style()))),
+                area,
+            ),
+            PluginDetailsLoadState::Error(error) => frame.render_widget(
+                Paragraph::new(Line::from(vec![
+                    Span::styled("Failed to load details: ", theme.status_error()),
+                    Span::styled(error, theme.text_muted_style()),
+                ])),
+                area,
+            ),
+            PluginDetailsLoadState::Loaded(data) => {
+                // Left column: Overview, Health, Env, Logs stacked with horizontal rules
+                let left_chunks = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([
+                        Constraint::Length(8), // Overview approx
+                        Constraint::Length(1), // hrule
+                        Constraint::Length(3), // Health condensed
+                        Constraint::Length(1), // hrule
+                        Constraint::Min(6),    // Env table
+                        Constraint::Length(1), // hrule
+                        Constraint::Min(5),    // Logs (scrollable)
+                    ])
+                    .split(area);
+
+                self.render_overview(frame, left_chunks[0], theme, data);
+                self.render_hrule(frame, left_chunks[1], theme);
+                self.render_health(frame, left_chunks[2], theme, data);
+                self.render_hrule(frame, left_chunks[3], theme);
+                self.render_environment(frame, left_chunks[4], theme, data);
+                self.render_hrule(frame, left_chunks[5], theme);
+
+                // Logs: compute scroll window and render with scrollbar
+                let total = data.logs.len();
+                let logs_area = left_chunks[6];
+                let header_body = Layout::default()
+                    .direction(Direction::Vertical)
+                    .constraints([Constraint::Length(1), Constraint::Min(1)])
+                    .split(logs_area);
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled("Logs (recent)", theme.text_muted_style()))),
+                    header_body[0],
+                );
+
+                let body_area = header_body[1];
+                let visible = body_area.height as usize;
+                let max_scroll = total.saturating_sub(visible);
+                let offset = state.logs_scroll().min(max_scroll);
+                // Prepare visible items respecting offset
+                let items: Vec<ListItem> = data.logs.iter().map(|log| format_log(theme, log)).collect();
+                let end = (offset + visible).min(items.len());
+                let visible_items = if offset < end { items[offset..end].to_vec() } else { vec![] };
+                frame.render_widget(List::new(visible_items), body_area);
+
+                // Scrollbar at right of logs body
+                if total > visible {
+                    let mut sb_state = ScrollbarState::new(total).position(offset);
+                    let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                        .thumb_style(Style::default().fg(theme.roles().scrollbar_thumb))
+                        .track_style(Style::default().fg(theme.roles().scrollbar_track));
+                    frame.render_stateful_widget(sb, body_area, &mut sb_state);
+                }
+            }
+        }
+    }
+
+    fn render_overview(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, data: &PluginDetailsData) {
+        let detail = &data.detail;
+        let mut lines = Vec::new();
+
+        // Command: combine base and args to match mockup
+        let command = if let Some(args) = &detail.args {
+            format!("{} {}", detail.command_or_url, args)
+        } else {
+            detail.command_or_url.clone()
+        };
+        lines.push(self.label_value_line(theme, "Command", command));
+
+        // Transport with local/remote hint
+        let transport_hint = if detail.transport_type.to_lowercase().contains("stdio") {
+            "(local)"
+        } else {
+            "(remote)"
+        };
+        lines.push(self.label_value_line(theme, "Transport", format!("{} {}", detail.transport_type, transport_hint)));
+
+        // Tags
+        lines.push(self.label_value_line(
+            theme,
+            "Tags",
+            if detail.tags.is_empty() {
+                "-".into()
+            } else {
+                detail.tags.join(", ")
+            },
+        ));
+
+        // Actions inline per PLUGINS.md
+        lines.push(Line::from(vec![
+            Span::styled("Actions   ", theme.accent_emphasis_style()),
+            Span::styled("[R]", theme.accent_emphasis_style()),
+            Span::styled(" Restart   ", theme.text_muted_style()),
+            Span::styled("[S]", theme.accent_emphasis_style()),
+            Span::styled(" Start   ", theme.text_muted_style()),
+            Span::styled("[T]", theme.accent_emphasis_style()),
+            Span::styled(" Stop", theme.text_muted_style()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("           ", theme.accent_emphasis_style()),
+            Span::styled("[Ctrl-R]", theme.accent_emphasis_style()),
+            Span::styled(" Refresh", theme.text_muted_style()),
+        ]));
+
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
+    }
+
+    fn render_health(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, data: &PluginDetailsData) {
+        let detail = &data.detail;
+        let health = &detail.health;
+        let mut lines = Vec::new();
+
+        // First line: Health with icon and Handshake
+        let healthy_icon = if health.is_healthy() { "✓" } else { "✗" };
+        let healthy_text = if health.is_healthy() { "Healthy" } else { "Unhealthy" };
+        let latency = detail
+            .handshake_latency
+            .or(health.handshake_latency)
+            .map(|ms| format!("{ms}ms"))
+            .unwrap_or_else(|| "-".into());
+        lines.push(Line::from(vec![
+            Span::styled("Health: ", theme.accent_emphasis_style()),
+            Span::styled(
+                healthy_icon,
+                if health.is_healthy() {
+                    theme.status_success()
+                } else {
+                    theme.status_error()
+                },
+            ),
+            Span::raw(" "),
+            Span::styled(healthy_text, theme.text_muted_style()),
+            Span::raw("      "),
+            Span::styled("Handshake: ", theme.accent_emphasis_style()),
+            Span::styled(latency, theme.text_muted_style()),
+        ]));
+
+        // Second line: Last start and Restarts (not tracked; display '-')
+        let last_start_time = detail
+            .last_start
+            .map(|dt| {
+                let local: DateTime<Local> = DateTime::from(dt);
+                local.format("%H:%M:%S").to_string()
+            })
+            .unwrap_or_else(|| "-".into());
+        lines.push(Line::from(vec![
+            Span::styled("Last start: ", theme.accent_emphasis_style()),
+            Span::styled(last_start_time, theme.text_muted_style()),
+            Span::raw("   "),
+            Span::styled("Restarts: ", theme.accent_emphasis_style()),
+            Span::styled("-", theme.text_muted_style()),
+        ]));
+
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
+    }
+
+    fn render_environment(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, data: &PluginDetailsData) {
+        if data.environment.is_empty() {
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    "No environment variables configured",
+                    theme.text_muted_style(),
+                ))),
+                area,
+            );
+            return;
+        }
+
+        // Split area to render a heading and the table below
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Min(1)])
+            .split(area);
+
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled("Env (masked)", theme.text_muted_style()))),
+            chunks[0],
+        );
+
+        let header = Row::new(vec![
+            Span::styled("Key", theme.accent_emphasis_style()),
+            Span::styled("Value", theme.accent_emphasis_style()),
+            Span::styled("Source", theme.accent_emphasis_style()),
+            Span::styled("Effective", theme.accent_emphasis_style()),
+        ]);
+
+        let rows: Vec<Row> = data.environment.iter().map(|env| build_env_row(theme, env)).collect();
+
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(20),
+                Constraint::Percentage(50),
+                Constraint::Length(12),
+                Constraint::Length(10),
+            ],
+        )
+        .header(header)
+        .column_spacing(2)
+        .block(Block::default());
+
+        frame.render_widget(table, chunks[1]);
+    }
+    fn render_tools(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, plugin_details: &PluginDetailsData) {
+        if plugin_details.tools.is_empty() {
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled("No tools exposed", theme.text_muted_style()))),
+                area,
+            );
+            return;
+        }
+
+        let items: Vec<ListItem> = plugin_details.tools.iter().map(|tool| format_tool(theme, tool, area)).collect();
+
+        frame.render_widget(List::new(items).block(Block::default()), area);
+    }
+
+    fn render_hrule(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme) {
+        // Draw a subtle horizontal rule using the bottom border of a block
+        let block = Block::default().borders(Borders::BOTTOM).border_style(theme.border_style(true));
+        frame.render_widget(block, area);
+    }
+
+    fn header_line(&self, theme: &dyn Theme, detail: &PluginDetail) -> Line<'static> {
+        let status_style = status_style(theme, detail.status);
+        let mut spans = Vec::new();
+        spans.push(Span::styled(format!("{} ", detail.status.icon()), status_style));
+        spans.push(Span::styled(detail.name.clone(), theme.accent_emphasis_style()));
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            format!("Transport: {}", detail.transport_type),
+            theme.text_muted_style(),
+        ));
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            format!("Enabled: {}", if detail.enabled { "Yes" } else { "No" }),
+            theme.text_muted_style(),
+        ));
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(format!("Tools: {}", detail.tool_count), theme.text_muted_style()));
+
+        Line::from(spans)
+    }
+
+    fn sub_header_line(&self, theme: &dyn Theme, detail: &PluginDetail) -> Line<'static> {
+        let mut spans = Vec::new();
+        spans.push(Span::styled(
+            format!("Status: {}", detail.status.display()),
+            theme.text_muted_style(),
+        ));
+
+        Line::from(spans)
+    }
+
+    fn label_value_line(&self, theme: &dyn Theme, label: &str, value: String) -> Line<'static> {
+        Line::from(vec![
+            Span::styled(format!("{label}: "), theme.accent_emphasis_style()),
+            Span::styled(value, theme.text_muted_style()),
+        ])
+    }
+}
+
+fn modal_title(details_state: Option<&PluginDetailsModalState>) -> String {
+    details_state
+        .and_then(|state| state.selected_plugin().map(|name| format!("Plugin Details — {}", name)))
+        .unwrap_or_else(|| "Plugin Details".to_string())
+}
+
+fn status_style(theme: &dyn Theme, status: PluginStatus) -> Style {
+    match status {
+        PluginStatus::Running => theme.status_success(),
+        PluginStatus::Warning => theme.status_warning(),
+        PluginStatus::Error => theme.status_error(),
+        PluginStatus::Starting | PluginStatus::Stopping => theme.status_info(),
+        PluginStatus::Stopped => theme.status_error(),
+        PluginStatus::Unknown => theme.text_muted_style(),
+    }
+}
+
+fn build_env_row(theme: &dyn Theme, env: &EnvVar) -> Row<'static> {
+    let masked = env.masked();
+    Row::new(vec![
+        Span::styled(masked.key, theme.text_muted_style()),
+        Span::raw(masked.value),
+        Span::raw(env.source.to_string()),
+        Span::raw(if env.effective { "✓" } else { "✗" }),
+    ])
+}
+
+fn format_log(theme: &dyn Theme, log: &McpLogEntry) -> ListItem<'static> {
+    let timestamp: DateTime<Local> = DateTime::from(log.timestamp);
+    let header = format!("{} {} {}", timestamp.format("%Y-%m-%d %H:%M:%S"), log.level, log.source,);
+
+    ListItem::new(Line::from(vec![
+        Span::styled(header, theme.text_muted_style()),
+        Span::raw("  "),
+        Span::raw(log.message.clone()),
+    ]))
+}
+
+fn format_tool<'a>(theme: &dyn Theme, tool: &'a PluginToolSummary, area: Rect) -> ListItem<'a> {
+    let mut spans = Vec::new();
+    spans.push(Span::styled(tool.name.clone(), theme.accent_emphasis_style()));
+    if let Some(title) = &tool.title {
+        spans.push(Span::raw(" — "));
+        spans.push(Span::styled(title.clone(), theme.text_muted_style()));
+    }
+
+    let mut lines = vec![Line::from(spans)];
+    if let Some(description) = &tool.description {
+        let wrap_width = usize::from(area.width.max(1));
+        let wrapped: Vec<Line> = wrap(description.as_str(), wrap_width)
+            .into_iter()
+            .map(|line| Line::from(Span::raw(line)).style(theme.text_muted_style()))
+            .collect();
+        lines.extend(wrapped)
+    }
+    if let Some(summary) = &tool.auth_summary {
+        lines.push(Line::from(Span::styled(format!("Auth: {summary}"), theme.text_muted_style())));
+    }
+
+    ListItem::new(lines)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn plugins_details_component_constructs() {
+        let _component = PluginsDetailsComponent::default();
+        assert!(true);
+    }
+}

@@ -1,3 +1,5 @@
+use std::fmt::Debug;
+
 use ratatui::style::{Color, Modifier, Style};
 
 /// Semantic color roles used throughout the UI.
@@ -26,12 +28,20 @@ pub struct ThemeRoles {
     pub selection_fg: Color,
     pub focus: Color,
 
+    /// Background color used when displaying modal overlays.
+    ///
+    /// This color should be significantly darker than the primary background so that
+    /// the active modal content appears elevated while still matching the theme
+    /// palette.
+    pub modal_bg: Color,
+
     pub scrollbar_track: Color,
     pub scrollbar_thumb: Color,
 }
 
 /// Theme trait exposes semantic roles and common style builders.
-pub trait Theme: Send + Sync {
+
+pub trait Theme: Send + Sync + Debug {
     fn roles(&self) -> &ThemeRoles;
 
     // Text styles
@@ -48,19 +58,18 @@ pub trait Theme: Send + Sync {
 
     // Borders and focus
     fn border_style(&self, focused: bool) -> Style {
-        let color = if focused {
-            self.roles().focus
-        } else {
-            self.roles().border
-        };
+        let color = if focused { self.roles().focus } else { self.roles().border };
         Style::default().fg(color)
     }
 
     // Selection
     fn selection_style(&self) -> Style {
-        Style::default()
-            .fg(self.roles().selection_fg)
-            .bg(self.roles().selection_bg)
+        Style::default().fg(self.roles().selection_fg).bg(self.roles().selection_bg)
+    }
+
+    /// Style used for the darkened background that appears behind modal dialogs.
+    fn modal_background_style(&self) -> Style {
+        Style::default().bg(self.roles().modal_bg)
     }
 
     // Status styles
@@ -82,8 +91,6 @@ pub trait Theme: Send + Sync {
         Style::default().fg(self.roles().accent_primary)
     }
     fn accent_emphasis_style(&self) -> Style {
-        Style::default()
-            .fg(self.roles().accent_primary)
-            .add_modifier(Modifier::BOLD)
+        Style::default().fg(self.roles().accent_primary).add_modifier(Modifier::BOLD)
     }
 }

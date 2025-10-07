@@ -20,4 +20,6 @@ heroku-registry = { path = "../registry" }
 heroku-engine = { path = "../engine" }
 heroku-tui = { path = "../tui" }
 heroku-util = { path = "../util" }
+heroku-mcp = { path = "../mcp" }
+heroku-types = { path = "../types" }
 reqwest = { workspace = true }

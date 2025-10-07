@@ -19,7 +19,15 @@ pub enum LogEntry {
         json: Option<Value>,
     },
     /// Plain text log: optional level and message.
-    Text { level: Option<String>, msg: String },
+    Text {
+        level: Option<String>,
+        msg: String,
+    },
+
+    MCP {
+        raw: String,
+        json: Option<Value>,
+    },
 }
 
 /// Selection model for logs supporting single and range selection.
@@ -74,6 +82,8 @@ pub struct LogsState {
     pub cached_columns: Option<Vec<ColumnWithSize>>,
     /// Focus flag for rat-focus integration
     pub focus: FocusFlag,
+    /// Last rendered rectangle of the detail modal for hit-testing.
+    pub detail_rect: Option<Rect>,
 }
 
 impl Default for LogsState {
@@ -88,6 +98,7 @@ impl Default for LogsState {
             cached_redacted_json: None,
             cached_columns: None,
             focus: FocusFlag::named("root.logs"),
+            detail_rect: None,
         }
     }
 }

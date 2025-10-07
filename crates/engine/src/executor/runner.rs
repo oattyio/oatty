@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use reqwest::Method;
 use serde_json::Value;
 use std::str::FromStr;
@@ -6,7 +6,7 @@ use std::str::FromStr;
 use crate::resolve::RunContext;
 
 use heroku_api::HerokuClient;
-use heroku_registry::{CommandSpec, Registry};
+use heroku_registry::{CommandSpec, Registry, find_by_group_and_cmd};
 use heroku_util::{
     build_path,
     http::{build_range_header_from_body, strip_range_body_fields},
@@ -58,7 +58,8 @@ impl RegistryCommandRunner {
     /// constructing a `HerokuClient` from environment variables.
     pub fn from_spec(spec: &CommandSpec) -> Result<Self> {
         let registry = Registry::from_embedded_schema()?;
-        let client = HerokuClient::new_from_service_id(spec.service_id)?;
+        let http = spec.http().ok_or_else(|| anyhow!("command '{}' is not HTTP-backed", spec.name))?;
+        let client = HerokuClient::new_from_service_id(http.service_id)?;
         Ok(Self { registry, client })
     }
 }
@@ -71,8 +72,18 @@ impl CommandRunner for RegistryCommandRunner {
             .map(|(g, rest)| (g.to_string(), rest.to_string()))
             .ok_or_else(|| anyhow::anyhow!("invalid run identifier: {}", run))?;
 
-        let spec = self.registry.find_by_group_and_cmd(&group, &name)?;
-        let method = Method::from_str(&spec.method).unwrap_or(Method::GET);
+        let spec = find_by_group_and_cmd(&self.registry.commands, &group, &name)?;
+
+        if let Some(mcp) = spec.mcp() {
+            return Err(anyhow!(
+                "command '{}' delegates to MCP tool '{}:{}'; workflows currently support HTTP commands only",
+                spec.name,
+                mcp.plugin_name,
+                mcp.tool_name
+            ));
+        }
+        let http = spec.http().ok_or_else(|| anyhow!("command '{}' is not HTTP-backed", spec.name))?;
+        let method = Method::from_str(&http.method).unwrap_or(Method::GET);
 
         // Inputs map from `with` if object
         let mut with_map: serde_json::Map<String, Value> = match with {
@@ -88,7 +99,7 @@ impl CommandRunner for RegistryCommandRunner {
             }
         }
 
-        let path = build_path(&spec.path, &path_variables);
+        let path = build_path(&http.path, &path_variables);
         let mut req = self.client.request(method.clone(), &path);
 
         match method {
@@ -133,10 +144,7 @@ impl CommandRunner for RegistryCommandRunner {
                 let headers = resp.headers().clone();
                 let val = resp.json::<Value>().await.unwrap_or(Value::Null);
                 let mut obj = serde_json::Map::new();
-                obj.insert(
-                    "status_code".into(),
-                    Value::Number(serde_json::Number::from(status.as_u16())),
-                );
+                obj.insert("status_code".into(), Value::Number(serde_json::Number::from(status.as_u16())));
                 if let Some(v) = headers
                     .get("Content-Range")
                     .and_then(|h| h.to_str().ok())

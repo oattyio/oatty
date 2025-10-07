@@ -22,7 +22,11 @@ fn openapi_v3_smoke_generates_commands() {
     assert!(!commands.is_empty(), "should produce some commands");
 
     // Find POST /data/postgres/v1/{addon}/pools and verify flags
-    let pools_create = commands.iter().find(|c| c.method == "POST" && c.path == "/data/postgres/v1/{v1}/pools");
+    let pools_create = commands.iter().find(|c| {
+        c.http()
+            .map(|http| http.method == "POST" && http.path == "/data/postgres/v1/{v1}/pools")
+            .unwrap_or(false)
+    });
     // NOTE: positional name for {addon} becomes {v1} due to existing path naming heuristic
     // so expected path uses {v1} after normalization.
     assert!(pools_create.is_some(), "expected pools:create command");
@@ -36,7 +40,11 @@ fn openapi_v3_smoke_generates_commands() {
     // Find GET /data/postgres/v1/{addon}/expensive-queries and ensure limit flag exists
     let exp_get = commands
         .iter()
-        .find(|c| c.method == "GET" && c.path == "/data/postgres/v1/{v1}/expensive-queries");
+        .find(|c| {
+            c.http()
+                .map(|http| http.method == "GET" && http.path == "/data/postgres/v1/{v1}/expensive-queries")
+                .unwrap_or(false)
+        });
     assert!(exp_get.is_some(), "expected expensive-queries:list command");
     let eg = exp_get.unwrap();
     let has_limit = eg.flags.iter().any(|f| f.name == "limit" && f.default_value.as_deref() == Some("10"));

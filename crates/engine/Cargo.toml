@@ -17,6 +17,8 @@ tracing = { workspace = true }
 heroku-api = { path = "../api" }
 heroku-util = { path = "../util" }
 heroku-registry = { path = "../registry" }
+heroku-types = {path = "../types"}
+heroku-mcp = { path = "../mcp" }
 tokio = { workspace = true }
 reqwest = { workspace = true }
 percent-encoding = { workspace = true }

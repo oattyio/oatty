@@ -101,7 +101,7 @@ fn precompute_provider_metadata(commands: &[CommandSpec]) -> ProviderMetadata {
         .iter()
         .map(|command| {
             let command_id = format!("{}:{}", command.group, command.name);
-            let extracted_placeholders = extract_path_placeholders(&command.path);
+            let extracted_placeholders = command.http().map(|http| extract_path_placeholders(&http.path)).unwrap_or_default();
             (command_id, extracted_placeholders)
         })
         .collect();
@@ -206,8 +206,11 @@ fn apply_positional_providers(
     provider_placeholders: &HashMap<String, Vec<String>>,
     provider_required_flags: &HashMap<String, Vec<String>>,
 ) {
+    let Some(http_spec) = command_spec.http() else {
+        return;
+    };
     let positional_name_to_index = build_positional_index(command_spec);
-    let path_segments = parse_path_segments(&command_spec.path);
+    let path_segments = parse_path_segments(&http_spec.path);
 
     let mut previous_concrete_segment: Option<String> = None;
 
@@ -290,7 +293,10 @@ fn find_provider_candidates(
     }
 
     // Then, look for scoped providers by examining earlier path segments
-    let path_segments = parse_path_segments(&command_spec.path);
+    let Some(http_spec) = command_spec.http() else {
+        return candidates;
+    };
+    let path_segments = parse_path_segments(&http_spec.path);
     let mut concrete_segments = Vec::new();
 
     for segment in path_segments {
@@ -337,11 +343,28 @@ fn process_placeholder(
     provider_placeholders: &HashMap<String, Vec<String>>,
     provider_required_flags: &HashMap<String, Vec<String>>,
 ) {
+    let mut candidate_group_names: Vec<String> = Vec::new();
+
     let normalized_group = normalize_group_name(previous_segment);
+    candidate_group_names.push(normalized_group);
+
+    if let Some(group_from_placeholder) = map_placeholder_to_group(placeholder_name) {
+        candidate_group_names.push(group_from_placeholder);
+    }
+
+    candidate_group_names.sort();
+    candidate_group_names.dedup();
 
     // Try to find the best provider by checking both scoped and unscoped options
-    let provider_candidates =
-        find_provider_candidates(&normalized_group, command_spec, positional_name_to_index, command_index);
+    let mut provider_candidates = Vec::new();
+    for group_name in candidate_group_names {
+        provider_candidates.extend(find_provider_candidates(
+            &group_name,
+            command_spec,
+            positional_name_to_index,
+            command_index,
+        ));
+    }
 
     // Find the best provider that can be bound
     let mut best_provider: Option<(String, Vec<Bind>)> = None;
@@ -376,15 +399,25 @@ fn process_placeholder(
     }
 
     if let Some((provider_id, binds)) = best_provider
-        && let Some(positional_arg) = command_spec
-            .positional_args
-            .iter_mut()
-            .find(|arg| arg.name == placeholder_name)
+        && let Some(positional_arg) = command_spec.positional_args.iter_mut().find(|arg| arg.name == placeholder_name)
     {
         positional_arg.provider = Some(ValueProvider::Command {
             command_id: provider_id,
             binds,
         });
+    }
+}
+
+/// Map specific placeholder names to known provider group names.
+///
+/// Some command paths use placeholder names that do not align with the
+/// immediately preceding concrete segment (e.g., `/pipelines/{pipeline}/stage/{pipeline_coupling}`).
+/// In those cases, we can infer a better provider group directly from the
+/// placeholder to unlock scoped providers such as `pipelines:pipeline-couplings:list`.
+fn map_placeholder_to_group(placeholder_name: &str) -> Option<String> {
+    match placeholder_name {
+        "pipeline_coupling" => Some("pipeline-couplings".to_string()),
+        _ => None,
     }
 }
 
@@ -557,10 +590,7 @@ fn bind_required_flags(
             .unwrap_or_else(|| vec![required_flag.clone()]);
 
         // Try to bind from available positional inputs first
-        if let Some(found_name) = candidate_names
-            .iter()
-            .find(|candidate| available_inputs.contains(*candidate))
-        {
+        if let Some(found_name) = candidate_names.iter().find(|candidate| available_inputs.contains(*candidate)) {
             bindings.push(Bind {
                 provider_key: required_flag.clone(),
                 from: found_name.clone(),

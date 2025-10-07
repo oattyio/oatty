@@ -80,6 +80,13 @@ impl PaginationState {
         self.current_page = 0;
     }
 
+    /// Moves forward to represent navigating to the last page.
+    pub fn last_page(&mut self) {
+        if self.has_next_page() {
+            self.current_page = self.current_page.saturating_add(1);
+        }
+    }
+
     /// Gets the current range info as a string
     pub fn range_info(&self) -> String {
         if !self.field.is_empty() {

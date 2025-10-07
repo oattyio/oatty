@@ -13,6 +13,7 @@ mod null;
 mod registry;
 mod selection;
 
+use anyhow::Result;
 pub use contract::{ProviderContract, ProviderReturns, ReturnField};
 pub use fetch::ProviderValueFetcher;
 pub use null::NullProvider;
@@ -23,7 +24,6 @@ use serde_json::Value;
 
 /// Trait defining the interface for provider value resolution.
 pub trait ProviderRegistry: Send + Sync {
-    fn fetch_values(&self, provider_id: &str, arguments: &serde_json::Map<String, Value>)
-    -> anyhow::Result<Vec<Value>>;
+    fn fetch_values(&self, provider_id: &str, arguments: &serde_json::Map<String, Value>) -> Result<Vec<Value>>;
     fn get_contract(&self, provider_id: &str) -> Option<ProviderContract>;
 }

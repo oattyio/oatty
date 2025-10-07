@@ -217,14 +217,8 @@ mod tests {
     #[test]
     fn test_date_formatting() {
         // RFC3339 formats
-        assert_eq!(
-            format_date_mmddyyyy("2023-12-25T10:30:00Z"),
-            Some("12/25/2023".to_string())
-        );
-        assert_eq!(
-            format_date_mmddyyyy("2023-06-15T14:22:30+00:00"),
-            Some("06/15/2023".to_string())
-        );
+        assert_eq!(format_date_mmddyyyy("2023-12-25T10:30:00Z"), Some("12/25/2023".to_string()));
+        assert_eq!(format_date_mmddyyyy("2023-06-15T14:22:30+00:00"), Some("06/15/2023".to_string()));
 
         // ISO formats
         assert_eq!(format_date_mmddyyyy("2023-12-25"), Some("12/25/2023".to_string()));
@@ -238,14 +232,8 @@ mod tests {
 
     #[test]
     fn test_rfc3339_parsing() {
-        assert_eq!(
-            parse_rfc3339_date("2023-12-25T10:30:00Z"),
-            Some("12/25/2023".to_string())
-        );
-        assert_eq!(
-            parse_rfc3339_date("2023-06-15T14:22:30+00:00"),
-            Some("06/15/2023".to_string())
-        );
+        assert_eq!(parse_rfc3339_date("2023-12-25T10:30:00Z"), Some("12/25/2023".to_string()));
+        assert_eq!(parse_rfc3339_date("2023-06-15T14:22:30+00:00"), Some("06/15/2023".to_string()));
         assert_eq!(parse_rfc3339_date("invalid"), None);
     }
 

@@ -5,9 +5,7 @@
 
 use anyhow::{Result, anyhow};
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
-// percent_encoding no longer needed here
 use serde_json::{Map, Value, json};
-// no longer requires HashMap
 
 // ============================================================================
 // Utility Functions
@@ -38,10 +36,77 @@ fn resolve_local_ref(root: &Value, r: &str) -> Option<Value> {
 // Parameter Collection and Merging
 // ============================================================================
 
-/// Collects and merges parameters from path items and operations.
+/// Collects and resolves parameters defined at both the path and operation levels from a given
+/// OpenAPI document. It ensures no duplicate parameters (based on both name and location) are
+/// included in the output, with operation-level parameters overriding path-level ones when conflicting.
 ///
-/// Operation-level parameters override path-level parameters when they have
-/// the same name and location (in). Returns a deduplicated list of parameters.
+/// # Arguments
+///
+/// * `root` - A reference to the root [`Value`] object of the OpenAPI document where `$ref` resolutions
+///            can be performed.
+/// * `path_item` - A [`Value`] representing the specific path object, which may contain `parameters`
+///                 defined at the path level.
+/// * `op` - A [`Value`] representing the specific operation object, which may contain `parameters`
+///          defined at the operation level.
+///
+/// # Returns
+///
+/// A `Vec<Value>` containing the resolved and deduplicated parameters.
+///
+/// - Parameters defined at the operation level take precedence over those defined at the path level
+///   if they share the same name and location.
+/// - Each parameter is resolved by dereferencing `$ref` if necessary, using the `resolve_local_ref`
+///   function to locate the referenced definitions in the `root` document.
+///
+/// # Example
+///
+/// ```rust
+/// use serde_json::json;
+/// use serde_json::Value;
+///
+/// let root = json!({
+///     "components": {
+///         "parameters": {
+///             "ExampleParam": {
+///                 "name": "example",
+///                 "in": "query",
+///                 "required": true,
+///                 "schema": { "type": "string" }
+///             }
+///         }
+///     }
+/// });
+///
+/// let path_item = json!({
+///     "parameters": [
+///         { "$ref": "#/components/parameters/ExampleParam" },
+///         { "name": "other", "in": "query", "required": true }
+///     ]
+/// });
+///
+/// let op = json!({
+///     "parameters": [
+///         { "name": "example", "in": "query", "required": false }
+///     ]
+/// });
+///
+/// let collected = collect_parameters(&root, &path_item, &op);
+/// assert_eq!(collected.len(), 2); // No duplicate parameters
+/// assert_eq!(collected[0]["name"], "other"); // Keeps `other` parameter from path level
+/// assert_eq!(collected[1]["name"], "example"); // Operation-level `example` overrides
+/// ```
+///
+/// # Notes
+///
+/// - The function relies on the `resolve_local_ref` function to resolve `$ref` values within the
+///   OpenAPI document. If unresolved, the parameter is included as-is.
+/// - The `root`, `path_item`, and `op` arguments are assumed to be well-structured JSON values
+///   following OpenAPI specifications.
+///
+/// # Dependencies
+///
+/// This function is designed to be used with the `serde_json` crate and operates on `serde_json::Value`
+/// for handling JSON objects.
 fn collect_parameters(root: &Value, path_item: &Value, op: &Value) -> Vec<Value> {
     let mut out: Vec<Value> = Vec::new();
     let mut seen: Vec<(String, String)> = Vec::new();
@@ -175,11 +240,7 @@ fn build_link_schema_from_oas3(root: &Value, path_item: &Value, op: &Value) -> O
         if let Some(obj) = body_schema.as_object() {
             if obj.get("properties").is_some() {
                 // Merge object properties
-                let body_props = obj
-                    .get("properties")
-                    .and_then(Value::as_object)
-                    .cloned()
-                    .unwrap_or_default();
+                let body_props = obj.get("properties").and_then(Value::as_object).cloned().unwrap_or_default();
                 merge_properties(&mut props, Some(&body_props));
                 merge_required(&mut required, obj.get("required"));
             } else {
@@ -223,7 +284,73 @@ const PTR_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'}')
     .add(b'/');
 
-/// Rewrites href path variables to encoded definition refs and collects path param definitions.
+/// Rewrites the `href` by replacing placeholders in the provided `path` with encoded JSON Pointer references
+/// and collects schema definitions for parameters in `definitions`.
+///
+/// This function processes `params` to identify parameters with `"in": "path"`. For each of these parameters,
+/// it builds or updates a corresponding entry in the `definitions` map. Specifically, it creates a definition
+/// object under the `definitions.identity` path, containing the parameter's `type` and optional `description`.
+/// Simultaneously, placeholders in the `path` matching parameter names (e.g., `{name}`) are replaced with
+/// encoded references that point to the `definitions.identity` of the parameter.
+///
+/// # Parameters
+/// - `path`: A string slice representing the original URI template containing parameter placeholders (e.g., `{name}`).
+/// - `params`: A slice of `Value` (from the `serde_json` crate), where each element represents a parameter with
+///    associated metadata (e.g., `name`, `in`, `type`, and `description`).
+/// - `definitions`: A mutable reference to a `Map<String, Value>` that stores the schema definitions. This is
+///    updated with new or modified parameter definitions as the function processes `params`.
+///
+/// # Returns
+/// A `String` containing the updated `href`, where parameter placeholders in the original `path` are replaced
+/// with encoded JSON Pointer references to the corresponding parameter definitions.
+///
+/// # Example
+/// ```
+/// use serde_json::{Value, json, Map};
+/// use serde_json::value::to_value;
+///
+/// let path = "/users/{userId}";
+/// let params = vec![
+///     json!({
+///         "name": "userId",
+///         "in": "path",
+///         "schema": { "type": "string" },
+///         "description": "The ID of the user"
+///     })
+/// ];
+/// let mut definitions = Map::new();
+///
+/// let updated_href = rewrite_href_and_collect_definitions(path, &params, &mut definitions);
+///
+/// assert_eq!(
+///     updated_href,
+///     "/users/{(%23%2Fdefinitions%2FuserId%2Fdefinitions%2Fidentity)}"
+/// );
+///
+/// assert_eq!(
+///     definitions.get("userId").unwrap(),
+///     &json!({
+///         "definitions": {
+///             "identity": {
+///                 "type": "string",
+///                 "description": "The ID of the user"
+///             }
+///         }
+///     })
+/// );
+/// ```
+///
+/// # Notes
+/// - The placeholders in the `path` should align with the `name` fields in `params`. If no match is found,
+///   the placeholder is left unchanged.
+/// - The function assumes that parameter objects in `params` conform to the OpenAPI-style schema, potentially
+///   including `name`, `in`, `schema`, and `description` fields.
+/// - The encoding of the JSON Pointer reference follows the `%` encoding rules specified for JSON Pointers
+///   used in URIs (e.g., `#` becomes `%23`).
+///
+/// # Errors
+/// This function does not return errors explicitly but may panic if invariants are violated, such as if a
+/// parameter's `schema` field is malformed or if `definitions` cannot be updated due to type mismatches.
 fn rewrite_href_and_collect_definitions(path: &str, params: &[Value], definitions: &mut Map<String, Value>) -> String {
     let mut href = path.to_string();
 
@@ -248,18 +375,25 @@ fn rewrite_href_and_collect_definitions(path: &str, params: &[Value], definition
             identity.insert("description".into(), d);
         }
 
-        let entry = definitions
-            .entry(name.to_string())
-            .or_insert_with(|| json!({"definitions": {}}));
-        let obj = entry.as_object_mut().unwrap();
-        let defs_obj = obj
-            .entry("definitions")
-            .or_insert_with(|| json!({}))
-            .as_object_mut()
-            .unwrap();
-        defs_obj
-            .entry("identity")
-            .or_insert_with(|| Value::Object(identity.clone()));
+        // Ensure definitions[name].definitions.identity exists and merge fields without panicking
+        let entry = definitions.entry(name.to_string()).or_insert_with(|| Value::Object(Map::new()));
+        if let Some(obj) = entry.as_object_mut() {
+            let defs_val = obj.entry("definitions").or_insert_with(|| Value::Object(Map::new()));
+            if let Some(defs_obj) = defs_val.as_object_mut() {
+                match defs_obj.get_mut("identity") {
+                    Some(existing) if existing.is_object() => {
+                        if let Some(existing_map) = existing.as_object_mut() {
+                            for (k, v) in identity.into_iter() {
+                                existing_map.entry(k).or_insert(v);
+                            }
+                        }
+                    }
+                    _ => {
+                        defs_obj.insert("identity".into(), Value::Object(identity));
+                    }
+                }
+            }
+        }
 
         // Rewrite {name} to {(%23%2Fdefinitions%2Fname%2Fdefinitions%2Fidentity)}
         let ptr = format!("#/definitions/{}/definitions/identity", name);
@@ -326,9 +460,7 @@ pub fn transform_openapi_to_links(doc: &Value) -> Result<Value> {
     } else if doc.get("swagger").is_some() {
         transform_swagger2(doc)
     } else {
-        Err(anyhow!(
-            "Unsupported OpenAPI document: expected v3 (openapi) or v2 (swagger)"
-        ))
+        Err(anyhow!("Unsupported OpenAPI document: expected v3 (openapi) or v2 (swagger)"))
     }
 }
 
@@ -344,9 +476,7 @@ fn transform_oas3(doc: &Value) -> Result<Value> {
 
     // Process each path and operation
     for (path, path_item) in paths.iter() {
-        let path_obj = path_item
-            .as_object()
-            .ok_or_else(|| anyhow!("Path item not an object: {}", path))?;
+        let path_obj = path_item.as_object().ok_or_else(|| anyhow!("Path item not an object: {}", path))?;
 
         for (method, operation) in path_obj.iter() {
             match method.as_str() {
@@ -387,15 +517,12 @@ fn transform_swagger2(doc: &Value) -> Result<Value> {
 
     // Process each path and operation
     for (path, path_item) in paths.iter() {
-        let path_obj = path_item
-            .as_object()
-            .ok_or_else(|| anyhow!("Path item not an object: {}", path))?;
+        let path_obj = path_item.as_object().ok_or_else(|| anyhow!("Path item not an object: {}", path))?;
 
         for (method, operation) in path_obj.iter() {
             match method.as_str() {
                 "get" | "post" | "put" | "patch" | "delete" => {
-                    let link =
-                        build_link_from_swagger2_operation(doc, path_item, operation, method, path, &mut definitions)?;
+                    let link = build_link_from_swagger2_operation(doc, path_item, operation, method, path, &mut definitions)?;
                     links.push(link);
                 }
                 _ => {} // Skip non-HTTP methods
@@ -446,11 +573,7 @@ fn build_link_from_operation(
         .unwrap_or("")
         .to_string();
 
-    let description = op
-        .get("description")
-        .and_then(Value::as_str)
-        .unwrap_or(&title)
-        .to_string();
+    let description = op.get("description").and_then(Value::as_str).unwrap_or(&title).to_string();
 
     let params = collect_parameters(doc, path_item, op);
     let href = rewrite_href_and_collect_definitions(path, &params, definitions);
@@ -496,11 +619,7 @@ fn build_link_from_swagger2_operation(
         .unwrap_or("")
         .to_string();
 
-    let description = op
-        .get("description")
-        .and_then(Value::as_str)
-        .unwrap_or(&title)
-        .to_string();
+    let description = op.get("description").and_then(Value::as_str).unwrap_or(&title).to_string();
 
     let all_params = collect_swagger2_parameters(doc, path_item, op);
     let href = rewrite_href_and_collect_definitions(path, &all_params, definitions);
@@ -619,7 +738,76 @@ fn build_target_schema_from_swagger2(root: &Value, op: &Value) -> Option<Value> 
     }
 }
 
-/// Builds a link schema from Swagger v2 parameters.
+/**
+ * Constructs a Swagger 2.0-compatible schema for a link from the given parameters and root definitions.
+ *
+ * This function processes an array of parameters and builds a JSON schema definition for query
+ * and body parameters according to the Swagger 2.0 specification. It extracts metadata such as
+ * parameter types, requirements, and descriptions, and combines them into a cohesive schema object.
+ *
+ * ### Parameters:
+ * - `root: &Value`:
+ *   A JSON document representing the root Swagger specification. This is used to resolve `$ref`
+ *   pointers when processing body parameters.
+ *
+ * - `params: &[Value]`:
+ *   A slice of JSON objects representing the parameters of a Swagger operation. Each parameter
+ *   may contain fields like `in`, `name`, `type`, `required`, `schema`, `enum`, `description`,
+ *   and `default`.
+ *
+ * ### Returns:
+ * - `Option<Value>`:
+ *   - Returns `Some(Value)` if there are valid properties or required fields in the resulting schema.
+ *   - Returns `None` if there are no valid properties or required fields to construct a schema.
+ *
+ * ### Behavior:
+ * 1. **Query Parameters**:
+ *    - Processes parameters with `"in": "query"`.
+ *    - Constructs their schema using fields (`type`, `enum`, `default`, `description`) and merges
+ *      it into the resulting schema.
+ *    - Tracks `required` query parameters explicitly to include them in the output schema.
+ *
+ * 2. **Body Parameters**:
+ *    - Processes parameters with `"in": "body"`.
+ *    - Attempts to resolve the `$ref` field in their `schema` against the `root` definition.
+ *    - If the body schema contains `properties` and `required` fields, merges them into
+ *      the resultant schema.
+ *    - If no `properties` are found, includes the body schema as a single `body` property.
+ *
+ * 3. **Other Parameter Types**:
+ *    - Skips these parameters (e.g., `header`, `path`) as they are not handled by this function.
+ *
+ * 4. Returns the constructed schema as a JSON object if it contains either `properties` or `required` fields.
+ *
+ * ### Example Input:
+ * ```json
+ * {
+ *   "parameters": [
+ *     { "name": "id", "in": "query", "type": "string", "required": true },
+ *     { "name": "filter", "in": "query", "type": "string" },
+ *     { "in": "body", "schema": { "$ref": "#/definitions/BodySchema" } }
+ *   ]
+ * }
+ * ```
+ *
+ * ### Example Output:
+ * ```json
+ * {
+ *   "type": "object",
+ *   "properties": {
+ *     "id": { "type": "string" },
+ *     "filter": { "type": "string" },
+ *     "body": { "$ref": "#/definitions/BodySchema" }
+ *   },
+ *   "required": ["id"]
+ * }
+ * ```
+ *
+ * ### Notes:
+ * - Fields in the `schema` are prioritized over legacy Swagger v2 fields like `type`, `default`, and `description`.
+ * - The function relies on helper functions `resolve_local_ref` to resolve `$ref` pointers and `merge_properties`
+ *   or `merge_required` to combine properties and requirements, respectively.
+ */
 fn build_swagger2_link_schema(root: &Value, params: &[Value]) -> Option<Value> {
     let mut required: Vec<String> = Vec::new();
     let mut properties: Map<String, Value> = Map::new();
@@ -629,17 +817,28 @@ fn build_swagger2_link_schema(root: &Value, params: &[Value]) -> Option<Value> {
             Some("query") => {
                 if let Some(name) = param.get("name").and_then(Value::as_str) {
                     // Mark as required if specified
-                    if param.get("required").and_then(Value::as_bool) == Some(true)
-                        && !required.contains(&name.to_string())
-                    {
+                    if param.get("required").and_then(Value::as_bool) == Some(true) && !required.contains(&name.to_string()) {
                         required.push(name.to_string());
                     }
 
-                    // Build parameter schema
-                    let mut schema = param.get("schema").cloned().unwrap_or_else(|| json!({}));
-
-                    // Handle Swagger v2 parameter format (type/default at top-level)
-                    if schema.is_null() || !schema.is_object() {
+                    // Build parameter schema: Swagger v2 query params usually place type/default at top level
+                    let schema = if let Some(s) = param.get("schema").cloned() {
+                        // Use provided schema and promote description/default if absent
+                        let mut s_owned = s;
+                        if s_owned.get("description").is_none()
+                            && let Some(desc) = param.get("description").cloned()
+                            && let Some(obj) = s_owned.as_object_mut()
+                        {
+                            obj.insert("description".into(), desc);
+                        }
+                        if s_owned.get("default").is_none()
+                            && let Some(def) = param.get("default").cloned()
+                            && let Some(obj) = s_owned.as_object_mut()
+                        {
+                            obj.insert("default".into(), def);
+                        }
+                        s_owned
+                    } else {
                         let mut s = Map::new();
                         if let Some(t) = param.get("type").cloned() {
                             s.insert("type".into(), t);
@@ -653,22 +852,8 @@ fn build_swagger2_link_schema(root: &Value, params: &[Value]) -> Option<Value> {
                         if let Some(desc) = param.get("description").cloned() {
                             s.insert("description".into(), desc);
                         }
-                        schema = Value::Object(s);
-                    } else {
-                        // Ensure description and default are present
-                        if schema.get("description").is_none()
-                            && let Some(desc) = param.get("description").cloned()
-                            && let Some(obj) = schema.as_object_mut()
-                        {
-                            obj.insert("description".into(), desc);
-                        }
-                        if schema.get("default").is_none()
-                            && let Some(def) = param.get("default").cloned()
-                            && let Some(obj) = schema.as_object_mut()
-                        {
-                            obj.insert("default".into(), def);
-                        }
-                    }
+                        Value::Object(s)
+                    };
 
                     properties.insert(name.to_string(), schema);
                 }
@@ -683,11 +868,7 @@ fn build_swagger2_link_schema(root: &Value, params: &[Value]) -> Option<Value> {
 
                     if let Some(obj) = schema.as_object() {
                         if obj.get("properties").is_some() {
-                            let body_props = obj
-                                .get("properties")
-                                .and_then(Value::as_object)
-                                .cloned()
-                                .unwrap_or_default();
+                            let body_props = obj.get("properties").and_then(Value::as_object).cloned().unwrap_or_default();
                             merge_properties(&mut properties, Some(&body_props));
                             merge_required(&mut required, obj.get("required"));
                         } else {
@@ -745,21 +926,9 @@ mod tests {
         let href = links[0].get("href").and_then(|v| v.as_str()).expect("href string");
 
         // Ensure the static parts of the path carry over intact
-        assert!(
-            href.starts_with("/data/postgres/v1/"),
-            "href should preserve prefix: {}",
-            href
-        );
-        assert!(
-            href.contains("/credentials/"),
-            "href should preserve middle segment: {}",
-            href
-        );
-        assert!(
-            href.ends_with("/rotate"),
-            "href should preserve trailing segment: {}",
-            href
-        );
+        assert!(href.starts_with("/data/postgres/v1/"), "href should preserve prefix: {}", href);
+        assert!(href.contains("/credentials/"), "href should preserve middle segment: {}", href);
+        assert!(href.ends_with("/rotate"), "href should preserve trailing segment: {}", href);
 
         // Ensure href variables are rewritten to encoded definition pointers
         assert!(
@@ -810,19 +979,10 @@ mod tests {
 
         let out = transform_openapi_to_links(&doc).expect("transform should succeed");
         let links = out.get("links").and_then(|v| v.as_array()).expect("links array");
-        let schema = links[0]
-            .get("schema")
-            .and_then(|v| v.as_object())
-            .expect("schema object");
-        let props = schema
-            .get("properties")
-            .and_then(|v| v.as_object())
-            .expect("properties object");
+        let schema = links[0].get("schema").and_then(|v| v.as_object()).expect("schema object");
+        let props = schema.get("properties").and_then(|v| v.as_object()).expect("properties object");
         let owner = props.get("owner").and_then(|v| v.as_object()).expect("owner schema");
-        assert_eq!(
-            owner.get("description").and_then(|v| v.as_str()),
-            Some("Filter by owner")
-        );
+        assert_eq!(owner.get("description").and_then(|v| v.as_str()), Some("Filter by owner"));
         assert_eq!(owner.get("default").and_then(|v| v.as_str()), Some("me"));
     }
 
@@ -843,19 +1003,10 @@ mod tests {
 
         let out = transform_openapi_to_links(&doc).expect("transform should succeed");
         let links = out.get("links").and_then(|v| v.as_array()).expect("links array");
-        let schema = links[0]
-            .get("schema")
-            .and_then(|v| v.as_object())
-            .expect("schema object");
-        let props = schema
-            .get("properties")
-            .and_then(|v| v.as_object())
-            .expect("properties object");
+        let schema = links[0].get("schema").and_then(|v| v.as_object()).expect("schema object");
+        let props = schema.get("properties").and_then(|v| v.as_object()).expect("properties object");
         let owner = props.get("owner").and_then(|v| v.as_object()).expect("owner schema");
-        assert_eq!(
-            owner.get("description").and_then(|v| v.as_str()),
-            Some("Filter by owner")
-        );
+        assert_eq!(owner.get("description").and_then(|v| v.as_str()), Some("Filter by owner"));
         assert_eq!(owner.get("default").and_then(|v| v.as_str()), Some("me"));
     }
 }

@@ -1,5 +1,4 @@
-#[allow(clippy::module_inception)]
-pub mod pagination;
+pub mod pagination_component;
 pub mod state;
 
-pub use pagination::PaginationComponent;
+pub use pagination_component::PaginationComponent;

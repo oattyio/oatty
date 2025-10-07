@@ -7,11 +7,14 @@
 use std::collections::{BTreeSet, HashMap};
 
 use heck::ToTitleCase;
-use heroku_util::{format_date_mmddyyyy, is_date_like_key};
+use heroku_util::{format_date_mmddyyyy, is_date_like_key, redact_json, redact_sensitive};
 use ratatui::prelude::*;
 use serde_json::{Map, Value};
 
-use crate::ui::theme::roles::Theme as UiTheme;
+use crate::{
+    app,
+    ui::{components::logs::state::LogEntry, theme::roles::Theme as UiTheme},
+};
 
 /// Creates a centered rectangular area within a given rectangle.
 ///
@@ -180,45 +183,6 @@ fn property_frequency_boost(header: &str) -> i32 {
     }
 }
 
-/// Extension trait for String to provide fallback values when empty.
-///
-/// This trait adds a method to String that returns an alternative value
-/// when the string is empty, useful for displaying placeholder text
-/// in UI components.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// use heroku_tui::ui::utils::IfEmptyStr;
-///
-/// let empty = String::new();
-/// let result = empty.if_empty_then("default".to_string());
-/// assert_eq!(result, "default");
-///
-/// let non_empty = "hello".to_string();
-/// let result = non_empty.if_empty_then("default".to_string());
-/// assert_eq!(result, "hello");
-/// ```
-pub trait IfEmptyStr {
-    /// Returns the string if non-empty, otherwise returns the alternative
-    /// value.
-    ///
-    /// # Arguments
-    ///
-    /// * `alt` - The alternative string to return if self is empty
-    ///
-    /// # Returns
-    ///
-    /// The original string if non-empty, otherwise the alternative string.
-    fn if_empty_then(self, alt: String) -> String;
-}
-
-impl IfEmptyStr for String {
-    fn if_empty_then(self, alt: String) -> String {
-        if self.is_empty() { alt } else { self }
-    }
-}
-
 /// Formatter kinds that influence header/value display.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ColumnFormatter {
@@ -229,14 +193,12 @@ pub enum ColumnFormatter {
 }
 
 /// Column metadata with measured maximum string length for rendering.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnWithSize {
     /// Display name (header label), typically Title Case of the key.
     pub name: String,
     /// JSON key to extract values from each row object.
     pub key: String,
-    /// Applied formatters for this column (header/value specific semantics).
-    pub formatters: Vec<ColumnFormatter>,
     /// Maximum string length among header and sampled, formatted cell values.
     pub max_len: usize,
 }
@@ -299,7 +261,6 @@ pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize) -> Vec
         out.push(ColumnWithSize {
             name: header,
             key: key.clone(),
-            formatters,
             max_len,
         });
     }
@@ -350,4 +311,60 @@ fn ellipsize_middle_if_sha_like(s: &str, keep_total: usize) -> String {
     let head = keep_total / 2;
     let tail = keep_total - head;
     format!("{}…{}", &s[..head], &s[s.len() - tail..])
+}
+// ============================================================================
+// Copy and Text Processing Methods
+// ============================================================================
+
+/// Builds the text content to be copied to clipboard based on current
+/// selection.
+///
+/// This method handles different copy scenarios:
+///
+/// - **Single API entry with JSON**: Returns formatted JSON if pretty mode
+///   enabled
+/// - **Single API entry without JSON**: Returns raw log content
+/// - **Multi-selection**: Returns concatenated log entries
+///
+/// All output is automatically redacted for security.
+///
+/// # Arguments
+///
+/// * `app` - The application state containing logs and selection
+///
+/// # Returns
+///
+/// A redacted string containing the selected log content
+pub fn build_copy_text(app: &app::App) -> String {
+    if app.logs.entries.is_empty() {
+        return String::new();
+    }
+    let (start, end) = app.logs.selection.range();
+    if start >= app.logs.entries.len() {
+        return String::new();
+    }
+
+    // Handle single selection with special JSON formatting
+    if start == end
+        && let Some(LogEntry::Api { json, raw, .. }) = app.logs.rich_entries.get(start)
+    {
+        if let Some(j) = json
+            && app.logs.pretty_json
+        {
+            let red = redact_json(j);
+            return serde_json::to_string_pretty(&red).unwrap_or_else(|_| redact_sensitive(raw));
+        }
+        return redact_sensitive(raw);
+    }
+
+    // Multi-select or text fallback: concatenate visible strings
+    let mut buf = String::new();
+    for i in start..=end.min(app.logs.entries.len() - 1) {
+        let line = app.logs.entries.get(i).cloned().unwrap_or_default();
+        if !buf.is_empty() {
+            buf.push('\n');
+        }
+        buf.push_str(&line);
+    }
+    redact_sensitive(&buf)
 }

@@ -4,25 +4,27 @@
 //! displays JSON results from command execution in a tabular format with
 //! scrolling and navigation capabilities.
 use crossterm::event::{KeyCode, KeyEvent};
-use heroku_types::Pagination;
+use heroku_types::{Effect, Msg, Pagination};
 use heroku_util::format_date_mmddyyyy;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
+use ratatui::layout::Rect;
+use ratatui::style::Style;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
-    prelude::*,
+    layout::{Constraint, Direction, Layout},
+    style::Modifier,
     text::{Line, Span},
     widgets::{Scrollbar, ScrollbarState, *},
 };
 use serde_json::Value;
 
+use super::state::KeyValueEntry;
 use crate::{
     app,
-    app::Effect,
     ui::{
-        components::{PaginationComponent, component::Component, table::TableFooter},
-        theme::{helpers as th, roles::Theme as UiTheme},
-        utils::{centered_rect, get_scored_keys, normalize_header, render_value},
+        components::{PaginationComponent, component::Component},
+        theme::{roles::Theme as UiTheme, theme_helpers as th},
+        utils::centered_rect,
     },
 };
 
@@ -61,13 +63,12 @@ use crate::{
 /// let mut table = TableComponent::new();
 /// table.init()?;
 /// ```
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct TableComponent<'a> {
     table: Table<'a>,
     table_state: TableState,
     scrollbar: Scrollbar<'a>,
     scrollbar_state: ScrollbarState,
-    footer: TableFooter<'a>,
     pagination: PaginationComponent,
 }
 
@@ -147,28 +148,64 @@ impl TableComponent<'_> {
     }
 
     /// Renders JSON as key-value pairs or plain text.
-    pub fn render_kv_or_text(&self, frame: &mut Frame, area: Rect, json: &Value, theme: &dyn UiTheme) {
+    fn render_kv_detail(&self, frame: &mut Frame, area: Rect, json: &Value, app: &mut app::App) {
+        let entries = app.table.kv_entries();
+        let focused = app.table.grid_f.get();
+        let selection = if entries.is_empty() {
+            None
+        } else {
+            Some(app.table.selected_index().min(entries.len().saturating_sub(1)))
+        };
+        let offset = if entries.is_empty() {
+            0
+        } else {
+            app.table.count_offset().min(entries.len().saturating_sub(1))
+        };
+
+        self.render_kv_or_text(frame, area, entries, selection, offset, focused, json, &*app.ctx.theme);
+    }
+
+    /// Renders JSON as key-value pairs or plain text.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_kv_or_text(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        entries: &[KeyValueEntry],
+        selection: Option<usize>,
+        offset: usize,
+        focused: bool,
+        json: &Value,
+        theme: &dyn UiTheme,
+    ) {
         match json {
-            Value::Object(map) => {
-                // Sort keys using the same scoring
-                let keys: Vec<String> = get_scored_keys(map);
-                let mut lines: Vec<Line> = Vec::new();
-                for header in keys.iter().take(24) {
-                    let val = render_value(header, map.get(header).unwrap_or(&Value::Null));
-                    lines.push(Line::from(vec![
-                        Span::styled(
-                            normalize_header(header),
-                            theme.text_secondary_style().add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(": "),
-                        Span::styled(val, theme.text_primary_style()),
-                    ]));
+            Value::Object(_) => {
+                let items: Vec<ListItem> = entries
+                    .iter()
+                    .map(|entry| {
+                        ListItem::new(Line::from(vec![
+                            Span::styled(entry.display_key.clone(), theme.text_secondary_style().add_modifier(Modifier::BOLD)),
+                            Span::raw(": "),
+                            Span::styled(entry.display_value.clone(), theme.text_primary_style()),
+                        ]))
+                    })
+                    .collect();
+
+                let mut list_state = ListState::default();
+                if let Some(selected) = selection {
+                    list_state.select(Some(selected.min(entries.len().saturating_sub(1))));
                 }
-                let p = Paragraph::new(Text::from(lines))
-                    .block(th::block(theme, Some("Details"), false))
-                    .wrap(Wrap { trim: false })
-                    .style(theme.text_primary_style());
-                frame.render_widget(p, area);
+                if !entries.is_empty() {
+                    let capped_offset = offset.min(entries.len().saturating_sub(1));
+                    *list_state.offset_mut() = capped_offset;
+                }
+
+                let list = List::new(items)
+                    .block(th::block(theme, Some("Details"), focused))
+                    .highlight_style(th::table_selected_style(theme))
+                    .style(th::panel_style(theme));
+
+                frame.render_stateful_widget(list, area, &mut list_state);
             }
             other => {
                 let date = match other {
@@ -186,78 +223,6 @@ impl TableComponent<'_> {
 }
 
 impl Component for TableComponent<'_> {
-    /// Renders the table modal with JSON results.
-    ///
-    /// This method handles the layout, styling, and table generation for the
-    /// results display.
-    ///
-    /// # Arguments
-    ///
-    /// * `f` - The frame to render to
-    /// * `rect` - The rectangular area to render in
-    /// * `app` - The application state containing result data
-    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
-        // Set up pagination if the command has range support
-        if let Some(pagination) = app.last_pagination.clone() {
-            self.set_pagination(pagination);
-            self.show_pagination();
-        } else {
-            self.hide_pagination();
-        }
-        // Large modal to maximize space for tables
-        let area = centered_rect(96, 90, rect);
-        let title = "Results  [Esc] Close  ↑/↓ Scroll";
-        let block = th::block(&*app.ctx.theme, Some(title), true);
-
-        frame.render_widget(Clear, area);
-        frame.render_widget(&block, area);
-        let inner = block.inner(area);
-        // Split for content + pagination + footer
-        let splits = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(1),                                                         // Table content
-                Constraint::Length(if self.pagination.state().is_visible { 7 } else { 0 }), // Pagination controls
-                Constraint::Length(1),                                                      // Footer
-            ])
-            .split(inner);
-
-        app.table.set_visible_rows(splits[0].height as usize);
-        let json = app.table.selected_result_json();
-        let widths = app.table.column_constraints();
-        let headers = app.table.headers();
-        let maybe_rows = app.table.rows();
-        let is_table = if let Some(json) = json {
-            if let Some(rows) = maybe_rows {
-                self.render_json_table_with_columns(
-                    frame,
-                    splits[0],
-                    app.table.count_offset(),
-                    app.table.selected_index(),
-                    rows,
-                    widths.unwrap(),
-                    headers.unwrap(),
-                    app.table.grid_f.get(),
-                    &*app.ctx.theme,
-                );
-                true
-            } else {
-                self.render_kv_or_text(frame, splits[0], json, &*app.ctx.theme);
-                false
-            }
-        } else {
-            let p = Paragraph::new("No results to display").style(app.ctx.theme.text_muted_style());
-            frame.render_widget(p, splits[0]);
-            false
-        };
-
-        if is_table {
-            // Render pagination controls
-            self.pagination.render(frame, splits[1], app);
-            self.footer.render(frame, splits[2], app);
-        }
-    }
-
     /// Handle key events for the results table modal.
     ///
     /// Applies local state updates directly to `app.table` for scrolling and
@@ -323,16 +288,137 @@ impl Component for TableComponent<'_> {
             KeyCode::End => {
                 app.table.reduce_end();
             }
-            // Toggle handled via App message; keep consistent with global actions
-            KeyCode::Char('t') => {
-                let _ = app.update(app::Msg::ToggleTable);
-            }
             KeyCode::Char('c') => {
-                effects.extend(app.update(app::Msg::CopyCommand));
+                if let Some(value) = app.table.selected_data() {
+                    let s = serde_json::to_string(value).ok().unwrap_or_default();
+                    effects.extend(app.update(Msg::CopyToClipboard(s)));
+                } else if let Some(entry) = app.table.selected_kv_entry() {
+                    let serialized = serde_json::to_string(&entry.raw_value).unwrap_or_else(|_| entry.raw_value.to_string());
+                    let payload = format!("{}: {}", entry.key, serialized);
+                    effects.extend(app.update(Msg::CopyToClipboard(payload)));
+                }
+            }
+            KeyCode::Esc => {
+                effects.push(Effect::CloseModal);
             }
             _ => {}
         }
         effects
+    }
+
+    /// Renders the table modal with JSON results.
+    ///
+    /// This method handles the layout, styling, and table generation for the
+    /// results display.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - The frame to render to
+    /// * `rect` - The rectangular area to render in
+    /// * `app` - The application state containing result data
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
+        // Set up pagination if the command has range support
+        if let Some(pagination) = app.last_pagination.clone() {
+            self.set_pagination(pagination);
+            self.show_pagination();
+        } else {
+            self.hide_pagination();
+        }
+        // Large modal to maximize space for tables
+        let area = centered_rect(96, 90, rect);
+        let title = "Results  [Esc] Close  ↑/↓ Scroll";
+        let block = th::block(&*app.ctx.theme, Some(title), true);
+
+        frame.render_widget(Clear, area);
+        frame.render_widget(&block, area);
+        let inner = block.inner(area);
+        // Split for content + pagination + footer
+        let splits = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(1),                                                         // Table content
+                Constraint::Length(if self.pagination.state().is_visible { 7 } else { 0 }), // Pagination controls
+                Constraint::Length(1),                                                      // Footer
+            ])
+            .split(inner);
+
+        app.table.set_visible_rows(splits[0].height as usize);
+        let json = app.table.selected_result_json().cloned();
+        let widths = app.table.column_constraints();
+        let headers = app.table.headers();
+        let maybe_rows = app.table.rows();
+        let mut rendered_table = false;
+
+        if let Some(json_value) = json.as_ref() {
+            if let Some(rows) = maybe_rows {
+                if !rows.is_empty() {
+                    self.render_json_table_with_columns(
+                        frame,
+                        splits[0],
+                        app.table.count_offset(),
+                        app.table.selected_index(),
+                        rows,
+                        widths.unwrap(),
+                        headers.unwrap(),
+                        app.table.grid_f.get(),
+                        &*app.ctx.theme,
+                    );
+                    rendered_table = true;
+                } else {
+                    self.render_kv_detail(frame, splits[0], json_value, app);
+                }
+            } else {
+                self.render_kv_detail(frame, splits[0], json_value, app);
+            }
+        } else {
+            let p = Paragraph::new("No results to display").style(app.ctx.theme.text_muted_style());
+            frame.render_widget(p, splits[0]);
+        }
+
+        if rendered_table {
+            self.pagination.render(frame, splits[1], app);
+        }
+
+        let hint_spans = self.get_hint_spans(app, true);
+        let hint_line = if hint_spans.is_empty() {
+            Line::default()
+        } else {
+            Line::from(hint_spans)
+        };
+        let hints_widget = Paragraph::new(hint_line).style(app.ctx.theme.text_muted_style());
+        frame.render_widget(hints_widget, splits[2]);
+    }
+
+    fn get_hint_spans(&self, app: &app::App, is_root: bool) -> Vec<Span<'_>> {
+        let has_rows = app.table.rows().map(|rows| !rows.is_empty()).unwrap_or(false);
+        let has_kv = !app.table.kv_entries().is_empty();
+        if !has_rows && !has_kv {
+            return Vec::new();
+        }
+
+        let theme = &*app.ctx.theme;
+        let mut spans: Vec<Span> = Vec::new();
+        if is_root {
+            spans.push(Span::styled("Hints: ", theme.text_muted_style()));
+        }
+
+        spans.extend([
+            Span::styled("Esc", theme.accent_emphasis_style()),
+            Span::styled(" close ", theme.text_muted_style()),
+            Span::styled("c", theme.accent_emphasis_style()),
+            Span::styled(" copy ", theme.text_muted_style()),
+            Span::styled("↑/↓", theme.accent_emphasis_style()),
+            Span::styled(" scroll  ", theme.text_muted_style()),
+            Span::styled("PgUp/PgDn", theme.accent_emphasis_style()),
+            Span::styled(" faster  ", theme.text_muted_style()),
+            Span::styled("Home/End", theme.accent_emphasis_style()),
+            Span::styled(" jump", theme.text_muted_style()),
+        ]);
+
+        if has_rows && self.pagination.state().is_visible {
+            spans.extend(self.pagination.get_hint_spans(app, false));
+        }
+        spans
     }
 }
 
@@ -345,7 +431,7 @@ impl HasFocus for PanelLeaf {
     fn focus(&self) -> FocusFlag {
         self.0.clone()
     }
-    fn area(&self) -> ratatui::layout::Rect {
-        ratatui::layout::Rect::default()
+    fn area(&self) -> Rect {
+        Rect::default()
     }
 }
