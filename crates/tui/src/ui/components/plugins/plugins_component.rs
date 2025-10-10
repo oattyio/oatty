@@ -87,7 +87,7 @@ impl Component for PluginsComponent {
     /// * `area` - The rectangular area available for rendering
     /// * `app` - Mutable reference to the app state
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
-        let layout = self.create_main_layout(area);
+        let layout = self.get_preferred_layout(app, area);
         let header_area = layout.get(0).expect("header area not found");
         let body_area = layout.get(1).expect("body area not found");
         let footer_area = layout.get(2).expect("footer area not found");
@@ -152,6 +152,27 @@ impl Component for PluginsComponent {
         }
 
         spans
+    }
+
+    /// Creates the main 3-row layout: header, body, and footer.
+    ///
+    /// This method defines the vertical layout structure for the plugins interface,
+    /// allocating space for the header (search bar), main body content, and footer
+    /// (hints bar).
+    ///
+    /// # Arguments
+    ///
+    /// * `inner_area` - The inner rectangular area to layout within
+    ///
+    /// # Returns
+    ///
+    /// Returns a vector of rectangles representing the header, body, and footer areas.
+    fn get_preferred_layout(&self, _app: &App, inner_area: Rect) -> Vec<Rect> {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(6), Constraint::Length(1)])
+            .split(inner_area)
+            .to_vec()
     }
 }
 
@@ -339,27 +360,6 @@ impl PluginsComponent {
             return self.table_component.handle_key_events(app, key_event);
         }
         vec![]
-    }
-
-    /// Creates the main 3-row layout: header, body, and footer.
-    ///
-    /// This method defines the vertical layout structure for the plugins interface,
-    /// allocating space for the header (search bar), main body content, and footer
-    /// (hints bar).
-    ///
-    /// # Arguments
-    ///
-    /// * `inner_area` - The inner rectangular area to layout within
-    ///
-    /// # Returns
-    ///
-    /// Returns a vector of rectangles representing the header, body, and footer areas.
-    fn create_main_layout(&self, inner_area: Rect) -> Vec<Rect> {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(6), Constraint::Length(1)])
-            .split(inner_area)
-            .to_vec()
     }
 
     /// Renders the header area containing the search bar.

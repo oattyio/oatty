@@ -127,39 +127,47 @@ pub fn strip_range_body_fields(mut body: Map<String, Value>) -> Map<String, Valu
 /// body.insert("order".to_string(), "desc".into());
 ///
 /// let header = build_range_header_from_body(&body).unwrap();
-/// assert_eq!(header, "name a..z; max=100, order=desc;");
+/// assert_eq!(header, "name a..z; order=desc; max=100;");
 /// ```
 pub fn build_range_header_from_body(body: &Map<String, Value>) -> Option<String> {
-    let field = body
-        .get("range-field")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|string| !string.is_empty())?;
+    fn clean_string(value: &Value) -> Option<String> {
+        match value {
+            Value::String(string) => {
+                let trimmed = string.trim();
+                if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+            }
+            Value::Number(number) => Some(number.to_string()),
+            Value::Bool(boolean) => Some(boolean.to_string()),
+            _ => None,
+        }
+    }
 
-    let start = body.get("range-start").and_then(|value| value.as_str()).unwrap_or("").trim();
+    let field = body.get("range-field").and_then(clean_string).map(|string| string.to_lowercase())?;
 
-    let end = body.get("range-end").and_then(|value| value.as_str()).unwrap_or("").trim();
+    let start = body.get("range-start").and_then(clean_string).unwrap_or_default();
+
+    let end = body.get("range-end").and_then(clean_string).unwrap_or_default();
 
     let order = body
         .get("order")
-        .and_then(|value| value.as_str())
-        .map(str::trim)
-        .filter(|string| !string.is_empty());
+        .and_then(clean_string)
+        .map(|string| string.trim_end_matches(';').to_lowercase());
 
-    let max = body
-        .get("max")
-        .and_then(|value| value.as_str())
-        .and_then(|string| string.parse::<usize>().ok());
+    let max = body.get("max").and_then(|value| match value {
+        Value::Number(number) => number.as_u64().map(|raw| raw as usize),
+        Value::String(string) => string.trim().parse::<usize>().ok(),
+        _ => None,
+    });
 
     let range_segment = format!("{}..{}", start, end);
-    let mut range_header = format!("{} {}", field, range_segment);
-
-    if let Some(maximum) = max {
-        range_header.push_str(&format!("; max={}", maximum));
-    }
+    let mut range_header = format!("{} {};", field, range_segment);
 
     if let Some(sort_order) = order {
-        range_header.push_str(&format!(", order={};", sort_order));
+        range_header.push_str(&format!(" order={};", sort_order));
+    }
+
+    if let Some(maximum) = max {
+        range_header.push_str(&format!(" max={};", maximum));
     }
 
     Some(range_header)
@@ -195,6 +203,32 @@ pub fn status_error_message(status_code: u16) -> Option<String> {
         401 => Some("Unauthorized (401). Hint: set HEROKU_API_KEY=... or configure ~/.netrc with machine api.heroku.com".into()),
         403 => Some("Forbidden (403). Hint: check team/app access, permissions, and role membership".into()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Number;
+
+    #[test]
+    fn builds_range_header_with_semicolon_delimiters() {
+        let mut body = Map::new();
+        body.insert("range-field".into(), Value::String("Name".into()));
+        body.insert("range-start".into(), Value::String("app1".into()));
+        body.insert("range-end".into(), Value::String("app9".into()));
+        body.insert("order".into(), Value::String("DESC".into()));
+        body.insert("max".into(), Value::Number(Number::from(100)));
+
+        let header = build_range_header_from_body(&body).expect("range header");
+        assert_eq!(header, "name app1..app9; order=desc; max=100;");
+    }
+
+    #[test]
+    fn returns_none_when_range_field_missing() {
+        let mut body = Map::new();
+        body.insert("range-start".into(), Value::String("app1".into()));
+        assert!(build_range_header_from_body(&body).is_none());
     }
 }
 

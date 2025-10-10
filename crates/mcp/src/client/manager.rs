@@ -139,7 +139,7 @@ impl McpClientManager {
         }
         // Prevent duplicates: if already running or in progress, bail
         let plugin_name = name.to_string();
-        let (mut active_guard, mut starting_guard) = tokio::join!(self.active_clients.lock(), self.starting.lock());
+        let (active_guard, mut starting_guard) = tokio::join!(self.active_clients.lock(), self.starting.lock());
 
         if active_guard.contains_key(name) {
             return Err(ClientManagerError::ClientAlreadyExists { name: plugin_name.clone() });

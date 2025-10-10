@@ -61,15 +61,16 @@ impl Default for FieldSelection {
 ///
 /// Examples
 /// ```rust
-/// use heroku_engine::provider::{ProviderReturns, ReturnField};
-/// use heroku_engine::provider::{infer_selection};
+/// use heroku_engine::provider::{ProviderContract, ProviderReturns, ReturnField, infer_selection};
 ///
-/// let contract = heroku_engine::provider::ProviderContract {
-///     args: serde_json::Map::new(),
-///     returns: ProviderReturns { fields: vec![
-///         ReturnField { name: "uuid".into(), r#type: Some("string".into()), tags: vec!["identifier".into()] },
-///         ReturnField { name: "display".into(), r#type: Some("string".into()), tags: vec!["display".into()] },
-///     ]}
+/// let contract = ProviderContract {
+///     arguments: Vec::new(),
+///     returns: ProviderReturns {
+///         fields: vec![
+///             ReturnField { name: "uuid".into(), r#type: Some("string".into()), tags: vec!["identifier".into()] },
+///             ReturnField { name: "display".into(), r#type: Some("string".into()), tags: vec!["display".into()] },
+///         ],
+///     },
 /// };
 /// let sel = infer_selection(None, Some(&contract));
 /// assert_eq!(sel.value_field, "uuid");
@@ -146,7 +147,52 @@ pub fn infer_selection(explicit: Option<crate::model::SelectSpec>, contract: Opt
     selection.source = SelectionSource::RequiresChoice;
     selection
 }
-
+/// Scans a `ProviderContract` to identify potential candidates for specific fields such as
+/// an identifier (`id`) and a display field (`name` or `display`), based on field tags and names.
+///
+/// # Arguments
+///
+/// * `contract` - A reference to a `ProviderContract` that contains a list of fields
+///   within its `returns` section. Each field may have some associated tags and a name.
+///
+/// # Returns
+///
+/// A tuple containing the following elements:
+///
+/// 1. `id_candidate` (`Option<String>`): The name of the field that is chosen as the identifier.
+///     - This is determined by checking for tags like `"id"` or `"identifier"` in the field.
+///     - If no such tags exist, any field explicitly named `"id"` will be chosen as a fallback.
+///     - Returns `None` if no identifier is found.
+///
+/// 2. `id_from_tags` (`bool`): Indicates whether the `id_candidate` was determined by tag-based matching.
+///
+/// 3. `display_candidate` (`Option<String>`): The name of the field that is chosen as the display field.
+///     - This is determined by checking for the `"display"` tag in the field.
+///     - If no such tag exists, any field explicitly named `"name"` will be chosen as a fallback.
+///     - Returns `None` if no display candidate is found.
+///
+/// 4. `display_from_tags` (`bool`): Indicates whether the `display_candidate` was determined by tag-based matching.
+///
+/// # Implementation Details
+///
+/// The function iterates through the fields in the `contract.returns.fields`.
+/// It checks the `tags` vector of each field for the presence of specific tags associated with `id` or `display`.
+/// If no tag-based match is found, it attempts to use explicit naming conventions as a fallback (`id` for identifiers, `name` for display).
+///
+/// # Example
+/// ```rust,ignore
+/// let contract = ProviderContract {
+///     returns: Returns {
+///         fields: vec![
+///             Field { name: "id", tags: vec!["identifier".to_string()] },
+///             Field { name: "name", tags: vec!["display".to_string()] },
+///         ]
+///     }
+/// };
+///
+/// let result = scan_contract_for_candidates(&contract);
+/// assert_eq!(result, (Some("id".to_string()), true, Some("name".to_string()), true));
+/// ```
 fn scan_contract_for_candidates(contract: &ProviderContract) -> (Option<String>, bool, Option<String>, bool) {
     let mut id_candidate: Option<String> = None;
     let mut id_from_tags = false;
@@ -170,7 +216,81 @@ fn scan_contract_for_candidates(contract: &ProviderContract) -> (Option<String>,
     }
     (id_candidate, id_from_tags, display_candidate, display_from_tags)
 }
-
+/// Coerces a `Value` into a specified target type or extracts a specific field from an object based on the given `FieldSelection`.
+///
+/// # Arguments
+///
+/// * `value` - The input `Value` to be coerced. It can be of type `Value::Object`, `Value::String`, `Value::Number`, `Value::Bool`, or `Value::Null`.
+/// * `target_type` - An optional string representing the desired target type for coercion. Valid options are:
+///   * `"string"` (default if `None` is provided)
+///   * `"number"`
+///   * `"boolean"`
+///   Any unrecognized target type will result in the `value` being returned unchanged.
+/// * `selection` - An optional `FieldSelection` that identifies the field to extract from a `Value::Object` input. If provided,
+/// the field value will be extracted; otherwise, the original value is used.
+///
+/// # Behavior
+///
+/// 1. If `value` is an object (`Value::Object`) and `selection` is provided, the field specified by `FieldSelection::value_field`
+///    will be extracted. If the field is not found, `Value::Null` will be used as the base value.
+/// 2. If `target_type` is provided, the function attempts to coerce the base value into the specified type:
+///    - `"string"`:
+///      - If the base value is `Value::String`, it remains unchanged.
+///      - If the base value is `Value::Null`, it is converted to an empty string (`Value::String`).
+///      - All other types are converted to a string via their `to_string` implementation.
+///    - `"number"`:
+///      - If the base value is `Value::Number`, it remains unchanged.
+///      - If the base value is `Value::String`, it will attempt to parse the string as a floating-point number (`f64`).
+///        If the parsing fails, the value defaults to `Value::Null`.
+///      - Other types default to `Value::Null`.
+///    - `"boolean"`:
+///      - If the base value is `Value::Bool`, it remains unchanged.
+///      - If the base value is `Value::String`, it is converted to a boolean:
+///        - The string is considered "true" if it matches `"true"`, `"1"`, or `"yes"`.
+///        - All other strings are considered "false".
+///      - If the base value is `Value::Number`, it evaluates to `true` if the number is non-zero, otherwise `false`.
+///      - All other types default to `Value::Bool(false)`.
+/// 3. If `target_type` is unrecognized, the function returns the base value unchanged.
+///
+/// # Returns
+///
+/// The coerced `Value` according to the provided `target_type` and/or field extraction logic.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use serde_json::Value;
+///
+/// // Example 1: Coerce a string to a number
+/// let value = Value::String("123".to_string());
+/// assert_eq!(
+///     coerce_value(&value, Some("number"), None),
+///     Value::Number(serde_json::Number::from(123))
+/// );
+///
+/// // Example 2: Extract a field from an object
+/// let obj = Value::Object(serde_json::map::Map::from_iter([
+///     ("key".to_string(), Value::String("value".to_string()))
+/// ]));
+/// let selection = Some(FieldSelection { value_field: "key".to_string() });
+/// assert_eq!(
+///     coerce_value(&obj, None, selection.as_ref()),
+///     Value::String("value".to_string())
+/// );
+///
+/// // Example 3: Coerce a boolean to a string
+/// let value = Value::Bool(true);
+/// assert_eq!(
+///     coerce_value(&value, Some("string"), None),
+///     Value::String("true".to_string())
+/// );
+///
+/// // Example 4: Handle unrecognized target type
+/// assert_eq!(
+///     coerce_value(&value, Some("unknown_type"), None),
+///     Value::Bool(true)
+/// );
+/// ```
 pub fn coerce_value(value: &Value, target_type: Option<&str>, selection: Option<&FieldSelection>) -> Value {
     let base = match (value, selection) {
         (Value::Object(map), Some(sel)) => map.get(&sel.value_field).cloned().unwrap_or(Value::Null),

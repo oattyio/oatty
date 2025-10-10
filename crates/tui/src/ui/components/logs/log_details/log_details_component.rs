@@ -75,7 +75,7 @@ impl LogDetailsComponent {
                 }
             }
 
-            // Handle single non-API entry or API without JSON
+            // Handle a single non-API entry or API without JSON
             let s = app.logs.entries.get(start).cloned().unwrap_or_default();
             let p = Paragraph::new(redact_sensitive(&s))
                 .block(Block::default().borders(Borders::NONE))
@@ -105,37 +105,7 @@ impl LogDetailsComponent {
 }
 
 impl Component for LogDetailsComponent {
-    fn render(&mut self, frame: &mut ratatui::Frame, rect: ratatui::prelude::Rect, app: &mut crate::app::App) {
-        let area = centered_rect(80, 70, rect);
-        let title = "Log Details";
-        let block = theme_helpers::block(&*app.ctx.theme, Some(title), true);
-
-        // Clear the modal area and render the border
-        frame.render_widget(Clear, area);
-        frame.render_widget(&block, area);
-        let inner = block.inner(area);
-
-        // Split modal into content and footer areas
-        let splits = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(1)])
-            .split(inner);
-
-        // Render the main detail content
-        self.render_detail_content(frame, splits[0], app);
-
-        // Render footer with keyboard hints
-        let hint_spans = self.get_hint_spans(app, true);
-        let hint_line = if hint_spans.is_empty() {
-            Line::default()
-        } else {
-            Line::from(hint_spans)
-        };
-        let footer = Paragraph::new(hint_line).style(app.ctx.theme.text_muted_style());
-        frame.render_widget(footer, splits[1]);
-    }
-
-    fn handle_key_events(&mut self, app: &mut crate::app::App, key: crossterm::event::KeyEvent) -> Vec<Effect> {
+    fn handle_key_events(&mut self, app: &mut App, key: crossterm::event::KeyEvent) -> Vec<Effect> {
         let mut effects = Vec::with_capacity(1);
 
         // keys not requiring the detail
@@ -183,6 +153,36 @@ impl Component for LogDetailsComponent {
         }
 
         effects
+    }
+
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
+        let area = centered_rect(80, 70, rect);
+        let title = "Log Details";
+        let block = theme_helpers::block(&*app.ctx.theme, Some(title), true);
+
+        // Clear the modal area and render the border
+        frame.render_widget(Clear, area);
+        frame.render_widget(&block, area);
+        let inner = block.inner(area);
+
+        // Split modal into content and footer areas
+        let splits = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(1), Constraint::Length(1)])
+            .split(inner);
+
+        // Render the main detail content
+        self.render_detail_content(frame, splits[0], app);
+
+        // Render footer with keyboard hints
+        let hint_spans = self.get_hint_spans(app, true);
+        let hint_line = if hint_spans.is_empty() {
+            Line::default()
+        } else {
+            Line::from(hint_spans)
+        };
+        let footer = Paragraph::new(hint_line).style(app.ctx.theme.text_muted_style());
+        frame.render_widget(footer, splits[1]);
     }
 
     fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {

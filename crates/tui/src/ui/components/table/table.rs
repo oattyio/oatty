@@ -3,15 +3,15 @@
 //! This module provides a component for rendering the table modal, which
 //! displays JSON results from command execution in a tabular format with
 //! scrolling and navigation capabilities.
-use crossterm::event::{KeyCode, KeyEvent};
-use heroku_types::{Effect, Msg, Pagination};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
+use heroku_types::{Effect, Msg};
 use heroku_util::format_date_mmddyyyy;
-use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
+use rat_focus::HasFocus;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Layout},
     style::Modifier,
     text::{Line, Span},
     widgets::{Scrollbar, ScrollbarState, *},
@@ -19,13 +19,11 @@ use ratatui::{
 use serde_json::Value;
 
 use super::state::KeyValueEntry;
-use crate::{
-    app,
-    ui::{
-        components::{PaginationComponent, component::Component},
-        theme::{roles::Theme as UiTheme, theme_helpers as th},
-        utils::centered_rect,
-    },
+use crate::app::App;
+use crate::ui::{
+    components::{PaginationComponent, component::Component},
+    theme::{roles::Theme as UiTheme, theme_helpers as th},
+    utils::centered_rect,
 };
 
 /// Results table modal component for displaying JSON data.
@@ -52,7 +50,7 @@ use crate::{
 ///
 /// - **Arrow keys**: Scroll up/down through rows
 /// - **Page Up/Down**: Scroll faster through the table
-/// - **Home/End**: Jump to beginning/end of the table
+/// - **Home/End**: Jump to the beginning /end of the table
 /// - **Escape**: Close the table modal
 ///
 /// # Examples
@@ -73,21 +71,6 @@ pub struct TableComponent<'a> {
 }
 
 impl TableComponent<'_> {
-    /// Sets the available range fields for pagination
-    pub fn set_pagination(&mut self, pagination: Pagination) {
-        self.pagination.set_pagination(pagination);
-    }
-
-    /// Shows the pagination controls
-    pub fn show_pagination(&mut self) {
-        self.pagination.show();
-    }
-
-    /// Hides the pagination controls
-    pub fn hide_pagination(&mut self) {
-        self.pagination.hide();
-    }
-
     /// Renders a JSON array as a table with offset support using known columns.
     #[allow(clippy::too_many_arguments)]
     pub fn render_json_table_with_columns(
@@ -126,7 +109,7 @@ impl TableComponent<'_> {
             )
             .column_spacing(1)
             .row_highlight_style(th::table_selected_style(theme))
-            // Ensure table fills with background surface and text color
+            // Ensure the table fills with background surface and text color
             .style(th::panel_style(theme));
 
         // Highlight the selected row relative to the visible window
@@ -148,7 +131,7 @@ impl TableComponent<'_> {
     }
 
     /// Renders JSON as key-value pairs or plain text.
-    fn render_kv_detail(&self, frame: &mut Frame, area: Rect, json: &Value, app: &mut app::App) {
+    fn render_kv_detail(&self, frame: &mut Frame, area: Rect, json: &Value, app: &mut App) {
         let entries = app.table.kv_entries();
         let focused = app.table.grid_f.get();
         let selection = if entries.is_empty() {
@@ -223,48 +206,33 @@ impl TableComponent<'_> {
 }
 
 impl Component for TableComponent<'_> {
-    /// Handle key events for the results table modal.
+    /// Handle key events for the result table modal.
     ///
     /// Applies local state updates directly to `app.table` for scrolling and
-    /// navigation. Returns `Ok(true)` if the key was handled by the table,
+    /// navigation. Returns `Ok(true)` if the table handled the key,
     /// otherwise `Ok(false)`.
-    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
+    fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         let mut effects: Vec<Effect> = vec![];
-
-        // Keep pagination focus in sync with enabled state
-        self.pagination.normalize_focus();
-
+        if key.code == KeyCode::Esc {
+            return vec![Effect::CloseModal];
+        }
+        self.pagination.sync_navigation_state(app);
         // Delegate to pagination when pagination subcontrols are focused
-        let p = self.pagination.state();
+        let pagination_state = &app.table.pagination_state;
         let focus_on_grid = app.table.grid_f.get();
-        let focus_on_pagination = p.nav_first_f.get() || p.nav_prev_f.get() || p.nav_next_f.get() || p.nav_last_f.get();
-        // Let table handle Tab/BackTab to cycle grid <-> pagination; otherwise delegate
-        if !focus_on_grid && focus_on_pagination && key.code != KeyCode::Tab && key.code != KeyCode::BackTab {
+        let focus_on_pagination = pagination_state.is_focused();
+        // Let the table handle Tab/BackTab to cycle grid <-> pagination; otherwise delegate
+        if !focus_on_grid && focus_on_pagination {
             effects.extend(self.pagination.handle_key_events(app, key));
             return effects;
         }
 
         match key.code {
-            KeyCode::Tab | KeyCode::BackTab => {
-                // Cycle grid + pagination subcontrols
-                let p = self.pagination.state();
-                let mut b = rat_focus::FocusBuilder::new(None);
-                b.widget(&PanelLeaf(app.table.grid_f.clone()));
-                // Only include enabled nav buttons
-                if p.has_prev_page() {
-                    b.widget(&PanelLeaf(p.nav_first_f.clone()));
-                    b.widget(&PanelLeaf(p.nav_prev_f.clone()));
-                }
-                if p.has_next_page() {
-                    b.widget(&PanelLeaf(p.nav_next_f.clone()));
-                    b.widget(&PanelLeaf(p.nav_last_f.clone()));
-                }
-                let f = b.build();
-                if key.code == KeyCode::Tab {
-                    let _ = f.next();
-                } else {
-                    let _ = f.prev();
-                }
+            KeyCode::BackTab => {
+                app.focus.prev();
+            }
+            KeyCode::Tab => {
+                app.focus.next();
             }
             KeyCode::Up => {
                 app.table.reduce_scroll(-1);
@@ -298,49 +266,45 @@ impl Component for TableComponent<'_> {
                     effects.extend(app.update(Msg::CopyToClipboard(payload)));
                 }
             }
-            KeyCode::Esc => {
-                effects.push(Effect::CloseModal);
-            }
             _ => {}
         }
+        effects
+    }
+
+    fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
+        let mut effects: Vec<Effect> = vec![];
+        effects.extend(self.pagination.handle_mouse_events(app, mouse));
         effects
     }
 
     /// Renders the table modal with JSON results.
     ///
     /// This method handles the layout, styling, and table generation for the
-    /// results display.
+    /// result display.
     ///
     /// # Arguments
     ///
     /// * `f` - The frame to render to
     /// * `rect` - The rectangular area to render in
     /// * `app` - The application state containing result data
-    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
         // Set up pagination if the command has range support
         if let Some(pagination) = app.last_pagination.clone() {
-            self.set_pagination(pagination);
-            self.show_pagination();
+            app.table.pagination_state.set_pagination(pagination);
+            app.table.pagination_state.show_pagination();
         } else {
-            self.hide_pagination();
+            app.table.pagination_state.hide_pagination();
         }
         // Large modal to maximize space for tables
         let area = centered_rect(96, 90, rect);
         let title = "Results  [Esc] Close  ↑/↓ Scroll";
-        let block = th::block(&*app.ctx.theme, Some(title), true);
+        let block = th::block(&*app.ctx.theme, Some(title), app.table.container_focus.get());
 
         frame.render_widget(Clear, area);
         frame.render_widget(&block, area);
         let inner = block.inner(area);
-        // Split for content + pagination + footer
-        let splits = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(1),                                                         // Table content
-                Constraint::Length(if self.pagination.state().is_visible { 7 } else { 0 }), // Pagination controls
-                Constraint::Length(1),                                                      // Footer
-            ])
-            .split(inner);
+        // Split for content + pagination and footer
+        let splits = self.get_preferred_layout(app, inner);
 
         app.table.set_visible_rows(splits[0].height as usize);
         let json = app.table.selected_result_json().cloned();
@@ -389,7 +353,7 @@ impl Component for TableComponent<'_> {
         frame.render_widget(hints_widget, splits[2]);
     }
 
-    fn get_hint_spans(&self, app: &app::App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
         let has_rows = app.table.rows().map(|rows| !rows.is_empty()).unwrap_or(false);
         let has_kv = !app.table.kv_entries().is_empty();
         if !has_rows && !has_kv {
@@ -415,23 +379,19 @@ impl Component for TableComponent<'_> {
             Span::styled(" jump", theme.text_muted_style()),
         ]);
 
-        if has_rows && self.pagination.state().is_visible {
+        if has_rows && app.table.pagination_state.is_visible() {
             spans.extend(self.pagination.get_hint_spans(app, false));
         }
         spans
     }
-}
 
-// Local leaf wrapper used for table grid and pagination focus items
-struct PanelLeaf(FocusFlag);
-impl HasFocus for PanelLeaf {
-    fn build(&self, builder: &mut FocusBuilder) {
-        builder.leaf_widget(self);
-    }
-    fn focus(&self) -> FocusFlag {
-        self.0.clone()
-    }
-    fn area(&self) -> Rect {
-        Rect::default()
+    fn get_preferred_layout(&self, app: &App, area: Rect) -> Vec<Rect> {
+        Layout::vertical([
+            Constraint::Min(1),                                                              // Table content
+            Constraint::Length(if app.table.pagination_state.is_visible() { 7 } else { 0 }), // Pagination controls
+            Constraint::Length(1),                                                           // Footer
+        ])
+        .split(area)
+        .to_vec()
     }
 }

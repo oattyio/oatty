@@ -22,9 +22,6 @@ use ratatui::{
 };
 use textwrap::wrap;
 
-const MODAL_WIDTH_PERCENT: u16 = 90;
-const MODAL_HEIGHT_PERCENT: u16 = 80;
-
 /// Renderable implementation of the plugin details modal, including tab navigation and
 /// lifecycle management shortcuts.
 #[derive(Debug, Default)]
@@ -55,7 +52,7 @@ impl Component for PluginsDetailsComponent {
                 if let PluginDetailsLoadState::Loaded(data) = details_state.load_state() {
                     let total = data.logs.len();
                     if total > 0 {
-                        // We don't know visible height here; clamp in render
+                        // We don't know the visible height here; clamp in render
                         details_state.scroll_logs_down(1, total.saturating_sub(1));
                     }
                 }
@@ -89,7 +86,7 @@ impl Component for PluginsDetailsComponent {
 
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         let theme = &*app.ctx.theme;
-        let modal_area = centered_rect(MODAL_WIDTH_PERCENT, MODAL_HEIGHT_PERCENT, area);
+        let modal_area = centered_rect(90, 80, area);
         frame.render_widget(Clear, modal_area);
 
         let title = modal_title(app.plugins.details.as_ref());
@@ -103,11 +100,12 @@ impl Component for PluginsDetailsComponent {
         frame.render_widget(block, modal_area);
 
         // First, split the full inner area into left (main) and right (tools) panes so the
-        // tools border can span the entire height of the modal contents.
-        let cols = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-            .split(inner);
+        // tool border can span the entire height of the modal contents.
+        let cols = Layout::horizontal([
+            Constraint::Percentage(60), // main
+            Constraint::Percentage(40), // tools
+        ])
+        .split(inner);
 
         // Draw a full-height left border for the tools pane
         let tools_border_block = Block::default().borders(Borders::LEFT).border_style(theme.border_style(true));
@@ -251,7 +249,7 @@ impl PluginsDetailsComponent {
                 self.render_environment(frame, left_chunks[4], theme, data);
                 self.render_hrule(frame, left_chunks[5], theme);
 
-                // Logs: compute scroll window and render with scrollbar
+                // Logs: compute a scroll window and render with scrollbar
                 let total = data.logs.len();
                 let logs_area = left_chunks[6];
                 let header_body = Layout::default()
@@ -273,7 +271,7 @@ impl PluginsDetailsComponent {
                 let visible_items = if offset < end { items[offset..end].to_vec() } else { vec![] };
                 frame.render_widget(List::new(visible_items), body_area);
 
-                // Scrollbar at right of logs body
+                // Scrollbar at right of log body
                 if total > visible {
                     let mut sb_state = ScrollbarState::new(total).position(offset);
                     let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -297,7 +295,7 @@ impl PluginsDetailsComponent {
         };
         lines.push(self.label_value_line(theme, "Command", command));
 
-        // Transport with local/remote hint
+        // Transport with a local/remote hint
         let transport_hint = if detail.transport_type.to_lowercase().contains("stdio") {
             "(local)"
         } else {
@@ -396,7 +394,7 @@ impl PluginsDetailsComponent {
             return;
         }
 
-        // Split area to render a heading and the table below
+        // Split the area to render a heading and the table below
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(1)])

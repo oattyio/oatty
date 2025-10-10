@@ -168,6 +168,7 @@ pub fn store_secret(name: &str, value: &str) -> Result<(), InterpolationError> {
 }
 
 /// Remove a secret from the OS keychain.
+#[allow(dead_code)]
 pub fn remove_secret(name: &str) -> Result<(), InterpolationError> {
     let keyring = keyring::Entry::new(SERVICE, name).map_err(|e| InterpolationError::KeyringError {
         name: name.to_string(),

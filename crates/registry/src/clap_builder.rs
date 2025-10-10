@@ -5,7 +5,7 @@ use std::{
 
 use clap::{Arg, ArgAction, Command as ClapCommand};
 
-use crate::{CommandFlag, CommandSpec, Registry};
+use crate::{CommandFlag, CommandSpec, Registry, feat_gate::feature_workflows};
 
 /// Builds a complete Clap command tree from the registry's command
 /// specifications.
@@ -48,6 +48,10 @@ pub fn build_clap(registry: Arc<Mutex<Registry>>) -> ClapCommand {
     for (group, cmds) in groups {
         let group_command = build_group_command(&group, cmds);
         root = root.subcommand(group_command);
+    }
+
+    if feature_workflows() {
+        root = root.subcommand(build_workflow_root_command());
     }
 
     root
@@ -165,6 +169,67 @@ fn build_group_command(group: &str, cmds: Vec<&CommandSpec>) -> ClapCommand {
     }
 
     group_cmd
+}
+
+fn build_workflow_root_command() -> ClapCommand {
+    let list_cmd = ClapCommand::new("list").about("List workflows embedded in the registry");
+
+    let preview_cmd = ClapCommand::new("preview")
+        .about("Preview a workflow definition")
+        .arg(
+            Arg::new("id")
+                .long("id")
+                .short('i')
+                .value_name("WORKFLOW_ID")
+                .required_unless_present("file")
+                .help("Identifier for a workflow bundled in the registry"),
+        )
+        .arg(
+            Arg::new("file")
+                .long("file")
+                .value_name("PATH")
+                .help("Preview a workflow definition from a file")
+                .conflicts_with("id"),
+        )
+        .arg(
+            Arg::new("format")
+                .long("format")
+                .value_name("FORMAT")
+                .value_parser(["yaml", "json"])
+                .default_value("yaml")
+                .help("Output format for the preview"),
+        );
+
+    let run_cmd = ClapCommand::new("run")
+        .about("Execute a workflow")
+        .arg(
+            Arg::new("id")
+                .long("id")
+                .short('i')
+                .value_name("WORKFLOW_ID")
+                .required_unless_present("file")
+                .help("Identifier for a workflow bundled in the registry"),
+        )
+        .arg(
+            Arg::new("file")
+                .long("file")
+                .value_name("PATH")
+                .help("Execute a workflow definition from a file")
+                .conflicts_with("id"),
+        )
+        .arg(
+            Arg::new("input")
+                .long("input")
+                .value_name("KEY=VALUE")
+                .help("Override a workflow input (repeatable)")
+                .action(ArgAction::Append),
+        );
+
+    ClapCommand::new("workflow")
+        .about("Workflow utilities")
+        .subcommand(list_cmd)
+        .subcommand(preview_cmd)
+        .subcommand(run_cmd)
 }
 
 /// Builds a single subcommand with its arguments and flags.

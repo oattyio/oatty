@@ -2,6 +2,7 @@ use anyhow::{Result, anyhow};
 use reqwest::Method;
 use serde_json::Value;
 use std::str::FromStr;
+use tokio::{runtime::Handle, task};
 
 use crate::resolve::RunContext;
 
@@ -136,26 +137,33 @@ impl CommandRunner for RegistryCommandRunner {
             }
         }
 
-        // Execute request synchronously using a lightweight runtime
-        let res = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt.block_on(async move {
-                let resp = req.send().await.map_err(|e| anyhow::anyhow!(e))?;
-                let status = resp.status();
-                let headers = resp.headers().clone();
-                let val = resp.json::<Value>().await.unwrap_or(Value::Null);
-                let mut obj = serde_json::Map::new();
-                obj.insert("status_code".into(), Value::Number(serde_json::Number::from(status.as_u16())));
-                if let Some(v) = headers
-                    .get("Content-Range")
-                    .and_then(|h| h.to_str().ok())
-                    .map(|s| Value::String(s.to_string()))
-                {
-                    obj.insert("content_range".into(), v);
-                }
-                obj.insert("data".into(), val);
-                Ok::<Value, anyhow::Error>(Value::Object(obj))
-            }),
-            Err(e) => Err(anyhow::anyhow!(e)),
+        let fut = async move {
+            let resp = req.send().await.map_err(|e| anyhow::anyhow!(e))?;
+            let status = resp.status();
+            let headers = resp.headers().clone();
+            let val = resp.json::<Value>().await.unwrap_or(Value::Null);
+            let mut obj = serde_json::Map::new();
+            obj.insert("status_code".into(), Value::Number(serde_json::Number::from(status.as_u16())));
+            if let Some(v) = headers
+                .get("Content-Range")
+                .and_then(|h| h.to_str().ok())
+                .map(|s| Value::String(s.to_string()))
+            {
+                obj.insert("content_range".into(), v);
+            }
+            obj.insert("data".into(), val);
+            Ok::<Value, anyhow::Error>(Value::Object(obj))
+        };
+
+        // Execute request synchronously, reusing the current runtime when available.
+        let res = if let Ok(handle) = Handle::try_current() {
+            task::block_in_place(|| handle.block_on(fut))
+        } else {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| anyhow::anyhow!(e))?
+                .block_on(fut)
         }?;
 
         Ok(res)

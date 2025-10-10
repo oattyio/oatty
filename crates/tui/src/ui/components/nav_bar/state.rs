@@ -1,3 +1,4 @@
+use heroku_registry::feat_gate::feature_workflows;
 use heroku_types::Route;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
@@ -84,11 +85,17 @@ impl VerticalNavBarState {
     /// - Browser: "⌕" (search lens)
     /// - Plugins: "{}" (configuration/plugins)
     pub fn defaults_for_views() -> Self {
-        Self::new(vec![
+        let mut items = vec![
             NavItem::new("[Cmd]", "Command", Route::Palette),
             NavItem::new("[Brw]", "Browser", Route::Browser),
             NavItem::new("[Ext]", "Extensions", Route::Plugins),
-        ])
+        ];
+
+        if feature_workflows() {
+            items.push(NavItem::new("[Wkf]", "Workflows", Route::Workflows));
+        }
+
+        Self::new(items)
     }
 
     /// Updates the collection of item focus flags to match `items` length.

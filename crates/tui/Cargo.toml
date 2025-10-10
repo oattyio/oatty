@@ -18,6 +18,8 @@ heroku-registry = { path = "../registry" }
 heroku-util = { path = "../util" }
 heroku-types = { path = "../types" }
 heroku-mcp = { path = "../mcp" }
+heroku-engine = { path = "../engine" }
+heroku-api = { path = "../api" }
 arboard = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
@@ -28,6 +30,7 @@ once_cell = { workspace = true }
 rat-focus = { workspace = true }
 serde_json = { workspace = true }
 textwrap = { workspace = true }
+serde = { version = "1.0.228", features = ["derive"] }
 
 [lib]
 doctest = false

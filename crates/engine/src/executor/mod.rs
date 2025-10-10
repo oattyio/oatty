@@ -386,6 +386,7 @@ mod tests {
             repeat: Some(StepRepeat {
                 until: "steps.s1.status == \"ok\"".into(),
                 every: "1s".into(),
+                ..Default::default()
             }),
         };
         let runner = EchoRunner;

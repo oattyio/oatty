@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 use ratatui::style::Color;
 
 use super::roles::{Theme, ThemeRoles};
@@ -7,7 +6,7 @@ use super::roles::{Theme, ThemeRoles};
 pub const N0: Color = Color::Rgb(0x2E, 0x34, 0x40); // #2E3440
 pub const N1: Color = Color::Rgb(0x3B, 0x42, 0x52); // #3B4252
 pub const N2: Color = Color::Rgb(0x43, 0x4C, 0x5E); // #434C5E
-pub const N3: Color = Color::Rgb(0x4C, 0x56, 0x6A); // #4C566A
+pub const N3: Color = Color::Rgb(0x7D, 0x88, 0x9D); // #7D889D
 
 // Snow Storm (foregrounds)
 pub const S0: Color = Color::Rgb(0xD8, 0xDE, 0xE9); // #D8DEE9

@@ -1,7 +1,7 @@
 //! Help modal component for displaying command documentation.
 //!
 //! This module provides a component for rendering the help modal, which
-//! displays comprehensive documentation for Heroku commands including usage
+//! displays comprehensive documentation for Heroku commands, including usage
 //! syntax, arguments, options, and examples.
 use std::vec;
 
@@ -16,7 +16,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{self, App},
+    app::App,
     ui::{
         components::{component::Component, help::content::build_command_help_text},
         theme::theme_helpers as th,
@@ -56,6 +56,14 @@ use crate::{
 pub struct HelpComponent;
 
 impl Component for HelpComponent {
+    fn handle_key_events(&mut self, _app: &mut App, key: KeyEvent) -> Vec<Effect> {
+        match key.code {
+            KeyCode::Esc => vec![Effect::CloseModal],
+
+            _ => vec![],
+        }
+    }
+
     /// Renders the help modal overlay with detailed command documentation.
     ///
     /// This function displays a modal dialog containing comprehensive help
@@ -66,11 +74,11 @@ impl Component for HelpComponent {
     ///
     /// * `f` - The frame to render to
     /// * `app` - The application state containing help data
-    /// * `area` - The full screen area (modal will be centered within this)
+    /// * `area` - The full-screen area (modal will be centered within this)
     ///
     /// # Features
     ///
-    /// - Centers modal at 80% width and 70% height
+    /// - Center modal at 80% width and 70% height
     /// - Shows command name in title with close hint
     /// - Displays comprehensive help text with sections:
     ///   - USAGE: Command syntax with arguments
@@ -91,7 +99,7 @@ impl Component for HelpComponent {
     /// let area = Rect::new(0, 0, 100, 50);
     /// draw_help_modal(&mut frame, &app, area);
     /// ```
-    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
         let area = centered_rect(80, 70, rect);
         // Prefer help_spec when set, otherwise picked
         let mut title = "Help".to_string();
@@ -125,13 +133,5 @@ impl Component for HelpComponent {
             .style(app.ctx.theme.text_primary_style())
             .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, inner);
-    }
-
-    fn handle_key_events(&mut self, _app: &mut App, key: KeyEvent) -> Vec<Effect> {
-        match key.code {
-            KeyCode::Esc => vec![Effect::CloseModal],
-
-            _ => vec![],
-        }
     }
 }

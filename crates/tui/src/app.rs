@@ -12,16 +12,25 @@ use std::{
     time::Duration,
 };
 
+use anyhow::{Result, anyhow};
+use heroku_api::HerokuClient;
+use heroku_engine::{
+    ProviderBindingOutcome, ProviderResolutionSource, RegistryCommandRunner, RuntimeWorkflow, StepResult, StepStatus, WorkflowRunState,
+};
 use heroku_mcp::{PluginDetail, PluginEngine};
 use heroku_registry::Registry;
+use heroku_types::service::ServiceId;
 use heroku_types::{Effect, ExecOutcome, Modal, Msg, Route};
 use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
+use crate::ui::components::nav_bar::VerticalNavBarComponent;
+use crate::ui::components::workflows::WorkflowInputsComponent;
+use crate::ui::components::workflows::collector::WorkflowCollectorComponent;
 use crate::ui::components::{
-    BrowserComponent, HelpComponent, PluginsComponent, TableComponent, logs::LogDetailsComponent, nav_bar::VerticalNavBarState,
-    plugins::PluginsDetailsComponent,
+    BrowserComponent, HelpComponent, PluginsComponent, TableComponent, WorkflowsComponent, logs::LogDetailsComponent,
+    nav_bar::VerticalNavBarState, plugins::PluginsDetailsComponent,
 };
 use crate::ui::{
     components::{
@@ -32,6 +41,7 @@ use crate::ui::{
         palette::{PaletteComponent, PaletteState, providers::RegistryBackedProvider, state::ValueProvider},
         plugins::PluginsState,
         table::TableState,
+        workflows::WorkflowState,
     },
     theme,
 };
@@ -85,6 +95,8 @@ pub struct App<'a> {
     pub help: HelpState,
     /// Plugins state (MCP management)
     pub plugins: PluginsState,
+    /// Workflow UI and execution state
+    pub workflows: WorkflowState,
     /// Application logs and status messages
     pub logs: LogsState,
     /// Vertical navigation bar state (left rail)
@@ -111,6 +123,8 @@ pub struct App<'a> {
     pub initial_range: Option<String>,
     /// Current main view component
     pub main_view: Option<Box<dyn Component>>,
+    /// Main view for the nav bar
+    pub nav_bar_view: Option<Box<dyn Component>>,
     /// Currently open modal component
     pub open_modal: Option<Box<dyn Component>>,
     /// Global focus tree for keyboard/mouse traversal
@@ -152,6 +166,7 @@ impl App<'_> {
             logs: LogsState::default(),
             help: HelpState::default(),
             plugins: PluginsState::new(),
+            workflows: WorkflowState::new(),
             table: TableState::default(),
             palette: PaletteState::new(Arc::clone(&registry)),
             nav_bar: VerticalNavBarState::defaults_for_views(),
@@ -166,6 +181,7 @@ impl App<'_> {
             initial_range: None,
             main_view: Some(Box::new(PaletteComponent::default())),
             open_modal: None,
+            nav_bar_view: Some(Box::new(VerticalNavBarComponent::new())),
             focus: Focus::default(),
             transient_focus_id: None,
             app_container_focus: FocusFlag::named("app.container"),
@@ -458,12 +474,186 @@ impl App<'_> {
         }
     }
 
+    pub fn run_workflow(&mut self, workflow: &RuntimeWorkflow) -> Result<Vec<Effect>> {
+        let run_state = WorkflowRunState::new(workflow.clone());
+        self.process_run_state(run_state, false)
+    }
+
+    /// Execute the workflow using the run state accumulated via the Guided Input Collector.
+    pub fn execute_workflow_from_collector(&mut self) -> Result<Vec<Effect>> {
+        let run_state = match self.workflows.take_run_state() {
+            Some(state) => state,
+            None => {
+                self.logs.entries.push("No workflow run state available to execute".to_string());
+                return Ok(vec![Effect::CloseModal]);
+            }
+        };
+        self.workflows.set_collector_visible(false);
+        let mut effects = vec![Effect::CloseModal];
+        effects.extend(self.process_run_state(run_state, true)?);
+        Ok(effects)
+    }
+
+    /// Open the interactive input view for the selected workflow.
+    pub fn open_workflow_inputs(&mut self, workflow: &RuntimeWorkflow) -> Result<()> {
+        let mut run_state = WorkflowRunState::new(workflow.clone());
+        run_state.evaluate_input_providers()?;
+        self.workflows.observe_provider_refresh(&run_state);
+        self.workflows.begin_inputs_session(run_state);
+        self.set_current_route(Route::Workflows);
+        Ok(())
+    }
+
+    /// Close the workflow input view, discarding any unsubmitted run state.
+    pub fn close_workflow_inputs(&mut self) {
+        self.workflows.end_inputs_session();
+        self.set_current_route(Route::Workflows);
+    }
+
+    /// Execute a workflow using the inputs prepared in the input view.
+    pub fn execute_workflow_from_inputs(&mut self) -> Result<Vec<Effect>> {
+        let run_state = match self.workflows.take_run_state() {
+            Some(state) => state,
+            None => {
+                self.logs.entries.push("No workflow run state available to execute".to_string());
+                return Ok(Vec::new());
+            }
+        };
+
+        self.workflows.end_inputs_session();
+        let effects = self.process_run_state(run_state, true)?;
+        self.set_current_route(Route::Workflows);
+        Ok(effects)
+    }
+
+    fn process_run_state(&mut self, mut run_state: WorkflowRunState, already_evaluated: bool) -> Result<Vec<Effect>> {
+        if !already_evaluated {
+            run_state.evaluate_input_providers()?;
+        }
+
+        self.workflows.observe_provider_refresh(&run_state);
+
+        if let Some(blocked) = run_state
+            .telemetry()
+            .provider_resolution_events()
+            .iter()
+            .find(|event| matches!(event.outcome, ProviderBindingOutcome::Prompt(_) | ProviderBindingOutcome::Error(_)))
+        {
+            let input = blocked.input.clone();
+            let argument = blocked.argument.clone();
+            let outcome_desc = describe_provider_outcome(&blocked.outcome);
+            self.workflows.set_active_run_state(run_state);
+            self.workflows.set_collector_visible(true);
+            self.logs
+                .entries
+                .push(format!("Collector: {}.{} requires attention: {}", input, argument, outcome_desc));
+            return Ok(vec![Effect::ShowModal(Modal::WorkflowCollector)]);
+        }
+
+        let registry_snapshot = self
+            .ctx
+            .registry
+            .lock()
+            .map_err(|_| anyhow!("could not obtain command registry lock"))?
+            .clone();
+
+        let client = HerokuClient::new_from_service_id(ServiceId::CoreApi)?;
+        let runner = RegistryCommandRunner::new(registry_snapshot, client);
+        let results = run_state.execute_with_runner(&runner);
+
+        self.log_workflow_execution(&run_state.workflow, &run_state, &results);
+
+        let mut effects = Vec::new();
+        if let Some(last) = results.last() {
+            if !last.output.is_null() {
+                self.table.apply_result_json(Some(last.output.clone()), &*self.ctx.theme);
+                self.table.normalize();
+                effects.push(Effect::ShowModal(Modal::Results));
+            }
+        }
+
+        Ok(effects)
+    }
+    /// Logs the execution details of a workflow, including telemetry events and step results. The
+    /// method appends log entries to the internal `logs` structure for both concise and rich logging.
+    ///
+    /// # Arguments
+    ///
+    /// * `workflow` - A reference to a `RuntimeWorkflow` that contains information about the executed workflow.
+    /// * `run_state` - A reference to a `WorkflowRunState` that provides access to telemetry events from the execution.
+    /// * `results` - A slice of `StepResult` containing the outcome of each step executed in the workflow.
+    ///
+    /// # Behavior
+    ///
+    /// This method performs the following:
+    /// - Logs a summary entry for the workflow execution, including the workflow identifier and the number of steps executed.
+    /// - Logs a richer `LogEntry::Text` with an "info" level indicating workflow execution.
+    /// - Iterates through the provider resolution events from the workflow run's telemetry and logs detailed entries for each event,
+    ///   describing the source (automatic or manual) and the outcome of the provider resolution.
+    /// - Iterates through the step results and logs a detailed entry for each step, including its identifier and status.
+    /// - Ensures the logs are trimmed if needed to conform to any size constraints.
+    ///
+    /// # Internal Structures
+    ///
+    /// - The `logs.entries` collection stores brief, human-readable log entries as plain text.
+    /// - The `logs.rich_entries` collection stores more structured log entries (like `LogEntry::Text`).
+    ///
+    /// # Dependencies
+    ///
+    /// - Relies on helper functions like `describe_provider_outcome` to translate provider outcomes into human-readable strings.
+    /// - Relies on `format_step_status` to convert step statuses into readable formats.
+    ///
+    /// Note: The method assumes the `self` type has a `trim_logs_if_needed` method to manage the size of log storage.
+    fn log_workflow_execution(&mut self, workflow: &RuntimeWorkflow, run_state: &WorkflowRunState, results: &[StepResult]) {
+        self.logs
+            .entries
+            .push(format!("Workflow '{}' executed ({} steps)", workflow.identifier, results.len()));
+        self.logs.rich_entries.push(LogEntry::Text {
+            level: Some("info".into()),
+            msg: format!("Workflow '{}' executed", workflow.identifier),
+        });
+
+        for event in run_state.telemetry().provider_resolution_events() {
+            self.logs.entries.push(format!(
+                "  provider {}.{} [{}] {}",
+                event.input,
+                event.argument,
+                match event.source {
+                    ProviderResolutionSource::Automatic => "auto",
+                    ProviderResolutionSource::Manual => "manual",
+                },
+                describe_provider_outcome(&event.outcome)
+            ));
+        }
+
+        for step in results {
+            self.logs
+                .entries
+                .push(format!("  step {} {}", step.id, format_step_status(step.status)));
+        }
+
+        self.trim_logs_if_needed();
+    }
+
     /// Update the current main route for focus building.
     pub fn set_current_route(&mut self, route: Route) {
+        if matches!(route, Route::Workflows) {
+            if let Err(error) = self.workflows.ensure_loaded(&self.ctx.registry) {
+                self.logs.entries.push(format!("Failed to load workflows: {error}"));
+            }
+        }
+
         let (view, state): (Box<dyn Component>, Box<&dyn HasFocus>) = match route {
             Route::Browser => (Box::new(BrowserComponent::default()), Box::new(&self.browser)),
             Route::Palette => (Box::new(PaletteComponent::default()), Box::new(&self.palette)),
             Route::Plugins => (Box::new(PluginsComponent::default()), Box::new(&self.plugins)),
+            Route::Workflows => {
+                if self.workflows.inputs_view_active() {
+                    (Box::new(WorkflowInputsComponent::default()), Box::new(&self.workflows))
+                } else {
+                    (Box::new(WorkflowsComponent::default()), Box::new(&self.workflows))
+                }
+            }
         };
 
         self.current_route = self.nav_bar.set_route(route);
@@ -481,6 +671,10 @@ impl App<'_> {
                 Modal::Results => Box::new(TableComponent::default()),
                 Modal::LogDetails => Box::new(LogDetailsComponent::default()),
                 Modal::PluginDetails => Box::new(PluginsDetailsComponent::default()),
+                Modal::WorkflowCollector => {
+                    self.workflows.set_collector_visible(true);
+                    Box::new(WorkflowCollectorComponent::default())
+                }
             };
             self.open_modal = Some(modal_view);
             // save the current focus to restore when the modal is closed
@@ -497,6 +691,11 @@ impl App<'_> {
         if matches!(previous, Some(Modal::PluginDetails)) && !matches!(self.open_modal_kind, Some(Modal::PluginDetails)) {
             self.plugins.clear_details_state();
         }
+        // If we are closing the collector, drop the retained run state
+        if matches!(previous, Some(Modal::WorkflowCollector)) && !matches!(self.open_modal_kind, Some(Modal::WorkflowCollector)) {
+            self.workflows.set_collector_visible(false);
+            let _ = self.workflows.take_run_state();
+        }
     }
 
     pub fn restore_focus(&mut self) {
@@ -512,6 +711,31 @@ impl App<'_> {
 }
 
 const EXECUTION_SUMMARY_LIMIT: usize = 160;
+
+fn describe_provider_outcome(outcome: &ProviderBindingOutcome) -> String {
+    match outcome {
+        ProviderBindingOutcome::Resolved(value) => {
+            if let Some(s) = value.as_str() {
+                format!("resolved to '{s}'")
+            } else {
+                format!("resolved to {}", value)
+            }
+        }
+        ProviderBindingOutcome::Prompt(prompt) => format!("prompted (required: {}, reason: {})", prompt.required, prompt.reason.message),
+        ProviderBindingOutcome::Skip(decision) => {
+            format!("skipped ({})", decision.reason.message)
+        }
+        ProviderBindingOutcome::Error(error) => format!("error: {}", error.message),
+    }
+}
+
+fn format_step_status(status: StepStatus) -> &'static str {
+    match status {
+        StepStatus::Succeeded => "succeeded",
+        StepStatus::Failed => "failed",
+        StepStatus::Skipped => "skipped",
+    }
+}
 
 fn summarize_execution_outcome(command_spec: Option<&heroku_registry::CommandSpec>, raw_log: &str) -> (String, Option<u16>) {
     let label = command_label(command_spec);
@@ -636,6 +860,9 @@ impl HasFocus for App<'_> {
                 Modal::LogDetails => {
                     builder.widget(&self.logs);
                 }
+                Modal::WorkflowCollector => {
+                    // no focusable fields; leave ring empty (collector stub)
+                }
                 Modal::PluginDetails | Modal::Help => {
                     // no focusable fields; leave ring empty
                 }
@@ -657,6 +884,10 @@ impl HasFocus for App<'_> {
             }
             Route::Plugins => {
                 builder.widget(&self.plugins);
+            }
+            Route::Workflows => {
+                builder.widget(&self.workflows);
+                builder.widget(&self.logs);
             }
         }
 

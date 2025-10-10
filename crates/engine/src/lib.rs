@@ -51,6 +51,7 @@ pub mod executor;
 pub mod model;
 pub mod provider;
 pub mod resolve;
+pub mod workflow;
 
 // Re-export commonly used types for convenience
 pub use executor::{
@@ -60,6 +61,14 @@ pub use executor::{
 pub use model::{InputSpec, StepSpec, WorkflowBundle, WorkflowSpec};
 pub use provider::{ProviderContract, ProviderRegistry};
 pub use resolve::RunContext;
+pub use workflow::bindings::{
+    ArgumentPrompt, BindingFailure, BindingSource, MissingReason, ProviderArgumentResolver, ProviderBindingOutcome, SkipDecision,
+};
+pub use workflow::document::{RuntimeWorkflow, build_runtime_catalog, runtime_workflow_from_definition};
+pub use workflow::state::{
+    InputProviderState, ProviderOutcomeState, ProviderResolutionEvent, ProviderResolutionSource, StepTelemetryEvent, WorkflowRunState,
+    WorkflowTelemetry,
+};
 
 /// Loads a workflow file from the filesystem with automatic format detection.
 ///

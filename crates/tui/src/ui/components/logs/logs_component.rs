@@ -121,7 +121,7 @@ impl LogsComponent {
 
     /// Checks if a single API log entry is currently selected.
     ///
-    /// Returns the selected log entry if exactly one item is selected and it's
+    /// Returns the selected log entry if exactly one item is selected, and it's
     /// an API entry. Used for determining available actions like JSON
     /// formatting.
     ///
@@ -243,10 +243,10 @@ impl LogsComponent {
     ///
     /// # Returns
     ///
-    /// A styled `Line` with appropriate color coding
+    /// A styled `Line` with the appropriate color coding
     fn styled_line<'a>(&self, theme: &dyn UiTheme, line: &'a str) -> Line<'a> {
         // Compiled regex patterns for performance
-        static TS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\[?\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?\]?").unwrap());
+        static TS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\[?\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?]?").unwrap());
         static UUID_RE: Lazy<Regex> = Lazy::new(|| {
             Regex::new(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b").unwrap()
         });
@@ -296,7 +296,7 @@ impl LogsComponent {
 }
 
 impl Component for LogsComponent {
-    /// Handles keyboard input events for the logs component.
+    /// Handles keyboard input events for the log component.
     ///
     /// This method processes various key combinations to provide navigation,
     /// selection, and interaction functionality:
@@ -337,19 +337,15 @@ impl Component for LogsComponent {
             }
             KeyCode::Up => {
                 if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    // Extend selection upward
                     self.extend_selection(app, -1);
                 } else {
-                    // Move cursor up
                     self.move_cursor(app, -1);
                 }
             }
             KeyCode::Down => {
                 if key.modifiers.contains(KeyModifiers::SHIFT) {
-                    // Extend selection downward
                     self.extend_selection(app, 1);
                 } else {
-                    // Move cursor down
                     self.move_cursor(app, 1);
                 }
             }
@@ -358,12 +354,10 @@ impl Component for LogsComponent {
                 return self.choose_detail(app);
             }
             KeyCode::Char('c') => {
-                // Copy selected content to clipboard
                 let text = build_copy_text(app);
                 effects.push(Effect::CopyLogsRequested(text));
             }
             KeyCode::Char('v') => {
-                // Toggle JSON pretty-printing (API entries only)
                 if matches!(self.is_single_api(app), Some(LogEntry::Api { .. })) {
                     app.logs.pretty_json = !app.logs.pretty_json;
                 }
@@ -397,7 +391,7 @@ impl Component for LogsComponent {
 
     /// Renders the logs component to the terminal frame.
     ///
-    /// This method handles the complete rendering of the logs interface
+    /// This method handles the complete rendering of the logs interface,
     /// including:
     ///
     /// - **Main log list**: Displays all log entries with syntax highlighting
@@ -436,7 +430,7 @@ impl Component for LogsComponent {
             .style(th::panel_style(&*app.ctx.theme))
             .highlight_symbol(if focused { "► " } else { "" });
 
-        // Set up list state for selection highlighting
+        // Set up the list state for selection highlighting
         let mut list_state = ListState::default();
         if focused {
             if let Some(sel) = self.selected_index(app) {
@@ -447,9 +441,8 @@ impl Component for LogsComponent {
         }
         frame.render_stateful_widget(list, rect, &mut list_state);
 
-        // Render scrollbar when focused to show position within log list
+        // Render scrollbar when focused to show position within a log list
         if focused {
-            use ratatui::widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState};
             let content_len = app.logs.entries.len();
             if content_len > 0 {
                 let visible = rect.height.saturating_sub(2) as usize; // Account for borders

@@ -3,11 +3,11 @@
 use chrono::{DateTime, Utc};
 use heroku_util::redact_sensitive_with;
 use serde::{Deserialize, Serialize};
-use tokio::fs::OpenOptions;
 use std::path::PathBuf;
 use thiserror::Error;
-use tracing::debug;
+use tokio::fs::OpenOptions;
 use tokio::io::AsyncWriteExt;
+use tracing::debug;
 
 /// Audit logger for tracking plugin lifecycle events.
 #[derive(Debug)]

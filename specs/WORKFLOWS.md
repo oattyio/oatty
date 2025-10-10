@@ -10,7 +10,7 @@ This document defines reusable workflow patterns for the Heroku CLI TUI, based o
 * **ValueProviders**: Inputs can be sourced from:
 
   * **Static enums** (from schema)
-  * **Dynamic built‑ins** (`apps:list`, `addons:list`, `pipelines:list`, `teams:list`, etc.)
+  * **Dynamic built‑ins** (`apps list`, `addons list`, `pipelines list`, `teams list`, etc.)
   * **Workflow outputs** (`${{tasks.<id>.output.<field>}}`)
   * **Plugin providers** (via MCP)
 * **Resilient**: Providers support caching, async refresh, and fallbacks.
@@ -30,22 +30,22 @@ inputs:
     description: "Name for new app"
     type: string
   region:
-    provider: regions:list
+    provider: regions list
     select: { value_field: name, display_field: name }
     default: { value: "us" }
   addon_plan:
     description: "Database plan"
-    provider: addons:services:list
+    provider: addons services:list
     select: { value_field: name, display_field: name }
 steps:
   - id: create_app
-    run: apps:create
+    run: apps create
     body:
       name: ${{ inputs.app_name }}
       region: ${{ inputs.region }}
 
   - id: add_pg
-    run: apps:addons:create
+    run: apps addons:create
     with: { app: ${{ inputs.app_name }} }
     body:
       plan: ${{ inputs.addon_plan }}
@@ -59,7 +59,7 @@ steps:
 workflow: build_from_tarball
 inputs:
   app:
-    provider: apps:list
+    provider: apps list
     select: { value_field: name, display_field: name, id_field: id }
   tar_path:
     description: "Path to tarball"
@@ -75,7 +75,7 @@ steps:
       file: ${{ inputs.tar_path }}
 
   - id: build
-    run: apps:builds:create
+    run: apps builds:create
     with:
       app: ${{ inputs.app }}
     body:
@@ -83,7 +83,7 @@ steps:
         url: ${{ steps.create_sources.output.source_blob.get_url }}
 
   - id: wait_for_build
-    run: apps:builds:info
+    run: apps builds:info
     with:
       app: ${{ inputs.app }}
       build: ${{ steps.build.output.id }}
@@ -103,40 +103,40 @@ inputs:
     description: "Name for pipeline"
     type: string
   team:
-    provider: teams:list
+    provider: teams list
     select: { value_field: id, display_field: name }
   dev_app:
-    provider: apps:list
+    provider: apps list
     select: { value_field: name, display_field: name }
   staging_app:
-    provider: apps:list
+    provider: apps list
     select: { value_field: name, display_field: name }
   prod_app:
-    provider: apps:list
+    provider: apps list
     select: { value_field: name, display_field: name }
 steps:
   - id: create_pipeline
-    run: pipelines:create
+    run: pipelines create
     body:
       name: ${{ inputs.pipeline_name }}
       owner: { id: ${{ inputs.team }} }
 
   - id: couple_dev
-    run: pipeline-couplings:create
+    run: pipeline-couplings create
     body:
       app: ${{ inputs.dev_app }}
       pipeline: ${{ steps.create_pipeline.output.id }}
       stage: development
 
   - id: couple_staging
-    run: pipeline-couplings:create
+    run: pipeline-couplings create
     body:
       app: ${{ inputs.staging_app }}
       pipeline: ${{ steps.create_pipeline.output.id }}
       stage: staging
 
   - id: couple_prod
-    run: pipeline-couplings:create
+    run: pipeline-couplings create
     body:
       app: ${{ inputs.prod_app }}
       pipeline: ${{ steps.create_pipeline.output.id }}
@@ -151,7 +151,7 @@ steps:
 workflow: collaborator_lifecycle
 inputs:
   app:
-    provider: apps:list
+    provider: apps list
     select: { value_field: name, display_field: name }
   user:
     description: "Email or user ID"
@@ -162,7 +162,7 @@ inputs:
     enum: [view, deploy, operate, manage]
 steps:
   - id: add_collab
-    run: teams:apps:collaborators:create
+    run: teams apps:collaborators:create
     with: { app: ${{ inputs.app }} }
     body:
       user: ${{ inputs.user }}
@@ -170,7 +170,7 @@ steps:
       silent: false
 
   - id: confirm
-    run: teams:apps:collaborators:info
+    run: teams apps:collaborators:info
     with:
       app: ${{ inputs.app }}
       collaborator: ${{ inputs.user }}
@@ -184,27 +184,27 @@ steps:
 workflow: space_with_otel
 inputs:
   team:
-    provider: teams:list
+    provider: teams list
     select: { value_field: id, display_field: name }
   space_name:
     description: "Name of new space"
     type: string
   region:
-    provider: regions:list
+    provider: regions list
     select: { value_field: name, display_field: name }
   otlp_endpoint:
     description: "OpenTelemetry collector endpoint URL"
     type: string
 steps:
   - id: create_space
-    run: spaces:create
+    run: spaces create
     body:
       team: ${{ inputs.team }}
       name: ${{ inputs.space_name }}
       region: ${{ inputs.region }}
 
   - id: add_drain
-    run: telemetry-drains:create
+    run: telemetry-drains create
     body:
       owner: { space: { name: ${{ inputs.space_name }} } }
       signals: ["traces", "metrics", "logs"]
@@ -253,7 +253,7 @@ inputs:
     select: { value_field: name, display_field: name, id_field: id }
 
   addon:
-    provider: addons:list
+    provider: addons list
     provider_args:
       app:
         from_step: create_app           # or `from_input: app`
@@ -321,7 +321,7 @@ provider_args: { app: ${{ steps.create_app.output.name }} }
 ```yaml
 steps:
   - id: create_app
-    run: apps:create
+    run: apps create
     output_contract:
       fields:
         - name: name
@@ -346,11 +346,11 @@ Some providers require arguments derived from earlier inputs or step outputs. Pr
 ```yaml
 inputs:
   app:
-    provider: apps:list
+    provider: apps list
     select: { value_field: name, display_field: name, id_field: id }
 
   addon:
-    provider: addons:list
+    provider: addons list
     provider_args:
       app:
         from_step: create_app           # or from_input: app
@@ -371,7 +371,7 @@ provider_args: { app: ${{ steps.create_app.output.name }} }
 ```yaml
 steps:
   - id: create_app
-    run: apps:create
+    run: apps create
     output_contract:
       fields:
         - name: name
@@ -449,14 +449,14 @@ providers:
 ```yaml
 inputs:
   app:
-    provider: apps:list
+    provider: apps list
     select:
       value_field: name
       display_field: name
       id_field: id
 
   addon:
-    provider: addons:list
+    provider: addons list
     provider_args:
       app: auto
     select:
@@ -483,7 +483,7 @@ A small, declarative registry lets providers advertise which arguments they acce
 
 ```yaml
 provider_arg_contracts:
-  addons:list:
+  addons list:
     args:
       app:
         accepts: [app_name, app_id]
@@ -491,17 +491,17 @@ provider_arg_contracts:
         coerce:
           app_name: { type: string }
           app_id:   { type: string, pattern: "^app-[0-9a-z]+$" }
-  pipelines:list:
+  pipelines list:
     args: {}
-  pipeline-promotions:create:
+  pipeline-promotions create:
     args:
       pipeline: { accepts: [pipeline_id, pipeline_name], prefer: pipeline_id }
       source.app: { accepts: [app_id, app_name], prefer: app_id }
       targets[].app: { accepts: [app_id, app_name], prefer: app_id }
-  telemetry-drains:create:
+  telemetry-drains create:
     args:
       owner.space.name: { accepts: [space_name] }
-  apps:builds:create:
+  apps builds:create:
     args:
       app: { accepts: [app_id, app_name], prefer: app_id }
 ```
@@ -536,39 +536,39 @@ steps:
 
 ## 6.4 Examples
 
-### A) `addons:list` needs `app`
+### A) `addons list` needs `app`
 
 ```yaml
 inputs:
   app:
-    provider: apps:list
+    provider: apps list
     select: { value_field: name, display_field: name, id_field: id }
 
   addon:
-    provider: addons:list
+    provider: addons list
     provider_args:
       app: ${{ steps.create_app.output.id }}   # satisfies app_id
     select: { value_field: name, display_field: name, id_field: id }
 ```
 
-### B) `pipeline-promotions:create` (nested args)
+### B) `pipeline-promotions create` (nested args)
 
 ```yaml
 inputs:
   pipeline:
-    provider: pipelines:list
+    provider: pipelines list
     select: { value_field: id, display_field: name }
   from_app:
-    provider: apps:list
+    provider: apps list
     select: { value_field: id, display_field: name }
   to_apps:
-    provider: apps:list
+    provider: apps list
     select: { value_field: id, display_field: name }
     mode: multiple
 
 steps:
   - id: promote
-    run: pipeline-promotions:create
+    run: pipeline-promotions create
     body:
       pipeline: { id: ${{ inputs.pipeline }} }
       source: { app: { id: ${{ inputs.from_app }} } }
@@ -587,7 +587,7 @@ inputs:
 
 steps:
   - id: build
-    run: apps:builds:create
+    run: apps builds:create
     with:
       app: ${{ inputs.app }}           # app_id chosen per contract
     body:

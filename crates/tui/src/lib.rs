@@ -1,3 +1,4 @@
+#![feature(associated_type_defaults)]
 //! # Heroku CLI TUI Library
 //!
 //! This library provides a terminal user interface (TUI) for the Heroku CLI.
@@ -65,5 +66,5 @@ use std::sync::{Arc, Mutex};
 /// }
 /// ```
 pub async fn run(registry: Arc<Mutex<heroku_registry::Registry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
-    crate::ui::runtime::run_app(registry, plugin_engine).await
+    ui::runtime::run_app(registry, plugin_engine).await
 }

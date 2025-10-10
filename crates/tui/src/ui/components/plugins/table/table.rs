@@ -15,17 +15,17 @@ use crate::ui::{
 use crate::{app::App, ui::components::component::Component};
 use heroku_mcp::AuthStatus;
 
-/// Table column width constraints for the plugins table.
+/// Table column width constraints for the plugin table.
 const NAME_COLUMN_WIDTH: u16 = 18;
 const STATUS_COLUMN_WIDTH: u16 = 10;
 const COMMAND_COLUMN_PERCENTAGE: u16 = 50;
 const AUTH_COLUMN_WIDTH: u16 = 12;
 const TAGS_COLUMN_PERCENTAGE: u16 = 20;
 
-/// Table header labels for the plugins table.
+/// Table header labels for the plugin table.
 const TABLE_HEADERS: &[&str] = &["Name", "Status", "Command/BaseUrl", "Auth", "Tags"];
 
-/// Component for rendering the plugins table with selection and navigation.
+/// Component for rendering the plugin table with selection and navigation.
 ///
 /// This component displays a table of MCP plugins with their status, authentication state,
 /// and other metadata. It supports keyboard navigation with up/down arrow keys and
@@ -40,7 +40,7 @@ impl PluginsTableComponent {
     /// The selection is bounded by the number of filtered items.
     ///
     /// # Arguments
-    /// * `app` - The application state containing the plugins data
+    /// * `app` - The application state containing the plugin data
     fn move_selection_up(app: &mut App) {
         let table_state = &mut app.plugins.table;
         let filtered_indices = table_state.filtered_indices();
@@ -59,7 +59,7 @@ impl PluginsTableComponent {
     /// The selection is bounded by the number of filtered items.
     ///
     /// # Arguments
-    /// * `app` - The application state containing the plugins data
+    /// * `app` - The application state containing the plugin data
     fn move_selection_down(app: &mut App) {
         let table_state = &mut app.plugins.table;
         let filtered_indices = table_state.filtered_indices();
@@ -82,7 +82,7 @@ impl PluginsTableComponent {
     fn create_table_header(theme: &dyn crate::ui::theme::Theme) -> Row<'static> {
         let header_cells = TABLE_HEADERS
             .iter()
-            .map(|&header_text| ratatui::text::Span::styled(header_text, theme_helpers::table_header_style(theme)));
+            .map(|&header_text| Span::styled(header_text, theme_helpers::table_header_style(theme)));
 
         Row::new(header_cells).style(theme_helpers::table_header_row_style(theme))
     }
@@ -153,7 +153,7 @@ impl PluginsTableComponent {
         }
     }
 
-    /// Formats the display name for a plugin item, adding selection indicator if needed.
+    /// Formats the display name for a plugin item, adding a selection indicator if needed.
     ///
     /// # Arguments
     /// * `plugin_item` - The plugin item to format
@@ -170,7 +170,7 @@ impl PluginsTableComponent {
         }
     }
 
-    /// Formats the tags list for display in the table.
+    /// Formats the tag list for display in the table.
     ///
     /// # Arguments
     /// * `tags` - The tags to format
@@ -265,7 +265,7 @@ impl Component for PluginsTableComponent {
         effects
     }
 
-    /// Renders the plugins table component.
+    /// Renders the plugin table component.
     ///
     /// Creates and displays a table showing all filtered plugin items with their
     /// status, authentication state, and metadata. The table supports keyboard
@@ -292,12 +292,12 @@ impl Component for PluginsTableComponent {
 
         frame.render_widget(table_widget, area);
     }
-    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<ratatui::prelude::Span<'_>> {
+    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
         let mut spans = Vec::with_capacity(10);
         if is_root {
             spans.push(Span::styled("Hints: ", theme.text_muted_style()));
-            // plugins component adds this
+            // the plugin component adds this
             if app.plugins.can_open_add_plugin() {
                 spans.extend([
                     Span::styled("Ctrl-A", theme.accent_emphasis_style()),

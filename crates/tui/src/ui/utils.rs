@@ -62,7 +62,61 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
         .split(popup_layout[1]);
     area[1]
 }
-
+/// Infer a set of column names from a list of JSON-like values.
+///
+/// This function analyzes the provided array of JSON-like objects (`arr`) to infer which
+/// keys (columns) are most relevant based on scoring logic and frequency of occurrence.
+/// It ensures that at least four column names are returned, prioritizing higher-scoring
+/// keys while falling back on frequently appearing keys if necessary.
+///
+/// # Scoring Logic:
+/// - Each key in an object is assigned a score based on its characteristics:
+///   - A base score is determined per key by the `base_key_score` function.
+///   - A boost is added for the key's property frequency using the `property_frequency_boost` function.
+///   - A penalty is applied for nested arrays, objects, or long strings:
+///     - Nested arrays: Score is reduced by a value derived from the array length.
+///     - Nested objects: Score is reduced by a fixed amount.
+///     - Long strings (greater than 80 characters): Score is reduced by a fixed amount.
+/// - Scores are aggregated across a sample of at most 50 items.
+///
+/// # Column Selection:
+/// - The keys are sorted by descending score, and the top-scoring keys are selected.
+/// - At most, 6 keys are selected based on the scoring logic.
+/// - If fewer than 4 keys are selected, additional keys are chosen based on their frequency
+///   of occurrence in the data. Frequencies are determined from a sample of up to 100 items.
+///
+/// # Parameters:
+/// - `arr: &[Value]`:
+///   A slice of JSON-like objects, where each object is represented as a `Value` (typically from
+///   the `serde_json` crate). The function expects elements to be of type `Value::Object`.
+///
+/// # Returns:
+/// - `Vec<String>`:
+///   A vector containing the inferred column names, sorted by their relevance according to
+///   the scoring logic and frequency of occurrence. At least 4 column names will be included,
+///   with a maximum of 6.
+///
+/// # Examples:
+/// ```
+/// use serde_json::Value;
+/// use your_crate::infer_columns;
+///
+/// let data = vec![
+///     Value::Object(serde_json::json!({"name": "Alice", "age": 30}).as_object().unwrap().clone()),
+///     Value::Object(serde_json::json!({"name": "Bob", "age": 25, "location": "USA"}).as_object().unwrap().clone()),
+///     Value::Object(serde_json::json!({"name": "Charlie", "status": "active"}).as_object().unwrap().clone())
+/// ];
+///
+/// let columns = infer_columns(&data);
+/// assert!(columns.len() >= 4);
+/// println!("{:?}", columns);
+/// ```
+///
+/// # Notes:
+/// - The function assumes that the input slice contains values of type `Value::Object`.
+///   Other types (e.g., `Value::Array` or `Value::String`) are ignored during processing.
+/// - Scoring logic and penalties may require adjustment based on specific use cases or
+///   domain-specific importance of certain keys.
 pub fn infer_columns(arr: &[Value]) -> Vec<String> {
     let mut score: HashMap<String, i32> = HashMap::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -139,6 +193,41 @@ pub fn base_key_score(key: &str) -> i32 {
         _ => 20,
     }
 }
+/// Generates a sorted vector of keys from a given map, arranged in descending order of their computed scores.
+///
+/// This function calculates the combined score for each key using two components:
+/// 1. `base_key_score`: A base score derived from the key itself.
+/// 2. `property_frequency_boost`: A frequency adjustment or weighting added to the base score.
+///
+/// The sorting process orders the keys based on their scores in descending order (i.e., higher scores appear first).
+///
+/// # Parameters
+/// - `map`: A reference to a `Map` containing string keys and associated values of type `Value`.
+///
+/// # Returns
+/// A `Vec<String>` containing all the keys in the input map, sorted by their scores in descending order.
+///
+/// # Example
+/// ```
+/// use your_crate::get_scored_keys;
+/// use serde_json::Map;
+/// use serde_json::Value;
+///
+/// let mut map = Map::new();
+/// map.insert("apple".to_string(), Value::Null);
+/// map.insert("banana".to_string(), Value::Null);
+///
+/// let sorted_keys = get_scored_keys(&map);
+/// println!("{:?}", sorted_keys); // Example output: ["banana", "apple"], depending on scoring logic
+/// ```
+///
+/// # Notes
+/// - This function relies on the implementations of `base_key_score` and `property_frequency_boost`
+///   to compute individual scores.
+/// - The behavior and order of the returned keys depend on the scoring logic defined in those functions.
+///
+/// # Panics
+/// This function does not explicitly handle panics unless the underlying operations (e.g., `key()` or scoring functions) panic.
 pub fn get_scored_keys(map: &Map<String, Value>) -> Vec<String> {
     let mut keys: Vec<String> = map.keys().cloned().collect();
     keys.sort_by(|a, b| {
@@ -266,7 +355,76 @@ pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize) -> Vec
     }
     out
 }
-
+/// Renders a given `Value` into a `String` representation, applying specific formatting
+/// or obfuscation rules based on the provided key and value type.
+///
+/// # Parameters
+/// - `key`: A reference to a `&str` representing the key associated with the `value`.
+///          This is used to determine if specific rules, such as masking sensitive
+///          data or formatting date-like strings, should be applied.
+/// - `value`: A reference to a `Value` instance representing the data to be rendered
+///            into a string. The `Value` type can represent various data types, such
+///            as strings, numbers, booleans, nulls, objects, etc., often used
+///            in JSON data representations.
+///
+/// # Behavior
+/// - If `value` is a `Value::String`:
+///     - Checks if the key is sensitive using `is_sensitive_key(key)`. If true, applies
+///       a middle obfuscation mask with `ellipsize_middle_if_sha_like()` (truncates
+///       sensitive data, typically SHA-like strings, to a shorter form).
+///     - Otherwise, checks if the key suggests a date using `is_date_like_key(key)`. If true,
+///       attempts to format the string as a date in `MM/DD/YYYY` format using
+///       `format_date_mmddyyyy()`. If formatting fails, returns the original string.
+///     - If neither condition is met, returns the string unchanged.
+/// - If `value` is a `Value::Number`, converts it to a `String` using the number's
+///   `to_string()` method.
+/// - If `value` is a `Value::Bool`, converts it to a string representation (`"true"` or `"false"`).
+/// - If `value` is a `Value::Null`, returns the string `"null"`.
+/// - If `value` is a `Value::Object`, attempts to render the object as follows:
+///     - Scores the keys of the object using `get_scored_keys()`.
+///     - If the highest scoring key exists, retrieves its associated value.
+///         - If this nested value is a string, it is returned as-is.
+///         - Otherwise, converts the nested value to a string.
+///     - If no keys are present, falls back to converting the entire `Value` object
+///       to a string representation.
+/// - For any other value types (e.g., arrays), falls back to converting the value
+///   directly to a string representation using its `to_string()` method.
+///
+/// # Returns
+/// - A `String` containing the rendered representation of the `value` based on the rules described above.
+///
+/// # Example
+/// ```
+/// use serde_json::Value;
+///
+/// let key = "password";
+/// let value = Value::String("123456789abcdef123456789abcdef".to_string());
+/// let rendered = render_value(key, &value);
+/// assert_eq!(rendered, "1234...cdef"); // Sensitive key obfuscation applied.
+///
+/// let key = "date_of_birth";
+/// let value = Value::String("2023-09-15".to_string());
+/// let rendered = render_value(key, &value);
+/// assert_eq!(rendered, "09/15/2023"); // Date formatting applied.
+///
+/// let key = "active";
+/// let value = Value::Bool(true);
+/// let rendered = render_value(key, &value);
+/// assert_eq!(rendered, "true"); // Boolean converted to string.
+///
+/// let key = "some_key";
+/// let value = Value::Null;
+/// let rendered = render_value(key, &value);
+/// assert_eq!(rendered, "null"); // Null value represented as "null".
+///
+/// let key = "nested_obj";
+/// let value = serde_json::json!({
+///     "score1": "value1",
+///     "score2": "value2"
+/// });
+/// let rendered = render_value(key, &value);
+/// assert_eq!(rendered, "value1"); // First/highest score key's value returned as string.
+/// ```
 pub fn render_value(key: &str, value: &Value) -> String {
     match value {
         Value::String(s) => {
@@ -301,7 +459,44 @@ pub fn render_value(key: &str, value: &Value) -> String {
 pub fn is_sensitive_key(key: &str) -> bool {
     matches!(key, "token" | "key" | "secret" | "password" | "api_key" | "auth_token")
 }
-
+/// Truncates a potentially SHA-like hexadecimal string in the middle if it meets certain conditions.
+///
+/// This function takes a string `s` and a `keep_total` parameter (indicating the total number of
+/// characters to retain). If the string appears to be hex-like (a heuristic based on length and
+/// content) and is longer than the `keep_total`, it truncates the string by keeping the first `keep_total / 2`
+/// characters and the last `keep_total - (keep_total / 2)` characters, replacing the middle portion with an
+/// ellipsis (`…`). If the string does not meet the hex-like heuristic or is short enough, it returns the
+/// input string unmodified.
+///
+/// # Arguments
+///
+/// * `s` - The input string to be potentially truncated.
+/// * `keep_total` - The desired total length for the truncated string, including the ellipsis (`…`).
+///
+/// # Returns
+///
+/// A new `String`:
+/// - If the input string is recognized as SHA-like and its length exceeds `keep_total`, the string is truncated
+///   in the middle with its center replaced by `…`.
+/// - Otherwise, the function simply returns a copy of the input string.
+///
+/// # Heuristic for SHA-like determination
+///
+/// - The string must have a length of at least 16 characters.
+/// - The string must consist entirely of ASCII hexadecimal digits (`[0-9a-fA-F]`).
+///
+/// # Examples
+///
+/// ```
+/// let s = "1234567890abcdef1234567890abcdef";
+/// assert_eq!(ellipsize_middle_if_sha_like(s, 10), "12345…bcdef");
+///
+/// let s = "not-a-sha-string";
+/// assert_eq!(ellipsize_middle_if_sha_like(s, 10), "not-a-sha-string");
+///
+/// let s = "12345";
+/// assert_eq!(ellipsize_middle_if_sha_like(s, 10), "12345");
+/// ```
 fn ellipsize_middle_if_sha_like(s: &str, keep_total: usize) -> String {
     // Heuristic: hex-looking and long → compress
     let is_hexish = s.len() >= 16 && s.chars().all(|c| c.is_ascii_hexdigit());
@@ -316,7 +511,7 @@ fn ellipsize_middle_if_sha_like(s: &str, keep_total: usize) -> String {
 // Copy and Text Processing Methods
 // ============================================================================
 
-/// Builds the text content to be copied to clipboard based on current
+/// Builds the text content to be copied to clipboard based on the current
 /// selection.
 ///
 /// This method handles different copy scenarios:
@@ -344,7 +539,7 @@ pub fn build_copy_text(app: &app::App) -> String {
         return String::new();
     }
 
-    // Handle single selection with special JSON formatting
+    // Handle a single selection with special JSON formatting
     if start == end
         && let Some(LogEntry::Api { json, raw, .. }) = app.logs.rich_entries.get(start)
     {

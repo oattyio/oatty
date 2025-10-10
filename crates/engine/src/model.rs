@@ -274,6 +274,16 @@ pub struct StepRepeat {
     /// string like "10s", "1m", or "5m30s". The exact parsing
     /// is handled by the workflow executor.
     pub every: String,
+
+    /// Optional timeout after which the repeating step aborts.
+    ///
+    /// Uses the same duration syntax as `every`.
+    #[serde(default)]
+    pub timeout: Option<String>,
+
+    /// Optional maximum number of attempts before aborting.
+    #[serde(default)]
+    pub max_attempts: Option<u32>,
 }
 
 /// Definition of a step's output structure and metadata.
@@ -405,6 +415,7 @@ mod tests {
         let repeat = StepRepeat {
             until: "output.status == \"completed\"".to_string(),
             every: "30s".to_string(),
+            ..Default::default()
         };
 
         assert_eq!(repeat.until, "output.status == \"completed\"");

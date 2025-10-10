@@ -31,6 +31,7 @@ use heroku_registry::CommandSpec;
 use heroku_registry::find_by_group_and_cmd;
 use heroku_types::{Effect, EnvVar, Modal, Route};
 use heroku_types::{ExecOutcome, command::CommandExecution};
+use heroku_util::build_range_header_from_body;
 use heroku_util::exec_remote;
 use heroku_util::lex_shell_like;
 use heroku_util::resolve_path;
@@ -964,33 +965,7 @@ fn persist_execution_context(application: &mut App, command_spec: &CommandSpec, 
     };
     application.last_spec = Some(command_spec.clone());
     application.last_body = Some(request_body.clone());
-
-    let init_field = request_body
-        .get("range-field")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-    let init_start = request_body.get("range-start").and_then(|v| v.as_str()).unwrap_or("").trim();
-    let init_end = request_body.get("range-end").and_then(|v| v.as_str()).unwrap_or("").trim();
-    let init_order = request_body
-        .get("order")
-        .and_then(|v| v.as_str())
-        .map(str::trim)
-        .filter(|s| !s.is_empty());
-    let init_max = request_body
-        .get("max")
-        .and_then(|v| v.as_str())
-        .and_then(|s| s.parse::<usize>().ok());
-    let initial_range = init_field.map(|field| {
-        let mut h = format!("{} {}..{}", field, init_start, init_end);
-        if let Some(ord) = init_order {
-            h.push_str(&format!("; order={};", ord));
-        }
-        if let Some(m) = init_max {
-            h.push_str(&format!("; max={};", m));
-        }
-        h
-    });
+    let initial_range = build_range_header_from_body(request_body);
 
     application.initial_range = initial_range.clone();
     application.pagination_history.clear();

@@ -143,33 +143,6 @@ impl BrowserState {
     pub fn selected_command(&self) -> Option<&CommandSpec> {
         self.selected_command.as_ref()
     }
-    pub fn input_fields(&self) -> &[Field] {
-        &self.input_fields
-    }
-    pub fn current_field_idx(&self) -> usize {
-        self.current_field_idx
-    }
-    pub fn count_fields(&self) -> usize {
-        self.input_fields.len()
-    }
-    pub fn missing_required_fields(&self) -> Vec<String> {
-        self.input_fields
-            .iter()
-            .filter(|f| f.required && f.value.is_empty())
-            .map(|f| f.name.clone())
-            .collect()
-    }
-    pub fn has_selected_command(&self) -> bool {
-        self.selected_command.is_some()
-    }
-
-    /// Gets the available range fields for the selected command
-    pub fn available_ranges(&self) -> Vec<String> {
-        self.selected_command
-            .as_ref()
-            .and_then(|cmd| cmd.http().map(|http| http.ranges.clone()))
-            .unwrap_or_default()
-    }
 
     // Internal helpers for managing field/selection state
     fn apply_command_selection(&mut self, command: CommandSpec) {

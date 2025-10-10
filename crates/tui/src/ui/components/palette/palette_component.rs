@@ -6,7 +6,7 @@
 
 use std::vec;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use heroku_types::{Effect, ItemKind, Modal};
 use rat_focus::HasFocus;
 use ratatui::{
@@ -17,18 +17,16 @@ use ratatui::{
     widgets::*,
 };
 
-use crate::{
-    app::{self, SharedCtx},
-    ui::{
-        components::{LogsComponent, component::Component},
-        layout::MainLayout,
-        theme::{Theme, theme_helpers as th},
-    },
+use crate::app::{App, SharedCtx};
+use crate::ui::{
+    components::{LogsComponent, component::Component},
+    theme::{Theme, theme_helpers as th},
 };
+
 static FRAMES: [&'static str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 /// Command palette component for input and suggestions.
 ///
-/// This component encapsulates the command palette experience including the
+/// This component encapsulates the command palette experience, including the
 /// input line, suggestions popup, and help integration. It provides a
 /// comprehensive interface for building and executing Heroku commands.
 ///
@@ -66,7 +64,7 @@ pub struct PaletteComponent {
 }
 
 impl PaletteComponent {
-    /// Creates the input paragraph widget with current state.
+    /// Creates the input paragraph widget with the current state.
     ///
     /// This function creates the input paragraph with throbber, input text, and
     /// ghost text, styled to match the browser's input appearance.
@@ -79,10 +77,10 @@ impl PaletteComponent {
     /// # Returns
     ///
     /// The input paragraph widget with proper block styling
-    fn create_input_paragraph<'a>(&self, app: &'a app::App, theme: &'a dyn Theme) -> Paragraph<'a> {
+    fn create_input_paragraph<'a>(&self, app: &'a App, theme: &'a dyn Theme) -> Paragraph<'a> {
         let mut spans: Vec<Span<'a>> = Vec::new();
 
-        // Add main input text
+        // Add the main input text
         spans.push(Span::styled(app.palette.input().to_string(), theme.text_primary_style()));
 
         // Add ghost text if available
@@ -92,13 +90,13 @@ impl PaletteComponent {
             spans.push(Span::styled(ghost.to_string(), theme.text_muted_style()));
         }
 
-        // Add throbber at end if executing or provider-loading
+        // Add throbber at the end if executing or provider-loading
         if app.executing || app.palette.is_provider_loading() {
             let sym = FRAMES[app.throbber_idx % FRAMES.len()];
             spans.push(Span::styled(format!(" {}", sym), theme.accent_emphasis_style()));
         }
 
-        // Create block with title and focus styling, matching browser input
+        // Create a block with title and focus styling, matching browser input
         let input_title = self.create_input_title(theme);
         let is_focused = app.palette.is_focused();
         let mut input_block = th::block(theme, None, is_focused);
@@ -140,7 +138,7 @@ impl PaletteComponent {
     /// # Returns
     ///
     /// The error paragraph widget, or None if no error
-    fn create_error_paragraph<'a>(&self, app: &'a app::App, theme: &'a dyn Theme) -> Option<Paragraph<'a>> {
+    fn create_error_paragraph<'a>(&self, app: &'a App, theme: &'a dyn Theme) -> Option<Paragraph<'a>> {
         if let Some(err) = app.palette.error_message() {
             let line = Line::from(vec![
                 Span::styled("✖ ".to_string(), Style::default().fg(theme.roles().error)),
@@ -152,9 +150,9 @@ impl PaletteComponent {
         }
     }
 
-    /// Creates the suggestions list widget.
+    /// Creates the suggestion list widget.
     ///
-    /// This function creates the suggestions list with highlighting and
+    /// This function creates the suggestion list with highlighting and
     /// styling.
     ///
     /// # Arguments
@@ -165,7 +163,7 @@ impl PaletteComponent {
     /// # Returns
     ///
     /// The suggestions list widget
-    fn create_suggestions_list<'a>(&'_ self, app: &'a app::App, theme: &dyn Theme) -> List<'a> {
+    fn create_suggestions_list<'a>(&'_ self, app: &'a App, theme: &dyn Theme) -> List<'a> {
         List::new(app.palette.rendered_suggestions().to_vec())
             .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
             .style(th::panel_style(theme))
@@ -173,7 +171,7 @@ impl PaletteComponent {
     }
 
     /// Calculates the inner layout areas for the palette input,
-    /// error message, suggestions and hint bar.
+    /// error message, suggestions, and hint bar.
     ///
     /// # Arguments
     ///
@@ -208,7 +206,7 @@ impl PaletteComponent {
     /// * `input_area` - The rectangular area of the input line
     /// * `app` - The application state containing palette data
     /// * `theme` - The current theme for styling
-    fn position_cursor(&self, frame: &mut Frame, input_area: Rect, app: &app::App, theme: &dyn Theme) {
+    fn position_cursor(&self, frame: &mut Frame, input_area: Rect, app: &App, theme: &dyn Theme) {
         if app.palette.is_focused() {
             // Create the same block structure to get the inner area
             let input_title = self.create_input_title(theme);
@@ -232,7 +230,7 @@ impl PaletteComponent {
 
     /// Handles character input in the command palette.
     ///
-    /// This function processes regular character input (with or without Shift
+    /// This function processes regular character input (with or without a Shift
     /// modifier) by inserting the character at the current cursor position,
     /// closing the suggestions popup, and clearing any previous error messages.
     ///
@@ -240,7 +238,7 @@ impl PaletteComponent {
     ///
     /// * `app` - The application state to update
     /// * `character` - The character to insert
-    fn handle_character_input(&self, app: &mut app::App, character: char) {
+    fn handle_character_input(&self, app: &mut App, character: char) {
         app.palette.apply_insert_char(character);
         app.palette.set_is_suggestions_open(false);
         app.palette.reduce_clear_error();
@@ -257,8 +255,8 @@ impl PaletteComponent {
     /// # Arguments
     ///
     /// * `app` - The application state to update
-    fn handle_help_request(&self, app: &mut app::App) -> Vec<Effect> {
-        // Ensure suggestions are up to date, then fetch effective command
+    fn handle_help_request(&self, app: &mut App) -> Vec<Effect> {
+        // Ensure suggestions are up to date, then fetch an effective command
         let SharedCtx { providers, .. } = &app.ctx;
         app.palette.apply_build_suggestions(providers, &*app.ctx.theme);
         let spec = app.palette.selected_command();
@@ -277,13 +275,13 @@ impl PaletteComponent {
     /// # Arguments
     ///
     /// * `app` - The application state to update
-    fn handle_backspace(&self, app: &mut app::App) {
+    fn handle_backspace(&self, app: &mut App) {
         app.palette.reduce_backspace();
         app.palette.reduce_clear_error();
         app.palette.apply_suggestions(vec![]);
     }
 
-    /// Handles left arrow key press to move cursor left.
+    /// Handles left arrow key press to move the cursor left.
     ///
     /// This function moves the cursor one position to the left within the input
     /// text, allowing users to navigate and edit their command input.
@@ -291,11 +289,11 @@ impl PaletteComponent {
     /// # Arguments
     ///
     /// * `app` - The application state to update
-    fn handle_cursor_left(&self, app: &mut app::App) {
+    fn handle_cursor_left(&self, app: &mut App) {
         app.palette.reduce_move_cursor_left();
     }
 
-    /// Handles right arrow key press to move cursor right.
+    /// Handles right arrow key press to move the cursor right.
     ///
     /// This function moves the cursor one position to the right within the
     /// input text, allowing users to navigate and edit their command input.
@@ -303,7 +301,7 @@ impl PaletteComponent {
     /// # Arguments
     ///
     /// * `app` - The application state to update
-    fn handle_cursor_right(&self, app: &mut app::App) {
+    fn handle_cursor_right(&self, app: &mut App) {
         app.palette.reduce_move_cursor_right();
     }
 
@@ -319,7 +317,7 @@ impl PaletteComponent {
     ///
     /// * `app` - The application state to update
     /// * `direction` - The direction to navigate (Up or Down)
-    fn handle_suggestion_navigation(&self, app: &mut app::App, direction: KeyCode) {
+    fn handle_suggestion_navigation(&self, app: &mut App, direction: KeyCode) {
         let len = app.palette.suggestions().len();
         if len > 0 {
             let selected = app.palette.suggestion_index() as isize;
@@ -331,28 +329,28 @@ impl PaletteComponent {
         }
     }
 
-    /// Handles tab keypress to trigger or refresh the suggestions list.
+    /// Handles tab keypress to trigger or refresh the suggestion list.
     ///
-    /// This function triggers building the suggestions list and opens the popup
+    /// This function triggers building the suggestion list and opens the popup
     /// if suggestions are available.
     ///
     /// # Arguments
     ///
     /// * `app` - The application state to update
-    fn handle_tab_press(&self, app: &mut app::App) {
+    fn handle_tab_press(&self, app: &mut App) {
         if app.palette.is_input_empty() {
             return;
         }
         let SharedCtx { providers, .. } = &app.ctx;
 
         app.palette.apply_build_suggestions(providers, &*app.ctx.theme);
-        // Open popup if we have suggestions or if provider-backed suggestions are loading
+        // Open the popup if we have suggestions or if provider-backed suggestions are loading
         let open = app.palette.suggestions_len() > 0 || app.palette.is_provider_loading();
         app.palette.set_is_suggestions_open(open);
     }
 
     /// Handles the Enter keypress.
-    fn handle_enter(&self, app: &mut app::App) -> Vec<Effect> {
+    fn handle_enter(&self, app: &mut App) -> Vec<Effect> {
         // Execute the command
         if !app.palette.is_suggestions_open() {
             return vec![Effect::Run];
@@ -391,7 +389,7 @@ impl PaletteComponent {
     /// # Arguments
     ///
     /// * `app` - The application state to update
-    fn handle_escape(&self, app: &mut app::App) {
+    fn handle_escape(&self, app: &mut App) {
         if app.palette.is_suggestions_open() {
             app.palette.set_is_suggestions_open(false);
             app.palette.apply_ghost_text();
@@ -402,6 +400,109 @@ impl PaletteComponent {
 }
 
 impl Component for PaletteComponent {
+    /// Handle key events for the command palette when the builder is not open.
+    ///
+    /// This function processes keyboard input for the command palette, handling
+    /// text input, navigation, suggestion acceptance, and special commands like
+    /// help toggling and builder opening.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - The application state to update
+    /// * `key` - The key event to process
+    ///
+    /// # Returns
+    ///
+    /// `Vec<Effect>` containing any effects that should be processed
+    ///
+    /// # Key Bindings
+    ///
+    /// - **Character input**: Adds characters to the palette input
+    /// - **Backspace**: Removes the character before the cursor
+    /// - **Arrow keys**: Navigate through suggestions (Up/Down) or move cursor
+    ///   (Left/Right)
+    /// - **Tab**: Trigger the suggestions list
+    /// - **Ctrl+H**: Open help for the current command or top suggestion
+    /// - **Ctrl+F**: Open the command browser
+    /// - **Enter**: Execute the current command (if complete) or insert selected suggestion
+    /// - **Escape**: Clear the palette input and close suggestions
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// // Example requires constructing full App and Registry; ignored in doctests.
+    /// ```
+    fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
+        let mut effects: Vec<Effect> = vec![];
+        // Delegate to logs if focused.
+        if app.logs.focus.get() {
+            return self.logs.handle_key_events(app, key);
+        }
+
+        match key.code {
+            KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+                // Handle character input
+                self.handle_character_input(app, c);
+            }
+            KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                // Handle help request
+                effects.extend(self.handle_help_request(app));
+            }
+            KeyCode::Backspace => {
+                // Handle backspace
+                self.handle_backspace(app);
+            }
+            KeyCode::Left => {
+                // Handle cursor left
+                self.handle_cursor_left(app);
+            }
+            KeyCode::Right => {
+                // Handle cursor right
+                self.handle_cursor_right(app);
+            }
+            KeyCode::Down | KeyCode::Up => {
+                if app.palette.is_suggestions_open() {
+                    // Navigate suggestions when the popup is open
+                    self.handle_suggestion_navigation(app, key.code);
+                } else {
+                    // Navigate command history when the popup is closed
+                    let changed = if key.code == KeyCode::Up {
+                        app.palette.history_up()
+                    } else {
+                        app.palette.history_down()
+                    };
+                    if changed {
+                        // Clear errors/suggestions while browsing history
+                        app.palette.reduce_clear_error();
+                        app.palette.set_is_suggestions_open(false);
+                    }
+                }
+            }
+            KeyCode::BackTab => {
+                app.focus.prev();
+            }
+            KeyCode::Tab => {
+                // When input is empty, use Tab/BackTab for focus traversal between palette and logs.
+                if app.palette.is_input_empty() {
+                    app.focus.next();
+                } else {
+                    // Otherwise, Tab refreshes/opens suggestions
+                    self.handle_tab_press(app);
+                }
+            }
+            KeyCode::Enter => {
+                // Handle enters keypress
+                effects.extend(self.handle_enter(app));
+            }
+            KeyCode::Esc => {
+                // Handle escape
+                self.handle_escape(app);
+            }
+            _ => {}
+        }
+        effects
+    }
+
     /// Renders the command palette with input and suggestions.
     ///
     /// This method orchestrates the rendering of all palette components:
@@ -420,17 +521,17 @@ impl Component for PaletteComponent {
     /// * `frame` - The frame to render to
     /// * `rect` - The rectangular area to render in
     /// * `app` - The application state containing palette data
-    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
-        let main_regions = MainLayout::responsive_layout(rect, app);
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
+        let main_regions = self.get_preferred_layout(app, rect);
         let theme = &*app.ctx.theme;
-        // Render main border and get layout areas
+        // Render the main border and get layout areas
         let splits = self.layout_palette_input(main_regions[0]);
 
         // Render input line with throbber and ghost text
         let input_para = self.create_input_paragraph(app, theme);
         frame.render_widget(input_para, splits[0]);
 
-        // Position cursor in input line
+        // Position cursor in the input line
         self.position_cursor(frame, splits[0], app, theme);
 
         // Render error message if present
@@ -470,7 +571,7 @@ impl Component for PaletteComponent {
         self.logs.render(frame, main_regions[1], app);
     }
 
-    fn get_hint_spans(&self, app: &app::App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
         let mut spans = Vec::new();
         if is_root {
@@ -496,106 +597,92 @@ impl Component for PaletteComponent {
         spans
     }
 
-    /// Handle key events for the command palette when the builder is not open.
+    /// Creates the main vertical layout for the palette and logs area.
     ///
-    /// This function processes keyboard input for the command palette, handling
-    /// text input, navigation, suggestion acceptance, and special commands like
-    /// help toggling and builder opening.
+    /// This function defines the primary layout structure of the TUI
+    /// application, dividing the screen into logical sections for different
+    /// UI components. The layout follows a vertical arrangement with
+    /// specific constraints for each area.
+    ///
+    /// # Layout Structure
+    ///
+    /// The main layout consists of 3 vertical sections:
+    ///
+    /// 1. **Palette Area** - Input field and suggestions
+    /// 2. **Hints Area** - Keyboard shortcuts and help text
+    /// 4. **Logs Area** - Application logs and status messages
     ///
     /// # Arguments
     ///
-    /// * `app` - The application state to update
-    /// * `key` - The key event to process
+    /// * `size` - The total available screen area (Rect)
     ///
     /// # Returns
     ///
-    /// `Vec<Effect>` containing any effects that should be processed
-    ///
-    /// # Key Bindings
-    ///
-    /// - **Character input**: Adds characters to the palette input
-    /// - **Backspace**: Removes the character before the cursor
-    /// - **Arrow keys**: Navigate through suggestions (Up/Down) or move cursor
-    ///   (Left/Right)
-    /// - **Tab**: Trigger the suggestions list
-    /// - **Ctrl+H**: Open help for the current command or top suggestion
-    /// - **Ctrl+F**: Open the command browser
-    /// - **Enter**: Execute the current command (if complete) or insert selected suggestion
-    /// - **Escape**: Clear the palette input and close suggestions
+    /// Vector of rectangular areas for each UI section, ordered from top to
+    /// bottom
     ///
     /// # Examples
     ///
     /// ```rust,ignore
-    /// // Example requires constructing full App and Registry; ignored in doctests.
+    /// use ratatui::prelude::*;
+    /// use heroku_tui::ui::layout::create_main_layout;
+    /// use heroku_tui::App;
+    /// use heroku_registry::Registry;
+    ///
+    /// let registry = Registry::from_embedded_schema().unwrap();
+    /// let app = new(registry);
+    /// let screen_size = Rect::new(0, 0, 80, 24);
+    /// let layout_areas = create_main_layout(screen_size, &app);
+    ///
+    /// // layout_areas[0] = Command palette area
+    /// // layout_areas[1] = Hints area
+    /// // layout_areas[2] = Logs area
     /// ```
-    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
-        let mut effects: Vec<Effect> = vec![];
-        // Delegate to logs if focused.
-        if app.logs.focus.get() {
-            return self.logs.handle_key_events(app, key);
+    fn get_preferred_layout(&self, app: &App, area: Rect) -> Vec<Rect> {
+        // Dynamically expand the palette area when the suggestions popup is visible
+        let mut palette_extra: u16 = 0;
+        let show_popup =
+            app.palette.error_message().is_none() && app.palette.is_suggestions_open() && !app.palette.suggestions().is_empty();
+
+        if show_popup {
+            let rows = app.palette.suggestions().len().min(10) as u16; // match palette.rs max_rows
+            let popup_height = rows + 3;
+            palette_extra = popup_height;
         }
 
-        match key.code {
-            KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
-                // Handle character input
-                self.handle_character_input(app, c);
-            }
-            KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // Handle help request
-                effects.extend(self.handle_help_request(app));
-            }
-            KeyCode::Backspace => {
-                // Handle backspace
-                self.handle_backspace(app);
-            }
-            KeyCode::Left => {
-                // Handle cursor left
-                self.handle_cursor_left(app);
-            }
-            KeyCode::Right => {
-                // Handle cursor right
-                self.handle_cursor_right(app);
-            }
-            KeyCode::Down | KeyCode::Up => {
-                if app.palette.is_suggestions_open() {
-                    // Navigate suggestions when popup is open
-                    self.handle_suggestion_navigation(app, key.code);
-                } else {
-                    // Navigate command history when popup is closed
-                    let changed = if key.code == KeyCode::Up {
-                        app.palette.history_up()
-                    } else {
-                        app.palette.history_down()
-                    };
-                    if changed {
-                        // Clear errors/suggestions while browsing history
-                        app.palette.reduce_clear_error();
-                        app.palette.set_is_suggestions_open(false);
-                    }
-                }
-            }
-            KeyCode::BackTab => {
-                app.focus.prev();
-            }
-            KeyCode::Tab => {
-                // When input is empty, use Tab/BackTab for focus traversal between palette and logs.
-                if app.palette.is_input_empty() {
-                    app.focus.next();
-                } else {
-                    // Otherwise, Tab refreshes/opens suggestions
-                    self.handle_tab_press(app);
-                }
-            }
-            KeyCode::Enter => {
-                // Handle enter keypress
-                effects.extend(self.handle_enter(app));
-            }
-            KeyCode::Esc => {
-                // Handle escape
-                self.handle_escape(app);
-            }
-            _ => {}
+        // a wider area displays 2 columns with the leftmost
+        // column split into 2 rows totaling 3 rendering areas.
+        if area.width >= 141 {
+            // start with left and right columns
+            let two_col = Layout::horizontal([
+                Constraint::Percentage(65), // Command palette + hints
+                Constraint::Min(20),        // logs
+            ])
+            .split(area);
+
+            // split the left col into two stacked rows
+            let constraints = [
+                Constraint::Length(5 + palette_extra), // Command palette area (+ suggestions)
+                Constraint::Percentage(100),           // Gap
+                Constraint::Min(1),                    // Hints area
+            ];
+
+            let vertical = Layout::vertical(constraints).split(two_col[0]);
+
+            return vec![vertical[0], two_col[1], vertical[2]]; // ordering intentional
         }
-        effects
+
+        // Smaller screens display 3 stacked rows.
+        let constraints = [
+            Constraint::Length(5 + palette_extra), // Command palette area (+ suggestions)
+            Constraint::Percentage(100),           // logs / output content
+            Constraint::Min(1),                    // Hints area
+        ];
+
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
+            .split(area)
+            .to_vec()
     }
 }

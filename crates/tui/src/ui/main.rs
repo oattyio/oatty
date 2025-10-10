@@ -5,13 +5,10 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::ui::components::component::Component;
-use crate::ui::components::nav_bar::VerticalNavBarComponent;
-
 /// Renders the main user interface layout and coordinates all UI components.
 ///
 /// This function creates the main application layout and orchestrates the
-/// rendering of all UI components including the command palette, hints,
+/// rendering of all UI components, including the command palette, hints,
 /// logs, and modal overlays.
 ///
 /// # Arguments
@@ -27,7 +24,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Temporarily take components to avoid borrow checker issues
     let mut main_view = std::mem::replace(&mut app.main_view, None);
     let mut open_modal = std::mem::replace(&mut app.open_modal, None);
-
+    let mut nav_bar = std::mem::replace(&mut app.nav_bar_view, None);
     // Layout: left rail for nav bar, right for active main view
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
@@ -37,9 +34,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     // Handle main view rendering
     if let Some(current) = main_view.as_mut() {
         // Render nav bar on the left
-        let mut nav = VerticalNavBarComponent::new();
-        nav.render(frame, chunks[0], app);
-        // Render active view on the right
+        if let Some(nav) = nav_bar.as_mut() {
+            nav.render(frame, chunks[0], app);
+        }
+
+        // Render an active view on the right
         current.render(frame, chunks[1], app);
     }
 
@@ -58,9 +57,12 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.open_modal.is_none() {
         app.open_modal = open_modal;
     }
+    if app.nav_bar_view.is_none() {
+        app.nav_bar_view = nav_bar;
+    }
 }
 
-/// Renders modal overlays based on application state.
+/// Renders modal overlays based on the application state.
 ///
 /// # Arguments
 ///

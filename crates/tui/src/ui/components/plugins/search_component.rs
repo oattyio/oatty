@@ -1,4 +1,4 @@
-//! Plugins search component for handling search input and filtering.
+//! Plugin search component for handling search input and filtering.
 //!
 //! Renders a simple header block containing the current filter, places the
 //! cursor at the end when focused, and updates filter text based on keystrokes
@@ -14,14 +14,14 @@ use crate::ui::theme::{Theme, theme_helpers as th};
 
 use super::PluginsState;
 
-/// Component for rendering and handling the plugins search input.
+/// Component for rendering and handling the plugin search input.
 ///
 /// This component is responsible for:
 /// - Processing simple text input for the search filter
 /// - Ignoring control-modified character inputs
 /// - Rendering the search header and positioning the cursor when focused
 ///
-/// It follows the TUI component contract and mutates application state under
+/// It follows the TUI component contract and mutates the application state under
 /// `app.plugins` directly for local UI interactions.
 #[derive(Debug, Default)]
 pub struct PluginsSearchComponent;
@@ -52,7 +52,7 @@ impl Component for PluginsSearchComponent {
     /// - `key_event`: The keyboard event to process
     ///
     /// # Returns
-    /// Returns a vector of effects to be processed by the application runtime.
+    ///  A vector of effects to be processed by the application runtime.
     fn handle_key_events(&mut self, app: &mut App, key_event: KeyEvent) -> Vec<Effect> {
         match key_event.code {
             KeyCode::Backspace if app.plugins.table.search_flag.get() => {
@@ -92,7 +92,7 @@ impl PluginsSearchComponent {
     /// - `frame`: Terminal frame used for rendering
     /// - `area`: The rectangular area to render into
     /// - `theme`: Active theme used for styles
-    /// - `state`: Reference to the plugins view state
+    /// - `state`: Reference to the plugin view state
     fn render_search_panel(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, state: &PluginsState) {
         let table_state = &state.table;
         let is_search_focused = table_state.search_flag.get();
@@ -104,7 +104,7 @@ impl PluginsSearchComponent {
         let header = Paragraph::new(filter_text).style(theme.text_primary_style()).block(header_block);
         frame.render_widget(header, area);
 
-        // Position cursor at end of input when focused
+        // Position the cursor at the end of input when focused
         if is_search_focused {
             let x = header_inner.x.saturating_add(state.table.cursor_position as u16);
             let y = header_inner.y;

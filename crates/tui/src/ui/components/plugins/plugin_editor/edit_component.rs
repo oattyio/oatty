@@ -1,9 +1,9 @@
-//! Add Plugin component for the MCP plugins management interface.
+//! Add the Plugin component for the MCP plugins management interface.
 //!
 //! This module provides the UI component for adding new MCP plugins to the system.
 //! It supports both Local (stdio) and Remote (HTTP/SSE) plugin types with appropriate
 //! form fields and validation. The component handles keyboard input, focus management,
-//! and rendering of the add plugin plugin interface.
+//! and rendering of the add plugin interface.
 
 use crossterm::event::{KeyCode, KeyModifiers};
 use heroku_types::Effect;

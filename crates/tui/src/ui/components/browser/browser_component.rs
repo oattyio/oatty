@@ -5,8 +5,8 @@
 //! - A search bar for filtering commands by name or group
 //! - A scrollable list of filtered commands with keyboard navigation
 //! - An inline help panel that displays detailed command information
-//! - Focus management between search, commands list, and help panels
-//! - Keyboard shortcuts for common actions (Enter to send to palette, Esc to close)
+//! - Focus management between search, command list, and help panels
+//! - Keyboard shortcuts for common actions (Enter to send it to palette, Esc to close)
 //!
 //! The component follows the TUI architecture pattern where it implements the `Component`
 //! trait and manages its rendering and event handling through focused helper methods.
@@ -29,10 +29,7 @@ use ratatui::{
 
 use crate::app::App;
 use crate::ui::components::help::content::build_command_help_text;
-use crate::ui::{
-    components::{browser::layout::BrowserLayout, component::Component},
-    theme::theme_helpers as th,
-};
+use crate::ui::{components::component::Component, theme::theme_helpers as th};
 
 /// A modal component for browsing and selecting Heroku commands interactively.
 ///
@@ -55,31 +52,6 @@ use crate::ui::{
 pub struct BrowserComponent;
 
 impl Component for BrowserComponent {
-    /// Renders the browser modal with all its panels and components.
-    ///
-    /// This method creates a centered modal overlay that contains the search panel,
-    /// commands list, inline help panel, and footer. It uses the browser layout
-    /// system to properly arrange the components within the available space.
-    ///
-    /// # Arguments
-    /// * `frame` - The Ratatui frame to render to
-    /// * `rect` - The available rendering area
-    /// * `app` - The application state containing browser data and theme
-    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
-        let layout_chunks = BrowserLayout::vertical_layout(rect);
-
-        self.render_search_panel(frame, app, layout_chunks[0]);
-
-        let main_layout = self.create_main_layout(layout_chunks[1]);
-        self.render_commands_panel(frame, app, main_layout[0]);
-        self.render_inline_help_panel(frame, app, main_layout[1]);
-
-        let hint_spans = self.get_hint_spans(app, true);
-
-        let paragraph = Paragraph::new(Line::from(hint_spans));
-        frame.render_widget(paragraph, layout_chunks[2]);
-    }
-
     /// Handles keyboard events for the browser component.
     ///
     /// This method routes keyboard events to the appropriate handler based on
@@ -109,6 +81,31 @@ impl Component for BrowserComponent {
         effects
     }
 
+    /// Renders the browser modal with all its panels and components.
+    ///
+    /// This method creates a centered modal overlay that contains the search panel,
+    /// commands list, inline help panel, and footer. It uses the browser layout
+    /// system to properly arrange the components within the available space.
+    ///
+    /// # Arguments
+    /// * `frame` - The Ratatui frame to render to
+    /// * `rect` - The available rendering area
+    /// * `app` - The application state containing browser data and theme
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
+        let layout_chunks = self.get_preferred_layout(app, rect);
+
+        self.render_search_panel(frame, app, layout_chunks[0]);
+
+        let main_layout = self.create_main_layout(layout_chunks[1]);
+        self.render_commands_panel(frame, app, main_layout[0]);
+        self.render_inline_help_panel(frame, app, main_layout[1]);
+
+        let hint_spans = self.get_hint_spans(app, true);
+
+        let paragraph = Paragraph::new(Line::from(hint_spans));
+        frame.render_widget(paragraph, layout_chunks[2]);
+    }
+
     /// Renders the footer with keyboard shortcut hints.
     ///
     /// This method displays helpful keyboard shortcuts at the bottom of the
@@ -131,6 +128,18 @@ impl Component for BrowserComponent {
             Span::styled(" Send to palette  ", theme.text_muted_style()),
         ]);
         spans
+    }
+
+    fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(3), // Search panel
+                Constraint::Min(10),   // Main content
+                Constraint::Length(1), // Footer
+            ])
+            .split(area)
+            .to_vec()
     }
 }
 

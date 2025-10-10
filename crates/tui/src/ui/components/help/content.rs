@@ -15,10 +15,7 @@ pub(crate) fn build_command_help_text<'a>(theme: &'a dyn crate::ui::theme::roles
     let cmd = format!("{} {}", group, name);
 
     let mut lines: Vec<Line<'_>> = vec![Line::from("")];
-    lines.push(Line::styled(
-        " USAGE:",
-        theme.text_secondary_style().add_modifier(ratatui::style::Modifier::BOLD),
-    ));
+    lines.push(Line::styled(" USAGE:", theme.text_secondary_style().add_modifier(Modifier::BOLD)));
 
     let mut usage_spans: Vec<Span<'_>> = vec![Span::styled(format!("  heroku {}", cmd), theme.text_primary_style())];
 
@@ -32,7 +29,7 @@ pub(crate) fn build_command_help_text<'a>(theme: &'a dyn crate::ui::theme::roles
         if flag.required {
             usage_spans.push(Span::styled(
                 format!(" --{}", flag.name),
-                theme.text_secondary_style().add_modifier(ratatui::style::Modifier::BOLD),
+                theme.text_secondary_style().add_modifier(Modifier::BOLD),
             ));
             if flag.r#type != "boolean" {
                 usage_spans.push(Span::styled(" <value>", theme.text_muted_style()));
@@ -41,7 +38,7 @@ pub(crate) fn build_command_help_text<'a>(theme: &'a dyn crate::ui::theme::roles
             usage_spans.push(Span::styled(" [", theme.text_muted_style()));
             usage_spans.push(Span::styled(
                 format!("--{}", flag.name),
-                theme.text_secondary_style().add_modifier(ratatui::style::Modifier::BOLD),
+                theme.text_secondary_style().add_modifier(Modifier::BOLD),
             ));
             if flag.r#type != "boolean" {
                 usage_spans.push(Span::styled(" <value>", theme.text_muted_style()));
@@ -107,10 +104,7 @@ pub(crate) fn build_command_help_text<'a>(theme: &'a dyn crate::ui::theme::roles
 
     if !spec.flags.is_empty() {
         lines.push(Line::from(""));
-        lines.push(Line::styled(
-            " OPTIONS:",
-            theme.text_secondary_style().add_modifier(ratatui::style::Modifier::BOLD),
-        ));
+        lines.push(Line::styled(" OPTIONS:", theme.text_secondary_style().add_modifier(Modifier::BOLD)));
         for flag in &spec.flags {
             let mut flag_line = if let Some(short) = &flag.short_name {
                 Line::styled(

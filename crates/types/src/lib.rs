@@ -6,7 +6,6 @@
 
 pub mod suggestion {
     //! Suggestion metadata used by palette and autocompletion UIs.
-
     /// Identifies the kind of suggestion item presented to the user.
     #[derive(Clone, Debug, PartialEq)]
     pub enum ItemKind {
@@ -633,6 +632,8 @@ pub mod messaging {
         Browser,
         /// Plugins view for managing MCP plugins.
         Plugins,
+        /// Workflows view for browsing workflow catalog.
+        Workflows,
     }
 
     /// Modal overlays that can be displayed on top of the main UI.
@@ -644,6 +645,8 @@ pub mod messaging {
         Results,
         /// Log details modal revealing the full log entry.
         LogDetails,
+        /// Guided Input Collector for resolving workflow inputs.
+        WorkflowCollector,
         /// Plugin details modal presenting plugin metadata.
         PluginDetails,
     }

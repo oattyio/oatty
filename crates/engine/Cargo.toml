@@ -22,6 +22,7 @@ heroku-mcp = { path = "../mcp" }
 tokio = { workspace = true }
 reqwest = { workspace = true }
 percent-encoding = { workspace = true }
+indexmap = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3.8"

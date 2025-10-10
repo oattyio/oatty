@@ -8,6 +8,7 @@ use ratatui::{
 use serde_json::Value;
 
 use crate::ui::{
+    components::pagination::state::PaginationState,
     theme::{
         roles::Theme as UiTheme,
         theme_helpers::{table_header_style, table_row_style},
@@ -29,6 +30,8 @@ pub struct TableState<'a> {
     column_constraints: Option<Vec<Constraint>>,
     headers: Option<Vec<Cell<'a>>>,
     kv_entries: Vec<KeyValueEntry>,
+    pub pagination_state: PaginationState,
+    pub container_focus: FocusFlag,
     pub grid_f: FocusFlag,
 }
 
@@ -59,9 +62,6 @@ impl<'a> TableState<'_> {
     }
     pub fn headers(&self) -> Option<&Vec<Cell<'_>>> {
         self.headers.as_ref()
-    }
-    pub fn grid_focus(&self) -> &FocusFlag {
-        &self.grid_f
     }
     pub fn selected_data(&self) -> Option<&Value> {
         if let Some(json_array) = Self::array_from_json(self.result_json.as_ref()) {
@@ -280,12 +280,15 @@ pub fn build_key_value_entries(value: &Value) -> Vec<KeyValueEntry> {
 
 impl HasFocus for TableState<'_> {
     fn build(&self, builder: &mut FocusBuilder) {
+        let tag = builder.start(self);
         // Single focusable grid area; treat as a leaf.
-        builder.leaf_widget(self.grid_focus());
+        builder.leaf_widget(&self.grid_f);
+        builder.widget(&self.pagination_state);
+        builder.end(tag);
     }
 
     fn focus(&self) -> FocusFlag {
-        self.grid_f.clone()
+        self.container_focus.clone()
     }
 
     fn area(&self) -> Rect {
