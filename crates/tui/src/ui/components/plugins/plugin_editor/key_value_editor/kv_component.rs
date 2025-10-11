@@ -15,7 +15,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use heroku_types::Effect;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Row, Table},
 };
@@ -238,10 +238,7 @@ impl KeyValueEditorComponent {
             constraints.push(Constraint::Length(4));
         }
 
-        let sections = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(constraints)
-            .split(area);
+        let sections = Layout::vertical(constraints).split(area);
 
         let table_area = sections[0];
         self.render_table(frame, table_area, theme, add_state);

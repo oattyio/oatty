@@ -7,7 +7,7 @@ use super::table::PluginsTableState;
 /// UI state for the Plugins view.
 #[derive(Debug, Clone)]
 pub struct PluginsState {
-    pub focus: FocusFlag,
+    pub container_focus: FocusFlag,
     /// Table-specific state including filter, selection, and grid focus.
     pub table: PluginsTableState,
     /// Logs drawer state, if open.
@@ -23,7 +23,7 @@ pub struct PluginsState {
 impl PluginsState {
     pub fn new() -> Self {
         Self {
-            focus: FocusFlag::named("plugins"),
+            container_focus: FocusFlag::named("plugins"),
             table: PluginsTableState::new(),
             logs: None,
             add: None,
@@ -63,7 +63,7 @@ impl HasFocus for PluginsState {
     fn build(&self, builder: &mut FocusBuilder) {
         let tag = builder.start(self);
         // Header search input and main grid
-        builder.leaf_widget(&self.table.search_flag);
+        builder.widget(&self.table);
         // Include add plugin view if visible
         if let Some(add) = &self.add {
             builder.widget(add);
@@ -72,12 +72,11 @@ impl HasFocus for PluginsState {
         if let Some(logs) = &self.logs {
             builder.widget(logs);
         }
-        builder.leaf_widget(&self.table.grid_flag);
         builder.end(tag);
     }
 
     fn focus(&self) -> FocusFlag {
-        self.focus.clone()
+        self.container_focus.clone()
     }
 
     fn area(&self) -> Rect {
@@ -96,7 +95,7 @@ mod tests {
         b.widget(&s);
         let f = b.build();
         // Sanity: focusing search and grid should be possible
-        f.focus(&s.table.search_flag);
-        f.focus(&s.table.grid_flag);
+        f.focus(&s.table.f_search);
+        f.focus(&s.table.f_grid);
     }
 }

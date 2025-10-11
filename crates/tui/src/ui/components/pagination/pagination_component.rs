@@ -8,7 +8,7 @@ use ratatui::{
     widgets::*,
 };
 
-use crate::ui::components::find_button_index_from_rect;
+use crate::ui::components::find_target_index_by_mouse_position;
 use crate::ui::components::pagination::state::PaginationState;
 use crate::{
     app::App,
@@ -470,7 +470,7 @@ impl Component for PaginationComponent {
         let pagination_state = &app.table.pagination_state;
         let maybe_idx = if pagination_state.is_visible && mouse.kind == MouseEventKind::Down(MouseButton::Left) {
             let MouseEvent { column, row, .. } = mouse;
-            find_button_index_from_rect(&pagination_state.last_area, &pagination_state.per_item_areas, column, row)
+            find_target_index_by_mouse_position(&pagination_state.last_area, &pagination_state.per_item_areas, column, row)
         } else {
             None
         };

@@ -3,9 +3,9 @@
 //! This module provides the UI component for adding new MCP plugins to the system.
 //! It supports both Local (stdio) and Remote (HTTP/SSE) plugin types with appropriate
 //! form fields and validation. The component handles keyboard input, focus management,
-//! and rendering of the add plugin interface.
+//! and rendering of the "edit plugin" interface.
 
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use heroku_types::Effect;
 // Focus management uses FocusFlag booleans on state; no ring needed here
 use ratatui::{
@@ -15,16 +15,17 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
 };
 
+use super::{
+    key_value_editor::KeyValueEditorComponent,
+    state::{PluginEditViewState, PluginTransport},
+};
+use crate::ui::theme::theme_helpers::create_radio_button;
 use crate::ui::{components::component::Component, theme::theme_helpers::render_button};
 use crate::{
     app::App,
     ui::theme::{Theme, theme_helpers},
 };
-
-use super::{
-    key_value_editor::KeyValueEditorComponent,
-    state::{PluginEditViewState, PluginTransport},
-};
+use crate::ui::components::find_target_index_by_mouse_position;
 
 struct EditPluginFormLayout {
     name_area: Rect,
@@ -33,7 +34,18 @@ struct EditPluginFormLayout {
     base_url_area: Rect,
 }
 
-/// Component for the add plugin plugin interface.
+struct ActionButtonLayout {
+    btn_validate_area: Rect,
+    btn_save_area: Rect,
+    btn_cancel_area: Rect,
+}
+
+struct RadioButtonLayout {
+    transport_local: Rect,
+    transport_remote: Rect,
+}
+
+/// Component for the "edit plugin" plugin interface.
 ///
 /// This component handles the UI for adding new MCP plugins to the system.
 /// It provides form fields for plugin configuration, transport selection,
@@ -45,9 +57,9 @@ pub struct PluginsEditComponent {
 }
 
 impl Component for PluginsEditComponent {
-    /// Handles keyboard events for the add plugin plugin.
+    /// Handles keyboard events for the "edit plugin" component.
     ///
-    /// This method processes keyboard input for the add plugin interface,
+    /// This method processes keyboard input for the "edit plugin" interface,
     /// including navigation, text input, and action triggers. It delegates
     /// to specialized handlers for different types of input.
     ///
@@ -89,7 +101,7 @@ impl Component for PluginsEditComponent {
                 return vec![Effect::PluginsValidateAdd];
             }
             KeyCode::Char('s') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                return vec![Effect::PluginsApplyAdd];
+                return vec![Effect::PluginsSave];
             }
             KeyCode::Enter => {
                 let effects = handle_enter_key(app);
@@ -112,11 +124,40 @@ impl Component for PluginsEditComponent {
         Vec::new()
     }
 
-    /// Renders the add plugin plugin interface.
+    fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+            return Vec::new();
+        }
+        let edit_state = &mut app.plugins.add.as_mut().expect("add state should be something");
+        let MouseEvent{column, row, ..} = mouse;
+        let PluginEditViewState{last_area, per_item_area, ..} = edit_state;
+        if let Some(idx) = find_target_index_by_mouse_position(last_area, per_item_area, column, row) {
+            let focusables = [
+                &edit_state.f_transport,    // local transport radio
+                &edit_state.f_transport,    // remote transport radio
+                &edit_state.f_name,         // Name
+                &edit_state.f_command,      // Command
+                &edit_state.f_args,         // Args
+                &edit_state.f_base_url,     // Base URL
+                &edit_state.f_btn_validate, // Validate button
+                &edit_state.f_btn_save,     // Save button
+                &edit_state.f_btn_cancel,   // Cancel button
+            ];
+            app.focus.focus(focusables[idx]);
+            // normalize the index to the focusables array
+            if idx < 2 || idx > 6 {
+                return handle_enter_key(app);
+            }
+            return Vec::new();
+        }
+        Vec::new()
+    }
+
+    /// Renders the "edit plugin" interface.
     ///
-    /// This method renders the complete add plugin plugin including the transport
+    /// This method renders the complete "edit plugin" plugin including the transport
     /// selection, form fields, and action buttons. It only renders when the
-    /// add plugin state is available.
+    /// "edit plugin" state is available.
     ///
     /// # Arguments
     ///
@@ -124,12 +165,12 @@ impl Component for PluginsEditComponent {
     /// * `area` - The rectangular area available for rendering
     /// * `app` - Mutable reference to the app state
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
-        let Some(add_state) = &app.plugins.add else { return };
+        let Some(add_state) = &mut app.plugins.add else { return };
 
         let theme = &*app.ctx.theme;
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(theme.border_style(add_state.focus.get()))
+            .border_style(theme.border_style(add_state.container_focus.get()))
             .style(theme_helpers::panel_style(theme))
             .title(Span::styled("Add Plugin", theme.text_secondary_style()));
 
@@ -144,49 +185,28 @@ impl Component for PluginsEditComponent {
         ])
         .split(inner_area);
 
-        // Transport selection row
-        let mut transport_spans: Vec<Span> = Vec::new();
-        transport_spans.push(Span::styled("Transport: ", theme.text_secondary_style()));
-
-        let create_radio_button = |label: &str, is_selected: bool| -> Vec<Span<'static>> {
-            let mut radio_spans = Vec::new();
-            radio_spans.push(Span::styled(
-                if is_selected { "[✓]" } else { "[ ]" },
-                if is_selected {
-                    theme.status_success()
-                } else {
-                    theme.text_primary_style()
-                },
-            ));
-            radio_spans.push(Span::raw(" "));
-            radio_spans.push(Span::styled(label.to_string(), theme.text_primary_style()));
-            radio_spans
-        };
-
-        for span in create_radio_button("Local", matches!(add_state.transport, PluginTransport::Local)) {
-            transport_spans.push(span);
-        }
-        transport_spans.push(Span::raw("   "));
-        for span in create_radio_button("Remote", matches!(add_state.transport, PluginTransport::Remote)) {
-            transport_spans.push(span);
-        }
-
-        let transport_line = Line::from(transport_spans);
-        let is_transport_focused = add_state.f_transport.get();
-        let styled_transport_line = if is_transport_focused {
-            transport_line.style(theme.selection_style())
-        } else {
-            transport_line
-        };
-
-        frame.render_widget(Paragraph::new(styled_transport_line).style(theme.text_primary_style()), layout[0]);
-
+        let transport_layout = render_radio_buttons(frame, layout[0], theme, add_state);
         let form_layout = render_form_fields(frame, layout[1], theme, add_state);
 
         self.kv_component.render_with_state(frame, layout[2], theme, add_state);
-        render_action_buttons(frame, layout[3], theme, add_state);
+        let button_layout = render_action_buttons(frame, layout[3], theme, add_state);
         // Position the cursor in the active input field
         position_cursor_in_active_field(frame, &form_layout, add_state);
+
+        // Update the state with the new layout
+        // so mouse events can be handled
+        add_state.last_area = inner_area;
+        add_state.per_item_area = vec![
+            transport_layout.transport_local,  // Local Radio
+            transport_layout.transport_remote, // Remote radio
+            form_layout.name_area,             // Name
+            form_layout.command_area,          // Command
+            form_layout.args_area,             // Args
+            form_layout.base_url_area,         // Base URL
+            button_layout.btn_validate_area,   // Validate button
+            button_layout.btn_save_area,       // Save button
+            button_layout.btn_cancel_area,     // Cancel button
+        ];
     }
 
     fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
@@ -230,7 +250,7 @@ impl Component for PluginsEditComponent {
     }
 }
 
-/// Handles Enter key presses in the add plugin plugin.
+/// Handles Enter key presses in the "edit plugin" plugin.
 ///
 /// This function processes Enter key events and triggers the appropriate
 /// action based on the currently focused control. For buttons, it triggers
@@ -239,7 +259,7 @@ impl Component for PluginsEditComponent {
 ///
 /// # Arguments
 ///
-/// * `add_state` - Mutable reference to the add plugin plugin state
+/// * `add_state` - Mutable reference to the "edit plugin" plugin state
 ///
 /// # Returns
 ///
@@ -260,7 +280,7 @@ fn handle_enter_key(app: &mut App) -> Vec<Effect> {
     if add_state.f_btn_save.get() && save_enabled {
         add_state.validation = add_state.kv_editor.commit_edit();
         if add_state.validation.is_ok() {
-            return vec![Effect::PluginsApplyAdd];
+            return vec![Effect::PluginsSave];
         }
     }
     if add_state.f_btn_cancel.get() {
@@ -278,14 +298,14 @@ fn handle_enter_key(app: &mut App) -> Vec<Effect> {
     Vec::new()
 }
 
-/// Handles Backspace key presses in the add plugin plugin.
+/// Handles Backspace key presses in the "edit plugin" plugin.
 ///
 /// This function removes the last character from the currently focused
 /// input field based on the transport type and focused control.
 ///
 /// # Arguments
 ///
-/// * `add_state` - Mutable reference to the add plugin plugin state
+/// * `add_state` - Mutable reference to the "edit plugin" plugin state
 fn handle_backspace_key(add_state: &mut PluginEditViewState) -> Option<char> {
     if add_state.f_name.get() {
         return add_state.name.pop();
@@ -302,14 +322,14 @@ fn handle_backspace_key(add_state: &mut PluginEditViewState) -> Option<char> {
     None
 }
 
-/// Handles character input in the add plugin plugin.
+/// Handles character input in the "edit plugin" plugin.
 ///
 /// This function adds the typed character to the currently focused
 /// input field based on the transport type and focused control.
 ///
 /// # Arguments
 ///
-/// * `add_state` - Mutable reference to the add plugin plugin state
+/// * `add_state` - Mutable reference to the "edit plugin" plugin state
 /// * `character` - The character to add to the input field
 fn handle_character_input(add_state: &mut PluginEditViewState, character: char) -> bool {
     if add_state.f_name.get() {
@@ -331,7 +351,7 @@ fn handle_character_input(add_state: &mut PluginEditViewState, character: char) 
     false
 }
 
-/// Renders the form fields section of the add plugin plugin.
+/// Renders the form fields section of the "edit plugin" plugin.
 ///
 /// This function renders the input fields for plugin configuration based on
 /// the selected transport type. It shows different fields for Local vs Remote
@@ -342,7 +362,7 @@ fn handle_character_input(add_state: &mut PluginEditViewState, character: char) 
 /// * `frame` - Mutable reference to the terminal frame for rendering
 /// * `fields_area` - The rectangular area allocated for form fields
 /// * `theme` - Reference to the UI theme for styling
-/// * `add_state` - Reference to the add plugin plugin state
+/// * `add_state` - Reference to the "edit plugin" plugin state
 fn render_form_fields(frame: &mut Frame, fields_area: Rect, theme: &dyn Theme, add_state: &PluginEditViewState) -> EditPluginFormLayout {
     // Always allow for the max rows to prevent
     // layout jitter when toggling transport
@@ -405,6 +425,40 @@ fn render_form_fields(frame: &mut Frame, fields_area: Rect, theme: &dyn Theme, a
     }
 }
 
+fn render_radio_buttons(frame: &mut Frame, area: Rect, theme: &dyn Theme, add_state: &PluginEditViewState) -> RadioButtonLayout {
+    // Transport selection row
+    let transport_layout = Layout::horizontal([
+        Constraint::Length(11), // Transport label
+        Constraint::Length(9),  // Local radio button
+        Constraint::Length(2),  // Spacing in-between
+        Constraint::Length(10), // Remote radio button
+    ])
+    .split(area);
+
+    frame.render_widget(Span::styled("Transport: ", theme.text_secondary_style()), transport_layout[0]);
+    let is_transport_focused = add_state.f_transport.get();
+
+    let local_transport = create_radio_button(
+        "Local",
+        matches!(add_state.transport, PluginTransport::Local),
+        is_transport_focused,
+        theme,
+    );
+    let remote_transport = create_radio_button(
+        "Remote",
+        matches!(add_state.transport, PluginTransport::Remote),
+        is_transport_focused,
+        theme,
+    );
+    frame.render_widget(local_transport, transport_layout[1]);
+    frame.render_widget(remote_transport, transport_layout[3]);
+
+    RadioButtonLayout {
+        transport_local: transport_layout[1],
+        transport_remote: transport_layout[3],
+    }
+}
+
 /// Render a single-line labeled input field with optional placeholder text.
 fn render_labeled_input_field(
     frame: &mut Frame,
@@ -433,7 +487,7 @@ fn render_labeled_input_field(
     frame.render_widget(paragraph, area);
 }
 
-/// Render a validation message for the add plugin form.
+/// Render a validation message for the "edit plugin" form.
 fn render_validation_message(frame: &mut Frame, area: Rect, theme: &dyn Theme, result: &Result<String, String>) {
     let (message, style) = match result {
         Ok(message) => (message, theme.status_success()),
@@ -449,32 +503,28 @@ fn render_validation_message(frame: &mut Frame, area: Rect, theme: &dyn Theme, r
     frame.render_widget(paragraph, area);
 }
 
-/// Renders the action buttons section of the add plugin plugin.
+/// Renders the action buttons section of the "edit plugin".
 ///
 /// This function renders the action buttons (Secrets, Validate, Save, Cancel)
-/// with appropriate styling based on their enabled state and focus status.
+/// with the appropriate styling based on their enabled state and focus status.
 ///
 /// # Arguments
 ///
 /// * `frame` - Mutable reference to the terminal frame for rendering
 /// * `buttons_area` - The rectangular area allocated for action buttons
 /// * `theme` - Reference to the UI theme for styling
-/// * `add_state` - Reference to the add plugin plugin state
-fn render_action_buttons(frame: &mut Frame, buttons_area: Rect, theme: &dyn Theme, add_state: &PluginEditViewState) {
-    let button_columns = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Min(0),     // Flexible space
-            Constraint::Length(12), // Validate button
-            Constraint::Length(2),  // Spacer
-            Constraint::Length(10), // Save button
-            Constraint::Length(2),  // Spacer
-            Constraint::Length(12), // Cancel button
-        ])
-        .split(buttons_area);
-
+/// * `add_state` - Reference to the "edit plugin" state
+fn render_action_buttons(frame: &mut Frame, area: Rect, theme: &dyn Theme, add_state: &PluginEditViewState) -> ActionButtonLayout {
     let (validate_enabled, save_enabled) = add_state.compute_button_enablement();
-
+    let button_columns = Layout::horizontal([
+        Constraint::Min(0),     // Flexible space
+        Constraint::Length(12), // Validate button
+        Constraint::Length(2),  // Spacer
+        Constraint::Length(10), // Save button
+        Constraint::Length(2),  // Spacer
+        Constraint::Length(12), // Cancel button
+    ])
+    .split(area);
     render_button(
         frame,
         button_columns[1],
@@ -505,6 +555,11 @@ fn render_action_buttons(frame: &mut Frame, buttons_area: Rect, theme: &dyn Them
         theme,
         Borders::ALL,
     );
+    ActionButtonLayout {
+        btn_validate_area: button_columns[1],
+        btn_save_area: button_columns[3],
+        btn_cancel_area: button_columns[5],
+    }
 }
 
 /// Positions the cursor in the currently focused input field.
@@ -517,7 +572,7 @@ fn render_action_buttons(frame: &mut Frame, buttons_area: Rect, theme: &dyn Them
 ///
 /// * `frame` - Mutable reference to the terminal frame for cursor positioning
 /// * `layout` - Layout metadata generated during form rendering
-/// * `add_state` - Reference to the add plugin plugin state
+/// * `add_state` - Reference to the "edit plugin" plugin state
 /// Position the terminal cursor based on the currently focused input field.
 fn position_cursor_in_active_field(frame: &mut Frame, layout: &EditPluginFormLayout, add_state: &PluginEditViewState) {
     if add_state.is_key_value_editor_focused() {

@@ -77,7 +77,7 @@ pub enum Cmd {
     /// Make an HTTP request to the Heroku API.
     ///
     /// Carries:
-    /// - [`CommandSpec`]: API request metadata (including path, method, and service)
+    /// - [`CommandSpec`]: API request metadata (including a path, method, and service)
     /// - `serde_json::Map`: JSON body
     ///
     /// # Example
@@ -157,9 +157,8 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
             }
             Effect::PluginsRefresh => Some(vec![Cmd::PluginsRefresh]),
             Effect::PluginsExportLogsDefault(name) => Some(vec![Cmd::PluginsExportLogsDefault(name)]),
-            Effect::PluginsOpenAdd => Some(vec![]),
             Effect::PluginsValidateAdd => Some(vec![Cmd::PluginsValidate]),
-            Effect::PluginsApplyAdd => Some(vec![Cmd::PluginsSave]),
+            Effect::PluginsSave => Some(vec![Cmd::PluginsSave]),
             Effect::ShowModal(modal) => handle_show_modal(app, modal),
             Effect::CloseModal => handle_close_modal(app),
             Effect::SwitchTo(route) => handle_switch_to(app, route),

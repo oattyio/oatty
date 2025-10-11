@@ -1,5 +1,14 @@
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crate::ui::components::find_target_index_by_mouse_position;
+use crate::ui::{
+    components::plugins::{PluginDetail, PluginsTableState, plugin_editor::state::PluginEditViewState},
+    theme::theme_helpers,
+};
+use crate::{app::App, ui::components::component::Component};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use heroku_mcp::AuthStatus;
 use heroku_types::{Effect, Modal};
+use ratatui::prelude::Layout;
+use ratatui::widgets::Paragraph;
 use ratatui::{
     Frame,
     layout::{Constraint, Rect},
@@ -7,13 +16,6 @@ use ratatui::{
     text::Span,
     widgets::{Block, Borders, Row, Table},
 };
-
-use crate::ui::{
-    components::plugins::{PluginDetail, PluginsTableState, plugin_editor::state::PluginEditViewState},
-    theme::theme_helpers,
-};
-use crate::{app::App, ui::components::component::Component};
-use heroku_mcp::AuthStatus;
 
 /// Table column width constraints for the plugin table.
 const NAME_COLUMN_WIDTH: u16 = 18;
@@ -100,7 +102,7 @@ impl PluginsTableComponent {
         let mut table_rows: Vec<Row<'static>> = Vec::with_capacity(filtered_indices.len());
         let selected_row_style = theme.selection_style().add_modifier(Modifier::BOLD);
         let selected_row_index = state.selected.unwrap_or(0);
-        let is_focused = state.grid_flag.get();
+        let is_focused = state.f_grid.get();
 
         for (row_index, &item_index) in filtered_indices.iter().enumerate() {
             if let Some(plugin_item) = state.items.get(item_index) {
@@ -194,27 +196,64 @@ impl PluginsTableComponent {
             Constraint::Percentage(TAGS_COLUMN_PERCENTAGE),
         ]
     }
-}
-
-impl Component for PluginsTableComponent {
-    /// Handles keyboard events for table navigation.
+    /// Handles key events for the grid view and performs actions based on the event.
     ///
-    /// Supports up/down arrow keys for row selection when the table is focused.
+    /// This function operates primarily in the context of managing plugins in the application.
+    /// Key events are mapped to specific actions, which include moving selection, showing modals,
+    /// and invoking plugin operations such as start, stop, restart, and more. Control modifiers
+    /// often trigger specific behaviors when combined with certain keys.
     ///
-    /// # Arguments
-    /// * `app` - The application state
-    /// * `key` - The key event to handle
+    /// # Parameters
+    ///
+    /// - `app`: A mutable reference to the `App` instance, which holds the application state
+    ///   and manages plugin operations.
+    /// - `key`: The key event received, containing the key code and any active modifiers.
     ///
     /// # Returns
-    /// A vector of effects to be processed by the runtime
-    fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
+    ///
+    /// A vector of `Effect` instances representing the actions to be performed as a result
+    /// of the key event. Effects may include showing a modal, loading plugin details, or
+    /// initiating plugin control operations.
+    ///
+    /// # Key Behaviors
+    ///
+    /// - **Navigation:**
+    ///   - `Up`: Moves the selection up in the grid if the grid flag is enabled.
+    ///   - `Down`: Moves the selection down in the grid if the grid flag is enabled.
+    ///
+    /// - **Plugin Details:**
+    ///   - `Enter`: Opens the plugin details modal and loads the selected plugin's details.
+    ///   - `Ctrl + D`: Same behavior as `Enter`.
+    ///
+    /// - **Plugin Operations:**
+    ///   - `Ctrl + S`: Starts the selected plugin.
+    ///   - `Ctrl + T`: Stops the selected plugin.
+    ///   - `Ctrl + R`: Restarts the selected plugin.
+    ///
+    /// - **Logs:**
+    ///   - `Ctrl + L`: Opens the logs for the selected plugin and marks logs as open.
+    ///
+    /// - **Plugin Management:**
+    ///   - `Ctrl + A`: Opens the add-plugin view if allowed.
+    ///   - `Ctrl + E`: Opens the edit view with the currently selected plugin's details if allowed.
+    ///
+    /// - **Ignored Inputs:**
+    ///   - Any key events not specifically matched in the logic are ignored.
+    ///
+    /// # Notes
+    ///
+    /// - The `control_pressed` flag is derived from the key event's modifier state and is used
+    ///   to differentiate between basic and modified key behaviors.
+    /// - The function directly modifies the application state (`app`) and returns effects that
+    ///   can be processed further by the caller.
+    fn handle_grid_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         let mut effects = vec![];
         let control_pressed = key.modifiers.contains(KeyModifiers::CONTROL);
         match key.code {
-            KeyCode::Up if app.plugins.table.grid_flag.get() => {
+            KeyCode::Up if app.plugins.table.f_grid.get() => {
                 Self::move_selection_up(app);
             }
-            KeyCode::Down if app.plugins.table.grid_flag.get() => {
+            KeyCode::Down if app.plugins.table.f_grid.get() => {
                 Self::move_selection_down(app);
             }
             KeyCode::Enter => {
@@ -261,7 +300,173 @@ impl Component for PluginsTableComponent {
             }
             _ => {}
         };
+        effects
+    }
+    /// Handles search-related key events while interacting with the application's plugin system.
+    ///
+    /// This method processes a series of key events and performs corresponding actions
+    /// on the application's state. Depending on the key pressed and any associated
+    /// modifiers, it updates the plugin search functionality, alters the search query,
+    /// or modifies the table cursor position. If no relevant action is found for a
+    /// key event, no changes are made.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - A mutable reference to the application state (`App`),
+    ///            which holds information about the current plugins and search status.
+    /// * `key` - The `KeyEvent` containing information about the key press and any modifiers.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<Effect>` that represents the changes or side effects produced by this function.
+    /// Currently, this function always returns an empty vector.
+    ///
+    /// # Behavior
+    ///
+    /// - **CTRL + 'a'**: Opens a new plugin editor by setting the application's
+    ///   `app.plugins.add` to a new `PluginEditViewState`.
+    /// - **Backspace**: If the `search_flag` is active (`true`), it removes the last letter
+    ///   from the search filter by calling `Self::remove_last_filter_character(app)`.
+    /// - **Character Input**: If the `search_flag` is active, it processes the typed character
+    ///   and updates the search filter unless the Control modifier is held.
+    /// - **Left Arrow Key**: Moves the cursor left in the plugins table by calling
+    ///   `app.plugins.table.reduce_move_cursor_left()`.
+    /// - **Right Arrow Key**: Moves the cursor right in the plugins table by calling
+    ///   `app.plugins.table.reduce_move_cursor_right()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// let mut app = App::new();
+    /// let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
+    /// let mut handler = YourHandler::new();
+    ///
+    /// handler.handle_search_key_events(&mut app, key);
+    /// // This will open the plugin editor by setting `app.plugins.add` to a new `PluginEditViewState`.
+    /// ```
+    fn handle_search_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
+        match key.code {
+            KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                app.plugins.add = Some(PluginEditViewState::new());
+            }
+            KeyCode::Backspace if app.plugins.table.f_search.get() => {
+                Self::remove_last_filter_character(app);
+            }
+            KeyCode::Char(character) if app.plugins.table.f_search.get() => {
+                Self::insert_filter_character_unless_control(app, key, character);
+            }
+            KeyCode::Left => {
+                app.plugins.table.reduce_move_cursor_left();
+            }
+            KeyCode::Right => {
+                app.plugins.table.reduce_move_cursor_right();
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
 
+    /// Removes the last character from the search filter and normalizes selection.
+    fn remove_last_filter_character(application: &mut App) {
+        application.plugins.table.pop_filter_character();
+    }
+
+    /// Inserts a character into the search filter unless a control modifier is pressed.
+    fn insert_filter_character_unless_control(application: &mut App, key_event: KeyEvent, character: char) {
+        if key_event.modifiers.contains(KeyModifiers::CONTROL) {
+            return;
+        }
+        application.plugins.table.push_filter_character(character);
+    }
+}
+
+impl Component for PluginsTableComponent {
+    /// Handles keyboard events for table navigation.
+    ///
+    /// Supports up/down arrow keys for row selection when the table is focused.
+    ///
+    /// # Arguments
+    /// * `app` - The application state
+    /// * `key` - The key event to handle
+    ///
+    /// # Returns
+    /// A vector of effects to be processed by the runtime
+    fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
+        let mut effects = vec![];
+        if app.plugins.table.f_grid.get() {
+            effects.extend(self.handle_grid_key_events(app, key));
+        }
+        if app.plugins.table.f_search.get() {
+            effects.extend(self.handle_search_key_events(app, key));
+        }
+
+        effects
+    }
+    /// Handles mouse events within the application, updating the plugins table state
+    /// and potentially generating a set of effects based on the user's interaction.
+    ///
+    /// This function is responsible for processing mouse interactions by checking
+    /// whether a left mouse click occurred within a certain area of the plugins table
+    /// (determined by the `last_area` and `per_item_area` dimensions). If a valid index
+    /// is identified based on the mouse position, the `f_grid` state of the plugin
+    /// table's grid is updated.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - A mutable reference to the application state (`App`), allowing modifications
+    ///   based on the interaction.
+    /// * `mouse` - A `MouseEvent` object which represents the properties of the mouse event,
+    ///   including its position, button type, and event kind (e.g., mouse down, mouse up).
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<Effect>` which represents any effects resulting from the mouse interaction.
+    /// In this implementation, the vector is always empty.
+    ///
+    /// # Details
+    ///
+    /// - If the `MouseEventKind` is a left mouse button press (`MouseEventKind::Down(MouseButton::Left)`),
+    ///   the function attempts to compute an index, `maybe_idx`, corresponding to the mouse position by
+    ///   using the helper function `find_target_index_by_mouse_position`.
+    /// - If a valid index, `maybe_idx`, is found, the `f_grid` attribute of the plugins table grid
+    ///   (`app.plugins.table.f_grid`) is set to `true`.
+    /// - No effects are added to the returned `effects` vector in this implementation,
+    ///   but the infrastructure exists for future enhancements.
+    ///
+    /// # Notes
+    ///
+    /// This function assumes that `last_area` and `per_item_area` are correctly initialized within
+    /// the `plugins.table` before calling this function. Additionally, `find_target_index_by_mouse_position`
+    /// should be properly implemented to determine the target index based on mouse coordinates.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// let mut app = App::new();
+    /// let mouse_event = MouseEvent {
+    ///     kind: MouseEventKind::Down(MouseButton::Left),
+    ///     column: 5,
+    ///     row: 10,
+    /// };
+    /// let mut handler = EventHandler::new();
+    /// let effects = handler.handle_mouse_events(&mut app, mouse_event);
+    /// assert!(effects.is_empty());
+    /// ```
+    fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
+        let effects = vec![];
+        let PluginsTableState {
+            last_area, per_item_area, ..
+        } = &app.plugins.table;
+        let maybe_idx = if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+            let MouseEvent { column, row, .. } = mouse;
+            find_target_index_by_mouse_position(last_area, per_item_area, column, row)
+        } else {
+            None
+        };
+
+        if let Some(_) = maybe_idx {
+            app.plugins.table.f_search.set(true);
+        }
         effects
     }
 
@@ -276,8 +481,25 @@ impl Component for PluginsTableComponent {
     /// * `area` - The rectangular area to render within
     /// * `app` - The application state containing plugin data
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
+        let blocks = self.get_preferred_layout(app, area);
+
         let theme = &*app.ctx.theme;
-        let table_state = &app.plugins.table;
+        let table_state = &mut app.plugins.table;
+        let is_search_focused = table_state.f_search.get();
+        let header_block = theme_helpers::block(theme, Some("Search Plugins"), is_search_focused);
+
+        // Render input inside the block
+        let header_inner = header_block.inner(blocks[0]);
+        let filter_text = table_state.filter_text();
+        let header = Paragraph::new(filter_text).style(theme.text_primary_style()).block(header_block);
+        frame.render_widget(header, blocks[0]);
+
+        // Position the cursor at the end of input when focused
+        if is_search_focused {
+            let x = header_inner.x.saturating_add(table_state.cursor_position as u16);
+            let y = header_inner.y;
+            frame.set_cursor_position((x, y));
+        }
 
         let table_header = Self::create_table_header(theme);
         let table_rows = Self::create_table_rows(table_state, theme);
@@ -286,11 +508,13 @@ impl Component for PluginsTableComponent {
         let table_widget = Table::new(table_rows, column_constraints).header(table_header).block(
             Block::default()
                 .borders(Borders::ALL)
-                .border_style(theme.border_style(table_state.grid_flag.get()))
+                .border_style(theme.border_style(table_state.f_grid.get()))
                 .style(theme_helpers::panel_style(theme)),
         );
 
-        frame.render_widget(table_widget, area);
+        frame.render_widget(table_widget, blocks[1]);
+        table_state.last_area = blocks[0];
+        table_state.per_item_area = vec![header_inner];
     }
     fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
@@ -327,6 +551,15 @@ impl Component for PluginsTableComponent {
         ]);
 
         spans
+    }
+
+    fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
+        Layout::vertical([
+            Constraint::Length(3), // search bar
+            Constraint::Min(6),    // table
+        ])
+        .split(area)
+        .to_vec()
     }
 }
 

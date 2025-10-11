@@ -1,5 +1,5 @@
 use super::VerticalNavBarState;
-use crate::ui::components::{Component, find_button_index_from_rect};
+use crate::ui::components::{Component, find_target_index_by_mouse_position};
 use crate::{
     app::App,
     ui::theme::theme_helpers::{self as th, render_button},
@@ -127,7 +127,7 @@ impl Component for VerticalNavBarComponent {
             } = &app.nav_bar;
             let x = mouse.column;
             let y = mouse.row;
-            find_button_index_from_rect(last_area, per_item_areas, x, y)
+            find_target_index_by_mouse_position(last_area, per_item_areas, x, y)
         } else {
             None
         };

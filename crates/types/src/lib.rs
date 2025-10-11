@@ -684,12 +684,10 @@ pub mod messaging {
         PluginsRestart(String),
         /// Export logs for a plugin to a default location (redacted).
         PluginsExportLogsDefault(String),
-        /// Open add plugin view.
-        PluginsOpenAdd,
-        /// Validate fields in the add plugin view.
+        /// Validate fields in the added plugin view.
         PluginsValidateAdd,
-        /// Apply add plugin patch.
-        PluginsApplyAdd,
+        /// Apply to add a plugin patch.
+        PluginsSave,
         /// Load detailed information for a plugin when opening the details modal.
         PluginsLoadDetail(String),
         /// Change the main view.

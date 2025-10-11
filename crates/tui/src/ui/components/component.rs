@@ -302,7 +302,7 @@ pub trait Component: Debug {
 /// let mouse_x = 15;
 /// let mouse_y = 15;
 ///
-/// let index = find_button_index_from_rect(&rect, &targets, mouse_x, mouse_y);
+/// let index = find_target_index_by_mouse_position(&rect, &targets, mouse_x, mouse_y);
 /// assert_eq!(index, Some(0)); // The mouse is within the first target rectangle.
 /// ```
 ///
@@ -310,7 +310,7 @@ pub trait Component: Debug {
 /// - If the input `rect` has a width or height of zero, the function immediately returns `None` without performing any checks.
 /// - The function uses inclusive bounds for `mouse_x` and `mouse_y` when checking the rectangle edges. This means that
 /// if the mouse is exactly on the left or top edges of a rectangle, it will still match.
-pub fn find_button_index_from_rect(rect: &Rect, targets: &Vec<Rect>, mouse_x: u16, mouse_y: u16) -> Option<usize> {
+pub fn find_target_index_by_mouse_position(rect: &Rect, targets: &Vec<Rect>, mouse_x: u16, mouse_y: u16) -> Option<usize> {
     let pos = Position::new(mouse_x, mouse_y);
     if !rect.contains(pos.clone()) {
         return None;

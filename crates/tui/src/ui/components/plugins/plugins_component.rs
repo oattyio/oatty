@@ -4,9 +4,11 @@
 //!
 //! This module contains the main coordinator component for the MCP (Model Context Protocol)
 //! plugins management interface, providing a unified view that can display different
-//! sub-components based on user interaction and app state.
+//! subcomponents based on user interaction and app state.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use super::{PluginsEditComponent, PluginsLogsComponent, PluginsTableComponent};
+use crate::{app::App, ui::components::component::Component};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use heroku_types::Effect;
 use ratatui::{
     Frame,
@@ -14,10 +16,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Clear, Paragraph},
 };
-
-use crate::{app::App, ui::components::component::Component};
-
-use super::{PluginsEditComponent, PluginsLogsComponent, PluginsSearchComponent, PluginsTableComponent};
 
 /// Top-level Plugins view component that orchestrates all plugin-related UI elements.
 ///
@@ -36,12 +34,10 @@ use super::{PluginsEditComponent, PluginsLogsComponent, PluginsSearchComponent, 
 pub struct PluginsComponent {
     /// Child component for displaying the plugin list table
     table_component: PluginsTableComponent,
-    /// Child component for plugin search functionality
-    search_component: PluginsSearchComponent,
     /// Child component for displaying plugin logs
     logs_component: PluginsLogsComponent,
-    /// Child component for the add plugin plugin
-    add_component: PluginsEditComponent,
+    /// Child component for the add plugin
+    edit_component: PluginsEditComponent,
 }
 
 impl Component for PluginsComponent {
@@ -75,7 +71,36 @@ impl Component for PluginsComponent {
         effects
     }
 
-    /// Renders the plugins component and all its children.
+    /// Handles mouse events by delegating them to various UI components and aggregating their effects.
+    ///
+    /// This function processes a given mouse event by passing it to the `table_component`,
+    /// `logs_component`, and `edit_component`. Each component handles the mouse event independently,
+    /// and any resulting effects are aggregated and returned as a single list.
+    ///
+    /// # Arguments
+    ///
+    /// * `app` - A mutable reference to the application's state.
+    /// * `mouse` - The `MouseEvent` that needs to be handled.
+    ///
+    /// # Returns
+    ///
+    /// A vector of `Effect` instances representing the outcomes or side effects resulting from the
+    /// mouse event as handled by the various components.
+    ///
+    /// # Components Handled
+    ///
+    /// * `table_component`
+    /// * `logs_component`
+    /// * `edit_component`
+    fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
+        let mut effects = vec![];
+        effects.extend(self.table_component.handle_mouse_events(app, mouse));
+        effects.extend(self.logs_component.handle_mouse_events(app, mouse));
+        effects.extend(self.edit_component.handle_mouse_events(app, mouse));
+        effects
+    }
+
+    /// Renders the plugin component and all its children.
     ///
     /// This method orchestrates the rendering of the entire plugins interface,
     /// including the main shell, header, body, footer, and any open overlays.
@@ -88,11 +113,9 @@ impl Component for PluginsComponent {
     /// * `app` - Mutable reference to the app state
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         let layout = self.get_preferred_layout(app, area);
-        let header_area = layout.get(0).expect("header area not found");
-        let body_area = layout.get(1).expect("body area not found");
-        let footer_area = layout.get(2).expect("footer area not found");
+        let body_area = layout.get(0).expect("body area not found");
+        let footer_area = layout.get(1).expect("footer area not found");
 
-        self.render_header_section(frame, *header_area, app);
         self.render_body_section(frame, *body_area, app);
 
         let spans = self.get_hint_spans(app, true);
@@ -104,7 +127,7 @@ impl Component for PluginsComponent {
         self.render_overlay_components(frame, area, app);
     }
 
-    /// Renders the hints bar content
+    /// Renders the hint bar content
     ///
     /// This method provides an area to render hints contextually
     /// and delegates to child components depending on focus.
@@ -124,8 +147,8 @@ impl Component for PluginsComponent {
         // The add component is visible
         if let Some(add_state) = app.plugins.add.as_ref() {
             // use the add component hints
-            if add_state.focus.get() {
-                spans.extend(self.add_component.get_hint_spans(app, false));
+            if add_state.container_focus.get() {
+                spans.extend(self.edit_component.get_hint_spans(app, false));
                 return spans;
             }
             spans.extend([
@@ -147,7 +170,7 @@ impl Component for PluginsComponent {
             }
         }
         // the grid is focused
-        if app.plugins.table.grid_flag.get() {
+        if app.plugins.table.f_grid.get() {
             spans.extend(self.table_component.get_hint_spans(app, false));
         }
 
@@ -168,11 +191,12 @@ impl Component for PluginsComponent {
     ///
     /// Returns a vector of rectangles representing the header, body, and footer areas.
     fn get_preferred_layout(&self, _app: &App, inner_area: Rect) -> Vec<Rect> {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Length(3), Constraint::Min(6), Constraint::Length(1)])
-            .split(inner_area)
-            .to_vec()
+        Layout::vertical([
+            Constraint::Min(6),    // grid
+            Constraint::Length(1), // footer
+        ])
+        .split(inner_area)
+        .to_vec()
     }
 }
 
@@ -231,7 +255,7 @@ impl PluginsComponent {
         }
 
         if app.plugins.add.is_some() {
-            return self.add_component.handle_key_events(app, key_event);
+            return self.edit_component.handle_key_events(app, key_event);
         }
 
         vec![]
@@ -268,7 +292,7 @@ impl PluginsComponent {
             }
             // Also available when the table component is focused
             KeyCode::Char('a') if control_pressed && app.plugins.can_open_add_plugin() => {
-                effects.push(Effect::PluginsApplyAdd);
+                effects.push(Effect::PluginsSave);
             }
             KeyCode::Char('l') if control_pressed && app.plugins.logs_open => {
                 self.handle_logs_toggle_follow_shortcut(app);
@@ -294,14 +318,14 @@ impl PluginsComponent {
                 logs_state.search_active = true;
             }
         } else {
-            app.plugins.table.search_flag.set(true);
-            app.plugins.table.grid_flag.set(false);
+            app.plugins.table.f_search.set(true);
+            app.plugins.table.f_grid.set(false);
         }
     }
 
     /// Handles the clear filter shortcut (Ctrl+K) which clears the search filter.
     fn handle_clear_filter_shortcut(&mut self, app: &mut App) {
-        if app.plugins.table.search_flag.get() {
+        if app.plugins.table.f_search.get() {
             app.plugins.table.clear_filter();
         }
     }
@@ -352,25 +376,10 @@ impl PluginsComponent {
     ///
     /// Returns a vector of effects generated by the child components.
     fn delegate_to_child_components(&mut self, app: &mut App, key_event: KeyEvent) -> Vec<Effect> {
-        if app.plugins.table.search_flag.get() {
-            return self.search_component.handle_key_events(app, key_event);
-        }
-
-        if app.plugins.table.grid_flag.get() {
+        if app.plugins.table.container_focus.get() {
             return self.table_component.handle_key_events(app, key_event);
         }
         vec![]
-    }
-
-    /// Renders the header area containing the search bar.
-    ///
-    /// # Arguments
-    ///
-    /// * `frame` - Mutable reference to the terminal frame for rendering
-    /// * `header_area` - The rectangular area allocated for the header
-    /// * `app` - Mutable reference to the app state
-    fn render_header_section(&mut self, frame: &mut Frame, header_area: Rect, app: &mut App) {
-        self.search_component.render(frame, header_area, app);
     }
 
     /// Renders the body area containing either the table or add view, or both side-by-side.
@@ -394,11 +403,11 @@ impl PluginsComponent {
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
                 .split(body_area);
-            self.add_component.render(frame, columns[0], app);
+            self.edit_component.render(frame, columns[0], app);
             self.table_component.render(frame, columns[1], app);
         } else if add_plugin_open {
             // Full-width add plugin when space is limited
-            self.add_component.render(frame, body_area, app);
+            self.edit_component.render(frame, body_area, app);
         } else {
             // Default table view
             self.table_component.render(frame, body_area, app);

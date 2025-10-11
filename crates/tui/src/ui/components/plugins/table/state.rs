@@ -15,11 +15,11 @@ use crate::ui::components::plugins::PluginDetail;
 #[derive(Debug, Clone)]
 pub struct PluginsTableState {
     /// Root focus scope for the plugins table cluster.
-    pub focus: FocusFlag,
+    pub container_focus: FocusFlag,
     /// Focus flag representing the quick-search input field above the table.
-    pub search_flag: FocusFlag,
+    pub f_search: FocusFlag,
     /// Focus flag representing the selectable grid of plugin rows.
-    pub grid_flag: FocusFlag,
+    pub f_grid: FocusFlag,
     /// Case-insensitive filter string entered by the user.
     pub filter: String,
     /// Flat list of plugin rows sourced from configuration or runtime updates.
@@ -28,6 +28,10 @@ pub struct PluginsTableState {
     pub selected: Option<usize>,
     // the position of the cursor in the search input
     pub cursor_position: usize,
+    // mouse focus related fields
+    pub last_area: Rect,
+    pub per_item_area: Vec<Rect>,
+    // the last time the table was refreshed, used to determine when to poll for updates
     last_refresh: Option<Instant>,
 }
 
@@ -35,14 +39,16 @@ impl PluginsTableState {
     /// Create a new table state with empty data and default focus flags.
     pub fn new() -> Self {
         Self {
-            focus: FocusFlag::named("plugins.table"),
-            search_flag: FocusFlag::named("plugins.search"),
-            grid_flag: FocusFlag::named("plugins.grid"),
+            container_focus: FocusFlag::named("plugins.table"),
+            f_search: FocusFlag::named("plugins.search"),
+            f_grid: FocusFlag::named("plugins.grid"),
             filter: String::new(),
             items: Vec::new(),
             selected: None,
             last_refresh: None,
             cursor_position: 0,
+            last_area: Rect::default(),
+            per_item_area: Vec::new(),
         }
     }
 
@@ -79,7 +85,7 @@ impl PluginsTableState {
 
     /// Determine whether enough time has elapsed to trigger a refresh of plugin status.
     pub fn should_refresh(&mut self) -> bool {
-        if !self.focus.get() {
+        if !self.container_focus.get() {
             return false;
         }
         const INTERVAL: Duration = Duration::from_millis(1000);
@@ -174,23 +180,16 @@ impl PluginsTableState {
         &self.filter
     }
 }
-
-impl Default for PluginsTableState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl HasFocus for PluginsTableState {
     fn build(&self, builder: &mut FocusBuilder) {
         let tag = builder.start(self);
-        builder.leaf_widget(&self.search_flag);
-        builder.leaf_widget(&self.grid_flag);
+        builder.leaf_widget(&self.f_search);
+        builder.leaf_widget(&self.f_grid);
         builder.end(tag);
     }
 
     fn focus(&self) -> FocusFlag {
-        self.focus.clone()
+        self.container_focus.clone()
     }
 
     fn area(&self) -> Rect {
