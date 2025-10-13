@@ -2,7 +2,7 @@ use super::VerticalNavBarState;
 use crate::ui::components::{Component, find_target_index_by_mouse_position};
 use crate::{
     app::App,
-    ui::theme::theme_helpers::{self as th, render_button},
+    ui::theme::theme_helpers::{self as th, ButtonRenderOptions, render_button},
 };
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use heroku_types::Effect;
@@ -207,17 +207,18 @@ impl Component for VerticalNavBarComponent {
         // Track layout for focus/mouse integration
         for (index, item) in app.nav_bar.items.iter().enumerate() {
             let is_selected = index == app.nav_bar.selected_index;
-            let is_focused = app
-                .nav_bar
-                .item_focus_flags
-                .get(index)
-                .and_then(|f| Some(f.get()))
-                .unwrap_or_default();
+            let is_focused = app.nav_bar.item_focus_flags.get(index).map(|flag| flag.get()).unwrap_or_default();
             // Safety: chunks length equals row_count; clamp if a small area.
             if let Some(row_area) = nav_bar_items.get(index).copied() {
                 // reversal of selected and focus intentional
                 let borders = if is_focused { Borders::ALL } else { Borders::NONE };
-                render_button(frame, row_area, &item.icon, true, is_focused, is_selected, theme, borders);
+                render_button(
+                    frame,
+                    row_area,
+                    &item.icon,
+                    theme,
+                    ButtonRenderOptions::new(true, is_focused, is_selected, borders),
+                );
             }
         }
         app.nav_bar.last_area = area;

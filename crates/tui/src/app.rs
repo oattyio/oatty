@@ -12,19 +12,6 @@ use std::{
     time::Duration,
 };
 
-use anyhow::{Result, anyhow};
-use heroku_api::HerokuClient;
-use heroku_engine::{
-    ProviderBindingOutcome, ProviderResolutionSource, RegistryCommandRunner, RuntimeWorkflow, StepResult, StepStatus, WorkflowRunState,
-};
-use heroku_mcp::{PluginDetail, PluginEngine};
-use heroku_registry::Registry;
-use heroku_types::service::ServiceId;
-use heroku_types::{Effect, ExecOutcome, Modal, Msg, Route};
-use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
-use ratatui::layout::Rect;
-use serde_json::{Map as JsonMap, Value as JsonValue};
-
 use crate::ui::components::nav_bar::VerticalNavBarComponent;
 use crate::ui::components::workflows::WorkflowInputsComponent;
 use crate::ui::components::workflows::collector::WorkflowCollectorComponent;
@@ -45,6 +32,17 @@ use crate::ui::{
     },
     theme,
 };
+use anyhow::{Result, anyhow};
+use heroku_api::HerokuClient;
+use heroku_engine::{ProviderBindingOutcome, ProviderResolutionSource, RegistryCommandRunner, StepResult, StepStatus, WorkflowRunState};
+use heroku_mcp::{PluginDetail, PluginEngine};
+use heroku_registry::Registry;
+use heroku_types::service::ServiceId;
+use heroku_types::workflow::RuntimeWorkflow;
+use heroku_types::{Effect, ExecOutcome, Modal, Msg, Route};
+use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
+use ratatui::layout::Rect;
+use serde_json::{Map as JsonMap, Value as JsonValue};
 
 /// Cross-cutting shared context owned by the App.
 ///
@@ -55,8 +53,6 @@ use crate::ui::{
 pub struct SharedCtx {
     /// Global Heroku command registry
     pub registry: Arc<Mutex<Registry>>,
-    /// Global debug flag (from env)
-    pub debug_enabled: bool,
     /// Value providers for suggestions
     pub providers: Vec<Box<dyn ValueProvider>>,
     /// Active UI theme (Dracula by default) loaded from env
@@ -67,14 +63,10 @@ pub struct SharedCtx {
 
 impl SharedCtx {
     pub fn new(registry: Arc<Mutex<Registry>>, plugin_engine: Arc<PluginEngine>) -> Self {
-        let debug_enabled = std::env::var("DEBUG")
-            .map(|v| !v.is_empty() && v != "0" && v.to_lowercase() != "false")
-            .unwrap_or(false);
         // Add a registry-backed provider with a small TTL cache
         let providers: Vec<Box<dyn ValueProvider>> = vec![Box::new(RegistryBackedProvider::new(Duration::from_secs(45)))];
         Self {
             registry,
-            debug_enabled,
             providers,
             theme: theme::load_from_env(),
             plugin_engine,
@@ -101,7 +93,6 @@ pub struct App<'a> {
     pub logs: LogsState,
     /// Vertical navigation bar state (left rail)
     pub nav_bar: VerticalNavBarState,
-    // moved to ctx: dry_run, debug_enabled, providers
     /// Whether a command is currently executing
     pub executing: bool,
     /// Animation frame for the execution throbber
@@ -414,7 +405,7 @@ impl App<'_> {
         let raw_payload = Self::stringify_result_payload(&normalized_value);
 
         self.logs.entries.push(summary);
-        self.logs.rich_entries.push(LogEntry::MCP {
+        self.logs.rich_entries.push(LogEntry::Mcp {
             raw: raw_payload,
             json: Some(normalized_value.clone()),
         });
@@ -436,14 +427,12 @@ impl App<'_> {
     /// the root level, so this helper unwraps objects that meet this pattern. All other payloads
     /// are returned unchanged.
     fn normalize_result_payload(value: JsonValue) -> JsonValue {
-        if let JsonValue::Object(map) = &value {
-            if map.len() == 1 {
-                if let Some(inner_value) = map.values().next() {
-                    if inner_value.is_array() {
-                        return inner_value.clone();
-                    }
-                }
-            }
+        if let JsonValue::Object(map) = &value
+            && map.len() == 1
+            && let Some(inner_value) = map.values().next()
+            && inner_value.is_array()
+        {
+            return inner_value.clone();
         }
         value
     }
@@ -474,11 +463,6 @@ impl App<'_> {
         }
     }
 
-    pub fn run_workflow(&mut self, workflow: &RuntimeWorkflow) -> Result<Vec<Effect>> {
-        let run_state = WorkflowRunState::new(workflow.clone());
-        self.process_run_state(run_state, false)
-    }
-
     /// Execute the workflow using the run state accumulated via the Guided Input Collector.
     pub fn execute_workflow_from_collector(&mut self) -> Result<Vec<Effect>> {
         let run_state = match self.workflows.take_run_state() {
@@ -495,19 +479,21 @@ impl App<'_> {
     }
 
     /// Open the interactive input view for the selected workflow.
-    pub fn open_workflow_inputs(&mut self, workflow: &RuntimeWorkflow) -> Result<()> {
+    fn open_workflow_inputs(&mut self) -> Result<()> {
+        let Some(workflow) = self.workflows.selected_workflow() else {
+            self.logs.entries.push("No workflow selected".to_string());
+            return Ok(());
+        };
         let mut run_state = WorkflowRunState::new(workflow.clone());
         run_state.evaluate_input_providers()?;
         self.workflows.observe_provider_refresh(&run_state);
         self.workflows.begin_inputs_session(run_state);
-        self.set_current_route(Route::Workflows);
         Ok(())
     }
 
     /// Close the workflow input view, discarding any unsubmitted run state.
     pub fn close_workflow_inputs(&mut self) {
         self.workflows.end_inputs_session();
-        self.set_current_route(Route::Workflows);
     }
 
     /// Execute a workflow using the inputs prepared in the input view.
@@ -522,7 +508,6 @@ impl App<'_> {
 
         self.workflows.end_inputs_session();
         let effects = self.process_run_state(run_state, true)?;
-        self.set_current_route(Route::Workflows);
         Ok(effects)
     }
 
@@ -564,12 +549,12 @@ impl App<'_> {
         self.log_workflow_execution(&run_state.workflow, &run_state, &results);
 
         let mut effects = Vec::new();
-        if let Some(last) = results.last() {
-            if !last.output.is_null() {
-                self.table.apply_result_json(Some(last.output.clone()), &*self.ctx.theme);
-                self.table.normalize();
-                effects.push(Effect::ShowModal(Modal::Results));
-            }
+        if let Some(last) = results.last()
+            && !last.output.is_null()
+        {
+            self.table.apply_result_json(Some(last.output.clone()), &*self.ctx.theme);
+            self.table.normalize();
+            effects.push(Effect::ShowModal(Modal::Results));
         }
 
         Ok(effects)
@@ -635,24 +620,52 @@ impl App<'_> {
         self.trim_logs_if_needed();
     }
 
-    /// Update the current main route for focus building.
+    /// Updates the current route of the application and performs necessary state transitions.
+    /// Note that this method is not intended to be called directly. Instead, use Effect::SwitchTo.
+    ///
+    /// # Arguments
+    /// * `route` - A `Route` enum variant representing the new route to be set.
+    ///
+    /// # Behavior
+    /// 1. Based on the provided `Route`, determines the corresponding components and their states.
+    /// 2. For specific routes:
+    ///     * **`Route::WorkflowInputs`**: Attempts to open workflow inputs and logs any errors encountered.
+    ///     * **`Route::Workflows`**: Ensures workflows are loaded via the registry and logs any errors encountered.
+    /// 3. Updates the navigation bar to reflect the new route.
+    /// 4. Changes the main view to the component corresponding to the new route.
+    /// 5. Updates the focus behavior using a `FocusBuilder` and sets the focus to the respective state.
+    ///
+    /// # Errors
+    /// - Logs errors related to loading workflows or opening workflow inputs if the operations fail.
+    ///
+    /// # Side Effects
+    /// - Updates internal state fields:
+    ///   * `current_route` - Tracks the currently active route.
+    ///   * `main_view` - Holds the new route's component as a boxed trait object.
+    ///   * `focus` - Responsible for managing the focus and is updated dynamically based on the route.
+    ///
+    /// # Example
+    /// ```rust
+    /// let mut app = MyApp::new();
+    /// app.set_current_route(Route::Palette);
+    /// ```
     pub fn set_current_route(&mut self, route: Route) {
-        if matches!(route, Route::Workflows) {
-            if let Err(error) = self.workflows.ensure_loaded(&self.ctx.registry) {
-                self.logs.entries.push(format!("Failed to load workflows: {error}"));
-            }
-        }
-
         let (view, state): (Box<dyn Component>, Box<&dyn HasFocus>) = match route {
-            Route::Browser => (Box::new(BrowserComponent::default()), Box::new(&self.browser)),
+            Route::Browser => (Box::new(BrowserComponent), Box::new(&self.browser)),
             Route::Palette => (Box::new(PaletteComponent::default()), Box::new(&self.palette)),
             Route::Plugins => (Box::new(PluginsComponent::default()), Box::new(&self.plugins)),
-            Route::Workflows => {
-                if self.workflows.inputs_view_active() {
-                    (Box::new(WorkflowInputsComponent::default()), Box::new(&self.workflows))
-                } else {
-                    (Box::new(WorkflowsComponent::default()), Box::new(&self.workflows))
+            Route::WorkflowInputs => {
+                if let Err(error) = self.open_workflow_inputs() {
+                    self.logs.entries.push(format!("Failed to open workflow inputs: {error}"));
                 }
+
+                (Box::new(WorkflowInputsComponent), Box::new(&self.workflows))
+            }
+            Route::Workflows => {
+                if let Err(error) = self.workflows.ensure_loaded(&self.ctx.registry) {
+                    self.logs.entries.push(format!("Failed to load workflows: {error}"));
+                }
+                (Box::new(WorkflowsComponent), Box::new(&self.workflows))
             }
         };
 
@@ -667,10 +680,10 @@ impl App<'_> {
         let previous = self.open_modal_kind.clone();
         if let Some(modal_kind) = modal.clone() {
             let modal_view: Box<dyn Component> = match modal_kind {
-                Modal::Help => Box::new(HelpComponent::default()),
+                Modal::Help => Box::new(HelpComponent),
                 Modal::Results => Box::new(TableComponent::default()),
-                Modal::LogDetails => Box::new(LogDetailsComponent::default()),
-                Modal::PluginDetails => Box::new(PluginsDetailsComponent::default()),
+                Modal::LogDetails => Box::new(LogDetailsComponent),
+                Modal::PluginDetails => Box::new(PluginsDetailsComponent),
                 Modal::WorkflowCollector => {
                     self.workflows.set_collector_visible(true);
                     Box::new(WorkflowCollectorComponent::default())
@@ -678,7 +691,7 @@ impl App<'_> {
             };
             self.open_modal = Some(modal_view);
             // save the current focus to restore when the modal is closed
-            self.transient_focus_id = self.focus.focused().and_then(|f| Some(f.widget_id()));
+            self.transient_focus_id = self.focus.focused().map(|focus| focus.widget_id());
         } else {
             self.open_modal = None;
         }
@@ -885,7 +898,7 @@ impl HasFocus for App<'_> {
             Route::Plugins => {
                 builder.widget(&self.plugins);
             }
-            Route::Workflows => {
+            Route::Workflows | Route::WorkflowInputs => {
                 builder.widget(&self.workflows);
                 builder.widget(&self.logs);
             }

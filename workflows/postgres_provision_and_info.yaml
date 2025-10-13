@@ -1,0 +1,29 @@
+workflow: postgres_provision_and_info
+description: "Provision a Heroku Postgres database for an app, wait until it's ready, and display database info."
+inputs:
+  app:
+    provider: apps list
+    select: { value_field: name, display_field: name }
+  plan:
+    description: "Heroku Postgres plan (e.g., heroku-postgresql:hobby-dev)"
+    provider: addons plans:list
+    select: { value_field: name, display_field: name }
+steps:
+  - id: provision
+    run: apps addons:create
+    with:
+      app: ${{ inputs.app }}
+    body:
+      plan: ${{ inputs.plan }}
+
+  - id: wait_for_addon
+    description: "Wait for the newly created addon to become available"
+    run: apps addons:wait
+    with:
+      app: ${{ inputs.app }}
+
+  - id: info
+    description: "Show Postgres info for the app"
+    run: apps pg:info
+    with:
+      app: ${{ inputs.app }}

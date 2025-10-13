@@ -64,7 +64,7 @@ for (name, spec) in &workflow_bundle.workflows {
 ```rust
 use heroku_engine::{parse_workflow_file, RunContext, execute_workflow};
 
-let bundle = parse_workflow_file("crates/engine/workflows/app_with_db.yaml")?;
+let bundle = parse_workflow_file("crates/engine/workflows/create_app_and_db.yaml")?;
 let spec = bundle.workflows.values().next().unwrap();
 
 let mut ctx = RunContext::default();

@@ -73,15 +73,15 @@ fn main() -> anyhow::Result<()> {
 ### Inspecting Provider Contracts
 
 Provider argument and return metadata are available on the registry via the `provider_contracts`
-map, keyed by `<group>:<name>` command identifiers:
+map, keyed by `<group> <name>` command identifiers:
 
 ```rust
 use heroku_cli_registry::Registry;
 
 fn main() -> anyhow::Result<()> {
     let registry = Registry::from_embedded_schema()?;
-    if let Some(contract) = registry.provider_contracts.get("apps:list") {
-        println!("apps:list returns {} fields", contract.returns.fields.len());
+    if let Some(contract) = registry.provider_contracts.get("apps list") {
+        println!("apps list returns {} fields", contract.returns.fields.len());
     }
     Ok(())
 }

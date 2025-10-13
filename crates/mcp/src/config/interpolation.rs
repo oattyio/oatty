@@ -140,8 +140,8 @@ pub fn determine_env_source(value: &str) -> EnvSource {
     if is_secret(value) {
         return EnvSource::Secret;
     }
-    if let Some(splits) = value.trim_start_matches(&['{', ' ']).split_once(":") {
-        return match splits.0 {
+    if let Some((prefix, _remainder)) = value.trim_start_matches(['{', ' ']).split_once(':') {
+        return match prefix {
             "env" => EnvSource::Env,
             "secret" => EnvSource::Secret,
             "file" => EnvSource::File,

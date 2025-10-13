@@ -114,8 +114,8 @@ impl VerticalNavBarState {
     }
 
     pub fn get_focused_list_item(&self) -> Option<(NavItem, usize)> {
-        if let Some(idx) = self.item_focus_flags.iter().position(|l| l.get()) {
-            return self.items.get(idx).and_then(|f| Some((f.clone(), idx)));
+        if let Some(idx) = self.item_focus_flags.iter().position(|flag| flag.get()) {
+            return self.items.get(idx).map(|item| (item.clone(), idx));
         }
         None
     }

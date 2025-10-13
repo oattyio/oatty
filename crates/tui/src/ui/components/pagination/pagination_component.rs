@@ -150,7 +150,8 @@ impl PaginationComponent {
     /// * `area` - The rectangular area to render within
     /// * `theme` - The theme to use for styling
     fn render_divider(&self, frame: &mut Frame, area: Rect, theme: &dyn UiTheme) {
-        let divider = Line::from(vec![Span::styled("─".repeat(area.width as usize), theme.text_muted_style())]);
+        let divider_style = Style::default().fg(theme.roles().divider);
+        let divider = Line::from(vec![Span::styled("─".repeat(area.width as usize), divider_style)]);
         let paragraph = Paragraph::new(divider);
         frame.render_widget(paragraph, area);
     }
@@ -407,12 +408,13 @@ impl Component for PaginationComponent {
                     pagination_state.prev_page();
                     effects.push(Effect::PrevPageRequested);
                 }
-                if pagination_state.nav_next_f.get() && pagination_state.next_available {
-                    if let Some(next_range) = pagination_state.next_range.clone() {
-                        pagination_state.current_page = pagination_state.current_page.saturating_add(1);
-                        pagination_state.prev_available = true;
-                        effects.push(Effect::NextPageRequested(next_range));
-                    }
+                if pagination_state.nav_next_f.get()
+                    && pagination_state.next_available
+                    && let Some(next_range) = pagination_state.next_range.clone()
+                {
+                    pagination_state.current_page = pagination_state.current_page.saturating_add(1);
+                    pagination_state.prev_available = true;
+                    effects.push(Effect::NextPageRequested(next_range));
                 }
                 if pagination_state.nav_last_f.get() && pagination_state.next_available {
                     effects.push(Effect::LastPageRequested);

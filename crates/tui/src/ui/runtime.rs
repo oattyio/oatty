@@ -66,15 +66,10 @@ async fn spawn_input_thread() -> mpsc::Receiver<Event> {
             if event::poll(Duration::from_millis(10)).expect("poll failed") {
                 match event::read() {
                     Ok(event) => {
-                        let send = if let Some(mouse_event) = event.as_mouse_event() {
-                            match mouse_event.kind {
-                                MouseEventKind::Down(_) => true,
-                                _ => false,
-                            }
-                        } else {
-                            true
-                        };
-                        if send && let Err(e) = sender.send(event).await {
+                        let should_send = event
+                            .as_mouse_event()
+                            .is_none_or(|mouse_event| matches!(mouse_event.kind, MouseEventKind::Down(_)));
+                        if should_send && let Err(e) = sender.send(event).await {
                             tracing::warn!("Failed to send event: {}", e);
                             break;
                         }
@@ -110,7 +105,7 @@ fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) 
 }
 
 /// Renders a frame by delegating to `ui::main::draw`.
-fn render<'a>(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, application: &mut App) -> Result<()> {
+fn render(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, application: &mut App) -> Result<()> {
     // Rebuild focus just before rendering so structure changes are reflected
     let old_focus = std::mem::take(&mut application.focus);
     application.focus = FocusBuilder::rebuild_for(application, Some(old_focus));
@@ -123,7 +118,7 @@ fn render<'a>(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, applic
 
 /// Handle raw crossterm input events and update `App`/components.
 /// Returns `Exit` for Ctrl+C, otherwise `Continue`.
-async fn handle_input_event<'a>(
+async fn handle_input_event(
     app: &mut App<'_>,
     input_event: Event,
     pending_execs: &mut FuturesUnordered<JoinHandle<ExecOutcome>>,
@@ -146,7 +141,7 @@ async fn handle_input_event<'a>(
     }
     Ok(LoopAction::Continue)
 }
-///
+/// Delegates an input event to whichever surface currently owns focus and executes resulting effects.
 async fn handle_delegate_event(
     app: &mut App<'_>,
     event: Event,
@@ -276,11 +271,11 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::Registry>>, plugin_eng
         // Fallback: detect terminal size changes even if no explicit Resize
         // event was received. This handles terminals that miss SIGWINCH or
         // drop resize notifications during interactive operations.
-        if let Ok((w, h)) = crossterm::terminal::size() {
-            if last_size != Some((w, h)) {
-                last_size = Some((w, h));
-                let _ = app.update(Msg::Resize(w, h));
-            }
+        if let Ok((w, h)) = crossterm::terminal::size()
+            && last_size != Some((w, h))
+        {
+            last_size = Some((w, h));
+            let _ = app.update(Msg::Resize(w, h));
         }
 
         // Render if dirty

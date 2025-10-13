@@ -17,6 +17,50 @@ pub(crate) struct SuggestionResult {
     pub provider_loading: bool,
 }
 
+struct PositionalSuggestionContext<'a> {
+    commands: &'a [CommandSpec],
+    spec: &'a CommandSpec,
+    remaining_parts: &'a [String],
+    current_input: &'a str,
+    ends_with_space: bool,
+    current_is_flag: bool,
+    providers: &'a [Box<dyn ValueProvider>],
+    user_args_len: usize,
+}
+
+fn build_positional_suggestions(context: PositionalSuggestionContext<'_>) -> (Vec<SuggestionItem>, bool) {
+    let PositionalSuggestionContext {
+        commands,
+        spec,
+        remaining_parts,
+        current_input,
+        ends_with_space,
+        current_is_flag,
+        providers,
+        user_args_len,
+    } = context;
+
+    let first_flag_idx = remaining_parts
+        .iter()
+        .position(|t| t.starts_with("--"))
+        .unwrap_or(remaining_parts.len());
+    let editing_positional = !current_is_flag
+        && !remaining_parts.is_empty()
+        && (remaining_parts.len() - 1) < first_flag_idx
+        && !spec.positional_args.is_empty()
+        && !ends_with_space;
+
+    if editing_positional {
+        let arg_index = (remaining_parts.len() - 1).min(spec.positional_args.len().saturating_sub(1));
+        return SuggestionEngine::build_for_index(commands, spec, arg_index, current_input, providers, remaining_parts);
+    }
+    if user_args_len < spec.positional_args.len() && !current_is_flag {
+        return SuggestionEngine::build_for_index(commands, spec, user_args_len, "", providers, remaining_parts);
+    }
+
+    (Vec::new(), false)
+}
+
 /// Engine responsible for building command suggestions based on user input and available commands.
 ///
 /// The suggestion engine analyzes user input tokens and generates contextually relevant
@@ -96,39 +140,6 @@ impl SuggestionEngine {
         }
         (values, loading)
     }
-    // Breakout: build positional suggestions and compute provider loading
-    fn build_positional_suggestions(
-        commands: &[CommandSpec],
-        spec: &CommandSpec,
-        remaining_parts: &[String],
-        current_input: &str,
-        ends_with_space: bool,
-        current_is_flag: bool,
-        providers: &[Box<dyn ValueProvider>],
-        user_args_len: usize,
-    ) -> (Vec<SuggestionItem>, bool) {
-        // Helper: build values for a specific positional index and determine loading
-
-        let first_flag_idx = remaining_parts
-            .iter()
-            .position(|t| t.starts_with("--"))
-            .unwrap_or(remaining_parts.len());
-        let editing_positional = !current_is_flag
-            && !remaining_parts.is_empty()
-            && (remaining_parts.len() - 1) < first_flag_idx
-            && !spec.positional_args.is_empty()
-            && !ends_with_space;
-
-        if editing_positional {
-            let arg_index = (remaining_parts.len() - 1).min(spec.positional_args.len().saturating_sub(1));
-            return Self::build_for_index(commands, spec, arg_index, current_input, providers, remaining_parts);
-        }
-        if user_args_len < spec.positional_args.len() && !current_is_flag {
-            return Self::build_for_index(commands, spec, user_args_len, "", providers, remaining_parts);
-        }
-        (Vec::new(), false)
-    }
-
     // Breakout: extend with required/optional flags depending on context
     fn extend_flag_suggestions(
         spec: &CommandSpec,
@@ -202,7 +213,7 @@ impl SuggestionEngine {
         // - If the user is currently typing a positional token (no trailing space),
         //   suggest values for that positional index.
         // - Otherwise, suggest for the next positional if any remain.
-        let (mut items, provider_loading) = Self::build_positional_suggestions(
+        let context = PositionalSuggestionContext {
             commands,
             spec,
             remaining_parts,
@@ -210,8 +221,9 @@ impl SuggestionEngine {
             ends_with_space,
             current_is_flag,
             providers,
-            user_args.len(),
-        );
+            user_args_len: user_args.len(),
+        };
+        let (mut items, provider_loading) = build_positional_suggestions(context);
 
         // Suggest required flags if needed (or if user is typing a flag)
         Self::extend_flag_suggestions(spec, &user_flags, current_input, current_is_flag, &mut items);
@@ -466,7 +478,7 @@ fn suggest_values_for_flag(
     }
 
     // Add dynamic values from providers
-    let command_key = format!("{}:{}", spec.group, spec.name);
+    let command_key = format!("{} {}", spec.group, spec.name);
     let inputs_map = build_inputs_map_for_flag(spec, remaining_parts, flag_name);
     for provider in providers {
         let mut values = provider.suggest(commands, &command_key, flag_name, partial, &inputs_map);
@@ -502,7 +514,7 @@ fn suggest_positionals(
     let mut items: Vec<SuggestionItem> = Vec::new();
 
     if let Some(positional_arg) = spec.positional_args.get(arg_count) {
-        let command_key = format!("{}:{}", spec.group, spec.name);
+        let command_key = format!("{} {}", spec.group, spec.name);
 
         // Query providers for dynamic suggestions
         let inputs_map = build_inputs_map_for_positional(spec, arg_count, remaining_parts);
@@ -785,7 +797,7 @@ mod tests {
 
     #[test]
     fn suggests_flag_values_enum_and_provider() {
-        // apps:info with --region enum and --app provider
+        // apps info with --region enum and --app provider
         let spec = CommandSpec {
             execution: CommandExecution::Http(HttpCommandSpec {
                 method: "GET".into(),
@@ -844,7 +856,7 @@ mod tests {
         ]);
         // Provider embedded on flag in the spec
         let mut map = std::collections::HashMap::new();
-        map.insert(("apps:info".into(), "app".into()), vec!["demo".into(), "prod".into()]);
+        map.insert(("apps info".into(), "app".into()), vec!["demo".into(), "prod".into()]);
         let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
         let result = SuggestionEngine::build(&reg.commands, &[provider], "apps info --app ");
         let values: Vec<_> = result.items.iter().filter(|item| matches!(item.kind, ItemKind::Value)).collect();
@@ -896,7 +908,7 @@ mod tests {
         ]);
         // Provider embedded on positional in the spec
         let mut map = std::collections::HashMap::new();
-        map.insert(("addons:config:update".into(), "addon".into()), vec!["redis-123".into()]);
+        map.insert(("addons config:update".into(), "addon".into()), vec!["redis-123".into()]);
         let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
         let result = SuggestionEngine::build(&reg.commands, &[provider], "addons config:update ");
         assert!(result.items.iter().any(|item| item.display == "redis-123"));
@@ -997,7 +1009,7 @@ mod tests {
             spec,
         ]);
         let mut map = std::collections::HashMap::new();
-        map.insert(("apps:info".into(), "app".into()), vec!["heroku-prod".into()]);
+        map.insert(("apps info".into(), "app".into()), vec!["heroku-prod".into()]);
         let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
         let result = SuggestionEngine::build(&reg.commands, &[provider], "apps info heroku-prod");
         assert!(result.items.is_empty(), "should not echo current value as sole suggestion");
@@ -1070,8 +1082,8 @@ mod tests {
             spec,
         ]);
         let mut map = std::collections::HashMap::new();
-        map.insert(("pipelines:ci:run".into(), "pipeline".into()), vec!["api".into(), "web".into()]);
-        map.insert(("pipelines:ci:run".into(), "branch".into()), vec!["main".into(), "develop".into()]);
+        map.insert(("pipelines ci:run".into(), "pipeline".into()), vec!["api".into(), "web".into()]);
+        map.insert(("pipelines ci:run".into(), "branch".into()), vec!["main".into(), "develop".into()]);
         let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
         // With first positional filled and trailing space, suggest second positional list
         let result = SuggestionEngine::build(&reg.commands, &[provider], "pipelines ci:run api ");

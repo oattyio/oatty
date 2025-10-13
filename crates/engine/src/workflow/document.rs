@@ -8,24 +8,8 @@
 //! authoring order.
 
 use anyhow::{Context, Result, bail};
-use heroku_types::workflow::{WorkflowDefinition, WorkflowInputDefinition, WorkflowStepDefinition};
+use heroku_types::{RuntimeWorkflow, WorkflowDefinition};
 use indexmap::IndexMap;
-use serde::{Deserialize, Serialize};
-
-/// Fully resolved workflow ready for runtime consumption.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct RuntimeWorkflow {
-    /// Canonical identifier used for lookups and telemetry.
-    pub identifier: String,
-    /// Optional title exposed in selection UI.
-    pub title: Option<String>,
-    /// Optional descriptive copy shown in detail panes.
-    pub description: Option<String>,
-    /// Declarative inputs keyed by authoring order.
-    pub inputs: IndexMap<String, WorkflowInputDefinition>,
-    /// Ordered execution steps.
-    pub steps: Vec<WorkflowStepDefinition>,
-}
 
 /// Builds a runtime workflow from a manifest definition.
 pub fn runtime_workflow_from_definition(definition: &WorkflowDefinition) -> Result<RuntimeWorkflow> {
@@ -78,6 +62,7 @@ pub fn build_runtime_catalog(definitions: &[WorkflowDefinition]) -> Result<Index
 #[cfg(test)]
 mod tests {
     use super::*;
+    use heroku_types::WorkflowStepDefinition;
     use indexmap::IndexMap;
 
     #[test]

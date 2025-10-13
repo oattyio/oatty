@@ -463,17 +463,13 @@ fn select_path(value: &Value, path: Option<&str>) -> Option<Value> {
     let mut current = value;
 
     for (index, segment) in segments.iter().enumerate() {
-        if index == 0 {
-            if let PathSegment::Key(key) = segment {
-                if key == "output" {
-                    if let Value::Object(map) = current {
-                        if let Some(next) = map.get("output") {
-                            current = next;
-                        }
-                    }
-                    continue;
-                }
-            }
+        if index == 0
+            && matches!(segment, PathSegment::Key(key) if key == "output")
+            && let Value::Object(map) = current
+            && let Some(next) = map.get("output")
+        {
+            current = next;
+            continue;
         }
 
         match segment {
@@ -569,7 +565,7 @@ fn parse_path_segments(path: &str) -> Vec<PathSegment> {
             '[' => {
                 push_buffer_as_key(&mut segments, &mut buffer);
                 let mut index_buffer = String::new();
-                while let Some(index_character) = characters.next() {
+                for index_character in characters.by_ref() {
                     if index_character == ']' {
                         break;
                     }

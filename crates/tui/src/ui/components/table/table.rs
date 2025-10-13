@@ -369,7 +369,7 @@ impl Component for TableComponent<'_> {
         spans.extend([
             Span::styled("Esc", theme.accent_emphasis_style()),
             Span::styled(" close ", theme.text_muted_style()),
-            Span::styled("c", theme.accent_emphasis_style()),
+            Span::styled("C", theme.accent_emphasis_style()),
             Span::styled(" copy ", theme.text_muted_style()),
             Span::styled("↑/↓", theme.accent_emphasis_style()),
             Span::styled(" scroll  ", theme.text_muted_style()),

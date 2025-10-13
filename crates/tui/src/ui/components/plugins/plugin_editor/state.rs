@@ -13,9 +13,13 @@ pub struct PluginEditViewState {
     /// Selected transport for the plugin: Local (stdio) or Remote (http/sse)
     pub transport: PluginTransport,
     pub name: String,
+    pub name_cursor: usize,
     pub command: String,
+    pub command_cursor: usize,
     pub args: String,
+    pub args_cursor: usize,
     pub base_url: String,
+    pub base_url_cursor: usize,
     /// Editor state for environment variables on local transports.
     pub kv_editor: KeyValueEditorState,
     pub validation: Result<String, String>,
@@ -41,9 +45,13 @@ impl PluginEditViewState {
             visible: true,
             transport: PluginTransport::Local,
             name: String::new(),
+            name_cursor: 0,
             command: String::new(),
+            command_cursor: 0,
             args: String::new(),
+            args_cursor: 0,
             base_url: String::new(),
+            base_url_cursor: 0,
             kv_editor,
             validation: Ok(String::new()),
             container_focus: FocusFlag::named("plugins.add"),
@@ -67,8 +75,10 @@ impl PluginEditViewState {
         let mut instance = Self::new();
         instance.transport = PluginTransport::from(client.transport_type.as_str());
         instance.name = client.name;
+        instance.name_cursor = instance.name.len();
 
         instance.args = client.args.unwrap_or_default();
+        instance.args_cursor = instance.args.len();
         instance.kv_editor.rows = client
             .env
             .iter()
@@ -80,8 +90,10 @@ impl PluginEditViewState {
             .collect();
         if instance.transport == PluginTransport::Local {
             instance.command = client.command_or_url;
+            instance.command_cursor = instance.command.len();
         } else {
             instance.base_url = client.command_or_url;
+            instance.base_url_cursor = instance.base_url.len();
         }
         instance
     }
@@ -134,7 +146,6 @@ impl PluginEditViewState {
             PluginTransport::Remote => "Headers",
         }
     }
-
 }
 
 /// Transport selection for Add Plugin view

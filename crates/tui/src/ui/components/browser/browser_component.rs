@@ -187,7 +187,7 @@ impl BrowserComponent {
     /// Handle Enter within the browser context (noop for now).
     pub fn apply_enter(&self, app: &App) -> Vec<Effect> {
         if let Some(spec) = app.browser.selected_command().cloned() {
-            return vec![Effect::SwitchTo(Route::Palette), Effect::SendToPalette(spec)];
+            return vec![Effect::SwitchTo(Route::Palette), Effect::SendToPalette(Box::new(spec))];
         }
         vec![]
     }

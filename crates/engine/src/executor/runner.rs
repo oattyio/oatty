@@ -67,11 +67,12 @@ impl RegistryCommandRunner {
 
 impl CommandRunner for RegistryCommandRunner {
     fn run(&self, run: &str, with: Option<&Value>, body: Option<&Value>, _ctx: &RunContext) -> Result<Value> {
-        // Parse run into group + name (name may contain additional colons)
+        // Parse run into group + name using the canonical whitespace-separated form ("group name").
         let (group, name) = run
-            .split_once(':')
-            .map(|(g, rest)| (g.to_string(), rest.to_string()))
-            .ok_or_else(|| anyhow::anyhow!("invalid run identifier: {}", run))?;
+            .split_once(char::is_whitespace)
+            .map(|(g, n)| (g.trim().to_string(), n.trim().to_string()))
+            .filter(|(g, n)| !g.is_empty() && !n.is_empty())
+            .ok_or_else(|| anyhow!("invalid run identifier: {run}"))?;
 
         let spec = find_by_group_and_cmd(&self.registry.commands, &group, &name)?;
 

@@ -8,17 +8,17 @@ use std::{
 use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use heroku_api::HerokuClient;
+use heroku_engine::workflow::document::{build_runtime_catalog, runtime_workflow_from_definition};
 use heroku_engine::{
     ProviderBindingOutcome, ProviderResolutionEvent, ProviderResolutionSource, RegistryCommandRunner, StepResult, StepStatus,
-    WorkflowRunState, build_runtime_catalog, runtime_workflow_from_definition,
+    WorkflowRunState,
 };
 use heroku_mcp::{PluginEngine, config::load_config};
 use heroku_registry::{Registry, build_clap, feat_gate::feature_workflows, find_by_group_and_cmd};
-use heroku_types::{ExecOutcome, command::CommandExecution, service::ServiceId, workflow::WorkflowDefinition};
+use heroku_types::{ExecOutcome, RuntimeWorkflow, command::CommandExecution, service::ServiceId, workflow::WorkflowDefinition};
 use heroku_util::resolve_path;
 use reqwest::Method;
 use serde_json::{Map, Value, json};
-use serde_yaml;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tracing_subscriber::fmt;
@@ -133,7 +133,7 @@ fn init_tracing() {
     let _ = fmt().with_env_filter(filter).with_writer(|| GatedStderr).try_init();
 }
 
-fn resolve_runtime_workflow(registry: Arc<Mutex<Registry>>, matches: &ArgMatches) -> Result<heroku_engine::RuntimeWorkflow> {
+fn resolve_runtime_workflow(registry: Arc<Mutex<Registry>>, matches: &ArgMatches) -> Result<RuntimeWorkflow> {
     if let Some(file) = matches.get_one::<String>("file") {
         return load_runtime_workflow_from_file(Path::new(file));
     }
@@ -154,7 +154,7 @@ fn resolve_runtime_workflow(registry: Arc<Mutex<Registry>>, matches: &ArgMatches
         .with_context(|| format!("unknown workflow id: {workflow_id}"))
 }
 
-fn load_runtime_workflow_from_file(path: &Path) -> Result<heroku_engine::RuntimeWorkflow> {
+fn load_runtime_workflow_from_file(path: &Path) -> Result<RuntimeWorkflow> {
     let content = fs::read_to_string(path).with_context(|| format!("read workflow {}", path.display()))?;
     let definition: WorkflowDefinition = if matches!(path.extension().and_then(|ext| ext.to_str()), Some(ext) if ext.eq_ignore_ascii_case("json"))
     {

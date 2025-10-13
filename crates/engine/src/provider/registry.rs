@@ -62,7 +62,18 @@ impl RegistryProvider {
     }
 
     fn resolve_spec(&self, provider_id: &str) -> Option<CommandSpec> {
-        let (group, name) = provider_id.split_once(':')?;
+        // Canonical whitespace-separated form only: "group name".
+        let (group, name) = match provider_id.split_once(char::is_whitespace) {
+            Some((g, n)) => {
+                let g = g.trim();
+                let n = n.trim();
+                if g.is_empty() || n.is_empty() {
+                    return None;
+                }
+                (g, n)
+            }
+            None => return None,
+        };
         self.registry
             .lock()
             .ok()
@@ -89,7 +100,9 @@ impl ProviderRegistry for RegistryProvider {
             return Ok(entry.items);
         }
 
-        let (group, name) = provider_id.split_once(':').ok_or(anyhow!("cannot split {}", provider_id))?;
+        let (group, name) = provider_id
+            .split_once(char::is_whitespace)
+            .ok_or(anyhow!(format!("invalid provider identifier: {}", provider_id)))?;
 
         let spec_ref = {
             let registry_lock = self.registry.lock().map_err(|e| anyhow!(e.to_string()))?;
@@ -109,17 +122,18 @@ impl ProviderRegistry for RegistryProvider {
             .runtime
             .block_on(async move { heroku_util::http_exec::exec_remote(&spec_clone, body).await });
 
-        if let Some(ExecOutcome::Http(_, result, _, _)) = result.ok() {
-            if let Some(items) = result.as_array().cloned() {
-                self.cache.lock().expect("cache lock").insert(
-                    key,
-                    CacheEntry {
-                        fetched_at: Instant::now(),
-                        items: items.clone(),
-                    },
-                );
-                return Ok(items);
-            }
+        if let Ok(ExecOutcome::Http(_, result_value, _, _)) = result
+            && let Some(items) = result_value.as_array()
+        {
+            let items = items.clone();
+            self.cache.lock().expect("cache lock").insert(
+                key,
+                CacheEntry {
+                    fetched_at: Instant::now(),
+                    items: items.clone(),
+                },
+            );
+            return Ok(items);
         }
 
         let resolved_spec = self
@@ -137,14 +151,26 @@ impl ProviderRegistry for RegistryProvider {
     }
 
     fn get_contract(&self, provider_id: &str) -> Option<ProviderContract> {
-        {
-            let registry = self.registry.lock().ok()?;
-            if let Some(contract) = registry.provider_contracts.get(provider_id) {
-                return Some(contract.clone());
-            }
+        // Only accept canonical space-separated identifiers. If parsing fails, return None.
+        let spec = self.resolve_spec(provider_id)?;
+        let group = spec.group.clone();
+        let name = spec.name.clone();
+        let canonical_key = format!("{} {}", group, name);
+        let legacy_key = format!("{}:{}", group, name);
+
+        // Prefer canonical space-separated key; fall back to legacy colon key to accommodate
+        // older embedded manifests that may still store provider contracts under that format.
+        if let Some(contract) = self.registry.lock().ok().and_then(|registry| {
+            registry
+                .provider_contracts
+                .get(&canonical_key)
+                .or_else(|| registry.provider_contracts.get(&legacy_key))
+                .cloned()
+        }) {
+            return Some(contract);
         }
 
-        self.resolve_spec(provider_id)?;
+        // If no explicit contract is found, return a sensible default.
         Some(default_provider_contract())
     }
 }
@@ -166,5 +192,27 @@ fn default_provider_contract() -> ProviderContract {
                 },
             ],
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    #[test]
+    fn get_contract_accepts_space_form_and_rejects_colon_form() {
+        // Build a real registry from the embedded schema; no network calls are made in get_contract.
+        let registry = Arc::new(Mutex::new(Registry::from_embedded_schema().expect("embedded schema")));
+        let provider = RegistryProvider::with_default_http(Arc::clone(&registry), Duration::from_secs(1)).expect("provider");
+
+        // Known command present in the manifest should resolve via space-separated identifier.
+        let ok = provider.get_contract("apps list");
+        assert!(ok.is_some(), "expected provider contract for 'apps list'");
+
+        // Legacy colon-separated form must be rejected now.
+        let bad = provider.get_contract("apps:list");
+        assert!(bad.is_none(), "colon form should not be accepted");
     }
 }

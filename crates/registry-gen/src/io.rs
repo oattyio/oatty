@@ -224,7 +224,8 @@ fn build_provider_contracts(commands: &[CommandSpec]) -> Vec<ProviderContractEnt
     let mut contracts = IndexMap::new();
 
     for command in commands {
-        let command_id = format!("{}:{}", command.group, command.name);
+        // Use canonical space-separated identifier ("group name") for provider contracts
+        let command_id = format!("{} {}", command.group, command.name);
 
         let mut contract = ProviderContract::default();
         build_argument_contracts(command, &mut contract);
@@ -252,10 +253,10 @@ fn build_provider_contracts(commands: &[CommandSpec]) -> Vec<ProviderContractEnt
 /// # Arguments
 ///
 /// * `command` - A reference to a `CommandSpec` instance that contains information about the
-///    command's HTTP path and flags (including their requirements).
+///   command's HTTP path and flags (including their requirements).
 ///
 /// * `contract` - A mutable reference to a `ProviderContract` where the generated argument
-///    contracts will be stored.
+///   contracts will be stored.
 ///
 /// # Details
 ///
@@ -372,7 +373,10 @@ fn accepts_with_preference(tags: &[&str], preferred: Option<&str>) -> (Vec<Strin
 
 fn normalize_argument_key(argument_name: &str) -> String {
     let without_indices = argument_name.replace("[]", "");
-    let segment = without_indices.split('.').last().unwrap_or(&without_indices);
+    let segment = without_indices
+        .rsplit_once('.')
+        .map(|(_, trailing)| trailing)
+        .unwrap_or(&without_indices);
     segment.replace('-', "_").to_ascii_lowercase()
 }
 /// Builds and assigns a return contract for a given provider contract based on the HTTP output schema specified in the command.

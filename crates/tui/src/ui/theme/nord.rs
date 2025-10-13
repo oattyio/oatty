@@ -24,7 +24,6 @@ pub const A_RED: Color = Color::Rgb(0xBF, 0x61, 0x6A); // #BF616A
 pub const A_ORANGE: Color = Color::Rgb(0xD0, 0x87, 0x70); // #D08770
 pub const A_YELLOW: Color = Color::Rgb(0xEB, 0xCB, 0x8B); // #EBCB8B
 pub const A_GREEN: Color = Color::Rgb(0xA3, 0xBE, 0x8C); // #A3BE8C
-pub const A_PURPLE: Color = Color::Rgb(0xB4, 0x8E, 0xAD); // #B48EAD
 
 // THEME.md authoritative aliases
 pub const BG_MAIN: Color = N0; // App/root background
@@ -46,7 +45,6 @@ pub const STATUS_ERROR: Color = A_RED;
 pub const STATUS_WARN: Color = A_ORANGE;
 pub const STATUS_PENDING: Color = A_YELLOW;
 pub const STATUS_OK: Color = A_GREEN;
-pub const STATUS_NOTE: Color = A_PURPLE; // Plugin badges/special
 
 /// Default Nord theme tuned for dark terminals.
 #[derive(Debug, Clone)]
@@ -76,7 +74,7 @@ impl NordTheme {
                 // Status colors: Aurora mapping
                 info: ACCENT_BLUE,
                 success: STATUS_OK,
-                warning: STATUS_PENDING,
+                warning: STATUS_WARN,
                 error: STATUS_ERROR,
 
                 // Selection: ACCENT_DARK background with selected text

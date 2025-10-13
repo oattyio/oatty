@@ -31,12 +31,18 @@ inputs:
     type: string
   region:
     provider: regions list
-    select: { value_field: name, display_field: name }
-    default: { value: "us" }
+    select:
+      value_field: name
+      display_field: name
+    default:
+      from: literal
+      value: "us"
   addon_plan:
     description: "Database plan"
     provider: addons services:list
-    select: { value_field: name, display_field: name }
+    select:
+      value_field: name
+      display_field: name
 steps:
   - id: create_app
     run: apps create
@@ -46,7 +52,8 @@ steps:
 
   - id: add_pg
     run: apps addons:create
-    with: { app: ${{ inputs.app_name }} }
+    with:
+      app: ${{ inputs.app_name }}
     body:
       plan: ${{ inputs.addon_plan }}
 ```
@@ -60,16 +67,19 @@ workflow: build_from_tarball
 inputs:
   app:
     provider: apps list
-    select: { value_field: name, display_field: name, id_field: id }
+    select:
+      value_field: name
+      display_field: name
+      id_field: id
   tar_path:
     description: "Path to tarball"
     type: file
 steps:
   - id: create_sources
-    run: sources:create
+    run: sources create
 
   - id: upload
-    run: shell:curl_put
+    run: shell curl_put
     with:
       url: ${{ steps.create_sources.output.source_blob.put_url }}
       file: ${{ inputs.tar_path }}
@@ -104,22 +114,31 @@ inputs:
     type: string
   team:
     provider: teams list
-    select: { value_field: id, display_field: name }
+    select:
+      value_field: id
+      display_field: name
   dev_app:
     provider: apps list
-    select: { value_field: name, display_field: name }
+    select:
+      value_field: name
+      display_field: name
   staging_app:
     provider: apps list
-    select: { value_field: name, display_field: name }
+    select:
+      value_field: name
+      display_field: name
   prod_app:
     provider: apps list
-    select: { value_field: name, display_field: name }
+    select:
+      value_field: name
+      display_field: name
 steps:
   - id: create_pipeline
     run: pipelines create
     body:
       name: ${{ inputs.pipeline_name }}
-      owner: { id: ${{ inputs.team }} }
+      owner:
+        id: ${{ inputs.team }}
 
   - id: couple_dev
     run: pipeline-couplings create
@@ -152,7 +171,9 @@ workflow: collaborator_lifecycle
 inputs:
   app:
     provider: apps list
-    select: { value_field: name, display_field: name }
+    select:
+      value_field: name
+      display_field: name
   user:
     description: "Email or user ID"
     type: string
@@ -163,7 +184,8 @@ inputs:
 steps:
   - id: add_collab
     run: teams apps:collaborators:create
-    with: { app: ${{ inputs.app }} }
+    with:
+      app: ${{ inputs.app }}
     body:
       user: ${{ inputs.user }}
       permissions: ${{ inputs.permissions }}
@@ -185,13 +207,17 @@ workflow: space_with_otel
 inputs:
   team:
     provider: teams list
-    select: { value_field: id, display_field: name }
+    select:
+      value_field: id
+      display_field: name
   space_name:
     description: "Name of new space"
     type: string
   region:
     provider: regions list
-    select: { value_field: name, display_field: name }
+    select:
+      value_field: name
+      display_field: name
   otlp_endpoint:
     description: "OpenTelemetry collector endpoint URL"
     type: string
@@ -206,7 +232,9 @@ steps:
   - id: add_drain
     run: telemetry-drains create
     body:
-      owner: { space: { name: ${{ inputs.space_name }} } }
+      owner:
+        space:
+          name: ${{ inputs.space_name }}
       signals: ["traces", "metrics", "logs"]
       exporter:
         type: otlp_http
@@ -249,7 +277,7 @@ Allow a provider’s arguments to be **derived automatically** from values produ
 ```yaml
 inputs:
   app:
-    provider: apps:list
+    provider: apps list
     select: { value_field: name, display_field: name, id_field: id }
 
   addon:
@@ -281,24 +309,26 @@ provider_args: { app: ${{ steps.create_app.output.name }} }
      2. schema type tags (e.g., `app_id`, `app_name`)
      3. common aliases (`name`, `id`, `slug`)
    * If a single unambiguous candidate remains → auto-select and badge `auto→ steps.create_app.output.name`.
-3. **Ambiguity**: When 2+ candidates remain, open **Field Picker UI** (below).
+3. **Ambiguity**: When 2+ candidates remain, toggle the inline **Field Picker pane** (below) to finish mapping.
 4. **Persistence**: Remember the user’s choice for the rest of the run; optionally persist per-workflow.
 
 ### Field Picker UI (only when needed)
 
 ```
-┌ Choose field for provider arg: app (addons:list) ──────────────────────┐
+┌ Choose field for provider arg: app (addons list) ──────────────────────┐
 │ Auto candidates:                                                       │
 │  1) steps.create_app.output.name        → "billing-svc"                │
 │  2) steps.create_app.output.id          → "app-456"                    │
 │  3) inputs.app                           → "billing-svc"               │
-│                                                                        |   
+│                                                                        │
 │ Browse any JSON:                                                       │
-│  > steps.<…>  (Tab to expand → ↑↓ to move → Enter to select)           │
+│  > steps.<…>  (←/→ expand & collapse • ↑/↓ move • type to filter)      │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-**Keybindings:** `f` open picker • `Tab` browse tree • `Enter` select • `Esc` cancel.
+**Keybindings:** `f` toggle picker pane • type or `/` to filter • `↑/↓` move • `←/→` expand/collapse • `Enter` select • `Esc` return to candidates.
+
+The picker renders inline inside the Guided Input Collector so users can review argument contracts, cache badges, and schema tags while browsing context data. When the picker is active, typed characters update the filter instead of moving the selection.
 
 ### Badging & Inspectability
 
@@ -309,7 +339,7 @@ provider_args: { app: ${{ steps.create_app.output.name }} }
 
 * If the resolved path is missing:
 
-  * `on_missing: prompt` → open Field Picker.
+  * `on_missing: prompt` → open the Field Picker pane for manual selection.
   * `on_missing: skip` → disable this provider field and allow manual entry.
   * `on_missing: fail` → block run and show actionable error.
 
@@ -400,7 +430,7 @@ metadata to:
 
 ## 5.4 Error Policy
 
-* `on_missing: prompt` → open the picker.
+* `on_missing: prompt` → surface the Field Picker pane.
 * `on_missing: skip` → allow manual entry.
 * `on_missing: fail` → stop with actionable error.
 
@@ -414,7 +444,7 @@ To make dependent providers reliable, each provider can declare the shape of its
 
 ```yaml
 providers:
-  apps:list:
+  apps list:
     returns:
       fields:
         - name: id
@@ -425,7 +455,7 @@ providers:
           tags: [app_name, display]
         - name: owner
           type: string
-  addons:list:
+  addons list:
     requires:
       - app   # must resolve to app_id or app_name
     returns:
@@ -513,7 +543,7 @@ provider_arg_contracts:
 ```yaml
 steps:
   - id: create_app
-    run: apps:create
+    run: apps create
     output_contract:
       fields:
         - name: name
@@ -570,9 +600,12 @@ steps:
   - id: promote
     run: pipeline-promotions create
     body:
-      pipeline: { id: ${{ inputs.pipeline }} }
-      source: { app: { id: ${{ inputs.from_app }} } }
-      targets: ${{ inputs.to_apps.map(id => ({ app: { id } })) }}
+      pipeline:
+        id: ${{ inputs.pipeline }}
+      source:
+        app:
+          id: ${{ inputs.from_app }}
+      targets: "${{ inputs.to_apps.map(id => ({ app: { id } })) }}"
 ```
 
 ### C) `apps:builds:create` preferring id but accepting name
@@ -580,7 +613,7 @@ steps:
 ```yaml
 inputs:
   app:
-    provider: apps:list
+    provider: apps list
     select: { value_field: id, display_field: name, id_field: id }
   tar_url:
     type: string
@@ -591,7 +624,8 @@ steps:
     with:
       app: ${{ inputs.app }}           # app_id chosen per contract
     body:
-      source_blob: { url: ${{ inputs.tar_url }} }
+      source_blob:
+        url: ${{ inputs.tar_url }}
 ```
 
 ## 6.5 Validation & Errors

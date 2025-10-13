@@ -161,39 +161,6 @@ pub trait Component: Debug {
         Vec::new()
     }
 
-    /// Update the internal state based on an application message.
-    ///
-    /// This method allows components to update their internal state in response
-    /// to application messages. Unlike `handle_events`, this method is called
-    /// for all messages and is intended for state synchronization rather than
-    /// event handling.
-    ///
-    /// # Arguments
-    ///
-    /// * `app` - The application state
-    /// * `msg` - The application message to process
-    ///
-    /// # Returns
-    ///
-    /// Vector of effects that the application should process
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// fn update(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-    ///     match msg {
-    ///         Msg::DataChanged => {
-    ///             self.refresh_data(app);
-    ///             vec![]
-    ///         }
-    ///         _ => vec![]
-    ///     }
-    /// }
-    /// ```
-    fn update(&mut self, _app: &mut App, _msg: &Msg) -> Vec<Effect> {
-        Vec::new()
-    }
-
     /// Render the component into the given area.
     ///
     /// This method is responsible for drawing the component's UI elements
@@ -284,7 +251,7 @@ pub trait Component: Debug {
 ///
 /// # Parameters
 /// - `rect`: A reference to a `Rect` object. This serves as a validation check to ensure it has a positive width and height.
-/// - `targets`: A vector of `Rect` objects, representing the clickable target areas that can be checked against the mouse coordinates.
+/// - `targets`: A slice of `Rect` objects representing the clickable target areas that can be checked against the mouse coordinates.
 /// - `mouse_x`: The x-coordinate of the mouse cursor.
 /// - `mouse_y`: The y-coordinate of the mouse cursor.
 ///
@@ -309,14 +276,15 @@ pub trait Component: Debug {
 /// # Note
 /// - If the input `rect` has a width or height of zero, the function immediately returns `None` without performing any checks.
 /// - The function uses inclusive bounds for `mouse_x` and `mouse_y` when checking the rectangle edges. This means that
-/// if the mouse is exactly on the left or top edges of a rectangle, it will still match.
-pub fn find_target_index_by_mouse_position(rect: &Rect, targets: &Vec<Rect>, mouse_x: u16, mouse_y: u16) -> Option<usize> {
+///   if the mouse is exactly on the left or top edges of a rectangle, it will still match.
+pub fn find_target_index_by_mouse_position(rect: &Rect, targets: &[Rect], mouse_x: u16, mouse_y: u16) -> Option<usize> {
     let pos = Position::new(mouse_x, mouse_y);
-    if !rect.contains(pos.clone()) {
+    if !rect.contains(pos) {
         return None;
     }
-    if let Some((idx, _)) = targets.iter().enumerate().find(|(_, r)| r.contains(pos.clone())) {
-        return Some(idx);
-    }
-    None
+    targets
+        .iter()
+        .enumerate()
+        .find(|(_, target)| target.contains(pos))
+        .map(|(idx, _)| idx)
 }

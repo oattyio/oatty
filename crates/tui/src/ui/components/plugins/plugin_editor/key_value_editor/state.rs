@@ -1,3 +1,4 @@
+use crate::ui::components::common::TextInputState;
 use crate::ui::components::plugins::EnvRow;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
@@ -162,17 +163,17 @@ impl KeyValueEditorState {
             self.selected_row_index = None;
             return false;
         }
-        if let Some(index) = self.selected_row_index {
-            if index < self.rows.len() {
-                self.rows.remove(index);
-                if self.rows.is_empty() {
-                    self.selected_row_index = None;
-                } else if index >= self.rows.len() {
-                    self.selected_row_index = Some(self.rows.len() - 1);
-                }
-                self.focus_table();
-                return true;
+        if let Some(index) = self.selected_row_index
+            && index < self.rows.len()
+        {
+            self.rows.remove(index);
+            if self.rows.is_empty() {
+                self.selected_row_index = None;
+            } else if index >= self.rows.len() {
+                self.selected_row_index = Some(self.rows.len() - 1);
             }
+            self.focus_table();
+            return true;
         }
         false
     }
@@ -244,7 +245,7 @@ impl KeyValueEditorState {
         }
     }
 
-    /// Appends a character to the active buffer while editing.
+    /// Appends a character to the active buffer while editing (UTF-8 safe, at cursor).
     pub fn push_character(&mut self, character: char) {
         if !self.is_editing() {
             return;
@@ -252,14 +253,24 @@ impl KeyValueEditorState {
         let value_field_active = self.is_value_field_focused();
         if let KeyValueEditorMode::Editing(edit) = &mut self.mode {
             if value_field_active {
-                edit.value_buffer.push(character);
+                let mut ti = TextInputState::new();
+                ti.set_input(edit.value_buffer.clone());
+                ti.set_cursor(edit.value_cursor);
+                ti.insert_char(character);
+                edit.value_buffer = ti.input().to_string();
+                edit.value_cursor = ti.cursor();
             } else {
-                edit.key_buffer.push(character);
+                let mut ti = TextInputState::new();
+                ti.set_input(edit.key_buffer.clone());
+                ti.set_cursor(edit.key_cursor);
+                ti.insert_char(character);
+                edit.key_buffer = ti.input().to_string();
+                edit.key_cursor = ti.cursor();
             }
         }
     }
 
-    /// Removes the last character from the active buffer while editing.
+    /// Removes the character before the cursor in the active buffer (UTF-8 safe).
     pub fn pop_character(&mut self) {
         if !self.is_editing() {
             return;
@@ -267,22 +278,69 @@ impl KeyValueEditorState {
         let value_field_active = self.is_value_field_focused();
         if let KeyValueEditorMode::Editing(edit) = &mut self.mode {
             if value_field_active {
-                edit.value_buffer.pop();
+                let mut ti = TextInputState::new();
+                ti.set_input(edit.value_buffer.clone());
+                ti.set_cursor(edit.value_cursor);
+                ti.backspace();
+                edit.value_buffer = ti.input().to_string();
+                edit.value_cursor = ti.cursor();
             } else {
-                edit.key_buffer.pop();
+                let mut ti = TextInputState::new();
+                ti.set_input(edit.key_buffer.clone());
+                ti.set_cursor(edit.key_cursor);
+                ti.backspace();
+                edit.key_buffer = ti.input().to_string();
+                edit.key_cursor = ti.cursor();
             }
         }
     }
 
-    /// Provides an immutable view of the selected row, if any.
-    pub fn selected_row(&self) -> Option<&EnvRow> {
-        self.selected_row_index.and_then(|index| self.rows.get(index))
+    /// Move cursor left in the active buffer.
+    pub fn move_cursor_left(&mut self) {
+        let value_field = self.is_value_field_focused();
+        if let KeyValueEditorMode::Editing(edit) = &mut self.mode {
+            if value_field {
+                let mut ti = TextInputState::new();
+                ti.set_input(edit.value_buffer.clone());
+                ti.set_cursor(edit.value_cursor);
+                ti.move_left();
+                edit.value_cursor = ti.cursor();
+            } else {
+                let mut ti = TextInputState::new();
+                ti.set_input(edit.key_buffer.clone());
+                ti.set_cursor(edit.key_cursor);
+                ti.move_left();
+                edit.key_cursor = ti.cursor();
+            }
+        }
     }
 
-    /// Provides a mutable view of the selected row, if any.
-    pub fn selected_row_mut(&mut self) -> Option<&mut EnvRow> {
-        let index = self.selected_row_index?;
-        self.rows.get_mut(index)
+    /// Move cursor right in the active buffer.
+    pub fn move_cursor_right(&mut self) {
+        let value_field = self.is_value_field_focused();
+        if let KeyValueEditorMode::Editing(edit) = &mut self.mode {
+            if value_field {
+                let mut ti = TextInputState::new();
+                ti.set_input(edit.value_buffer.clone());
+                ti.set_cursor(edit.value_cursor);
+                ti.move_right();
+                edit.value_cursor = ti.cursor();
+            } else {
+                let mut ti = TextInputState::new();
+                ti.set_input(edit.key_buffer.clone());
+                ti.set_cursor(edit.key_cursor);
+                ti.move_right();
+                edit.key_cursor = ti.cursor();
+            }
+        }
+    }
+
+    /// Returns the editing cursors (key, value) if in edit mode.
+    pub fn editing_cursors(&self) -> Option<(usize, usize)> {
+        match &self.mode {
+            KeyValueEditorMode::Browsing => None,
+            KeyValueEditorMode::Editing(edit) => Some((edit.key_cursor, edit.value_cursor)),
+        }
     }
 
     fn focus_table(&mut self) {
@@ -345,6 +403,10 @@ pub struct KeyValueEditorEditState {
     pub key_buffer: String,
     /// Working buffer for the value column.
     pub value_buffer: String,
+    /// Cursor (byte index) within key_buffer.
+    pub key_cursor: usize,
+    /// Cursor (byte index) within value_buffer.
+    pub value_cursor: usize,
     /// Original row snapshot for cancellation or change detection.
     pub original_row: EnvRow,
     /// Indicates whether the editor created a new row for this edit session.
@@ -354,10 +416,14 @@ pub struct KeyValueEditorEditState {
 impl KeyValueEditorEditState {
     /// Creates an edit state from an existing row.
     pub(super) fn from_existing(row_index: usize, row: &EnvRow) -> Self {
+        let key = row.key.clone();
+        let val = row.value.clone();
         Self {
             row_index,
-            key_buffer: row.key.clone(),
-            value_buffer: row.value.clone(),
+            key_buffer: key.clone(),
+            value_buffer: val.clone(),
+            key_cursor: key.len(),
+            value_cursor: val.len(),
             original_row: row.clone(),
             is_new_row: false,
         }
@@ -369,6 +435,8 @@ impl KeyValueEditorEditState {
             row_index,
             key_buffer: String::new(),
             value_buffer: String::new(),
+            key_cursor: 0,
+            value_cursor: 0,
             original_row: EnvRow {
                 key: String::new(),
                 value: String::new(),

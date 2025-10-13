@@ -22,9 +22,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     frame.render_widget(bg_fill, size);
 
     // Temporarily take components to avoid borrow checker issues
-    let mut main_view = std::mem::replace(&mut app.main_view, None);
-    let mut open_modal = std::mem::replace(&mut app.open_modal, None);
-    let mut nav_bar = std::mem::replace(&mut app.nav_bar_view, None);
+    let mut main_view = app.main_view.take();
+    let mut open_modal = app.open_modal.take();
+    let mut nav_bar = app.nav_bar_view.take();
     // Layout: left rail for nav bar, right for active main view
     let chunks = Layout::default()
         .direction(Direction::Horizontal)

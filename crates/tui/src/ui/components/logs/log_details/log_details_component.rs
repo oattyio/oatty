@@ -50,7 +50,7 @@ impl LogDetailsComponent {
         if start == end {
             if let Some(entry) = app.logs.rich_entries.get(start) {
                 match entry {
-                    LogEntry::Api { json: Some(j), .. } | LogEntry::MCP { json: Some(j), .. } => {
+                    LogEntry::Api { json: Some(j), .. } | LogEntry::Mcp { json: Some(j), .. } => {
                         // Use cached redacted JSON if available, otherwise redact on-the-fly
                         // Note: Only non-array JSON renders here; arrays are routed to global table
                         // modal
@@ -71,7 +71,33 @@ impl LogDetailsComponent {
                         table.render_kv_or_text(frame, area, &entries, selection, offset, true, red_ref, &*app.ctx.theme);
                         return;
                     }
-                    _ => {}
+                    LogEntry::Api { status, raw, .. } => {
+                        let detail_text = format!("HTTP {status}\n\n{raw}");
+                        let paragraph = Paragraph::new(redact_sensitive(&detail_text))
+                            .block(Block::default().borders(Borders::NONE))
+                            .wrap(Wrap { trim: false })
+                            .style(app.ctx.theme.text_primary_style());
+                        frame.render_widget(paragraph, area);
+                        return;
+                    }
+                    LogEntry::Text { level, msg } => {
+                        let heading = level.as_deref().unwrap_or("info");
+                        let detail_text = format!("[{heading}] {msg}");
+                        let paragraph = Paragraph::new(redact_sensitive(&detail_text))
+                            .block(Block::default().borders(Borders::NONE))
+                            .wrap(Wrap { trim: false })
+                            .style(app.ctx.theme.text_primary_style());
+                        frame.render_widget(paragraph, area);
+                        return;
+                    }
+                    LogEntry::Mcp { raw, .. } => {
+                        let paragraph = Paragraph::new(redact_sensitive(raw))
+                            .block(Block::default().borders(Borders::NONE))
+                            .wrap(Wrap { trim: false })
+                            .style(app.ctx.theme.text_primary_style());
+                        frame.render_widget(paragraph, area);
+                        return;
+                    }
                 }
             }
 
@@ -125,7 +151,7 @@ impl Component for LogDetailsComponent {
                 let (start, end) = app.logs.selection.range();
                 if start == end {
                     app.logs.rich_entries.get(start).and_then(|entry| match entry {
-                        LogEntry::Api { json: Some(value), .. } | LogEntry::MCP { json: Some(value), .. } => Some(value),
+                        LogEntry::Api { json: Some(value), .. } | LogEntry::Mcp { json: Some(value), .. } => Some(value),
                         _ => None,
                     })
                 } else {

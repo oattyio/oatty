@@ -33,7 +33,7 @@
 ## Work Unit 5: Selector and Detail Enhancements
 - **Table upgrades**: Enhance `crates/tui/src/ui/components/table` to support selection markers, multi-select chips, TTL badges, and inline provider metadata per `specs/WORKFLOW_TUI.md` §§2.3–2.4; expose configuration hooks that `WorkflowInputComponent` can toggle.
 - **Detail pane integration**: Extend Key/Value viewer (likely `crates/tui/src/ui/components/browser` or dedicated detail view) to highlight schema tags (`app_id`, `enum`) and enumerated literals as described in both workflow specs.
-- **Field picker modal**: Add a modal component for the JSON field picker defined in `specs/WORKFLOWS.md` §5.2, reusing tree navigation patterns from the browser component and persisting selections into workflow state.
+- **Inline field picker pane**: Extend the Guided Input Collector so the JSON field picker from `specs/WORKFLOWS.md` §5.2 renders inline within its detail column, reusing browser-style tree navigation, supporting inline filtering, and persisting selections into workflow state without stacking another modal.
 - **Error and fallback UX**: Implement `on_error` handling surfaces (manual entry prompts, cached badges) consistent with `specs/WORKFLOW_VALUE_PROVIDERS_UX.md` §2 and §3, ensuring accessibility cues (focus, shortcuts) follow existing theme helpers.
 
 ## Work Unit 6: Validation, Tooling, and Documentation
@@ -47,3 +47,5 @@
 - Determine persistence scope for provider selection overrides (per session vs. persisted config) before finalizing cache storage strategy.
 - Validate manifest size impact when embedding workflows and provider contracts; may require compression adjustments in `crates/registry-gen`.
 - Align keyboard shortcuts with global policy (check `specs/UX_GUIDELINES.md`) to avoid conflicts with existing components.
+- Future enhancement: Introduce tag-weighted auto-mapping scoring with explainable ranking feedback so the collector can default to the highest-confidence candidate without manual selection.
+- Future enhancement: Implement an engine-level provider cache with TTL-aware eviction and refresh hooks to complement the TUI snapshot badges and support persistence requirements.

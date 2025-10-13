@@ -326,9 +326,8 @@ fn handle_switch_to(app: &mut App, route: Route) -> Option<Vec<Cmd>> {
 
 /// When pressing Enter in the browser, populate the palette with the
 /// constructed command and close the command browser.
-fn handle_send_to_palette(app: &mut App, command_spec: CommandSpec) -> Option<Vec<Cmd>> {
-    let name = command_spec.name;
-    let group = command_spec.group;
+fn handle_send_to_palette(app: &mut App, command_spec: Box<CommandSpec>) -> Option<Vec<Cmd>> {
+    let CommandSpec { group, name, .. } = *command_spec;
 
     app.palette.set_input(format!("{} {}", group, name));
     app.palette.set_cursor(app.palette.input().len());
@@ -716,11 +715,8 @@ async fn execute_mcp_task(
 /// - Boolean flags don't require values
 /// - Non-boolean flags require values (next token or after =)
 /// - Unknown flags are rejected
-fn parse_command_arguments(
-    argument_tokens: &[String],
-    command_spec: &CommandSpec,
-) -> Result<(HashMap<String, Option<String>>, Vec<String>)> {
-    let mut user_flags: HashMap<String, Option<String>> = HashMap::new();
+fn parse_command_arguments(argument_tokens: &[String], command_spec: &CommandSpec) -> Result<ParsedCommandArgs> {
+    let mut user_flags: FlagValueMap = HashMap::new();
     let mut user_args: Vec<String> = Vec::new();
     let mut index = 0;
 
@@ -999,3 +995,5 @@ fn execute_command(command_spec: CommandSpec, request_body: Map<String, Value>, 
         }
     }
 }
+type FlagValueMap = HashMap<String, Option<String>>;
+type ParsedCommandArgs = (FlagValueMap, Vec<String>);

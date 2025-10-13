@@ -83,6 +83,21 @@ pub fn human_duration(duration: Duration) -> String {
 
     if parts.is_empty() { "0s".to_string() } else { parts.join(" ") }
 }
+
+pub fn summarize_values(values: &[JsonValue], limit: usize) -> String {
+    if values.is_empty() {
+        return "<none>".to_string();
+    }
+
+    let mut parts = Vec::new();
+    for value in values.iter().take(limit) {
+        parts.push(format_preview(value));
+    }
+    if values.len() > limit {
+        parts.push("…".to_string());
+    }
+    parts.join(", ")
+}
 pub fn format_preview(value: &JsonValue) -> String {
     let text = match value {
         JsonValue::String(s) => s.clone(),

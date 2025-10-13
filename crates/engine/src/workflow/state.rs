@@ -8,19 +8,18 @@
 
 use std::collections::HashSet;
 
-use anyhow::Result;
-use indexmap::{IndexMap, map::Entry as IndexMapEntry};
-use serde_json::Value;
-
 use crate::{
     RunContext,
     executor::{self, CommandRunner, StepResult, StepStatus, runner::NoopRunner},
     workflow::{
         bindings::{ProviderArgumentResolver, ProviderBindingOutcome},
-        document::RuntimeWorkflow,
         runtime::workflow_spec_from_runtime,
     },
 };
+use anyhow::Result;
+use heroku_types::workflow::RuntimeWorkflow;
+use indexmap::{IndexMap, map::Entry as IndexMapEntry};
+use serde_json::Value;
 
 /// Captures the outcome of resolving a single provider argument.
 #[derive(Debug, Clone, PartialEq)]
@@ -91,10 +90,7 @@ impl WorkflowRunState {
             }
 
             let outcomes = resolver.resolve_arguments(&definition.provider_args);
-            let state = self
-                .input_provider_states
-                .entry(input_name.clone())
-                .or_insert_with(InputProviderState::default);
+            let state = self.input_provider_states.entry(input_name.clone()).or_default();
 
             for (argument_name, outcome) in outcomes {
                 let key = (input_name.clone(), argument_name.clone());
@@ -133,10 +129,7 @@ impl WorkflowRunState {
 
     /// Persists a user-supplied outcome for a specific provider argument.
     pub fn persist_provider_outcome(&mut self, input_name: &str, argument_name: &str, outcome: ProviderBindingOutcome) {
-        let state = self
-            .input_provider_states
-            .entry(input_name.to_string())
-            .or_insert_with(InputProviderState::default);
+        let state = self.input_provider_states.entry(input_name.to_string()).or_default();
 
         state
             .argument_outcomes

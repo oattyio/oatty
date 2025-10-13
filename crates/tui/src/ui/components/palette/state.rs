@@ -20,13 +20,13 @@ use crate::ui::components::palette::suggestion_engine::SuggestionEngine;
 use crate::ui::theme::Theme;
 
 use super::suggestion_engine::{parse_user_flags_args, required_flags_remaining};
+use crate::ui::components::common::TextInputState;
+use crate::ui::theme::theme_helpers::create_list_item_with_match;
 use heroku_registry::{Registry, find_by_group_and_cmd};
 use heroku_types::{CommandSpec, ItemKind, SuggestionItem};
 use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
-use ratatui::style::Modifier;
-use ratatui::text::{Line, Span};
 use ratatui::widgets::ListItem;
 
 /// Locate the index of the token under the cursor.
@@ -73,7 +73,7 @@ pub struct PaletteState {
     /// List of current suggestions
     suggestions: Vec<SuggestionItem>,
     /// Pre-rendered suggestion list items for efficient display
-    rendered_suggestions: Vec<ratatui::widgets::ListItem<'static>>,
+    rendered_suggestions: Vec<ListItem<'static>>,
     /// Optional error message to display
     error_message: Option<String>,
 
@@ -171,9 +171,7 @@ impl PaletteState {
     /// Selected command for help: prefer highlighted suggestion if open, else
     /// parse input.
     pub fn selected_command(&self) -> Option<CommandSpec> {
-        let Some(lock) = self.registry.lock().ok() else {
-            return None;
-        };
+        let lock = self.registry.lock().ok()?;
         let commands = &lock.commands;
         let selected_command = self.selected_command_from_suggestion(commands);
         if self.is_suggestions_open && selected_command.is_some() {
@@ -270,6 +268,16 @@ impl PaletteState {
 
     // ===== PRIVATE SETTERS =====
 
+    /// Adapter to delegate text/cursor editing to common::TextInputState
+    fn with_text_input<F: FnOnce(&mut TextInputState)>(&mut self, f: F) {
+        let mut ti = TextInputState::new();
+        ti.set_input(self.input.clone());
+        ti.set_cursor(self.cursor_position);
+        f(&mut ti);
+        self.input = ti.input().to_string();
+        self.cursor_position = ti.cursor();
+    }
+
     /// Set the input text
     pub(crate) fn set_input(&mut self, input: String) {
         self.input = input;
@@ -320,11 +328,7 @@ impl PaletteState {
     ///
     /// Returns: nothing; updates `self.cursor` in place.
     pub fn reduce_move_cursor_left(&mut self) {
-        if self.cursor_position == 0 {
-            return;
-        }
-        let prev_len = self.input[..self.cursor_position].chars().last().map(|c| c.len_utf8()).unwrap_or(1);
-        self.cursor_position = self.cursor_position.saturating_sub(prev_len);
+        self.with_text_input(|ti| ti.move_left());
     }
 
     /// Move the cursor one character to the right.
@@ -337,14 +341,7 @@ impl PaletteState {
     ///
     /// Returns: nothing; updates `self.cursor` in place.
     pub fn reduce_move_cursor_right(&mut self) {
-        if self.cursor_position >= self.input.len() {
-            return;
-        }
-        // Advance by one Unicode scalar starting at current byte offset
-        let mut iter = self.input[self.cursor_position..].chars();
-        if let Some(next) = iter.next() {
-            self.cursor_position = self.cursor_position.saturating_add(next.len_utf8());
-        }
+        self.with_text_input(|ti| ti.move_right());
     }
 
     /// Insert a character at the cursor and advance.
@@ -363,8 +360,7 @@ impl PaletteState {
             self.history_index = None;
             self.draft_input = None;
         }
-        self.input.insert(self.cursor_position, c);
-        self.cursor_position += c.len_utf8();
+        self.with_text_input(|ti| ti.insert_char(c));
     }
 
     /// Remove the character immediately before the cursor.
@@ -383,22 +379,16 @@ impl PaletteState {
             self.history_index = None;
             self.draft_input = None;
         }
-        if self.cursor_position == 0 {
-            return;
-        }
-        let prev = self.input[..self.cursor_position].chars().last().map(|c| c.len_utf8()).unwrap_or(1);
-        let start = self.cursor_position - prev;
-        self.input.drain(start..self.cursor_position);
-        self.cursor_position = start;
+        self.with_text_input(|ti| ti.backspace());
     }
 
     /// Finalize suggestion list for the UI: rank, truncate, ghost text, and
     /// state flags.
-    fn finalize_suggestions(&mut self, items: &mut Vec<SuggestionItem>, theme: &dyn crate::ui::theme::Theme) {
+    fn finalize_suggestions(&mut self, items: &mut [SuggestionItem], theme: &dyn crate::ui::theme::Theme) {
         items.sort_by(|a, b| b.score.cmp(&a.score));
 
         self.suggestion_index = self.suggestion_index.min(items.len().saturating_sub(1));
-        self.suggestions = items.clone();
+        self.suggestions = items.to_vec();
         self.is_suggestions_open = !self.suggestions.is_empty();
 
         let current_token = get_current_token(&self.input, self.cursor_position);
@@ -407,46 +397,9 @@ impl PaletteState {
         self.rendered_suggestions = self
             .suggestions
             .iter()
-            .map(|s| {
-                let display = s.display.clone();
-                if needle.is_empty() {
-                    return ListItem::new(Line::from(Span::styled(display, theme.text_primary_style())));
-                }
-
-                let mut spans: Vec<Span> = Vec::new();
-                let hay = display.as_str();
-                let mut i = 0usize;
-                let needle_lower = needle.to_ascii_lowercase();
-                let hay_lower = hay.to_ascii_lowercase();
-
-                // Find and highlight all matches
-                while let Some(pos) = hay_lower[i..].find(&needle_lower) {
-                    let start = i + pos;
-
-                    // Add text before the match
-                    if start > i {
-                        spans.push(Span::styled(hay[i..start].to_string(), theme.text_primary_style()));
-                    }
-
-                    // Add highlighted match
-                    let end = start + needle.len();
-                    spans.push(Span::styled(
-                        hay[start..end].to_string(),
-                        theme.accent_emphasis_style().add_modifier(Modifier::BOLD),
-                    ));
-
-                    i = end;
-                    if i >= hay.len() {
-                        break;
-                    }
-                }
-
-                // Add remaining text after last match
-                if i < hay.len() {
-                    spans.push(Span::styled(hay[i..].to_string(), theme.text_primary_style()));
-                }
-
-                ListItem::new(Line::from(spans))
+            .map(|suggestion_item| {
+                let display = suggestion_item.display.clone();
+                create_list_item_with_match(needle.to_string(), display, theme)
             })
             .collect();
 
@@ -805,7 +758,7 @@ impl PaletteState {
                 if tokens.len() >= 2 {
                     let group = tokens[0].clone();
                     let name = tokens[1].clone();
-                    if let Some(spec) = find_by_group_and_cmd(commands, group.as_str(), name.as_str()).ok() {
+                    if let Ok(spec) = find_by_group_and_cmd(commands, group.as_str(), name.as_str()) {
                         let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
                         let (user_flags, user_args, _flag_values) = parse_user_flags_args(&spec, parts);
                         if let Some(hint) = self.eol_flag_hint(&spec, &user_flags) {
@@ -824,7 +777,7 @@ impl PaletteState {
             items
         };
 
-        self.finalize_suggestions(&mut items, theme);
+        self.finalize_suggestions(items.as_mut_slice(), theme);
         // Preserve run hint ghost when suggestions are empty
         if self.suggestions.is_empty() && self.ghost_text.is_none() {
             let tokens: Vec<String> = lex_shell_like(&self.input);
@@ -892,6 +845,106 @@ mod tests {
         st.apply_accept_non_command_suggestion("heroku-prod");
         assert_eq!(st.input(), "apps info heroku-prod ");
     }
+
+    // --- Parity tests with common::TextInputState to quantify integration risk ---
+    use crate::ui::components::common::TextInputState;
+
+    #[derive(Clone, Copy, Debug)]
+    enum Op {
+        Left,
+        Right,
+        Ins(char),
+        Back,
+    }
+
+    fn run_palette(mut input: &str, cursor: usize, ops: &[Op]) -> (String, usize) {
+        let reg = Arc::new(Mutex::new(Registry::from_embedded_schema().unwrap()));
+        let mut st = PaletteState::new(reg);
+        st.set_input(input.to_string());
+        st.set_cursor(cursor);
+        for op in ops {
+            match *op {
+                Op::Left => st.reduce_move_cursor_left(),
+                Op::Right => st.reduce_move_cursor_right(),
+                Op::Ins(c) => st.apply_insert_char(c),
+                Op::Back => st.reduce_backspace(),
+            }
+        }
+        (st.input().to_string(), st.selected_cursor_position())
+    }
+
+    fn run_text_input(input: &str, cursor: usize, ops: &[Op]) -> (String, usize) {
+        let mut st = TextInputState::new();
+        st.set_input(input);
+        st.set_cursor(cursor);
+        for op in ops {
+            match *op {
+                Op::Left => st.move_left(),
+                Op::Right => st.move_right(),
+                Op::Ins(c) => st.insert_char(c),
+                Op::Back => st.backspace(),
+            }
+        }
+        (st.input().to_string(), st.cursor())
+    }
+
+    fn assert_parity(input: &str, cursor: usize, ops: &[Op]) {
+        let a = run_palette(input, cursor, ops);
+        let b = run_text_input(input, cursor, ops);
+        assert_eq!(a, b, "Parity mismatch for input='{input}', cursor={cursor}, ops={ops:?}");
+    }
+
+    #[test]
+    fn palette_text_input_parity_ascii() {
+        let ops = [
+            Op::Ins('h'),
+            Op::Ins('e'),
+            Op::Ins('l'),
+            Op::Ins('l'),
+            Op::Ins('o'),
+            Op::Left,
+            Op::Back,
+            Op::Ins('y'),
+        ];
+        assert_parity("", 0, &ops);
+    }
+
+    #[test]
+    fn palette_text_input_parity_utf8_emoji() {
+        // Start with multi-byte character in the middle
+        let input = "h🙂llo"; // emoji is 4 bytes
+        // place cursor after 'h'
+        let cursor = 1;
+        let ops = [Op::Ins('e'), Op::Right, Op::Back, Op::Left, Op::Back];
+        assert_parity(input, cursor, &ops);
+    }
+
+    #[test]
+    fn palette_text_input_parity_boundaries() {
+        // Deleting at start is a no-op; moving past end is a no-op
+        let input = "abc";
+        let cursor = 0;
+        let ops = [Op::Back, Op::Left, Op::Ins('x'), Op::Left, Op::Left, Op::Left, Op::Left, Op::Back];
+        assert_parity(input, cursor, &ops);
+    }
+
+    #[test]
+    fn palette_text_input_parity_mixed_sequence() {
+        let input = "héllo"; // accented e is 2 bytes
+        // put cursor between h and é
+        let cursor = 1;
+        let ops = [
+            Op::Right, // over é correctly (2 bytes)
+            Op::Ins('-'),
+            Op::Left,
+            Op::Back,
+            Op::Ins('X'),
+            Op::Right,
+            Op::Right,
+            Op::Ins('!'),
+        ];
+        assert_parity(input, cursor, &ops);
+    }
 }
 
 /// Trait for providing dynamic values for command suggestions.
@@ -903,7 +956,7 @@ pub trait ValueProvider: Send + Sync + Debug {
     ///
     /// # Arguments
     ///
-    /// * `command_key` - The command key (e.g., "apps:info")
+    /// * `command_key` - The command key (e.g., "apps info")
     /// * `field` - The field name (e.g., "app")
     /// * `partial` - The partial input to match against
     ///

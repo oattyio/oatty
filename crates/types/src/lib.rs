@@ -622,7 +622,6 @@ pub mod messaging {
     //! Application-level messages and side effects.
 
     use crate::{command::CommandSpec, execution::ExecOutcome};
-
     /// Navigation targets within the TUI.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Route {
@@ -634,6 +633,8 @@ pub mod messaging {
         Plugins,
         /// Workflows view for browsing workflow catalog.
         Workflows,
+        /// Workflows view for browsing workflow catalog.
+        WorkflowInputs,
     }
 
     /// Modal overlays that can be displayed on top of the main UI.
@@ -697,7 +698,7 @@ pub mod messaging {
         /// Hide any open modals.
         CloseModal,
         /// Send the command spec to the palette.
-        SendToPalette(CommandSpec),
+        SendToPalette(Box<CommandSpec>),
     }
 
     /// Messages that can be sent to update the application state.
@@ -1303,15 +1304,14 @@ pub mod plugin {
     }
 }
 
-pub use command::{CommandExecution, CommandFlag, CommandSpec, Field, HttpCommandSpec, McpCommandSpec, PositionalArgument};
-pub use execution::{ExecOutcome, Pagination};
-pub use messaging::{Effect, Modal, Msg, Route};
-pub use plugin::{
-    AuthStatus, EnvSource, EnvVar, HealthStatus, LogLevel, LogSource, McpLogEntry, PluginDetail, PluginStatus, TransportStatus,
-};
-pub use provider::{Bind, ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract, ValueProvider};
-pub use service::{ParseServiceIdError, ServiceId, ToServiceIdInfo};
-pub use suggestion::{ItemKind, SuggestionItem};
+pub use command::*;
+pub use execution::*;
+pub use messaging::*;
+pub use plugin::*;
+pub use provider::*;
+pub use service::*;
+pub use suggestion::*;
+pub use workflow::*;
 
 #[cfg(test)]
 mod tests {

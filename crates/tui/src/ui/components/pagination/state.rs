@@ -130,9 +130,6 @@ impl PaginationState {
     pub fn is_visible(&self) -> bool {
         self.is_visible
     }
-    pub fn is_range_mode(&self) -> bool {
-        self.range_mode
-    }
 }
 impl HasFocus for PaginationState {
     fn build(&self, builder: &mut FocusBuilder) {

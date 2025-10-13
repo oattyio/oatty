@@ -320,7 +320,7 @@ impl Component for LogsComponent {
     /// A vector of effects to be processed by the application
     fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
         if app.logs.detail.is_some() {
-            let mut detail_component = LogDetailsComponent::default();
+            let mut detail_component = LogDetailsComponent;
             return detail_component.handle_key_events(app, key);
         }
 
@@ -428,7 +428,7 @@ impl Component for LogsComponent {
             .block(block)
             .highlight_style(app.ctx.theme.selection_style().add_modifier(Modifier::BOLD))
             .style(th::panel_style(&*app.ctx.theme))
-            .highlight_symbol(if focused { "► " } else { "" });
+            .highlight_symbol(if focused { "> " } else { "" });
 
         // Set up the list state for selection highlighting
         let mut list_state = ListState::default();
@@ -463,7 +463,7 @@ impl Component for LogsComponent {
             let modal_area = centered_rect(80, 70, overlay_area);
             app.logs.detail_rect = Some(modal_area);
             frame.render_widget(Block::default().style(app.ctx.theme.modal_background_style()).dim(), overlay_area);
-            let mut detail_component = LogDetailsComponent::default();
+            let mut detail_component = LogDetailsComponent;
             detail_component.render(frame, overlay_area, app);
         } else {
             app.logs.detail_rect = None;

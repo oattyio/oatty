@@ -1,7 +1,8 @@
 workflow: collaborator_lifecycle
+description: "Add a collaborator to an app and verify their access and permissions."
 inputs:
   app:
-    provider: apps:list
+    provider: apps list
     select: { value_field: name, display_field: name }
   user:
     description: "Email or user ID"
@@ -12,15 +13,16 @@ inputs:
     enum: [view, deploy, operate, manage]
 steps:
   - id: add_collab
-    run: teams:apps:collaborators:create
-    with: { app: ${{ inputs.app }} }
+    run: teams apps:collaborators:create
+    with:
+      app: ${{ inputs.app }}
     body:
       user: ${{ inputs.user }}
       permissions: ${{ inputs.permissions }}
       silent: false
 
   - id: confirm
-    run: teams:apps:collaborators:info
+    run: teams apps:collaborators:info
     with:
       app: ${{ inputs.app }}
       collaborator: ${{ inputs.user }}

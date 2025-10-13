@@ -192,10 +192,11 @@ impl PluginEngine {
     pub async fn stop(&self) -> Result<(), PluginEngineError> {
         if let Some(handle) = self.status_listener.lock().await.take() {
             handle.abort();
-            if let Err(join_error) = handle.await {
-                if !join_error.is_cancelled() {
+            match handle.await {
+                Err(join_error) if !join_error.is_cancelled() => {
                     tracing::warn!("Status listener task ended with error: {}", join_error);
                 }
+                _ => {}
             }
         }
 

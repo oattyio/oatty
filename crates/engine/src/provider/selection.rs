@@ -216,48 +216,23 @@ fn scan_contract_for_candidates(contract: &ProviderContract) -> (Option<String>,
     }
     (id_candidate, id_from_tags, display_candidate, display_from_tags)
 }
-/// Coerces a `Value` into a specified target type or extracts a specific field from an object based on the given `FieldSelection`.
+/// Coerces a JSON [`Value`] into the desired target type after optionally extracting a field from
+/// an object.
 ///
 /// # Arguments
 ///
-/// * `value` - The input `Value` to be coerced. It can be of type `Value::Object`, `Value::String`, `Value::Number`, `Value::Bool`, or `Value::Null`.
-/// * `target_type` - An optional string representing the desired target type for coercion. Valid options are:
-///   * `"string"` (default if `None` is provided)
-///   * `"number"`
-///   * `"boolean"`
-///   Any unrecognized target type will result in the `value` being returned unchanged.
-/// * `selection` - An optional `FieldSelection` that identifies the field to extract from a `Value::Object` input. If provided,
-/// the field value will be extracted; otherwise, the original value is used.
-///
-/// # Behavior
-///
-/// 1. If `value` is an object (`Value::Object`) and `selection` is provided, the field specified by `FieldSelection::value_field`
-///    will be extracted. If the field is not found, `Value::Null` will be used as the base value.
-/// 2. If `target_type` is provided, the function attempts to coerce the base value into the specified type:
-///    - `"string"`:
-///      - If the base value is `Value::String`, it remains unchanged.
-///      - If the base value is `Value::Null`, it is converted to an empty string (`Value::String`).
-///      - All other types are converted to a string via their `to_string` implementation.
-///    - `"number"`:
-///      - If the base value is `Value::Number`, it remains unchanged.
-///      - If the base value is `Value::String`, it will attempt to parse the string as a floating-point number (`f64`).
-///        If the parsing fails, the value defaults to `Value::Null`.
-///      - Other types default to `Value::Null`.
-///    - `"boolean"`:
-///      - If the base value is `Value::Bool`, it remains unchanged.
-///      - If the base value is `Value::String`, it is converted to a boolean:
-///        - The string is considered "true" if it matches `"true"`, `"1"`, or `"yes"`.
-///        - All other strings are considered "false".
-///      - If the base value is `Value::Number`, it evaluates to `true` if the number is non-zero, otherwise `false`.
-///      - All other types default to `Value::Bool(false)`.
-/// 3. If `target_type` is unrecognized, the function returns the base value unchanged.
+/// * `value` - Input value to coerce. Objects can be combined with `selection`; other kinds are
+///   converted directly.
+/// * `target_type` - Optional coercion target (`"string"`, `"number"`, or `"boolean"`). When
+///   `None`, the function preserves the original type unless a selection produces `Null`, which
+///   defaults to an empty string.
+/// * `selection` - Optional field selector that extracts a nested field from object values before
+///   coercion. When the field is missing, the function behaves as if `Value::Null` was supplied.
 ///
 /// # Returns
 ///
-/// The coerced `Value` according to the provided `target_type` and/or field extraction logic.
-///
-/// # Examples
-///
+/// A coerced [`Value`] consistent with workflow binding expectations. Unsupported target types
+/// leave the original value unchanged.
 /// ```rust,ignore
 /// use serde_json::Value;
 ///

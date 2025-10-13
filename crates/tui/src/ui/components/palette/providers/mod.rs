@@ -83,12 +83,29 @@ impl RegistryBackedProvider {
         }
     }
 
-    /// Parses a provider key of the form "group:name" into its components.
+    /// Parses a provider key into its (group, name) components.
+    ///
+    /// Accepts the canonical space-separated form ("group name") and, for internal
+    /// manifest compatibility, the legacy colon-separated form ("group:name").
+    /// User-facing identifiers elsewhere remain space-only; this parser is used
+    /// for provider bindings embedded in CommandSpec, which may still carry colon
+    /// IDs in unreleased manifests.
     fn parse_provider_key(provider_id: &str) -> Option<(&str, &str)> {
-        match provider_id.split_once(':') {
-            Some((group, name)) if !group.is_empty() && !name.is_empty() => Some((group, name)),
-            _ => None,
+        if let Some((group, name)) = provider_id.split_once(char::is_whitespace) {
+            let group = group.trim();
+            let name = name.trim();
+            if !group.is_empty() && !name.is_empty() {
+                return Some((group, name));
+            }
         }
+        if let Some((group, name)) = provider_id.split_once(':') {
+            let group = group.trim();
+            let name = name.trim();
+            if !group.is_empty() && !name.is_empty() {
+                return Some((group, name));
+            }
+        }
+        None
     }
 
     /// Attempts to mark a provider fetch as active; returns false if already active.
@@ -211,7 +228,7 @@ impl RegistryBackedProvider {
 impl ValueProvider for RegistryBackedProvider {
     /// Suggests values for a command field based on provider bindings.
     ///
-    /// The `command_key` must be in the form "group:name". Returns fuzzy-matched
+    /// The `command_key` must be in the canonical form "group name". Returns fuzzy-matched
     /// suggestions for the given `field` and `partial` input, sorted by score.
     fn suggest(
         &self,
@@ -221,8 +238,15 @@ impl ValueProvider for RegistryBackedProvider {
         partial: &str,
         inputs: &std::collections::HashMap<String, String>,
     ) -> Vec<SuggestionItem> {
-        let (group, name) = match command_key.split_once(':') {
-            Some((group, name)) if !group.is_empty() && !name.is_empty() => (group, name),
+        let (group, name) = match command_key.split_once(char::is_whitespace) {
+            Some((group, name)) => {
+                let group = group.trim();
+                let name = name.trim();
+                if group.is_empty() || name.is_empty() {
+                    return Vec::new();
+                }
+                (group, name)
+            }
             _ => return Vec::new(),
         };
 
@@ -282,5 +306,32 @@ fn label_from_value(value: serde_json::Value) -> Option<String> {
             .and_then(|v| v.as_str().map(str::to_string))
             .or_else(|| map.into_iter().find_map(|(_, v)| v.as_str().map(str::to_string))),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::RegistryBackedProvider;
+
+    #[test]
+    fn parse_provider_key_accepts_space_and_colon() {
+        // Accepts canonical space-separated form
+        let parsed = RegistryBackedProvider::parse_provider_key("apps list");
+        assert!(parsed.is_some());
+        let (g, n) = parsed.unwrap();
+        assert_eq!(g, "apps");
+        assert_eq!(n, "list");
+
+        // Also accepts legacy colon-separated form for internal bindings
+        let parsed_colon = RegistryBackedProvider::parse_provider_key("apps:list");
+        assert!(parsed_colon.is_some());
+        let (g2, n2) = parsed_colon.unwrap();
+        assert_eq!(g2, "apps");
+        assert_eq!(n2, "list");
+
+        // Rejects missing name
+        assert!(RegistryBackedProvider::parse_provider_key("apps   ").is_none());
+        // Rejects missing group
+        assert!(RegistryBackedProvider::parse_provider_key("  list").is_none());
     }
 }

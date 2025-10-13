@@ -3,37 +3,47 @@ use heroku_types::Effect;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::Modifier,
+    style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap},
+    widgets::{Block, Borders, Clear, Paragraph, Wrap},
 };
 
 use crate::app::App;
 use crate::ui::components::component::Component;
-use crate::ui::components::workflows::{ProviderCacheSummary, WorkflowProviderSnapshot, format_cache_summary, format_preview};
+use crate::ui::components::table::{SelectableTableConfig, SelectableTableRow, SelectionMode, render_selectable_table};
+use crate::ui::components::workflows::{
+    FieldPickerPane, ProviderCacheSummary, WorkflowBindingTarget, format_cache_summary, format_preview, human_duration, summarize_values,
+};
+use crate::ui::theme::{roles::Theme, theme_helpers as th};
 use crate::ui::utils::centered_rect;
 use heroku_engine::{BindingSource, ProviderBindingOutcome, WorkflowRunState};
-use heroku_types::workflow::{WorkflowInputDefinition, WorkflowValueProvider};
+use heroku_types::{
+    provider::{ProviderArgumentContract, ProviderFieldContract},
+    workflow::{
+        WorkflowInputDefinition, WorkflowInputMode, WorkflowMissingBehavior, WorkflowProviderArgumentValue, WorkflowProviderErrorPolicy,
+        WorkflowValueProvider,
+    },
+};
 use serde_json::Value as JsonValue;
-use std::collections::HashSet;
+use std::{collections::HashSet, time::Duration};
 
 const MAX_CANDIDATES: usize = 24;
 
 #[derive(Clone, Debug)]
 struct UnresolvedItem {
-    input: String,
-    argument: String,
+    target: WorkflowBindingTarget,
     detail: String,
-    source: Option<BindingSource>,
-    required: bool,
     path: Option<String>,
     outcome: ProviderBindingOutcome,
 }
 
 #[derive(Clone, Debug)]
 struct CandidateItem {
-    label: String,
+    source_path: String,
+    preview: String,
     value: JsonValue,
+    metadata_badges: Vec<String>,
+    is_selected: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -79,6 +89,12 @@ pub struct WorkflowCollectorComponent {
     focus: CollectorFocus,
     /// When true, keystrokes modify the filter rather than control focus navigation.
     search_active: bool,
+    /// Indicates whether the detail pane currently shows the inline field picker.
+    field_picker_active: bool,
+    /// Maintains navigation state for the inline field picker tree.
+    field_picker_pane: FieldPickerPane,
+    /// When true, typed characters update the picker filter instead of moving selection.
+    field_picker_filter_active: bool,
 }
 
 impl Component for WorkflowCollectorComponent {
@@ -118,24 +134,43 @@ impl Component for WorkflowCollectorComponent {
     /// - May modify the application state (`app`) as part of key handling operations.
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         if self.search_active {
-            return self.handle_filter_input(key);
+            let effects = self.handle_filter_input(key);
+            self.deactivate_field_picker(app);
+            return effects;
+        }
+
+        if self.field_picker_active
+            && matches!(self.focus, CollectorFocus::Candidates)
+            && let Some(effects) = self.handle_field_picker_key(app, key)
+        {
+            return effects;
         }
 
         match key.code {
-            KeyCode::Esc => vec![Effect::CloseModal],
+            KeyCode::Esc => {
+                self.deactivate_field_picker(app);
+                vec![Effect::CloseModal]
+            }
             KeyCode::Tab => {
                 self.focus = self.focus.next();
+                if !matches!(self.focus, CollectorFocus::Candidates) {
+                    self.deactivate_field_picker(app);
+                }
                 self.sync_manual_value(app);
                 Vec::new()
             }
             KeyCode::BackTab => {
                 self.focus = self.focus.previous();
+                if !matches!(self.focus, CollectorFocus::Candidates) {
+                    self.deactivate_field_picker(app);
+                }
                 self.sync_manual_value(app);
                 Vec::new()
             }
             KeyCode::Char('/') if matches!(self.focus, CollectorFocus::UnresolvedList) => {
                 self.search_active = true;
                 self.filter_query.clear();
+                self.deactivate_field_picker(app);
                 Vec::new()
             }
             KeyCode::Char('r') | KeyCode::Char('R') => {
@@ -149,18 +184,72 @@ impl Component for WorkflowCollectorComponent {
                 }
                 if refreshed {
                     app.workflows.observe_provider_refresh_current();
+                    if self.field_picker_active {
+                        let run_state = app.workflows.active_run_state();
+                        self.field_picker_pane.sync_from_run_state(run_state);
+                    }
+                }
+                Vec::new()
+            }
+            KeyCode::Char('f') | KeyCode::Char('F') if matches!(self.focus, CollectorFocus::Candidates) => {
+                let view_model = CollectorViewModel::build(app, &self.filter_query, self.selected_index);
+                if self.field_picker_active {
+                    self.deactivate_field_picker(app);
+                } else {
+                    self.activate_field_picker(app, &view_model);
                 }
                 Vec::new()
             }
             KeyCode::F(2) => {
                 self.focus = CollectorFocus::Manual;
                 self.search_active = false;
+                self.deactivate_field_picker(app);
                 self.sync_manual_value(app);
                 Vec::new()
             }
-            KeyCode::Up => self.handle_vertical_navigation(app, true),
-            KeyCode::Down => self.handle_vertical_navigation(app, false),
+            KeyCode::Up => {
+                let effects = self.handle_vertical_navigation(app, true);
+                if matches!(self.focus, CollectorFocus::UnresolvedList) {
+                    self.deactivate_field_picker(app);
+                }
+                effects
+            }
+            KeyCode::Down => {
+                let effects = self.handle_vertical_navigation(app, false);
+                if matches!(self.focus, CollectorFocus::UnresolvedList) {
+                    self.deactivate_field_picker(app);
+                }
+                effects
+            }
             KeyCode::Enter => self.handle_enter(app),
+            KeyCode::Char(' ') if matches!(self.focus, CollectorFocus::Candidates) => {
+                if self.field_picker_active {
+                    return Vec::new();
+                }
+                let view_model = CollectorViewModel::build(app, &self.filter_query, self.selected_index);
+                if matches!(view_model.selection_mode, WorkflowInputMode::Multiple)
+                    && !view_model.candidate_items.is_empty()
+                    && let (Some(item), Some(candidate)) = (
+                        view_model.unresolved_items.get(self.selected_index).cloned(),
+                        view_model.candidate_items.get(self.selected_candidate),
+                    )
+                {
+                    let mut values = view_model.selected_values.clone();
+                    if candidate.is_selected {
+                        values.retain(|existing| existing != &candidate.value);
+                    } else if !values.iter().any(|existing| existing == &candidate.value) {
+                        values.push(candidate.value.clone());
+                    }
+
+                    let new_value = JsonValue::Array(values.clone());
+                    if let Err(err) = app.workflows.apply_binding_value(&item.target, new_value) {
+                        app.logs.entries.push(format!("Provider evaluation error: {err}"));
+                    } else {
+                        return self.finalize_binding_update(app);
+                    }
+                }
+                Vec::new()
+            }
             KeyCode::Char(c) if matches!(self.focus, CollectorFocus::Manual) && !c.is_control() => {
                 self.manual_dirty = true;
                 self.manual_value.push(c);
@@ -238,16 +327,6 @@ impl Component for WorkflowCollectorComponent {
         // Clear area under the modal
         frame.render_widget(Clear, modal_area);
 
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1), // header
-                Constraint::Min(6),    // body
-                Constraint::Length(5), // candidates + manual controls
-                Constraint::Length(1), // footer
-            ])
-            .split(modal_area);
-
         let theme = &*app.ctx.theme;
 
         let mut view_model = CollectorViewModel::build(app, &self.filter_query, self.selected_index);
@@ -262,9 +341,7 @@ impl Component for WorkflowCollectorComponent {
             self.selected_index = 0;
         }
 
-        if view_model.candidate_items.is_empty() {
-            self.selected_candidate = 0;
-        } else if self.selected_candidate >= view_model.candidate_items.len() {
+        if view_model.candidate_items.is_empty() || self.selected_candidate >= view_model.candidate_items.len() {
             self.selected_candidate = 0;
         }
         let unresolved_count = view_model.unresolved_items.len();
@@ -274,27 +351,137 @@ impl Component for WorkflowCollectorComponent {
             view_model.workflow_identifier, unresolved_count
         );
         let header_block = Block::default().title(header_title).borders(Borders::ALL);
-        frame.render_widget(header_block, chunks[0]);
+        let inner = header_block.inner(modal_area);
+        frame.render_widget(header_block, modal_area);
 
-        let body_chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(42), Constraint::Percentage(58)])
-            .split(chunks[1]);
+        let chunks = Layout::vertical([
+            Constraint::Min(6),    // body
+            Constraint::Length(5), // candidates + manual controls
+            Constraint::Length(1), // footer
+        ])
+        .split(inner);
+
+        let body_chunks = Layout::horizontal([Constraint::Percentage(42), Constraint::Percentage(58)]).split(chunks[0]);
 
         self.render_unresolved_list(frame, body_chunks[0], app, &view_model);
         self.render_details(frame, body_chunks[1], app, &view_model);
-        self.render_manual_and_candidates(frame, chunks[2], app, &view_model);
+        self.render_manual_and_candidates(frame, chunks[1], app, &view_model);
 
         let footer = Paragraph::new(Line::from(vec![
             Span::styled("[Esc] Close  ", theme.text_secondary_style().add_modifier(Modifier::BOLD)),
-            Span::raw("[Enter] Apply  [/] Filter  [r] Refresh  [Tab] Cycle focus  [F2] Manual"),
+            Span::raw("[Enter] Apply  [/] Filter  [r] Refresh  [f] Field picker  [Tab] Cycle focus  [F2] Manual"),
         ]))
         .block(Block::default().borders(Borders::ALL));
-        frame.render_widget(footer, chunks[3]);
+        frame.render_widget(footer, chunks[2]);
     }
 }
 
 impl WorkflowCollectorComponent {
+    fn handle_field_picker_key(&mut self, app: &mut App, key: KeyEvent) -> Option<Vec<Effect>> {
+        use KeyCode::*;
+
+        if self.field_picker_filter_active {
+            return match key.code {
+                Esc => {
+                    self.field_picker_filter_active = false;
+                    Some(Vec::new())
+                }
+                Enter => {
+                    self.field_picker_filter_active = false;
+                    Some(self.apply_field_picker_selection(app))
+                }
+                Backspace => {
+                    self.field_picker_pane.pop_filter_char();
+                    Some(Vec::new())
+                }
+                Char('/') => {
+                    self.field_picker_pane.clear_filter();
+                    Some(Vec::new())
+                }
+                Char(character) if !character.is_control() => {
+                    self.field_picker_pane.push_filter_char(character);
+                    Some(Vec::new())
+                }
+                _ => Some(Vec::new()),
+            };
+        }
+
+        match key.code {
+            Esc => {
+                self.deactivate_field_picker(app);
+                Some(Vec::new())
+            }
+            Up => {
+                self.field_picker_pane.select_prev();
+                Some(Vec::new())
+            }
+            Down => {
+                self.field_picker_pane.select_next();
+                Some(Vec::new())
+            }
+            Left => {
+                self.field_picker_pane.collapse_selected();
+                Some(Vec::new())
+            }
+            Right => {
+                self.field_picker_pane.expand_selected();
+                Some(Vec::new())
+            }
+            Enter => Some(self.apply_field_picker_selection(app)),
+            Char('/') => {
+                self.field_picker_filter_active = true;
+                self.field_picker_pane.clear_filter();
+                Some(Vec::new())
+            }
+            Char(character) if !character.is_control() => {
+                self.field_picker_filter_active = true;
+                self.field_picker_pane.clear_filter();
+                self.field_picker_pane.push_filter_char(character);
+                Some(Vec::new())
+            }
+            Char('f') | Char('F') => {
+                self.deactivate_field_picker(app);
+                Some(Vec::new())
+            }
+            _ => None,
+        }
+    }
+
+    fn activate_field_picker(&mut self, app: &mut App, view_model: &CollectorViewModel) {
+        if let Some(item) = view_model.unresolved_items.get(self.selected_index) {
+            self.field_picker_active = true;
+            self.field_picker_filter_active = false;
+            self.field_picker_pane.reset();
+            app.workflows.set_field_picker_target(item.target.clone());
+            let run_state = app.workflows.active_run_state();
+            self.field_picker_pane.sync_from_run_state(run_state);
+        }
+    }
+
+    fn deactivate_field_picker(&mut self, app: &mut App) {
+        if !self.field_picker_active {
+            return;
+        }
+        self.field_picker_active = false;
+        self.field_picker_filter_active = false;
+        self.field_picker_pane.reset();
+        app.workflows.clear_field_picker_target();
+    }
+
+    fn apply_field_picker_selection(&mut self, app: &mut App) -> Vec<Effect> {
+        let Some(value) = self.field_picker_pane.current_value() else {
+            return Vec::new();
+        };
+
+        if let Err(err) = app.workflows.apply_field_picker_value(value) {
+            app.logs.entries.push(format!("Failed to apply value from field picker: {err}"));
+            return Vec::new();
+        }
+
+        self.deactivate_field_picker(app);
+        self.finalize_binding_update(app)
+    }
+
     fn handle_filter_input(&mut self, key: KeyEvent) -> Vec<Effect> {
         match key.code {
             KeyCode::Esc => {
@@ -347,6 +534,14 @@ impl WorkflowCollectorComponent {
                 self.sync_manual_value(app);
             }
             CollectorFocus::Candidates => {
+                if self.field_picker_active {
+                    if moving_up {
+                        self.field_picker_pane.select_prev();
+                    } else {
+                        self.field_picker_pane.select_next();
+                    }
+                    return Vec::new();
+                }
                 let len = view_model.candidate_items.len();
                 if len == 0 {
                     return Vec::new();
@@ -392,6 +587,9 @@ impl WorkflowCollectorComponent {
                 Vec::new()
             }
             CollectorFocus::Candidates => {
+                if self.field_picker_active {
+                    return self.apply_field_picker_selection(app);
+                }
                 if let Some(item) = view_model.unresolved_items.get(self.selected_index).cloned()
                     && let Some(candidate) = view_model.candidate_items.get(self.selected_candidate)
                 {
@@ -418,7 +616,7 @@ impl WorkflowCollectorComponent {
         let view_model = CollectorViewModel::build(app, &self.filter_query, self.selected_index);
         if let Some(item) = view_model.unresolved_items.get(self.selected_index) {
             if let Some(state) = app.workflows.active_run_state() {
-                if let Some(value) = state.run_context.inputs.get(&item.input) {
+                if let Some(value) = state.run_context.inputs.get(&item.target.input) {
                     self.manual_value = format_json_value(value);
                 } else {
                     self.manual_value.clear();
@@ -430,37 +628,11 @@ impl WorkflowCollectorComponent {
     }
 
     fn apply_value(&mut self, app: &mut App, item: &UnresolvedItem, value: JsonValue) -> Vec<Effect> {
-        {
-            let Some(state) = app.workflows.active_run_state_mut() else {
-                app.logs.entries.push("No workflow run state available".into());
-                return Vec::new();
-            };
-
-            apply_value_to_state(state, item, value);
-
-            if let Err(err) = state.evaluate_input_providers() {
-                app.logs.entries.push(format!("Provider evaluation error: {err}"));
-                return Vec::new();
-            }
+        if let Err(err) = app.workflows.apply_binding_value(&item.target, value) {
+            app.logs.entries.push(format!("Provider evaluation error: {err}"));
+            return Vec::new();
         }
-
-        app.workflows.observe_provider_refresh_current();
-
-        self.manual_dirty = false;
-        self.sync_manual_value(app);
-
-        let model_after = CollectorViewModel::build(app, &self.filter_query, self.selected_index);
-        if model_after.unresolved_items.is_empty() {
-            match app.execute_workflow_from_collector() {
-                Ok(effects) => effects,
-                Err(err) => {
-                    app.logs.entries.push(format!("Workflow execution error: {err}"));
-                    Vec::new()
-                }
-            }
-        } else {
-            Vec::new()
-        }
+        self.finalize_binding_update(app)
     }
 
     fn render_unresolved_list(&mut self, frame: &mut Frame, area: Rect, app: &App, view_model: &CollectorViewModel) {
@@ -470,12 +642,12 @@ impl WorkflowCollectorComponent {
 
         for (index, item) in view_model.unresolved_items.iter().enumerate() {
             let prefix = if index == highlight_index { "▸" } else { " " };
-            let required_badge = if item.required { " [required]" } else { "" };
+            let required_badge = if item.target.required { " [required]" } else { "" };
             let detail = format!(
                 "{prefix} {input}.{argument}{required} — {detail}",
                 prefix = prefix,
-                input = item.input,
-                argument = item.argument,
+                input = item.target.input,
+                argument = item.target.argument,
                 required = required_badge,
                 detail = item.detail
             );
@@ -517,126 +689,399 @@ impl WorkflowCollectorComponent {
 
     fn render_details(&self, frame: &mut Frame, area: Rect, app: &App, view_model: &CollectorViewModel) {
         let theme = &*app.ctx.theme;
-        let block = Block::default()
-            .title("Details")
-            .borders(Borders::ALL)
-            .border_style(theme.border_style(false));
+        let block = th::block(theme, Some("Details"), false);
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
-        if let Some(item) = view_model.unresolved_items.get(self.selected_index) {
-            let provider_label = view_model.provider_label.as_deref().unwrap_or("-");
-            let mut lines = vec![
-                Line::from(vec![
-                    Span::styled("Input: ", theme.text_secondary_style()),
-                    Span::styled(&item.input, theme.text_primary_style()),
-                ]),
-                Line::from(vec![
-                    Span::styled("Argument: ", theme.text_secondary_style()),
-                    Span::styled(&item.argument, theme.text_primary_style()),
-                ]),
-                Line::from(vec![
-                    Span::styled("Provider: ", theme.text_secondary_style()),
-                    Span::styled(provider_label, theme.text_primary_style()),
-                ]),
-                Line::from(vec![
-                    Span::styled("Reason: ", theme.text_secondary_style()),
-                    Span::styled(&item.detail, theme.status_warning()),
-                ]),
-            ];
-
-            if let Some(path) = &item.path {
-                lines.push(Line::from(vec![
-                    Span::styled("Path: ", theme.text_secondary_style()),
-                    Span::styled(path, theme.text_primary_style()),
-                ]));
-            }
-
-            if let Some(definition) = &view_model.selected_input_definition {
-                if let Some(description) = definition.description.as_deref() {
-                    lines.push(Line::from(Span::styled(description, theme.text_muted_style())));
-                }
-            }
-
-            let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
-            frame.render_widget(paragraph, inner);
-        } else {
+        let Some(item) = view_model.unresolved_items.get(self.selected_index) else {
             let placeholder = Paragraph::new("Select an unresolved item or press Enter to run.")
                 .style(theme.text_muted_style())
                 .wrap(Wrap { trim: true });
             frame.render_widget(placeholder, inner);
+            return;
+        };
+
+        let provider_label = view_model.provider_label.as_deref().unwrap_or("-");
+        let mut lines: Vec<Line> = Vec::new();
+
+        lines.push(Line::from(vec![
+            Span::styled("Input: ", theme.text_secondary_style()),
+            Span::styled(&item.target.input, theme.text_primary_style().add_modifier(Modifier::BOLD)),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Argument: ", theme.text_secondary_style()),
+            Span::styled(&item.target.argument, theme.text_primary_style()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("Provider: ", theme.text_secondary_style()),
+            Span::styled(provider_label, theme.text_primary_style()),
+        ]));
+
+        if let Some(source) = binding_source_label(&item.target) {
+            lines.push(Line::from(vec![
+                Span::styled("Source: ", theme.text_secondary_style()),
+                Span::styled(source, theme.text_primary_style()),
+            ]));
         }
+
+        lines.push(Line::from(vec![
+            Span::styled("Required: ", theme.text_secondary_style()),
+            Span::styled(if item.target.required { "yes" } else { "no" }, theme.text_primary_style()),
+        ]));
+
+        let (status_label, status_style) = describe_outcome(theme, &item.outcome, &item.detail);
+        lines.push(Line::from(vec![
+            Span::styled("Status: ", theme.text_secondary_style()),
+            Span::styled(status_label, status_style),
+        ]));
+
+        if let Some(path) = &item.path {
+            lines.push(Line::from(vec![
+                Span::styled("Path: ", theme.text_secondary_style()),
+                Span::styled(path, theme.text_primary_style()),
+            ]));
+        }
+
+        if let Some(snapshot) = &view_model.provider_snapshot {
+            lines.push(Line::from(vec![
+                Span::styled("Cache: ", theme.text_secondary_style()),
+                Span::styled(format_cache_summary(snapshot), theme.text_primary_style()),
+            ]));
+        }
+
+        if !view_model.selected_value_labels.is_empty() {
+            lines.push(Line::from(vec![
+                Span::styled("Selected: ", theme.text_secondary_style()),
+                Span::styled(view_model.selected_value_labels.join(", "), theme.text_primary_style()),
+            ]));
+        }
+
+        if let Some(definition) = &view_model.selected_input_definition {
+            lines.push(Line::from(Span::raw("")));
+
+            if let Some(description) = definition.description.as_deref() {
+                lines.push(Line::from(Span::styled(description, theme.text_muted_style())));
+            }
+
+            lines.push(Line::from(vec![
+                Span::styled("Selection mode: ", theme.text_secondary_style()),
+                Span::styled(selection_mode_label(view_model.selection_mode), theme.text_primary_style()),
+            ]));
+
+            if let Some(type_hint) = definition.r#type.as_deref() {
+                lines.push(Line::from(vec![
+                    Span::styled("Type: ", theme.text_secondary_style()),
+                    Span::styled(type_hint, theme.text_primary_style()),
+                ]));
+            }
+
+            if let Some(ttl) = definition.cache_ttl_sec {
+                lines.push(Line::from(vec![
+                    Span::styled("Cache TTL: ", theme.text_secondary_style()),
+                    Span::styled(human_duration(Duration::from_secs(ttl)), theme.text_primary_style()),
+                ]));
+            }
+
+            if let Some(placeholder) = definition.placeholder.as_deref() {
+                lines.push(Line::from(vec![
+                    Span::styled("Placeholder: ", theme.text_secondary_style()),
+                    Span::styled(placeholder, theme.text_primary_style()),
+                ]));
+            }
+
+            if let Some(select) = definition.select.as_ref() {
+                let mut select_parts = Vec::new();
+                if let Some(value) = select.value_field.as_deref() {
+                    select_parts.push(format!("value={value}"));
+                }
+                if let Some(display) = select.display_field.as_deref() {
+                    select_parts.push(format!("display={display}"));
+                }
+                if let Some(id_field) = select.id_field.as_deref() {
+                    select_parts.push(format!("id={id_field}"));
+                }
+                if !select_parts.is_empty() {
+                    lines.push(Line::from(vec![
+                        Span::styled("Select: ", theme.text_secondary_style()),
+                        Span::styled(select_parts.join(" • "), theme.text_primary_style()),
+                    ]));
+                }
+            }
+
+            if let Some(validate) = definition.validate.as_ref() {
+                lines.push(Line::from(vec![
+                    Span::styled("Required by schema: ", theme.text_secondary_style()),
+                    Span::styled(if validate.required { "yes" } else { "no" }, theme.text_primary_style()),
+                ]));
+
+                if !validate.allowed_values.is_empty() {
+                    lines.push(Line::from(vec![
+                        Span::styled("Allowed: ", theme.text_secondary_style()),
+                        Span::styled(summarize_values(&validate.allowed_values, 6), theme.text_primary_style()),
+                    ]));
+                }
+
+                if let Some(pattern) = validate.pattern.as_deref() {
+                    lines.push(Line::from(vec![
+                        Span::styled("Pattern: ", theme.text_secondary_style()),
+                        Span::styled(pattern, theme.text_primary_style()),
+                    ]));
+                }
+
+                let mut length_parts = Vec::new();
+                if let Some(min) = validate.min_length {
+                    length_parts.push(format!("min {min}"));
+                }
+                if let Some(max) = validate.max_length {
+                    length_parts.push(format!("max {max}"));
+                }
+                if !length_parts.is_empty() {
+                    lines.push(Line::from(vec![
+                        Span::styled("Length: ", theme.text_secondary_style()),
+                        Span::styled(length_parts.join(" • "), theme.text_primary_style()),
+                    ]));
+                }
+            }
+
+            if !definition.enumerated_values.is_empty() {
+                lines.push(Line::from(vec![
+                    Span::styled("Enumerated: ", theme.text_secondary_style()),
+                    Span::styled(summarize_values(&definition.enumerated_values, 6), theme.text_primary_style()),
+                ]));
+            }
+
+            if let Some(policy) = definition.on_error.as_ref() {
+                lines.push(Line::from(vec![
+                    Span::styled("on_error: ", theme.text_secondary_style()),
+                    Span::styled(
+                        match policy {
+                            WorkflowProviderErrorPolicy::Manual => "manual",
+                            WorkflowProviderErrorPolicy::Cached => "cached",
+                            WorkflowProviderErrorPolicy::Fail => "fail",
+                        },
+                        theme.text_primary_style(),
+                    ),
+                ]));
+            }
+
+            if !definition.provider_args.is_empty() {
+                let args = describe_provider_args(definition.provider_args.iter());
+                if !args.is_empty() {
+                    lines.push(Line::from(vec![
+                        Span::styled("Provider args: ", theme.text_secondary_style()),
+                        Span::styled(args.join(" • "), theme.text_primary_style()),
+                    ]));
+                }
+            }
+        }
+
+        if !view_model.provider_argument_contracts.is_empty() {
+            lines.push(Line::from(Span::raw("")));
+            lines.push(Line::from(vec![Span::styled(
+                "Argument contract:",
+                theme.text_secondary_style().add_modifier(Modifier::BOLD),
+            )]));
+            for contract in &view_model.provider_argument_contracts {
+                let text = format_argument_contract(contract);
+                lines.push(Line::from(Span::styled(text, theme.text_primary_style())));
+            }
+        }
+
+        if !view_model.provider_return_fields.is_empty() {
+            lines.push(Line::from(vec![Span::styled(
+                "Return fields:",
+                theme.text_secondary_style().add_modifier(Modifier::BOLD),
+            )]));
+            for field in &view_model.provider_return_fields {
+                let text = format_return_field(field);
+                lines.push(Line::from(Span::styled(text, theme.text_primary_style())));
+            }
+        }
+
+        if matches!(self.focus, CollectorFocus::Candidates) {
+            lines.push(Line::from(Span::raw("")));
+            let hint = if self.field_picker_active {
+                "Field picker active — use ↑/↓ to browse, Enter to apply, Esc to return to candidates."
+            } else {
+                "Tip: press [f] to open the field picker for context browsing."
+            };
+            lines.push(Line::from(Span::styled(hint, theme.text_muted_style())));
+        }
+
+        let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, inner);
     }
 
-    fn render_manual_and_candidates(&self, frame: &mut Frame, area: Rect, app: &App, view_model: &CollectorViewModel) {
+    fn render_manual_and_candidates(&mut self, frame: &mut Frame, area: Rect, app: &App, view_model: &CollectorViewModel) {
         let theme = &*app.ctx.theme;
-        let layout = Layout::default()
+        let split = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(70), Constraint::Percentage(30)])
             .split(area);
+        let candidate_area = split[0];
+        let manual_area = split[1];
 
-        // Candidates panel
-        let candidate_title = if let Some(summary) = &view_model.provider_snapshot {
-            format!("Candidates — {}", format_cache_summary(summary))
+        if self.field_picker_active {
+            let run_state = app.workflows.active_run_state();
+            self.field_picker_pane.sync_from_run_state(run_state);
+            let target = app.workflows.field_picker_target();
+            render_field_picker_panel(
+                frame,
+                candidate_area,
+                theme,
+                &self.field_picker_pane,
+                target,
+                matches!(self.focus, CollectorFocus::Candidates),
+                self.field_picker_filter_active,
+            );
         } else {
-            "Candidates".to_string()
-        };
-
-        let candidate_block = Block::default()
-            .title(candidate_title)
-            .borders(Borders::ALL)
-            .border_style(theme.border_style(matches!(self.focus, CollectorFocus::Candidates)));
-        let candidate_inner = candidate_block.inner(layout[0]);
-        frame.render_widget(candidate_block, layout[0]);
-
-        if view_model.candidate_items.is_empty() {
-            let message = Paragraph::new("No candidates available. Use manual entry.")
-                .style(theme.text_muted_style())
-                .wrap(Wrap { trim: true });
-            frame.render_widget(message, candidate_inner);
-        } else {
-            let items: Vec<ListItem> = view_model
-                .candidate_items
-                .iter()
-                .enumerate()
-                .map(|(index, candidate)| {
-                    let label = if index == self.selected_candidate {
-                        Span::styled(candidate.label.clone(), theme.selection_style())
-                    } else {
-                        Span::styled(candidate.label.clone(), theme.text_primary_style())
-                    };
-                    ListItem::new(Line::from(label))
-                })
-                .collect();
-
-            let mut list_state = ratatui::widgets::ListState::default();
-            list_state.select(Some(self.selected_candidate.min(items.len().saturating_sub(1))));
-
-            let list = List::new(items).highlight_symbol("▸ ");
-            frame.render_stateful_widget(list, candidate_inner, &mut list_state);
+            render_candidate_table(
+                frame,
+                candidate_area,
+                theme,
+                view_model,
+                matches!(self.focus, CollectorFocus::Candidates),
+                self.selected_candidate,
+            );
         }
 
-        // Manual entry panel
-        let manual_block = Block::default()
-            .title("Manual Entry")
-            .borders(Borders::ALL)
-            .border_style(theme.border_style(matches!(self.focus, CollectorFocus::Manual)));
-        let manual_inner = manual_block.inner(layout[1]);
-        frame.render_widget(manual_block, layout[1]);
+        render_manual_panel(
+            frame,
+            manual_area,
+            theme,
+            view_model,
+            matches!(self.focus, CollectorFocus::Manual),
+            &self.manual_value,
+        );
+    }
 
-        let manual_value_line = if self.manual_value.is_empty() {
-            Line::from(Span::styled("<type value>", theme.text_muted_style()))
+    fn finalize_binding_update(&mut self, app: &mut App) -> Vec<Effect> {
+        self.manual_dirty = false;
+        self.sync_manual_value(app);
+
+        let model_after = CollectorViewModel::build(app, &self.filter_query, self.selected_index);
+        if model_after.unresolved_items.is_empty() {
+            match app.execute_workflow_from_collector() {
+                Ok(effects) => effects,
+                Err(err) => {
+                    app.logs.entries.push(format!("Workflow execution error: {err}"));
+                    Vec::new()
+                }
+            }
         } else {
-            Line::from(Span::styled(self.manual_value.clone(), theme.text_primary_style()))
-        };
-
-        let mut manual_lines = vec![manual_value_line];
-        if let Some(summary) = &view_model.provider_snapshot {
-            manual_lines.push(Line::from(Span::styled(format_cache_summary(summary), theme.text_muted_style())));
+            Vec::new()
         }
+    }
+}
 
-        let manual_paragraph = Paragraph::new(manual_lines).wrap(Wrap { trim: true });
-        frame.render_widget(manual_paragraph, manual_inner);
+fn render_candidate_table(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &dyn Theme,
+    view_model: &CollectorViewModel,
+    focused: bool,
+    selected_index: usize,
+) {
+    let title = view_model
+        .provider_label
+        .as_deref()
+        .map(|label| format!("Candidates ({label})"))
+        .unwrap_or_else(|| "Candidates".to_string());
+    let mut config = SelectableTableConfig::new(
+        title,
+        vec!["Source".to_string(), "Preview".to_string()],
+        selection_mode_for_input(view_model.selection_mode),
+    );
+
+    config.status_badge = view_model.provider_snapshot.as_ref().map(format_cache_summary);
+    config.selected_labels = view_model.selected_value_labels.clone();
+    config.metadata_title = Some("Why".to_string());
+    config.focused = focused;
+    let highlight = if view_model.candidate_items.is_empty() {
+        None
+    } else {
+        Some(selected_index.min(view_model.candidate_items.len().saturating_sub(1)))
+    };
+    config.highlight_index = highlight;
+
+    config.rows = view_model
+        .candidate_items
+        .iter()
+        .map(|candidate| {
+            SelectableTableRow::new(
+                vec![candidate.source_path.clone(), candidate.preview.clone()],
+                candidate.metadata_badges.clone(),
+                candidate.is_selected,
+            )
+        })
+        .collect();
+
+    render_selectable_table(frame, area, &config, theme);
+}
+
+fn render_field_picker_panel(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &dyn Theme,
+    pane: &FieldPickerPane,
+    target: Option<&WorkflowBindingTarget>,
+    focused: bool,
+    filter_active: bool,
+) {
+    let title = target
+        .map(|t| format!("Field Picker — {}.{}", t.input, t.argument))
+        .unwrap_or_else(|| "Field Picker".to_string());
+    let block = th::block(theme, Some(&title), focused);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+    pane.render_inline(frame, inner, theme, target, filter_active);
+}
+
+fn render_manual_panel(
+    frame: &mut Frame,
+    area: Rect,
+    theme: &dyn Theme,
+    view_model: &CollectorViewModel,
+    focused: bool,
+    manual_value: &str,
+) {
+    let block = th::block(theme, Some("Manual Entry"), focused);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    let mut lines: Vec<Line> = Vec::new();
+
+    if manual_value.is_empty() {
+        lines.push(Line::from(Span::styled("<type value>", theme.text_muted_style())));
+    } else {
+        lines.push(Line::from(Span::styled(manual_value.to_string(), theme.text_primary_style())));
+    }
+
+    if let Some(policy) = &view_model.provider_error_policy {
+        let policy_text = match policy {
+            WorkflowProviderErrorPolicy::Manual => "on_error: manual (always allow entry)",
+            WorkflowProviderErrorPolicy::Cached => "on_error: cached (reuse stored values)",
+            WorkflowProviderErrorPolicy::Fail => "on_error: fail (halt on error)",
+        };
+        lines.push(Line::from(Span::styled(policy_text, theme.text_secondary_style())));
+    }
+
+    if let Some(summary) = &view_model.provider_snapshot {
+        lines.push(Line::from(Span::styled(format_cache_summary(summary), theme.text_muted_style())));
+    }
+
+    lines.push(Line::from(Span::styled(
+        "[F2] edit • [r] retry provider • [Esc] close",
+        theme.text_muted_style(),
+    )));
+
+    frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), inner);
+}
+
+fn selection_mode_for_input(mode: WorkflowInputMode) -> SelectionMode {
+    match mode {
+        WorkflowInputMode::Single => SelectionMode::Single,
+        WorkflowInputMode::Multiple => SelectionMode::Multiple,
     }
 }
 
@@ -648,6 +1093,12 @@ struct CollectorViewModel {
     provider_label: Option<String>,
     candidate_items: Vec<CandidateItem>,
     provider_snapshot: Option<ProviderCacheSummary>,
+    selection_mode: WorkflowInputMode,
+    selected_values: Vec<JsonValue>,
+    selected_value_labels: Vec<String>,
+    provider_error_policy: Option<WorkflowProviderErrorPolicy>,
+    provider_argument_contracts: Vec<ProviderArgumentContract>,
+    provider_return_fields: Vec<ProviderFieldContract>,
 }
 
 impl CollectorViewModel {
@@ -672,11 +1123,13 @@ impl CollectorViewModel {
                                 continue;
                             }
                             unresolved.push(UnresolvedItem {
-                                input: input_name.clone(),
-                                argument: argument_name.clone(),
+                                target: WorkflowBindingTarget {
+                                    input: input_name.clone(),
+                                    argument: argument_name.clone(),
+                                    source: Some(prompt.source.clone()),
+                                    required: prompt.required,
+                                },
                                 detail: prompt.reason.message.clone(),
-                                source: Some(prompt.source.clone()),
-                                required: prompt.required,
                                 path: prompt.reason.path.clone(),
                                 outcome: ProviderBindingOutcome::Prompt(prompt.clone()),
                             });
@@ -686,11 +1139,13 @@ impl CollectorViewModel {
                                 continue;
                             }
                             unresolved.push(UnresolvedItem {
-                                input: input_name.clone(),
-                                argument: argument_name.clone(),
+                                target: WorkflowBindingTarget {
+                                    input: input_name.clone(),
+                                    argument: argument_name.clone(),
+                                    source: error.source.clone(),
+                                    required: false,
+                                },
                                 detail: error.message.clone(),
-                                source: error.source.clone(),
-                                required: false,
                                 path: None,
                                 outcome: ProviderBindingOutcome::Error(error.clone()),
                             });
@@ -700,11 +1155,13 @@ impl CollectorViewModel {
                                 continue;
                             }
                             unresolved.push(UnresolvedItem {
-                                input: input_name.clone(),
-                                argument: argument_name.clone(),
+                                target: WorkflowBindingTarget {
+                                    input: input_name.clone(),
+                                    argument: argument_name.clone(),
+                                    source: Some(decision.source.clone()),
+                                    required: false,
+                                },
                                 detail: decision.reason.message.clone(),
-                                source: Some(decision.source.clone()),
-                                required: false,
                                 path: decision.reason.path.clone(),
                                 outcome: ProviderBindingOutcome::Skip(decision.clone()),
                             });
@@ -718,7 +1175,7 @@ impl CollectorViewModel {
         let selected_item = unresolved.get(selected_index).cloned();
         let selected_definition = selected_item
             .as_ref()
-            .and_then(|item| state.workflow.inputs.get(&item.input).cloned());
+            .and_then(|item| state.workflow.inputs.get(&item.target.input).cloned());
         let provider_label = selected_definition
             .as_ref()
             .and_then(|definition| definition.provider.as_ref())
@@ -726,23 +1183,50 @@ impl CollectorViewModel {
                 WorkflowValueProvider::Id(id) => id.clone(),
                 WorkflowValueProvider::Detailed(detail) => detail.id.clone(),
             });
+        let provider_contract = if let Some(label) = provider_label.as_ref() {
+            match app.ctx.registry.lock() {
+                Ok(registry) => registry.provider_contracts.get(label).cloned(),
+                Err(_) => None,
+            }
+        } else {
+            None
+        };
         let provider_cache_key = selected_item
             .as_ref()
-            .and_then(|item| provider_label.as_ref().map(|label| format!("{}:{label}", item.input)));
+            .and_then(|item| provider_label.as_ref().map(|label| format!("{}:{label}", item.target.input)));
         let provider_snapshot = provider_cache_key
             .as_deref()
             .and_then(|key| app.workflows.provider_snapshot(key))
-            .map(|snapshot| ProviderCacheSummary::from_snapshot(snapshot));
+            .map(ProviderCacheSummary::from_snapshot);
+        let selection_mode = selected_definition
+            .as_ref()
+            .map(|definition| definition.mode)
+            .unwrap_or(WorkflowInputMode::Single);
+        let selected_values = selected_item
+            .as_ref()
+            .and_then(|item| state.run_context.inputs.get(&item.target.input))
+            .map(|value| normalize_selected_values(value, selection_mode))
+            .unwrap_or_default();
+        let selected_value_labels = selected_values.iter().map(format_preview).collect::<Vec<_>>();
         let candidate_items = selected_item
             .as_ref()
-            .map(|item| collect_candidates(state, item))
+            .map(|item| collect_candidates(state, item, &selected_values))
             .unwrap_or_default();
+        let provider_error_policy = selected_definition.as_ref().and_then(|definition| definition.on_error.clone());
 
         model.unresolved_items = unresolved;
         model.selected_input_definition = selected_definition;
         model.provider_label = provider_label;
         model.candidate_items = candidate_items;
         model.provider_snapshot = provider_snapshot;
+        model.selection_mode = selection_mode;
+        model.selected_values = selected_values;
+        model.selected_value_labels = selected_value_labels;
+        model.provider_error_policy = provider_error_policy;
+        if let Some(contract) = provider_contract {
+            model.provider_argument_contracts = contract.arguments;
+            model.provider_return_fields = contract.returns.fields;
+        }
         model
     }
 }
@@ -765,6 +1249,23 @@ fn filter_matches(filter: &str, input_name: &str, argument_name: &str, detail: &
     input_name.contains(&filter) || argument_name.contains(&filter) || detail.contains(&filter)
 }
 
+fn normalize_selected_values(value: &JsonValue, mode: WorkflowInputMode) -> Vec<JsonValue> {
+    match mode {
+        WorkflowInputMode::Single => {
+            if value.is_null() {
+                Vec::new()
+            } else {
+                vec![value.clone()]
+            }
+        }
+        WorkflowInputMode::Multiple => match value {
+            JsonValue::Array(items) => items.clone(),
+            JsonValue::Null => Vec::new(),
+            other => vec![other.clone()],
+        },
+    }
+}
+
 fn format_json_value(value: &JsonValue) -> String {
     match value {
         JsonValue::String(text) => text.clone(),
@@ -775,148 +1276,279 @@ fn format_json_value(value: &JsonValue) -> String {
     }
 }
 
-fn apply_value_to_state(state: &mut WorkflowRunState, item: &UnresolvedItem, value: JsonValue) {
-    let value_for_state = value.clone();
+fn collect_candidates(state: &WorkflowRunState, item: &UnresolvedItem, selected_values: &[JsonValue]) -> Vec<CandidateItem> {
+    let mut accumulator = CandidateAccumulator::new(selected_values);
 
-    match &item.source {
-        Some(BindingSource::Input { input_name }) => {
-            state.set_input_value(input_name, value_for_state.clone());
-        }
-        Some(BindingSource::Step { step_id }) => {
-            state.run_context_mut().steps.insert(step_id.clone(), value_for_state.clone());
-        }
-        Some(BindingSource::Multiple { step_id, input_name }) => {
-            state.set_input_value(input_name, value_for_state.clone());
-            state.run_context_mut().steps.insert(step_id.clone(), value_for_state.clone());
-        }
-        None => {}
-    }
-
-    state.set_input_value(&item.input, value_for_state.clone());
-    state.persist_provider_outcome(&item.input, &item.argument, ProviderBindingOutcome::Resolved(value_for_state));
-}
-
-fn collect_candidates(state: &WorkflowRunState, item: &UnresolvedItem) -> Vec<CandidateItem> {
-    let mut candidates = Vec::new();
-    let mut seen_values = HashSet::new();
-
-    if let Some(existing) = state.run_context.inputs.get(&item.input) {
-        push_candidate(
-            format!("inputs.{} (current)", item.input),
+    if let Some(existing) = state.run_context.inputs.get(&item.target.input) {
+        accumulator.push_with_metadata(
+            format!("inputs.{} (current)", item.target.input),
             existing,
-            &mut candidates,
-            &mut seen_values,
+            vec!["current".to_string(), format!("source: inputs.{}", item.target.input)],
         );
     }
 
-    match &item.source {
+    match &item.target.source {
         Some(BindingSource::Input { input_name }) => {
             if let Some(value) = state.run_context.inputs.get(input_name) {
-                gather_json_candidates(&format!("inputs.{input_name}"), value, &mut candidates, &mut seen_values, 0);
+                accumulator.gather_nested(&format!("inputs.{input_name}"), value, 0, &[format!("source: inputs.{input_name}")]);
             }
         }
         Some(BindingSource::Step { step_id }) => {
             if let Some(value) = state.run_context.steps.get(step_id) {
-                gather_json_candidates(&format!("steps.{step_id}"), value, &mut candidates, &mut seen_values, 0);
+                accumulator.gather_nested(&format!("steps.{step_id}"), value, 0, &[format!("source: steps.{step_id}")]);
             }
         }
         Some(BindingSource::Multiple { step_id, input_name }) => {
             if let Some(value) = state.run_context.inputs.get(input_name) {
-                gather_json_candidates(&format!("inputs.{input_name}"), value, &mut candidates, &mut seen_values, 0);
+                accumulator.gather_nested(&format!("inputs.{input_name}"), value, 0, &[format!("source: inputs.{input_name}")]);
             }
             if let Some(value) = state.run_context.steps.get(step_id) {
-                gather_json_candidates(&format!("steps.{step_id}"), value, &mut candidates, &mut seen_values, 0);
+                accumulator.gather_nested(&format!("steps.{step_id}"), value, 0, &[format!("source: steps.{step_id}")]);
             }
         }
         None => {}
     }
 
-    if candidates.len() < MAX_CANDIDATES {
+    if accumulator.len() < MAX_CANDIDATES {
         for (input_name, value) in state.run_context.inputs.iter() {
-            gather_json_candidates(&format!("inputs.{input_name}"), value, &mut candidates, &mut seen_values, 0);
-            if candidates.len() >= MAX_CANDIDATES {
+            accumulator.gather_nested(&format!("inputs.{input_name}"), value, 0, &[format!("source: inputs.{input_name}")]);
+            if accumulator.len() >= MAX_CANDIDATES {
                 break;
             }
         }
     }
 
-    if candidates.len() < MAX_CANDIDATES {
+    if accumulator.len() < MAX_CANDIDATES {
         for (step_id, value) in state.run_context.steps.iter() {
-            gather_json_candidates(&format!("steps.{step_id}"), value, &mut candidates, &mut seen_values, 0);
-            if candidates.len() >= MAX_CANDIDATES {
+            accumulator.gather_nested(&format!("steps.{step_id}"), value, 0, &[format!("source: steps.{step_id}")]);
+            if accumulator.len() >= MAX_CANDIDATES {
                 break;
             }
         }
     }
 
-    candidates.truncate(MAX_CANDIDATES);
-    candidates
+    accumulator.into_items()
 }
 
-fn gather_json_candidates(
-    base_label: &str,
-    value: &JsonValue,
-    candidates: &mut Vec<CandidateItem>,
-    seen: &mut HashSet<String>,
-    depth: usize,
-) {
-    if candidates.len() >= MAX_CANDIDATES {
-        return;
+struct CandidateAccumulator<'a> {
+    items: Vec<CandidateItem>,
+    seen: HashSet<String>,
+    selected_values: &'a [JsonValue],
+}
+
+impl<'a> CandidateAccumulator<'a> {
+    fn new(selected_values: &'a [JsonValue]) -> Self {
+        Self {
+            items: Vec::new(),
+            seen: HashSet::new(),
+            selected_values,
+        }
     }
 
-    if depth > 3 {
-        return;
+    fn len(&self) -> usize {
+        self.items.len()
     }
 
-    match value {
-        JsonValue::String(_) | JsonValue::Number(_) | JsonValue::Bool(_) => {
-            push_candidate(base_label.to_string(), value, candidates, seen);
+    fn into_items(mut self) -> Vec<CandidateItem> {
+        self.items.truncate(MAX_CANDIDATES);
+        self.items
+    }
+
+    fn gather_nested(&mut self, base_label: &str, value: &JsonValue, depth: usize, metadata: &[String]) {
+        if self.items.len() >= MAX_CANDIDATES || depth > 3 {
+            return;
         }
-        JsonValue::Array(items) => {
-            for (index, item) in items.iter().enumerate() {
-                let label = format!("{base_label}[{index}]");
-                gather_json_candidates(&label, item, candidates, seen, depth + 1);
-                if candidates.len() >= MAX_CANDIDATES {
-                    break;
+
+        match value {
+            JsonValue::String(_) | JsonValue::Number(_) | JsonValue::Bool(_) => {
+                self.push_with_metadata(base_label.to_string(), value, metadata.to_vec());
+            }
+            JsonValue::Array(items) => {
+                for (index, item) in items.iter().enumerate() {
+                    let label = format!("{base_label}[{index}]");
+                    self.gather_nested(&label, item, depth + 1, metadata);
+                    if self.items.len() >= MAX_CANDIDATES {
+                        break;
+                    }
                 }
             }
-        }
-        JsonValue::Object(map) => {
-            for (key, item_value) in map.iter() {
-                let label = if base_label.is_empty() {
-                    key.to_string()
-                } else {
-                    format!("{base_label}.{key}")
-                };
-                gather_json_candidates(&label, item_value, candidates, seen, depth + 1);
-                if candidates.len() >= MAX_CANDIDATES {
-                    break;
+            JsonValue::Object(map) => {
+                for (key, item_value) in map.iter() {
+                    let label = if base_label.is_empty() {
+                        key.to_string()
+                    } else {
+                        format!("{base_label}.{key}")
+                    };
+                    self.gather_nested(&label, item_value, depth + 1, metadata);
+                    if self.items.len() >= MAX_CANDIDATES {
+                        break;
+                    }
                 }
             }
+            JsonValue::Null => {}
         }
-        JsonValue::Null => {}
+    }
+
+    fn push_with_metadata(&mut self, source_path: String, value: &JsonValue, mut metadata_badges: Vec<String>) {
+        if self.items.len() >= MAX_CANDIDATES {
+            return;
+        }
+
+        let fingerprint = serde_json::to_string(value).unwrap_or_default();
+        if !self.seen.insert(format!("{source_path}|{fingerprint}")) {
+            return;
+        }
+
+        if !metadata_badges.iter().any(|badge| badge.starts_with("type:")) {
+            metadata_badges.push(value_type_label(value));
+        }
+
+        let preview = format_preview(value);
+        let is_selected = self.selected_values.iter().any(|selected| selected == value);
+        self.items.push(CandidateItem {
+            source_path,
+            preview,
+            value: value.clone(),
+            metadata_badges,
+            is_selected,
+        });
     }
 }
 
-fn push_candidate(label: String, value: &JsonValue, candidates: &mut Vec<CandidateItem>, seen: &mut HashSet<String>) {
-    if candidates.len() >= MAX_CANDIDATES {
-        return;
-    }
-
-    let fingerprint = serde_json::to_string(value).unwrap_or_default();
-    if !seen.insert(format!("{label}|{fingerprint}")) {
-        return;
-    }
-
-    let preview = format_preview(value);
-    let display_label = if preview.is_empty() {
-        label.clone()
-    } else {
-        format!("{label} → {preview}")
+fn value_type_label(value: &JsonValue) -> String {
+    let label = match value {
+        JsonValue::String(_) => "type: string",
+        JsonValue::Number(_) => "type: number",
+        JsonValue::Bool(_) => "type: bool",
+        JsonValue::Array(_) => "type: array",
+        JsonValue::Object(_) => "type: object",
+        JsonValue::Null => "type: null",
     };
+    label.to_string()
+}
 
-    candidates.push(CandidateItem {
-        label: display_label,
-        value: value.clone(),
-    });
+fn binding_source_label(target: &WorkflowBindingTarget) -> Option<String> {
+    let source = target.source.as_ref()?;
+    let label = match source {
+        BindingSource::Input { input_name } => format!("inputs.{input_name}"),
+        BindingSource::Step { step_id } => format!("steps.{step_id}"),
+        BindingSource::Multiple { step_id, input_name } => format!("steps.{step_id} + inputs.{input_name}"),
+    };
+    Some(label)
+}
+
+fn describe_outcome(theme: &dyn Theme, outcome: &ProviderBindingOutcome, detail: &str) -> (String, Style) {
+    let (label, style) = match outcome {
+        ProviderBindingOutcome::Prompt(_) => ("Requires input", theme.status_warning()),
+        ProviderBindingOutcome::Error(_) => ("Provider error", theme.status_error()),
+        ProviderBindingOutcome::Skip(_) => ("Skipped", theme.status_warning()),
+        ProviderBindingOutcome::Resolved(_) => ("Resolved", theme.status_success()),
+    };
+    let message = if detail.is_empty() {
+        label.to_string()
+    } else {
+        format!("{label}: {detail}")
+    };
+    (message, style)
+}
+
+fn selection_mode_label(mode: WorkflowInputMode) -> &'static str {
+    match mode {
+        WorkflowInputMode::Single => "single value",
+        WorkflowInputMode::Multiple => "multiple values",
+    }
+}
+
+fn describe_provider_args<'a, I>(args: I) -> Vec<String>
+where
+    I: IntoIterator<Item = (&'a String, &'a WorkflowProviderArgumentValue)>,
+{
+    let mut result = Vec::new();
+    for (name, value) in args {
+        let description = match value {
+            WorkflowProviderArgumentValue::Literal(literal) => {
+                let trimmed = literal.trim();
+                let display = if trimmed.chars().any(char::is_whitespace) {
+                    format!("\"{trimmed}\"")
+                } else {
+                    trimmed.to_string()
+                };
+                format!("{name}={display}")
+            }
+            WorkflowProviderArgumentValue::Binding(binding) => {
+                let mut target_parts = Vec::new();
+                if let Some(step) = &binding.from_step {
+                    target_parts.push(format!("steps.{step}"));
+                }
+                if let Some(input) = &binding.from_input {
+                    target_parts.push(format!("inputs.{input}"));
+                }
+                if target_parts.is_empty() {
+                    target_parts.push("context".to_string());
+                }
+                let mut target = target_parts.join(" | ");
+                if let Some(path) = binding.path.as_deref().filter(|path| !path.is_empty()) {
+                    if !target.ends_with('.') && !path.starts_with('[') {
+                        target.push('.');
+                    }
+                    target.push_str(path);
+                }
+
+                let mut extras = Vec::new();
+                if binding.required == Some(true) {
+                    extras.push("required".to_string());
+                }
+                if let Some(on_missing) = binding.on_missing.as_ref() {
+                    extras.push(format!("on_missing={}", describe_missing_behavior(on_missing)));
+                }
+
+                if extras.is_empty() {
+                    format!("{name}⇢{target}")
+                } else {
+                    format!("{name}⇢{target} ({})", extras.join(", "))
+                }
+            }
+        };
+        result.push(description);
+    }
+    result
+}
+
+fn describe_missing_behavior(behavior: &WorkflowMissingBehavior) -> &'static str {
+    match behavior {
+        WorkflowMissingBehavior::Prompt => "prompt",
+        WorkflowMissingBehavior::Skip => "skip",
+        WorkflowMissingBehavior::Fail => "fail",
+    }
+}
+
+fn format_argument_contract(contract: &ProviderArgumentContract) -> String {
+    let mut text = format!("• {}", contract.name);
+    if contract.required {
+        text.push_str(" (required)");
+    }
+    if !contract.accepts.is_empty() {
+        text.push_str(" • accepts ");
+        text.push_str(&contract.accepts.join(", "));
+    }
+    if let Some(prefer) = &contract.prefer {
+        text.push_str(" • prefer ");
+        text.push_str(prefer);
+    }
+    text
+}
+
+fn format_return_field(field: &ProviderFieldContract) -> String {
+    let mut text = format!("• {}", field.name);
+    if let Some(ty) = &field.r#type {
+        text.push_str(" (");
+        text.push_str(ty);
+        text.push(')');
+    }
+    if !field.tags.is_empty() {
+        text.push_str(" [");
+        text.push_str(&field.tags.join(", "));
+        text.push(']');
+    }
+    text
 }

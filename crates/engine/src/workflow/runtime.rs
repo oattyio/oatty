@@ -7,11 +7,9 @@
 use std::collections::HashMap;
 
 use crate::model::{ContractField, OutputContract, StepRepeat, StepSpec, WorkflowSpec};
-use heroku_types::workflow::{WorkflowOutputContract, WorkflowOutputField, WorkflowRepeat, WorkflowStepDefinition};
+use heroku_types::workflow::{RuntimeWorkflow, WorkflowOutputContract, WorkflowOutputField, WorkflowRepeat, WorkflowStepDefinition};
 use indexmap::IndexMap;
 use serde_json::{Map as JsonMap, Value};
-
-use super::document::RuntimeWorkflow;
 
 /// Builds an engine-friendly `WorkflowSpec` from a runtime workflow definition.
 pub fn workflow_spec_from_runtime(workflow: &RuntimeWorkflow) -> WorkflowSpec {
@@ -78,7 +76,6 @@ fn convert_output_field(field: &WorkflowOutputField) -> ContractField {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflow::document::RuntimeWorkflow;
     use heroku_types::workflow::{WorkflowOutputContract, WorkflowOutputField, WorkflowRepeat};
 
     fn sample_runtime_workflow() -> RuntimeWorkflow {
@@ -86,7 +83,7 @@ mod tests {
         with.insert("app".into(), Value::String("${{ inputs.app }}".into()));
         let steps = vec![WorkflowStepDefinition {
             id: "s1".into(),
-            run: "apps:list".into(),
+            run: "apps list".into(),
             description: None,
             depends_on: Vec::new(),
             with,

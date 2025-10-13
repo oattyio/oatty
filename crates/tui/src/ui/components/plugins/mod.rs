@@ -10,6 +10,7 @@ mod logs;
 mod plugin_editor;
 mod plugins_component;
 mod state;
+#[allow(clippy::module_inception)]
 mod table;
 mod types;
 

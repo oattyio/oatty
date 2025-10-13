@@ -1,0 +1,38 @@
+workflow: postgres_copy_between_apps
+description: "Copy data from a source app's database to a target app's database. Useful for refreshing staging from production."
+inputs:
+  source_app:
+    description: "App to copy FROM"
+    provider: apps list
+    select: { value_field: name, display_field: name }
+  source_db:
+    description: "Source DB attachment on source app (e.g., HEROKU_POSTGRESQL_IVORY_URL)"
+    provider: apps addons:list
+    depends_on:
+      app: ${{ inputs.source_app }}
+    select: { value_field: name, display_field: name }
+  target_app:
+    description: "App to copy TO"
+    provider: apps list
+    select: { value_field: name, display_field: name }
+  target_db:
+    description: "Target DB attachment on target app"
+    provider: apps addons:list
+    depends_on:
+      app: ${{ inputs.target_app }}
+    select: { value_field: name, display_field: name }
+steps:
+  - id: confirm
+    description: "Show selected source and target before copying"
+    run: noop echo
+    body:
+      message: "Copying from ${{ inputs.source_app }}:${{ inputs.source_db }} to ${{ inputs.target_app }}:${{ inputs.target_db }}"
+
+  - id: copy
+    description: "Perform the copy operation. Runs in the context of the TARGET app."
+    run: apps pg:copy
+    with:
+      app: ${{ inputs.target_app }}
+    body:
+      source: ${{ inputs.source_db }}
+      target: ${{ inputs.target_db }}

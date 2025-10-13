@@ -1,6 +1,7 @@
 use super::roles::Theme;
 use crate::ui::theme::roles::ThemeRoles;
 use ratatui::text::Line;
+use ratatui::widgets::ListItem;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -77,7 +78,7 @@ pub fn table_row_styles(theme: &dyn Theme) -> (Style, Style) {
 /// brightness is unaffected.
 pub fn table_row_style(theme: &dyn Theme, row_index: usize) -> Style {
     let (even, odd) = table_row_styles(theme);
-    if row_index % 2 == 0 { even } else { odd }
+    if row_index.is_multiple_of(2) { even } else { odd }
 }
 
 /// Style for a selected row.
@@ -136,10 +137,7 @@ pub fn button_secondary_style(theme: &dyn Theme, enabled: bool, selected: bool) 
             ..
         } = theme.roles().clone();
         let style = Style::default().fg(accent_secondary);
-        if selected {
-            return style.bg(selection_bg);
-        }
-        return style;
+        if selected { style.bg(selection_bg) } else { style }
     } else {
         theme.text_muted_style()
     }
@@ -148,8 +146,8 @@ pub fn button_secondary_style(theme: &dyn Theme, enabled: bool, selected: bool) 
 /// Badge/tag style (filled accent, readable text).
 #[allow(dead_code)]
 pub fn badge_style(theme: &dyn Theme) -> Style {
-    let ThemeRoles { accent_secondary, .. } = theme.roles().clone();
-    Style::default().bg(accent_secondary).fg(Color::Black)
+    // Delegate to Theme’s default badge style so all themes are consistent
+    theme.badge_style()
 }
 
 /// Build a standard paragraph styled with the primary text.
@@ -158,28 +156,50 @@ pub fn paragraph<'a>(theme: &dyn Theme, text: impl Into<Span<'a>>) -> Paragraph<
     Paragraph::new(text.into()).style(theme.text_primary_style())
 }
 
+/// Immutable configuration specifying how a button should be rendered.
+#[derive(Debug, Clone, Copy)]
+pub struct ButtonRenderOptions {
+    /// Whether the button is interactable and should display active styling.
+    pub enabled: bool,
+    /// Indicates whether the button currently owns focus.
+    pub focused: bool,
+    /// Highlights the button as the selected option.
+    pub selected: bool,
+    /// Border configuration to apply when drawing the button.
+    pub borders: Borders,
+}
+
+impl ButtonRenderOptions {
+    /// Construct a new `ButtonRenderOptions` using positional arguments.
+    pub const fn new(enabled: bool, focused: bool, selected: bool, borders: Borders) -> Self {
+        Self {
+            enabled,
+            focused,
+            selected,
+            borders,
+        }
+    }
+}
+
 /// Renders a button widget within a given area on the terminal frame.
 ///
 /// # Parameters
 /// - `frame`: A mutable reference to the terminal `Frame` where the button will be rendered.
 /// - `area`: A `Rect` specifying the area of the terminal where the button will be drawn.
 /// - `label`: A string slice (`&str`) that represents the label or text to be displayed on the button.
-/// - `is_enabled`: A boolean flag indicating whether the button is enabled. Disabled buttons are styled with a muted appearance.
-/// - `is_focused`: A boolean flag indicating whether the button is currently focused.
-/// - `is_selected`: A boolean flag indicating whether the button is selected. May modify its visual appearance if true.
 /// - `theme`: A reference to an object implementing the `Theme` trait, used to retrieve styles for borders, text, and other visual elements based on button states.
-/// - `borders`: A `Borders` parameter specifying which sides of the button (if any) should have a border drawn.
+/// - `options`: Aggregated button state describing enabled, focused, selected, and border configuration.
 ///
 /// # Behavior
 /// This function renders a button with the following visual traits and rules:
-/// - The border style is determined by whether the button is enabled (`border_style`) and focused.
+/// - The border style is determined by whether the button is enabled and focused.
 /// - The button's main style (e.g., text color and background) is defined based on its enabled state and selection state.
 /// - Padding within the button is added only if no borders are present, ensuring consistent dimensions regardless of whether borders are drawn.
 /// - The label is centrally aligned and displayed inside the button's area.
 ///
 /// # Styling
-/// - If `is_enabled` is `false`, the button and its border use a "muted" style provided by the `theme`.
-/// - If `is_enabled` is `true`, the border style depends on whether the button is focused, and the button itself may use a secondary style, optionally modified by the `is_selected` state.
+/// - Disabled buttons use a muted style provided by the `theme`.
+/// - Enabled buttons rely on secondary styling, optionally accented when marked as selected.
 ///
 /// # Examples
 /// ```
@@ -190,36 +210,24 @@ pub fn paragraph<'a>(theme: &dyn Theme, text: impl Into<Span<'a>>) -> Paragraph<
 ///     &mut frame,
 ///     area,
 ///     "Click Me",
-///     true,           // Button is enabled
-///     true,           // Button is focused
-///     false,          // Button is not selected
 ///     &theme,
-///     Borders::ALL,   // Draw a border on all sides of the button
+///     ButtonRenderOptions::new(true, true, false, Borders::ALL),
 /// );
 /// ```
-pub fn render_button(
-    frame: &mut Frame,
-    area: Rect,
-    label: &str,
-    is_enabled: bool,
-    is_focused: bool,
-    is_selected: bool,
-    theme: &dyn Theme,
-    borders: Borders,
-) {
-    let border_style = if is_enabled {
-        theme.border_style(is_focused)
+pub fn render_button(frame: &mut Frame, area: Rect, label: &str, theme: &dyn Theme, options: ButtonRenderOptions) {
+    let border_style = if options.enabled {
+        theme.border_style(options.focused)
     } else {
         theme.text_muted_style()
     };
 
-    let button_style = if is_enabled {
-        button_secondary_style(theme, true, is_selected)
+    let button_style = if options.enabled {
+        button_secondary_style(theme, true, options.selected)
     } else {
         theme.text_muted_style()
     };
 
-    let padding = if borders.is_empty() {
+    let padding = if options.borders.is_empty() {
         Padding::uniform(1) // Add padding when no borders to match bordered button size
     } else {
         Padding::uniform(0) // No padding when borders are present
@@ -228,7 +236,12 @@ pub fn render_button(
     frame.render_widget(
         Paragraph::new(label)
             .centered()
-            .block(Block::bordered().borders(borders).border_style(border_style).padding(padding))
+            .block(
+                Block::bordered()
+                    .borders(options.borders)
+                    .border_style(border_style)
+                    .padding(padding),
+            )
             .style(button_style),
         area,
     );
@@ -299,4 +312,45 @@ pub fn create_radio_button(label: &str, is_selected: bool, is_focused: bool, the
     } else {
         Line::from(radio_spans).style(theme.text_primary_style())
     }
+}
+
+pub fn create_list_item_with_match(needle: String, display: String, theme: &dyn Theme) -> ListItem<'static> {
+    if needle.is_empty() {
+        return ListItem::new(Line::from(Span::styled(display, theme.text_primary_style())));
+    }
+
+    let mut spans: Vec<Span> = Vec::new();
+    let hay = display.as_str();
+    let mut i = 0usize;
+    let needle_lower = needle.to_ascii_lowercase();
+    let hay_lower = hay.to_ascii_lowercase();
+
+    // Find and highlight all matches
+    while let Some(pos) = hay_lower[i..].find(&needle_lower) {
+        let start = i + pos;
+
+        // Add text before the match
+        if start > i {
+            spans.push(Span::styled(hay[i..start].to_string(), theme.text_primary_style()));
+        }
+
+        // Add highlighted match
+        let end = start + needle.len();
+        spans.push(Span::styled(
+            hay[start..end].to_string(),
+            theme.accent_emphasis_style().add_modifier(Modifier::BOLD),
+        ));
+
+        i = end;
+        if i >= hay.len() {
+            break;
+        }
+    }
+
+    // Add remaining text after last match
+    if i < hay.len() {
+        spans.push(Span::styled(hay[i..].to_string(), theme.text_primary_style()));
+    }
+
+    ListItem::new(Line::from(spans))
 }

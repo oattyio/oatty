@@ -24,9 +24,6 @@ impl PluginLogsState {
             focus: FocusFlag::named("plugins.logs"),
         }
     }
-    pub fn set_lines(&mut self, lines: Vec<String>) {
-        self.lines = lines;
-    }
     pub fn toggle_follow(&mut self) {
         self.follow = !self.follow;
     }

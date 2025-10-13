@@ -16,8 +16,6 @@ pub const ORANGE: Color = Color::Rgb(0xFF, 0xB8, 0x6C); // #ffb86c
 pub const PINK: Color = Color::Rgb(0xFF, 0x79, 0xC6); // #ff79c6
 pub const PURPLE: Color = Color::Rgb(0xBD, 0x93, 0xF9); // #bd93f9
 pub const RED: Color = Color::Rgb(0xFF, 0x55, 0x55); // #ff5555
-pub const YELLOW: Color = Color::Rgb(0xF1, 0xFA, 0x8C); // #f1fa8c
-
 // THEME.md authoritative aliases (Dracula mapping)
 pub const BG_MAIN: Color = BG; // App/root background
 pub const BG_PANEL: Color = BG; // Panels share background in Dracula

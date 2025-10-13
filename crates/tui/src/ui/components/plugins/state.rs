@@ -49,6 +49,9 @@ impl PluginsState {
     }
 
     pub fn clear_details_state(&mut self) {
+        if let Some(details) = &mut self.details {
+            details.reset();
+        }
         self.details = None;
     }
 }
@@ -62,12 +65,13 @@ impl Default for PluginsState {
 impl HasFocus for PluginsState {
     fn build(&self, builder: &mut FocusBuilder) {
         let tag = builder.start(self);
-        // Header search input and main grid
-        builder.widget(&self.table);
         // Include add plugin view if visible
         if let Some(add) = &self.add {
             builder.widget(add);
         }
+        // Header search input and main grid
+        builder.widget(&self.table);
+
         // Include overlays if open
         if let Some(logs) = &self.logs {
             builder.widget(logs);

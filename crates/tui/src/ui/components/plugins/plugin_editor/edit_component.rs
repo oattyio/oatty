@@ -5,7 +5,7 @@
 //! form fields and validation. The component handles keyboard input, focus management,
 //! and rendering of the "edit plugin" interface.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use heroku_types::Effect;
 // Focus management uses FocusFlag booleans on state; no ring needed here
 use ratatui::{
@@ -19,13 +19,16 @@ use super::{
     key_value_editor::KeyValueEditorComponent,
     state::{PluginEditViewState, PluginTransport},
 };
-use crate::ui::theme::theme_helpers::create_radio_button;
-use crate::ui::{components::component::Component, theme::theme_helpers::render_button};
 use crate::{
     app::App,
-    ui::theme::{Theme, theme_helpers},
+    ui::{
+        components::{common::TextInputState, component::Component, find_target_index_by_mouse_position},
+        theme::{
+            Theme,
+            theme_helpers::{self, ButtonRenderOptions, create_radio_button, render_button},
+        },
+    },
 };
-use crate::ui::components::find_target_index_by_mouse_position;
 
 struct EditPluginFormLayout {
     name_area: Rect,
@@ -54,6 +57,80 @@ struct RadioButtonLayout {
 #[derive(Debug, Default)]
 pub struct PluginsEditComponent {
     kv_component: KeyValueEditorComponent,
+    // Map Focus widget IDs to persistent text input states for inline fields
+    focus_id_to_input: std::collections::HashMap<usize, TextInputState>,
+}
+
+impl PluginsEditComponent {
+    fn ensure_inputs_initialized(&mut self, add_state: &PluginEditViewState) {
+        // Reinitialize when the map is empty or does not contain the current field IDs
+        let ids = [
+            add_state.f_name.widget_id(),
+            add_state.f_command.widget_id(),
+            add_state.f_args.widget_id(),
+            add_state.f_base_url.widget_id(),
+        ];
+        let needs_init = self.focus_id_to_input.is_empty() || ids.iter().any(|id| !self.focus_id_to_input.contains_key(id));
+        if needs_init {
+            self.focus_id_to_input.clear();
+            let mk = |id: usize, input: &str, cursor: usize| -> (usize, TextInputState) {
+                let mut ti = TextInputState::new();
+                ti.set_input(input);
+                ti.set_cursor(cursor);
+                (id, ti)
+            };
+            let entries = [
+                mk(add_state.f_name.widget_id(), &add_state.name, add_state.name_cursor),
+                mk(add_state.f_command.widget_id(), &add_state.command, add_state.command_cursor),
+                mk(add_state.f_args.widget_id(), &add_state.args, add_state.args_cursor),
+                mk(add_state.f_base_url.widget_id(), &add_state.base_url, add_state.base_url_cursor),
+            ];
+            for (id, ti) in entries {
+                self.focus_id_to_input.insert(id, ti);
+            }
+        }
+    }
+
+    fn sync_back(add_state: &mut PluginEditViewState, widget_id: usize, ti: &TextInputState) {
+        if widget_id == add_state.f_name.widget_id() {
+            add_state.name = ti.input().to_string();
+            add_state.name_cursor = ti.cursor();
+        } else if widget_id == add_state.f_command.widget_id() {
+            add_state.command = ti.input().to_string();
+            add_state.command_cursor = ti.cursor();
+        } else if widget_id == add_state.f_args.widget_id() {
+            add_state.args = ti.input().to_string();
+            add_state.args_cursor = ti.cursor();
+        } else if widget_id == add_state.f_base_url.widget_id() {
+            add_state.base_url = ti.input().to_string();
+            add_state.base_url_cursor = ti.cursor();
+        }
+    }
+
+    fn edit_focused_input<F: FnOnce(&mut TextInputState)>(&mut self, app: &mut App, f: F) -> bool {
+        let Some(widget_id) = app.focus.focused_widget_id() else {
+            return false;
+        };
+        let Some(add_state) = app.plugins.add.as_mut() else {
+            return false;
+        };
+        self.ensure_inputs_initialized(add_state);
+        if let Some(ti) = self.focus_id_to_input.get_mut(&widget_id) {
+            f(ti);
+            Self::sync_back(add_state, widget_id, ti);
+            return true;
+        }
+        false
+    }
+
+    fn edit_and_reset_validation<F: FnOnce(&mut TextInputState)>(&mut self, app: &mut App, f: F) {
+        if !self.edit_focused_input(app, f) {
+            return;
+        }
+        if let Some(add_state) = app.plugins.add.as_mut() {
+            add_state.validation = Ok(String::new());
+        }
+    }
 }
 
 impl Component for PluginsEditComponent {
@@ -91,6 +168,13 @@ impl Component for PluginsEditComponent {
             KeyCode::Right if is_transport_focused => {
                 add_state.transport = PluginTransport::Remote;
             }
+            KeyCode::Left => {
+                // Move cursor in active text field (UTF-8 safe) via focused widget
+                let _ = self.edit_focused_input(app, |ti| ti.move_left());
+            }
+            KeyCode::Right => {
+                let _ = self.edit_focused_input(app, |ti| ti.move_right());
+            }
             KeyCode::Char(' ') if is_transport_focused => {
                 add_state.transport = match add_state.transport {
                     PluginTransport::Local => PluginTransport::Remote,
@@ -109,15 +193,9 @@ impl Component for PluginsEditComponent {
                     return effects;
                 }
             }
-            KeyCode::Backspace => {
-                if handle_backspace_key(add_state).is_some() {
-                    add_state.validation = Ok(String::new()); // clear validation
-                }
-            }
+            KeyCode::Backspace => self.edit_and_reset_validation(app, |ti| ti.backspace()),
             KeyCode::Char(character) if !key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                if handle_character_input(add_state, character) {
-                    add_state.validation = Ok(String::new()); // clear validation
-                }
+                self.edit_and_reset_validation(app, |ti| ti.insert_char(character));
             }
             _ => {}
         }
@@ -125,12 +203,14 @@ impl Component for PluginsEditComponent {
     }
 
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
-        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
+        if mouse.kind != MouseEventKind::Down(MouseButton::Left) || app.plugins.add.is_none() {
             return Vec::new();
         }
         let edit_state = &mut app.plugins.add.as_mut().expect("add state should be something");
-        let MouseEvent{column, row, ..} = mouse;
-        let PluginEditViewState{last_area, per_item_area, ..} = edit_state;
+        let MouseEvent { column, row, .. } = mouse;
+        let PluginEditViewState {
+            last_area, per_item_area, ..
+        } = edit_state;
         if let Some(idx) = find_target_index_by_mouse_position(last_area, per_item_area, column, row) {
             let focusables = [
                 &edit_state.f_transport,    // local transport radio
@@ -145,7 +225,7 @@ impl Component for PluginsEditComponent {
             ];
             app.focus.focus(focusables[idx]);
             // normalize the index to the focusables array
-            if idx < 2 || idx > 6 {
+            if !(2..=6).contains(&idx) {
                 return handle_enter_key(app);
             }
             return Vec::new();
@@ -296,59 +376,6 @@ fn handle_enter_key(app: &mut App) -> Vec<Effect> {
     }
 
     Vec::new()
-}
-
-/// Handles Backspace key presses in the "edit plugin" plugin.
-///
-/// This function removes the last character from the currently focused
-/// input field based on the transport type and focused control.
-///
-/// # Arguments
-///
-/// * `add_state` - Mutable reference to the "edit plugin" plugin state
-fn handle_backspace_key(add_state: &mut PluginEditViewState) -> Option<char> {
-    if add_state.f_name.get() {
-        return add_state.name.pop();
-    }
-    if add_state.f_command.get() {
-        return add_state.command.pop();
-    }
-    if add_state.f_args.get() {
-        return add_state.args.pop();
-    }
-    if add_state.f_base_url.get() {
-        return add_state.base_url.pop();
-    }
-    None
-}
-
-/// Handles character input in the "edit plugin" plugin.
-///
-/// This function adds the typed character to the currently focused
-/// input field based on the transport type and focused control.
-///
-/// # Arguments
-///
-/// * `add_state` - Mutable reference to the "edit plugin" plugin state
-/// * `character` - The character to add to the input field
-fn handle_character_input(add_state: &mut PluginEditViewState, character: char) -> bool {
-    if add_state.f_name.get() {
-        add_state.name.push(character);
-        return true;
-    }
-    if add_state.f_command.get() {
-        add_state.command.push(character);
-        return true;
-    }
-    if add_state.f_args.get() {
-        add_state.args.push(character);
-        return true;
-    }
-    if add_state.f_base_url.get() {
-        add_state.base_url.push(character);
-        return true;
-    }
-    false
 }
 
 /// Renders the form fields section of the "edit plugin" plugin.
@@ -529,31 +556,22 @@ fn render_action_buttons(frame: &mut Frame, area: Rect, theme: &dyn Theme, add_s
         frame,
         button_columns[1],
         "Validate",
-        validate_enabled,
-        add_state.f_btn_validate.get(),
-        false,
         theme,
-        Borders::ALL,
+        ButtonRenderOptions::new(validate_enabled, add_state.f_btn_validate.get(), false, Borders::ALL),
     );
     render_button(
         frame,
         button_columns[3],
         "Save",
-        save_enabled,
-        add_state.f_btn_save.get(),
-        false,
         theme,
-        Borders::ALL,
+        ButtonRenderOptions::new(save_enabled, add_state.f_btn_save.get(), false, Borders::ALL),
     );
     render_button(
         frame,
         button_columns[5],
         "Cancel",
-        true,
-        add_state.f_btn_cancel.get(),
-        false,
         theme,
-        Borders::ALL,
+        ButtonRenderOptions::new(true, add_state.f_btn_cancel.get(), false, Borders::ALL),
     );
     ActionButtonLayout {
         btn_validate_area: button_columns[1],
@@ -573,7 +591,7 @@ fn render_action_buttons(frame: &mut Frame, area: Rect, theme: &dyn Theme, add_s
 /// * `frame` - Mutable reference to the terminal frame for cursor positioning
 /// * `layout` - Layout metadata generated during form rendering
 /// * `add_state` - Reference to the "edit plugin" plugin state
-/// Position the terminal cursor based on the currently focused input field.
+///
 fn position_cursor_in_active_field(frame: &mut Frame, layout: &EditPluginFormLayout, add_state: &PluginEditViewState) {
     if add_state.is_key_value_editor_focused() {
         // The key/value component manages cursor placement while editing.
@@ -581,25 +599,29 @@ fn position_cursor_in_active_field(frame: &mut Frame, layout: &EditPluginFormLay
     }
 
     if add_state.f_name.get() {
-        let (cursor_x, cursor_y) = cursor_position_for_field(layout.name_area, "Name", add_state.name.chars().count());
+        let prefix = &add_state.name[..add_state.name_cursor.min(add_state.name.len())];
+        let (cursor_x, cursor_y) = cursor_position_for_field(layout.name_area, "Name", prefix.chars().count());
         frame.set_cursor_position((cursor_x, cursor_y));
         return;
     }
 
     if add_state.f_command.get() {
-        let (cursor_x, cursor_y) = cursor_position_for_field(layout.command_area, "Command", add_state.command.chars().count());
+        let prefix = &add_state.command[..add_state.command_cursor.min(add_state.command.len())];
+        let (cursor_x, cursor_y) = cursor_position_for_field(layout.command_area, "Command", prefix.chars().count());
         frame.set_cursor_position((cursor_x, cursor_y));
         return;
     }
 
     if add_state.f_args.get() {
-        let (cursor_x, cursor_y) = cursor_position_for_field(layout.args_area, "Args", add_state.args.chars().count());
+        let prefix = &add_state.args[..add_state.args_cursor.min(add_state.args.len())];
+        let (cursor_x, cursor_y) = cursor_position_for_field(layout.args_area, "Args", prefix.chars().count());
         frame.set_cursor_position((cursor_x, cursor_y));
         return;
     }
 
     if add_state.f_base_url.get() {
-        let (cursor_x, cursor_y) = cursor_position_for_field(layout.base_url_area, "Base URL", add_state.base_url.chars().count());
+        let prefix = &add_state.base_url[..add_state.base_url_cursor.min(add_state.base_url.len())];
+        let (cursor_x, cursor_y) = cursor_position_for_field(layout.base_url_area, "Base URL", prefix.chars().count());
         frame.set_cursor_position((cursor_x, cursor_y));
     }
 }

@@ -7,6 +7,7 @@
 //! subcomponents based on user interaction and app state.
 
 use super::{PluginsEditComponent, PluginsLogsComponent, PluginsTableComponent};
+use crate::ui::components::plugins::plugin_editor::state::PluginEditViewState;
 use crate::{app::App, ui::components::component::Component};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use heroku_types::Effect;
@@ -113,14 +114,14 @@ impl Component for PluginsComponent {
     /// * `app` - Mutable reference to the app state
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         let layout = self.get_preferred_layout(app, area);
-        let body_area = layout.get(0).expect("body area not found");
+        let body_area = layout.first().expect("body area not found");
         let footer_area = layout.get(1).expect("footer area not found");
 
         self.render_body_section(frame, *body_area, app);
 
         let spans = self.get_hint_spans(app, true);
         frame.render_widget(
-            Paragraph::new(Line::from(spans)).style(*&app.ctx.theme.text_muted_style()),
+            Paragraph::new(Line::from(spans)).style(app.ctx.theme.text_muted_style()),
             *footer_area,
         );
 
@@ -292,7 +293,7 @@ impl PluginsComponent {
             }
             // Also available when the table component is focused
             KeyCode::Char('a') if control_pressed && app.plugins.can_open_add_plugin() => {
-                effects.push(Effect::PluginsSave);
+                app.plugins.add = Some(PluginEditViewState::new());
             }
             KeyCode::Char('l') if control_pressed && app.plugins.logs_open => {
                 self.handle_logs_toggle_follow_shortcut(app);

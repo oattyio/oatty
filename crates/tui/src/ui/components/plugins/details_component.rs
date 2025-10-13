@@ -90,6 +90,7 @@ impl Component for PluginsDetailsComponent {
             KeyCode::Esc => effects.push(Effect::CloseModal),
             KeyCode::Up => {
                 if let PluginDetailsLoadState::Loaded(data) = details_state.load_state() {
+                    let data = data.as_ref();
                     let total = data.logs.len();
                     if total > 0 {
                         details_state.scroll_logs_up(1);
@@ -98,6 +99,7 @@ impl Component for PluginsDetailsComponent {
             }
             KeyCode::Down => {
                 if let PluginDetailsLoadState::Loaded(data) = details_state.load_state() {
+                    let data = data.as_ref();
                     let total = data.logs.len();
                     if total > 0 {
                         // We don't know the visible height here; clamp in render
@@ -229,10 +231,10 @@ impl Component for PluginsDetailsComponent {
         self.render_content(frame, left_layout[1], theme, app.plugins.details.as_ref());
 
         // Render tools list spanning the full right column height when data is loaded
-        if let Some(state) = app.plugins.details.as_ref() {
-            if let PluginDetailsLoadState::Loaded(data) = state.load_state() {
-                self.render_tools(frame, tools_inner, theme, data);
-            }
+        if let Some(state) = app.plugins.details.as_ref()
+            && let PluginDetailsLoadState::Loaded(data) = state.load_state()
+        {
+            self.render_tools(frame, tools_inner, theme, data.as_ref());
         }
 
         let hints = Line::from(self.get_hint_spans(app, true)).style(theme.text_muted_style());
@@ -331,14 +333,20 @@ impl PluginsDetailsComponent {
         if let Some(state) = details_state {
             match state.load_state() {
                 PluginDetailsLoadState::Loaded(data) => {
+                    let data = data.as_ref();
                     lines.push(self.header_line(theme, &data.detail));
                     lines.push(self.sub_header_line(theme, &data.detail));
                 }
-                _ => {
+                other => {
                     if let Some(name) = state.selected_plugin() {
+                        let status_span = if other.is_error() {
+                            Span::styled(" (error)", theme.status_error())
+                        } else {
+                            Span::styled(" (loading)", theme.text_muted_style())
+                        };
                         lines.push(Line::from(vec![
                             Span::styled(name.to_string(), theme.accent_emphasis_style()),
-                            Span::styled(" (loading)", theme.text_muted_style()),
+                            status_span,
                         ]));
                     } else {
                         lines.push(Line::from(Span::styled("No plugin selected", theme.text_muted_style())));
@@ -384,6 +392,7 @@ impl PluginsDetailsComponent {
                 area,
             ),
             PluginDetailsLoadState::Loaded(data) => {
+                let data = data.as_ref();
                 // Left column: Overview, Health, Env, Logs stacked with horizontal rules
                 let left_chunks = Layout::default()
                     .direction(Direction::Vertical)

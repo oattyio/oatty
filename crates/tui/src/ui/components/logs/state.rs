@@ -6,8 +6,6 @@ use ratatui::layout::Rect;
 /// application, managing user interactions, data flow, and UI state.
 use serde_json::Value;
 
-use crate::ui::utils::ColumnWithSize;
-
 /// Structured log entry supporting API responses and plain text.
 #[derive(Debug, Clone)]
 pub enum LogEntry {
@@ -24,7 +22,7 @@ pub enum LogEntry {
         msg: String,
     },
 
-    MCP {
+    Mcp {
         raw: String,
         json: Option<Value>,
     },
@@ -38,12 +36,6 @@ pub struct Selection {
 }
 
 impl Selection {
-    pub fn new(index: usize) -> Self {
-        Self {
-            anchor: index,
-            cursor: index,
-        }
-    }
     pub fn is_single(&self) -> bool {
         self.anchor == self.cursor
     }
@@ -79,7 +71,6 @@ pub struct LogsState {
     /// Cached redacted JSON for currently opened single API detail (by index).
     pub cached_detail_index: Option<usize>,
     pub cached_redacted_json: Option<Value>,
-    pub cached_columns: Option<Vec<ColumnWithSize>>,
     /// Focus flag for rat-focus integration
     pub focus: FocusFlag,
     /// Last rendered rectangle of the detail modal for hit-testing.
@@ -96,7 +87,6 @@ impl Default for LogsState {
             pretty_json: true,
             cached_detail_index: None,
             cached_redacted_json: None,
-            cached_columns: None,
             focus: FocusFlag::named("root.logs"),
             detail_rect: None,
         }

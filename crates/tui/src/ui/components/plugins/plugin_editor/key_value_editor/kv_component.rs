@@ -41,6 +41,37 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct KeyValueEditorComponent;
 
+/// Presentation metadata for rendering an inline key/value field.
+///
+/// Bundles styling inputs so helper functions avoid long parameter lists while
+/// keeping rendering logic cohesive.
+#[derive(Debug)]
+struct InlineFieldDisplay<'a> {
+    /// Label displayed before the field's value (for example, `Key`).
+    label: &'a str,
+    /// Current contents of the field.
+    value: &'a str,
+    /// Placeholder text shown when the field is empty.
+    placeholder: &'a str,
+    /// Indicates whether this field currently has focus.
+    focused: bool,
+}
+
+/// Aggregated cursor metadata for positioning the inline editor caret.
+#[derive(Debug)]
+struct InlineFieldCursorState<'a> {
+    /// Indicates whether the key field is currently focused.
+    key_field_active: bool,
+    /// Text buffer for the key field.
+    key_buffer: &'a str,
+    /// Text buffer for the value field.
+    value_buffer: &'a str,
+    /// Cursor position relative to the key buffer.
+    key_cursor: usize,
+    /// Cursor position relative to the value buffer.
+    value_cursor: usize,
+}
+
 impl KeyValueEditorComponent {
     /// Handle keyboard input when the editor is in editing mode.
     ///
@@ -78,6 +109,12 @@ impl KeyValueEditorComponent {
             }
             KeyCode::Backspace => {
                 editor.kv_editor.pop_character();
+            }
+            KeyCode::Left => {
+                editor.kv_editor.move_cursor_left();
+            }
+            KeyCode::Right => {
+                editor.kv_editor.move_cursor_right();
             }
             KeyCode::Tab | KeyCode::BackTab => {
                 editor.kv_editor.toggle_field();
@@ -468,10 +505,41 @@ impl KeyValueEditorComponent {
         let key_field_active = editor.is_key_field_focused();
         let value_field_active = editor.is_value_field_focused();
 
-        self.render_inline_field(frame, fields[0], theme, "Key", key_buffer, "(required)", key_field_active);
-        self.render_inline_field(frame, fields[1], theme, "Value", value_buffer, "(optional)", value_field_active);
+        self.render_inline_field(
+            frame,
+            fields[0],
+            theme,
+            InlineFieldDisplay {
+                label: "Key",
+                value: key_buffer,
+                placeholder: "(required)",
+                focused: key_field_active,
+            },
+        );
+        self.render_inline_field(
+            frame,
+            fields[1],
+            theme,
+            InlineFieldDisplay {
+                label: "Value",
+                value: value_buffer,
+                placeholder: "(optional)",
+                focused: value_field_active,
+            },
+        );
 
-        self.position_cursor_for_inline_field(frame, &fields, key_field_active, key_buffer, value_buffer);
+        let (key_cursor, value_cursor) = editor.editing_cursors().unwrap_or((key_buffer.len(), value_buffer.len()));
+        self.position_cursor_for_inline_field(
+            frame,
+            &fields,
+            InlineFieldCursorState {
+                key_field_active,
+                key_buffer,
+                value_buffer,
+                key_cursor,
+                value_cursor,
+            },
+        );
     }
 
     /// Render a single inline field (key or value) with appropriate styling.
@@ -485,20 +553,14 @@ impl KeyValueEditorComponent {
     /// * `frame` - The Ratatui frame for rendering
     /// * `area` - The available rendering area for the field
     /// * `theme` - The theme for styling
-    /// * `label` - The field label (e.g., "Key", "Value")
-    /// * `value` - The current field value
-    /// * `placeholder` - The placeholder text to show when value is empty
-    /// * `focused` - Whether this field currently has focus
-    fn render_inline_field(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        theme: &dyn Theme,
-        label: &str,
-        value: &str,
-        placeholder: &str,
-        focused: bool,
-    ) {
+    /// * `display` - Presentation metadata for the inline field
+    fn render_inline_field(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, display: InlineFieldDisplay<'_>) {
+        let InlineFieldDisplay {
+            label,
+            value,
+            placeholder,
+            focused,
+        } = display;
         let mut spans = Vec::new();
         spans.push(Span::styled(if focused { "› " } else { "  " }, theme.text_secondary_style()));
         spans.push(Span::styled(format!("{}: ", label), theme.text_primary_style()));
@@ -527,24 +589,24 @@ impl KeyValueEditorComponent {
     ///
     /// * `frame` - The Ratatui frame for cursor positioning
     /// * `fields` - The layout areas for the key and value fields
-    /// * `key_field_active` - Whether the key field is currently active
-    /// * `key_buffer` - The current key field content
-    /// * `value_buffer` - The current value field content
-    fn position_cursor_for_inline_field(
-        &self,
-        frame: &mut Frame,
-        fields: &[Rect],
-        key_field_active: bool,
-        key_buffer: &str,
-        value_buffer: &str,
-    ) {
+    /// * `cursor_state` - Aggregated cursor metadata for the editor
+    fn position_cursor_for_inline_field(&self, frame: &mut Frame, fields: &[Rect], cursor_state: InlineFieldCursorState<'_>) {
         if fields.len() < 2 {
             return;
         }
+        let InlineFieldCursorState {
+            key_field_active,
+            key_buffer,
+            value_buffer,
+            key_cursor,
+            value_cursor,
+        } = cursor_state;
         let (target_area, field_label, content_length) = if key_field_active {
-            (fields[0], "Key", key_buffer.chars().count())
+            let prefix = &key_buffer[..key_cursor.min(key_buffer.len())];
+            (fields[0], "Key", prefix.chars().count())
         } else {
-            (fields[1], "Value", value_buffer.chars().count())
+            let prefix = &value_buffer[..value_cursor.min(value_buffer.len())];
+            (fields[1], "Value", prefix.chars().count())
         };
         let label_prefix = format!("{}: ", field_label);
         let offset = 2 + label_prefix.chars().count();
@@ -570,7 +632,7 @@ impl Component for KeyValueEditorComponent {
     ///
     /// A vector of effects that should be processed by the application runtime.
     fn handle_key_events(&mut self, app: &mut App, key_event: KeyEvent) -> Vec<Effect> {
-        let editing = app.plugins.add.as_ref().and_then(|e| Some(e.kv_editor.is_editing()));
+        let editing = app.plugins.add.as_ref().map(|editor| editor.kv_editor.is_editing());
         if editing.unwrap_or(false) {
             self.handle_editing_mode_input(app, key_event);
         } else {

@@ -91,10 +91,7 @@ pub(crate) fn build_command_help_text<'a>(theme: &'a dyn crate::ui::theme::roles
                     format!("  {} ", pa.name.to_uppercase()),
                     theme.text_secondary_style().add_modifier(Modifier::BOLD),
                 );
-                arg_line.push_span(Span::styled(
-                    format!("{}{}", has_provider, desc.to_string()),
-                    theme.text_muted_style(),
-                ));
+                arg_line.push_span(Span::styled(format!("{has_provider}{desc}"), theme.text_muted_style()));
                 lines.push(arg_line);
             } else {
                 lines.push(Line::from(format!("  {}: Path parameter derived from the endpoint URL.", pa.name)));

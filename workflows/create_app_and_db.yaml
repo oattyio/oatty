@@ -5,7 +5,7 @@ inputs:
     description: "Name for the application"
     type: string
   region:
-    provider: regions:list
+    provider: regions list
     select:
       value_field: name
       display_field: name
@@ -14,26 +14,26 @@ inputs:
       value: "us"
   addon_plan:
     description: "Heroku Postgres plan"
-    provider: addons:services:list
+    provider: addons services:list
     select:
       value_field: name
       display_field: name
 steps:
   - id: create_app
-    run: apps:create
+    run: apps create
     body:
       name: ${{ inputs.app_name }}
       region: ${{ inputs.region }}
 
   - id: add_pg
-    run: apps:addons:create
+    run: apps addons:create
     with:
       app: ${{ inputs.app_name }}
     body:
       plan: ${{ inputs.addon_plan }}
 
   - id: set_config
-    run: apps:config-vars:update
+    run: apps config-vars:update
     with:
       app: ${{ inputs.app_name }}
     body:

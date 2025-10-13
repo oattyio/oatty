@@ -1,0 +1,38 @@
+workflow: postgres_backup_and_download
+description: "Capture a logical backup for a selected database, wait for completion, and download it."
+inputs:
+  app:
+    provider: apps list
+    select: { value_field: name, display_field: name }
+  database:
+    description: "Database attachment name to back up (e.g., HEROKU_POSTGRESQL_IVORY_URL)"
+    provider: apps addons:list
+    depends_on:
+      app: ${{ inputs.app }}
+    select: { value_field: name, display_field: name }
+steps:
+  - id: capture
+    run: apps pg:backups:capture
+    with:
+      app: ${{ inputs.app }}
+    body:
+      database: ${{ inputs.database }}
+
+  - id: wait
+    description: "Poll backup status until completed or failed"
+    run: apps pg:backups:info
+    with:
+      app: ${{ inputs.app }}
+    body:
+      backup: ${{ steps.capture.output.id }}
+    repeat:
+      until: ${{ ["Completed","Failed","Canceled"].includes(step.output.status) }}
+      every: 10s
+
+  - id: download
+    when: ${{ steps.wait.output.status == "Completed" }}
+    run: apps pg:backups:download
+    with:
+      app: ${{ inputs.app }}
+    body:
+      backup: ${{ steps.capture.output.id }}

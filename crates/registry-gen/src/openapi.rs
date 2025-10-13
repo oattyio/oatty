@@ -36,27 +36,19 @@ fn resolve_local_ref(root: &Value, r: &str) -> Option<Value> {
 // Parameter Collection and Merging
 // ============================================================================
 
-/// Collects and resolves parameters defined at both the path and operation levels from a given
-/// OpenAPI document. It ensures no duplicate parameters (based on both name and location) are
-/// included in the output, with operation-level parameters overriding path-level ones when conflicting.
+/// Collects and resolves parameters declared at both the path and operation levels within an
+/// OpenAPI document. Operation-level parameters override path-level definitions that share the
+/// same name and location.
 ///
 /// # Arguments
 ///
-/// * `root` - A reference to the root [`Value`] object of the OpenAPI document where `$ref` resolutions
-///            can be performed.
-/// * `path_item` - A [`Value`] representing the specific path object, which may contain `parameters`
-///                 defined at the path level.
-/// * `op` - A [`Value`] representing the specific operation object, which may contain `parameters`
-///          defined at the operation level.
+/// * `root` - Root [`Value`] used to resolve any local `$ref` pointers.
+/// * `path_item` - Path-level object that may contribute shared parameters.
+/// * `op` - Operation-level object whose parameters override path-level entries.
 ///
 /// # Returns
 ///
-/// A `Vec<Value>` containing the resolved and deduplicated parameters.
-///
-/// - Parameters defined at the operation level take precedence over those defined at the path level
-///   if they share the same name and location.
-/// - Each parameter is resolved by dereferencing `$ref` if necessary, using the `resolve_local_ref`
-///   function to locate the referenced definitions in the `root` document.
+/// Resolved and deduplicated parameters with any `$ref` indirections expanded.
 ///
 /// # Example
 ///
@@ -98,15 +90,7 @@ fn resolve_local_ref(root: &Value, r: &str) -> Option<Value> {
 ///
 /// # Notes
 ///
-/// - The function relies on the `resolve_local_ref` function to resolve `$ref` values within the
-///   OpenAPI document. If unresolved, the parameter is included as-is.
-/// - The `root`, `path_item`, and `op` arguments are assumed to be well-structured JSON values
-///   following OpenAPI specifications.
-///
-/// # Dependencies
-///
-/// This function is designed to be used with the `serde_json` crate and operates on `serde_json::Value`
-/// for handling JSON objects.
+/// Unresolvable `$ref` pointers are returned as-is to preserve the input structure.
 fn collect_parameters(root: &Value, path_item: &Value, op: &Value) -> Vec<Value> {
     let mut out: Vec<Value> = Vec::new();
     let mut seen: Vec<(String, String)> = Vec::new();

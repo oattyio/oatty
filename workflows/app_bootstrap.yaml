@@ -1,0 +1,67 @@
+workflow: app_bootstrap
+description: "Create a new Heroku app, configure basics, provision a database, and open it."
+inputs:
+  app_name:
+    description: "Name for the new app"
+    type: string
+  region:
+    description: "Region to create the app in"
+    provider: regions list
+    select: { value_field: name, display_field: name }
+    default:
+      from: literal
+      value: "us"
+  stack:
+    description: "Stack to use (e.g., heroku-22)"
+    type: string
+    provider: stacks list
+    select: { value_field: name, display_field: name }
+    default:
+      from: literal
+      value: "heroku-22"
+  addon_plan:
+    description: "Database plan to provision (e.g., heroku-postgresql:hobby-dev)"
+    provider: addons plans:list
+    select: { value_field: name, display_field: name }
+  config_vars:
+    description: "Config vars to set on the app"
+    type: object
+    optional: true
+  buildpack:
+    description: "Optional buildpack to add"
+    type: string
+    optional: true
+steps:
+  - id: create_app
+    run: apps create
+    body:
+      name: ${{ inputs.app_name }}
+      region: ${{ inputs.region }}
+      stack: ${{ inputs.stack }}
+
+  - id: add_buildpack
+    when: ${{ !!inputs.buildpack }}
+    run: apps buildpacks:add
+    with:
+      app: ${{ inputs.app_name }}
+    body:
+      buildpack: ${{ inputs.buildpack }}
+
+  - id: set_config
+    when: ${{ !!inputs.config_vars }}
+    run: apps config:set
+    with:
+      app: ${{ inputs.app_name }}
+    body: ${{ inputs.config_vars }}
+
+  - id: provision_db
+    run: apps addons:create
+    with:
+      app: ${{ inputs.app_name }}
+    body:
+      plan: ${{ inputs.addon_plan }}
+
+  - id: open
+    run: apps open
+    with:
+      app: ${{ inputs.app_name }}

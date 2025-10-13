@@ -16,32 +16,32 @@
 ## 2) Layout & Flow
 
 ```
-┌─ Guided Input Collector — Resolve Inputs ────────────────────────────────────────────────────────┐
-│ Workflow: provision_and_promote  •  Unresolved: 3  •  [F1] Help  [Esc] Close                    │
-├─ Unresolved Inputs (sticky head) ───────────────────────────┬─ Details / Candidates ────────────┤
-│ 1) addon.app        (addons:list)  needs: [app_id|app_name] │ Provider: addons:list             │
-│ 2) pipeline         (pipelines:list)                        │ Arg contracts:                    │
-│ 3) prod_app         (apps:list)                             │   app: accepts [app_id,app_name]  │
-│                                                            │   prefer app_id  • required       │
-│ [↑/↓] select • [Enter] resolve • [/] filter • [r] refresh   │ Candidates (Page 1/2):            │
-│                                                            │  1) steps.create_app.output.id    │
-│                                                            │     → "app-456" [tags: app_id]    │
-│                                                            │  2) steps.create_app.output.name  │
-│                                                            │     → "billing-svc" [app_name]    │
-│                                                            │  3) inputs.app → "billing-svc"    │
-│                                                            │ Actions: [Enter] choose  [f] Picker│
-├─ Manual Entry (fallback) ───────────────────────────────────┴───────────────────────────────────┤
-│ on_error: manual — Enter value for addon.app:  [________________________]  (validate: app_id|name)│
-│ [Tab] switch to candidates • [r] retry provider • [c] use cached (24s old)                       │
-├─ Footer ─────────────────────────────────────────────────────────────────────────────────────────┤
-│ [Space] toggle multi-select  •  [Enter] apply  •  [Esc] close  •  [Alt+R] Remember this mapping  │
-└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ Guided Input Collector — Resolve Inputs ────────────────────────────────────────────────────────────────────────┐
+│ Workflow: provision_and_promote  •  Unresolved: 3                                                                │
+├─ Unresolved Inputs (sticky head) ───────────────────────────┬─ Details / Candidates ─────────────────────────────┤
+│ 1) addon.app        (addons:list)  needs: [app_id|app_name] │ Provider: addons:list                              │
+│ 2) pipeline         (pipelines:list)                        │ Arg contracts:                                     │
+│ 3) prod_app         (apps:list)                             │   app: accepts [app_id,app_name]                   │
+│                                                             │  prefer app_id  • required                         │
+│ [↑/↓] select • [Enter] resolve • [/] filter • [r] refresh   │ Candidates (Page 1/2):                             │
+│                                                             │ 1) steps.create_app.output.id                      │
+│                                                             │    → "app-456" [tags: app_id]                      │
+│                                                             │ 2) steps.create_app.output.name                    │
+│                                                             │    → "billing-svc" [app_name]                      │
+│                                                             │ 3) inputs.app → "billing-svc"                      │
+│                                                             │Actions: [Enter] choose  [f] Picker pane  [/] Filter│
+├─ Manual Entry (fallback) ───────────────────────────────────┴────────────────────────────────────────────────────┤
+│ on_error: manual — Enter value for addon.app:  [________________________]  (validate: app_id|name)               │
+│ [Tab] switch to candidates • [r] retry provider • [c] use cached (24s old)                                       │
+├─ Footer ─────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ [Space] toggle multi-select  •  [Enter] apply  •  [Esc] close  •  [Alt+R] Remember this mapping                  │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 **Flow:**
 1. User selects an unresolved field from the left list.  
-2. The right pane shows **contracts** (accepts/prefer/required) and **schema-valid candidates** (with tag badges).  
-3. The user can pick a candidate, open the **Field Picker** for full JSON browsing, or enter a **manual fallback**.  
+2. The right pane shows **contracts** (accepts/prefer/required) and **schema-valid candidates** (with tag badges) by default, and can flip into the inline **Field Picker** tree on demand.  
+3. The user can pick a candidate, toggle the inline **Field Picker** pane for full JSON browsing, or enter a **manual fallback**.  
 4. Repeat until unresolved = 0, then the modal closes or offers **Run**/**Dry-run**.
 
 ---
@@ -50,7 +50,7 @@
 
 - **Navigation:** `↑/↓` navigate unresolved fields; `/` filter; `r` refresh provider cache; `Enter` select/apply; `Esc` close.  
 - **Multi-select lists:** `Space` toggles items.  
-- **Field Picker (if opened):** `Tab` browse tree • `Enter` select • `Esc` cancel.  
+- **Field Picker pane:** `f` toggles the detail column between candidates and the picker tree; type to filter (or press `/` to clear), use `↑/↓` to move, `←/→` to collapse/expand, `Enter` to select, `Esc` returns to candidates.  
 - **Optional:** `Alt+R` toggles **Remember this mapping** (see Persistence).
 
 ---
@@ -85,7 +85,7 @@
 ## 7) Error & Ambiguity Handling
 
 - **Contracts first:** Candidates are derived via **producer output contracts** (tags like `app_id`, `app_name`) and **provider arg-contracts** (`accepts`, `prefer`).  
-- **Heuristics second:** If multiple remain after tag-based filtering, show ranked candidates and open the **Field Picker** upon request.  
+- **Heuristics second:** If multiple remain after tag-based filtering, show ranked candidates and switch the detail pane to the **Field Picker** view upon request.  
 - **Explainability:** Each candidate includes a short **“why”** (e.g., “matches accepts; prefer app_id”).
 
 ---

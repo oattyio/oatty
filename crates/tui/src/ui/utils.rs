@@ -360,12 +360,12 @@ pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize) -> Vec
 ///
 /// # Parameters
 /// - `key`: A reference to a `&str` representing the key associated with the `value`.
-///          This is used to determine if specific rules, such as masking sensitive
-///          data or formatting date-like strings, should be applied.
+///   This is used to determine if specific rules, such as masking sensitive
+///   data or formatting date-like strings, should be applied.
 /// - `value`: A reference to a `Value` instance representing the data to be rendered
-///            into a string. The `Value` type can represent various data types, such
-///            as strings, numbers, booleans, nulls, objects, etc., often used
-///            in JSON data representations.
+///   into a string. The `Value` type can represent various data types, such
+///   as strings, numbers, booleans, nulls, objects, etc., often used
+///   in JSON data representations.
 ///
 /// # Behavior
 /// - If `value` is a `Value::String`:

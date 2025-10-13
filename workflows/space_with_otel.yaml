@@ -1,29 +1,32 @@
 workflow: space_with_otel
+description: "Create a Private Space and configure an OpenTelemetry drain for traces, metrics, and logs."
 inputs:
   team:
-    provider: teams:list
+    provider: teams list
     select: { value_field: id, display_field: name }
   space_name:
     description: "Name of new space"
     type: string
   region:
-    provider: regions:list
+    provider: regions list
     select: { value_field: name, display_field: name }
   otlp_endpoint:
     description: "OpenTelemetry collector endpoint URL"
     type: string
 steps:
   - id: create_space
-    run: spaces:create
+    run: spaces create
     body:
       team: ${{ inputs.team }}
       name: ${{ inputs.space_name }}
       region: ${{ inputs.region }}
 
   - id: add_drain
-    run: telemetry-drains:create
+    run: telemetry-drains create
     body:
-      owner: { space: { name: ${{ inputs.space_name }} } }
+      owner:
+        space:
+          name: ${{ inputs.space_name }}
       signals: ["traces", "metrics", "logs"]
       exporter:
         type: otlp_http

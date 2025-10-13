@@ -300,8 +300,8 @@ fn contains_secret_block(value: &str) -> bool {
     uppercased.contains("-----BEGIN ") || uppercased.contains("PRIVATE KEY") || uppercased.contains("BEGIN CERTIFICATE")
 }
 
-fn normalize_secret_candidate<'a>(value: &'a str) -> &'a str {
-    let mut normalized = value.trim().trim_end_matches(|c| matches!(c, ';' | ','));
+fn normalize_secret_candidate(value: &str) -> &str {
+    let mut normalized = value.trim().trim_end_matches([';', ',']);
 
     if let Some(stripped) = strip_matching_wrapper(normalized, "\"") {
         normalized = stripped.trim();
@@ -341,10 +341,13 @@ fn looks_like_high_entropy_secret(value: &str) -> bool {
         return true;
     }
 
-    if analysis.has_lowercase && analysis.has_uppercase && analysis.has_digit {
-        if entropy >= HIGH_ENTROPY_THRESHOLD && (analysis.has_symbol || analysis.unique_characters >= MIN_UNIQUE_CHARACTERS) {
-            return true;
-        }
+    if analysis.has_lowercase
+        && analysis.has_uppercase
+        && analysis.has_digit
+        && entropy >= HIGH_ENTROPY_THRESHOLD
+        && (analysis.has_symbol || analysis.unique_characters >= MIN_UNIQUE_CHARACTERS)
+    {
+        return true;
     }
 
     false
@@ -413,7 +416,7 @@ fn is_long_hex_secret(value: &str, length: usize) -> bool {
 }
 
 fn is_base64_like(value: &str, analysis: &CharacterAnalysis) -> bool {
-    if value.len() < MIN_BASE64_LENGTH || value.len() % 4 != 0 {
+    if value.len() < MIN_BASE64_LENGTH || !value.len().is_multiple_of(4) {
         return false;
     }
 

@@ -1,0 +1,19 @@
+workflow: postgres_promote_primary
+description: "Promote a selected Heroku Postgres database attachment to be the primary DATABASE_URL for an app."
+inputs:
+  app:
+    provider: apps list
+    select: { value_field: name, display_field: name }
+  database:
+    description: "Database attachment name to promote (e.g., HEROKU_POSTGRESQL_IVORY_URL)"
+    provider: apps addons:list
+    depends_on:
+      app: ${{ inputs.app }}
+    select: { value_field: name, display_field: name }
+steps:
+  - id: promote
+    run: apps pg:promote
+    with:
+      app: ${{ inputs.app }}
+    body:
+      database: ${{ inputs.database }}

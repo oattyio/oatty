@@ -6,7 +6,7 @@
 
 use std::vec;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use heroku_types::{Effect, ItemKind, Modal};
 use rat_focus::HasFocus;
 use ratatui::{
@@ -23,7 +23,7 @@ use crate::ui::{
     theme::{Theme, theme_helpers as th},
 };
 
-static FRAMES: [&'static str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+static FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 /// Command palette component for input and suggestions.
 ///
 /// This component encapsulates the command palette experience, including the
@@ -167,7 +167,7 @@ impl PaletteComponent {
         List::new(app.palette.rendered_suggestions().to_vec())
             .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
             .style(th::panel_style(theme))
-            .highlight_symbol("► ")
+            .highlight_symbol("> ")
     }
 
     /// Calculates the inner layout areas for the palette input,

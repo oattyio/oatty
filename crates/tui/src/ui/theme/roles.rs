@@ -40,7 +40,6 @@ pub struct ThemeRoles {
 }
 
 /// Theme trait exposes semantic roles and common style builders.
-
 pub trait Theme: Send + Sync + Debug {
     fn roles(&self) -> &ThemeRoles;
 
@@ -64,7 +63,7 @@ pub trait Theme: Send + Sync + Debug {
 
     // Selection
     fn selection_style(&self) -> Style {
-        Style::default().fg(self.roles().selection_fg).bg(self.roles().selection_bg)
+        Style::default().bg(self.roles().selection_bg)
     }
 
     /// Style used for the darkened background that appears behind modal dialogs.
@@ -92,5 +91,14 @@ pub trait Theme: Send + Sync + Debug {
     }
     fn accent_emphasis_style(&self) -> Style {
         Style::default().fg(self.roles().accent_primary).add_modifier(Modifier::BOLD)
+    }
+
+    // Badges (chips)
+    fn badge_style(&self) -> Style {
+        // Use ACCENT_SUBTLE as background and TEXT_SELECTED for foreground to ensure readability
+        Style::default()
+            .bg(self.roles().accent_subtle)
+            .fg(self.roles().selection_fg)
+            .add_modifier(Modifier::BOLD)
     }
 }

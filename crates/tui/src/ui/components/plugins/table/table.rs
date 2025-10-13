@@ -302,48 +302,11 @@ impl PluginsTableComponent {
         };
         effects
     }
-    /// Handles search-related key events while interacting with the application's plugin system.
+    /// Handles search navigation for the plugin table.
     ///
-    /// This method processes a series of key events and performs corresponding actions
-    /// on the application's state. Depending on the key pressed and any associated
-    /// modifiers, it updates the plugin search functionality, alters the search query,
-    /// or modifies the table cursor position. If no relevant action is found for a
-    /// key event, no changes are made.
-    ///
-    /// # Arguments
-    ///
-    /// * `app` - A mutable reference to the application state (`App`),
-    ///            which holds information about the current plugins and search status.
-    /// * `key` - The `KeyEvent` containing information about the key press and any modifiers.
-    ///
-    /// # Returns
-    ///
-    /// A `Vec<Effect>` that represents the changes or side effects produced by this function.
-    /// Currently, this function always returns an empty vector.
-    ///
-    /// # Behavior
-    ///
-    /// - **CTRL + 'a'**: Opens a new plugin editor by setting the application's
-    ///   `app.plugins.add` to a new `PluginEditViewState`.
-    /// - **Backspace**: If the `search_flag` is active (`true`), it removes the last letter
-    ///   from the search filter by calling `Self::remove_last_filter_character(app)`.
-    /// - **Character Input**: If the `search_flag` is active, it processes the typed character
-    ///   and updates the search filter unless the Control modifier is held.
-    /// - **Left Arrow Key**: Moves the cursor left in the plugins table by calling
-    ///   `app.plugins.table.reduce_move_cursor_left()`.
-    /// - **Right Arrow Key**: Moves the cursor right in the plugins table by calling
-    ///   `app.plugins.table.reduce_move_cursor_right()`.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut app = App::new();
-    /// let key = KeyEvent::new(KeyCode::Char('a'), KeyModifiers::CONTROL);
-    /// let mut handler = YourHandler::new();
-    ///
-    /// handler.handle_search_key_events(&mut app, key);
-    /// // This will open the plugin editor by setting `app.plugins.add` to a new `PluginEditViewState`.
-    /// ```
+    /// When the search box has focus, printable characters update the filter and backspace removes
+    /// the previous character. Outside of search mode, arrow keys move the selected table row, and
+    /// `Ctrl+A` opens the add-plugin workflow.
     fn handle_search_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         match key.code {
             KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -464,7 +427,7 @@ impl Component for PluginsTableComponent {
             None
         };
 
-        if let Some(_) = maybe_idx {
+        if maybe_idx.is_some() {
             app.plugins.table.f_search.set(true);
         }
         effects

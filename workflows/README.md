@@ -10,18 +10,18 @@ inputs:
     description: "Name for new app"
     type: string
   region:
-    provider: regions:list
+    provider: regions list
     select:
       value_field: name
       display_field: name
 steps:
   - id: create_app
-    run: apps:create
+    run: apps create
     body:
       name: ${{ inputs.app_name }}
       region: ${{ inputs.region }}
   - id: confirm
-    run: apps:info
+    run: apps info
     with:
       app: ${{ inputs.app_name }}
 ```
