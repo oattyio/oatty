@@ -5,7 +5,7 @@ use crate::config::McpConfig;
 use crate::logging::{AuditEntry, AuditResult, LogManager};
 use crate::plugin::{LifecycleManager, PluginRegistry, RegistryError};
 use crate::types::{AuthStatus, McpToolMetadata, PluginDetail, PluginStatus, PluginToolSummary};
-use heroku_registry::{CommandSpec, Registry as CommandRegistry};
+use heroku_registry::{CommandRegistry, CommandSpec};
 use heroku_types::{CommandFlag, ExecOutcome, McpCommandSpec, PositionalArgument};
 use heroku_util::resolve_output_schema;
 use serde_json::Value;
@@ -475,6 +475,7 @@ impl PluginEngine {
         &self,
         spec: &CommandSpec,
         arguments: &serde_json::Map<String, Value>,
+        request_id: u64
     ) -> Result<ExecOutcome, PluginEngineError> {
         let mcp = spec.mcp().ok_or_else(|| PluginEngineError::ConfigurationError {
             message: format!("command '{}' is not MCP-backed", spec.name),
@@ -515,7 +516,7 @@ impl PluginEngine {
             log.push_str(&pretty);
         }
 
-        Ok(ExecOutcome::Mcp(log, payload))
+        Ok(ExecOutcome::Mcp(log, payload, request_id))
     }
 
     /// Convert MCP tool metadata into synthetic CLI command specifications.

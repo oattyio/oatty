@@ -22,11 +22,11 @@ The generator infers and verifies providers in a second pass and embeds them dir
 
 #### Key Functions (updated)
 
-- Build command index: `<group>:<name>` for all commands
-- Identify list-capable groups (presence of `<group>:list`)
+- Build command index keyed by the canonical `<group> <name>` identifier for every command (legacy colon forms are still recognized during manifest generation but are no longer emitted into runtime identifiers).
+- Identify list-capable groups (presence of `<group> list`)
 - Resolve providers:
-  - Positionals: find best provider by checking both simple (`<group>:list`) and scoped (`<earlier_segment>:<group>:list`) providers, preferring those with successful bindings
-  - Flags: map flag name to plural group via synonym/pluralization → `<group>:list` when present
+  - Positionals: find best provider by checking both simple (`<group> list`) and scoped (`<earlier_segment> <group> list`) providers, preferring those with successful bindings
+  - Flags: map flag name to plural group via synonym/pluralization → `<group> list` when present
   - Bindings: bind provider path placeholders from earlier consumer positionals; bind required provider flags only from a safe set and only from consumer required flags or earlier positionals.
 
 #### Provider Resolution Logic
@@ -44,29 +44,40 @@ pub fn resolve_and_infer_providers(commands: &mut [CommandSpec]) {
 }
 ```
 
-### 2. Registry-Backed Provider (`providers/mod.rs`)
+### 2. ProviderRegistry (`engine/provider/registry.rs`)
 
-The `RegistryBackedProvider` implements the actual value fetching and caching logic. Its `suggest` signature accepts an `inputs` map to satisfy provider bindings.
+The shared engine `ProviderRegistry` now implements the `ValueProvider` trait directly. This unifies provider lookup, caching, and suggestion ranking for both the workflow engine and the TUI palette.
 
 #### Architecture Features
 
-- **Asynchronous Fetching**: Background API calls to prevent UI blocking
-- **Intelligent Caching**: TTL-based caching with deduplication
-- **Concurrent Request Management**: Prevents duplicate API calls for the same provider
-- **Fuzzy Matching**: Provides scored suggestions based on partial input
+- **Shared Runtime**: One registry instance serves workflow execution and the palette.
+- **Asynchronous Fetching**: Background API calls prevent UI stalls while new data loads.
+- **Intelligent Caching**: TTL-based cache keyed by provider ID + arguments with deduplicated in-flight fetches.
+- **Binding Awareness**: Reuses schema-inferred binds to supply path/query arguments automatically.
+- **Fuzzy Ranking**: Scores results with `fuzzy_score` before returning `SuggestionItem`s.
 
 #### Core Implementation (shape)
 
 ```rust
-pub struct RegistryBackedProvider {
-    registry: Arc<Registry>,
-    ttl: Duration,
+pub struct ProviderRegistry {
+    registry: Arc<Mutex<CommandRegistry>>,
+    fetcher: Arc<dyn ProviderValueFetcher>,
+    cache_ttl: Duration,
     cache: Arc<Mutex<HashMap<String, CacheEntry>>>,
+    choices: Arc<Mutex<HashMap<String, FieldSelection>>>,
     active_fetches: Arc<Mutex<HashSet<String>>>,
+    runtime: Arc<Runtime>,
 }
 
-impl ValueProvider for RegistryBackedProvider {
-    fn suggest(&self, command_key: &str, field: &str, partial: &str, inputs: &HashMap<String, String>) -> Vec<SuggestionItem> { /* ... */ }
+impl ValueProvider for ProviderRegistry {
+    fn suggest(
+        &self,
+        commands: &[CommandSpec],
+        command_key: &str,
+        field: &str,
+        partial: &str,
+        inputs: &HashMap<String, String>,
+    ) -> Vec<SuggestionItem> { /* ... */ }
 }
 ```
 
@@ -85,9 +96,10 @@ The command palette component integrates the provider system with the user inter
 
 ```rust
 fn handle_tab_press(&self, app: &mut app::App) {
-    let SharedCtx { registry, providers, .. } = &app.ctx;
-    app.palette.apply_build_suggestions(registry, providers);
-    app.palette.set_is_suggestions_open(app.palette.suggestions_len() > 0);
+    let SharedCtx { providers, .. } = &app.ctx;
+    app.palette.apply_build_suggestions(providers, &*app.ctx.theme);
+    let open = app.palette.suggestions_len() > 0 || app.palette.is_provider_loading();
+    app.palette.set_is_suggestions_open(open);
 }
 ```
 

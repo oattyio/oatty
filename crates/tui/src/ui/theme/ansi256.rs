@@ -1,0 +1,102 @@
+//! ANSI 256-color fallback theme tailored for terminals without truecolor support.
+//!
+//! This palette approximates the Dracula theme using indexed colors so the UI
+//! remains legible inside macOS Terminal and other 8-bit color terminals.
+
+use ratatui::style::Color;
+
+use super::roles::{Theme, ThemeRoles};
+
+/// ANSI 256-color approximation of the Dracula palette.
+#[derive(Debug, Clone)]
+pub struct Ansi256Theme {
+    roles: ThemeRoles,
+}
+
+impl Ansi256Theme {
+    pub fn new() -> Self {
+        Self {
+            roles: ThemeRoles {
+                background: Color::Indexed(236), // ~#303030
+                surface: Color::Indexed(236),
+                surface_muted: Color::Indexed(239), // ~#4E4E4E
+                border: Color::Indexed(239),
+                divider: Color::Indexed(239),
+
+                text: Color::Indexed(255),          // ~#EEEEEE
+                text_secondary: Color::Indexed(61), // ~#5F5FAF
+                text_muted: Color::Indexed(61),
+
+                accent_primary: Color::Indexed(212),   // ~#FF87D7
+                accent_secondary: Color::Indexed(117), // ~#87D7FF
+                accent_subtle: Color::Indexed(61),
+
+                info: Color::Indexed(117),
+                success: Color::Indexed(84),  // ~#5FFF87
+                warning: Color::Indexed(215), // ~#FFAF5F
+                error: Color::Indexed(203),   // ~#FF5F5F
+
+                selection_bg: Color::Indexed(239),
+                selection_fg: Color::Indexed(255),
+                focus: Color::Indexed(117),
+                modal_bg: Color::Indexed(235), // slightly darker overlay
+
+                scrollbar_track: Color::Indexed(239),
+                scrollbar_thumb: Color::Indexed(61),
+            },
+        }
+    }
+}
+
+impl Theme for Ansi256Theme {
+    fn roles(&self) -> &ThemeRoles {
+        &self.roles
+    }
+}
+
+/// High-contrast variant for ANSI terminals.
+#[derive(Debug, Clone)]
+pub struct Ansi256ThemeHighContrast {
+    roles: ThemeRoles,
+}
+
+impl Ansi256ThemeHighContrast {
+    pub fn new() -> Self {
+        Self {
+            roles: ThemeRoles {
+                background: Color::Indexed(236),
+                surface: Color::Indexed(236),
+                surface_muted: Color::Indexed(239),
+                border: Color::Indexed(141), // ~#AF87FF
+                divider: Color::Indexed(239),
+
+                text: Color::Indexed(255),
+                text_secondary: Color::Indexed(117),
+                text_muted: Color::Indexed(61),
+
+                accent_primary: Color::Indexed(212),
+                accent_secondary: Color::Indexed(117),
+                accent_subtle: Color::Indexed(61),
+
+                info: Color::Indexed(117),
+                success: Color::Indexed(84),
+                warning: Color::Indexed(215),
+                error: Color::Indexed(203),
+
+                selection_bg: Color::Indexed(239),
+                selection_fg: Color::Indexed(255),
+                focus: Color::Indexed(117),
+                modal_bg: Color::Indexed(235),
+
+                scrollbar_track: Color::Indexed(239),
+                scrollbar_thumb: Color::Indexed(141),
+            },
+        }
+    }
+}
+
+impl Theme for Ansi256ThemeHighContrast {
+    fn roles(&self) -> &ThemeRoles {
+        &self.roles
+    }
+}

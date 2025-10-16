@@ -54,7 +54,7 @@ pub mod provider {
         Command { command_id: String, binds: Vec<Bind> },
     }
 
-    /// Declares a mapping from a provider's required input to a consumer field name.
+    /// Declares a mapping from a provider's required to be input to a consumer field name.
     #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
     pub struct Bind {
         /// The provider's input key (for example, a path placeholder like `app`).
@@ -422,6 +422,11 @@ pub mod command {
                 _ => None,
             }
         }
+        
+        /// Returns the canonical name for this command.
+        pub fn canonical_id(&self) -> String {
+            format!("{} {}", self.group, self.name)
+        }
 
         /// Construct a new HTTP-backed command specification.
         pub fn new_http(
@@ -570,12 +575,12 @@ pub mod execution {
     /// state changes that should occur.
     #[derive(Debug, Clone, Serialize, Deserialize, Default)]
     pub enum ExecOutcome {
-        /// Payload from an http call. Includes the deserialized value,
-        /// an optional pagination object, and a boolean used to
-        /// determine if the results should be displayed in a table modal.
-        Http(String, Value, Option<Pagination>, bool),
-        /// Result from executing an MCP tool, containing a log summary and structured payload.
-        Mcp(String, Value),
+        /// Result from executing an HTTP command containing a structured payload.
+        /// (status_code, log_entry, json_result, maybe_pagination, request_id)
+        Http(u16, String, Value, Option<Pagination>, u64),
+        /// Result from executing an MCP tool containing a structured payload.
+        /// (log_entry, json_result, request_id)
+        Mcp(String, Value, u64),
         /// Result from performing an action on a plugin
         /// Contains a log message and the new plugin detail object
         PluginDetail(String, Option<PluginDetail>),
@@ -597,7 +602,7 @@ pub mod execution {
         #[default]
         None,
     }
-
+    
     /// Pagination metadata parsed from API response headers.
     #[derive(Debug, Clone, Serialize, Deserialize, Default)]
     pub struct Pagination {
@@ -638,12 +643,12 @@ pub mod messaging {
     }
 
     /// Modal overlays that can be displayed on top of the main UI.
-    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[derive(Debug, Clone)]
     pub enum Modal {
         /// Help modal displaying shortcuts and usage tips.
         Help,
         /// Results modal showing API responses in a table.
-        Results,
+        Results(Box<ExecOutcome>),
         /// Log details modal revealing the full log entry.
         LogDetails,
         /// Guided Input Collector for resolving workflow inputs.
@@ -656,23 +661,24 @@ pub mod messaging {
     ///
     /// This enum defines actions that should be performed as a result of state changes, such as
     /// copying to clipboard or showing notifications.
-    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[derive(Debug, Clone)]
     #[allow(clippy::enum_variant_names)]
     pub enum Effect {
-        /// Request to run the current command in the palette.
-        Run,
-        /// Request to copy the current command to clipboard.
+        /// Request to run the current command in the palette
+        /// with the hydrated command string and u64 hash of the request.
+        Run(String, u64),
+        /// Request to copy the current command to the clipboard.
         CopyToClipboardRequested(String),
         /// Request to copy the current logs selection (already rendered/redacted).
         CopyLogsRequested(String),
         /// Request the next page using the `Next-Range` header.
-        NextPageRequested(String),
+        NextPageRequested(String, u64),
         /// Request the previous page using the prior `Range` header, if any.
-        PrevPageRequested,
+        PrevPageRequested(u64),
         /// Request the first page using the initial `Range` header (or none).
-        FirstPageRequested,
+        FirstPageRequested(u64),
         /// Request navigation to the last available page.
-        LastPageRequested,
+        LastPageRequested(u64),
         /// Load MCP plugins from config into `PluginsState`.
         PluginsLoadRequested,
         /// Refresh plugin statuses and health.

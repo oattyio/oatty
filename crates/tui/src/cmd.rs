@@ -27,7 +27,7 @@ use heroku_mcp::config::validate_config;
 use heroku_mcp::config::validate_server_name;
 use heroku_mcp::config::{McpServer, determine_env_source};
 use heroku_mcp::{McpConfig, PluginEngine};
-use heroku_registry::CommandSpec;
+use heroku_registry::{CommandRegistry, CommandSpec};
 use heroku_registry::find_by_group_and_cmd;
 use heroku_types::{Effect, EnvVar, Modal, Route};
 use heroku_types::{ExecOutcome, command::CommandExecution};
@@ -43,7 +43,7 @@ use serde_json::from_str;
 use std::collections::HashMap;
 use std::fs::read_to_string;
 use std::str::FromStr;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::vec;
 use tokio::task::JoinHandle;
@@ -104,9 +104,9 @@ pub enum Cmd {
     ///     assert!(b.is_empty());
     /// }
     /// ```
-    ExecuteHttp(CommandSpec, Map<String, Value>),
+    ExecuteHttp(CommandSpec, Map<String, Value>, u64),
     /// Invoke an MCP tool via the plugin engine.
-    ExecuteMcp(CommandSpec, Map<String, Value>),
+    ExecuteMcp(CommandSpec, Map<String, Value>, u64),
     /// Load MCP plugins from config (synchronous file read) and populate UI state.
     LoadPlugins,
     PluginsStart(String),
@@ -142,10 +142,10 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
         let effect_commands = match effect {
             Effect::CopyToClipboardRequested(text) => Some(vec![Cmd::ClipboardSet(text)]),
             Effect::CopyLogsRequested(text) => Some(vec![Cmd::ClipboardSet(text)]),
-            Effect::NextPageRequested(next_raw) => handle_next_page_requested(app, next_raw),
-            Effect::PrevPageRequested => handle_prev_page_requested(app),
-            Effect::FirstPageRequested => handle_first_page_requested(app),
-            Effect::LastPageRequested => handle_last_page_requested(app),
+            Effect::NextPageRequested(next_raw, request_id) => handle_next_page_requested(app, next_raw, request_id),
+            Effect::PrevPageRequested(request_id) => handle_prev_page_requested(app, request_id),
+            Effect::FirstPageRequested(request_id) => handle_first_page_requested(app, request_id),
+            Effect::LastPageRequested(request_id) => handle_last_page_requested(app, request_id),
             Effect::PluginsLoadRequested => Some(vec![Cmd::LoadPlugins]),
             Effect::PluginsStart(name) => Some(vec![Cmd::PluginsStart(name)]),
             Effect::PluginsStop(name) => Some(vec![Cmd::PluginsStop(name)]),
@@ -163,7 +163,7 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
             Effect::CloseModal => handle_close_modal(app),
             Effect::SwitchTo(route) => handle_switch_to(app, route),
             Effect::SendToPalette(spec) => handle_send_to_palette(app, spec),
-            Effect::Run => start_palette_execution(app),
+            Effect::Run(cmd, hash) => run_command(app, cmd, hash),
         };
         if let Some(cmds) = effect_commands {
             commands.extend(cmds);
@@ -183,7 +183,7 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
 ///
 /// # Returns
 /// A vector containing an HTTP execution command if context is available
-fn handle_next_page_requested(app: &mut App, next_raw: String) -> Option<Vec<Cmd>> {
+fn handle_next_page_requested(app: &mut App, next_raw: String, request_id: u64) -> Option<Vec<Cmd>> {
     let mut commands = Vec::new();
 
     if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
@@ -193,7 +193,7 @@ fn handle_next_page_requested(app: &mut App, next_raw: String) -> Option<Vec<Cmd
         // Append to history for Prev/First navigation
         app.pagination_history.push(Some(next_raw));
 
-        commands.push(Cmd::ExecuteHttp(spec, body));
+        commands.push(Cmd::ExecuteHttp(spec, body, request_id));
     } else {
         app.logs.entries.push("Cannot request next page: no prior command context".into());
     }
@@ -210,7 +210,7 @@ fn handle_next_page_requested(app: &mut App, next_raw: String) -> Option<Vec<Cmd
 ///
 /// # Returns
 /// A vector containing an HTTP execution command if navigation is possible
-fn handle_prev_page_requested(app: &mut App) -> Option<Vec<Cmd>> {
+fn handle_prev_page_requested(app: &mut App, request_id: u64) -> Option<Vec<Cmd>> {
     let mut commands = Vec::new();
 
     if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
@@ -229,7 +229,7 @@ fn handle_prev_page_requested(app: &mut App) -> Option<Vec<Cmd>> {
             let _ = body.remove("next-range");
         }
 
-        commands.push(Cmd::ExecuteHttp(spec, body));
+        commands.push(Cmd::ExecuteHttp(spec, body, request_id));
     } else {
         app.logs
             .entries
@@ -248,7 +248,7 @@ fn handle_prev_page_requested(app: &mut App) -> Option<Vec<Cmd>> {
 ///
 /// # Returns
 /// A vector containing an HTTP execution command if context is available
-fn handle_first_page_requested(app: &mut App) -> Option<Vec<Cmd>> {
+fn handle_first_page_requested(app: &mut App, request_id: u64) -> Option<Vec<Cmd>> {
     let mut commands = Vec::new();
 
     if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
@@ -264,7 +264,7 @@ fn handle_first_page_requested(app: &mut App) -> Option<Vec<Cmd>> {
         app.pagination_history.clear();
         app.pagination_history.push(first_opt);
 
-        commands.push(Cmd::ExecuteHttp(spec, body));
+        commands.push(Cmd::ExecuteHttp(spec, body, request_id));
     } else {
         app.logs.entries.push("Cannot request first page: no prior command context".into());
     }
@@ -273,11 +273,11 @@ fn handle_first_page_requested(app: &mut App) -> Option<Vec<Cmd>> {
 }
 
 /// Handle the last page requested effect by attempting to navigate to the final page.
-fn handle_last_page_requested(app: &mut App) -> Option<Vec<Cmd>> {
+fn handle_last_page_requested(app: &mut App, request_id: u64) -> Option<Vec<Cmd>> {
     let next_range = app.last_pagination.as_ref().and_then(|pagination| pagination.next_range.clone());
 
     match next_range {
-        Some(range) => handle_next_page_requested(app, range),
+        Some(range) => handle_next_page_requested(app, range, request_id),
         None => Some(Vec::new()),
     }
 }
@@ -291,9 +291,6 @@ fn handle_last_page_requested(app: &mut App) -> Option<Vec<Cmd>> {
 /// # Returns
 /// A vector containing no commands (modal changes are direct UI state updates)
 fn handle_show_modal(app: &mut App, modal: Modal) -> Option<Vec<Cmd>> {
-    if matches!(modal, Modal::PluginDetails) {
-        app.plugins.ensure_details_state();
-    }
     app.set_open_modal_kind(Some(modal));
     None // No commands needed for direct UI state update
 }
@@ -349,12 +346,12 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
         let outcome = match command {
             Cmd::ApplyPaletteError(error) => apply_palette_error(app, error),
             Cmd::ClipboardSet(text) => execute_clipboard_set(app, text),
-            Cmd::ExecuteHttp(spec, body) => {
-                batch.pending.push(spawn_execute_http(app, spec, body));
+            Cmd::ExecuteHttp(spec, body, request_id) => {
+                batch.pending.push(spawn_execute_http(app, spec, body, request_id));
                 continue;
             }
-            Cmd::ExecuteMcp(spec, body) => {
-                batch.pending.push(spawn_execute_mcp(app, spec, body));
+            Cmd::ExecuteMcp(spec, body, request_id) => {
+                batch.pending.push(spawn_execute_mcp(app, spec, body, request_id));
                 continue;
             }
             Cmd::PluginsStart(name) => {
@@ -649,17 +646,17 @@ fn collect_key_value_rows(rows: &[EnvRow]) -> Result<Option<Vec<EnvVar>>, Vec<St
 
 /// Spawn an HTTP execution on the Tokio scheduler while updating local state
 /// to show the spinner.
-fn spawn_execute_http(app: &mut App<'_>, spec: CommandSpec, body: Map<String, Value>) -> JoinHandle<ExecOutcome> {
+fn spawn_execute_http(app: &mut App<'_>, spec: CommandSpec, body: Map<String, Value>, request_id: u64) -> JoinHandle<ExecOutcome> {
     app.executing = true;
     app.throbber_idx = 0;
 
     let active = app.active_exec_count.clone();
     active.fetch_add(1, Ordering::Relaxed);
 
-    tokio::spawn(async move { execute_http_task(active, spec, body).await })
+    tokio::spawn(async move { execute_http_task(active, spec, body, request_id).await })
 }
 
-fn spawn_execute_mcp(app: &mut App<'_>, spec: CommandSpec, arguments: Map<String, Value>) -> JoinHandle<ExecOutcome> {
+fn spawn_execute_mcp(app: &mut App<'_>, spec: CommandSpec, arguments: Map<String, Value>, request_id: u64) -> JoinHandle<ExecOutcome> {
     app.executing = true;
     app.throbber_idx = 0;
 
@@ -667,13 +664,13 @@ fn spawn_execute_mcp(app: &mut App<'_>, spec: CommandSpec, arguments: Map<String
     active.fetch_add(1, Ordering::Relaxed);
     let engine = app.ctx.plugin_engine.clone();
 
-    tokio::spawn(async move { execute_mcp_task(active, engine, spec, arguments).await })
+    tokio::spawn(async move { execute_mcp_task(active, engine, spec, arguments, request_id).await })
 }
 
 /// Background task body for executing an HTTP request and translating it into
 /// an [`ExecOutcome`].
-async fn execute_http_task(active_exec_count: Arc<AtomicUsize>, spec: CommandSpec, body: Map<String, Value>) -> ExecOutcome {
-    let result = exec_remote(&spec, body).await;
+async fn execute_http_task(active_exec_count: Arc<AtomicUsize>, spec: CommandSpec, body: Map<String, Value>, request_id: u64) -> ExecOutcome {
+    let result = exec_remote(&spec, body, request_id).await;
     let outcome = result.unwrap_or_else(|err| ExecOutcome::Log(format!("Error: {}", err)));
 
     active_exec_count.fetch_sub(1, Ordering::Relaxed);
@@ -686,8 +683,9 @@ async fn execute_mcp_task(
     engine: Arc<PluginEngine>,
     spec: CommandSpec,
     arguments: Map<String, Value>,
+    request_id: u64
 ) -> ExecOutcome {
-    let result = engine.execute_tool(&spec, &arguments).await;
+    let result = engine.execute_tool(&spec, &arguments, request_id).await;
     let outcome = result.unwrap_or_else(|err| ExecOutcome::Log(format!("Error: {}", err)));
 
     active_exec_count.fetch_sub(1, Ordering::Relaxed);
@@ -896,26 +894,25 @@ fn build_request_body(user_flags: HashMap<String, Option<String>>, command_spec:
 /// // For input "apps info my-app --verbose"
 /// // Validates command exists, app_id is provided, starts execution
 /// ```
-fn start_palette_execution(application: &mut App) -> Option<Vec<Cmd>> {
-    let valid = validate_command(application);
+fn run_command(app: &mut App, hydrated_command: String, request_id: u64) -> Option<Vec<Cmd>> {
+    let valid = validate_command(app, &hydrated_command, Arc::clone(&app.ctx.command_registry));
+
     match valid {
         Ok((command_spec, request_body, user_args)) => {
-            let command_input = application.palette.input();
-            application.logs.entries.push(format!("Running: {}", command_input));
-            application.logs.rich_entries.push(LogEntry::Text {
+            app.logs.entries.push(format!("Running: {}", &hydrated_command));
+            app.logs.rich_entries.push(LogEntry::Text {
                 level: Some("info".into()),
-                msg: format!("Running: {}", command_input),
+                msg: format!("Running: {}", &hydrated_command),
             });
-            execute_command(command_spec, request_body, user_args)
+            execute_command(command_spec, request_body, user_args, request_id)
         }
         Err(error) => Some(vec![Cmd::ApplyPaletteError(error.to_string())]),
     }
 }
 
-fn validate_command(application: &mut App) -> Result<(CommandSpec, Map<String, Value>, Vec<String>)> {
+fn validate_command(app: &mut App, hydrated_command: &String, command_registry: Arc<Mutex<CommandRegistry>>) -> Result<(CommandSpec, Map<String, Value>, Vec<String>)> {
     // Step 1: Parse and validate the palette input
-    let input_owned = application.palette.input().to_string();
-    let input = input_owned.trim().to_string();
+    let input = hydrated_command.trim().to_string();
     if input.is_empty() {
         return Err(anyhow!("Empty command input. Type a command (e.g., apps info)"));
     }
@@ -930,9 +927,7 @@ fn validate_command(application: &mut App) -> Result<(CommandSpec, Map<String, V
 
     // Step 2: Find the command specification in the registry
     let command_spec = {
-        let lock = application
-            .ctx
-            .registry
+        let lock = command_registry
             .lock()
             .map_err(|_| anyhow!("Could not obtain lock to registry"))?;
         let commands = &lock.commands;
@@ -948,27 +943,27 @@ fn validate_command(application: &mut App) -> Result<(CommandSpec, Map<String, V
     // Step 5: Build request body from flags
     let request_body = build_request_body(user_flags, &command_spec);
     // Step 6: Persist execution context for pagination UI and replay
-    persist_execution_context(application, &command_spec, &request_body, &input);
+    persist_execution_context(app, &command_spec, &request_body, &input);
 
     Ok((command_spec, request_body, user_args))
 }
 
-fn persist_execution_context(application: &mut App, command_spec: &CommandSpec, request_body: &Map<String, Value>, input: &str) {
-    application.last_command_ranges = match command_spec.execution() {
+fn persist_execution_context(app: &mut App, command_spec: &CommandSpec, request_body: &Map<String, Value>, input: &str) {
+    app.last_command_ranges = match command_spec.execution() {
         CommandExecution::Http(http) => Some(http.ranges.clone()),
         _ => None,
     };
-    application.last_spec = Some(command_spec.clone());
-    application.last_body = Some(request_body.clone());
+    app.last_spec = Some(command_spec.clone());
+    app.last_body = Some(request_body.clone());
     let initial_range = build_range_header_from_body(request_body);
 
-    application.initial_range = initial_range.clone();
-    application.pagination_history.clear();
-    application.pagination_history.push(initial_range);
-    application.palette.push_history_if_needed(input);
+    app.initial_range = initial_range.clone();
+    app.pagination_history.clear();
+    app.pagination_history.push(initial_range);
+    app.palette.push_history_if_needed(input);
 }
 
-fn execute_command(command_spec: CommandSpec, request_body: Map<String, Value>, user_args: Vec<String>) -> Option<Vec<Cmd>> {
+fn execute_command(command_spec: CommandSpec, request_body: Map<String, Value>, user_args: Vec<String>, request_id: u64) -> Option<Vec<Cmd>> {
     match command_spec.execution() {
         CommandExecution::Http(http) => {
             let mut command_spec_to_run = command_spec.clone();
@@ -981,7 +976,7 @@ fn execute_command(command_spec: CommandSpec, request_body: Map<String, Value>, 
                 http_spec.path = resolve_path(&http.path, &positional_argument_map);
             }
 
-            Some(vec![Cmd::ExecuteHttp(command_spec_to_run, request_body)])
+            Some(vec![Cmd::ExecuteHttp(command_spec_to_run, request_body, request_id)])
         }
         CommandExecution::Mcp(_) => {
             let mut arguments = request_body;
@@ -991,7 +986,7 @@ fn execute_command(command_spec: CommandSpec, request_body: Map<String, Value>, 
                 }
             }
 
-            Some(vec![Cmd::ExecuteMcp(command_spec, arguments)])
+            Some(vec![Cmd::ExecuteMcp(command_spec, arguments, request_id)])
         }
     }
 }

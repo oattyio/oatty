@@ -43,10 +43,10 @@ Note on current implementation (embed + bindings):
 ### 3.2 Built-in Dynamic Providers
 - Provided by the core CLI, backed by API calls.
 - Examples:
-  - `apps:list` → returns app names.
-  - `addons:list` → returns addons for given app.
-  - `pipelines:list` → returns pipelines visible to user.
-  - `teams:list` → returns team slugs.
+  - `apps list` → returns app names.
+  - `addons list` → returns addons for given app.
+  - `pipelines list` → returns pipelines visible to user.
+  - `teams list` → returns team slugs.
 
 ### 3.3 Workflow Providers
 - Extract values from **previous workflow steps**.
@@ -55,7 +55,7 @@ Note on current implementation (embed + bindings):
 
 ### 3.4 Plugin Providers (MCP)
 - Exposed by MCP plugins via `autocomplete(tool, field, partial)`.
-- Example: A Postgres plugin offering `databases:list` values for `--db`.
+- Example: A Postgres plugin offering `databases list` values for `--db`.
 - Host integrates plugin-suggested values with schema-defined flags.
 
 ---
@@ -63,7 +63,7 @@ Note on current implementation (embed + bindings):
 ## 4. Provider Invocation Lifecycle
 
 1. **User types a flag** (`--app`) or Guided UI highlights a field.
-2. CLI checks schema for associated provider ID (e.g., `"provider": "apps:list"`).
+2. CLI checks schema for associated provider ID (e.g., `"provider": "apps list"`).
 3. **Resolution order**:
    - Static values (enum/defaults).
    - Cached results for this provider.
@@ -81,7 +81,7 @@ Note on current implementation (embed + bindings):
 ```json
 {
   "flag": "--app",
-  "provider": "apps:list",
+  "provider": "apps list",
   "required": true,
   "multiple": false
 }

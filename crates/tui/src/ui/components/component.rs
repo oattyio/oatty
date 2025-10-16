@@ -90,12 +90,7 @@ pub trait Component: Debug {
     /// * `msg` - The application message to handle
     ///
     /// # Returns
-    ///
-    /// Vector of effects that the application should process
-    #[allow(dead_code)]
-    fn handle_events(&mut self, _app: &mut App, _msg: &Msg) -> Vec<Effect> {
-        Vec::new()
-    }
+    fn handle_message(&mut self, _app: &mut App, _msg: &Msg) -> Vec<Effect> { Vec::new() }
 
     /// Handle key events when this component has focus.
     ///
@@ -218,7 +213,7 @@ pub trait Component: Debug {
     /// fn render_hints_bar(&mut self, frame: &mut Frame, rect: Rect, app: &App) {
     /// }
     /// ```
-    fn get_hint_spans(&self, _app: &App, _is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, _app: &App) -> Vec<Span<'_>> {
         Vec::new()
     }
 

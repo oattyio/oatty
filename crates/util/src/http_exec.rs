@@ -8,7 +8,7 @@ use crate::http;
 use heroku_api::HerokuClient;
 use heroku_types::CommandSpec;
 use heroku_types::ExecOutcome;
-use reqwest::Method;
+use reqwest::{Method, StatusCode};
 use reqwest::header::{CONTENT_RANGE, HeaderMap, HeaderName};
 use serde_json::{Map as JsonMap, Value};
 
@@ -18,7 +18,7 @@ use serde_json::{Map as JsonMap, Value};
 /// - Applies Range headers from the body when present.
 /// - Sends the request and parses the response into [`ExecOutcome`].
 /// - Returns a user-friendly `Err(String)` on HTTP/auth/network issues.
-pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>) -> Result<ExecOutcome, String> {
+pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>, request_id: u64) -> Result<ExecOutcome, String> {
     let http = spec.http().ok_or_else(|| format!("Command '{}' is not HTTP-backed", spec.name))?;
 
     let client = HerokuClient::new_from_service_id(http.service_id)
@@ -76,23 +76,112 @@ pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>) -> Re
     if !status.is_success() {
         return Err(format!("HTTP {}: {}", status.as_u16(), text));
     }
-
-    let log = format!("{}\n{}", status, text);
-    let (result_json, open_table) = http::parse_response_json(&text);
-    Ok(ExecOutcome::Http(log, result_json.unwrap_or(Value::Null), pagination, open_table))
+    let raw_log = format!("{}\n{}", status, text);
+    let log = summarize_execution_outcome(spec, raw_log.as_str(), status);
+    let result_json = http::parse_response_json(&text);
+    Ok(ExecOutcome::Http(status.as_u16(), log, result_json.unwrap_or(Value::Null), pagination, request_id))
 }
 
-/// Fetch a JSON array from the Heroku API at the given path.
+fn summarize_execution_outcome(command_spec: &CommandSpec, raw_log: &str, status_code: StatusCode) -> String {
+    let trimmed_log = raw_log.trim();
+    let canonical_name = command_spec.canonical_id();
+
+    if let Some(error_message) = trimmed_log.strip_prefix("Error:") {
+        let redacted = crate::redact_sensitive(error_message.trim());
+        let truncated = truncate_for_summary(&redacted, 160);
+        return format!("{} • failed: {}", canonical_name, truncated);
+    }
+
+    let success = if status_code.is_success() {
+        "success"
+    } else {
+        "failed"
+    };
+    format!("{} • {}", canonical_name, success)
+}
+
+fn truncate_for_summary(text: &str, max_len: usize) -> String {
+    let trimmed = text.trim();
+    if trimmed.chars().count() <= max_len {
+        return trimmed.to_string();
+    }
+
+    // Reserve space for the trailing ellipsis ("...").
+    let target_len = max_len.saturating_sub(3);
+    let mut truncated = String::new();
+    for (idx, ch) in trimmed.chars().enumerate() {
+        if idx >= target_len {
+            break;
+        }
+        truncated.push(ch);
+    }
+    let trimmed_truncated = truncated.trim_end();
+    format!("{}...", trimmed_truncated)
+}
+
+/// Fetches a JSON array from a remote HTTP endpoint.
 ///
-/// Returns Ok(Vec<Value>) when the response body parses to a JSON array.
-/// On error or non-array response, returns Err with a user-friendly message.
+/// # Description
+/// This asynchronous function retrieves a JSON array from a remote endpoint defined
+/// in the [`CommandSpec`] parameter. It verifies the HTTP service configuration,
+/// initializes a Heroku API client, performs a GET request, and processes the response
+/// to validate and extract the desired JSON array.
+///
+/// # Parameters
+/// - `spec`: A reference to a [`CommandSpec`] object that contains the HTTP
+///   service configuration, including the `name` and `path` details.
+///
+/// # Returns
+/// - `Ok(Vec<Value>)`: If the HTTP request is successful, the response is a valid JSON array.
+/// - `Err(String)`: If an error occurs at any stage (e.g., missing HTTP configuration,
+///   network issues, invalid JSON), a descriptive error message is returned.
+///
+/// # Errors
+/// - Returns an error if the [`CommandSpec`] is not associated with an HTTP-backed service.
+/// - Returns an error if authentication setup for the Heroku API client fails (e.g., missing
+///   `HEROKU_API_KEY` or improperly configured `~/.netrc` file).
+/// - Returns an error if the HTTP request fails (e.g., network error, invalid proxy settings).
+/// - Returns an error if the response status code indicates failure (non-2xx status code).
+/// - Returns an error if the response body is not a valid JSON array or cannot be deserialized.
+///
+/// # Example
+/// ```rust ignore
+/// use serde_json::Value;
+///
+/// #[tokio::main]
+/// async fn main() {
+///     let spec = CommandSpec::new(); // Example initialization
+///     match fetch_json_array(&spec).await {
+///         Ok(json_array) => println!("Received data: {:?}", json_array),
+///         Err(err) => eprintln!("Failed to fetch JSON array: {}", err),
+///     }
+/// }
+/// ```
+///
+/// # Dependencies
+/// - This function uses the `HerokuClient` for API requests, and the `serde_json` crate
+///   for parsing JSON responses.
+/// - Ensure the environment variable `HEROKU_API_KEY` or the `~/.netrc` configuration is
+///   set up properly for authentication.
+///
+/// # Notes
+/// - The function unwraps the response body text (`text().await`) if reading the body fails,
+///   defaulting to a placeholder value `<no body>`.
+/// - Errors are formatted with helpful hints where applicable, such as checking connection
+///   settings or ensuring API credentials are configured.
+///
+/// [`CommandSpec`]: Path to your CommandSpec type definition.
 pub async fn fetch_json_array(spec: &CommandSpec) -> Result<Vec<Value>, String> {
     let http = spec.http().ok_or_else(|| format!("Command '{}' is not HTTP-backed", spec.name))?;
 
     let client = HerokuClient::new_from_service_id(http.service_id)
         .map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc", e))?;
 
-    let resp = client.request(reqwest::Method::GET, &http.path).send().await.map_err(|e| {
+    let method = Method::from_bytes(http.method.as_bytes()).map_err(|e| e.to_string())?;
+    if method != Method::GET {
+        return Err("GET method required for list endpoints".into());
+    }
+    let resp = client.request(method, &http.path).send().await.map_err(|e| {
         format!(
             "Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY or ~/.netrc is set",
             e

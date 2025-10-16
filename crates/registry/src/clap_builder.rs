@@ -5,7 +5,7 @@ use std::{
 
 use clap::{Arg, ArgAction, Command as ClapCommand};
 
-use crate::{CommandFlag, CommandSpec, Registry, feat_gate::feature_workflows};
+use crate::{CommandFlag, CommandRegistry, CommandSpec, feat_gate::feature_workflows};
 
 /// Builds a complete Clap command tree from the registry's command
 /// specifications.
@@ -31,13 +31,13 @@ use crate::{CommandFlag, CommandSpec, Registry, feat_gate::feature_workflows};
 ///
 /// ```rust
 /// use std::sync::{Arc, Mutex};
-/// use heroku_registry::{Registry, build_clap};
+/// use heroku_registry::{CommandRegistry, build_clap};
 ///
-/// let registry = Registry::from_embedded_schema().unwrap();
+/// let registry = CommandRegistry::from_embedded_schema().unwrap();
 /// let registry = Arc::new(Mutex::new(registry));
 /// let _clap_command = build_clap(Arc::clone(&registry));
 /// ```
-pub fn build_clap(registry: Arc<Mutex<Registry>>) -> ClapCommand {
+pub fn build_clap(registry: Arc<Mutex<CommandRegistry>>) -> ClapCommand {
     let mut root = create_root_command();
     let Some(lock) = registry.lock().ok() else {
         return root;

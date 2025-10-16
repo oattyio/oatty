@@ -5,6 +5,8 @@ use ratatui::layout::Rect;
 /// This struct serves as the central state container for the entire TUI
 /// application, managing user interactions, data flow, and UI state.
 use serde_json::Value;
+use heroku_types::ExecOutcome;
+use crate::ui::utils::normalize_result_payload;
 
 /// Structured log entry supporting API responses and plain text.
 #[derive(Debug, Clone)]
@@ -52,7 +54,7 @@ pub enum LogDetailView {
     /// Use table view for API responses with tabular JSON; carries scroll
     /// offset.
     Table { offset: usize },
-    /// Use simple text viewer for plain or multi-line selections.
+    /// Use a simple text viewer for plain or multi-line selections.
     Text,
 }
 
@@ -72,9 +74,44 @@ pub struct LogsState {
     pub cached_detail_index: Option<usize>,
     pub cached_redacted_json: Option<Value>,
     /// Focus flag for rat-focus integration
-    pub focus: FocusFlag,
+    pub container_focus: FocusFlag,
     /// Last rendered rectangle of the detail modal for hit-testing.
     pub detail_rect: Option<Rect>,
+}
+
+impl LogsState {
+    pub (crate) fn process_general_execution_result(&mut self, execution_outcome: &Box<ExecOutcome>) {
+        match execution_outcome.as_ref() {
+            ExecOutcome::Http(status, log, value, ..) => {
+                self.entries.push(log.to_string());
+                self.rich_entries.push(LogEntry::Api {
+                    status: *status,
+                    raw: log.clone(),
+                    json: Some(normalize_result_payload(value.clone())),
+                });
+            }
+            ExecOutcome::Mcp(log, value, ..) => {
+                self.entries.push(log.to_string());
+                self.rich_entries.push(LogEntry::Mcp {
+                    raw: log.clone(),
+                    json: Some(normalize_result_payload(value.clone())),
+                });
+            }
+            ExecOutcome::Log(text) 
+            | ExecOutcome::PluginDetail(text, ..) 
+            | ExecOutcome::PluginValidationErr(text, ..)
+            | ExecOutcome::PluginDetailLoad(text, ..)
+            | ExecOutcome::PluginsRefresh(text, ..)
+            | ExecOutcome::PluginValidationOk(text, ..) => {
+                self.entries.push(text.to_string());
+                self.rich_entries.push(LogEntry::Text {
+                    level: None,
+                    msg: text.to_string(),
+                });
+            }
+            _ => {}
+        }
+    }
 }
 
 impl Default for LogsState {
@@ -87,7 +124,7 @@ impl Default for LogsState {
             pretty_json: true,
             cached_detail_index: None,
             cached_redacted_json: None,
-            focus: FocusFlag::named("root.logs"),
+            container_focus: FocusFlag::named("root.logs"),
             detail_rect: None,
         }
     }
@@ -99,7 +136,7 @@ impl HasFocus for LogsState {
     }
 
     fn focus(&self) -> FocusFlag {
-        self.focus.clone()
+        self.container_focus.clone()
     }
 
     fn area(&self) -> Rect {

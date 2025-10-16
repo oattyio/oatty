@@ -105,7 +105,7 @@ impl LifecycleManager {
     /// Start a plugin with lifecycle management.
     pub async fn start_plugin<F>(&self, name: &str, start_fn: F) -> Result<(), LifecycleError>
     where
-        F: FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>,
+        F: FnOnce() -> std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>,
     {
         let start_time = SystemTime::now();
 
@@ -163,7 +163,7 @@ impl LifecycleManager {
     /// Stop a plugin with lifecycle management.
     pub async fn stop_plugin<F>(&self, name: &str, stop_fn: F) -> Result<(), LifecycleError>
     where
-        F: FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>,
+        F: FnOnce() -> std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>,
     {
         let shutdown_time = SystemTime::now();
 
@@ -220,8 +220,8 @@ impl LifecycleManager {
     /// Restart a plugin with lifecycle management.
     pub async fn restart_plugin<F, G>(&self, name: &str, stop_fn: F, start_fn: G) -> Result<(), LifecycleError>
     where
-        F: FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>,
-        G: FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send>>,
+        F: FnOnce() -> std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>,
+        G: FnOnce() -> std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>,
     {
         let restart_time = SystemTime::now();
 

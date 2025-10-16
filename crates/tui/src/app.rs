@@ -13,19 +13,19 @@ use std::{
 };
 
 use crate::ui::components::nav_bar::VerticalNavBarComponent;
-use crate::ui::components::workflows::WorkflowInputsComponent;
-use crate::ui::components::workflows::collector::WorkflowCollectorComponent;
+use crate::ui::components::workflows::{WorkflowCollectorComponent, WorkflowInputsComponent};
 use crate::ui::components::{
     BrowserComponent, HelpComponent, PluginsComponent, TableComponent, WorkflowsComponent, logs::LogDetailsComponent,
     nav_bar::VerticalNavBarState, plugins::PluginsDetailsComponent,
 };
+use crate::ui::utils::centered_rect;
 use crate::ui::{
     components::{
         browser::BrowserState,
         component::Component,
         help::HelpState,
         logs::{LogsState, state::LogEntry},
-        palette::{PaletteComponent, PaletteState, providers::RegistryBackedProvider, state::ValueProvider},
+        palette::{PaletteComponent, PaletteState},
         plugins::PluginsState,
         table::TableState,
         workflows::WorkflowState,
@@ -34,12 +34,15 @@ use crate::ui::{
 };
 use anyhow::{Result, anyhow};
 use heroku_api::HerokuClient;
-use heroku_engine::{ProviderBindingOutcome, ProviderResolutionSource, RegistryCommandRunner, StepResult, StepStatus, WorkflowRunState};
+use heroku_engine::provider::ProviderRegistry;
+use heroku_engine::{
+    ProviderBindingOutcome, ProviderResolutionSource, RegistryCommandRunner, StepResult, StepStatus, ValueProvider, WorkflowRunState,
+};
 use heroku_mcp::{PluginDetail, PluginEngine};
-use heroku_registry::Registry;
+use heroku_registry::CommandRegistry;
 use heroku_types::service::ServiceId;
 use heroku_types::workflow::RuntimeWorkflow;
-use heroku_types::{Effect, ExecOutcome, Modal, Msg, Route};
+use heroku_types::{Effect, ExecOutcome, Modal, Msg, Pagination, Route};
 use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -52,9 +55,11 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 #[derive(Debug)]
 pub struct SharedCtx {
     /// Global Heroku command registry
-    pub registry: Arc<Mutex<Registry>>,
+    pub command_registry: Arc<Mutex<CommandRegistry>>,
     /// Value providers for suggestions
-    pub providers: Vec<Box<dyn ValueProvider>>,
+    pub providers: Vec<Arc<dyn ValueProvider>>,
+    /// Typed ProviderRegistry for provider-backed workflow selectors
+    pub provider_registry: Arc<ProviderRegistry>,
     /// Active UI theme (Dracula by default) loaded from env
     pub theme: Box<dyn theme::Theme>,
     /// MCP plugin engine (None until initialized in main.rs)
@@ -62,12 +67,16 @@ pub struct SharedCtx {
 }
 
 impl SharedCtx {
-    pub fn new(registry: Arc<Mutex<Registry>>, plugin_engine: Arc<PluginEngine>) -> Self {
-        // Add a registry-backed provider with a small TTL cache
-        let providers: Vec<Box<dyn ValueProvider>> = vec![Box::new(RegistryBackedProvider::new(Duration::from_secs(45)))];
+    pub fn new(command_registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Self {
+        let provider_registry = Arc::new(
+            ProviderRegistry::with_default_http(Arc::clone(&command_registry), Duration::from_secs(30)).expect("provider registry"),
+        );
+        let providers: Vec<Arc<dyn ValueProvider>> = vec![provider_registry.clone()];
+
         Self {
-            registry,
+            command_registry,
             providers,
+            provider_registry: provider_registry.clone(),
             theme: theme::load_from_env(),
             plugin_engine,
         }
@@ -101,7 +110,7 @@ pub struct App<'a> {
     /// animate
     pub active_exec_count: Arc<AtomicUsize>,
     /// Last pagination info returned by an execution (if any)
-    pub last_pagination: Option<heroku_types::Pagination>,
+    pub last_pagination: Option<Pagination>,
     /// Ranges supported by the last executed command (for pagination UI)
     pub last_command_ranges: Option<Vec<String>>,
     /// Last executed CommandSpec (for pagination replays)
@@ -117,10 +126,12 @@ pub struct App<'a> {
     /// Main view for the nav bar
     pub nav_bar_view: Option<Box<dyn Component>>,
     /// Currently open modal component
-    pub open_modal: Option<Box<dyn Component>>,
+    pub open_modal: Option<(Box<dyn Component>, Box<dyn Fn(Rect) -> Rect>)>,
+    /// Currently open logs view component
+    pub logs_view: Option<Box<dyn Component>>,
     /// Global focus tree for keyboard/mouse traversal
     pub focus: Focus,
-    // the widget_id of the focus just before a modal is opened
+    /// the widget_id of the focus just before a modal is opened
     transient_focus_id: Option<usize>,
     /// Container focus flag for the top-level app focus scope
     app_container_focus: FocusFlag,
@@ -150,7 +161,7 @@ impl App<'_> {
     /// ```rust,ignore
     /// // Requires constructing a full Registry and App; ignored in doctests.
     /// ```
-    pub fn new(registry: Arc<Mutex<Registry>>, engine: Arc<PluginEngine>) -> Self {
+    pub fn new(registry: Arc<Mutex<CommandRegistry>>, engine: Arc<PluginEngine>) -> Self {
         let mut app = Self {
             ctx: SharedCtx::new(Arc::clone(&registry), engine),
             browser: BrowserState::new(Arc::clone(&registry)),
@@ -178,6 +189,7 @@ impl App<'_> {
             app_container_focus: FocusFlag::named("app.container"),
             current_route: Route::Palette,
             open_modal_kind: None,
+            logs_view: None,
         };
         app.browser.update_browser_filtered();
 
@@ -213,10 +225,7 @@ impl App<'_> {
             Msg::Tick => self.handle_tick_message(),
             Msg::Resize(..) => vec![],
             Msg::CopyToClipboard(text) => vec![Effect::CopyToClipboardRequested(text)],
-            Msg::ExecCompleted(execution_outcome) => self.handle_execution_completion(execution_outcome),
-            // Placeholder handlers for upcoming logs features
-            Msg::LogsUp | Msg::LogsDown | Msg::LogsExtendUp | Msg::LogsExtendDown => vec![],
-            Msg::LogsOpenDetail | Msg::LogsCloseDetail | Msg::LogsCopy | Msg::LogsTogglePretty => vec![],
+            _ => Vec::new(),
         }
     }
 
@@ -248,6 +257,7 @@ impl App<'_> {
             let SharedCtx { providers, .. } = &self.ctx;
             self.palette.apply_build_suggestions(providers, &*self.ctx.theme);
         }
+
         vec![]
     }
 
@@ -266,22 +276,15 @@ impl App<'_> {
     ///
     /// Returns `true` if the execution was handled as a special case (plugin response)
     /// and the caller should return early, `false` if normal processing should continue.
-    fn handle_execution_completion(&mut self, execution_outcome: Box<ExecOutcome>) -> Vec<Effect> {
+    fn handle_execution_completion(&mut self, execution_outcome: Box<ExecOutcome>) {
         let execution_outcome = *execution_outcome;
         // Keep executing=true if other executions are still active
-        let still_executing = self.active_exec_count.load(Ordering::Relaxed) > 0;
-        self.executing = still_executing;
         match execution_outcome {
-            ExecOutcome::Http(..) => self.process_general_execution_result(execution_outcome),
-            ExecOutcome::Mcp(log, value) => self.process_mcp_execution_result(log, value),
             ExecOutcome::PluginDetailLoad(name, result) => self.handle_plugin_detail_load(name, result),
             ExecOutcome::PluginDetail(log, maybe_detail) => self.handle_plugin_detail(log, maybe_detail),
             ExecOutcome::PluginsRefresh(log, maybe_plugins) => self.handle_plugin_refresh_response(log, maybe_plugins),
-            ExecOutcome::Log(log) => {
-                self.logs.entries.push(log);
-                vec![]
-            }
-            _ => vec![],
+            ExecOutcome::Log(log) => { self.logs.entries.push(log) },
+            _ => {},
         }
     }
 
@@ -291,13 +294,9 @@ impl App<'_> {
     ///
     /// * `log` - The raw log output for redaction
     /// * `maybe_detail` - The plugin detail to apply
-    ///
-    /// # Returns
-    ///
-    /// Returns `Vec<Effect>` if follow up effects are needed
-    fn handle_plugin_detail(&mut self, log: String, maybe_detail: Option<PluginDetail>) -> Vec<Effect> {
+    fn handle_plugin_detail(&mut self, log: String, maybe_detail: Option<PluginDetail>) {
         self.logs.entries.push(log);
-        let Some(detail) = maybe_detail else { return vec![] };
+        let Some(detail) = maybe_detail else { return; };
         if let Some(state) = self.plugins.details.as_mut()
             && state.selected_plugin().is_some_and(|selected| selected == detail.name)
         {
@@ -305,11 +304,9 @@ impl App<'_> {
         }
 
         self.plugins.table.update_item(detail);
-
-        vec![]
     }
 
-    fn handle_plugin_detail_load(&mut self, name: String, result: Result<PluginDetail, String>) -> Vec<Effect> {
+    fn handle_plugin_detail_load(&mut self, name: String, result: Result<PluginDetail, String>) {
         match result {
             Ok(detail) => {
                 self.logs.entries.push(format!("Plugins: loaded details for '{name}'"));
@@ -331,8 +328,6 @@ impl App<'_> {
                 }
             }
         }
-
-        vec![]
     }
 
     /// Handles plugin refresh responses from command execution.
@@ -342,100 +337,28 @@ impl App<'_> {
     /// * `log` - The raw log output for redaction
     /// * `plugin_updates` - The updates to apply
     ///
-    /// # Returns
-    ///
-    /// Returns `Vec<Effect>` if follow up effects are needed
-    fn handle_plugin_refresh_response(&mut self, log: String, plugin_updates: Option<Vec<PluginDetail>>) -> Vec<Effect> {
+    fn handle_plugin_refresh_response(&mut self, log: String, plugin_updates: Option<Vec<PluginDetail>>) {
         self.logs.entries.push(log);
         let Some(updated_plugins) = plugin_updates else {
-            return vec![];
+            return;
         };
         self.plugins.table.replace_items(updated_plugins);
-        vec![]
     }
 
-    /// Processes general command execution results (non-plugin specific).
-    ///
-    /// This method handles the standard processing of command results including
-    /// logging, table updates, and pagination information.
-    ///
-    /// # Arguments
-    ///
-    /// * `execution_outcome` - The result of the command execution
-    fn process_general_execution_result(&mut self, execution_outcome: ExecOutcome) -> Vec<Effect> {
-        let ExecOutcome::Http(log, value, maybe_pagination, open_table) = execution_outcome else {
-            return vec![];
-        };
-
-        // nothing to do
-        if !open_table || (log.is_empty() && value.is_null()) {
-            return vec![];
-        }
-        let (summary, status_code) = summarize_execution_outcome(self.last_spec.as_ref(), &log);
-
-        let normalized_value = Self::normalize_result_payload(value);
-
-        self.logs.entries.push(summary);
-        self.logs.rich_entries.push(LogEntry::Api {
-            status: status_code.unwrap_or(0),
-            raw: log,
-            json: Some(normalized_value.clone()),
-        });
-
-        self.trim_logs_if_needed();
-
-        if open_table {
-            self.table.apply_result_json(Some(normalized_value), &*self.ctx.theme);
-            self.table.normalize();
-            self.last_pagination = maybe_pagination;
-            self.palette.reduce_clear_all();
-
-            return vec![Effect::ShowModal(Modal::Results)];
-        }
-
-        vec![]
-    }
-
-    fn process_mcp_execution_result(&mut self, log: String, value: JsonValue) -> Vec<Effect> {
-        let label = command_label(self.last_spec.as_ref());
-        let success = if log.contains("failed") { "failed" } else { "succeeded" };
-        let summary = format!("{} - {}", label, success);
-
-        let normalized_value = Self::normalize_result_payload(value);
-        let raw_payload = Self::stringify_result_payload(&normalized_value);
-
-        self.logs.entries.push(summary);
-        self.logs.rich_entries.push(LogEntry::Mcp {
-            raw: raw_payload,
-            json: Some(normalized_value.clone()),
-        });
-        self.trim_logs_if_needed();
-
-        if normalized_value.is_object() || normalized_value.is_array() {
-            self.table.apply_result_json(Some(normalized_value), &*self.ctx.theme);
-            self.table.normalize();
-            self.palette.reduce_clear_all();
-            return vec![Effect::ShowModal(Modal::Results)];
-        }
-
-        vec![]
-    }
-
-    /// Normalize execution payloads to ensure single-key collections render in the results table.
-    ///
-    /// Some APIs return objects shaped as `{ "items": [ ... ] }`. The table expects an array at
-    /// the root level, so this helper unwraps objects that meet this pattern. All other payloads
-    /// are returned unchanged.
-    fn normalize_result_payload(value: JsonValue) -> JsonValue {
-        if let JsonValue::Object(map) = &value
-            && map.len() == 1
-            && let Some(inner_value) = map.values().next()
-            && inner_value.is_array()
-        {
-            return inner_value.clone();
-        }
-        value
-    }
+    // fn route_exec_outcome(&mut self, destination: ExecOutcomeDestination, normalized_value: JsonValue) -> Vec<Effect> {
+    //     let mut effects = Vec::new();
+    //     match destination {
+    //         ExecOutcomeDestination::WorkflowCollector => {
+    //             let Some(collector_state) = self.workflows.selector_state_mut() else {return Vec::new()};
+    //             collector_state.table.apply_result_json(Some(normalized_value), &*self.ctx.theme);
+    //             collector_state.table.normalize();
+    //             self.focus.focus(&collector_state.table.grid_f);
+    //             collector_state.status = SelectorStatus::Loaded;
+    //             collector_state.error_message = None;
+    //         },
+    //     }
+    //     effects
+    // }
 
     /// Produce a human-readable string representation of a JSON payload for logging.
     fn stringify_result_payload(value: &JsonValue) -> String {
@@ -463,21 +386,6 @@ impl App<'_> {
         }
     }
 
-    /// Execute the workflow using the run state accumulated via the Guided Input Collector.
-    pub fn execute_workflow_from_collector(&mut self) -> Result<Vec<Effect>> {
-        let run_state = match self.workflows.take_run_state() {
-            Some(state) => state,
-            None => {
-                self.logs.entries.push("No workflow run state available to execute".to_string());
-                return Ok(vec![Effect::CloseModal]);
-            }
-        };
-        self.workflows.set_collector_visible(false);
-        let mut effects = vec![Effect::CloseModal];
-        effects.extend(self.process_run_state(run_state, true)?);
-        Ok(effects)
-    }
-
     /// Open the interactive input view for the selected workflow.
     fn open_workflow_inputs(&mut self) -> Result<()> {
         let Some(workflow) = self.workflows.selected_workflow() else {
@@ -486,7 +394,6 @@ impl App<'_> {
         };
         let mut run_state = WorkflowRunState::new(workflow.clone());
         run_state.evaluate_input_providers()?;
-        self.workflows.observe_provider_refresh(&run_state);
         self.workflows.begin_inputs_session(run_state);
         Ok(())
     }
@@ -496,27 +403,10 @@ impl App<'_> {
         self.workflows.end_inputs_session();
     }
 
-    /// Execute a workflow using the inputs prepared in the input view.
-    pub fn execute_workflow_from_inputs(&mut self) -> Result<Vec<Effect>> {
-        let run_state = match self.workflows.take_run_state() {
-            Some(state) => state,
-            None => {
-                self.logs.entries.push("No workflow run state available to execute".to_string());
-                return Ok(Vec::new());
-            }
-        };
-
-        self.workflows.end_inputs_session();
-        let effects = self.process_run_state(run_state, true)?;
-        Ok(effects)
-    }
-
     fn process_run_state(&mut self, mut run_state: WorkflowRunState, already_evaluated: bool) -> Result<Vec<Effect>> {
         if !already_evaluated {
             run_state.evaluate_input_providers()?;
         }
-
-        self.workflows.observe_provider_refresh(&run_state);
 
         if let Some(blocked) = run_state
             .telemetry()
@@ -528,7 +418,6 @@ impl App<'_> {
             let argument = blocked.argument.clone();
             let outcome_desc = describe_provider_outcome(&blocked.outcome);
             self.workflows.set_active_run_state(run_state);
-            self.workflows.set_collector_visible(true);
             self.logs
                 .entries
                 .push(format!("Collector: {}.{} requires attention: {}", input, argument, outcome_desc));
@@ -537,7 +426,7 @@ impl App<'_> {
 
         let registry_snapshot = self
             .ctx
-            .registry
+            .command_registry
             .lock()
             .map_err(|_| anyhow!("could not obtain command registry lock"))?
             .clone();
@@ -554,7 +443,7 @@ impl App<'_> {
         {
             self.table.apply_result_json(Some(last.output.clone()), &*self.ctx.theme);
             self.table.normalize();
-            effects.push(Effect::ShowModal(Modal::Results));
+            // effects.push(Effect::ShowModal(Modal::Results));
         }
 
         Ok(effects)
@@ -662,7 +551,7 @@ impl App<'_> {
                 (Box::new(WorkflowInputsComponent), Box::new(&self.workflows))
             }
             Route::Workflows => {
-                if let Err(error) = self.workflows.ensure_loaded(&self.ctx.registry) {
+                if let Err(error) = self.workflows.ensure_loaded(&self.ctx.command_registry) {
                     self.logs.entries.push(format!("Failed to load workflows: {error}"));
                 }
                 (Box::new(WorkflowsComponent), Box::new(&self.workflows))
@@ -677,17 +566,25 @@ impl App<'_> {
 
     /// Update the open modal kind (use None to clear).
     pub fn set_open_modal_kind(&mut self, modal: Option<Modal>) {
-        let previous = self.open_modal_kind.clone();
         if let Some(modal_kind) = modal.clone() {
-            let modal_view: Box<dyn Component> = match modal_kind {
-                Modal::Help => Box::new(HelpComponent),
-                Modal::Results => Box::new(TableComponent::default()),
-                Modal::LogDetails => Box::new(LogDetailsComponent),
-                Modal::PluginDetails => Box::new(PluginsDetailsComponent),
-                Modal::WorkflowCollector => {
-                    self.workflows.set_collector_visible(true);
-                    Box::new(WorkflowCollectorComponent::default())
-                }
+            let modal_view: (Box<dyn Component>, Box<dyn Fn(Rect) -> Rect>) = match modal_kind {
+                Modal::Help => (Box::new(HelpComponent::default()), Box::new(|rect| centered_rect(80, 70, rect))),
+                Modal::Results(exec_outcome) => {
+                    self.table.process_general_execution_result(&exec_outcome, &*self.ctx.theme);
+                    (Box::new(TableComponent::default()), Box::new(|rect| centered_rect(96, 90, rect))) 
+                },
+                Modal::LogDetails => (
+                    Box::new(LogDetailsComponent::default()),
+                    Box::new(|rect| centered_rect(80, 70, rect)),
+                ),
+                Modal::PluginDetails => (
+                    Box::new(PluginsDetailsComponent::default()),
+                    Box::new(|rect| centered_rect(90, 80, rect)),
+                ),
+                Modal::WorkflowCollector => (
+                    Box::new(WorkflowCollectorComponent::default()),
+                    Box::new(|rect| centered_rect(96, 90, rect)),
+                ),
             };
             self.open_modal = Some(modal_view);
             // save the current focus to restore when the modal is closed
@@ -696,19 +593,6 @@ impl App<'_> {
             self.open_modal = None;
         }
         self.open_modal_kind = modal;
-
-        if matches!(self.open_modal_kind, Some(Modal::PluginDetails)) {
-            self.plugins.ensure_details_state();
-        }
-
-        if matches!(previous, Some(Modal::PluginDetails)) && !matches!(self.open_modal_kind, Some(Modal::PluginDetails)) {
-            self.plugins.clear_details_state();
-        }
-        // If we are closing the collector, drop the retained run state
-        if matches!(previous, Some(Modal::WorkflowCollector)) && !matches!(self.open_modal_kind, Some(Modal::WorkflowCollector)) {
-            self.workflows.set_collector_visible(false);
-            let _ = self.workflows.take_run_state();
-        }
     }
 
     pub fn restore_focus(&mut self) {
@@ -722,8 +606,6 @@ impl App<'_> {
         }
     }
 }
-
-const EXECUTION_SUMMARY_LIMIT: usize = 160;
 
 fn describe_provider_outcome(outcome: &ProviderBindingOutcome) -> String {
     match outcome {
@@ -750,114 +632,6 @@ fn format_step_status(status: StepStatus) -> &'static str {
     }
 }
 
-fn summarize_execution_outcome(command_spec: Option<&heroku_registry::CommandSpec>, raw_log: &str) -> (String, Option<u16>) {
-    let label = command_label(command_spec);
-    let trimmed_log = raw_log.trim();
-
-    if trimmed_log.starts_with("Plugins:") {
-        let sanitized = heroku_util::redact_sensitive(trimmed_log);
-        return (sanitized, None);
-    }
-
-    if let Some(error_message) = trimmed_log.strip_prefix("Error:") {
-        let redacted = heroku_util::redact_sensitive(error_message.trim());
-        let truncated = truncate_for_summary(&redacted, EXECUTION_SUMMARY_LIMIT);
-        let summary = format!("{} - failed: {}", label, truncated);
-        return (summary, None);
-    }
-
-    let status_line = trimmed_log.lines().next().unwrap_or_default().trim();
-    let status_code = status_line.split_whitespace().next().and_then(|code| code.parse::<u16>().ok());
-
-    let success = if status_code.is_some_and(|c| c.clamp(200, 399) == c) {
-        "success"
-    } else {
-        "failed"
-    };
-    let summary = if status_line.is_empty() {
-        format!("{} - {}", label, success)
-    } else {
-        let sanitized_status = heroku_util::redact_sensitive(status_line);
-        format!("{} - {} ({})", label, success, sanitized_status)
-    };
-
-    (summary, status_code)
-}
-
-fn command_label(command_spec: Option<&heroku_registry::CommandSpec>) -> String {
-    match command_spec {
-        Some(spec) if spec.name.is_empty() => spec.group.clone(),
-        Some(spec) => format!("{} {}", spec.group, spec.name),
-        None => "Command".to_string(),
-    }
-}
-
-fn truncate_for_summary(text: &str, max_len: usize) -> String {
-    let trimmed = text.trim();
-    if trimmed.chars().count() <= max_len {
-        return trimmed.to_string();
-    }
-
-    // Reserve space for the trailing ellipsis ("...").
-    let target_len = max_len.saturating_sub(3);
-    let mut truncated = String::new();
-    for (idx, ch) in trimmed.chars().enumerate() {
-        if idx >= target_len {
-            break;
-        }
-        truncated.push(ch);
-    }
-    let trimmed_truncated = truncated.trim_end();
-    format!("{}...", trimmed_truncated)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use heroku_registry::CommandSpec;
-    use heroku_types::{ServiceId, command::HttpCommandSpec};
-
-    fn sample_spec() -> CommandSpec {
-        CommandSpec::new_http(
-            "apps".to_string(),
-            "info".to_string(),
-            String::new(),
-            Vec::new(),
-            Vec::new(),
-            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new(), None),
-        )
-    }
-
-    #[test]
-    fn summarize_success_includes_status_code() {
-        let spec = sample_spec();
-        let (summary, status) = summarize_execution_outcome(Some(&spec), "200 OK\n{\"foo\":\"bar\"}");
-
-        assert_eq!(summary, "apps info - success (200 OK)");
-        assert_eq!(status, Some(200));
-    }
-
-    #[test]
-    fn summarize_error_marks_failure_and_truncates() {
-        let spec = sample_spec();
-        let long_error = format!("Error: {}", "SensitiveToken123".repeat((EXECUTION_SUMMARY_LIMIT / 5) + 10));
-
-        let (summary, status) = summarize_execution_outcome(Some(&spec), &long_error);
-
-        assert!(summary.starts_with("apps info - failed: "));
-        assert!(summary.ends_with("..."));
-        assert_eq!(status, None);
-    }
-
-    #[test]
-    fn summarize_without_spec_uses_generic_label() {
-        let (summary, status) = summarize_execution_outcome(None, "200 OK\n{}");
-
-        assert_eq!(summary, "Command - success (200 OK)");
-        assert_eq!(status, Some(200));
-    }
-}
-
 impl HasFocus for App<'_> {
     /// Build the top-level focus container for the application.
     ///
@@ -867,7 +641,7 @@ impl HasFocus for App<'_> {
         // If a modal is open, it is the sole focus scope.
         if let Some(kind) = &self.open_modal_kind {
             match kind {
-                Modal::Results => {
+                Modal::Results(_) => {
                     builder.widget(&self.table);
                 }
                 Modal::LogDetails => {
@@ -877,7 +651,7 @@ impl HasFocus for App<'_> {
                     // no focusable fields; leave ring empty (collector stub)
                 }
                 Modal::PluginDetails | Modal::Help => {
-                    // no focusable fields; leave ring empty
+                    // no focusable fields; leave the ring empty
                 }
             }
             builder.end(tag);

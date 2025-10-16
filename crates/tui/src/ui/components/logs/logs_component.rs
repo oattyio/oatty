@@ -14,10 +14,9 @@
 //! The component follows the TEA (The Elm Architecture) pattern and integrates
 //! with the application's focus management system.
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::{Effect, Modal};
+use heroku_types::{Effect, ExecOutcome, Modal, Msg};
 use heroku_util::redact_json;
 use once_cell::sync::Lazy;
-use ratatui::prelude::Stylize;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -37,9 +36,10 @@ use crate::{
     ui::{
         components::component::Component,
         theme::{roles::Theme as UiTheme, theme_helpers as th},
-        utils::{build_copy_text, centered_rect},
+        utils::build_copy_text,
     },
 };
+use crate::app::App;
 
 /// Component for displaying and interacting with application logs.
 ///
@@ -170,15 +170,14 @@ impl LogsComponent {
             let selected_index = app.logs.selection.cursor;
             match app.logs.rich_entries.get(selected_index) {
                 Some(LogEntry::Api {
-                    json: Some(json_value), ..
+                    status,
+                    raw,
+                    json: Some(json_value),..
                 }) if self.json_has_array(json_value) => {
-                    let redacted = redact_json(json_value);
-                    app.table.apply_result_json(Some(redacted), &*app.ctx.theme);
-                    app.table.normalize();
                     app.logs.detail = None;
                     app.logs.cached_detail_index = None;
                     app.logs.cached_redacted_json = None;
-                    modal_to_open = Modal::Results;
+                    modal_to_open = Modal::Results(Box::new(ExecOutcome::Http(*status, raw.to_string(), json_value.clone(), None, 0)));
                 }
                 Some(LogEntry::Api {
                     json: Some(json_value), ..
@@ -195,11 +194,7 @@ impl LogsComponent {
             }
         }
 
-        if matches!(modal_to_open, Modal::Results) {
-            vec![Effect::ShowModal(modal_to_open)]
-        } else {
-            vec![]
-        }
+        vec![Effect::ShowModal(modal_to_open)]
     }
 
     /// Checks if a JSON value contains array data suitable for table display.
@@ -296,6 +291,14 @@ impl LogsComponent {
 }
 
 impl Component for LogsComponent {
+    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+        match msg {
+            Msg::ExecCompleted(outcome) => app.logs.process_general_execution_result(outcome),
+            _ => {}
+        }
+        Vec::new()
+    }
+
     /// Handles keyboard input events for the log component.
     ///
     /// This method processes various key combinations to provide navigation,
@@ -410,7 +413,7 @@ impl Component for LogsComponent {
     /// * `rect` - The rectangular area allocated for this component
     /// * `app` - The application state containing logs and UI state
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
-        let focused = app.logs.focus.get();
+        let focused = app.logs.container_focus.get();
         let title = format!("Logs ({})", app.logs.entries.len());
         let block = th::block(&*app.ctx.theme, Some(&title), focused);
 
@@ -456,23 +459,11 @@ impl Component for LogsComponent {
                 frame.render_stateful_widget(sb, rect, &mut sb_state);
             }
         }
-
-        // Render detail modal overlay when open
-        if focused && app.logs.detail.is_some() {
-            let overlay_area = frame.area();
-            let modal_area = centered_rect(80, 70, overlay_area);
-            app.logs.detail_rect = Some(modal_area);
-            frame.render_widget(Block::default().style(app.ctx.theme.modal_background_style()).dim(), overlay_area);
-            let mut detail_component = LogDetailsComponent;
-            detail_component.render(frame, overlay_area, app);
-        } else {
-            app.logs.detail_rect = None;
-        }
     }
 
-    fn get_hint_spans(&self, app: &app::App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &app::App) -> Vec<Span<'_>> {
         // Only render when logs are focused (rat-focus)
-        if !app.logs.focus.get() {
+        if !app.logs.container_focus.get() {
             return vec![];
         }
 
@@ -487,9 +478,6 @@ impl Component for LogsComponent {
 
         let theme = &*app.ctx.theme;
         let mut spans: Vec<Span> = vec![];
-        if is_root {
-            spans.push(Span::styled("Logs: ", theme.text_muted_style()))
-        }
         spans.extend([
             Span::styled("↑/↓", theme.accent_emphasis_style()),
             Span::styled(" Move  ", theme.text_muted_style()),

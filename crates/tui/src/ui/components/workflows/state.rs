@@ -1,18 +1,15 @@
 use crate::ui::components::common::TextInputState;
 use crate::ui::components::workflows::input::WorkflowInputViewState;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use heroku_engine::workflow::document::build_runtime_catalog;
-use heroku_engine::{BindingSource, ProviderBindingOutcome, WorkflowRunState};
-use heroku_registry::{feat_gate::feature_workflows, Registry};
+use heroku_engine::{ProviderBindingOutcome, WorkflowRunState};
+use heroku_registry::{CommandRegistry, feat_gate::feature_workflows};
 use heroku_types::workflow::{RuntimeWorkflow, WorkflowInputDefinition, WorkflowValueProvider};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::{layout::Rect, widgets::ListState};
-use serde_json::Value as JsonValue;
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex},
-    time::{Duration, Instant},
-};
+use std::sync::{Arc, Mutex};
+use heroku_types::{WorkflowInputValidation, WorkflowProviderErrorPolicy};
+use crate::ui::components::table::TableState;
 
 /// Maintains the workflow catalogue, filtered view, and list selection state for the picker UI.
 #[derive(Debug, Default)]
@@ -43,8 +40,8 @@ impl WorkflowListState {
 
     /// Loads workflow definitions from the registry when the feature flag is enabled.
     ///
-    /// The list is populated once and subsequent calls are inexpensive no-ops.
-    pub fn ensure_loaded(&mut self, registry: &Arc<Mutex<Registry>>) -> Result<()> {
+    /// The list is populated once, and later calls are inexpensive no-ops.
+    pub fn ensure_loaded(&mut self, registry: &Arc<Mutex<CommandRegistry>>) -> Result<()> {
         if !feature_workflows() {
             self.workflows.clear();
             self.filtered_indices.clear();
@@ -55,9 +52,9 @@ impl WorkflowListState {
         }
 
         if self.workflows.is_empty() {
-            let definitions = registry.lock().map_err(|_| anyhow!("could not lock registry"))?.workflows.clone();
+            let definitions = &registry.lock().map_err(|_| anyhow!("could not lock registry"))?.workflows;
 
-            let catalog = build_runtime_catalog(&definitions)?;
+            let catalog = build_runtime_catalog(definitions)?;
             self.workflows = catalog.into_values().collect();
             self.rebuild_filter();
         }
@@ -241,12 +238,13 @@ impl HasFocus for WorkflowListState {
 #[derive(Debug, Default)]
 pub struct WorkflowState {
     pub list: WorkflowListState,
-    collector_visible: bool,
     active_run_state: Option<WorkflowRunState>,
     selected_metadata: Option<WorkflowSelectionMetadata>,
-    provider_cache: WorkflowProviderCache,
     input_view: Option<WorkflowInputViewState>,
-    field_picker_target: Option<WorkflowBindingTarget>,
+    /// Manual entry modal state (when open); None when not editing.
+    pub manual_entry: Option<ManualEntryViewState>,
+    /// Provider-backed selector state (when open); None when not selecting.
+    pub selector: Option<WorkflowSelectorViewState<'static>>,
     /// The focus flags for the workflow view.
     pub container_focus: FocusFlag,
     pub f_search: FocusFlag,
@@ -257,19 +255,18 @@ impl WorkflowState {
     pub fn new() -> Self {
         Self {
             list: WorkflowListState::new(),
-            collector_visible: false,
             active_run_state: None,
             selected_metadata: None,
-            provider_cache: WorkflowProviderCache::default(),
             input_view: None,
-            field_picker_target: None,
+            manual_entry: None,
+            selector: None,
             container_focus: FocusFlag::named("workflow.container"),
             f_search: FocusFlag::named("workflow.search"),
         }
     }
 
     /// Lazily loads workflows from the registry and refreshes derived metadata.
-    pub fn ensure_loaded(&mut self, registry: &Arc<Mutex<Registry>>) -> Result<()> {
+    pub fn ensure_loaded(&mut self, registry: &Arc<Mutex<CommandRegistry>>) -> Result<()> {
         self.list.ensure_loaded(registry)?;
         self.refresh_selection_metadata();
         Ok(())
@@ -365,18 +362,6 @@ impl WorkflowState {
         self.selected_metadata.as_ref()
     }
 
-    /// Marks the guided input collector as visible or hidden.
-    ///
-    /// When the collector closes, provider cache snapshots are cleared so fresh
-    /// data is fetched on the next run.
-    pub fn set_collector_visible(&mut self, visible: bool) {
-        self.collector_visible = visible;
-        if !visible {
-            self.provider_cache.clear();
-            self.field_picker_target = None;
-        }
-    }
-
     /// Stores an active workflow run state for interaction with the collector.
     pub fn set_active_run_state(&mut self, state: WorkflowRunState) {
         self.active_run_state = Some(state);
@@ -390,12 +375,6 @@ impl WorkflowState {
     /// Retrieves the active run state mutably.
     pub fn active_run_state_mut(&mut self) -> Option<&mut WorkflowRunState> {
         self.active_run_state.as_mut()
-    }
-
-    /// Consumes and returns the active run state, clearing it from memory.
-    pub fn take_run_state(&mut self) -> Option<WorkflowRunState> {
-        self.field_picker_target = None;
-        self.active_run_state.take()
     }
 
     /// Returns a mutable reference to the input view state when active.
@@ -419,7 +398,7 @@ impl WorkflowState {
         self.input_view = None;
         self.active_run_state = None;
     }
-    
+
     /// Retrieves the currently active input definition from the application's workflows.
     ///
     /// This function is used to get the definition of the input that is currently selected in the
@@ -461,140 +440,29 @@ impl WorkflowState {
     pub fn active_input_definition(&self) -> Option<WorkflowInputDefinition> {
         let run_state = self.active_run_state()?;
         let idx = self.input_view_state()?.selected();
-        run_state
-            .workflow
-            .inputs
-            .get_index(idx)
-            .map(|(_, def)| def.clone())
+        run_state.workflow.inputs.get_index(idx).map(|(_, def)| def.clone())
     }
 
-
-    /// Records a provider cache snapshot associated with the current workflow selection or active run.
+    /// Counts unresolved required inputs.
     ///
-    /// This helper is reserved for future workflow UX iterations that capture cache metadata during manual
-    /// provider refresh flows.
-    pub fn record_provider_snapshot(&mut self, provider_key: impl Into<String>, item_count: Option<usize>, ttl: Option<Duration>) {
-        let key: String = provider_key.into();
-
-        let workflow_identifier = self.selected_metadata().map(|metadata| metadata.identifier.clone()).or_else(|| {
-            self.active_run_state
-                .as_ref()
-                .map(|run_state| run_state.workflow.identifier.clone())
-        });
-
-        if let Some(workflow_identifier) = workflow_identifier {
-            self.record_provider_snapshot_for(&workflow_identifier, key, item_count, ttl);
-        }
-    }
-
-    /// Returns cached provider information for the current workflow.
-    pub fn provider_snapshot(&self, provider_key: &str) -> Option<&WorkflowProviderSnapshot> {
-        if let Some(metadata) = self.selected_metadata()
-            && let Some(snapshot) = self.provider_snapshot_for(&metadata.identifier, provider_key)
-        {
-            return Some(snapshot);
-        }
-
-        if let Some(run_state) = &self.active_run_state {
-            return self.provider_snapshot_for(&run_state.workflow.identifier, provider_key);
-        }
-
-        None
-    }
-
-    /// Records provider refresh times and TTL metadata after evaluation.
-    pub fn observe_provider_refresh(&mut self, run_state: &WorkflowRunState) {
-        let workflow_identifier = run_state.workflow.identifier.clone();
-        let updates = collect_provider_updates(run_state);
-        for update in updates {
-            self.record_provider_snapshot_for(&workflow_identifier, update.key, update.item_count, update.ttl);
-        }
-    }
-
-    /// Convenience wrapper that records refresh metadata using the active run state, if present.
-    pub fn observe_provider_refresh_current(&mut self) {
-        let Some(run_state) = self.active_run_state.as_ref() else {
-            return;
-        };
-        let workflow_identifier = run_state.workflow.identifier.clone();
-        let updates = collect_provider_updates(run_state);
-        for update in updates {
-            self.record_provider_snapshot_for(&workflow_identifier, update.key, update.item_count, update.ttl);
-        }
-    }
-
-    fn record_provider_snapshot_for(
-        &mut self,
-        workflow_identifier: &str,
-        provider_key: impl Into<String>,
-        item_count: Option<usize>,
-        ttl: Option<Duration>,
-    ) {
-        let key = format!("{}::{}", workflow_identifier, provider_key.into());
-        self.provider_cache.record_snapshot(key, item_count, ttl, Instant::now());
-    }
-
-    /// Stores binding metadata used when the field picker is launched.
-    pub fn set_field_picker_target(&mut self, target: WorkflowBindingTarget) {
-        self.field_picker_target = Some(target);
-    }
-
-    /// Returns the currently staged field picker target, if any.
-    pub fn field_picker_target(&self) -> Option<&WorkflowBindingTarget> {
-        self.field_picker_target.as_ref()
-    }
-
-    /// Clears any pending field picker target.
-    pub fn clear_field_picker_target(&mut self) {
-        self.field_picker_target = None;
-    }
-
-    /// Applies a concrete value to the run state for the given binding target and re-evaluates providers.
-    pub fn apply_binding_value(&mut self, target: &WorkflowBindingTarget, value: JsonValue) -> Result<()> {
-        let run_state = self
-            .active_run_state
-            .as_mut()
-            .ok_or_else(|| anyhow!("no active workflow run state available"))?;
-        apply_binding_value_to_state(run_state, target, value)?;
-        run_state.evaluate_input_providers()?;
-        self.observe_provider_refresh_current();
-        Ok(())
-    }
-
-    /// Applies a value captured via the field picker using the staged target.
-    pub fn apply_field_picker_value(&mut self, value: JsonValue) -> Result<()> {
-        let target = self
-            .field_picker_target
-            .clone()
-            .ok_or_else(|| anyhow!("field picker target not set"))?;
-        self.apply_binding_value(&target, value)
-    }
-
-    /// Counts unresolved provider prompts and errors that still need input.
+    /// This aligns with the InputStatus used by the Input Collection View:
+    /// an input is considered "resolved" once it has a value present in the
+    /// run context, regardless of provider argument binding states. Optional
+    /// inputs that are not filled do not block readiness and are excluded.
     pub fn unresolved_item_count(&self) -> usize {
         let Some(run_state) = self.active_run_state.as_ref() else {
             return 0;
         };
 
-        let mut count = 0;
-        for (input_name, _) in run_state.workflow.inputs.iter() {
-            if let Some(provider_state) = run_state.provider_state_for(input_name) {
-                for outcome_state in provider_state.argument_outcomes.values() {
-                    match &outcome_state.outcome {
-                        ProviderBindingOutcome::Prompt(_) | ProviderBindingOutcome::Error(_) | ProviderBindingOutcome::Skip(_) => {
-                            count += 1;
-                        }
-                        ProviderBindingOutcome::Resolved(_) => {}
-                    }
-                }
-            }
-        }
-        count
-    }
-
-    fn provider_snapshot_for(&self, workflow_identifier: &str, provider_key: &str) -> Option<&WorkflowProviderSnapshot> {
-        let key = format!("{}::{provider_key}", workflow_identifier);
-        self.provider_cache.snapshot(&key)
+        run_state
+            .workflow
+            .inputs
+            .iter()
+            .filter(|(name, def)| {
+                let required = def.is_required();
+                required && run_state.run_context.inputs.get(*name).is_none()
+            })
+            .count()
     }
 
     fn refresh_selection_metadata(&mut self) {
@@ -653,42 +521,6 @@ fn provider_identifier(definition: &WorkflowInputDefinition) -> Option<String> {
     })
 }
 
-fn collect_provider_updates(run_state: &WorkflowRunState) -> Vec<ProviderSnapshotUpdate> {
-    run_state
-        .workflow
-        .inputs
-        .iter()
-        .filter_map(|(input_name, definition)| {
-            provider_identifier(definition).map(|provider_id| {
-                let provider_key = format!("{input_name}:{provider_id}");
-                let ttl = definition.cache_ttl_sec.map(Duration::from_secs);
-                let item_count = run_state
-                    .provider_state_for(input_name)
-                    .map(|state| {
-                        state
-                            .argument_outcomes
-                            .values()
-                            .filter(|outcome| matches!(outcome.outcome, ProviderBindingOutcome::Resolved(_)))
-                            .count()
-                    })
-                    .filter(|count| *count > 0);
-
-                ProviderSnapshotUpdate {
-                    key: provider_key,
-                    ttl,
-                    item_count,
-                }
-            })
-        })
-        .collect()
-}
-
-struct ProviderSnapshotUpdate {
-    key: String,
-    ttl: Option<Duration>,
-    item_count: Option<usize>,
-}
-
 impl WorkflowSelectionMetadata {
     fn from_runtime(workflow: &RuntimeWorkflow) -> Self {
         Self {
@@ -701,74 +533,157 @@ impl WorkflowSelectionMetadata {
     }
 }
 
-/// Tracks cached provider data associated with workflows for TTL-aware refresh hints.
-#[derive(Debug, Default)]
-pub struct WorkflowProviderCache {
-    entries: HashMap<String, WorkflowProviderSnapshot>,
+// ---- Manual entry modal state ----
+#[derive(Debug, Clone, Default)]
+pub struct ManualEntryViewState {
+    /// Label for the value being entered (input name)
+    pub label: String,
+    /// UTF-8 safe text input buffer and cursor
+    pub text: TextInputState,
+    /// Latest validation error shown inline
+    pub error: Option<String>,
+    /// Optional validation rules from the workflow definition
+    pub validation: Option<WorkflowInputValidation>,
+    /// Optional placeholder shown when empty
+    pub placeholder: Option<String>,
 }
 
-impl WorkflowProviderCache {
-    /// Records or updates a provider snapshot keyed by workflow + provider identifier.
-    pub fn record_snapshot(&mut self, key: impl Into<String>, item_count: Option<usize>, ttl: Option<Duration>, captured_at: Instant) {
-        self.entries.insert(
-            key.into(),
-            WorkflowProviderSnapshot {
-                last_refreshed: captured_at,
-                ttl,
-                item_count,
-            },
-        );
-    }
-
-    /// Returns a snapshot for the given key if one has been cached.
-    pub fn snapshot(&self, key: &str) -> Option<&WorkflowProviderSnapshot> {
-        self.entries.get(key)
-    }
-
-    /// Removes all cached provider snapshots.
-    pub fn clear(&mut self) {
-        self.entries.clear();
-    }
+/// Provider-backed selector state rendered in the Workflow Collector modal.
+#[derive(Debug)]
+pub struct WorkflowSelectorViewState<'a> {
+    /// Canonical provider identifier (e.g., "apps list").
+    pub provider_id: String,
+    /// Arguments resolved for the provider (from prior inputs/steps).
+    pub resolved_args: serde_json::Map<String, serde_json::Value>,
+    /// Backing table state used for rendering results.
+    pub table: TableState<'a>,
+    /// Optional value_field from `select` used to extract the workflow value.
+    pub value_field: Option<String>,
+    /// Optional display_field used as primary for filtering.
+    pub display_field: Option<String>,
+    /// Provider on_error policy to drive fallback behavior.
+    pub on_error: Option<WorkflowProviderErrorPolicy>,
+    /// Current status label ("loading…", "loaded", or error text).
+    pub status: SelectorStatus,
+    /// Optional error message to surface inline.
+    pub error_message: Option<String>,
+    /// Original unfiltered provider items (array of rows).
+    pub original_items: Option<Vec<serde_json::Value>>,
+    /// Lightweight inline filter buffer.
+    pub filter: TextInputState,
+    /// Whether the filter input is currently focused/active.
+    pub filter_active: bool,
 }
 
-/// Captures metadata about a provider result, such as last refresh time and cached item count.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkflowProviderSnapshot {
-    /// Timestamp of the last provider refresh.
-    pub last_refreshed: Instant,
-    /// Optional refresh interval advertised by the provider.
-    pub ttl: Option<Duration>,
-    /// Optional number of items returned on the last fetch.
-    pub item_count: Option<usize>,
+/// Loading status for the selector.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectorStatus {
+    Loading,
+    Loaded,
+    Error,
 }
 
-/// Describes a binding target that the collector or field picker is attempting to satisfy.
-#[derive(Debug, Clone)]
-pub struct WorkflowBindingTarget {
-    pub input: String,
-    pub argument: String,
-    pub source: Option<BindingSource>,
-    pub required: bool,
-}
-
-fn apply_binding_value_to_state(state: &mut WorkflowRunState, target: &WorkflowBindingTarget, value: JsonValue) -> Result<()> {
-    let value_for_state = value.clone();
-
-    match &target.source {
-        Some(BindingSource::Input { input_name }) => {
-            state.set_input_value(input_name, value_for_state.clone());
+impl WorkflowState {
+    /// Opens the Manual Entry modal for the currently selected input.
+    pub fn open_manual_for_active_input(&mut self) {
+        let Some(run_state) = self.active_run_state() else {
+            return;
+        };
+        let Some(view) = self.input_view_state() else {
+            return;
+        };
+        let idx = view.selected();
+        let Some((name, def)) = run_state.workflow.inputs.get_index(idx) else {
+            return;
+        };
+        let mut state = ManualEntryViewState::default();
+        state.label = name.to_string();
+        state.validation = def.validate.clone();
+        state.placeholder = def.placeholder.clone();
+        if let Some(existing) = run_state
+            .run_context
+            .inputs
+            .get(name)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+        {
+            state.text.set_input(existing);
+            // place cursor at end
+            state.text.set_cursor(state.text.input().len());
         }
-        Some(BindingSource::Step { step_id }) => {
-            state.run_context_mut().steps.insert(step_id.clone(), value_for_state.clone());
-        }
-        Some(BindingSource::Multiple { step_id, input_name }) => {
-            state.set_input_value(input_name, value_for_state.clone());
-            state.run_context_mut().steps.insert(step_id.clone(), value_for_state.clone());
-        }
-        None => {}
+        self.manual_entry = Some(state);
     }
 
-    state.set_input_value(&target.input, value_for_state.clone());
-    state.persist_provider_outcome(&target.input, &target.argument, ProviderBindingOutcome::Resolved(value_for_state));
-    Ok(())
+    /// Returns an immutable reference to the manual entry state when present.
+    pub fn manual_entry_state(&self) -> Option<&ManualEntryViewState> {
+        self.manual_entry.as_ref()
+    }
+
+    /// Returns a mutable reference to the manual entry state when present.
+    pub fn manual_entry_state_mut(&mut self) -> Option<&mut ManualEntryViewState> {
+        self.manual_entry.as_mut()
+    }
+
+    /// Returns the currently active input name, if any.
+    pub fn active_input_name(&self) -> Option<String> {
+        let run_state = self.active_run_state()?;
+        let idx = self.input_view_state()?.selected();
+        run_state.workflow.inputs.get_index(idx).map(|(k, _)| k.clone())
+    }
+
+    /// Initializes the Provider-backed selector for the currently active input.
+    pub fn open_selector_for_active_input(&mut self) {
+        let Some(run_state) = self.active_run_state() else {
+            return;
+        };
+        let Some(view) = self.input_view_state() else {
+            return;
+        };
+        let idx = view.selected();
+        let Some((name, def)) = run_state.workflow.inputs.get_index(idx) else {
+            return;
+        };
+
+        let provider_id = match provider_identifier(def) {
+            Some(id) => id,
+            None => return,
+        };
+
+        // Collect resolved provider args from the binding outcomes.
+        let mut args = serde_json::Map::new();
+        if let Some(pstate) = run_state.provider_state_for(name) {
+            for (arg, outcome) in &pstate.argument_outcomes {
+                if let ProviderBindingOutcome::Resolved(value) = &outcome.outcome {
+                    args.insert(arg.clone(), value.clone());
+                }
+            }
+        }
+
+        let value_field = def.select.as_ref().and_then(|s| s.value_field.clone());
+
+        let table: TableState<'static> = Default::default();
+
+        self.selector = Some(WorkflowSelectorViewState {
+            provider_id,
+            resolved_args: args,
+            table,
+            value_field,
+            display_field: def.select.as_ref().and_then(|s| s.display_field.clone()),
+            on_error: def.on_error.clone(),
+            status: SelectorStatus::Loading,
+            error_message: None,
+            original_items: None,
+            filter: TextInputState::new(),
+            filter_active: false,
+        });
+    }
+
+    /// Returns the selector state if present.
+    pub fn selector_state(&self) -> Option<&WorkflowSelectorViewState<'static>> {
+        self.selector.as_ref()
+    }
+    /// Returns a mutable selector state if present.
+    pub fn selector_state_mut(&mut self) -> Option<&mut WorkflowSelectorViewState<'static>> {
+        self.selector.as_mut()
+    }
 }

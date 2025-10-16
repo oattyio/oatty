@@ -15,7 +15,7 @@ use ratatui::{
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::collections::HashSet;
 
-use crate::ui::components::workflows::{WorkflowBindingTarget, format_preview};
+use crate::ui::components::workflows::format_preview;
 use crate::ui::theme::{roles::Theme, theme_helpers as th};
 
 fn render_filter(frame: &mut Frame, area: Rect, theme: &dyn Theme, filter: &str, active: bool) {
@@ -34,14 +34,14 @@ fn render_filter(frame: &mut Frame, area: Rect, theme: &dyn Theme, filter: &str,
     frame.render_widget(paragraph, area);
 }
 
-fn render_body(frame: &mut Frame, area: Rect, theme: &dyn Theme, tree: &PickerTree, filter: &str, target: Option<&WorkflowBindingTarget>) {
+fn render_body(frame: &mut Frame, area: Rect, theme: &dyn Theme, tree: &PickerTree, filter: &str) {
     let segments = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
         .split(area);
 
     render_tree_list(frame, segments[0], theme, tree, filter);
-    render_detail_panel(frame, segments[1], theme, tree.current_node(), target);
+    render_detail_panel(frame, segments[1], theme, tree.current_node());
 }
 
 fn render_tree_list(frame: &mut Frame, area: Rect, theme: &dyn Theme, tree: &PickerTree, filter: &str) {
@@ -91,25 +91,12 @@ fn render_tree_list(frame: &mut Frame, area: Rect, theme: &dyn Theme, tree: &Pic
     frame.render_widget(paragraph, inner);
 }
 
-fn render_detail_panel(
-    frame: &mut Frame,
-    area: Rect,
-    theme: &dyn Theme,
-    node: Option<&PickerNode>,
-    target: Option<&WorkflowBindingTarget>,
-) {
+fn render_detail_panel(frame: &mut Frame, area: Rect, theme: &dyn Theme, node: Option<&PickerNode>) {
     let block = th::block(theme, Some("Details"), false);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
     let mut lines: Vec<Line> = Vec::new();
-
-    if let Some(target) = target {
-        lines.push(Line::from(vec![
-            Span::styled("Target: ", theme.text_secondary_style()),
-            Span::styled(format!("{}.{}", target.input, target.argument), theme.text_primary_style()),
-        ]));
-    }
 
     if let Some(node) = node {
         lines.push(Line::from(vec![
@@ -440,32 +427,18 @@ impl FieldPickerPane {
         self.tree.set_filter(filter);
     }
 
-    pub fn render_inline(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        theme: &dyn Theme,
-        target: Option<&WorkflowBindingTarget>,
-        filter_active: bool,
-    ) {
-        self.render_contents(frame, area, theme, target, filter_active);
+    pub fn render_inline(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, filter_active: bool) {
+        self.render_contents(frame, area, theme, filter_active);
     }
 
-    fn render_contents(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        theme: &dyn Theme,
-        target: Option<&WorkflowBindingTarget>,
-        filter_active: bool,
-    ) {
+    fn render_contents(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, filter_active: bool) {
         let layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)])
             .split(area);
 
         render_filter(frame, layout[0], theme, &self.filter, filter_active);
-        render_body(frame, layout[1], theme, &self.tree, &self.filter, target);
+        render_body(frame, layout[1], theme, &self.tree, &self.filter);
         render_footer(frame, layout[2], theme);
     }
 }

@@ -4,14 +4,15 @@
 //! handles text input, command suggestions, and user interactions for
 //! building Heroku CLI commands.
 
+use std::hash::{DefaultHasher, Hasher};
 use std::vec;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use heroku_types::{Effect, ItemKind, Modal};
+use heroku_types::{Effect, ItemKind, Modal, Msg};
 use rat_focus::HasFocus;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     prelude::*,
     text::{Line, Span},
     widgets::*,
@@ -19,11 +20,16 @@ use ratatui::{
 
 use crate::app::{App, SharedCtx};
 use crate::ui::{
-    components::{LogsComponent, component::Component},
+    components::{component::Component},
     theme::{Theme, theme_helpers as th},
 };
 
 static FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+struct PaletteLayout {
+    input_area: Rect,
+    error_area: Rect,
+    suggestions_area: Rect,
+}
 /// Command palette component for input and suggestions.
 ///
 /// This component encapsulates the command palette experience, including the
@@ -59,9 +65,7 @@ static FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 /// palette.init()?;
 /// ```
 #[derive(Debug, Default)]
-pub struct PaletteComponent {
-    logs: LogsComponent,
-}
+pub struct PaletteComponent;
 
 impl PaletteComponent {
     /// Creates the input paragraph widget with the current state.
@@ -168,29 +172,6 @@ impl PaletteComponent {
             .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
             .style(th::panel_style(theme))
             .highlight_symbol("> ")
-    }
-
-    /// Calculates the inner layout areas for the palette input,
-    /// error message, suggestions, and hint bar.
-    ///
-    /// # Arguments
-    ///
-    /// * `rect` - The rectangular area to render in
-    ///
-    /// # Returns
-    ///
-    /// The split layout areas
-    fn layout_palette_input(&mut self, rect: Rect) -> Vec<Rect> {
-        let splits = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Input line - accommodates block with title and borders
-                Constraint::Min(1),    // Content area - error messages, suggestions
-                Constraint::Length(1), // Hints bar
-            ])
-            .split(rect);
-
-        splits.to_vec()
     }
 
     /// Positions the cursor in the input line.
@@ -353,7 +334,12 @@ impl PaletteComponent {
     fn handle_enter(&self, app: &mut App) -> Vec<Effect> {
         // Execute the command
         if !app.palette.is_suggestions_open() {
-            return vec![Effect::Run];
+            let mut hasher = DefaultHasher::new();
+            let cmd = app.palette.input().to_string();
+            hasher.write(cmd.as_bytes());
+            let hash = hasher.finish();
+            app.palette.set_cmd_exec_hash(hash);
+            return vec![Effect::Run(cmd, hash)];
         } else {
             // otherwise, select from the list
             if let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index()).cloned() {
@@ -397,9 +383,30 @@ impl PaletteComponent {
             app.palette.reduce_clear_all();
         }
     }
+
+    fn get_palette_layout(&self, app: &App, area: Rect) -> PaletteLayout {
+        let rects = self.get_preferred_layout(app, area);
+        PaletteLayout {
+            input_area: rects[0],
+            error_area: rects[1],
+            suggestions_area: rects[2],
+        }
+    }
 }
 
 impl Component for PaletteComponent {
+    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+        match msg {
+            Msg::Tick => {
+                if app.executing || app.palette.is_provider_loading() {
+                    app.throbber_idx = (app.throbber_idx + 1) % 10;
+                }
+                Vec::new()
+            },
+            Msg::ExecCompleted(outcome) => app.palette.process_general_execution_result(outcome),
+            _ => Vec::new()
+        }
+    }
     /// Handle key events for the command palette when the builder is not open.
     ///
     /// This function processes keyboard input for the command palette, handling
@@ -434,11 +441,6 @@ impl Component for PaletteComponent {
     /// ```
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         let mut effects: Vec<Effect> = vec![];
-        // Delegate to logs if focused.
-        if app.logs.focus.get() {
-            return self.logs.handle_key_events(app, key);
-        }
-
         match key.code {
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
                 // Handle character input
@@ -522,21 +524,22 @@ impl Component for PaletteComponent {
     /// * `rect` - The rectangular area to render in
     /// * `app` - The application state containing palette data
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
-        let main_regions = self.get_preferred_layout(app, rect);
+        let PaletteLayout {
+            input_area,
+            error_area,
+            suggestions_area,
+        } = self.get_palette_layout(app, rect);
         let theme = &*app.ctx.theme;
-        // Render the main border and get layout areas
-        let splits = self.layout_palette_input(main_regions[0]);
-
         // Render input line with throbber and ghost text
         let input_para = self.create_input_paragraph(app, theme);
-        frame.render_widget(input_para, splits[0]);
+        frame.render_widget(input_para, input_area);
 
         // Position cursor in the input line
-        self.position_cursor(frame, splits[0], app, theme);
+        self.position_cursor(frame, input_area, app, theme);
 
         // Render error message if present
         if let Some(error_para) = self.create_error_paragraph(app, theme) {
-            frame.render_widget(error_para, splits[1]);
+            frame.render_widget(error_para, error_area);
         }
 
         // Render suggestions popup
@@ -545,12 +548,6 @@ impl Component for PaletteComponent {
 
         if should_show_suggestions {
             let suggestions_list = self.create_suggestions_list(app, theme);
-
-            // Calculate popup dimensions
-            let max_rows = 10usize;
-            let rows = app.palette.suggestions().len().min(max_rows);
-            let popup_height = rows as u16 + 2;
-            let popup_area = Rect::new(rect.x, rect.y + 3, rect.width, popup_height);
 
             // Update list state
             let sel = if app.palette.suggestions().is_empty() {
@@ -561,128 +558,32 @@ impl Component for PaletteComponent {
             let mut list_state = ListState::default();
             list_state.select(sel);
 
-            frame.render_stateful_widget(suggestions_list, popup_area, &mut list_state);
+            frame.render_stateful_widget(suggestions_list, suggestions_area, &mut list_state);
         }
-
-        let hint_spans = self.get_hint_spans(app, true);
-        let hints_widget = Paragraph::new(Line::from(hint_spans)).style(theme.text_muted_style());
-        frame.render_widget(hints_widget, main_regions[2]);
-
-        self.logs.render(frame, main_regions[1], app);
     }
 
-    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        let mut spans = Vec::new();
-        if is_root {
-            spans.push(Span::styled("Hints: ", theme.text_muted_style()));
-        }
-
-        if app.logs.focus.get() {
-            spans.extend(self.logs.get_hint_spans(app, false));
-        } else {
-            spans.extend([
-                Span::styled("Tab", theme.accent_emphasis_style()),
-                Span::styled(" Completions ", theme.text_muted_style()),
-                Span::styled("↑/↓", theme.accent_emphasis_style()),
-                Span::styled(" Cycle  ", theme.text_muted_style()),
-                Span::styled("Enter", theme.accent_emphasis_style()),
-                Span::styled(" Accept  ", theme.text_muted_style()),
-                Span::styled("Ctrl+H", theme.accent_emphasis_style()),
-                Span::styled(" Help  ", theme.text_muted_style()),
-                Span::styled("Esc", theme.accent_emphasis_style()),
-                Span::styled(" Cancel", theme.text_muted_style()),
-            ]);
-        }
-        spans
+        [
+            Span::styled("Tab", theme.accent_emphasis_style()),
+            Span::styled(" Completions ", theme.text_muted_style()),
+            Span::styled("↑/↓", theme.accent_emphasis_style()),
+            Span::styled(" Cycle  ", theme.text_muted_style()),
+            Span::styled("Enter", theme.accent_emphasis_style()),
+            Span::styled(" Accept  ", theme.text_muted_style()),
+            Span::styled("Ctrl+H", theme.accent_emphasis_style()),
+            Span::styled(" Help  ", theme.text_muted_style()),
+            Span::styled("Esc", theme.accent_emphasis_style()),
+            Span::styled(" Cancel", theme.text_muted_style()),
+        ].to_vec()
     }
 
-    /// Creates the main vertical layout for the palette and logs area.
-    ///
-    /// This function defines the primary layout structure of the TUI
-    /// application, dividing the screen into logical sections for different
-    /// UI components. The layout follows a vertical arrangement with
-    /// specific constraints for each area.
-    ///
-    /// # Layout Structure
-    ///
-    /// The main layout consists of 3 vertical sections:
-    ///
-    /// 1. **Palette Area** - Input field and suggestions
-    /// 2. **Hints Area** - Keyboard shortcuts and help text
-    /// 4. **Logs Area** - Application logs and status messages
-    ///
-    /// # Arguments
-    ///
-    /// * `size` - The total available screen area (Rect)
-    ///
-    /// # Returns
-    ///
-    /// Vector of rectangular areas for each UI section, ordered from top to
-    /// bottom
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use ratatui::prelude::*;
-    /// use heroku_tui::ui::layout::create_main_layout;
-    /// use heroku_tui::App;
-    /// use heroku_registry::Registry;
-    ///
-    /// let registry = Registry::from_embedded_schema().unwrap();
-    /// let app = new(registry);
-    /// let screen_size = Rect::new(0, 0, 80, 24);
-    /// let layout_areas = create_main_layout(screen_size, &app);
-    ///
-    /// // layout_areas[0] = Command palette area
-    /// // layout_areas[1] = Hints area
-    /// // layout_areas[2] = Logs area
-    /// ```
     fn get_preferred_layout(&self, app: &App, area: Rect) -> Vec<Rect> {
-        // Dynamically expand the palette area when the suggestions popup is visible
-        let mut palette_extra: u16 = 0;
-        let show_popup =
-            app.palette.error_message().is_none() && app.palette.is_suggestions_open() && !app.palette.suggestions().is_empty();
-
-        if show_popup {
-            let rows = app.palette.suggestions().len().min(10) as u16; // match palette.rs max_rows
-            let popup_height = rows + 3;
-            palette_extra = popup_height;
-        }
-
-        // a wider area displays 2 columns with the leftmost
-        // column split into 2 rows totaling 3 rendering areas.
-        if area.width >= 141 {
-            // start with left and right columns
-            let two_col = Layout::horizontal([
-                Constraint::Percentage(65), // Command palette + hints
-                Constraint::Min(20),        // logs
-            ])
-            .split(area);
-
-            // split the left col into two stacked rows
-            let constraints = [
-                Constraint::Length(5 + palette_extra), // Command palette area (+ suggestions)
-                Constraint::Percentage(100),           // Gap
-                Constraint::Min(1),                    // Hints area
-            ];
-
-            let vertical = Layout::vertical(constraints).split(two_col[0]);
-
-            return vec![vertical[0], two_col[1], vertical[2]]; // ordering intentional
-        }
-
-        // Smaller screens display 3 stacked rows.
-        let constraints = [
-            Constraint::Length(5 + palette_extra), // Command palette area (+ suggestions)
-            Constraint::Percentage(100),           // logs / output content
-            Constraint::Min(1),                    // Hints area
-        ];
-
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(constraints)
-            .split(area)
-            .to_vec()
+        // 3 areas in total, stacked on top of one another
+        Layout::vertical([
+            Constraint::Length(3), // input area
+            Constraint::Length(1), // error area
+            Constraint::Min(1),    // Suggestion area
+        ]).split(area).to_vec()
     }
 }

@@ -289,13 +289,10 @@ impl Component for PluginsEditComponent {
         ];
     }
 
-    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
         let add_state = app.plugins.add.as_ref().expect("add state should be something");
         let mut spans = vec![];
-        if is_root {
-            spans.push(Span::styled("Hints: ", theme.text_muted_style()))
-        }
 
         if add_state.f_transport.get() {
             spans.extend([
@@ -305,7 +302,7 @@ impl Component for PluginsEditComponent {
         }
 
         if add_state.is_key_value_editor_focused() {
-            spans.extend(self.kv_component.get_hint_spans(app, is_root));
+            spans.extend(self.kv_component.get_hint_spans(app));
         } else {
             spans.extend([
                 Span::styled("Esc", theme.accent_emphasis_style()),

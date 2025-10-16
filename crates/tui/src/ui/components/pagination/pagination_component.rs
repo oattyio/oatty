@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::Effect;
+use heroku_types::{Effect};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -316,7 +316,7 @@ impl PaginationComponent {
             KeyCode::Left => {
                 if pagination_state.prev_available {
                     pagination_state.prev_page();
-                    Some(Effect::PrevPageRequested)
+                    Some(Effect::PrevPageRequested(0))
                 } else {
                     None
                 }
@@ -327,7 +327,7 @@ impl PaginationComponent {
                     pagination_state.next_range.clone().map(|next_range| {
                         pagination_state.current_page = pagination_state.current_page.saturating_add(1);
                         pagination_state.prev_available = true;
-                        Effect::NextPageRequested(next_range)
+                        Effect::NextPageRequested(next_range, 0)
                     })
                 } else {
                     None
@@ -336,7 +336,7 @@ impl PaginationComponent {
             KeyCode::End => {
                 if pagination_state.next_available {
                     pagination_state.last_page();
-                    Some(Effect::LastPageRequested)
+                    Some(Effect::LastPageRequested(0))
                 } else {
                     None
                 }
@@ -344,7 +344,7 @@ impl PaginationComponent {
             KeyCode::Home => {
                 if pagination_state.prev_available {
                     pagination_state.first_page();
-                    Some(Effect::FirstPageRequested)
+                    Some(Effect::FirstPageRequested(0))
                 } else {
                     None
                 }
@@ -402,11 +402,11 @@ impl Component for PaginationComponent {
                 // Activate the focused nav button
                 if pagination_state.nav_first_f.get() && pagination_state.prev_available {
                     pagination_state.first_page();
-                    effects.push(Effect::FirstPageRequested);
+                    effects.push(Effect::FirstPageRequested(0));
                 }
                 if pagination_state.nav_prev_f.get() && pagination_state.prev_available {
                     pagination_state.prev_page();
-                    effects.push(Effect::PrevPageRequested);
+                    effects.push(Effect::PrevPageRequested(0));
                 }
                 if pagination_state.nav_next_f.get()
                     && pagination_state.next_available
@@ -414,10 +414,10 @@ impl Component for PaginationComponent {
                 {
                     pagination_state.current_page = pagination_state.current_page.saturating_add(1);
                     pagination_state.prev_available = true;
-                    effects.push(Effect::NextPageRequested(next_range));
+                    effects.push(Effect::NextPageRequested(next_range, 0));
                 }
                 if pagination_state.nav_last_f.get() && pagination_state.next_available {
-                    effects.push(Effect::LastPageRequested);
+                    effects.push(Effect::LastPageRequested(0));
                 }
             }
             _ => {}
@@ -522,7 +522,7 @@ impl Component for PaginationComponent {
         self.render_navigation_controls(frame, chunks[2], app);
     }
 
-    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let pagination_state = &app.table.pagination_state;
         if !pagination_state.is_visible {
             return Vec::new();
@@ -537,19 +537,15 @@ impl Component for PaginationComponent {
         }
 
         let theme = &*app.ctx.theme;
-        let mut spans = Vec::new();
-        if is_root {
-            spans.push(Span::styled("Pagination: ", theme.text_muted_style()));
-        }
-        spans.extend([
+        
+        [
             Span::styled("←/→", theme.accent_emphasis_style()),
             Span::styled(" navigate  ", theme.text_muted_style()),
             Span::styled("Home/End", theme.accent_emphasis_style()),
             Span::styled(" jump  ", theme.text_muted_style()),
             Span::styled("Enter", theme.accent_emphasis_style()),
             Span::styled(" select", theme.text_muted_style()),
-        ]);
-        spans
+        ].to_vec()
     }
 
     fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {

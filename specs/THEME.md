@@ -299,13 +299,26 @@ State chips: Aurora colors
 
 ## 9) Theme Switching (Contributors)
 
-The TUI selects a theme via the `TUI_THEME` environment variable. Default is `dracula` when unset.
+The TUI derives its palette at startup. If `TUI_THEME` is unset, the loader inspects terminal capabilities:
+- Truecolor terminals (e.g., iTerm2, Kitty) receive the standard Dracula palette.
+- 8-bit/ANSI terminals fall back to the curated `ansi256` theme for consistent contrast.
 
-Supported values
-- `dracula` (default)
+Contributors can override both the palette and the color mode via environment variables.
+
+Supported `TUI_THEME` values
+- `dracula` (default for truecolor terminals)
 - `dracula_hc`, `dracula-high-contrast`, `dracula-hc`, `draculahc`
 - `nord`
 - `nord_hc`, `nord-high-contrast`, `nord-hc`, `nordhc`
+- `cyberpunk`
+- `cyberpunk_hc`, `cyberpunk-high-contrast`, `cyberpunk-hc`, `cyberpunkhc`
+- `ansi256`
+- `ansi256_hc`, `ansi256-high-contrast`, `ansi256-hc`, `ansi256hc`
+
+Optional color-mode override (`TUI_COLOR_MODE`)
+- `truecolor` / `24bit` — force RGB output even if the terminal misreports.
+- `ansi256` / `256` / `8bit` — force the fallback palette for testing.
+- `TUI_FORCE_TRUECOLOR=1` is also recognized as a legacy alias.
 
 Examples
 ```bash
@@ -323,12 +336,23 @@ TUI_THEME=nord cargo run -p heroku-cli
 
 # Nord High Contrast
 TUI_THEME=nord_hc cargo run -p heroku-cli
+
+# Cyberpunk fallback test
+TUI_THEME=cyberpunk cargo run -p heroku-cli
+
+# Force ANSI palette regardless of terminal
+TUI_COLOR_MODE=ansi256 cargo run -p heroku-cli
+
+# Force truecolor palette when a terminal fakes 256-color support
+TUI_COLOR_MODE=truecolor cargo run -p heroku-cli
 ```
 
 Implementation notes
-- Loader: `crates/tui/src/ui/theme/mod.rs::load_from_env()` maps env to theme types.
+- Loader: `crates/tui/src/ui/theme/mod.rs::load_from_env()` handles env overrides.
+- Capability detection: `crates/tui/src/ui/theme/mod.rs::detect_color_capability()` inspects `COLORTERM`, `TERM`, and overrides before selecting `DraculaTheme` or `Ansi256Theme`.
 - Theme role usage: prefer semantic roles in `ThemeRoles` over hard-coded colors.
 - Hot-switching at runtime is not supported; change `TUI_THEME` and restart.
+- Manual QA: validate both truecolor (iTerm2) and ANSI terminals (macOS Terminal) after palette changes.
 
 ## 10) Non-Goals (avoid)
 

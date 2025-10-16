@@ -258,11 +258,13 @@ impl PluginsTableComponent {
             }
             KeyCode::Enter => {
                 effects.push(Effect::ShowModal(Modal::PluginDetails));
+                app.plugins.ensure_details_state();
                 if let Some(selected_item) = app.plugins.table.selected_item() {
                     effects.push(Effect::PluginsLoadDetail(selected_item.name.clone()));
                 }
             }
             KeyCode::Char('d') if control_pressed => {
+                app.plugins.ensure_details_state();
                 effects.push(Effect::ShowModal(Modal::PluginDetails));
                 if let Some(selected_item) = app.plugins.table.selected_item() {
                     effects.push(Effect::PluginsLoadDetail(selected_item.name.clone()));
@@ -479,19 +481,9 @@ impl Component for PluginsTableComponent {
         table_state.last_area = blocks[0];
         table_state.per_item_area = vec![header_inner];
     }
-    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
         let mut spans = Vec::with_capacity(10);
-        if is_root {
-            spans.push(Span::styled("Hints: ", theme.text_muted_style()));
-            // the plugin component adds this
-            if app.plugins.can_open_add_plugin() {
-                spans.extend([
-                    Span::styled("Ctrl-A", theme.accent_emphasis_style()),
-                    Span::styled(" Add  ", theme.text_muted_style()),
-                ]);
-            }
-        }
 
         if app.plugins.table.selected_item().is_some() {
             spans.extend([

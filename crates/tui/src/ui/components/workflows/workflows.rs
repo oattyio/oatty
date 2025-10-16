@@ -1,11 +1,12 @@
 use crate::app::App;
 use crate::ui::components::component::Component;
 use crate::ui::theme::theme_helpers as th;
-use crate::ui::theme::theme_helpers::create_list_item_with_match;
+use crate::ui::theme::theme_helpers::create_spans_with_match;
 use crossterm::event::{KeyCode, KeyEvent};
 use heroku_types::Effect::SwitchTo;
 use heroku_types::workflow::RuntimeWorkflow;
-use heroku_types::{Effect, Route};
+use heroku_types::{Effect, Msg, Route};
+use ratatui::widgets::ListItem;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -123,9 +124,16 @@ impl WorkflowsComponent {
                     state.workflow_by_index(*workflow_index).map(|workflow| {
                         let identifier_cell = format!("{:<width$}", workflow.identifier, width = identifier_width);
                         let summary = Self::summarize_workflow(workflow, available_summary_width);
-                        create_list_item_with_match(filter_input.to_string(), format!("{} {}", identifier_cell, summary), theme)
+                        let primary = theme.text_primary_style();
+                        let secondary = theme.text_secondary_style();
+                        let accent = theme.accent_emphasis_style();
+                        let input = filter_input.to_string();
+                        let mut spans = create_spans_with_match(input.clone(), identifier_cell, primary, accent);
+                        spans.extend(create_spans_with_match(input, summary, secondary, accent));
+                        ListItem::from(Line::from(spans))
                     })
-                }).collect::<Vec<_>>();
+                })
+                .collect::<Vec<_>>();
             (items, state.filtered_count())
         };
 
@@ -196,7 +204,7 @@ impl Component for WorkflowsComponent {
             _ => {}
         }
         let mut effects = Vec::new();
-        if let Err(error) = app.workflows.ensure_loaded(&app.ctx.registry) {
+        if let Err(error) = app.workflows.ensure_loaded(&app.ctx.command_registry) {
             app.logs.entries.push(format!("Failed to load workflows: {error}"));
             return effects;
         }
@@ -229,7 +237,7 @@ impl Component for WorkflowsComponent {
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
-        if let Err(error) = app.workflows.ensure_loaded(&app.ctx.registry) {
+        if let Err(error) = app.workflows.ensure_loaded(&app.ctx.command_registry) {
             let block = Paragraph::new(format!("Workflows failed to load: {error}"))
                 .style(app.ctx.theme.status_error())
                 .wrap(Wrap { trim: true });

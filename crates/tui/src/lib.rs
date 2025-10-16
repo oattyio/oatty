@@ -28,7 +28,6 @@ mod ui;
 use anyhow::Result;
 use heroku_mcp::PluginEngine;
 use std::sync::{Arc, Mutex};
-
 // Runtime moved to ui::runtime
 
 /// Runs the main TUI application loop.
@@ -65,6 +64,6 @@ use std::sync::{Arc, Mutex};
 ///     run(registry).await
 /// }
 /// ```
-pub async fn run(registry: Arc<Mutex<heroku_registry::Registry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
+pub async fn run(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
     ui::runtime::run_app(registry, plugin_engine).await
 }

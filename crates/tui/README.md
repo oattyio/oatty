@@ -73,7 +73,7 @@ Troubleshooting
 The palette integrates ValueProviders inferred in the registry:
 
 - Registry generation embeds `provider: Option<ValueProvider>` directly on each `CommandFlag` and `PositionalArgument`.
-- The palette uses a `RegistryBackedProvider` that resolves provider IDs (e.g., `apps:list`) and fetches live values via the same HTTP client logic (`fetch_json_array`).
+- The shared engine `ProviderRegistry` now implements the ValueProvider trait, letting the palette resolve provider IDs (e.g., `apps:list`) and fetch live values via the same HTTP client logic (`fetch_json_array`).
 - Results are cached in-memory with a short TTL and merged with enum values and history in the suggestion list.
 
 ### SuggestionEngine (Encapsulated Suggestions)

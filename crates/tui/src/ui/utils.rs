@@ -44,22 +44,18 @@ use crate::{
 /// // Creates a rectangle that's 80% wide and 70% tall, centered in parent
 /// ```
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-    let area = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1]);
+    let popup_layout = Layout::vertical([
+        Constraint::Percentage((100 - percent_y) / 2),
+        Constraint::Percentage(percent_y),
+        Constraint::Percentage((100 - percent_y) / 2),
+    ])
+    .split(r);
+    let area = Layout::horizontal([
+        Constraint::Percentage((100 - percent_x) / 2),
+        Constraint::Percentage(percent_x),
+        Constraint::Percentage((100 - percent_x) / 2),
+    ])
+    .split(popup_layout[1]);
     area[1]
 }
 /// Infer a set of column names from a list of JSON-like values.
@@ -563,3 +559,20 @@ pub fn build_copy_text(app: &app::App) -> String {
     }
     redact_sensitive(&buf)
 }
+
+/// Normalize execution payloads to ensure single-key collections render in the results table.
+///
+/// Some APIs return objects shaped as `{ "items": [ ... ] }`. The table expects an array at
+/// the root level, so this helper unwraps objects that meet this pattern. All other payloads
+/// are returned unchanged.
+pub fn normalize_result_payload(value: Value) -> Value {
+    if let Value::Object(map) = &value
+        && map.len() == 1
+        && let Some(inner_value) = map.values().next()
+        && inner_value.is_array()
+    {
+        return inner_value.clone();
+    }
+    value
+}
+

@@ -7,7 +7,7 @@ use ratatui::{layout::Rect, widgets::ListState};
 
 #[derive(Debug, Clone)]
 pub struct BrowserState {
-    pub registry: Arc<Mutex<heroku_registry::Registry>>,
+    pub registry: Arc<Mutex<heroku_registry::CommandRegistry>>,
     selected_command: Option<CommandSpec>,
     input_fields: Vec<Field>,
     current_field_idx: usize,
@@ -24,7 +24,7 @@ pub struct BrowserState {
 }
 
 impl BrowserState {
-    pub fn new(registry: Arc<Mutex<heroku_registry::Registry>>) -> Self {
+    pub fn new(registry: Arc<Mutex<heroku_registry::CommandRegistry>>) -> Self {
         Self {
             registry,
             selected_command: None,

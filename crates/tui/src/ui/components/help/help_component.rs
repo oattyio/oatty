@@ -12,7 +12,7 @@ use ratatui::{
     layout::Rect,
     style::Modifier,
     text::{Line, Text},
-    widgets::{Clear, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
 };
 
 use crate::{
@@ -20,7 +20,6 @@ use crate::{
     ui::{
         components::{component::Component, help::content::build_command_help_text},
         theme::theme_helpers as th,
-        utils::centered_rect,
     },
 };
 
@@ -100,7 +99,6 @@ impl Component for HelpComponent {
     /// draw_help_modal(&mut frame, &app, area);
     /// ```
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
-        let area = centered_rect(80, 70, rect);
         // Prefer help_spec when set, otherwise picked
         let mut title = "Help".to_string();
         let mut text = Text::from(vec![Line::styled(
@@ -124,9 +122,8 @@ impl Component for HelpComponent {
         let block = th::block(&*app.ctx.theme, Some(&title), true);
 
         // Clear background, draw block, then split inner area for content/footer
-        frame.render_widget(Clear, area);
-        frame.render_widget(block.clone(), area);
-        let inner = block.inner(area);
+        frame.render_widget(block.clone(), rect);
+        let inner = block.inner(rect);
 
         // Content paragraph inside inner content rect
         let paragraph = Paragraph::new(text)

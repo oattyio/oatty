@@ -2,7 +2,7 @@
 
 - Core Crates: `crates/cli` (binary entry, args dispatch, launches TUI), `crates/tui` (Ratatui UI, focus, autocomplete, tables, theme), `crates/registry` (loads command manifest), `crates/registry-gen` (schema → manifest generator + provider inference), `crates/engine` (workflow orchestration, templating, step I/O), `crates/api` (`reqwest` client, auth, retries), `crates/util` (logging, redaction, caching, JSON helpers), `crates/mcp` (MCP plugin infrastructure, client management, logging).
 
-- Command Spec & Manifest: Commands are identified by `group` + `name` (e.g., `apps info`). Fields are `positional_args` or `flags`. The manifest is generated at build-time by `crates/registry-gen` from the API schema and embeds per-field `provider` metadata directly in `CommandSpec`.
+- Command Spec & Manifest: Commands are identified by `group` + `name` (e.g., `apps info`). Fields are `positional_args` or `flags`. The manifest is generated at build-time by `crates/registry-gen` from the API schema and embeds per-field `provider` metadata directly in `CommandSpec`. Colon-delimited identifiers (e.g., `apps:list`) are deprecated; the engine logs and rejects them in favor of the canonical `<group> <name>` form.
 
 - Output Schema Summaries: Each `CommandSpec` includes an enriched `SchemaProperty` tree that retains
   JSON type, required keys, array item shapes, enumerated literals, optional `format`, and workflow
@@ -13,12 +13,12 @@
     - `ValueProvider::Command { command_id: String, binds: Vec<Bind> }`
     - `Bind { provider_key: String, from: String }`
   - Example: `apps info <app>` → positional `app` carries `provider: Command { command_id: "apps:list", binds: [] }`
-  - Example with bindings: `addons info <app> <addon>` → positional `addon` carries `provider: Command { command_id: "addons:list", binds: [{ provider_key: "app", from: "app" }] }`
+  - Example with bindings: `addons info <app> <addon>` → positional `addon` carries `provider: Command { command_id: "addons list", binds: [{ provider_key: "app", from: "app" }] }`
 
 - Provider Inference (registry-gen): Two-pass inference attaches providers conservatively.
-  - Build `<group>:<name>` index, detect groups with `list`.
-  - Positionals: walk `spec.path` and bind provider from the immediately preceding concrete segment (e.g., `/addons/{addon}/config` → group `addons` → `addons:list`).
-  - Flags: map flag names to plural groups via a synonyms table + conservative pluralization; bind `<group>:list` when present.
+  - Build `<group> <name>` index, detect groups with `list`.
+  - Positionals: walk `spec.path` and bind provider from the immediately preceding concrete segment (e.g., `/addons/{addon}/config` → group `addons` → `addons list`).
+  - Flags: map flag names to plural groups via a synonyms table + conservative pluralization; bind `<group> list` when present.
   - High-reliability bindings:
     - Bind provider path placeholders from earlier consumer positionals (via name synonyms).
     - Bind required provider flags only when they are in a safe set (app/app_id, addon/addon_id, pipeline, team/team_name, space/space_id, region, stack) and can be sourced either from earlier positionals or from consumer required flags (same/synonym name).
@@ -39,6 +39,7 @@
 
 - **TUI Layer:** Guided/Power modes, autocomplete surfaces provider results, focus management for forms/tables, theming from `plans/THEME.md`, accessibility + UX patterns from `plans/FOCUS_MANAGEMENT.md`, general guidelines from `plans/UX_GUIDELINES.md`, autocomplete from `plans/AUTOCOMPLETE.md` and workflow.
   - State ownership: top-level components (palette, browser, logs, help, table) keep their state on `app::App` for coordination; nested subcomponents (e.g., pagination inside the table) may keep private state and be composed by the parent. See AGENTS.md for the component cookbook.
+  - Shared view helpers under `ui/components/common/` encapsulate reusable Ratatui widgets (e.g., `ResultsTableView`). Controllers implement `Component`, hold no long-lived data, and pass the appropriate slice of `App` state into the shared renderers so multiple instances can coexist without duplicating drawing logic.
   - Runtime: The event loop and input routing live in `crates/tui/src/ui/runtime.rs`. It handles terminal setup/teardown, emits a constant animation tick (~8 FPS), routes input to focused components, and renders only when `App` marks itself dirty. This ensures smooth animations without unnecessary redraws while idle.
   - Mouse input: Components that expose clickable buttons or focusable inputs implement `handle_mouse_events` alongside keyboard handlers. Each render pass caches the target rectangles (`state.last_area`, `state.per_item_areas`), and a helper (`find_target_index_by_mouse_position`) maps the cursor location from `MouseEventKind::Down(MouseButton::Left)` into the matching button. Once identified, the component reuses the keyboard path by toggling the same focus flag and calling its `handle_key_events` with an `Enter` key event, ensuring mouse and keyboard paths stay in sync without duplicating logic.
   - Message/Effect Architecture: The TUI is TEA-inspired: it keeps a single `App` model, distinguishes between `Msg` and `Effect`, and routes side effects through `Cmd`s, while intentionally allowing local-first state mutation and a few synchronous effects for ergonomics. See `specs/MSG_EFFECT_ARCHITECTURE.md` for the full description of these patterns and their pragmatic deviations.
@@ -56,7 +57,7 @@ See plans/FOCUS_MANAGEMENT.md for details on the rat-focus model (flags, local f
 - API & Security: `reqwest` + TLS; auth via `HEROKU_API_KEY`. Redaction patterns (`token`, `password`, `secret`, etc.) applied to logs. Provider results are cached with a TTL in the TUI.
 
 - Example: `addons info <app> <addon>`
-  - Provider: `addons:list` exists at `/apps/{app}/addons`.
+  - Provider: `addons list` exists at `/apps/{app}/addons`.
   - Binding: `{ provider_key: "app", from: "app" }` attaches to the `addon` positional.
   - TUI resolves `app` from the user's input, fetches app-scoped addon names, and suggests values for `addon`.
 

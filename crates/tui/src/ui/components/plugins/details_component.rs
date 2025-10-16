@@ -6,7 +6,6 @@ use crate::{
     ui::{
         components::{component::Component, plugins::PluginDetailsLoadState},
         theme::{Theme, theme_helpers as th},
-        utils::centered_rect,
     },
 };
 use chrono::{DateTime, Local};
@@ -18,7 +17,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Wrap},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Wrap},
 };
 use textwrap::wrap;
 
@@ -191,8 +190,6 @@ impl Component for PluginsDetailsComponent {
     /// ```
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         let theme = &*app.ctx.theme;
-        let modal_area = centered_rect(90, 80, area);
-        frame.render_widget(Clear, modal_area);
 
         let title = modal_title(app.plugins.details.as_ref());
         let block = Block::default()
@@ -201,8 +198,8 @@ impl Component for PluginsDetailsComponent {
             .style(th::panel_style(theme))
             .title(Span::styled(title, theme.text_secondary_style().add_modifier(Modifier::BOLD)));
 
-        let inner = block.inner(modal_area);
-        frame.render_widget(block, modal_area);
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
 
         // First, split the full inner area into left (main) and right (tools) panes so the
         // tool border can span the entire height of the modal contents.
@@ -223,7 +220,6 @@ impl Component for PluginsDetailsComponent {
             .constraints([
                 Constraint::Length(3), // header
                 Constraint::Min(6),    // content
-                Constraint::Length(1), // footer
             ])
             .split(cols[0]);
 
@@ -236,9 +232,6 @@ impl Component for PluginsDetailsComponent {
         {
             self.render_tools(frame, tools_inner, theme, data.as_ref());
         }
-
-        let hints = Line::from(self.get_hint_spans(app, true)).style(theme.text_muted_style());
-        frame.render_widget(Paragraph::new(hints), left_layout[2]);
     }
 
     /// Generates a vector of styled `Span` elements representing UI hints based on the application context.
@@ -294,12 +287,9 @@ impl Component for PluginsDetailsComponent {
     /// - `theme` styles accessible through `app.ctx.theme`.
     /// - Plugin details and their load state accessed via `app.plugins.details`.
     ///
-    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
         let mut spans = Vec::new();
-        if is_root {
-            spans.push(Span::styled("Hints: ", theme.text_muted_style()));
-        }
         spans.extend([
             Span::styled("Esc", theme.accent_emphasis_style()),
             Span::styled(" Close  ", theme.text_muted_style()),

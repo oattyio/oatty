@@ -422,7 +422,7 @@ impl<R: Registry + Send + Sync> CompletionSource for FlagSource<R> {
 // sources/values.rs (uses dynamic providers + enums + history)
 pub struct ValueSource<R: Registry> {
     pub reg: R,
-    pub providers: Vec<Box<dyn ValueProvider>>,
+    pub providers: Vec<Arc<dyn ValueProvider>>,
 }
 
 #[async_trait]

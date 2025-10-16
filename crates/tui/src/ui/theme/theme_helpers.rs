@@ -1,7 +1,6 @@
 use super::roles::Theme;
 use crate::ui::theme::roles::ThemeRoles;
 use ratatui::text::Line;
-use ratatui::widgets::ListItem;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -314,9 +313,9 @@ pub fn create_radio_button(label: &str, is_selected: bool, is_focused: bool, the
     }
 }
 
-pub fn create_list_item_with_match(needle: String, display: String, theme: &dyn Theme) -> ListItem<'static> {
+pub fn create_spans_with_match(needle: String, display: String, default_style: Style, emphasis_style: Style) -> Vec<Span<'static>> {
     if needle.is_empty() {
-        return ListItem::new(Line::from(Span::styled(display, theme.text_primary_style())));
+        return vec![Span::styled(display, default_style)];
     }
 
     let mut spans: Vec<Span> = Vec::new();
@@ -331,14 +330,14 @@ pub fn create_list_item_with_match(needle: String, display: String, theme: &dyn 
 
         // Add text before the match
         if start > i {
-            spans.push(Span::styled(hay[i..start].to_string(), theme.text_primary_style()));
+            spans.push(Span::styled(hay[i..start].to_string(), default_style));
         }
 
         // Add highlighted match
         let end = start + needle.len();
         spans.push(Span::styled(
             hay[start..end].to_string(),
-            theme.accent_emphasis_style().add_modifier(Modifier::BOLD),
+            emphasis_style.add_modifier(Modifier::BOLD),
         ));
 
         i = end;
@@ -349,8 +348,8 @@ pub fn create_list_item_with_match(needle: String, display: String, theme: &dyn 
 
     // Add remaining text after last match
     if i < hay.len() {
-        spans.push(Span::styled(hay[i..].to_string(), theme.text_primary_style()));
+        spans.push(Span::styled(hay[i..].to_string(), default_style));
     }
 
-    ListItem::new(Line::from(spans))
+    spans
 }

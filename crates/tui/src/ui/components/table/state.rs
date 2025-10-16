@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Cell, Row},
 };
 use serde_json::Value;
-
+use heroku_types::{ExecOutcome};
 use crate::ui::{
     components::pagination::state::PaginationState,
     theme::{
@@ -18,6 +18,8 @@ use crate::ui::{
         status_color_for_value,
     },
 };
+use crate::ui::theme::Theme;
+use crate::ui::utils::normalize_result_payload;
 
 #[derive(Debug, Default)]
 pub struct TableState<'a> {
@@ -85,7 +87,6 @@ impl<'a> TableState<'_> {
     pub fn normalize(&mut self) {
         self.offset = 0;
         self.selected = 0;
-        self.grid_f.set(true);
     }
 
     pub fn apply_result_json(&mut self, value: Option<Value>, theme: &dyn UiTheme) {
@@ -245,6 +246,30 @@ impl<'a> TableState<'_> {
             return rows.len();
         }
         self.kv_entries.len()
+    }
+
+    /// Processes general command execution results (non-plugin specific).
+    ///
+    /// This method handles the standard processing of command results including
+    /// logging, table updates, and pagination information.
+    ///
+    /// # Arguments
+    ///
+    /// * `execution_outcome` - The result of the command execution
+    pub (crate) fn process_general_execution_result(&mut self, execution_outcome: &Box<ExecOutcome>, theme: &dyn Theme) {
+        let ExecOutcome::Http(_, _, value, maybe_pagination, request_id) = execution_outcome.as_ref() else {
+            return;
+        };
+        if let Some(pagination) = maybe_pagination {
+            self.pagination_state.set_pagination(pagination.clone());
+            self.pagination_state.show_pagination();
+        } else {
+            self.pagination_state.hide_pagination();
+        }
+
+        let normalized_value = normalize_result_payload(value.clone());
+        self.apply_result_json(Some(normalized_value), theme);
+        self.normalize();
     }
 }
 

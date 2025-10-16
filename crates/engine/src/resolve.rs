@@ -485,6 +485,74 @@ fn navigate_json_path(root_value: &Value, path_parts: &[&str]) -> String {
 /// - **Booleans**: Converted to "true" or "false"
 /// - **Null**: Converted to empty string
 /// - **Objects/Arrays**: Converted to JSON string representation
+/// Select a nested JSON value by a minimal dot path with optional numeric indices.
+///
+/// Supports segments like `a`, `a.b`, and array indices `a[0].b[1]`. Returns `None`
+/// when any segment is missing or applied to the wrong JSON type. When `path` is
+/// `None`, the input `value` is cloned and returned as-is.
+pub fn select_path(value: &Value, path: Option<&str>) -> Option<Value> {
+    let Some(path) = path else {
+        return Some(value.clone());
+    };
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Some(value.clone());
+    }
+
+    let mut current = value;
+    for segment in trimmed.split('.') {
+        if segment.is_empty() {
+            continue;
+        }
+        let (key, indices) = split_indices(segment);
+        if !key.is_empty() {
+            current = match current.get(key) {
+                Some(v) => v,
+                None => return None,
+            };
+        }
+        for idx in indices {
+            current = match current.get(idx) {
+                Some(v) => v,
+                None => return None,
+            };
+        }
+    }
+    Some(current.clone())
+}
+
+fn split_indices(segment: &str) -> (&str, Vec<usize>) {
+    let mut key_end = segment.len();
+    let mut indices = Vec::new();
+    let bytes = segment.as_bytes();
+    for (i, &b) in bytes.iter().enumerate() {
+        if b == b'[' {
+            key_end = i;
+            break;
+        }
+    }
+    let key = &segment[..key_end];
+    let mut i = key_end;
+    while i < bytes.len() {
+        if bytes[i] != b'[' {
+            break;
+        }
+        i += 1; // skip [
+        let start = i;
+        while i < bytes.len() && bytes[i] != b']' {
+            i += 1;
+        }
+        if i <= start {
+            break;
+        }
+        if let Ok(n) = segment[start..i].parse::<usize>() {
+            indices.push(n);
+        }
+        i += 1; // skip ]
+    }
+    (key, indices)
+}
+
 fn format_json_value(value: &Value) -> String {
     match value {
         Value::String(string_value) => string_value.clone(),

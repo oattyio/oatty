@@ -84,7 +84,7 @@ fn build_command_index(commands: &[CommandSpec]) -> (HashSet<String>, HashMap<St
     let mut command_id_to_index = HashMap::new();
 
     for (index, command) in commands.iter().enumerate() {
-        let command_id = format!("{}:{}", command.group, command.name);
+        let command_id = format!("{} {}", command.group, command.name);
         command_identifiers.insert(command_id.clone());
         command_id_to_index.insert(command_id, index);
     }
@@ -100,7 +100,7 @@ fn precompute_provider_metadata(commands: &[CommandSpec]) -> ProviderMetadata {
     let placeholders: HashMap<String, Vec<String>> = commands
         .iter()
         .map(|command| {
-            let command_id = format!("{}:{}", command.group, command.name);
+            let command_id = format!("{} {}", command.group, command.name);
             let extracted_placeholders = command.http().map(|http| extract_path_placeholders(&http.path)).unwrap_or_default();
             (command_id, extracted_placeholders)
         })
@@ -109,7 +109,7 @@ fn precompute_provider_metadata(commands: &[CommandSpec]) -> ProviderMetadata {
     let required_flags: HashMap<String, Vec<String>> = commands
         .iter()
         .map(|command| {
-            let command_id = format!("{}:{}", command.group, command.name);
+            let command_id = format!("{} {}", command.group, command.name);
             let required_flag_names: Vec<String> = command
                 .flags
                 .iter()
@@ -156,7 +156,7 @@ fn apply_flag_providers(flags: &mut [CommandFlag], list_groups: &HashSet<String>
 
     for flag in flags.iter_mut() {
         if let Some(group_name) = map_flag_name_to_group(&flag.name, &flag_to_group_synonyms) {
-            let list_provider_id = format!("{}:{}", group_name, "list");
+            let list_provider_id = format!("{} {}", group_name, "list");
 
             if list_groups.contains(&group_name) && command_index.contains(&list_provider_id) {
                 flag.provider = Some(ValueProvider::Command {
@@ -287,7 +287,7 @@ fn find_provider_candidates(
     let mut candidates = Vec::new();
 
     // First, try the simple unscoped provider
-    let simple_provider = format!("{}:{}", normalized_group, "list");
+    let simple_provider = format!("{} {}", normalized_group, "list");
     if command_index.contains(&simple_provider) {
         candidates.push(simple_provider);
     }
@@ -318,7 +318,7 @@ fn find_provider_candidates(
         if i < concrete_segments.len() - 1 {
             // Don't use the last segment (it's the target group)
             // Try using this segment as a group name with "<target_group>:list" as the command name
-            let scoped_provider = format!("{}:{}:{}", segment, normalized_group, "list");
+            let scoped_provider = format!("{} {}:{}", segment, normalized_group, "list");
             if command_index.contains(&scoped_provider) {
                 candidates.push(scoped_provider);
             }

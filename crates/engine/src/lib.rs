@@ -59,7 +59,7 @@ pub use executor::{
     prepare_plan, run_step,
 };
 pub use model::{InputSpec, StepSpec, WorkflowBundle, WorkflowSpec};
-pub use provider::{ProviderContract, ProviderRegistry};
+pub use provider::{ProviderContract, ProviderValueResolver, ValueProvider};
 pub use resolve::RunContext;
 pub use workflow::bindings::{
     ArgumentPrompt, BindingFailure, BindingSource, MissingReason, ProviderArgumentResolver, ProviderBindingOutcome, SkipDecision,

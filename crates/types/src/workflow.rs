@@ -77,6 +77,9 @@ pub struct WorkflowInputDefinition {
     /// Join configuration applied when `mode` is multiple and results must be concatenated.
     #[serde(default)]
     pub join: Option<WorkflowJoinConfiguration>,
+    /// When true, this input does not block readiness. All inputs are required by default unless `optional: true`.
+    #[serde(default)]
+    pub optional: bool,
     /// Declarative validation metadata (required flags, enumerations, patterns).
     #[serde(default)]
     pub validate: Option<WorkflowInputValidation>,
@@ -102,6 +105,7 @@ impl Default for WorkflowInputDefinition {
             default: None,
             provider_args: default_provider_argument_map(),
             join: None,
+            optional: false,
             validate: None,
             placeholder: None,
             enumerated_values: Vec::new(),
@@ -382,5 +386,22 @@ steps:
         assert_eq!(definition.workflow, "app_with_db");
         assert!(definition.inputs.contains_key("app_name"));
         assert_eq!(definition.steps.len(), 3);
+    }
+}
+
+impl WorkflowInputDefinition {
+    /// Returns true when this input should not block readiness.
+    ///
+    /// New authoring semantics: inputs are required by default unless `optional: true` is set.
+    /// Legacy `validate.required` is ignored for readiness; it may still be used by
+    /// future per-field validation, but does not affect required/optional at the
+    /// workflow level.
+    pub fn is_optional(&self) -> bool {
+        self.optional
+    }
+
+    /// Returns true when a value must be supplied before running the workflow.
+    pub fn is_required(&self) -> bool {
+        !self.optional
     }
 }

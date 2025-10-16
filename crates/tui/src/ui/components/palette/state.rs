@@ -13,20 +13,21 @@
 //! - For non-boolean flags whose value is pending, only values are suggested
 //!   (enums and provider values) until the value is complete.
 //! - Suggestions never render an empty popup.
-use std::sync::Mutex;
-use std::{fmt::Debug, sync::Arc};
+use std::sync::{Arc, Mutex};
 
 use crate::ui::components::palette::suggestion_engine::SuggestionEngine;
 use crate::ui::theme::Theme;
 
 use super::suggestion_engine::{parse_user_flags_args, required_flags_remaining};
 use crate::ui::components::common::TextInputState;
-use crate::ui::theme::theme_helpers::create_list_item_with_match;
-use heroku_registry::{Registry, find_by_group_and_cmd};
-use heroku_types::{CommandSpec, ItemKind, SuggestionItem};
-use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
+use crate::ui::theme::theme_helpers::create_spans_with_match;
+use heroku_engine::ValueProvider;
+use heroku_registry::{CommandRegistry, find_by_group_and_cmd};
+use heroku_types::{CommandSpec, Effect, ExecOutcome, ItemKind, Modal, SuggestionItem};
+use heroku_util::{lex_shell_like, lex_shell_like_ranged};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
+use ratatui::text::Line;
 use ratatui::widgets::ListItem;
 
 /// Locate the index of the token under the cursor.
@@ -55,7 +56,7 @@ fn token_index_at_cursor(input: &str, cursor: usize) -> Option<usize> {
 /// input text, cursor position, suggestions, and error states.
 #[derive(Clone, Debug)]
 pub struct PaletteState {
-    registry: Arc<Mutex<Registry>>,
+    registry: Arc<Mutex<CommandRegistry>>,
     /// Focus flag for self
     focus: FocusFlag,
     /// Focus flag for the input field
@@ -64,7 +65,7 @@ pub struct PaletteState {
     input: String,
     /// Current cursor position (byte index)
     cursor_position: usize,
-    /// Optional ghost text to show as placeholder
+    /// Optional ghost text to show as a placeholder
     ghost_text: Option<String>,
     /// Whether the suggestions popup is currently open
     is_suggestions_open: bool,
@@ -76,20 +77,20 @@ pub struct PaletteState {
     rendered_suggestions: Vec<ListItem<'static>>,
     /// Optional error message to display
     error_message: Option<String>,
-
     /// Whether provider-backed suggestions are actively loading
     provider_loading: bool,
-
     /// History of executed palette inputs (most recent last)
     history: Vec<String>,
     /// Current index into history when browsing (0..history.len()-1), None when not browsing
     history_index: Option<usize>,
     /// Draft input captured when entering history browse mode, restored when exiting
     draft_input: Option<String>,
+    /// The hash of the command being waited on by the palette
+    cmd_exec_hash: Option<u64>
 }
 
 impl PaletteState {
-    pub fn new(registry: Arc<Mutex<Registry>>) -> Self {
+    pub fn new(registry: Arc<Mutex<CommandRegistry>>) -> Self {
         Self {
             registry,
             focus: FocusFlag::named("heroku.palette"),
@@ -106,6 +107,7 @@ impl PaletteState {
             history: Vec::new(),
             history_index: None,
             draft_input: None,
+            cmd_exec_hash: None
         }
     }
 }
@@ -143,6 +145,8 @@ impl PaletteState {
     pub fn suggestion_index(&self) -> usize {
         self.suggestion_index
     }
+
+    pub fn cmd_exec_hash(&self) -> Option<u64> { self.cmd_exec_hash }
 
     /// Derive the command spec from the current input tokens ("group sub").
     fn selected_command_from_input(&self, commands: &[CommandSpec]) -> Option<CommandSpec> {
@@ -216,7 +220,7 @@ impl PaletteState {
     }
 
     /// Get the current rendered suggestions list
-    pub fn rendered_suggestions(&self) -> &[ratatui::widgets::ListItem<'static>] {
+    pub fn rendered_suggestions(&self) -> &[ListItem<'static>] {
         &self.rendered_suggestions
     }
 
@@ -282,6 +286,8 @@ impl PaletteState {
     pub(crate) fn set_input(&mut self, input: String) {
         self.input = input;
     }
+
+    pub(crate) fn set_cmd_exec_hash(&mut self, hash: u64) {self.cmd_exec_hash = Some(hash)}
 
     /// Set the cursor position
     pub(crate) fn set_cursor(&mut self, cursor: usize) {
@@ -399,7 +405,13 @@ impl PaletteState {
             .iter()
             .map(|suggestion_item| {
                 let display = suggestion_item.display.clone();
-                create_list_item_with_match(needle.to_string(), display, theme)
+                let spans = create_spans_with_match(
+                    needle.to_string(),
+                    display,
+                    theme.text_primary_style(),
+                    theme.accent_emphasis_style(),
+                );
+                ListItem::from(Line::from(spans))
             })
             .collect();
 
@@ -419,8 +431,8 @@ impl PaletteState {
 
     // ===== HISTORY =====
     /// Append the given input to history, trimming and deduping adjacent entries.
-    pub fn push_history_if_needed(&mut self, s: &str) {
-        let value = s.trim();
+    pub fn push_history_if_needed(&mut self, entry: &str) {
+        let value = entry.trim();
         if value.is_empty() {
             return;
         }
@@ -570,13 +582,6 @@ impl PaletteState {
         self.input.clear();
         self.insert_with_space(exec);
     }
-
-    // Renders the palette UI components.
-    //
-    // This function used to render the complete command palette including the input
-    // line, optional ghost text, error messages, and the suggestions popup.
-    // Rendering responsibility has been migrated to PaletteComponent::render(),
-    // and this comment remains for historical context for future refactors.
 
     /// Accept a non-command suggestion (flag/value) without clobbering the
     /// resolved command (group sub).
@@ -728,7 +733,7 @@ impl PaletteState {
     /// st.set_input("apps info --app ".into());
     /// st.apply_build_suggestions(&Registry::from_embedded_schema().unwrap(), &[]);
     /// ```
-    pub fn apply_build_suggestions(&mut self, providers: &[Box<dyn ValueProvider>], theme: &dyn Theme) {
+    pub fn apply_build_suggestions(&mut self, providers: &[Arc<dyn ValueProvider>], theme: &dyn Theme) {
         let mut items = {
             let Some(lock) = self.registry.lock().ok() else {
                 return;
@@ -820,15 +825,162 @@ impl PaletteState {
         }
         None
     }
+
+    /// Processes general command execution results (non-plugin specific).
+    ///
+    /// This method handles the standard processing of command results including
+    /// logging, table updates, and pagination information.
+    ///
+    /// # Arguments
+    ///
+    /// * `execution_outcome` - The result of the command execution
+    pub (crate) fn process_general_execution_result(&mut self, execution_outcome: &Box<ExecOutcome>) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        let (value, request_id) = match execution_outcome.as_ref() {
+            ExecOutcome::Http(_, _, value, _, request_id) => (value.clone(), request_id.clone()),
+            ExecOutcome::Mcp(_, value, request_id) => (value.clone(), request_id.clone()),
+            _ => return effects,
+        };
+
+        // nothing to do
+        if !self.cmd_exec_hash.is_some_and(|h| h == request_id) || value.is_null() {
+            return effects;
+        }
+
+        let input = self.input.to_string();
+        self.push_history_if_needed(input.trim());
+        self.reduce_clear_all();
+        effects.push(Effect::ShowModal(Modal::Results(execution_outcome.clone())));
+
+        effects
+    }
 }
 
+/// Retrieves the current token at or near a specific cursor position in the input string.
+///
+/// This function processes the input string using a lexer function `lex_shell_like_ranged`
+/// to tokenize it into a series of tokens. It then identifies the token that contains
+/// the given cursor position (if any). If no such token is found, it defaults to
+/// returning the last token in the list. If the list of tokens is empty, it returns an
+/// empty string.
+///
+/// # Arguments
+///
+/// * `input` - A reference to the input string which will be tokenized.
+/// * `cursor_position` - A `usize` representing the cursor's position in the input string.
+///
+/// # Returns
+///
+/// A `String` representation of the current token at the cursor's position. If no token
+/// can be identified at the cursor's position, the function returns an empty string.
+///
+/// # Example
+///
+/// ```rust
+/// let input = "echo hello world";
+/// let cursor_position = 6;
+/// let token = get_current_token(input, cursor_position);
+/// assert_eq!(token, "hello");
+/// ```
+///
+/// # Notes
+///
+/// The function relies on `lex_shell_like_ranged`, which is assumed to return a list of
+/// tokens where each token is a structure or object that includes the fields:
+/// - `start`: The starting index of the token in the input string.
+/// - `end`: The ending index of the token in the input string.
+/// - `text`: The actual text of the token.
+///
+/// The range `[start, end]` is inclusive, meaning the token at `cursor_position` is
+/// determined if the position satisfies `start <= cursor_position <= end`.
+///
+/// If the cursor does not match any token but there are tokens available, the final
+/// token in the list will be returned.
+fn get_current_token(input: &str, cursor_position: usize) -> String {
+    let tokens = lex_shell_like_ranged(input);
+    let token = tokens
+        .iter()
+        .find(|t| t.start <= cursor_position && cursor_position <= t.end)
+        .or_else(|| tokens.last());
+
+    token.map(|t| t.text.to_string()).unwrap_or_default()
+}
+
+/// Computes the remaining portion of the `insert` string after stripping the prefix
+/// that matches the token containing the cursor position within the `input` string,
+/// or the last token if no token contains the cursor.
+///
+/// # Arguments
+///
+/// * `input` - A string slice representing the input text to be tokenized.
+/// * `cursor` - A `usize` representing the position of the cursor within the `input`.
+/// * `insert` - A string slice representing the text to be analyzed for the remainder.
+///
+/// # Returns
+///
+/// Returns a `String` containing the portion of `insert` after removing the
+/// token-matching prefix. If no matching token is found, or the prefix does not match,
+/// it returns an empty `String`.
+///
+/// # Behavior
+///
+/// The function works as follows:
+/// 1. Tokenizes the input string into shell-like tokens using `lex_shell_like_ranged`.
+/// 2. Determines the token that contains the cursor position, or defaults to the last token.
+/// 3. Extracts the matching text of the identified token.
+/// 4. Checks whether `insert` starts with the token text. If so, it strips the token text
+///    from `insert` and returns the remainder. Otherwise, it returns an empty string.
+///
+/// # Example
+///
+/// ```
+/// let input = "echo hello world";
+/// let cursor = 5; // Cursor is within "hello".
+/// let insert = "hello world";
+/// let result = ghost_remainder(input, cursor, insert);
+/// assert_eq!(result, " world");
+/// ```
+///
+/// If the `insert` does not start with the token text:
+///
+/// ```
+/// let input = "echo hello";
+/// let cursor = 0; // Cursor is outside of any token (matches "echo").
+/// let insert = "world";
+/// let result = ghost_remainder(input, cursor, insert);
+/// assert_eq!(result, ""); // No match, so empty string is returned.
+/// ```
+///
+/// # Note
+///
+/// The function depends on the `lex_shell_like_ranged` external function for tokenizing
+/// the `input` string, which must return a collection of tokens, each with fields
+/// `start`, `end`, and `text`. The behavior of this function heavily depends
+/// on the implementation of the tokenizer.
+pub fn ghost_remainder(input: &str, cursor: usize, insert: &str) -> String {
+    let tokens = lex_shell_like_ranged(input);
+    // Find the token that contains the cursor, otherwise take the last token
+    let last_tok = tokens
+        .iter()
+        .find(|t| t.start <= cursor && cursor <= t.end)
+        .or_else(|| tokens.last());
+    let token_text = match last_tok {
+        Some(t) => t.text,
+        None => "",
+    };
+    if let Some(rest) = insert.strip_prefix(token_text) {
+        rest.to_string()
+    } else {
+        String::new()
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn replace_partial_positional_on_accept() {
-        let mut st = PaletteState::new(Arc::new(Mutex::new(Registry::from_embedded_schema().unwrap())));
+        let mut st = PaletteState::new(Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap())));
         st.set_input("apps info hero".into());
         st.set_cursor(st.input().len());
         st.apply_accept_positional_suggestion("heroku-prod");
@@ -837,7 +989,7 @@ mod tests {
 
     #[test]
     fn replace_placeholder_positional_on_accept_value() {
-        let mut st = PaletteState::new(Arc::new(Mutex::new(Registry::from_embedded_schema().unwrap())));
+        let mut st = PaletteState::new(Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap())));
         // Placeholder for positional arg
         st.set_input("apps info <app> ".into());
         st.set_cursor(st.input().len());
@@ -858,7 +1010,7 @@ mod tests {
     }
 
     fn run_palette(mut input: &str, cursor: usize, ops: &[Op]) -> (String, usize) {
-        let reg = Arc::new(Mutex::new(Registry::from_embedded_schema().unwrap()));
+        let reg = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap()));
         let mut st = PaletteState::new(reg);
         st.set_input(input.to_string());
         st.set_cursor(cursor);
@@ -944,216 +1096,5 @@ mod tests {
             Op::Ins('!'),
         ];
         assert_parity(input, cursor, &ops);
-    }
-}
-
-/// Trait for providing dynamic values for command suggestions.
-///
-/// This trait allows external systems to provide dynamic values
-/// for command parameters, such as app names, region names, etc.
-pub trait ValueProvider: Send + Sync + Debug {
-    /// Suggests values for the given command and field combination.
-    ///
-    /// # Arguments
-    ///
-    /// * `command_key` - The command key (e.g., "apps info")
-    /// * `field` - The field name (e.g., "app")
-    /// * `partial` - The partial input to match against
-    ///
-    /// # Returns
-    ///
-    /// Vector of suggestion items that match the partial input.
-    fn suggest(
-        &self,
-        commands: &[CommandSpec],
-        command_key: &str,
-        field: &str,
-        partial: &str,
-        inputs: &std::collections::HashMap<String, String>,
-    ) -> Vec<SuggestionItem>;
-}
-
-/// A simple value provider that returns static values.
-///
-/// This provider returns a predefined list of values for specific
-/// command and field combinations.
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct StaticValuesProvider {
-    /// The command key this provider matches
-    pub command_key: String,
-    /// The field name this provider provides values for
-    pub field: String,
-    /// The static values to suggest
-    pub values: Vec<String>,
-}
-
-impl ValueProvider for StaticValuesProvider {
-    /// Suggest values that fuzzy-match `partial` for the configured (command,
-    /// field).
-    fn suggest(
-        &self,
-        _commands: &[CommandSpec],
-        command_key: &str,
-        field: &str,
-        partial: &str,
-        _inputs: &std::collections::HashMap<String, String>,
-    ) -> Vec<SuggestionItem> {
-        if command_key != self.command_key || field != self.field {
-            return vec![];
-        }
-        let mut out = Vec::new();
-        for v in &self.values {
-            if let Some(score) = fuzzy_score(v, partial) {
-                out.push(SuggestionItem {
-                    display: v.clone(),
-                    insert_text: v.clone(),
-                    kind: ItemKind::Value,
-                    meta: Some("provider".into()),
-                    score,
-                });
-            }
-        }
-        out
-    }
-}
-
-// Determine if the first two tokens resolve to a known command.
-//
-// A command is considered resolved when at least two tokens exist and they
-// match a `(group, name)` pair in the registry.
-// is_command_resolved is implemented in suggest.rs
-
-// Compute the prefix used to rank command suggestions.
-//
-// When two or more tokens exist, uses "group sub"; otherwise uses the first
-// token or empty string.
-// compute_command_prefix is implemented in suggest.rs
-
-// Build command suggestions in execution form ("group sub").
-//
-// Uses `fuzzy_score` against the computed prefix to rank candidates and embeds
-// the command summary in the display text.
-// suggest_commands is implemented in suggest.rs
-
-// Parse user-provided flags and positional arguments from the portion of
-// tokens after the resolved (group, sub) command.
-//
-// long flags are collected without the leading dashes; values immediately
-// following non-boolean flags are consumed. Returns `(user_flags, user_args)`.
-// parse_user_flags_args is implemented in suggest.rs
-
-// Find the last pending non-boolean flag that expects a value.
-//
-// Scans tokens from the end to find the most recent flag and checks whether
-// its value has been supplied. If a value is already complete (per
-// `is_flag_value_complete`), returns `None`.
-// find_pending_flag is implemented in suggest.rs
-
-// Derive the value fragment currently being typed for the last flag.
-//
-// If the last token is a flag containing an equals sign (e.g., `--app=pa`),
-// returns the suffix after `=`; otherwise returns the last token itself (or an
-// empty string when no tokens exist in `parts`).
-// flag_value_partial is implemented in suggest.rs
-
-// Suggest values for a specific non-boolean flag, combining enum values with
-// provider-derived suggestions.
-// suggest_values_for_flag is implemented in suggest.rs
-
-// Suggest positional values for the next expected positional parameter using
-// providers; when no provider values are available, suggest a placeholder
-// formatted as `<name>`.
-// suggest_positionals is implemented in suggest.rs
-
-// Whether any required flags are not yet supplied by the user.
-// required_flags_remaining is implemented in suggest.rs
-
-// Determine whether the last flag's value is complete according to REPL rules.
-//
-// Rules:
-// - If the last token is `-` or `--`, it is not complete.
-// - If no flag token is found when scanning backward, it is complete.
-// - If the last token is the flag itself (no value yet), it is not complete.
-// - If the last token is the value immediately after the flag, it is complete
-//   only if the input ends in whitespace (typing may continue otherwise).
-//
-// Arguments:
-// - `input`: The full input line.
-//
-// Returns: `true` if the last flag value is considered complete.
-//
-// Example:
-//
-// ```rust,ignore
-// use heroku_tui::ui::components::palette::state::is_flag_value_complete;
-//
-// assert!(!is_flag_value_complete("--app"));
-// assert!(!is_flag_value_complete("--app my"));
-// assert!(is_flag_value_complete("--app my "));
-// ```
-fn get_current_token(input: &str, cursor_position: usize) -> String {
-    let tokens = lex_shell_like_ranged(input);
-    let token = tokens
-        .iter()
-        .find(|t| t.start <= cursor_position && cursor_position <= t.end)
-        .or_else(|| tokens.last());
-
-    token.map(|t| t.text.to_string()).unwrap_or_default()
-}
-
-// is_flag_value_complete is implemented in suggest.rs and re-exported above
-
-// Collect candidate flag suggestions for a command specification.
-//
-// Generates suggestions for either required or optional flags that have not
-// yet been provided by the user. When `current` starts with a dash, only flags
-// whose long form starts with `current` are included (prefix filtering).
-//
-// Arguments:
-// - `spec`: The command specification whose flags are considered.
-// - `user_flags`: Long flag names already present in the input (without `--`).
-// - `current`: The current token text (used for prefix filtering when typing a
-//   flag).
-// - `required_only`: When `true`, include only required flags; when `false`,
-//   only optional flags.
-// collect_flag_candidates is implemented in suggest.rs
-
-// Compute the remainder of the current token toward a target insert text toward end.
-//
-// If the token under the cursor is a prefix of `insert`, returns the suffix
-// that would be inserted to complete it. Used to render subtle ghost text to
-// the right of the cursor previewing acceptance of the top suggestion.
-//
-// Arguments:
-// - `input`: Full input line.
-// - `cursor`: Cursor position (byte index) into `input`.
-// - `insert`: The prospective full text to insert for the current token.
-//
-// Returns: The suffix of `insert` beyond the current token, or empty string.
-//
-// Example:
-//
-// ```rust,ignore
-// use heroku_tui::ui::components::palette::state::ghost_remainder;
-//
-// assert_eq!(ghost_remainder("ap", 2, "apps"), "ps");
-// assert_eq!(ghost_remainder("foo", 3, "bar"), "");
-// ```
-pub fn ghost_remainder(input: &str, cursor: usize, insert: &str) -> String {
-    let tokens = lex_shell_like_ranged(input);
-    // Find the token that contains the cursor, otherwise take the last token
-    let last_tok = tokens
-        .iter()
-        .find(|t| t.start <= cursor && cursor <= t.end)
-        .or_else(|| tokens.last());
-    let token_text = match last_tok {
-        Some(t) => t.text,
-        None => "",
-    };
-    if let Some(rest) = insert.strip_prefix(token_text) {
-        rest.to_string()
-    } else {
-        String::new()
     }
 }

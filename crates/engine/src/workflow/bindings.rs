@@ -450,54 +450,9 @@ pub enum BindingSource {
 ///   - `PathSegment::Index`: Represents an index for accessing arrays.
 /// - The function requires `value` to be cloneable as it may return a cloned child element.
 fn select_path(value: &Value, path: Option<&str>) -> Option<Value> {
-    let Some(path_text) = path.map(str::trim).filter(|segment| !segment.is_empty()) else {
-        return Some(value.clone());
-    };
-
-    let segments = parse_path_segments(path_text);
-
-    if segments.is_empty() {
-        return Some(value.clone());
-    }
-
-    let mut current = value;
-
-    for (index, segment) in segments.iter().enumerate() {
-        if index == 0
-            && matches!(segment, PathSegment::Key(key) if key == "output")
-            && let Value::Object(map) = current
-            && let Some(next) = map.get("output")
-        {
-            current = next;
-            continue;
-        }
-
-        match segment {
-            PathSegment::Key(key) => match current {
-                Value::Object(map) => match map.get(key) {
-                    Some(next) => current = next,
-                    None => return None,
-                },
-                _ => return None,
-            },
-            PathSegment::Index(index) => match current {
-                Value::Array(values) => match values.get(*index) {
-                    Some(next) => current = next,
-                    None => return None,
-                },
-                _ => return None,
-            },
-        }
-    }
-
-    Some(current.clone())
+    crate::resolve::select_path(value, path)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum PathSegment {
-    Key(String),
-    Index(usize),
-}
 /// Parses a given string path into a vector of `PathSegment` objects, which represent the segments of the path.
 ///
 /// The path may contain dot-separated keys (e.g., "key1.key2"), as well as index accessors within square brackets
@@ -549,74 +504,6 @@ enum PathSegment {
 /// - The square bracket parsing does not currently support complex expressions or nested brackets.
 /// - Quotes (`'` or `"`) are not handled specifically for keys inside brackets; all content is treated as-is.
 ///
-/// # Helper Function
-/// This function uses a helper function `push_buffer_as_key` to push buffered strings as `PathSegment::Key`
-/// when encountering delimiters or end of input.
-fn parse_path_segments(path: &str) -> Vec<PathSegment> {
-    let mut segments = Vec::new();
-    let mut buffer = String::new();
-    let mut characters = path.chars().peekable();
-
-    while let Some(character) = characters.next() {
-        match character {
-            '.' => {
-                push_buffer_as_key(&mut segments, &mut buffer);
-            }
-            '[' => {
-                push_buffer_as_key(&mut segments, &mut buffer);
-                let mut index_buffer = String::new();
-                for index_character in characters.by_ref() {
-                    if index_character == ']' {
-                        break;
-                    }
-                    index_buffer.push(index_character);
-                }
-                if let Ok(index) = index_buffer.trim().parse::<usize>() {
-                    segments.push(PathSegment::Index(index));
-                } else if !index_buffer.trim().is_empty() {
-                    segments.push(PathSegment::Key(index_buffer.trim().to_string()));
-                }
-            }
-            _ => buffer.push(character),
-        }
-    }
-
-    push_buffer_as_key(&mut segments, &mut buffer);
-
-    segments
-}
-/// Processes the contents of a buffer and appends it as a `Key` variant of `PathSegment`
-/// into the provided `segments` vector after trimming whitespace.
-///
-/// # Parameters
-/// - `segments`: A mutable reference to a vector of `PathSegment` where the processed key will be added.
-/// - `buffer`: A mutable reference to a string buffer containing the potential key to be processed.
-///
-/// # Behavior
-/// - Trims leading and trailing whitespace from the `buffer`.
-/// - If the trimmed `buffer` is not empty, it creates a `Key` variant of `PathSegment`
-///   from the buffer's content and appends it to the `segments` vector.
-/// - Clears the `buffer` content after processing.
-///
-/// # Examples
-/// ```ignore
-/// let mut segments = Vec::new();
-/// let mut buffer = String::from("   my_key   ");
-/// push_buffer_as_key(&mut segments, &mut buffer);
-///
-/// assert_eq!(segments.len(), 1);
-/// if let PathSegment::Key(key) = &segments[0] {
-///     assert_eq!(key, "my_key");
-/// }
-/// assert!(buffer.is_empty());
-/// ```
-fn push_buffer_as_key(segments: &mut Vec<PathSegment>, buffer: &mut String) {
-    let key = buffer.trim();
-    if !key.is_empty() {
-        segments.push(PathSegment::Key(key.to_string()));
-    }
-    buffer.clear();
-}
 
 #[cfg(test)]
 mod tests {

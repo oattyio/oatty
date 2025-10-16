@@ -14,7 +14,7 @@ use heroku_engine::{
     WorkflowRunState,
 };
 use heroku_mcp::{PluginEngine, config::load_config};
-use heroku_registry::{Registry, build_clap, feat_gate::feature_workflows, find_by_group_and_cmd};
+use heroku_registry::{CommandRegistry, build_clap, feat_gate::feature_workflows, find_by_group_and_cmd};
 use heroku_types::{ExecOutcome, RuntimeWorkflow, command::CommandExecution, service::ServiceId, workflow::WorkflowDefinition};
 use heroku_util::resolve_path;
 use reqwest::Method;
@@ -75,25 +75,25 @@ impl Write for GatedStderr {
 async fn main() -> Result<()> {
     init_tracing();
     let cfg = load_config()?;
-    let registry = Arc::new(Mutex::new(Registry::from_embedded_schema()?));
-    let plugin_engine = Arc::new(PluginEngine::new(cfg, Arc::clone(&registry))?);
+    let command_registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema()?));
+    let plugin_engine = Arc::new(PluginEngine::new(cfg, Arc::clone(&command_registry))?);
     plugin_engine.prepare_registry().await?;
     plugin_engine.start().await?;
 
-    let cli = build_clap(Arc::clone(&registry));
+    let cli = build_clap(Arc::clone(&command_registry));
     let matches = cli.get_matches();
 
     // No subcommands => TUI
     if matches.subcommand_name().is_none() {
         // Silence tracing output to stderr while the TUI is active to avoid overlay
         TUI_ACTIVE.store(true, Ordering::Relaxed);
-        let tui_result = heroku_tui::run(Arc::clone(&registry), Arc::clone(&plugin_engine)).await;
+        let tui_result = heroku_tui::run(Arc::clone(&command_registry), Arc::clone(&plugin_engine)).await;
         TUI_ACTIVE.store(false, Ordering::Relaxed);
         plugin_engine.stop().await?;
         return tui_result;
     }
 
-    let result = run_command(Arc::clone(&registry), &matches, Arc::clone(&plugin_engine)).await;
+    let result = run_command(Arc::clone(&command_registry), &matches, Arc::clone(&plugin_engine)).await;
     plugin_engine.stop().await?;
     result
 }
@@ -133,7 +133,7 @@ fn init_tracing() {
     let _ = fmt().with_env_filter(filter).with_writer(|| GatedStderr).try_init();
 }
 
-fn resolve_runtime_workflow(registry: Arc<Mutex<Registry>>, matches: &ArgMatches) -> Result<RuntimeWorkflow> {
+fn resolve_runtime_workflow(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches) -> Result<RuntimeWorkflow> {
     if let Some(file) = matches.get_one::<String>("file") {
         return load_runtime_workflow_from_file(Path::new(file));
     }
@@ -338,7 +338,7 @@ fn format_step_status(status: StepStatus) -> &'static str {
 /// # Set config var
 /// heroku-cli config config:set KEY=value
 /// ```
-async fn run_command(registry: Arc<Mutex<Registry>>, matches: &ArgMatches, plugin_engine: Arc<PluginEngine>) -> Result<()> {
+async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches, plugin_engine: Arc<PluginEngine>) -> Result<()> {
     // format is <group> <qualified subcommand> e.g. apps app:create
     let (group, sub) = matches.subcommand().context("expected a resource group subcommand")?;
 
@@ -399,9 +399,9 @@ async fn run_command(registry: Arc<Mutex<Registry>>, matches: &ArgMatches, plugi
                 }
             }
 
-            let outcome = plugin_engine.execute_tool(&cmd_spec, &arguments).await?;
+            let outcome = plugin_engine.execute_tool(&cmd_spec, &arguments, 0).await?;
             match outcome {
-                ExecOutcome::Mcp(log, _) => println!("{}", log),
+                ExecOutcome::Mcp(log, ..) => println!("{}", log),
                 ExecOutcome::Log(log) => println!("{}", log),
                 other => println!("{:?}", other),
             }
@@ -411,7 +411,7 @@ async fn run_command(registry: Arc<Mutex<Registry>>, matches: &ArgMatches, plugi
 }
 
 fn handle_workflow_command(
-    registry: Arc<Mutex<Registry>>,
+    registry: Arc<Mutex<CommandRegistry>>,
     root_matches: &ArgMatches,
     subcommand: &str,
     sub_matches: &ArgMatches,
@@ -430,7 +430,7 @@ fn handle_workflow_command(
     }
 }
 
-fn list_workflows(registry: Arc<Mutex<Registry>>, json_output: bool) -> Result<()> {
+fn list_workflows(registry: Arc<Mutex<CommandRegistry>>, json_output: bool) -> Result<()> {
     let definitions = {
         let guard = registry.lock().expect("could not obtain lock on registry");
         guard.workflows.clone()
@@ -482,7 +482,7 @@ fn list_workflows(registry: Arc<Mutex<Registry>>, json_output: bool) -> Result<(
     Ok(())
 }
 
-fn preview_workflow(registry: Arc<Mutex<Registry>>, json_output: bool, matches: &ArgMatches) -> Result<()> {
+fn preview_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, matches: &ArgMatches) -> Result<()> {
     let runtime = resolve_runtime_workflow(registry, matches)?;
     let format = matches.get_one::<String>("format").map(|s| s.as_str()).unwrap_or("yaml");
 
@@ -495,7 +495,7 @@ fn preview_workflow(registry: Arc<Mutex<Registry>>, json_output: bool, matches: 
     Ok(())
 }
 
-fn run_workflow(registry: Arc<Mutex<Registry>>, json_output: bool, matches: &ArgMatches) -> Result<()> {
+fn run_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, matches: &ArgMatches) -> Result<()> {
     let mut state = WorkflowRunState::new(resolve_runtime_workflow(Arc::clone(&registry), matches)?);
 
     if let Some(overrides) = matches.get_many::<String>("input") {

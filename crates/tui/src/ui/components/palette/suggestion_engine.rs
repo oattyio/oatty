@@ -1,7 +1,8 @@
 use heroku_types::{CommandExecution, CommandSpec, ItemKind, SuggestionItem};
 use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
+use std::sync::Arc;
 
-use super::state::ValueProvider;
+use heroku_engine::ValueProvider;
 
 // ===== Types =====
 
@@ -24,7 +25,7 @@ struct PositionalSuggestionContext<'a> {
     current_input: &'a str,
     ends_with_space: bool,
     current_is_flag: bool,
-    providers: &'a [Box<dyn ValueProvider>],
+    providers: &'a [Arc<dyn ValueProvider>],
     user_args_len: usize,
 }
 
@@ -94,7 +95,7 @@ impl SuggestionEngine {
         spec: &CommandSpec,
         remaining_parts: &[String],
         input: &str,
-        providers: &[Box<dyn ValueProvider>],
+        providers: &[Arc<dyn ValueProvider>],
     ) -> Option<SuggestionResult> {
         let pending_flag = find_pending_flag(spec, remaining_parts, input);
         if let Some(flag_name) = pending_flag {
@@ -120,7 +121,7 @@ impl SuggestionEngine {
         spec: &CommandSpec,
         index: usize,
         current: &str,
-        providers: &[Box<dyn ValueProvider>],
+        providers: &[Arc<dyn ValueProvider>],
         remaining_parts: &[String],
     ) -> (Vec<SuggestionItem>, bool) {
         let mut values = suggest_positionals(commands, spec, index, current, providers, remaining_parts);
@@ -180,7 +181,7 @@ impl SuggestionEngine {
     /// ```
     /// let result = SuggestionEngine::build(&registry, &providers, "apps info --app ");
     /// ```
-    pub fn build(commands: &[CommandSpec], providers: &[Box<dyn ValueProvider>], input: &str) -> SuggestionResult {
+    pub fn build(commands: &[CommandSpec], providers: &[Arc<dyn ValueProvider>], input: &str) -> SuggestionResult {
         let input_tokens: Vec<String> = lex_shell_like(input);
 
         if let Some(out) = Self::suggest_when_unresolved(commands, &input_tokens) {
@@ -457,7 +458,7 @@ fn suggest_values_for_flag(
     spec: &CommandSpec,
     flag_name: &str,
     partial: &str,
-    providers: &[Box<dyn ValueProvider>],
+    providers: &[Arc<dyn ValueProvider>],
     remaining_parts: &[String],
 ) -> Vec<SuggestionItem> {
     let mut items: Vec<SuggestionItem> = Vec::new();
@@ -508,7 +509,7 @@ fn suggest_positionals(
     spec: &CommandSpec,
     arg_count: usize,
     current: &str,
-    providers: &[Box<dyn ValueProvider>],
+    providers: &[Arc<dyn ValueProvider>],
     remaining_parts: &[String],
 ) -> Vec<SuggestionItem> {
     let mut items: Vec<SuggestionItem> = Vec::new();
@@ -716,7 +717,7 @@ pub(crate) fn is_flag_value_complete(input: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use heroku_registry::Registry;
+    use heroku_registry::CommandRegistry;
     use heroku_types::{CommandExecution, CommandFlag, HttpCommandSpec, PositionalArgument, ServiceId};
 
     #[derive(Debug)]
@@ -749,8 +750,8 @@ mod tests {
         }
     }
 
-    fn registry_with(commands: Vec<CommandSpec>) -> Registry {
-        heroku_registry::Registry {
+    fn registry_with(commands: Vec<CommandSpec>) -> CommandRegistry {
+        CommandRegistry {
             commands,
             workflows: vec![],
             provider_contracts: Default::default(),
@@ -857,7 +858,7 @@ mod tests {
         // Provider embedded on flag in the spec
         let mut map = std::collections::HashMap::new();
         map.insert(("apps info".into(), "app".into()), vec!["demo".into(), "prod".into()]);
-        let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
+        let provider: Arc<dyn ValueProvider> = Arc::new(TestProvider { map });
         let result = SuggestionEngine::build(&reg.commands, &[provider], "apps info --app ");
         let values: Vec<_> = result.items.iter().filter(|item| matches!(item.kind, ItemKind::Value)).collect();
         assert!(!values.is_empty());
@@ -909,7 +910,7 @@ mod tests {
         // Provider embedded on positional in the spec
         let mut map = std::collections::HashMap::new();
         map.insert(("addons config:update".into(), "addon".into()), vec!["redis-123".into()]);
-        let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
+        let provider: Arc<dyn ValueProvider> = Arc::new(TestProvider { map });
         let result = SuggestionEngine::build(&reg.commands, &[provider], "addons config:update ");
         assert!(result.items.iter().any(|item| item.display == "redis-123"));
         assert!(!result.provider_loading);
@@ -961,7 +962,7 @@ mod tests {
             spec,
         ]);
         // provider already embedded on flag
-        let empty_provider: Box<dyn ValueProvider> = Box::new(TestProvider { map: Default::default() });
+        let empty_provider: Arc<dyn ValueProvider> = Arc::new(TestProvider { map: Default::default() });
         let result = SuggestionEngine::build(&reg.commands, &[empty_provider], "apps info --app ");
         assert!(result.provider_loading);
     }
@@ -1010,7 +1011,7 @@ mod tests {
         ]);
         let mut map = std::collections::HashMap::new();
         map.insert(("apps info".into(), "app".into()), vec!["heroku-prod".into()]);
-        let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
+        let provider: Arc<dyn ValueProvider> = Arc::new(TestProvider { map });
         let result = SuggestionEngine::build(&reg.commands, &[provider], "apps info heroku-prod");
         assert!(result.items.is_empty(), "should not echo current value as sole suggestion");
     }
@@ -1084,7 +1085,7 @@ mod tests {
         let mut map = std::collections::HashMap::new();
         map.insert(("pipelines ci:run".into(), "pipeline".into()), vec!["api".into(), "web".into()]);
         map.insert(("pipelines ci:run".into(), "branch".into()), vec!["main".into(), "develop".into()]);
-        let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
+        let provider: Arc<dyn ValueProvider> = Arc::new(TestProvider { map });
         // With first positional filled and trailing space, suggest second positional list
         let result = SuggestionEngine::build(&reg.commands, &[provider], "pipelines ci:run api ");
         let vals: Vec<_> = result

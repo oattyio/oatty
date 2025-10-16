@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 static MANIFEST: &str = include_str!(concat!(env!("OUT_DIR"), "/heroku-manifest.json"));
 /// The main registry containing all available Heroku CLI commands.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
-pub struct Registry {
+pub struct CommandRegistry {
     /// Collection of all available command specifications
     pub commands: Vec<CommandSpec>,
     /// Workflow definitions bundled with the registry manifest
@@ -17,7 +17,7 @@ pub struct Registry {
     pub provider_contracts: IndexMap<String, ProviderContract>,
 }
 
-impl Registry {
+impl CommandRegistry {
     /// Creates a new Registry instance by loading command definitions from the
     /// embedded schema.
     ///
@@ -33,9 +33,9 @@ impl Registry {
     /// # Examples
     ///
     /// ```rust
-    /// use heroku_registry::Registry;
+    /// use heroku_registry::CommandRegistry;
     ///
-    /// let registry = Registry::from_embedded_schema().expect("load registry from schema");
+    /// let registry = CommandRegistry::from_embedded_schema().expect("load registry from schema");
     /// println!("Loaded {} commands", registry.commands.len());
     /// ```
     pub fn from_embedded_schema() -> Result<Self> {
@@ -47,7 +47,7 @@ impl Registry {
             .map(|entry| (entry.command_id, entry.contract))
             .collect();
 
-        Ok(Registry {
+        Ok(CommandRegistry {
             commands: manifest.commands,
             workflows: manifest.workflows,
             provider_contracts,

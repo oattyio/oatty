@@ -23,7 +23,7 @@ use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
-
+use std::sync::atomic::Ordering;
 use anyhow::Result;
 use crossterm::event::MouseEventKind;
 use crossterm::{
@@ -46,12 +46,6 @@ use crate::app::App;
 use crate::ui::components::component::Component;
 use crate::{cmd, ui::main};
 use rat_focus::FocusBuilder;
-
-/// Control flow signal for the main loop
-enum LoopAction {
-    Continue,
-    Exit,
-}
 
 /// Spawn a dedicated input thread that blocks on terminal input and forwards
 /// `crossterm` events over a Tokio channel.
@@ -118,57 +112,51 @@ fn render(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, applicatio
 
 /// Handle raw crossterm input events and update `App`/components.
 /// Returns `Exit` for Ctrl+C, otherwise `Continue`.
-async fn handle_input_event(
-    app: &mut App<'_>,
-    input_event: Event,
-    pending_execs: &mut FuturesUnordered<JoinHandle<ExecOutcome>>,
-) -> Result<LoopAction> {
+fn handle_input_event(app: &mut App<'_>, input_event: Event) -> Vec<Effect> {
     match input_event {
         Event::Key(key_event) => {
-            if key_event.code == KeyCode::Char('c') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
-                return Ok(LoopAction::Exit);
-            }
-            handle_delegate_event(app, Event::Key(key_event), pending_execs).await?;
+            handle_delegate_event(app, Event::Key(key_event))
         }
         Event::Mouse(mouse_event) => {
-            handle_delegate_event(app, Event::Mouse(mouse_event), pending_execs).await?;
+            handle_delegate_event(app, Event::Mouse(mouse_event))
         }
         Event::Resize(width, height) => {
-            let _ = app.update(Msg::Resize(width, height));
+            handle_message(app, Msg::Resize(width, height))
         }
         // Avoid marking dirty for ignored events
-        Event::FocusGained | Event::FocusLost | Event::Paste(_) => {}
+        Event::FocusGained | Event::FocusLost | Event::Paste(_) => {Vec::new()}
     }
-    Ok(LoopAction::Continue)
 }
 /// Delegates an input event to whichever surface currently owns focus and executes resulting effects.
-async fn handle_delegate_event(
-    app: &mut App<'_>,
-    event: Event,
-    pending_execs: &mut FuturesUnordered<JoinHandle<ExecOutcome>>,
-) -> Result<()> {
+fn handle_delegate_event(app: &mut App<'_>, event: Event) -> Vec<Effect> {
     // Temporarily take components to avoid borrow checker issues
     let mut open_modal = std::mem::take(&mut app.open_modal);
     let mut main_view = std::mem::take(&mut app.main_view);
     let mut nav_bar = std::mem::take(&mut app.nav_bar_view);
+    let mut logs_view = std::mem::take(&mut app.logs_view);
 
     let mut effects = Vec::new();
     if event.is_key() {
-        let Event::Key(key_event) = event else { return Ok(()) };
-        let Some(view) = get_target_view(app, main_view.as_mut(), open_modal.as_mut(), nav_bar.as_mut()) else {
-            return Ok(());
+        let Event::Key(key_event) = event else { return effects };
+        let Some(view) = get_target_view(
+            app,
+            main_view.as_mut(),
+            open_modal.as_mut().map(|(modal, _)| modal),
+            nav_bar.as_mut(),
+            logs_view.as_mut(),
+        ) else {
+            return effects;
         };
         effects.extend(view.handle_key_events(app, key_event));
-    }
-    if event.is_mouse() {
-        let Event::Mouse(mouse_event) = event else { return Ok(()) };
+    } else if event.is_mouse() {
+        let Event::Mouse(mouse_event) = event else { return effects };
         if let Some(nav_bar) = nav_bar.as_mut() {
             effects.extend(nav_bar.handle_mouse_events(app, mouse_event))
         }
         if let Some(main) = main_view.as_mut() {
             effects.extend(main.handle_mouse_events(app, mouse_event))
         }
-        if let Some(modal) = open_modal.as_mut() {
+        if let Some((modal, ..)) = open_modal.as_mut() {
             effects.extend(modal.handle_mouse_events(app, mouse_event))
         }
     }
@@ -177,10 +165,39 @@ async fn handle_delegate_event(
     app.main_view = main_view;
     app.open_modal = open_modal;
     app.nav_bar_view = nav_bar;
+    app.logs_view = logs_view;
 
-    // Run the effects
-    process_effects(app, effects, pending_execs).await;
-    Ok(())
+    effects
+}
+
+fn handle_message(app: &mut App<'_>, msg: Msg) -> Vec<Effect> {
+    let mut effects = Vec::new();
+    // Temporarily take components to avoid borrow checker issues
+    let mut open_modal = std::mem::take(&mut app.open_modal);
+    let mut main_view = std::mem::take(&mut app.main_view);
+    let mut nav_bar = std::mem::take(&mut app.nav_bar_view);
+    let mut logs_view = std::mem::take(&mut app.logs_view);
+
+    if let Some(nav_bar) = nav_bar.as_mut() {
+        effects.extend(nav_bar.handle_message(app, &msg));
+    }
+    if let Some(main) = main_view.as_mut() {
+        effects.extend(main.handle_message(app, &msg));
+    }
+    if let Some(logs) = logs_view.as_mut() {
+        effects.extend(logs.handle_message(app, &msg));
+    }
+    if let Some((modal, ..)) = open_modal.as_mut() {
+        effects.extend(modal.handle_message(app, &msg));
+    }
+
+    // Move components back
+    app.main_view = main_view;
+    app.open_modal = open_modal;
+    app.nav_bar_view = nav_bar;
+    app.logs_view = logs_view;
+
+    effects
 }
 
 fn get_target_view<'a>(
@@ -188,6 +205,7 @@ fn get_target_view<'a>(
     maybe_view: Option<&'a mut Box<dyn Component>>,
     maybe_modal: Option<&'a mut Box<dyn Component>>,
     nav_bar: Option<&'a mut Box<dyn Component>>,
+    logs_view: Option<&'a mut Box<dyn Component>>,
 ) -> Option<&'a mut Box<dyn Component>> {
     if maybe_modal.is_some() {
         return maybe_modal;
@@ -196,21 +214,26 @@ fn get_target_view<'a>(
     if nav_has_focus {
         return nav_bar;
     }
+    let logs_has_focus = app.logs.container_focus.get();
+    if logs_has_focus {
+        return logs_view;
+    }
     maybe_view
 }
 
 /// Entry point for the TUI runtime: sets up the terminal, spawns the event
 /// producer, runs the async event loop, and performs cleanup on exit.
-pub async fn run_app(registry: Arc<Mutex<heroku_registry::Registry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
+pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
     let mut app = App::new(registry, plugin_engine);
     let mut terminal = setup_terminal()?;
 
     // Input comes from a dedicated blocking thread to ensure reliability.
     let mut input_receiver = spawn_input_thread().await;
     let mut pending_execs: FuturesUnordered<JoinHandle<ExecOutcome>> = FuturesUnordered::new();
+    let mut effects: Vec<Effect> = Vec::with_capacity(5);
 
     // Ticking strategy: fast while animating, very slow when idle.
-    let fast_interval = Duration::from_millis(125);
+    let fast_interval = Duration::from_millis(100);
     let idle_interval = Duration::from_millis(5000);
     let mut current_interval = idle_interval;
     let mut ticker = time::interval(current_interval);
@@ -218,7 +241,7 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::Registry>>, plugin_eng
 
     render(&mut terminal, &mut app)?;
     // run initialization effects
-    process_effects(&mut app, vec![Effect::PluginsLoadRequested], &mut pending_execs).await;
+    process_effects(&mut app, vec![Effect::PluginsLoadRequested], &mut pending_execs, &mut effects).await;
     // Track the last known terminal size to synthesize Resize messages when
     // some terminals fail to emit them reliably (e.g., certain iTerm2 setups).
     let mut last_size: Option<(u16, u16)> = crossterm::terminal::size().ok();
@@ -226,7 +249,7 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::Registry>>, plugin_eng
     loop {
         // Determine if we need animation ticks and adjust the ticker dynamically.
         let needs_animation = app.executing || app.palette.is_provider_loading();
-        let target_interval = if needs_animation { fast_interval } else { idle_interval };
+        let target_interval = if needs_animation || !effects.is_empty() { fast_interval } else { idle_interval };
         if target_interval != current_interval {
             current_interval = target_interval;
             ticker = time::interval(current_interval);
@@ -237,10 +260,12 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::Registry>>, plugin_eng
             // Terminal input events
             maybe_event = input_receiver.recv() => {
                 if let Some(event) = maybe_event {
-                    match handle_input_event(&mut app, event, &mut pending_execs).await? {
-                        LoopAction::Continue => {}
-                        LoopAction::Exit => return Ok(()),
+                    if let Event::Key(key_event) = event {
+                        if key_event.code == KeyCode::Char('c') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                            break;
+                        }
                     }
+                    effects.extend(handle_input_event(&mut app, event));
                 } else {
                     // Input channel closed; break out to shut down cleanly.
                     break;
@@ -251,16 +276,21 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::Registry>>, plugin_eng
             // Periodic animation tick
             _ = ticker.tick() => {
                 if needs_animation {
-                    let effects = app.update(Msg::Tick);
-                    process_effects(&mut app, effects, &mut pending_execs).await;
+                    effects.extend(handle_message(&mut app, Msg::Tick));
                     needs_render = true;
+                }
+                if !effects.is_empty() {
+                    // make a copy of the effects to avoid processing
+                    // new effects while processing old ones
+                    let mut dest = Vec::with_capacity(effects.len());
+                    dest.append(&mut effects);
+                    process_effects(&mut app, dest, &mut pending_execs, &mut effects).await;
                 }
             }
 
             Some(joined) = pending_execs.next(), if !pending_execs.is_empty() => {
                 let outcome = joined.unwrap_or_else(|error| ExecOutcome::Log(format!("Execution task failed: {error}")));
-                let follow_up = app.update(Msg::ExecCompleted(Box::new(outcome)));
-                process_effects(&mut app, follow_up, &mut pending_execs).await;
+                effects.extend(handle_message(&mut app, Msg::ExecCompleted(Box::new(outcome))));
                 needs_render = true;
             }
 
@@ -288,7 +318,7 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::Registry>>, plugin_eng
     Ok(())
 }
 
-async fn process_effects(app: &mut App<'_>, effects: Vec<Effect>, pending_execs: &mut FuturesUnordered<JoinHandle<ExecOutcome>>) {
+async fn process_effects(app: &mut App<'_>, effects: Vec<Effect>, pending_execs: &mut FuturesUnordered<JoinHandle<ExecOutcome>>, effects_out: &mut Vec<Effect>) {
     if effects.is_empty() {
         return;
     }
@@ -302,12 +332,9 @@ async fn process_effects(app: &mut App<'_>, effects: Vec<Effect>, pending_execs:
         return;
     }
 
-    let mut follow_up_effects: Vec<Effect> = Vec::new();
     for outcome in command_batch.immediate {
-        follow_up_effects.extend(app.update(Msg::ExecCompleted(Box::new(outcome))));
+        let still_executing = app.active_exec_count.load(Ordering::Relaxed) > 0;
+        app.executing = still_executing;
+        effects_out.extend(handle_message(app, Msg::ExecCompleted(Box::new(outcome))));
     }
-    if follow_up_effects.is_empty() {
-        return;
-    }
-    Box::pin(process_effects(app, follow_up_effects, pending_execs)).await;
 }

@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use heroku_types::Effect;
+use heroku_types::{Effect, Msg};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -18,7 +18,7 @@ use super::state::PluginLogsState;
 pub struct PluginsLogsComponent;
 
 impl PluginsLogsComponent {
-    /// Handle key events specific to the logs drawer.
+    /// Handle key events specific to the "logs" drawer.
     pub fn handle_key_events(&self, logs: &mut PluginLogsState, key: KeyEvent) -> Vec<Effect> {
         match key.code {
             KeyCode::Backspace if logs.search_active => {
@@ -42,13 +42,18 @@ impl Component for PluginsLogsComponent {
         }
     }
 
-    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
-        let theme = &*app.ctx.theme;
-        let mut spans = vec![];
-        if is_root {
-            spans.push(Span::styled("Hints: ", theme.text_muted_style()))
+    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+        match msg {
+            Msg::ExecCompleted(outcome) => {app.logs.process_general_execution_result(&outcome);},
+            _ => {}
         }
-        spans.extend([
+
+        Vec::new()
+    }
+
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
+        let theme = &*app.ctx.theme;
+        [
             Span::styled("Ctrl+F", theme.accent_emphasis_style()),
             Span::styled(" Search ", theme.text_muted_style()),
             Span::styled("Ctrl+L", theme.accent_emphasis_style()),
@@ -59,8 +64,7 @@ impl Component for PluginsLogsComponent {
             Span::styled(" Copy all ", theme.text_muted_style()),
             Span::styled("Ctrl+O", theme.accent_emphasis_style()),
             Span::styled(" Export ", theme.text_muted_style()),
-        ]);
-        spans
+        ].to_vec()
     }
 }
 

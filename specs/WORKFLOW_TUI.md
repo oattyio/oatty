@@ -13,7 +13,7 @@ Define how ValueProviders are declared and consumed in `WORKFLOWS.yaml`, and how
 inputs:
   app:
     description: "Target application"
-    provider: apps:list                # built-in dynamic provider id
+    provider: apps list                # built-in dynamic provider id
     select:
       value_field: name                # value inserted into flags/args
       display_field: name              # primary display column in UI
@@ -27,9 +27,9 @@ inputs:
 
   addon:
     description: "Choose an add-on for the selected app"
-    provider: addons:list
+    provider: addons list
     provider_args:
-      app: ${ { inputs.app } }         # provider params can reference other inputs
+      app: ${{ inputs.app }}           # provider params can reference other inputs
     select:
       value_field: name
       display_field: name
@@ -44,11 +44,11 @@ inputs:
 ```yaml
 steps:
   - id: set_config
-    run: apps:config-vars:update
+    run: apps config-vars:update
     with:
-      app: ${ { inputs.app } }
+      app: ${{ inputs.app }}
     body:
-      DB_ADDON: ${ { inputs.addon } }
+      DB_ADDON: ${{ inputs.addon }}
 ```
 
 ### 1.3 Advanced: multiple selection & join
@@ -57,7 +57,7 @@ steps:
 inputs:
   collaborators:
     description: "Grant access to users"
-    provider: users:list
+    provider: users list
     select:
       value_field: email
       display_field: email
@@ -73,7 +73,7 @@ inputs:
 ```yaml
 inputs:
   prod_app:
-    provider: apps:list
+    provider: apps list
     provider_args:
       tag: production
       owner: me
@@ -88,10 +88,10 @@ inputs:
 ```yaml
 inputs:
   staged_app:
-    provider: apps:list
+    provider: apps list
     default:
       from: workflow_output
-      value: ${ { tasks.create_app.output.name } }
+      value: ${{ steps.create_app.output.name }}
 ```
 
 ### 1.6 Declarative validation
@@ -99,7 +99,7 @@ inputs:
 ```yaml
 inputs:
   region:
-    provider: regions:enum
+    provider: regions enum
     select:
       value_field: slug
       display_field: name
@@ -113,7 +113,7 @@ inputs:
 ```yaml
 inputs:
   app:
-    provider: apps:list
+    provider: apps list
     select: { value_field: name, display_field: name, id_field: id }
     placeholder: "Start typing to search apps…"  # shown in TUI when empty
     on_error: manual
@@ -141,31 +141,66 @@ inputs:
 ### 2.2 Input Collection View (Provider-backed fields)
 
 ```
-┌─ Run: provision_and_promote ───────────────────────────────────────────┐
-│ Required Inputs                                                        │
-│                                                                        │
-│ ▸ pipeline  [provider: pipelines:list]                                 │
-│   ┌ Apps/Pipelines (loading… ⠋) ────────────────────────────────────┐  │
-│   │ name                id             owner                        │  │
-│   │ … (cached/async)                                                │  │
-│   └─────────────────────────────────────────────────────────────────┘  │
-│                                                                        │
-│ ▸ staging_app  [provider: apps:list]                                   │
-│   ┌ Apps (loaded 24s ago) ──────────────────────────────────────────┐  │
-│   │ ▸ billing-svc        app-456       team: infra                  │  │
-│   │   demo-app           app-123       owner: justin@example.com    │  │
-│   └─────────────────────────────────────────────────────────────────┘  │
-│                                                                        │
-│ ▸ prod_app  [provider: apps:list]                                      │
-│   (select from list or type to override)                               │
-└────────────────────────────────────────────────────────────────────────┘
+┌─ Run: provision_and_promote ──────────────────────────────────────────────────────────────────────────────────┐
+│ Steps & Inputs (left)                                                    │ Workflow Details (right)           │
+│                                                                          │                                    │
+│ ▸ pipeline        ✓ Looks good!  [provider: pipelines list]  [required]  │ Ready?:           ⚠ Waiting on app │
+│ staging_app       ⚠ No value     [provider: apps list]       [required]  │ Resolved steps:   1 / 3            │
+│ prod_app          ⚠ No value     [provider: apps list]                   │ Next action:      staging_app      │
+│                                                                          │ Selected values:                   │
+│                                                                          │   • pipeline      → demo pipeline  │
+│                                                                          │   • staging_app   → — pending —    │
+│                                                                          │ Auto-reset note:  downstream steps │
+│                                                                          │                   reset when a     │
+│                                                                          │                   prior step edits.│
+│                                                                          │ Cache age:        pipelines 12s    │
+│                                                                          │                   apps 24s         │
+│                                                                          │ Errors & notes:   none             │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
   ↑↓ navigate  •  Enter choose  •  / filter  •  r refresh  •  Tab next  •  F2 fallback to manual
 ```
 
-### 2.3 Table Selector with Detail Pane (Single-select)
+- **Left column** is a compact step list rendered like the runtime List view in
+  `workflows/input.rs` (status prefix, provider label, required badge, highlight marker) without
+  inlining provider result tables, and each step stays on a single line for quick scanning.
+- **Right column** summarizes workflow readiness: completion state, next unresolved step,
+  currently selected values (show `— pending —` for unresolved items), cache freshness, and
+  any validation errors.
+- Unless step values are mutually exclusive of on-another e.g., no chained providers, when a previously 
+  resolved step changes, every chained step reverts to its default value (or unresolved if no default).
+  The detail pane immediately reflects the reset so users see which values need attention before execution. 
+  The detail pane should show a note about the auto-reset behavior if applicable.
+- The detail pane updates after every interaction (selection change, manual value entry,
+  refresh, fallback), so the aggregate view always mirrors the live state.
+- Manual entry is triggered by pressing `F2` when a provider is present or by default when pressing
+  `Enter` when the provider is not present.
+
+### 2.3 Manual Entry View
+```
+┌─ Manual entry: pipeline ───────────────────────────────────────────────┐
+│                                                                        │
+│  Value: my-pipeline                                                    │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+ Esc cancel  •  Enter confirm
+```
+
+### 2.4 Table Selector with Detail Pane (Single-select)
+
+This view appears when the user highlights a step in the Input Collection list and presses `Enter`.
+The top table lets them choose a row (provider item), which simultaneously populates the key/value
+detail pane below. From that detail pane the user confirms the exact value fed into the workflow
+step. Rows, headers, and selection states are powered by the reusable table component in
+`crates/tui/src/ui/components/table`.
+
+Controls:
+- `Space`/`Enter` in the table selects a row and enables the `Apply` button.
+- `Apply` (or pressing `Enter`) forwards the chosen value to the workflow step and closes the
+  modal.
+- `Cancel` (or `Esc`) closes the modal without changing the pending step.
 
 ```
-┌ Apps — Select one (apps:list) ────────────────────────────────────────┐
+┌ Apps — Select one (apps list) ────────────────────────────────────────┐
 │ Filter: [bill]   Status: loaded (30s TTL)                             │
 ├──────────────┬───────────┬────────────────────────────────────────────┤
 │ name         │ id        │ meta                                       │
@@ -179,7 +214,8 @@ inputs:
 │ owner        : infra                                                   │
 │ created_at   : 2025-03-08                                              │
 └────────────────────────────────────────────────────────────────────────┘
-  ↑↓ move  •  Space select  •  Enter confirm  •  / search  •  s sort  •  r refresh
+Buttons: [Cancel]   [Apply ✓]
+  Esc cancel  •  ↑↓ move  •  Space select  •  Enter confirm  •  r refresh
 
 **Schema-aware badges**
 
@@ -191,10 +227,10 @@ inputs:
 - Respect `required` keys by flagging missing fields before confirm.
 ```
 
-### 2.4 Table Selector (Multi-select) with Chip Summary
+### 2.5 Table Selector (Multi-select) with Chip Summary
 
 ```
-┌ Users — Select multiple (users:list) ─────────────────────────────────┐
+┌ Users — Select multiple (users list) ─────────────────────────────────┐
 │ Selected: [alice@x.com] [bob@y.com]                                   │
 │ Filter: []                                                            │
 ├──────────────┬──────────┬──────────────┬──────────────────────────────┤
@@ -207,26 +243,26 @@ inputs:
   Space toggle  •  a select all (filtered)  •  x clear  •  Enter confirm
 ```
 
-### 2.5 Provider Error + Fallback
+### 2.6 Provider Error + Fallback
 
 ```
-┌ Apps (apps:list) ──────────────────────────────────────────────────────┐
+┌ Apps (apps list) ──────────────────────────────────────────────────────┐
 │ ⚠ Unable to fetch apps (timeout).                                      │
 │                                                                        |   
 │ You can: [R]etry  •  [F2] Enter manually  •  [C]ached (12s old)        │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.6 Chained Providers (Add-ons depend on App)
+### 2.7 Chained Providers (Add-ons depend on App)
 
 ```
 ┌ Inputs ────────────────────────────────────────────────────────────────┐
-│ app         [apps:list]    → selected: billing-svc                     │
-│ addon       [addons:list]  (args: app=billing-svc)                     │
+│ app         [apps list]    → selected: billing-svc                     │
+│ addon       [addons list]  (args: app=billing-svc)                     │
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.7.1 Run View (Steps, Logs, Outputs)
+### 2.8.1 Run View (Steps, Logs, Outputs)
 * **Sticky headers**: the Steps, Logs, and Outputs section headers and column headers remain fixed while the panel content scrolls.
 * **Independent pagination**: each panel has its own paging controls and indicators.
 ```
@@ -256,7 +292,7 @@ inputs:
 │ [First] [Prev]  Page 1/3  [Next] [Last]   •   [y] copy value   •   [Enter] expand details       │
 └─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
-### 2.7.2 Run View — Wide Mode (side panel paging + sticky column headers)
+### 2.8.2 Run View — Wide Mode (side panel paging + sticky column headers)
 ```
 ┌─ Workflow: build_from_tarball ──────────────────────────────────────────────────────────────────┐
 │ Status: running • Build: bld-9876 • Elapsed: 00:00:57 • [t] Toggle layout • [q] Quit            │
@@ -327,7 +363,7 @@ Providers return arrays of uniform objects. The host maps fields according to `s
 
 ### 4.4 Chaining
 
-* `provider_args` can reference earlier inputs or task outputs using the same template language used in steps.
+* `provider_args` can reference earlier inputs or step outputs using the same template language used in steps.
 
 ---
 
@@ -338,7 +374,7 @@ Providers return arrays of uniform objects. The host maps fields according to `s
 ```yaml
 inputs:
   app:
-    provider: apps:list
+    provider: apps list
     select: { value_field: name, display_field: name, id_field: id }
 ```
 
@@ -347,7 +383,7 @@ inputs:
 ```yaml
 inputs:
   reviewers:
-    provider: users:list
+    provider: users list
     select: { value_field: email, display_field: email, id_field: id }
     mode: multiple
     join: { separator: "," }
@@ -358,11 +394,11 @@ inputs:
 ```yaml
 inputs:
   app:
-    provider: apps:list
+    provider: apps list
     select: { value_field: name, display_field: name, id_field: id }
   addon:
-    provider: addons:list
-    provider_args: { app: ${ { inputs.app } } }
+    provider: addons list
+    provider_args: { app: ${{ inputs.app }} }
     select: { value_field: name, display_field: name, id_field: id }
 ```
 
@@ -371,7 +407,7 @@ inputs:
 ```yaml
 inputs:
   pipeline:
-    provider: pipelines:list
+    provider: pipelines list
     select: { value_field: name, display_field: name, id_field: id }
     default: { from: history }
     cache_ttl_sec: 45

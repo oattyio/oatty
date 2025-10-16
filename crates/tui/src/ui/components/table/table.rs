@@ -4,26 +4,18 @@
 //! displays JSON results from command execution in a tabular format with
 //! scrolling and navigation capabilities.
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
-use heroku_types::{Effect, Msg};
-use heroku_util::format_date_mmddyyyy;
+use heroku_types::{Effect, ExecOutcome, Msg};
 use rat_focus::HasFocus;
-use ratatui::layout::Rect;
-use ratatui::style::Style;
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout},
-    style::Modifier,
-    text::{Line, Span},
-    widgets::{Scrollbar, ScrollbarState, *},
+    layout::{Constraint, Layout, Rect},
+    text::{Span},
 };
-use serde_json::Value;
 
-use super::state::KeyValueEntry;
 use crate::app::App;
 use crate::ui::{
-    components::{PaginationComponent, component::Component},
-    theme::{roles::Theme as UiTheme, theme_helpers as th},
-    utils::centered_rect,
+    components::{PaginationComponent, common::ResultsTableView, component::Component},
+    theme::theme_helpers as th,
 };
 
 /// Results table modal component for displaying JSON data.
@@ -63,146 +55,8 @@ use crate::ui::{
 /// ```
 #[derive(Debug, Default)]
 pub struct TableComponent<'a> {
-    table: Table<'a>,
-    table_state: TableState,
-    scrollbar: Scrollbar<'a>,
-    scrollbar_state: ScrollbarState,
+    view: ResultsTableView<'a>,
     pagination: PaginationComponent,
-}
-
-impl TableComponent<'_> {
-    /// Renders a JSON array as a table with offset support using known columns.
-    #[allow(clippy::too_many_arguments)]
-    pub fn render_json_table_with_columns(
-        &mut self,
-        frame: &mut Frame,
-        area: Rect,
-        offset: usize,
-        selected: usize,
-        rows: &[Row],
-        widths: &[Constraint],
-        headers: &[Cell],
-        focused: bool,
-        theme: &dyn UiTheme,
-    ) {
-        if rows.is_empty() {
-            let p = Paragraph::new("No results to display").style(theme.text_muted_style());
-            frame.render_widget(p, area);
-            return;
-        }
-        // Compute visible rows
-        let visible = area.height as usize;
-        let max_start = rows.len().saturating_sub(visible.max(1));
-        let start = offset.min(max_start);
-        // Render only the visible window of rows
-        let end = (start + visible).min(rows.len());
-        let table = self
-            .table
-            .clone()
-            .rows(rows[start..end].to_owned())
-            .widths(widths)
-            .header(Row::new(headers.to_owned()).style(th::table_header_row_style(theme)))
-            .block(
-                th::block(theme, None, false)
-                    .borders(Borders::ALL)
-                    .border_style(theme.border_style(focused)),
-            )
-            .column_spacing(1)
-            .row_highlight_style(th::table_selected_style(theme))
-            // Ensure the table fills with background surface and text color
-            .style(th::panel_style(theme));
-
-        // Highlight the selected row relative to the visible window
-        let sel = selected.saturating_sub(start);
-        self.table_state.select(Some(sel));
-        frame.render_stateful_widget(table, area, &mut self.table_state);
-
-        // Scrollbar indicating vertical position within table rows
-        if !rows.is_empty() {
-            let mut sb_state = self.scrollbar_state.content_length(max_start).position(start);
-            let scrollbar = self
-                .scrollbar
-                .clone()
-                .thumb_style(Style::default().fg(theme.roles().scrollbar_thumb))
-                .track_style(Style::default().fg(theme.roles().scrollbar_track));
-            frame.render_stateful_widget(scrollbar, area, &mut sb_state);
-            self.scrollbar_state = sb_state;
-        }
-    }
-
-    /// Renders JSON as key-value pairs or plain text.
-    fn render_kv_detail(&self, frame: &mut Frame, area: Rect, json: &Value, app: &mut App) {
-        let entries = app.table.kv_entries();
-        let focused = app.table.grid_f.get();
-        let selection = if entries.is_empty() {
-            None
-        } else {
-            Some(app.table.selected_index().min(entries.len().saturating_sub(1)))
-        };
-        let offset = if entries.is_empty() {
-            0
-        } else {
-            app.table.count_offset().min(entries.len().saturating_sub(1))
-        };
-
-        self.render_kv_or_text(frame, area, entries, selection, offset, focused, json, &*app.ctx.theme);
-    }
-
-    /// Renders JSON as key-value pairs or plain text.
-    #[allow(clippy::too_many_arguments)]
-    pub fn render_kv_or_text(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        entries: &[KeyValueEntry],
-        selection: Option<usize>,
-        offset: usize,
-        focused: bool,
-        json: &Value,
-        theme: &dyn UiTheme,
-    ) {
-        match json {
-            Value::Object(_) => {
-                let items: Vec<ListItem> = entries
-                    .iter()
-                    .map(|entry| {
-                        ListItem::new(Line::from(vec![
-                            Span::styled(entry.display_key.clone(), theme.text_secondary_style().add_modifier(Modifier::BOLD)),
-                            Span::raw(": "),
-                            Span::styled(entry.display_value.clone(), theme.text_primary_style()),
-                        ]))
-                    })
-                    .collect();
-
-                let mut list_state = ListState::default();
-                if let Some(selected) = selection {
-                    list_state.select(Some(selected.min(entries.len().saturating_sub(1))));
-                }
-                if !entries.is_empty() {
-                    let capped_offset = offset.min(entries.len().saturating_sub(1));
-                    *list_state.offset_mut() = capped_offset;
-                }
-
-                let list = List::new(items)
-                    .block(th::block(theme, Some("Details"), focused))
-                    .highlight_style(th::table_selected_style(theme))
-                    .style(th::panel_style(theme));
-
-                frame.render_stateful_widget(list, area, &mut list_state);
-            }
-            other => {
-                let date = match other {
-                    Value::String(s) => format_date_mmddyyyy(s).unwrap_or_else(|| s.clone()),
-                    _ => other.to_string(),
-                };
-                let paragraph = Paragraph::new(date)
-                    .block(th::block(theme, Some("Result"), false))
-                    .wrap(Wrap { trim: false })
-                    .style(theme.text_primary_style());
-                frame.render_widget(paragraph, area);
-            }
-        }
-    }
 }
 
 impl Component for TableComponent<'_> {
@@ -276,6 +130,12 @@ impl Component for TableComponent<'_> {
         effects.extend(self.pagination.handle_mouse_events(app, mouse));
         effects
     }
+    
+    // fn handle_msg(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
+    //     match msg {
+    //         Msg::ExecCompleted()
+    //     }
+    // }
 
     /// Renders the table modal with JSON results.
     ///
@@ -288,72 +148,26 @@ impl Component for TableComponent<'_> {
     /// * `rect` - The rectangular area to render in
     /// * `app` - The application state containing result data
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
-        // Set up pagination if the command has range support
-        if let Some(pagination) = app.last_pagination.clone() {
-            app.table.pagination_state.set_pagination(pagination);
-            app.table.pagination_state.show_pagination();
-        } else {
-            app.table.pagination_state.hide_pagination();
-        }
         // Large modal to maximize space for tables
-        let area = centered_rect(96, 90, rect);
         let title = "Results  [Esc] Close  ↑/↓ Scroll";
         let block = th::block(&*app.ctx.theme, Some(title), app.table.container_focus.get());
 
-        frame.render_widget(Clear, area);
-        frame.render_widget(&block, area);
-        let inner = block.inner(area);
+        frame.render_widget(&block, rect);
+        let inner = block.inner(rect);
         // Split for content + pagination and footer
         let splits = self.get_preferred_layout(app, inner);
 
         app.table.set_visible_rows(splits[0].height as usize);
-        let json = app.table.selected_result_json().cloned();
-        let widths = app.table.column_constraints();
-        let headers = app.table.headers();
-        let maybe_rows = app.table.rows();
-        let mut rendered_table = false;
-
-        if let Some(json_value) = json.as_ref() {
-            if let Some(rows) = maybe_rows {
-                if !rows.is_empty() {
-                    self.render_json_table_with_columns(
-                        frame,
-                        splits[0],
-                        app.table.count_offset(),
-                        app.table.selected_index(),
-                        rows,
-                        widths.unwrap(),
-                        headers.unwrap(),
-                        app.table.grid_f.get(),
-                        &*app.ctx.theme,
-                    );
-                    rendered_table = true;
-                } else {
-                    self.render_kv_detail(frame, splits[0], json_value, app);
-                }
-            } else {
-                self.render_kv_detail(frame, splits[0], json_value, app);
-            }
-        } else {
-            let p = Paragraph::new("No results to display").style(app.ctx.theme.text_muted_style());
-            frame.render_widget(p, splits[0]);
-        }
+        let rendered_table = self
+            .view
+            .render_results(frame, splits[0], &app.table, app.table.grid_f.get(), &*app.ctx.theme);
 
         if rendered_table {
             self.pagination.render(frame, splits[1], app);
         }
-
-        let hint_spans = self.get_hint_spans(app, true);
-        let hint_line = if hint_spans.is_empty() {
-            Line::default()
-        } else {
-            Line::from(hint_spans)
-        };
-        let hints_widget = Paragraph::new(hint_line).style(app.ctx.theme.text_muted_style());
-        frame.render_widget(hints_widget, splits[2]);
     }
 
-    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let has_rows = app.table.rows().map(|rows| !rows.is_empty()).unwrap_or(false);
         let has_kv = !app.table.kv_entries().is_empty();
         if !has_rows && !has_kv {
@@ -362,10 +176,6 @@ impl Component for TableComponent<'_> {
 
         let theme = &*app.ctx.theme;
         let mut spans: Vec<Span> = Vec::new();
-        if is_root {
-            spans.push(Span::styled("Hints: ", theme.text_muted_style()));
-        }
-
         spans.extend([
             Span::styled("Esc", theme.accent_emphasis_style()),
             Span::styled(" close ", theme.text_muted_style()),
@@ -380,7 +190,7 @@ impl Component for TableComponent<'_> {
         ]);
 
         if has_rows && app.table.pagination_state.is_visible() {
-            spans.extend(self.pagination.get_hint_spans(app, false));
+            spans.extend(self.pagination.get_hint_spans(app));
         }
         spans
     }
@@ -389,7 +199,6 @@ impl Component for TableComponent<'_> {
         Layout::vertical([
             Constraint::Min(1),                                                              // Table content
             Constraint::Length(if app.table.pagination_state.is_visible() { 7 } else { 0 }), // Pagination controls
-            Constraint::Length(1),                                                           // Footer
         ])
         .split(area)
         .to_vec()

@@ -12,7 +12,7 @@ pub use clap_builder::build_clap;
 pub use heroku_types::{
     CommandFlag, CommandSpec, ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract,
 };
-pub use models::Registry;
+pub use models::CommandRegistry;
 pub use utils::*;
 
 #[cfg(test)]
@@ -30,7 +30,7 @@ mod tests {
     /// 3. All command names are unique (no duplicates)
     #[test]
     fn manifest_non_empty_and_unique_names() {
-        let registry = Registry::from_embedded_schema().expect("load registry from manifest");
+        let registry = CommandRegistry::from_embedded_schema().expect("load registry from manifest");
         assert!(!registry.commands.is_empty(), "registry commands should not be empty");
         let mut seen = HashSet::new();
         let mut duplicates: Vec<String> = vec![];

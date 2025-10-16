@@ -14,8 +14,8 @@ use heroku_types::Effect;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    text::{Line, Span},
-    widgets::{Clear, Paragraph},
+    text::{Span},
+    widgets::{Clear},
 };
 
 /// Top-level Plugins view component that orchestrates all plugin-related UI elements.
@@ -113,18 +113,7 @@ impl Component for PluginsComponent {
     /// * `area` - The rectangular area available for rendering
     /// * `app` - Mutable reference to the app state
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
-        let layout = self.get_preferred_layout(app, area);
-        let body_area = layout.first().expect("body area not found");
-        let footer_area = layout.get(1).expect("footer area not found");
-
-        self.render_body_section(frame, *body_area, app);
-
-        let spans = self.get_hint_spans(app, true);
-        frame.render_widget(
-            Paragraph::new(Line::from(spans)).style(app.ctx.theme.text_muted_style()),
-            *footer_area,
-        );
-
+        self.render_body_section(frame, area, app);
         self.render_overlay_components(frame, area, app);
     }
 
@@ -138,18 +127,15 @@ impl Component for PluginsComponent {
     /// * `frame` - Mutable reference to the terminal frame for rendering
     /// * `area` - The rectangular area available for rendering
     /// * `app` - Mutable reference to the app state
-    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
         let mut spans = vec![];
-        if is_root {
-            spans.push(Span::styled("Hints: ", theme.text_muted_style()));
-        }
 
         // The add component is visible
         if let Some(add_state) = app.plugins.add.as_ref() {
             // use the add component hints
             if add_state.container_focus.get() {
-                spans.extend(self.edit_component.get_hint_spans(app, false));
+                spans.extend(self.edit_component.get_hint_spans(app));
                 return spans;
             }
             spans.extend([
@@ -172,32 +158,10 @@ impl Component for PluginsComponent {
         }
         // the grid is focused
         if app.plugins.table.f_grid.get() {
-            spans.extend(self.table_component.get_hint_spans(app, false));
+            spans.extend(self.table_component.get_hint_spans(app));
         }
 
         spans
-    }
-
-    /// Creates the main 3-row layout: header, body, and footer.
-    ///
-    /// This method defines the vertical layout structure for the plugins interface,
-    /// allocating space for the header (search bar), main body content, and footer
-    /// (hints bar).
-    ///
-    /// # Arguments
-    ///
-    /// * `inner_area` - The inner rectangular area to layout within
-    ///
-    /// # Returns
-    ///
-    /// Returns a vector of rectangles representing the header, body, and footer areas.
-    fn get_preferred_layout(&self, _app: &App, inner_area: Rect) -> Vec<Rect> {
-        Layout::vertical([
-            Constraint::Min(6),    // grid
-            Constraint::Length(1), // footer
-        ])
-        .split(inner_area)
-        .to_vec()
     }
 }
 

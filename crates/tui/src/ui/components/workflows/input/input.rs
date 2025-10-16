@@ -11,7 +11,7 @@ use ratatui::{
 
 use crate::app::App;
 use crate::ui::components::component::Component;
-use crate::ui::components::workflows::view_utils::{ProviderCacheSummary, format_cache_summary, format_preview, summarize_values};
+use crate::ui::components::workflows::view_utils::{format_preview};
 use crate::ui::theme::{roles::Theme, theme_helpers as th};
 
 #[derive(Debug, Default)]
@@ -39,22 +39,23 @@ impl Component for WorkflowInputsComponent {
                     app.workflows.input_view_state_mut().unwrap().select_prev(total);
                 }
             }
-            KeyCode::Char('r') | KeyCode::Char('R') => {
-                if let Some(state) = app.workflows.active_run_state_mut() {
-                    if let Err(err) = state.evaluate_input_providers() {
-                        app.logs.entries.push(format!("Provider evaluation error: {err}"));
-                    } else {
-                        app.workflows.observe_provider_refresh_current();
-                    }
-                }
-            }
             KeyCode::Enter => {
-                // If the selected input is unresolved, open the Guided Input Collector modal.
-                if app.workflows.active_input_definition().is_some() {
+                if let Some(def) = app.workflows.active_input_definition() {
+                    // Route: provider present → selector (collector modal); else → manual entry
+                    if def.provider.is_some() {
+                        app.workflows.open_selector_for_active_input();
+                    } else {
+                        app.workflows.open_manual_for_active_input();
+                    }
                     effects.push(Effect::ShowModal(Modal::WorkflowCollector));
                 }
             }
-            _ => {},
+            KeyCode::F(2) => {
+                // F2 fallback to manual entry regardless of provider presence
+                app.workflows.open_manual_for_active_input();
+                effects.push(Effect::ShowModal(Modal::WorkflowCollector));
+            }
+            _ => {}
         }
         effects
     }
@@ -73,16 +74,9 @@ impl Component for WorkflowInputsComponent {
             state.clamp_selection(rows.len());
         }
 
-        let _selected_status = app
-            .workflows
-            .input_view_state()
-            .and_then(|s| rows.get(s.selected()))
-            .map(|r| r.status);
-
         let splits = Layout::vertical([
             Constraint::Length(2),       // header height
             Constraint::Percentage(100), // content height
-            Constraint::Min(1),          // Hints bar height
         ])
         .split(inner);
 
@@ -92,29 +86,18 @@ impl Component for WorkflowInputsComponent {
 
         render_inputs_list(frame, content_layout[0], app, &rows);
         render_input_details(frame, content_layout[1], app, &rows);
-
-        let hint_spans = self.get_hint_spans(app, true);
-        let hints_widget = Paragraph::new(Line::from(hint_spans)).style(app.ctx.theme.text_muted_style());
-        frame.render_widget(hints_widget, splits[2]);
     }
 
-    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        let mut spans = Vec::new();
-        if is_root {
-            spans.push(Span::styled("Hints: ", theme.text_muted_style()));
-        }
-        spans.extend([
+        [
             Span::styled("Esc", theme.accent_emphasis_style()),
             Span::styled(" Back", theme.text_muted_style()),
             Span::styled(" ↑/↓", theme.accent_emphasis_style()),
             Span::styled(" Navigate", theme.text_muted_style()),
             Span::styled(" Enter", theme.accent_emphasis_style()),
             Span::styled(" Pick input", theme.text_muted_style()),
-            Span::styled(" Ctrl+R", theme.accent_emphasis_style()),
-            Span::styled(" Refresh", theme.text_muted_style()),
-        ]);
-        spans
+        ].to_vec()
     }
 }
 
@@ -182,7 +165,7 @@ fn render_inputs_list(frame: &mut Frame, area: Rect, app: &App, rows: &[Workflow
 
     let selected = view_state.selected();
 
-    // Build list items without manual marker; the List widget will handle highlight/marker
+    // Build list items without a manual marker; the List widget will handle highlight/marker
     let mut items: Vec<ListItem> = Vec::with_capacity(rows.len());
     for row in rows.iter() {
         let status_span = match row.status {
@@ -203,7 +186,7 @@ fn render_inputs_list(frame: &mut Frame, area: Rect, app: &App, rows: &[Workflow
             segments.push(Span::styled("[required]", theme.text_secondary_style()));
         }
         if let Some(message) = &row.status_message {
-            segments.push(Span::styled(format!("    {message}"), theme.text_muted_style()));
+            segments.push(Span::styled(format!("{message}"), theme.text_muted_style()));
         }
 
         let line = Line::from(segments);
@@ -223,151 +206,147 @@ fn render_inputs_list(frame: &mut Frame, area: Rect, app: &App, rows: &[Workflow
 
 fn render_input_details(frame: &mut Frame, area: Rect, app: &App, rows: &[WorkflowInputRow]) {
     let theme = &*app.ctx.theme;
-    let block = th::block(theme, Some("Details"), false);
+    let block = th::block(theme, Some("Workflow Details"), false);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    let Some(view_state) = app.workflows.input_view_state() else {
+    if app.workflows.active_run_state().is_none() {
         return;
+    }
+
+    // Aggregate readiness information
+    let total = rows.len();
+    let unresolved = app.workflows.unresolved_item_count();
+    let resolved = total.saturating_sub(unresolved);
+
+    // Next action = first unresolved or error entry
+    let mut next_action: Option<&str> = None;
+    for row in rows {
+        if matches!(row.status, InputStatus::Error | InputStatus::Pending) {
+            next_action = Some(&row.name);
+            break;
+        }
+    }
+
+    // Selected values list
+    let mut selected_lines: Vec<Line> = Vec::new();
+    for row in rows {
+        let value_display = row
+            .current_value
+            .as_deref()
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "— pending —".to_string());
+        selected_lines.push(Line::from(vec![
+            Span::styled("  • ", theme.text_secondary_style()),
+            Span::styled(format!("{:<14}", row.name), theme.text_primary_style()),
+            Span::styled(" → ", theme.text_secondary_style()),
+            if row.current_value.is_some() {
+                Span::styled(value_display, theme.text_primary_style())
+            } else {
+                Span::styled(value_display, theme.text_muted_style())
+            },
+        ]));
+    }
+
+    // Cache age summary (best-effort: show provider labels; age unknown if not tracked)
+    let mut cache_lines: Vec<Line> = Vec::new();
+    {
+        use std::collections::BTreeMap;
+        let mut providers: BTreeMap<&str, Option<String>> = BTreeMap::new();
+        for row in rows {
+            if let Some(label) = row.provider_label.as_deref() {
+                // Age unknown in the current model; show placeholder "—"
+                providers.entry(label).or_insert(None);
+            }
+        }
+        if providers.is_empty() {
+            cache_lines.push(Line::from(Span::styled("Cache age: —", theme.text_muted_style())));
+        } else {
+            cache_lines.push(Line::from(vec![Span::styled("Cache age:", theme.text_secondary_style())]));
+            for (label, _age) in providers.into_iter() {
+                cache_lines.push(Line::from(vec![
+                    Span::styled("  • ", theme.text_secondary_style()),
+                    Span::styled(format!("{:<12}", label), theme.text_primary_style()),
+                    Span::styled(" ", theme.text_secondary_style()),
+                    Span::styled("—", theme.text_muted_style()),
+                ]));
+            }
+        }
+    }
+
+    // Errors & notes aggregation
+    let mut error_notes: Vec<String> = Vec::new();
+    for row in rows {
+        if let Some(message) = &row.status_message {
+            error_notes.push(message.clone());
+        }
+    }
+
+    // Build final lines according to spec layout
+    let mut lines: Vec<Line> = Vec::new();
+    // Ready?
+    let ready_label = if unresolved == 0 {
+        Span::styled("Ready?: ✓ All inputs resolved", theme.status_success())
+    } else {
+        Span::styled(
+            format!("Ready?: ⚠ Waiting on {}", next_action.unwrap_or("—")),
+            theme.status_warning(),
+        )
     };
+    lines.push(Line::from(ready_label));
 
-    let Some(row) = rows.get(view_state.selected()) else {
-        let paragraph = Paragraph::new("Select an input to inspect details.")
-            .style(theme.text_muted_style())
-            .wrap(Wrap { trim: true });
-        frame.render_widget(paragraph, inner);
-        return;
-    };
-
-    let run_state = app.workflows.active_run_state().unwrap();
-    let definition = run_state.workflow.inputs.get(&row.name).cloned().unwrap_or_default();
-
-    let mut lines = Vec::new();
+    // Resolved count
     lines.push(Line::from(vec![
-        Span::styled("Input: ", theme.text_secondary_style()),
-        Span::styled(&row.name, theme.text_primary_style().add_modifier(Modifier::BOLD)),
+        Span::styled("Resolved inputs: ", theme.text_secondary_style()),
+        Span::styled(format!("{} / {}", resolved, total), theme.text_primary_style()),
     ]));
 
-    if let Some(description) = &row.description {
-        lines.push(Line::from(Span::styled(description, theme.text_secondary_style())));
-    }
-
-    if let Some(value) = &row.current_value {
-        lines.push(Line::from(vec![
-            Span::styled("Current value: ", theme.text_secondary_style()),
-            Span::styled(value, theme.text_primary_style()),
-        ]));
-    }
-
-    if let Some(provider) = &row.provider_label {
-        lines.push(Line::from(vec![
-            Span::styled("Provider: ", theme.text_secondary_style()),
-            Span::styled(provider, theme.text_primary_style()),
-        ]));
-    }
-
-    match row.status {
-        InputStatus::Resolved => {
-            lines.push(Line::from(Span::styled("Status: resolved", theme.status_success())));
-        }
-        InputStatus::Pending => {
-            lines.push(Line::from(Span::styled("Status: pending", theme.status_warning())));
-        }
-        InputStatus::Error => {
-            lines.push(Line::from(Span::styled("Status: error", theme.status_error())));
-        }
-    }
-
-    if let Some(input_type) = definition.r#type.as_deref() {
-        lines.push(Line::from(vec![
-            Span::styled("Type: ", theme.text_secondary_style()),
-            Span::styled(input_type, theme.text_primary_style()),
-        ]));
-    }
-
+    // Next action
     lines.push(Line::from(vec![
-        Span::styled("Mode: ", theme.text_secondary_style()),
+        Span::styled("Next action: ", theme.text_secondary_style()),
         Span::styled(
-            match definition.mode {
-                heroku_types::workflow::WorkflowInputMode::Single => "single",
-                heroku_types::workflow::WorkflowInputMode::Multiple => "multiple",
+            next_action.unwrap_or("—"),
+            if unresolved == 0 {
+                theme.text_muted_style()
+            } else {
+                theme.text_primary_style()
             },
-            theme.text_primary_style(),
         ),
     ]));
 
-    if let Some(select) = definition.select.as_ref() {
-        let mut select_parts = Vec::new();
-        if let Some(field) = select.display_field.as_deref() {
-            select_parts.push(format!("display={field}"));
-        }
-        if let Some(field) = select.value_field.as_deref() {
-            select_parts.push(format!("value={field}"));
-        }
-        if let Some(field) = select.id_field.as_deref() {
-            select_parts.push(format!("id={field}"));
-        }
-        if !select_parts.is_empty() {
+    // Spacer
+    lines.push(Line::from(""));
+
+    // Selected values header
+    lines.push(Line::from(Span::styled("Selected values:", theme.text_secondary_style())));
+    lines.extend(selected_lines);
+
+    // Spacer and auto-reset note
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("Auto-reset note: ", theme.text_secondary_style()),
+        Span::styled("downstream steps reset when a prior step edits.", theme.text_muted_style()),
+    ]));
+
+    // Spacer and cache ages
+    lines.push(Line::from(""));
+    lines.extend(cache_lines);
+
+    // Spacer and errors
+    lines.push(Line::from(""));
+    if error_notes.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("Errors & notes: ", theme.text_secondary_style()),
+            Span::styled("none", theme.text_muted_style()),
+        ]));
+    } else {
+        lines.push(Line::from(Span::styled("Errors & notes:", theme.text_secondary_style())));
+        for note in error_notes {
             lines.push(Line::from(vec![
-                Span::styled("Select: ", theme.text_secondary_style()),
-                Span::styled(select_parts.join(" • "), theme.text_primary_style()),
+                Span::styled("  • ", theme.text_secondary_style()),
+                Span::styled(note, theme.text_primary_style()),
             ]));
         }
-    }
-
-    if !definition.enumerated_values.is_empty() {
-        lines.push(Line::from(vec![
-            Span::styled("Enumerated: ", theme.text_secondary_style()),
-            Span::styled(summarize_values(&definition.enumerated_values, 8), theme.text_primary_style()),
-        ]));
-    }
-
-    if let Some(validate) = definition.validate.as_ref() {
-        if !validate.allowed_values.is_empty() {
-            lines.push(Line::from(vec![
-                Span::styled("Allowed: ", theme.text_secondary_style()),
-                Span::styled(summarize_values(&validate.allowed_values, 8), theme.text_primary_style()),
-            ]));
-        }
-        if let Some(pattern) = validate.pattern.as_deref() {
-            lines.push(Line::from(vec![
-                Span::styled("Pattern: ", theme.text_secondary_style()),
-                Span::styled(pattern, theme.text_primary_style()),
-            ]));
-        }
-    }
-
-    if let Some(policy) = definition.on_error {
-        lines.push(Line::from(vec![
-            Span::styled("on_error: ", theme.text_secondary_style()),
-            Span::styled(
-                match policy {
-                    heroku_types::workflow::WorkflowProviderErrorPolicy::Manual => "manual",
-                    heroku_types::workflow::WorkflowProviderErrorPolicy::Cached => "cached",
-                    heroku_types::workflow::WorkflowProviderErrorPolicy::Fail => "fail",
-                },
-                theme.text_primary_style(),
-            ),
-        ]));
-    }
-
-    if !definition.provider_args.is_empty() {
-        let arg_list = definition.provider_args.keys().cloned().collect::<Vec<_>>().join(", ");
-        lines.push(Line::from(vec![
-            Span::styled("Provider args: ", theme.text_secondary_style()),
-            Span::styled(arg_list, theme.text_primary_style()),
-        ]));
-    }
-
-    if let Some(message) = &row.status_message {
-        lines.push(Line::from(Span::styled(message, theme.text_muted_style())));
-    }
-
-    if let Some(summary) = &row.cache_summary {
-        lines.push(Line::from(vec![
-            Span::styled("Cache: ", theme.text_secondary_style()),
-            Span::styled(format_cache_summary(summary), theme.text_primary_style()),
-        ]));
     }
 
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
@@ -382,21 +361,19 @@ fn build_input_rows(app: &App) -> Vec<WorkflowInputRow> {
     let mut rows = Vec::new();
     let run_state = app.workflows.active_run_state().unwrap();
     for (name, definition) in run_state.workflow.inputs.iter() {
-        rows.push(build_input_row(app, run_state, name, definition));
+        rows.push(build_input_row(run_state, name, definition));
     }
 
     rows
 }
 
-fn build_input_row(app: &App, run_state: &WorkflowRunState, name: &str, definition: &WorkflowInputDefinition) -> WorkflowInputRow {
-    let required = definition.validate.as_ref().map(|validate| validate.required).unwrap_or(false);
+fn build_input_row(run_state: &WorkflowRunState, name: &str, definition: &WorkflowInputDefinition) -> WorkflowInputRow {
+    let required = definition.is_required();
 
     let provider_label = definition.provider.as_ref().map(|provider| match provider {
         WorkflowValueProvider::Id(id) => id.clone(),
         WorkflowValueProvider::Detailed(detail) => detail.id.clone(),
     });
-
-    let provider_key = provider_label.as_ref().map(|id| format!("{name}:{id}"));
 
     let provider_state = run_state.provider_state_for(name);
     let mut status = InputStatus::Pending;
@@ -429,17 +406,11 @@ fn build_input_row(app: &App, run_state: &WorkflowRunState, name: &str, definiti
         status = InputStatus::Resolved;
     } else if !required {
         status = InputStatus::Pending;
-        status_message = Some("(This field is optional)".to_string());
+        status_message = Some("[optional]".to_string());
     }
 
     let current_value = run_state.run_context.inputs.get(name).map(format_preview);
-
     let description = definition.description.clone();
-
-    let cache_summary = provider_key
-        .as_deref()
-        .and_then(|key| app.workflows.provider_snapshot(key))
-        .map(ProviderCacheSummary::from_snapshot);
 
     WorkflowInputRow {
         name: name.to_string(),
@@ -449,7 +420,6 @@ fn build_input_row(app: &App, run_state: &WorkflowRunState, name: &str, definiti
         status_message,
         description,
         current_value,
-        cache_summary,
     }
 }
 
@@ -462,7 +432,6 @@ struct WorkflowInputRow {
     status_message: Option<String>,
     description: Option<String>,
     current_value: Option<String>,
-    cache_summary: Option<ProviderCacheSummary>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

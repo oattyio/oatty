@@ -2,13 +2,13 @@ use crate::{
     app::App,
     ui::{
         components::{
-            TableComponent,
+            common::ResultsTableView,
             component::Component,
             logs::state::{LogDetailView, LogEntry},
             table::build_key_value_entries,
         },
         theme::theme_helpers,
-        utils::{build_copy_text, centered_rect},
+        utils::build_copy_text,
     },
 };
 use crossterm::event::KeyCode;
@@ -16,9 +16,9 @@ use heroku_types::Effect;
 use heroku_util::redact_sensitive;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
-    text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    layout::{Rect},
+    text::{Span},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 use serde_json::Value;
 
@@ -60,7 +60,6 @@ impl LogDetailsComponent {
                         };
 
                         // Render formatted JSON using TableComponent for better presentation
-                        let table = TableComponent::default();
                         let entries = build_key_value_entries(red_ref);
                         let offset = match app.logs.detail {
                             Some(LogDetailView::Table { offset }) => offset.min(entries.len().saturating_sub(1)),
@@ -68,7 +67,7 @@ impl LogDetailsComponent {
                         };
                         let selection = if entries.is_empty() { None } else { Some(offset) };
                         app.logs.detail = Some(LogDetailView::Table { offset });
-                        table.render_kv_or_text(frame, area, &entries, selection, offset, true, red_ref, &*app.ctx.theme);
+                        ResultsTableView::render_kv_or_text(frame, area, &entries, selection, offset, true, red_ref, &*app.ctx.theme);
                         return;
                     }
                     LogEntry::Api { status, raw, .. } => {
@@ -182,47 +181,22 @@ impl Component for LogDetailsComponent {
     }
 
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
-        let area = centered_rect(80, 70, rect);
         let title = "Log Details";
         let block = theme_helpers::block(&*app.ctx.theme, Some(title), true);
-
         // Clear the modal area and render the border
-        frame.render_widget(Clear, area);
-        frame.render_widget(&block, area);
-        let inner = block.inner(area);
-
-        // Split modal into content and footer areas
-        let splits = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(1), Constraint::Length(1)])
-            .split(inner);
-
+        let inner = block.inner(rect);
+        frame.render_widget(block, rect);
         // Render the main detail content
-        self.render_detail_content(frame, splits[0], app);
-
-        // Render footer with keyboard hints
-        let hint_spans = self.get_hint_spans(app, true);
-        let hint_line = if hint_spans.is_empty() {
-            Line::default()
-        } else {
-            Line::from(hint_spans)
-        };
-        let footer = Paragraph::new(hint_line).style(app.ctx.theme.text_muted_style());
-        frame.render_widget(footer, splits[1]);
+        self.render_detail_content(frame, inner, app);
     }
 
-    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        let mut spans = Vec::new();
-        if is_root {
-            spans.push(Span::styled("Hint: ", theme.text_muted_style()));
-        }
-        spans.extend([
+        [
             Span::styled("Esc", theme.accent_emphasis_style()),
             Span::styled(" Close  ", theme.text_muted_style()),
             Span::styled("C", theme.accent_emphasis_style()),
             Span::styled(" Copy  ", theme.text_muted_style()),
-        ]);
-        spans
+        ].to_vec()
     }
 }

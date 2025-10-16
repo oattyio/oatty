@@ -99,11 +99,6 @@ impl Component for BrowserComponent {
         let main_layout = self.create_main_layout(layout_chunks[1]);
         self.render_commands_panel(frame, app, main_layout[0]);
         self.render_inline_help_panel(frame, app, main_layout[1]);
-
-        let hint_spans = self.get_hint_spans(app, true);
-
-        let paragraph = Paragraph::new(Line::from(hint_spans));
-        frame.render_widget(paragraph, layout_chunks[2]);
     }
 
     /// Renders the footer with keyboard shortcut hints.
@@ -115,19 +110,14 @@ impl Component for BrowserComponent {
     /// * `frame` - The Ratatui frame to render to
     /// * `app` - The application state containing theme information
     /// * `area` - The area to render the footer in
-    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        let mut spans = vec![];
-        if is_root {
-            spans.push(Span::styled("Hint: ", theme.text_muted_style()));
-        }
-        spans.extend([
+        vec![
             Span::styled("Esc", theme.accent_emphasis_style()),
             Span::styled(" Clear ", theme.text_muted_style()),
             Span::styled("Enter", theme.accent_emphasis_style()),
             Span::styled(" Send to palette  ", theme.text_muted_style()),
-        ]);
-        spans
+        ]
     }
 
     fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
@@ -136,7 +126,6 @@ impl Component for BrowserComponent {
             .constraints([
                 Constraint::Length(3), // Search panel
                 Constraint::Min(10),   // Main content
-                Constraint::Length(1), // Footer
             ])
             .split(area)
             .to_vec()
