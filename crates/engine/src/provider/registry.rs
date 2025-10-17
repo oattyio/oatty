@@ -1,3 +1,10 @@
+use crate::ProviderValueResolver;
+use anyhow::{Result, anyhow};
+use heroku_registry::{CommandRegistry, CommandSpec, find_by_group_and_cmd};
+use heroku_types::{Bind, ExecOutcome, ItemKind, SuggestionItem, ValueProvider as ProviderBinding};
+use heroku_util::{build_path, exec_remote, fuzzy_score};
+use serde_json::{Map as JsonMap, Value};
+use std::hash::DefaultHasher;
 use std::{
     collections::{HashMap, HashSet},
     fmt,
@@ -5,18 +12,11 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
-use std::hash::DefaultHasher;
-use crate::ProviderValueResolver;
-use anyhow::{Result, anyhow};
-use heroku_registry::{CommandRegistry, CommandSpec, find_by_group_and_cmd};
-use heroku_types::{Bind, ExecOutcome, ItemKind, SuggestionItem, ValueProvider as ProviderBinding};
-use heroku_util::{build_path, exec_remote, fuzzy_score};
-use serde_json::{Map as JsonMap, Value};
 use tokio::runtime::Handle;
 use tracing::warn;
 
 use super::{
-    ValueProvider,
+    PendingProviderFetch, ProviderFetchPlan, ProviderSuggestionSet, ValueProvider,
     contract::{ProviderContract, ProviderReturns, ReturnField},
     fetch::ProviderValueFetcher,
     label_from_value,
@@ -27,6 +27,12 @@ use super::{
 struct CacheEntry {
     fetched_at: Instant,
     items: Vec<Value>,
+}
+
+#[derive(Debug)]
+pub enum CacheLookupOutcome {
+    Hit(Vec<Value>),
+    Pending(PendingProviderFetch),
 }
 
 fn cache_key(provider_id: &str, args: &JsonMap<String, Value>) -> String {
@@ -284,21 +290,6 @@ impl ProviderRegistry {
         self.choices.lock().expect("choices lock").get(provider_id).cloned()
     }
 
-    pub fn cached_values_or_enqueue(&self, provider_id: &str, args: JsonMap<String, Value>) -> Option<Vec<Value>> {
-        let key = cache_key(provider_id, &args);
-        if let Some(entry) = self.cache.lock().expect("cache lock").get(&key).cloned()
-            && entry.fetched_at.elapsed() < self.cache_ttl
-        {
-            return Some(entry.items);
-        }
-
-        if !self.try_begin_fetch(&key) {
-            return None;
-        }
-        self.spawn_fetch(provider_id.to_string(), args, key);
-        None
-    }
-
     fn try_begin_fetch(&self, key: &str) -> bool {
         let mut active = self.active_fetches.lock().expect("active fetches lock");
         if active.contains(key) {
@@ -308,19 +299,41 @@ impl ProviderRegistry {
         true
     }
 
-    fn spawn_fetch(&self, provider_id: String, args: JsonMap<String, Value>, cache_key: String) {
-        let registry = Arc::clone(&self.registry);
-        let fetcher = Arc::clone(&self.fetcher);
-        let handle = self.handle.clone();
-        let cache = Arc::clone(&self.cache);
-        let active_fetches = Arc::clone(&self.active_fetches);
+    fn finish_fetch(&self, key: &str) {
+        self.active_fetches.lock().expect("active fetches lock").remove(key);
+    }
 
-        std::thread::spawn(move || {
-            if let Err(error) = fetch_and_cache(registry, fetcher, handle, cache, provider_id, args, cache_key.clone()) {
-                warn!("provider fetch failed: {}", error);
-            }
-            active_fetches.lock().expect("active fetches lock").remove(&cache_key);
-        });
+    pub fn cached_values_or_plan(&self, provider_id: &str, args: JsonMap<String, Value>) -> CacheLookupOutcome {
+        let canonical_id = canonical_identifier(provider_id).unwrap_or_else(|| provider_id.to_string());
+        let key = cache_key(&canonical_id, &args);
+
+        if let Some(entry) = self.cache.lock().expect("cache lock").get(&key).cloned()
+            && entry.fetched_at.elapsed() < self.cache_ttl
+        {
+            return CacheLookupOutcome::Hit(entry.items);
+        }
+
+        let should_dispatch = self.try_begin_fetch(&key);
+        let plan = ProviderFetchPlan::new(canonical_id, key.clone(), args);
+        let pending = PendingProviderFetch::new(plan, should_dispatch);
+        CacheLookupOutcome::Pending(pending)
+    }
+
+    pub fn complete_fetch(&self, plan: &ProviderFetchPlan) -> Result<Vec<Value>> {
+        let result = fetch_and_cache(
+            Arc::clone(&self.registry),
+            Arc::clone(&self.fetcher),
+            self.handle.clone(),
+            Arc::clone(&self.cache),
+            plan.provider_id.clone(),
+            plan.args.clone(),
+            plan.cache_key.clone(),
+        );
+        self.finish_fetch(&plan.cache_key);
+        if let Err(ref error) = result {
+            warn!("provider fetch failed: {}", error);
+        }
+        result
     }
 }
 
@@ -450,20 +463,20 @@ impl ValueProvider for ProviderRegistry {
         field: &str,
         partial: &str,
         inputs: &HashMap<String, String>,
-    ) -> Vec<SuggestionItem> {
+    ) -> ProviderSuggestionSet {
         let (group, name) = match split_command_key(command_key) {
             Some(parts) => parts,
-            None => return Vec::new(),
+            None => return ProviderSuggestionSet::default(),
         };
 
         let spec = match commands.iter().find(|command| command.group == group && command.name == name) {
             Some(spec) => spec,
-            None => return Vec::new(),
+            None => return ProviderSuggestionSet::default(),
         };
 
         let (provider_id, binds) = match binding_for_field(spec, field) {
             Some(binding) => binding,
-            None => return Vec::new(),
+            None => return ProviderSuggestionSet::default(),
         };
 
         let mut arguments = JsonMap::new();
@@ -472,34 +485,34 @@ impl ValueProvider for ProviderRegistry {
                 arguments.insert(binding.provider_key.clone(), Value::String(value.clone()));
             } else {
                 // Cannot satisfy provider bindings yet; trigger fetch once values are available.
-                return Vec::new();
+                return ProviderSuggestionSet::default();
             }
         }
 
-        let values = match self.cached_values_or_enqueue(&provider_id, arguments) {
-            Some(values) => values,
-            None => return Vec::new(),
-        };
-
-        let provider_meta = canonical_identifier(&provider_id).unwrap_or(provider_id.clone());
-        let mut items = Vec::with_capacity(values.len());
-        for value in values {
-            let Some(label) = label_from_value(value) else {
-                continue;
-            };
-            let Some(score) = fuzzy_score(&label, partial) else {
-                continue;
-            };
-            items.push(SuggestionItem {
-                display: label.clone(),
-                insert_text: label,
-                kind: ItemKind::Value,
-                meta: Some(provider_meta.clone()),
-                score,
-            });
+        match self.cached_values_or_plan(&provider_id, arguments) {
+            CacheLookupOutcome::Hit(values) => {
+                let provider_meta = canonical_identifier(&provider_id).unwrap_or(provider_id.clone());
+                let mut items = Vec::with_capacity(values.len());
+                for value in values {
+                    let Some(label) = label_from_value(value) else {
+                        continue;
+                    };
+                    let Some(score) = fuzzy_score(&label, partial) else {
+                        continue;
+                    };
+                    items.push(SuggestionItem {
+                        display: label.clone(),
+                        insert_text: label,
+                        kind: ItemKind::Value,
+                        meta: Some(provider_meta.clone()),
+                        score,
+                    });
+                }
+                items.sort_by(|a, b| b.score.cmp(&a.score));
+                ProviderSuggestionSet::ready(items)
+            }
+            CacheLookupOutcome::Pending(pending) => ProviderSuggestionSet::with_pending(Vec::new(), pending),
         }
-        items.sort_by(|a, b| b.score.cmp(&a.score));
-        items
     }
 }
 

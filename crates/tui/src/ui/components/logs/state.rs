@@ -1,3 +1,5 @@
+use crate::ui::utils::normalize_result_payload;
+use heroku_types::ExecOutcome;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 /// The main application state containing all UI data and business logic.
@@ -5,8 +7,6 @@ use ratatui::layout::Rect;
 /// This struct serves as the central state container for the entire TUI
 /// application, managing user interactions, data flow, and UI state.
 use serde_json::Value;
-use heroku_types::ExecOutcome;
-use crate::ui::utils::normalize_result_payload;
 
 /// Structured log entry supporting API responses and plain text.
 #[derive(Debug, Clone)]
@@ -80,7 +80,7 @@ pub struct LogsState {
 }
 
 impl LogsState {
-    pub (crate) fn process_general_execution_result(&mut self, execution_outcome: &Box<ExecOutcome>) {
+    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &Box<ExecOutcome>) {
         match execution_outcome.as_ref() {
             ExecOutcome::Http(status, log, value, ..) => {
                 self.entries.push(log.to_string());
@@ -97,8 +97,8 @@ impl LogsState {
                     json: Some(normalize_result_payload(value.clone())),
                 });
             }
-            ExecOutcome::Log(text) 
-            | ExecOutcome::PluginDetail(text, ..) 
+            ExecOutcome::Log(text)
+            | ExecOutcome::PluginDetail(text, ..)
             | ExecOutcome::PluginValidationErr(text, ..)
             | ExecOutcome::PluginDetailLoad(text, ..)
             | ExecOutcome::PluginsRefresh(text, ..)

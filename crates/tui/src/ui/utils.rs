@@ -575,4 +575,3 @@ pub fn normalize_result_payload(value: Value) -> Value {
     }
     value
 }
-

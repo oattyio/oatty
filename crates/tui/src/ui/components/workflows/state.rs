@@ -1,15 +1,18 @@
 use crate::ui::components::common::TextInputState;
+use crate::ui::components::table::TableState;
 use crate::ui::components::workflows::input::WorkflowInputViewState;
+use crate::ui::theme::Theme;
 use anyhow::{Result, anyhow};
 use heroku_engine::workflow::document::build_runtime_catalog;
 use heroku_engine::{ProviderBindingOutcome, WorkflowRunState};
 use heroku_registry::{CommandRegistry, feat_gate::feature_workflows};
 use heroku_types::workflow::{RuntimeWorkflow, WorkflowInputDefinition, WorkflowValueProvider};
+use heroku_types::{WorkflowInputValidation, WorkflowProviderErrorPolicy};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::{layout::Rect, widgets::ListState};
+use regex::Regex;
+use serde_json::Value;
 use std::sync::{Arc, Mutex};
-use heroku_types::{WorkflowInputValidation, WorkflowProviderErrorPolicy};
-use crate::ui::components::table::TableState;
 
 /// Maintains the workflow catalogue, filtered view, and list selection state for the picker UI.
 #[derive(Debug, Default)]
@@ -548,6 +551,99 @@ pub struct ManualEntryViewState {
     pub placeholder: Option<String>,
 }
 
+/// Validate a text candidate against the declarative workflow rules.
+///
+/// This helper centralises the validation logic so both manual entry acceptance
+/// and status rendering apply the same checks (allowed values, regex patterns,
+/// length constraints).
+pub fn validate_candidate_value(candidate: &str, validation: &WorkflowInputValidation) -> Result<(), String> {
+    if !validation.allowed_values.is_empty() {
+        let matches_allowed_value = validation.allowed_values.iter().any(|value| {
+            value
+                .as_str()
+                .map(|text| text == candidate)
+                .unwrap_or_else(|| value.to_string() == candidate)
+        });
+
+        if !matches_allowed_value {
+            return Err("value is not in the allowed set".to_string());
+        }
+    }
+
+    if let Some(min_length) = validation.min_length {
+        if candidate.chars().count() < min_length {
+            return Err(format!("value must be at least {} characters", min_length));
+        }
+    }
+
+    if let Some(max_length) = validation.max_length {
+        if candidate.chars().count() > max_length {
+            return Err(format!("value must be at most {} characters", max_length));
+        }
+    }
+
+    if let Some(pattern) = &validation.pattern {
+        let regex = Regex::new(pattern).map_err(|error| format!("invalid pattern '{}': {}", pattern, error))?;
+        if !regex.is_match(candidate) {
+            return Err(format!("value must match the pattern {}", pattern));
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_validation() -> WorkflowInputValidation {
+        WorkflowInputValidation {
+            required: false,
+            allowed_values: Vec::new(),
+            pattern: None,
+            min_length: None,
+            max_length: None,
+        }
+    }
+
+    #[test]
+    fn candidate_matching_pattern_passes() {
+        let mut validation = base_validation();
+        validation.pattern = Some("^[a-z]{3,5}$".to_string());
+
+        assert!(validate_candidate_value("app", &validation).is_ok());
+        assert!(validate_candidate_value("valid", &validation).is_ok());
+    }
+
+    #[test]
+    fn candidate_failing_pattern_rejects() {
+        let mut validation = base_validation();
+        validation.pattern = Some("^[a-z]{3,5}$".to_string());
+
+        let error = validate_candidate_value("APP", &validation).expect_err("expected pattern error");
+        assert!(error.contains("pattern"));
+    }
+
+    #[test]
+    fn invalid_pattern_reports_error() {
+        let mut validation = base_validation();
+        validation.pattern = Some("[".to_string());
+
+        let error = validate_candidate_value("app", &validation).expect_err("expected invalid pattern error");
+        assert!(error.contains("invalid pattern"));
+    }
+
+    #[test]
+    fn allowed_values_enforced() {
+        let mut validation = base_validation();
+        validation.allowed_values = vec![serde_json::Value::from("alpha"), serde_json::Value::from("beta")];
+
+        assert!(validate_candidate_value("alpha", &validation).is_ok());
+        let error = validate_candidate_value("delta", &validation).expect_err("expected allowed values error");
+        assert!(error.contains("allowed set"));
+    }
+}
+
 /// Provider-backed selector state rendered in the Workflow Collector modal.
 #[derive(Debug)]
 pub struct WorkflowSelectorViewState<'a> {
@@ -569,10 +665,59 @@ pub struct WorkflowSelectorViewState<'a> {
     pub error_message: Option<String>,
     /// Original unfiltered provider items (array of rows).
     pub original_items: Option<Vec<serde_json::Value>>,
+    /// Cache key currently awaiting asynchronous fetch completion.
+    pub pending_cache_key: Option<String>,
     /// Lightweight inline filter buffer.
     pub filter: TextInputState,
     /// Whether the filter input is currently focused/active.
     pub filter_active: bool,
+}
+
+impl<'a> WorkflowSelectorViewState<'a> {
+    pub fn set_items(&mut self, items: Vec<serde_json::Value>) {
+        self.original_items = Some(items);
+        self.status = SelectorStatus::Loaded;
+        self.error_message = None;
+        self.pending_cache_key = None;
+    }
+
+    pub fn set_error(&mut self, message: String) {
+        self.status = SelectorStatus::Error;
+        self.error_message = Some(message);
+        self.pending_cache_key = None;
+    }
+
+    pub fn refresh_table(&mut self, theme: &dyn Theme) {
+        let Some(items) = self.original_items.clone() else {
+            return;
+        };
+        let query = self.filter.input().trim().to_lowercase();
+        let dataset: Vec<Value> = if query.is_empty() {
+            items
+        } else {
+            items
+                .into_iter()
+                .filter(|item| match item {
+                    Value::Object(map) => {
+                        if let Some(display_field) = self.display_field.as_deref() {
+                            if let Some(value) = map.get(display_field) {
+                                if let Some(text) = value.as_str() {
+                                    return text.to_lowercase().starts_with(&query);
+                                }
+                            }
+                        }
+                        map.values()
+                            .any(|value| value.as_str().map(|text| text.to_lowercase().contains(&query)).unwrap_or(false))
+                    }
+                    Value::String(text) => text.to_lowercase().contains(&query),
+                    _ => false,
+                })
+                .collect()
+        };
+        let json = Value::Array(dataset);
+        self.table.apply_result_json(Some(json), theme);
+        self.table.normalize();
+    }
 }
 
 /// Loading status for the selector.
@@ -675,6 +820,7 @@ impl WorkflowState {
             original_items: None,
             filter: TextInputState::new(),
             filter_active: false,
+            pending_cache_key: None,
         });
     }
 

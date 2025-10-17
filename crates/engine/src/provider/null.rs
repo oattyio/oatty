@@ -1,6 +1,6 @@
-use serde_json::Value;
-use crate::ProviderValueResolver;
 use super::contract::ProviderContract;
+use crate::ProviderValueResolver;
+use serde_json::Value;
 
 pub struct NullProvider;
 

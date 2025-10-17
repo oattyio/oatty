@@ -44,7 +44,9 @@ impl Component for PluginsLogsComponent {
 
     fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
         match msg {
-            Msg::ExecCompleted(outcome) => {app.logs.process_general_execution_result(&outcome);},
+            Msg::ExecCompleted(outcome) => {
+                app.logs.process_general_execution_result(&outcome);
+            }
             _ => {}
         }
 
@@ -64,7 +66,8 @@ impl Component for PluginsLogsComponent {
             Span::styled(" Copy all ", theme.text_muted_style()),
             Span::styled("Ctrl+O", theme.accent_emphasis_style()),
             Span::styled(" Export ", theme.text_muted_style()),
-        ].to_vec()
+        ]
+        .to_vec()
     }
 }
 

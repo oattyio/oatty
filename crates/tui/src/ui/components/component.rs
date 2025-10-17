@@ -90,7 +90,9 @@ pub trait Component: Debug {
     /// * `msg` - The application message to handle
     ///
     /// # Returns
-    fn handle_message(&mut self, _app: &mut App, _msg: &Msg) -> Vec<Effect> { Vec::new() }
+    fn handle_message(&mut self, _app: &mut App, _msg: &Msg) -> Vec<Effect> {
+        Vec::new()
+    }
 
     /// Handle key events when this component has focus.
     ///

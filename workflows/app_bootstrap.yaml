@@ -4,6 +4,8 @@ inputs:
   app_name:
     description: "Name for the new app"
     type: string
+    validate:
+      pattern: "^[a-z](?:[a-z0-9-]{1,28}[a-z0-9])$"
   region:
     description: "Region to create the app in"
     provider: regions list

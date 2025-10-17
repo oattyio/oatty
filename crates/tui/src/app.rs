@@ -5,14 +5,13 @@
 //! user interactions, and coordinates between different UI components.
 
 use std::{
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Arc, Mutex, atomic::AtomicUsize},
     time::Duration,
 };
 
+use crate::cmd::Cmd;
 use crate::ui::components::nav_bar::VerticalNavBarComponent;
+use crate::ui::components::workflows::state::SelectorStatus;
 use crate::ui::components::workflows::{WorkflowCollectorComponent, WorkflowInputsComponent};
 use crate::ui::components::{
     BrowserComponent, HelpComponent, PluginsComponent, TableComponent, WorkflowsComponent, logs::LogDetailsComponent,
@@ -34,7 +33,7 @@ use crate::ui::{
 };
 use anyhow::{Result, anyhow};
 use heroku_api::HerokuClient;
-use heroku_engine::provider::ProviderRegistry;
+use heroku_engine::provider::{CacheLookupOutcome, PendingProviderFetch, ProviderRegistry};
 use heroku_engine::{
     ProviderBindingOutcome, ProviderResolutionSource, RegistryCommandRunner, StepResult, StepStatus, ValueProvider, WorkflowRunState,
 };
@@ -225,6 +224,7 @@ impl App<'_> {
             Msg::Tick => self.handle_tick_message(),
             Msg::Resize(..) => vec![],
             Msg::CopyToClipboard(text) => vec![Effect::CopyToClipboardRequested(text)],
+            Msg::ProviderValuesReady { provider_id, cache_key } => self.handle_provider_values_ready(provider_id, cache_key),
             _ => Vec::new(),
         }
     }
@@ -254,11 +254,80 @@ impl App<'_> {
         // rebuild suggestions to pick up newly cached results without requiring
         // another keypress
         if self.palette.is_suggestions_open() && self.palette.is_provider_loading() {
-            let SharedCtx { providers, .. } = &self.ctx;
-            self.palette.apply_build_suggestions(providers, &*self.ctx.theme);
+            return self.rebuild_palette_suggestions();
         }
 
         vec![]
+    }
+
+    fn effects_for_pending_fetches(&self, fetches: Vec<PendingProviderFetch>) -> Vec<Effect> {
+        fetches
+            .into_iter()
+            .filter(|pending| pending.should_dispatch)
+            .map(|pending| Effect::ProviderFetchRequested {
+                provider_id: pending.plan.provider_id.clone(),
+                cache_key: pending.plan.cache_key.clone(),
+                args: pending.plan.args.clone(),
+            })
+            .collect()
+    }
+
+    pub fn rebuild_palette_suggestions(&mut self) -> Vec<Effect> {
+        let fetches = self.palette.apply_build_suggestions(&self.ctx.providers, &*self.ctx.theme);
+        self.effects_for_pending_fetches(fetches)
+    }
+
+    pub fn prepare_selector_fetch(&mut self) -> Vec<Effect> {
+        let Some(selector) = self.workflows.selector_state_mut() else {
+            return Vec::new();
+        };
+
+        match self
+            .ctx
+            .provider_registry
+            .cached_values_or_plan(&selector.provider_id, selector.resolved_args.clone())
+        {
+            CacheLookupOutcome::Hit(items) => {
+                selector.set_items(items);
+                selector.refresh_table(&*self.ctx.theme);
+                Vec::new()
+            }
+            CacheLookupOutcome::Pending(pending) => {
+                selector.pending_cache_key = Some(pending.plan.cache_key.clone());
+                selector.status = SelectorStatus::Loading;
+                self.effects_for_pending_fetches(vec![pending])
+            }
+        }
+    }
+
+    fn handle_provider_values_ready(&mut self, provider_id: String, cache_key: String) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        if self.palette.is_provider_loading() {
+            effects.extend(self.rebuild_palette_suggestions());
+        }
+
+        if let Some(selector) = self.workflows.selector_state_mut() {
+            let matches_identifier = selector.provider_id == provider_id;
+            let matches_cache_key = selector.pending_cache_key.as_deref().map_or(true, |key| key == cache_key.as_str());
+            if matches_identifier && matches_cache_key {
+                match self
+                    .ctx
+                    .provider_registry
+                    .cached_values_or_plan(&selector.provider_id, selector.resolved_args.clone())
+                {
+                    CacheLookupOutcome::Hit(items) => {
+                        selector.set_items(items);
+                        selector.refresh_table(&*self.ctx.theme);
+                    }
+                    CacheLookupOutcome::Pending(pending) => {
+                        selector.pending_cache_key = Some(pending.plan.cache_key.clone());
+                        effects.extend(self.effects_for_pending_fetches(vec![pending]));
+                    }
+                }
+            }
+        }
+
+        effects
     }
 
     /// Handles execution completion messages and processes the results.
@@ -283,8 +352,8 @@ impl App<'_> {
             ExecOutcome::PluginDetailLoad(name, result) => self.handle_plugin_detail_load(name, result),
             ExecOutcome::PluginDetail(log, maybe_detail) => self.handle_plugin_detail(log, maybe_detail),
             ExecOutcome::PluginsRefresh(log, maybe_plugins) => self.handle_plugin_refresh_response(log, maybe_plugins),
-            ExecOutcome::Log(log) => { self.logs.entries.push(log) },
-            _ => {},
+            ExecOutcome::Log(log) => self.logs.entries.push(log),
+            _ => {}
         }
     }
 
@@ -296,7 +365,9 @@ impl App<'_> {
     /// * `maybe_detail` - The plugin detail to apply
     fn handle_plugin_detail(&mut self, log: String, maybe_detail: Option<PluginDetail>) {
         self.logs.entries.push(log);
-        let Some(detail) = maybe_detail else { return; };
+        let Some(detail) = maybe_detail else {
+            return;
+        };
         if let Some(state) = self.plugins.details.as_mut()
             && state.selected_plugin().is_some_and(|selected| selected == detail.name)
         {
@@ -437,7 +508,7 @@ impl App<'_> {
 
         self.log_workflow_execution(&run_state.workflow, &run_state, &results);
 
-        let mut effects = Vec::new();
+        let effects = Vec::new();
         if let Some(last) = results.last()
             && !last.output.is_null()
         {
@@ -571,8 +642,8 @@ impl App<'_> {
                 Modal::Help => (Box::new(HelpComponent::default()), Box::new(|rect| centered_rect(80, 70, rect))),
                 Modal::Results(exec_outcome) => {
                     self.table.process_general_execution_result(&exec_outcome, &*self.ctx.theme);
-                    (Box::new(TableComponent::default()), Box::new(|rect| centered_rect(96, 90, rect))) 
-                },
+                    (Box::new(TableComponent::default()), Box::new(|rect| centered_rect(96, 90, rect)))
+                }
                 Modal::LogDetails => (
                     Box::new(LogDetailsComponent::default()),
                     Box::new(|rect| centered_rect(80, 70, rect)),

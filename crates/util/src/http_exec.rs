@@ -8,8 +8,8 @@ use crate::http;
 use heroku_api::HerokuClient;
 use heroku_types::CommandSpec;
 use heroku_types::ExecOutcome;
-use reqwest::{Method, StatusCode};
 use reqwest::header::{CONTENT_RANGE, HeaderMap, HeaderName};
+use reqwest::{Method, StatusCode};
 use serde_json::{Map as JsonMap, Value};
 
 /// Perform an asynchronous REST API call against the Heroku platform.
@@ -79,7 +79,13 @@ pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>, reque
     let raw_log = format!("{}\n{}", status, text);
     let log = summarize_execution_outcome(spec, raw_log.as_str(), status);
     let result_json = http::parse_response_json(&text);
-    Ok(ExecOutcome::Http(status.as_u16(), log, result_json.unwrap_or(Value::Null), pagination, request_id))
+    Ok(ExecOutcome::Http(
+        status.as_u16(),
+        log,
+        result_json.unwrap_or(Value::Null),
+        pagination,
+        request_id,
+    ))
 }
 
 fn summarize_execution_outcome(command_spec: &CommandSpec, raw_log: &str, status_code: StatusCode) -> String {
@@ -92,11 +98,7 @@ fn summarize_execution_outcome(command_spec: &CommandSpec, raw_log: &str, status
         return format!("{} • failed: {}", canonical_name, truncated);
     }
 
-    let success = if status_code.is_success() {
-        "success"
-    } else {
-        "failed"
-    };
+    let success = if status_code.is_success() { "success" } else { "failed" };
     format!("{} • {}", canonical_name, success)
 }
 

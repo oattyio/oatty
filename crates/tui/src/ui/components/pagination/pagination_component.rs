@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::{Effect};
+use heroku_types::Effect;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -537,7 +537,7 @@ impl Component for PaginationComponent {
         }
 
         let theme = &*app.ctx.theme;
-        
+
         [
             Span::styled("←/→", theme.accent_emphasis_style()),
             Span::styled(" navigate  ", theme.text_muted_style()),
@@ -545,7 +545,8 @@ impl Component for PaginationComponent {
             Span::styled(" jump  ", theme.text_muted_style()),
             Span::styled("Enter", theme.accent_emphasis_style()),
             Span::styled(" select", theme.text_muted_style()),
-        ].to_vec()
+        ]
+        .to_vec()
     }
 
     fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {

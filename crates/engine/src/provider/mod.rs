@@ -18,9 +18,9 @@ use anyhow::Result;
 pub use contract::{ProviderContract, ProviderReturns, ReturnField};
 pub use fetch::ProviderValueFetcher;
 pub use null::NullProvider;
-pub use registry::ProviderRegistry;
+pub use registry::{CacheLookupOutcome, ProviderRegistry};
 pub use selection::{FieldSelection, SelectionSource, coerce_value, infer_selection};
-pub use value_provider::{ValueProvider, label_from_value};
+pub use value_provider::{PendingProviderFetch, ProviderFetchPlan, ProviderSuggestionSet, ValueProvider, label_from_value};
 
 use serde_json::Value;
 

@@ -7,7 +7,73 @@
 use std::{collections::HashMap, fmt::Debug};
 
 use heroku_types::{CommandSpec, SuggestionItem};
-use serde_json::Value;
+use serde_json::{Map as JsonMap, Value};
+
+/// Specification describing a provider fetch that must be performed before
+/// suggestions can be returned.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderFetchPlan {
+    /// Canonical provider identifier (`group name`).
+    pub provider_id: String,
+    /// Cache key derived from provider identifier + arguments.
+    pub cache_key: String,
+    /// Arguments collected from user inputs or bindings.
+    pub args: JsonMap<String, Value>,
+}
+
+impl ProviderFetchPlan {
+    /// Helper to construct a new fetch plan.
+    pub fn new(provider_id: String, cache_key: String, args: JsonMap<String, Value>) -> Self {
+        Self {
+            provider_id,
+            cache_key,
+            args,
+        }
+    }
+}
+
+/// Pending fetch metadata returned by a provider suggestion call.
+#[derive(Clone, Debug)]
+pub struct PendingProviderFetch {
+    /// Fetch plan describing provider identifier, cache key, and arguments.
+    pub plan: ProviderFetchPlan,
+    /// Whether the caller should dispatch a new fetch (false when another request is already in flight).
+    pub should_dispatch: bool,
+}
+
+impl PendingProviderFetch {
+    /// Create a new pending fetch record.
+    pub fn new(plan: ProviderFetchPlan, should_dispatch: bool) -> Self {
+        Self { plan, should_dispatch }
+    }
+}
+
+/// Result of invoking a value provider.
+#[derive(Clone, Debug, Default)]
+pub struct ProviderSuggestionSet {
+    /// Suggestions immediately available for display.
+    pub items: Vec<SuggestionItem>,
+    /// Optional fetch that must complete before additional items appear.
+    pub pending_fetch: Option<PendingProviderFetch>,
+}
+
+impl ProviderSuggestionSet {
+    /// Construct a suggestion set containing only ready items.
+    pub fn ready(items: Vec<SuggestionItem>) -> Self {
+        Self {
+            items,
+            pending_fetch: None,
+        }
+    }
+
+    /// Construct a suggestion set with a pending fetch and any existing items.
+    pub fn with_pending(items: Vec<SuggestionItem>, fetch: PendingProviderFetch) -> Self {
+        Self {
+            items,
+            pending_fetch: Some(fetch),
+        }
+    }
+}
 
 /// Trait describing a dynamic value provider for command flags and positionals.
 ///
@@ -28,7 +94,7 @@ pub trait ValueProvider: Send + Sync + Debug {
         field: &str,
         partial: &str,
         inputs: &HashMap<String, String>,
-    ) -> Vec<SuggestionItem>;
+    ) -> ProviderSuggestionSet;
 }
 
 /// Best-effort conversion from a provider JSON payload into a display label.

@@ -38,6 +38,32 @@ Key points:
 * Power mode uses providers for **autocomplete suggestions**.
 * Fallbacks and cache status are visible inline (with icons/labels).
 
+### Declarative input validation
+
+Author workflows can attach a `validate` block to any input to enforce schema rules before a run
+starts. Each field is optional and evaluated client side:
+
+* `required: true` prevents submission without a value.
+* `enum: [...]` constrains the value to the listed literals.
+* `pattern: "<regex>"` enforces a regular expression on the selected or entered text.
+* `min_length` / `max_length` apply to string lengths.
+
+Example — ensure `app_name` follows Heroku naming rules (lowercase, alphanumeric, hyphen, 3–30
+characters, cannot end with a hyphen):
+
+```yaml
+inputs:
+  app_name:
+    description: "App name shown in dashboards and CLI"
+    type: string
+    validate:
+      required: true
+      pattern: "^[a-z](?:[a-z0-9-]{1,28}[a-z0-9])$"
+```
+
+The engine shares these rules with the TUI so invalid values surface inline with actionable error
+messages instead of failing at API time.
+
 ---
 
 ## 2.x Dependent Providers & Auto-Mapping from Previous Outputs

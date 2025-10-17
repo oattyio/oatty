@@ -485,6 +485,7 @@ fn navigate_json_path(root_value: &Value, path_parts: &[&str]) -> String {
 /// - **Booleans**: Converted to "true" or "false"
 /// - **Null**: Converted to empty string
 /// - **Objects/Arrays**: Converted to JSON string representation
+///
 /// Select a nested JSON value by a minimal dot path with optional numeric indices.
 ///
 /// Supports segments like `a`, `a.b`, and array indices `a[0].b[1]`. Returns `None`
@@ -506,16 +507,10 @@ pub fn select_path(value: &Value, path: Option<&str>) -> Option<Value> {
         }
         let (key, indices) = split_indices(segment);
         if !key.is_empty() {
-            current = match current.get(key) {
-                Some(v) => v,
-                None => return None,
-            };
+            current = current.get(key)?;
         }
         for idx in indices {
-            current = match current.get(idx) {
-                Some(v) => v,
-                None => return None,
-            };
+            current = current.get(idx)?;
         }
     }
     Some(current.clone())

@@ -257,8 +257,5 @@ mod tests {
 /// assert!(!is_table_suitable);
 /// ```
 pub fn parse_response_json(text: &str) -> Option<Value> {
-    match serde_json::from_str::<Value>(text) {
-        Ok(json) => Some(json),
-        Err(_) => None,
-    }
+    serde_json::from_str::<Value>(text).ok()
 }

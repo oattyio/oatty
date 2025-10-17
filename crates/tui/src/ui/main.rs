@@ -29,9 +29,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     let mut logs_view = app.logs_view.take();
 
     let layout = get_preferred_layout(app, area);
-    let mut hint_spans: Vec<Span> = vec![
-        Span::styled("Hints: ", app.ctx.theme.text_muted_style())
-    ];
+    let mut hint_spans: Vec<Span> = vec![Span::styled("Hints: ", app.ctx.theme.text_muted_style())];
     // Handle main view rendering
     if let Some(current) = main_view.as_mut() {
         // Render nav bar on the left
@@ -81,13 +79,15 @@ fn get_preferred_layout(app: &App, area: Rect) -> Vec<Rect> {
     let outer_areas = Layout::horizontal([
         Constraint::Length(9), // Nav bar width
         Constraint::Min(1),    // Wrapper
-    ]).split(area);
+    ])
+    .split(area);
     // Split the wrapper area into 2 areas for the main view
     // and hints stacked vertically.
     let content_areas = Layout::vertical([
-        Constraint::Percentage(100),  // Main view width
-        Constraint::Min(1),           // Hints area
-    ]).split(outer_areas[1]);
+        Constraint::Percentage(100), // Main view width
+        Constraint::Min(1),          // Hints area
+    ])
+    .split(outer_areas[1]);
 
     let main_view_areas = if content_areas[0].width >= 141 {
         let constraints = if app.logs_view.is_some() {
@@ -95,10 +95,12 @@ fn get_preferred_layout(app: &App, area: Rect) -> Vec<Rect> {
                 Constraint::Percentage(50), // Main view width
                 Constraint::Percentage(50), // Logs width
             ]
-        } else { [
-            Constraint::Percentage(100), // Main view width
-            Constraint::Percentage(0),   // No logs shown
-        ]};
+        } else {
+            [
+                Constraint::Percentage(100), // Main view width
+                Constraint::Percentage(0),   // No logs shown
+            ]
+        };
 
         Layout::vertical(constraints).split(content_areas[0])
     } else {
@@ -112,10 +114,10 @@ fn get_preferred_layout(app: &App, area: Rect) -> Vec<Rect> {
     };
 
     vec![
-        outer_areas[0],         // navigation
-        content_areas[1],       // Hints bar
-        main_view_areas[0],     // Main view
-        main_view_areas[1],     // Logs / output content (if open)
+        outer_areas[0],     // navigation
+        content_areas[1],   // Hints bar
+        main_view_areas[0], // Main view
+        main_view_areas[1], // Logs / output content (if open)
     ]
 }
 

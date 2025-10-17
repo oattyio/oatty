@@ -21,7 +21,7 @@ use crate::ui::theme::Theme;
 use super::suggestion_engine::{parse_user_flags_args, required_flags_remaining};
 use crate::ui::components::common::TextInputState;
 use crate::ui::theme::theme_helpers::create_spans_with_match;
-use heroku_engine::ValueProvider;
+use heroku_engine::provider::{PendingProviderFetch, ValueProvider};
 use heroku_registry::{CommandRegistry, find_by_group_and_cmd};
 use heroku_types::{CommandSpec, Effect, ExecOutcome, ItemKind, Modal, SuggestionItem};
 use heroku_util::{lex_shell_like, lex_shell_like_ranged};
@@ -86,7 +86,7 @@ pub struct PaletteState {
     /// Draft input captured when entering history browse mode, restored when exiting
     draft_input: Option<String>,
     /// The hash of the command being waited on by the palette
-    cmd_exec_hash: Option<u64>
+    cmd_exec_hash: Option<u64>,
 }
 
 impl PaletteState {
@@ -107,7 +107,7 @@ impl PaletteState {
             history: Vec::new(),
             history_index: None,
             draft_input: None,
-            cmd_exec_hash: None
+            cmd_exec_hash: None,
         }
     }
 }
@@ -146,7 +146,9 @@ impl PaletteState {
         self.suggestion_index
     }
 
-    pub fn cmd_exec_hash(&self) -> Option<u64> { self.cmd_exec_hash }
+    pub fn cmd_exec_hash(&self) -> Option<u64> {
+        self.cmd_exec_hash
+    }
 
     /// Derive the command spec from the current input tokens ("group sub").
     fn selected_command_from_input(&self, commands: &[CommandSpec]) -> Option<CommandSpec> {
@@ -287,7 +289,9 @@ impl PaletteState {
         self.input = input;
     }
 
-    pub(crate) fn set_cmd_exec_hash(&mut self, hash: u64) {self.cmd_exec_hash = Some(hash)}
+    pub(crate) fn set_cmd_exec_hash(&mut self, hash: u64) {
+        self.cmd_exec_hash = Some(hash)
+    }
 
     /// Set the cursor position
     pub(crate) fn set_cursor(&mut self, cursor: usize) {
@@ -733,17 +737,19 @@ impl PaletteState {
     /// st.set_input("apps info --app ".into());
     /// st.apply_build_suggestions(&Registry::from_embedded_schema().unwrap(), &[]);
     /// ```
-    pub fn apply_build_suggestions(&mut self, providers: &[Arc<dyn ValueProvider>], theme: &dyn Theme) {
+    pub fn apply_build_suggestions(&mut self, providers: &[Arc<dyn ValueProvider>], theme: &dyn Theme) -> Vec<PendingProviderFetch> {
+        let mut pending_fetches = Vec::new();
         let mut items = {
             let Some(lock) = self.registry.lock().ok() else {
-                return;
+                return pending_fetches;
             };
             let commands = &lock.commands;
 
             let result = SuggestionEngine::build(commands, providers, &self.input);
 
             let mut items = result.items;
-            self.provider_loading = result.provider_loading;
+            pending_fetches = result.pending_fetches;
+            self.provider_loading = result.provider_loading || !pending_fetches.is_empty();
 
             // When provider-backed suggestions are still loading and we have nothing to show yet,
             // present a lightweight placeholder so the popup can open immediately.
@@ -795,7 +801,7 @@ impl PaletteState {
                     .ok()
                     .and_then(|lock| find_by_group_and_cmd(&lock.commands, group.as_str(), name.as_str()).ok())
                 else {
-                    return;
+                    return pending_fetches;
                 };
 
                 let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
@@ -807,6 +813,7 @@ impl PaletteState {
                 }
             }
         }
+        pending_fetches
     }
 
     /// Suggest an end-of-line hint for starting flags when any remain.
@@ -834,7 +841,7 @@ impl PaletteState {
     /// # Arguments
     ///
     /// * `execution_outcome` - The result of the command execution
-    pub (crate) fn process_general_execution_result(&mut self, execution_outcome: &Box<ExecOutcome>) -> Vec<Effect> {
+    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &Box<ExecOutcome>) -> Vec<Effect> {
         let mut effects = Vec::new();
         let (value, request_id) = match execution_outcome.as_ref() {
             ExecOutcome::Http(_, _, value, _, request_id) => (value.clone(), request_id.clone()),

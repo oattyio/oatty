@@ -16,8 +16,8 @@ use heroku_types::Effect;
 use heroku_util::redact_sensitive;
 use ratatui::{
     Frame,
-    layout::{Rect},
-    text::{Span},
+    layout::Rect,
+    text::Span,
     widgets::{Block, Borders, Paragraph, Wrap},
 };
 use serde_json::Value;
@@ -197,6 +197,7 @@ impl Component for LogDetailsComponent {
             Span::styled(" Close  ", theme.text_muted_style()),
             Span::styled("C", theme.accent_emphasis_style()),
             Span::styled(" Copy  ", theme.text_muted_style()),
-        ].to_vec()
+        ]
+        .to_vec()
     }
 }

@@ -11,7 +11,8 @@ use ratatui::{
 
 use crate::app::App;
 use crate::ui::components::component::Component;
-use crate::ui::components::workflows::view_utils::{format_preview};
+use crate::ui::components::workflows::state::validate_candidate_value;
+use crate::ui::components::workflows::view_utils::format_preview;
 use crate::ui::theme::{roles::Theme, theme_helpers as th};
 
 #[derive(Debug, Default)]
@@ -44,6 +45,7 @@ impl Component for WorkflowInputsComponent {
                     // Route: provider present → selector (collector modal); else → manual entry
                     if def.provider.is_some() {
                         app.workflows.open_selector_for_active_input();
+                        effects.extend(app.prepare_selector_fetch());
                     } else {
                         app.workflows.open_manual_for_active_input();
                     }
@@ -97,7 +99,8 @@ impl Component for WorkflowInputsComponent {
             Span::styled(" Navigate", theme.text_muted_style()),
             Span::styled(" Enter", theme.accent_emphasis_style()),
             Span::styled(" Pick input", theme.text_muted_style()),
-        ].to_vec()
+        ]
+        .to_vec()
     }
 }
 
@@ -169,9 +172,9 @@ fn render_inputs_list(frame: &mut Frame, area: Rect, app: &App, rows: &[Workflow
     let mut items: Vec<ListItem> = Vec::with_capacity(rows.len());
     for row in rows.iter() {
         let status_span = match row.status {
-            InputStatus::Resolved => Span::styled(format!("{:<12}", "✓ Looks good!"), theme.status_success()),
-            InputStatus::Pending => Span::styled(format!("{:<12}", "⚠ No value"), theme.status_warning()),
-            InputStatus::Error => Span::styled(format!("{:<12}", "X error"), theme.status_error()),
+            InputStatus::Resolved => Span::styled(format!("{:<15}", "✓ Looks good!"), theme.status_success()),
+            InputStatus::Pending => Span::styled(format!("{:<15}", "⚠ No value"), theme.status_warning()),
+            InputStatus::Error => Span::styled(format!("{:<15}", "X error"), theme.status_error()),
         };
 
         let mut segments = vec![Span::raw(format!("{:<20}", row.name)), status_span];
@@ -241,7 +244,7 @@ fn render_input_details(frame: &mut Frame, area: Rect, app: &App, rows: &[Workfl
             Span::styled(format!("{:<14}", row.name), theme.text_primary_style()),
             Span::styled(" → ", theme.text_secondary_style()),
             if row.current_value.is_some() {
-                Span::styled(value_display, theme.text_primary_style())
+                Span::styled(value_display, theme.status_success())
             } else {
                 Span::styled(value_display, theme.text_muted_style())
             },
@@ -395,21 +398,62 @@ fn build_input_row(run_state: &WorkflowRunState, name: &str, definition: &Workfl
                     status = InputStatus::Pending;
                     status_message = Some(skip.reason.message.clone());
                 }
-                ProviderBindingOutcome::Resolved(_) => {
-                    if !matches!(status, InputStatus::Error) {
-                        status = InputStatus::Resolved;
-                    }
-                }
+                ProviderBindingOutcome::Resolved(_) => {}
             }
         }
-    } else if run_state.run_context.inputs.get(name).is_some() {
-        status = InputStatus::Resolved;
-    } else if !required {
-        status = InputStatus::Pending;
-        status_message = Some("[optional]".to_string());
     }
 
-    let current_value = run_state.run_context.inputs.get(name).map(format_preview);
+    let raw_value = run_state.run_context.inputs.get(name);
+    let has_value = raw_value.map_or(false, has_meaningful_input_value);
+
+    if matches!(status, InputStatus::Error) {
+        // Preserve error state and explanatory message coming from provider resolution.
+    } else if has_value {
+        if let Some(value) = raw_value {
+            if let Some(validation) = &definition.validate {
+                match value {
+                    serde_json::Value::String(text) => match validate_candidate_value(text, validation) {
+                        Ok(()) => {
+                            status = InputStatus::Resolved;
+                            status_message = None;
+                        }
+                        Err(message) => {
+                            status = InputStatus::Error;
+                            status_message = Some(message);
+                        }
+                    },
+                    other => {
+                        if !validation.allowed_values.is_empty() {
+                            let matches_allowed = validation.allowed_values.iter().any(|allowed| allowed == other);
+                            if matches_allowed {
+                                status = InputStatus::Resolved;
+                                status_message = None;
+                            } else {
+                                status = InputStatus::Error;
+                                status_message = Some("value is not in the allowed set".to_string());
+                            }
+                        } else if validation.pattern.is_some() || validation.min_length.is_some() || validation.max_length.is_some() {
+                            status = InputStatus::Error;
+                            status_message = Some("value must be text to satisfy validation rules".to_string());
+                        } else {
+                            status = InputStatus::Resolved;
+                            status_message = None;
+                        }
+                    }
+                }
+            } else {
+                status = InputStatus::Resolved;
+                status_message = None;
+            }
+        }
+    } else {
+        status = InputStatus::Pending;
+        if !required && status_message.is_none() {
+            status_message = Some("[optional]".to_string());
+        }
+    }
+
+    let current_value = raw_value.map(format_preview);
     let description = definition.description.clone();
 
     WorkflowInputRow {
@@ -439,4 +483,15 @@ enum InputStatus {
     Resolved,
     Pending,
     Error,
+}
+
+/// Returns `true` when the input value contains data that should mark the input as resolved.
+fn has_meaningful_input_value(value: &serde_json::Value) -> bool {
+    match value {
+        serde_json::Value::Null => false,
+        serde_json::Value::String(text) => !text.trim().is_empty(),
+        serde_json::Value::Array(elements) => !elements.is_empty(),
+        serde_json::Value::Object(properties) => !properties.is_empty(),
+        _ => true,
+    }
 }

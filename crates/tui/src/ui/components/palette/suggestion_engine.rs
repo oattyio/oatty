@@ -2,7 +2,7 @@ use heroku_types::{CommandExecution, CommandSpec, ItemKind, SuggestionItem};
 use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
 use std::sync::Arc;
 
-use heroku_engine::ValueProvider;
+use heroku_engine::provider::{PendingProviderFetch, ProviderSuggestionSet, ValueProvider};
 
 // ===== Types =====
 
@@ -16,6 +16,31 @@ pub(crate) struct SuggestionResult {
     pub items: Vec<SuggestionItem>,
     /// Whether value providers are currently loading data for suggestions
     pub provider_loading: bool,
+    /// Pending provider fetches that should be dispatched by the caller.
+    pub pending_fetches: Vec<PendingProviderFetch>,
+}
+
+#[derive(Default)]
+struct ProviderSuggestionAggregate {
+    items: Vec<SuggestionItem>,
+    pending_fetches: Vec<PendingProviderFetch>,
+    provider_loading: bool,
+}
+
+impl ProviderSuggestionAggregate {
+    fn extend(&mut self, mut result: ProviderSuggestionSet) {
+        if let Some(fetch) = result.pending_fetch.take() {
+            self.provider_loading = true;
+            self.pending_fetches.push(fetch);
+        }
+        if !result.items.is_empty() {
+            self.items.extend(result.items);
+        }
+    }
+
+    fn into_parts(self) -> (Vec<SuggestionItem>, Vec<PendingProviderFetch>, bool) {
+        (self.items, self.pending_fetches, self.provider_loading)
+    }
 }
 
 struct PositionalSuggestionContext<'a> {
@@ -29,7 +54,7 @@ struct PositionalSuggestionContext<'a> {
     user_args_len: usize,
 }
 
-fn build_positional_suggestions(context: PositionalSuggestionContext<'_>) -> (Vec<SuggestionItem>, bool) {
+fn build_positional_suggestions(context: PositionalSuggestionContext<'_>) -> (Vec<SuggestionItem>, Vec<PendingProviderFetch>, bool) {
     let PositionalSuggestionContext {
         commands,
         spec,
@@ -59,7 +84,7 @@ fn build_positional_suggestions(context: PositionalSuggestionContext<'_>) -> (Ve
         return SuggestionEngine::build_for_index(commands, spec, user_args_len, "", providers, remaining_parts);
     }
 
-    (Vec::new(), false)
+    (Vec::new(), Vec::new(), false)
 }
 
 /// Engine responsible for building command suggestions based on user input and available commands.
@@ -77,6 +102,7 @@ impl SuggestionEngine {
             return Some(SuggestionResult {
                 items,
                 provider_loading: false,
+                pending_fetches: Vec::new(),
             });
         }
         None
@@ -100,19 +126,13 @@ impl SuggestionEngine {
         let pending_flag = find_pending_flag(spec, remaining_parts, input);
         if let Some(flag_name) = pending_flag {
             let value_partial = flag_value_partial(remaining_parts);
-            let items = suggest_values_for_flag(commands, spec, &flag_name, &value_partial, providers, remaining_parts);
-            // Signal loading when a provider is declared for this flag but no non-enum values yet
-            let has_binding = spec
-                .flags
-                .iter()
-                .find(|f| f.name == flag_name)
-                .and_then(|f| f.provider.as_ref())
-                .is_some();
-            let provider_found = items
-                .iter()
-                .any(|it| matches!(it.kind, ItemKind::Value) && it.meta.as_deref() != Some("enum"));
-            let provider_loading = has_binding && !provider_found;
-            return Some(SuggestionResult { items, provider_loading });
+            let (items, pending_fetches, provider_loading) =
+                suggest_values_for_flag(commands, spec, &flag_name, &value_partial, providers, remaining_parts);
+            return Some(SuggestionResult {
+                items,
+                provider_loading,
+                pending_fetches,
+            });
         }
         None
     }
@@ -123,23 +143,8 @@ impl SuggestionEngine {
         current: &str,
         providers: &[Arc<dyn ValueProvider>],
         remaining_parts: &[String],
-    ) -> (Vec<SuggestionItem>, bool) {
-        let mut values = suggest_positionals(commands, spec, index, current, providers, remaining_parts);
-        let mut loading = false;
-        if let Some(positional_arg) = spec.positional_args.get(index) {
-            // Keep provider suggestions only different from the current echo
-            if !current.is_empty() {
-                values.retain(|item| item.insert_text != current);
-            }
-            let has_binding = positional_arg.provider.is_some();
-            let provider_found = values
-                .iter()
-                .any(|item| matches!(item.kind, ItemKind::Value) && item.meta.as_deref() != Some("enum"));
-            if has_binding && !provider_found {
-                loading = true;
-            }
-        }
-        (values, loading)
+    ) -> (Vec<SuggestionItem>, Vec<PendingProviderFetch>, bool) {
+        suggest_positionals(commands, spec, index, current, providers, remaining_parts)
     }
     // Breakout: extend with required/optional flags depending on context
     fn extend_flag_suggestions(
@@ -192,6 +197,7 @@ impl SuggestionEngine {
             return SuggestionResult {
                 items: vec![],
                 provider_loading: false,
+                pending_fetches: Vec::new(),
             };
         };
 
@@ -224,12 +230,20 @@ impl SuggestionEngine {
             providers,
             user_args_len: user_args.len(),
         };
-        let (mut items, provider_loading) = build_positional_suggestions(context);
+        let (mut items, pending_fetches, mut provider_loading) = build_positional_suggestions(context);
 
         // Suggest required flags if needed (or if user is typing a flag)
         Self::extend_flag_suggestions(spec, &user_flags, current_input, current_is_flag, &mut items);
 
-        SuggestionResult { items, provider_loading }
+        if !pending_fetches.is_empty() {
+            provider_loading = true;
+        }
+
+        SuggestionResult {
+            items,
+            provider_loading,
+            pending_fetches,
+        }
     }
 }
 
@@ -460,7 +474,7 @@ fn suggest_values_for_flag(
     partial: &str,
     providers: &[Arc<dyn ValueProvider>],
     remaining_parts: &[String],
-) -> Vec<SuggestionItem> {
+) -> (Vec<SuggestionItem>, Vec<PendingProviderFetch>, bool) {
     let mut items: Vec<SuggestionItem> = Vec::new();
 
     // Add enum values from flag definition
@@ -481,12 +495,30 @@ fn suggest_values_for_flag(
     // Add dynamic values from providers
     let command_key = format!("{} {}", spec.group, spec.name);
     let inputs_map = build_inputs_map_for_flag(spec, remaining_parts, flag_name);
+    let mut aggregate = ProviderSuggestionAggregate::default();
     for provider in providers {
-        let mut values = provider.suggest(commands, &command_key, flag_name, partial, &inputs_map);
-        items.append(&mut values);
+        let result = provider.suggest(commands, &command_key, flag_name, partial, &inputs_map);
+        aggregate.extend(result);
+    }
+    let (provider_items, pending_fetches, mut provider_loading) = aggregate.into_parts();
+
+    let has_binding = spec
+        .flags
+        .iter()
+        .find(|flag| flag.name == flag_name)
+        .and_then(|flag| flag.provider.as_ref())
+        .is_some();
+    if !provider_loading && has_binding {
+        let provider_found = provider_items
+            .iter()
+            .any(|item| matches!(item.kind, ItemKind::Value) && item.meta.as_deref() != Some("enum"));
+        if !provider_found {
+            provider_loading = true;
+        }
     }
 
-    items
+    items.extend(provider_items);
+    (items, pending_fetches, provider_loading)
 }
 
 /// Generates suggestions for positional arguments.
@@ -511,18 +543,39 @@ fn suggest_positionals(
     current: &str,
     providers: &[Arc<dyn ValueProvider>],
     remaining_parts: &[String],
-) -> Vec<SuggestionItem> {
+) -> (Vec<SuggestionItem>, Vec<PendingProviderFetch>, bool) {
     let mut items: Vec<SuggestionItem> = Vec::new();
+    let mut pending_fetches: Vec<PendingProviderFetch> = Vec::new();
+    let mut provider_loading = false;
 
     if let Some(positional_arg) = spec.positional_args.get(arg_count) {
         let command_key = format!("{} {}", spec.group, spec.name);
 
         // Query providers for dynamic suggestions
         let inputs_map = build_inputs_map_for_positional(spec, arg_count, remaining_parts);
+        let mut aggregate = ProviderSuggestionAggregate::default();
         for provider in providers {
-            let mut values = provider.suggest(commands, &command_key, &positional_arg.name, current, &inputs_map);
-            items.append(&mut values);
+            let result = provider.suggest(commands, &command_key, &positional_arg.name, current, &inputs_map);
+            aggregate.extend(result);
         }
+        let (mut provider_items, fetches, loading_flag) = aggregate.into_parts();
+        pending_fetches = fetches;
+        provider_loading = loading_flag;
+
+        if !current.is_empty() {
+            provider_items.retain(|item| item.insert_text != current);
+        }
+        let has_binding = positional_arg.provider.is_some();
+        if has_binding && !provider_loading {
+            let provider_found = provider_items
+                .iter()
+                .any(|item| matches!(item.kind, ItemKind::Value) && item.meta.as_deref() != Some("enum"));
+            if !provider_found {
+                provider_loading = true;
+            }
+        }
+
+        items.extend(provider_items);
 
         // Fall back to generic placeholder if no provider suggestions
         if items.is_empty() {
@@ -540,7 +593,7 @@ fn suggest_positionals(
         }
     }
 
-    items
+    (items, pending_fetches, provider_loading)
 }
 
 fn build_inputs_map_for_positional(
@@ -733,20 +786,20 @@ mod tests {
             field: &str,
             _partial: &str,
             _inputs: &std::collections::HashMap<String, String>,
-        ) -> Vec<SuggestionItem> {
-            let mut out = Vec::new();
+        ) -> ProviderSuggestionSet {
+            let mut items = Vec::new();
             if let Some(values) = self.map.get(&(command_key.to_string(), field.to_string())) {
-                for v in values {
-                    out.push(SuggestionItem {
-                        display: v.clone(),
-                        insert_text: v.clone(),
+                for value in values {
+                    items.push(SuggestionItem {
+                        display: value.clone(),
+                        insert_text: value.clone(),
                         kind: ItemKind::Value,
                         meta: Some("test-provider".into()),
                         score: 1,
                     });
                 }
             }
-            out
+            ProviderSuggestionSet::ready(items)
         }
     }
 

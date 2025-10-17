@@ -5,7 +5,7 @@ use crate::ui::theme::theme_helpers::create_spans_with_match;
 use crossterm::event::{KeyCode, KeyEvent};
 use heroku_types::Effect::SwitchTo;
 use heroku_types::workflow::RuntimeWorkflow;
-use heroku_types::{Effect, Msg, Route};
+use heroku_types::{Effect, Route};
 use ratatui::widgets::ListItem;
 use ratatui::{
     Frame,

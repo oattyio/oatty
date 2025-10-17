@@ -14,8 +14,8 @@ use heroku_types::Effect;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    text::{Span},
-    widgets::{Clear},
+    text::Span,
+    widgets::Clear,
 };
 
 /// Top-level Plugins view component that orchestrates all plugin-related UI elements.

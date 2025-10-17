@@ -19,11 +19,6 @@
 //! - `run_app(registry)` is called from `lib::run` and performs setup,
 //!   event processing, and teardown.
 
-use std::{
-    sync::{Arc, Mutex},
-    time::Duration,
-};
-use std::sync::atomic::Ordering;
 use anyhow::Result;
 use crossterm::event::MouseEventKind;
 use crossterm::{
@@ -35,6 +30,11 @@ use futures_util::{StreamExt, stream::FuturesUnordered};
 use heroku_mcp::PluginEngine;
 use heroku_types::{Effect, ExecOutcome, Msg};
 use ratatui::{Terminal, prelude::*};
+use std::sync::atomic::Ordering;
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 use tokio::task::JoinHandle;
 use tokio::{
     signal,
@@ -114,17 +114,11 @@ fn render(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, applicatio
 /// Returns `Exit` for Ctrl+C, otherwise `Continue`.
 fn handle_input_event(app: &mut App<'_>, input_event: Event) -> Vec<Effect> {
     match input_event {
-        Event::Key(key_event) => {
-            handle_delegate_event(app, Event::Key(key_event))
-        }
-        Event::Mouse(mouse_event) => {
-            handle_delegate_event(app, Event::Mouse(mouse_event))
-        }
-        Event::Resize(width, height) => {
-            handle_message(app, Msg::Resize(width, height))
-        }
+        Event::Key(key_event) => handle_delegate_event(app, Event::Key(key_event)),
+        Event::Mouse(mouse_event) => handle_delegate_event(app, Event::Mouse(mouse_event)),
+        Event::Resize(width, height) => handle_message(app, Msg::Resize(width, height)),
         // Avoid marking dirty for ignored events
-        Event::FocusGained | Event::FocusLost | Event::Paste(_) => {Vec::new()}
+        Event::FocusGained | Event::FocusLost | Event::Paste(_) => Vec::new(),
     }
 }
 /// Delegates an input event to whichever surface currently owns focus and executes resulting effects.
@@ -197,6 +191,8 @@ fn handle_message(app: &mut App<'_>, msg: Msg) -> Vec<Effect> {
     app.nav_bar_view = nav_bar;
     app.logs_view = logs_view;
 
+    effects.extend(app.update(msg));
+
     effects
 }
 
@@ -249,7 +245,11 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plu
     loop {
         // Determine if we need animation ticks and adjust the ticker dynamically.
         let needs_animation = app.executing || app.palette.is_provider_loading();
-        let target_interval = if needs_animation || !effects.is_empty() { fast_interval } else { idle_interval };
+        let target_interval = if needs_animation || !effects.is_empty() {
+            fast_interval
+        } else {
+            idle_interval
+        };
         if target_interval != current_interval {
             current_interval = target_interval;
             ticker = time::interval(current_interval);
@@ -285,12 +285,25 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plu
                     let mut dest = Vec::with_capacity(effects.len());
                     dest.append(&mut effects);
                     process_effects(&mut app, dest, &mut pending_execs, &mut effects).await;
+                     needs_render = true;
                 }
             }
 
             Some(joined) = pending_execs.next(), if !pending_execs.is_empty() => {
                 let outcome = joined.unwrap_or_else(|error| ExecOutcome::Log(format!("Execution task failed: {error}")));
-                effects.extend(handle_message(&mut app, Msg::ExecCompleted(Box::new(outcome))));
+                match outcome {
+                    ExecOutcome::ProviderValues(provider_id, cache_key, _, _) => {
+                        effects.extend(handle_message(&mut app, Msg::ProviderValuesReady { provider_id, cache_key }));
+                    }
+                    other => {
+                        effects.extend(handle_message(&mut app, Msg::ExecCompleted(Box::new(other))));
+                    }
+                }
+                let still_running = app.active_exec_count.load(Ordering::Relaxed) > 0 || !pending_execs.is_empty();
+                app.executing = still_running;
+                if !still_running {
+                    app.throbber_idx = 0;
+                }
                 needs_render = true;
             }
 
@@ -318,23 +331,43 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plu
     Ok(())
 }
 
-async fn process_effects(app: &mut App<'_>, effects: Vec<Effect>, pending_execs: &mut FuturesUnordered<JoinHandle<ExecOutcome>>, effects_out: &mut Vec<Effect>) {
+async fn process_effects(
+    app: &mut App<'_>,
+    effects: Vec<Effect>,
+    pending_execs: &mut FuturesUnordered<JoinHandle<ExecOutcome>>,
+    effects_out: &mut Vec<Effect>,
+) {
     if effects.is_empty() {
         return;
     }
 
     let command_batch = cmd::run_from_effects(app, effects).await;
     if !command_batch.pending.is_empty() {
+        let was_executing = app.executing;
         pending_execs.extend(command_batch.pending);
+        if !was_executing {
+            app.throbber_idx = 0;
+        }
+        app.executing = true;
     }
 
     if command_batch.immediate.is_empty() {
+        if app.active_exec_count.load(Ordering::Relaxed) == 0 && pending_execs.is_empty() {
+            app.executing = false;
+        }
         return;
     }
 
     for outcome in command_batch.immediate {
-        let still_executing = app.active_exec_count.load(Ordering::Relaxed) > 0;
+        let still_executing = app.active_exec_count.load(Ordering::Relaxed) > 0 || !pending_execs.is_empty();
         app.executing = still_executing;
-        effects_out.extend(handle_message(app, Msg::ExecCompleted(Box::new(outcome))));
+        match outcome {
+            ExecOutcome::ProviderValues(provider_id, cache_key, _, _) => {
+                effects_out.extend(handle_message(app, Msg::ProviderValuesReady { provider_id, cache_key }));
+            }
+            other => {
+                effects_out.extend(handle_message(app, Msg::ExecCompleted(Box::new(other))));
+            }
+        }
     }
 }

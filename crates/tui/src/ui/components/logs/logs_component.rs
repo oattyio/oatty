@@ -31,6 +31,7 @@ use super::{
     LogDetailsComponent,
     state::{LogDetailView, LogEntry},
 };
+use crate::app::App;
 use crate::{
     app,
     ui::{
@@ -39,7 +40,6 @@ use crate::{
         utils::build_copy_text,
     },
 };
-use crate::app::App;
 
 /// Component for displaying and interacting with application logs.
 ///
@@ -172,7 +172,8 @@ impl LogsComponent {
                 Some(LogEntry::Api {
                     status,
                     raw,
-                    json: Some(json_value),..
+                    json: Some(json_value),
+                    ..
                 }) if self.json_has_array(json_value) => {
                     app.logs.detail = None;
                     app.logs.cached_detail_index = None;

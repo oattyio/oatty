@@ -18,9 +18,9 @@ use ratatui::{
     widgets::*,
 };
 
-use crate::app::{App, SharedCtx};
+use crate::app::App;
 use crate::ui::{
-    components::{component::Component},
+    components::component::Component,
     theme::{Theme, theme_helpers as th},
 };
 
@@ -237,15 +237,13 @@ impl PaletteComponent {
     ///
     /// * `app` - The application state to update
     fn handle_help_request(&self, app: &mut App) -> Vec<Effect> {
-        // Ensure suggestions are up to date, then fetch an effective command
-        let SharedCtx { providers, .. } = &app.ctx;
-        app.palette.apply_build_suggestions(providers, &*app.ctx.theme);
+        let mut effects = app.rebuild_palette_suggestions();
         let spec = app.palette.selected_command();
         if spec.is_some() {
             app.help.set_spec(spec);
-            return vec![Effect::ShowModal(Modal::Help)];
+            effects.push(Effect::ShowModal(Modal::Help));
         }
-        vec![]
+        effects
     }
 
     /// Handles backspace key press in the command palette.
@@ -318,16 +316,15 @@ impl PaletteComponent {
     /// # Arguments
     ///
     /// * `app` - The application state to update
-    fn handle_tab_press(&self, app: &mut App) {
+    fn handle_tab_press(&self, app: &mut App) -> Vec<Effect> {
         if app.palette.is_input_empty() {
-            return;
+            return Vec::new();
         }
-        let SharedCtx { providers, .. } = &app.ctx;
-
-        app.palette.apply_build_suggestions(providers, &*app.ctx.theme);
+        let effects = app.rebuild_palette_suggestions();
         // Open the popup if we have suggestions or if provider-backed suggestions are loading
         let open = app.palette.suggestions_len() > 0 || app.palette.is_provider_loading();
         app.palette.set_is_suggestions_open(open);
+        effects
     }
 
     /// Handles the Enter keypress.
@@ -402,9 +399,9 @@ impl Component for PaletteComponent {
                     app.throbber_idx = (app.throbber_idx + 1) % 10;
                 }
                 Vec::new()
-            },
+            }
             Msg::ExecCompleted(outcome) => app.palette.process_general_execution_result(outcome),
-            _ => Vec::new()
+            _ => Vec::new(),
         }
     }
     /// Handle key events for the command palette when the builder is not open.
@@ -489,7 +486,7 @@ impl Component for PaletteComponent {
                     app.focus.next();
                 } else {
                     // Otherwise, Tab refreshes/opens suggestions
-                    self.handle_tab_press(app);
+                    effects.extend(self.handle_tab_press(app));
                 }
             }
             KeyCode::Enter => {
@@ -575,15 +572,18 @@ impl Component for PaletteComponent {
             Span::styled(" Help  ", theme.text_muted_style()),
             Span::styled("Esc", theme.accent_emphasis_style()),
             Span::styled(" Cancel", theme.text_muted_style()),
-        ].to_vec()
+        ]
+        .to_vec()
     }
 
-    fn get_preferred_layout(&self, app: &App, area: Rect) -> Vec<Rect> {
+    fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
         // 3 areas in total, stacked on top of one another
         Layout::vertical([
             Constraint::Length(3), // input area
             Constraint::Length(1), // error area
             Constraint::Min(1),    // Suggestion area
-        ]).split(area).to_vec()
+        ])
+        .split(area)
+        .to_vec()
     }
 }

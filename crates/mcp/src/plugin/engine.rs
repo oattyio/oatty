@@ -475,7 +475,7 @@ impl PluginEngine {
         &self,
         spec: &CommandSpec,
         arguments: &serde_json::Map<String, Value>,
-        request_id: u64
+        request_id: u64,
     ) -> Result<ExecOutcome, PluginEngineError> {
         let mcp = spec.mcp().ok_or_else(|| PluginEngineError::ConfigurationError {
             message: format!("command '{}' is not MCP-backed", spec.name),

@@ -21,14 +21,15 @@
 
 use anyhow::Result;
 use anyhow::anyhow;
+use heroku_engine::provider::ProviderFetchPlan;
 use heroku_mcp::config::default_config_path;
 use heroku_mcp::config::save_config_to_path;
 use heroku_mcp::config::validate_config;
 use heroku_mcp::config::validate_server_name;
 use heroku_mcp::config::{McpServer, determine_env_source};
 use heroku_mcp::{McpConfig, PluginEngine};
-use heroku_registry::{CommandRegistry, CommandSpec};
 use heroku_registry::find_by_group_and_cmd;
+use heroku_registry::{CommandRegistry, CommandSpec};
 use heroku_types::{Effect, EnvVar, Modal, Route};
 use heroku_types::{ExecOutcome, command::CommandExecution};
 use heroku_util::build_range_header_from_body;
@@ -40,11 +41,11 @@ use serde_json::Map;
 use serde_json::Number;
 use serde_json::Value;
 use serde_json::from_str;
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::fs::read_to_string;
 use std::str::FromStr;
-use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::vec;
 use tokio::task::JoinHandle;
 
@@ -105,6 +106,12 @@ pub enum Cmd {
     /// }
     /// ```
     ExecuteHttp(CommandSpec, Map<String, Value>, u64),
+    /// Fetch provider-backed suggestion values asynchronously.
+    FetchProviderValues {
+        provider_id: String,
+        cache_key: String,
+        args: Map<String, Value>,
+    },
     /// Invoke an MCP tool via the plugin engine.
     ExecuteMcp(CommandSpec, Map<String, Value>, u64),
     /// Load MCP plugins from config (synchronous file read) and populate UI state.
@@ -137,8 +144,9 @@ pub struct CommandBatch {
 /// can poll them later.
 pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> CommandBatch {
     let mut commands = Vec::new();
+    let mut effect_queue: VecDeque<Effect> = effects.into();
 
-    for effect in effects {
+    while let Some(effect) = effect_queue.pop_front() {
         let effect_commands = match effect {
             Effect::CopyToClipboardRequested(text) => Some(vec![Cmd::ClipboardSet(text)]),
             Effect::CopyLogsRequested(text) => Some(vec![Cmd::ClipboardSet(text)]),
@@ -162,8 +170,21 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
             Effect::ShowModal(modal) => handle_show_modal(app, modal),
             Effect::CloseModal => handle_close_modal(app),
             Effect::SwitchTo(route) => handle_switch_to(app, route),
-            Effect::SendToPalette(spec) => handle_send_to_palette(app, spec),
+            Effect::SendToPalette(spec) => {
+                let result = handle_send_to_palette(app, spec);
+                effect_queue.extend(app.rebuild_palette_suggestions());
+                result
+            }
             Effect::Run(cmd, hash) => run_command(app, cmd, hash),
+            Effect::ProviderFetchRequested {
+                provider_id,
+                cache_key,
+                args,
+            } => Some(vec![Cmd::FetchProviderValues {
+                provider_id,
+                cache_key,
+                args,
+            }]),
         };
         if let Some(cmds) = effect_commands {
             commands.extend(cmds);
@@ -318,17 +339,16 @@ fn handle_close_modal(app: &mut App) -> Option<Vec<Cmd>> {
 /// A vector containing no commands (view changes are direct UI state updates)
 fn handle_switch_to(app: &mut App, route: Route) -> Option<Vec<Cmd>> {
     app.set_current_route(route);
-    Some(vec![])
+    None
 }
 
-/// When pressing Enter in the browser, populate the palette with the
+/// When pressing the Enter key in the browser, populate the palette with the
 /// constructed command and close the command browser.
 fn handle_send_to_palette(app: &mut App, command_spec: Box<CommandSpec>) -> Option<Vec<Cmd>> {
     let CommandSpec { group, name, .. } = *command_spec;
 
     app.palette.set_input(format!("{} {}", group, name));
     app.palette.set_cursor(app.palette.input().len());
-    app.palette.apply_build_suggestions(&app.ctx.providers, &*app.ctx.theme);
     Some(vec![])
 }
 
@@ -348,6 +368,14 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
             Cmd::ClipboardSet(text) => execute_clipboard_set(app, text),
             Cmd::ExecuteHttp(spec, body, request_id) => {
                 batch.pending.push(spawn_execute_http(app, spec, body, request_id));
+                continue;
+            }
+            Cmd::FetchProviderValues {
+                provider_id,
+                cache_key,
+                args,
+            } => {
+                batch.pending.push(spawn_fetch_provider_values(app, provider_id, cache_key, args));
                 continue;
             }
             Cmd::ExecuteMcp(spec, body, request_id) => {
@@ -433,9 +461,6 @@ enum PluginAction {
 
 /// Execute a plugin lifecycle action using the MCP supervisor.
 fn spawn_execute_plugin_action(app: &mut App<'_>, action: PluginAction, name: String) -> JoinHandle<ExecOutcome> {
-    app.executing = true;
-    app.throbber_idx = 0;
-
     let plugin_engine = app.ctx.plugin_engine.clone();
     tokio::spawn(async move {
         let client_mgr = plugin_engine.client_manager();
@@ -647,19 +672,25 @@ fn collect_key_value_rows(rows: &[EnvRow]) -> Result<Option<Vec<EnvVar>>, Vec<St
 /// Spawn an HTTP execution on the Tokio scheduler while updating local state
 /// to show the spinner.
 fn spawn_execute_http(app: &mut App<'_>, spec: CommandSpec, body: Map<String, Value>, request_id: u64) -> JoinHandle<ExecOutcome> {
-    app.executing = true;
-    app.throbber_idx = 0;
-
     let active = app.active_exec_count.clone();
     active.fetch_add(1, Ordering::Relaxed);
 
     tokio::spawn(async move { execute_http_task(active, spec, body, request_id).await })
 }
 
-fn spawn_execute_mcp(app: &mut App<'_>, spec: CommandSpec, arguments: Map<String, Value>, request_id: u64) -> JoinHandle<ExecOutcome> {
-    app.executing = true;
-    app.throbber_idx = 0;
+fn spawn_fetch_provider_values(app: &App, provider_id: String, cache_key: String, args: Map<String, Value>) -> JoinHandle<ExecOutcome> {
+    let registry = Arc::clone(&app.ctx.provider_registry);
 
+    tokio::task::spawn_blocking(move || {
+        let plan = ProviderFetchPlan::new(provider_id.clone(), cache_key.clone(), args);
+        match registry.complete_fetch(&plan) {
+            Ok(values) => ExecOutcome::ProviderValues(provider_id, cache_key, values, None),
+            Err(error) => ExecOutcome::Log(format!("Provider fetch failed: {error}")),
+        }
+    })
+}
+
+fn spawn_execute_mcp(app: &mut App<'_>, spec: CommandSpec, arguments: Map<String, Value>, request_id: u64) -> JoinHandle<ExecOutcome> {
     let active = app.active_exec_count.clone();
     active.fetch_add(1, Ordering::Relaxed);
     let engine = app.ctx.plugin_engine.clone();
@@ -669,7 +700,12 @@ fn spawn_execute_mcp(app: &mut App<'_>, spec: CommandSpec, arguments: Map<String
 
 /// Background task body for executing an HTTP request and translating it into
 /// an [`ExecOutcome`].
-async fn execute_http_task(active_exec_count: Arc<AtomicUsize>, spec: CommandSpec, body: Map<String, Value>, request_id: u64) -> ExecOutcome {
+async fn execute_http_task(
+    active_exec_count: Arc<AtomicUsize>,
+    spec: CommandSpec,
+    body: Map<String, Value>,
+    request_id: u64,
+) -> ExecOutcome {
     let result = exec_remote(&spec, body, request_id).await;
     let outcome = result.unwrap_or_else(|err| ExecOutcome::Log(format!("Error: {}", err)));
 
@@ -683,7 +719,7 @@ async fn execute_mcp_task(
     engine: Arc<PluginEngine>,
     spec: CommandSpec,
     arguments: Map<String, Value>,
-    request_id: u64
+    request_id: u64,
 ) -> ExecOutcome {
     let result = engine.execute_tool(&spec, &arguments, request_id).await;
     let outcome = result.unwrap_or_else(|err| ExecOutcome::Log(format!("Error: {}", err)));
@@ -910,7 +946,11 @@ fn run_command(app: &mut App, hydrated_command: String, request_id: u64) -> Opti
     }
 }
 
-fn validate_command(app: &mut App, hydrated_command: &String, command_registry: Arc<Mutex<CommandRegistry>>) -> Result<(CommandSpec, Map<String, Value>, Vec<String>)> {
+fn validate_command(
+    app: &mut App,
+    hydrated_command: &String,
+    command_registry: Arc<Mutex<CommandRegistry>>,
+) -> Result<(CommandSpec, Map<String, Value>, Vec<String>)> {
     // Step 1: Parse and validate the palette input
     let input = hydrated_command.trim().to_string();
     if input.is_empty() {
@@ -927,9 +967,7 @@ fn validate_command(app: &mut App, hydrated_command: &String, command_registry: 
 
     // Step 2: Find the command specification in the registry
     let command_spec = {
-        let lock = command_registry
-            .lock()
-            .map_err(|_| anyhow!("Could not obtain lock to registry"))?;
+        let lock = command_registry.lock().map_err(|_| anyhow!("Could not obtain lock to registry"))?;
         let commands = &lock.commands;
         find_by_group_and_cmd(commands, tokens[0].as_str(), tokens[1].as_str())?
     };
@@ -963,7 +1001,12 @@ fn persist_execution_context(app: &mut App, command_spec: &CommandSpec, request_
     app.palette.push_history_if_needed(input);
 }
 
-fn execute_command(command_spec: CommandSpec, request_body: Map<String, Value>, user_args: Vec<String>, request_id: u64) -> Option<Vec<Cmd>> {
+fn execute_command(
+    command_spec: CommandSpec,
+    request_body: Map<String, Value>,
+    user_args: Vec<String>,
+    request_id: u64,
+) -> Option<Vec<Cmd>> {
     match command_spec.execution() {
         CommandExecution::Http(http) => {
             let mut command_spec_to_run = command_spec.clone();

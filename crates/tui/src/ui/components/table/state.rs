@@ -1,12 +1,5 @@
-use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
-use ratatui::layout::Rect;
-use ratatui::{
-    layout::Constraint,
-    style::Style,
-    widgets::{Cell, Row},
-};
-use serde_json::Value;
-use heroku_types::{ExecOutcome};
+use crate::ui::theme::Theme;
+use crate::ui::utils::normalize_result_payload;
 use crate::ui::{
     components::pagination::state::PaginationState,
     theme::{
@@ -18,8 +11,15 @@ use crate::ui::{
         status_color_for_value,
     },
 };
-use crate::ui::theme::Theme;
-use crate::ui::utils::normalize_result_payload;
+use heroku_types::ExecOutcome;
+use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
+use ratatui::layout::Rect;
+use ratatui::{
+    layout::Constraint,
+    style::Style,
+    widgets::{Cell, Row},
+};
+use serde_json::Value;
 
 #[derive(Debug, Default)]
 pub struct TableState<'a> {
@@ -256,8 +256,8 @@ impl<'a> TableState<'_> {
     /// # Arguments
     ///
     /// * `execution_outcome` - The result of the command execution
-    pub (crate) fn process_general_execution_result(&mut self, execution_outcome: &Box<ExecOutcome>, theme: &dyn Theme) {
-        let ExecOutcome::Http(_, _, value, maybe_pagination, request_id) = execution_outcome.as_ref() else {
+    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &Box<ExecOutcome>, theme: &dyn Theme) {
+        let ExecOutcome::Http(_, _, value, maybe_pagination, _request_id) = execution_outcome.as_ref() else {
             return;
         };
         if let Some(pagination) = maybe_pagination {

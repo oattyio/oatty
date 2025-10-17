@@ -422,7 +422,7 @@ pub mod command {
                 _ => None,
             }
         }
-        
+
         /// Returns the canonical name for this command.
         pub fn canonical_id(&self) -> String {
             format!("{} {}", self.group, self.name)
@@ -581,6 +581,9 @@ pub mod execution {
         /// Result from executing an MCP tool containing a structured payload.
         /// (log_entry, json_result, request_id)
         Mcp(String, Value, u64),
+        /// Result from fetching provider-backed values for suggestions or selectors.
+        /// (provider_id, cache_key, values, optional request identifier)
+        ProviderValues(String, String, Vec<Value>, Option<u64>),
         /// Result from performing an action on a plugin
         /// Contains a log message and the new plugin detail object
         PluginDetail(String, Option<PluginDetail>),
@@ -602,7 +605,7 @@ pub mod execution {
         #[default]
         None,
     }
-    
+
     /// Pagination metadata parsed from API response headers.
     #[derive(Debug, Clone, Serialize, Deserialize, Default)]
     pub struct Pagination {
@@ -627,6 +630,7 @@ pub mod messaging {
     //! Application-level messages and side effects.
 
     use crate::{command::CommandSpec, execution::ExecOutcome};
+    use serde_json::{Map as JsonMap, Value as JsonValue};
     /// Navigation targets within the TUI.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Route {
@@ -705,6 +709,15 @@ pub mod messaging {
         CloseModal,
         /// Send the command spec to the palette.
         SendToPalette(Box<CommandSpec>),
+        /// Request fetching values for a provider-backed suggestion or selector.
+        ProviderFetchRequested {
+            /// Canonical provider identifier (`group name`).
+            provider_id: String,
+            /// Cache key associated with the provider arguments.
+            cache_key: String,
+            /// Arguments that should be supplied to the provider request.
+            args: JsonMap<String, JsonValue>,
+        },
     }
 
     /// Messages that can be sent to update the application state.
@@ -737,6 +750,13 @@ pub mod messaging {
         LogsCopy,
         /// Toggle pretty/raw for a single API response.
         LogsTogglePretty,
+        /// Provider-backed values finished loading and are ready for consumption.
+        ProviderValuesReady {
+            /// Canonical provider identifier (`group name`).
+            provider_id: String,
+            /// Cache key whose contents are now available from the registry cache.
+            cache_key: String,
+        },
     }
 }
 

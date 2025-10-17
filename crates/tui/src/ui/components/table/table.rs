@@ -4,12 +4,12 @@
 //! displays JSON results from command execution in a tabular format with
 //! scrolling and navigation capabilities.
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
-use heroku_types::{Effect, ExecOutcome, Msg};
+use heroku_types::{Effect, Msg};
 use rat_focus::HasFocus;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    text::{Span},
+    text::Span,
 };
 
 use crate::app::App;
@@ -130,7 +130,7 @@ impl Component for TableComponent<'_> {
         effects.extend(self.pagination.handle_mouse_events(app, mouse));
         effects
     }
-    
+
     // fn handle_msg(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
     //     match msg {
     //         Msg::ExecCompleted()

@@ -1,7 +1,8 @@
 use crate::app::App;
 use crate::ui::components::common::ResultsTableView;
-use crate::ui::components::workflows::state::{SelectorStatus, WorkflowSelectorViewState};
+use crate::ui::components::workflows::state::{SelectorStatus, WorkflowSelectorViewState, validate_candidate_value};
 use crate::ui::theme::Theme;
+use crate::ui::{components::component::Component, theme::theme_helpers as th};
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
 use heroku_engine::ProviderValueResolver;
 use heroku_engine::resolve::select_path;
@@ -11,12 +12,6 @@ use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 use serde_json::{Value as JsonValue, Value};
-use crate::{
-    ui::{
-        components::{component::Component},
-        theme::theme_helpers as th,
-    },
-};
 #[derive(Debug, Eq, PartialEq, Clone, Default)]
 pub struct WorkflowCollectorComponent {}
 
@@ -78,51 +73,53 @@ impl WorkflowCollectorComponent {
     //------------------------------------------
     // Manual entry widget handlers
     fn handle_manual_entry_key_events(&self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
-        let mut effects = Vec::new();
-        // pull this branch out of the matcher to avoid a borrow checker error
-        if key.code == KeyCode::Enter {
-            effects.extend(self.validate_and_insert_manual_value(app));
-        }
-        let view_state = app.workflows.manual_entry_state_mut().expect("manual entry state");
         match key.code {
+            KeyCode::Enter => return self.validate_and_insert_manual_value(app),
             KeyCode::Esc => {
                 app.workflows.manual_entry = None;
-                effects.push(Effect::CloseModal);
+                return vec![Effect::CloseModal];
             }
-            KeyCode::Left => view_state.text.move_left(),
-            KeyCode::Right => view_state.text.move_right(),
-            KeyCode::Backspace => view_state.text.backspace(),
-            KeyCode::Char(c) => view_state.text.insert_char(c),
             _ => {}
         }
-        effects
+
+        let Some(view_state) = app.workflows.manual_entry_state_mut() else {
+            return Vec::new();
+        };
+
+        match key.code {
+            KeyCode::Left => view_state.text.move_left(),
+            KeyCode::Right => view_state.text.move_right(),
+            KeyCode::Backspace => {
+                view_state.text.backspace();
+                view_state.error = None;
+            }
+            KeyCode::Char(character) => {
+                view_state.text.insert_char(character);
+                view_state.error = None;
+            }
+            _ => {}
+        }
+
+        Vec::new()
     }
 
     fn validate_and_insert_manual_value(&self, app: &mut App) -> Vec<Effect> {
         let view_state = app.workflows.manual_entry_state_mut().expect("manual entry state");
         let mut effects = Vec::new();
-        // Validate against enum (pattern deferred to follow-up if regex available)
         let candidate = view_state.text.input().to_string();
+        view_state.error = None;
+
         if let Some(validate) = &view_state.validation {
-            if !validate.allowed_values.is_empty() {
-                let ok = validate
-                    .allowed_values
-                    .iter()
-                    .any(|v| v.as_str() == Some(candidate.as_str()) || v.to_string() == candidate);
-                if !ok {
-                    view_state.error = Some("value is not in allowed set".into());
-                    return effects;
-                }
+            if let Err(error_message) = validate_candidate_value(candidate.as_str(), validate) {
+                view_state.error = Some(error_message);
+                return effects;
             }
         }
 
         let input_name = app.workflows.active_input_name();
         if let Some(run_state) = app.workflows.active_run_state_mut() {
             if let Some(name) = input_name {
-                run_state
-                    .run_context_mut()
-                    .inputs
-                    .insert(name, Value::String(candidate));
+                run_state.run_context_mut().inputs.insert(name, Value::String(candidate));
                 let _ = run_state.evaluate_input_providers();
             }
         }
@@ -180,9 +177,7 @@ impl WorkflowCollectorComponent {
             KeyCode::Home => sel.table.reduce_home(),
             KeyCode::End => sel.table.reduce_end(),
             KeyCode::Enter => {
-                if matches!(sel.status, SelectorStatus::Error)
-                    && matches!(sel.on_error, Some(WorkflowProviderErrorPolicy::Fail))
-                {
+                if matches!(sel.status, SelectorStatus::Error) && matches!(sel.on_error, Some(WorkflowProviderErrorPolicy::Fail)) {
                     // Fail policy: do not allow apply
                     sel.error_message = Some("provider error: cannot apply (policy: fail)".into());
                     return effects;
@@ -208,40 +203,8 @@ impl WorkflowCollectorComponent {
         effects
     }
 
-
     fn apply_filter(&self, sel: &mut WorkflowSelectorViewState<'_>, theme: &dyn Theme) {
-        let Some(items) = sel.original_items.clone() else {
-            return;
-        };
-        let query = sel.filter.input().trim().to_lowercase();
-        if query.is_empty() {
-            let json = Value::Array(items);
-            sel.table.apply_result_json(Some(json), theme);
-            sel.table.normalize();
-            return;
-        }
-        let filtered: Vec<serde_json::Value> = items
-            .into_iter()
-            .filter(|item| match item {
-                Value::Object(map) => {
-                    if let Some(df) = sel.display_field.as_deref() {
-                        if let Some(v) = map.get(df) {
-                            if let Some(s) = v.as_str() {
-                                return s.to_lowercase().starts_with(&query);
-                            }
-                        }
-                    }
-                    // fallback: any string field contains substring
-                    map.values()
-                        .any(|v| v.as_str().map(|s| s.to_lowercase().contains(&query)).unwrap_or(false))
-                }
-                Value::String(s) => s.to_lowercase().contains(&query),
-                _ => false,
-            })
-            .collect();
-        let json = Value::Array(filtered);
-        sel.table.apply_result_json(Some(json), theme);
-        sel.table.normalize();
+        sel.refresh_table(theme);
     }
 
     fn extract_selected_value(&self, sel: &WorkflowSelectorViewState<'_>) -> Option<JsonValue> {
@@ -291,7 +254,7 @@ impl WorkflowCollectorComponent {
             Constraint::Length(1), // error line
             Constraint::Min(1),    // hints
         ])
-            .split(inner);
+        .split(inner);
 
         // Value line
         let value_text = format!("Value: {}", view_state.text.input());
@@ -311,26 +274,9 @@ impl WorkflowCollectorComponent {
         let y = inner.y;
         frame.set_cursor_position((x, y));
     }
-    
+
     fn render_selector(&self, frame: &mut Frame, rect: Rect, app: &mut App) {
         let sel = app.workflows.selector_state_mut().expect("selector state");
-        // Non-blocking initial load: try cached values or enqueue a background fetch.
-        if matches!(sel.status, SelectorStatus::Loading) {
-            if let Some(items) = app
-                .ctx
-                .provider_registry
-                .cached_values_or_enqueue(&sel.provider_id, sel.resolved_args.clone())
-            {
-                sel.original_items = Some(items.clone());
-                let json = Value::Array(items);
-                sel.table.apply_result_json(Some(json), &*app.ctx.theme);
-                sel.table.normalize();
-                sel.status = SelectorStatus::Loaded;
-                sel.error_message = None;
-                // If filter already has text, apply it
-                self.apply_filter(sel, &*app.ctx.theme);
-            }
-        }
 
         let title = format!("Select one ({})", sel.provider_id);
         let block = th::block(&*app.ctx.theme, Some(title.as_str()), false);
@@ -342,7 +288,7 @@ impl WorkflowCollectorComponent {
             Constraint::Min(6),    // Table
             Constraint::Length(1), // Hints
         ])
-            .split(inner);
+        .split(inner);
 
         // Header line: Filter (placeholder) + Status
         let status_label = match sel.status {
