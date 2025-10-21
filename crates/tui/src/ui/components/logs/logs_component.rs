@@ -13,7 +13,7 @@
 //!
 //! The component follows the TEA (The Elm Architecture) pattern and integrates
 //! with the application's focus management system.
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use heroku_types::{Effect, ExecOutcome, Modal, Msg};
 use heroku_util::redact_json;
 use once_cell::sync::Lazy;
@@ -372,27 +372,6 @@ impl Component for LogsComponent {
         effects
     }
 
-    fn handle_mouse_events(&mut self, app: &mut app::App, mouse: MouseEvent) -> Vec<Effect> {
-        if app.logs.detail.is_none() {
-            return Vec::new();
-        }
-
-        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
-            if let Some(area) = app.logs.detail_rect {
-                let inside_horizontal = mouse.column >= area.x && mouse.column < area.x + area.width;
-                let inside_vertical = mouse.row >= area.y && mouse.row < area.y + area.height;
-                if inside_horizontal && inside_vertical {
-                    return Vec::new();
-                }
-            }
-            app.logs.detail = None;
-            app.logs.detail_rect = None;
-            return vec![Effect::CloseModal];
-        }
-
-        Vec::new()
-    }
-
     /// Renders the logs component to the terminal frame.
     ///
     /// This method handles the complete rendering of the logs interface,
@@ -478,17 +457,15 @@ impl Component for LogsComponent {
         }
 
         let theme = &*app.ctx.theme;
-        let mut spans: Vec<Span> = vec![];
-        spans.extend([
-            Span::styled("↑/↓", theme.accent_emphasis_style()),
-            Span::styled(" Move  ", theme.text_muted_style()),
-            Span::styled("Shift+↑/↓", theme.accent_emphasis_style()),
-            Span::styled(" Range  ", theme.text_muted_style()),
-            Span::styled("Enter", theme.accent_emphasis_style()),
-            Span::styled(" Open  ", theme.text_muted_style()),
-            Span::styled("C", theme.accent_emphasis_style()),
-            Span::styled(" Copy  ", theme.text_muted_style()),
-        ]);
+        let mut spans = th::build_hint_spans(
+            theme,
+            &[
+                ("↑/↓", " Move  "),
+                ("Shift+↑/↓", " Range  "),
+                ("Enter", " Open  "),
+                ("C", " Copy  "),
+            ],
+        );
         if show_pretty_toggle {
             spans.push(Span::styled("V ", theme.accent_emphasis_style()));
             // Show current mode with green highlight

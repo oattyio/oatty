@@ -2,7 +2,7 @@
 //!
 //! This module verifies and assigns ValueProviders to flags and positional
 //! arguments only after the full command list is known. It builds an index of
-//! `<group>:<name>` → CommandSpec presence so provider candidates can be
+//! `<group> <name>` → CommandSpec presence so provider candidates can be
 //! verified with 100% confidence. Heuristics are still used to propose
 //! candidates, but only verified providers are assigned.
 //!
@@ -14,7 +14,7 @@
 //!
 //! # Key Concepts
 //!
-//! - **Command Index**: A mapping of `<group>:<name>` to command presence for verification
+//! - **Command Index**: A mapping of `<group> <name>` to command presence for verification
 //! - **List Groups**: Groups that have a corresponding `list` command for value provision
 //! - **Provider Bindings**: Mappings from consumer inputs to provider parameters
 //! - **Placeholder Resolution**: Matching path placeholders to available consumer inputs
@@ -41,7 +41,7 @@ enum BindingOutcome {
 ///
 /// # Process
 ///
-/// 1. Build a command index mapping `<group>:<name>` to command presence
+/// 1. Build a command index mapping `<group> <name>` to command presence
 /// 2. Identify groups that have corresponding `list` commands
 /// 3. Precompute provider metadata for efficient binding evaluation
 /// 4. Apply verified providers to flags and positional arguments
@@ -74,7 +74,7 @@ struct ProviderMetadata {
     required_flags: HashMap<String, Vec<String>>,
 }
 
-/// Build an index of `<group>:<name>` command identifiers.
+/// Build an index of `<group> <name>` canonical command identifiers.
 ///
 /// Returns a tuple containing:
 /// - A set of all command identifiers for fast lookup
@@ -133,7 +133,7 @@ fn precompute_provider_metadata(commands: &[CommandSpec]) -> ProviderMetadata {
 fn find_groups_with_list_commands(command_index: &HashSet<String>) -> HashSet<String> {
     command_index
         .iter()
-        .filter_map(|command_id| command_id.split_once(':'))
+        .filter_map(|command_id| command_id.split_once(' '))
         .filter(|(_, command_name)| *command_name == "list")
         .map(|(group_name, _)| group_name.to_string())
         .collect()
@@ -276,8 +276,8 @@ fn parse_path_segments(path: &str) -> Vec<PathSegment> {
 /// Find candidate providers for a given group, considering both scoped and unscoped options.
 ///
 /// This function looks for list commands that could provide values for the target placeholder,
-/// considering both simple group-based providers (e.g., "addons:list") and scoped providers
-/// (e.g., "app:addons:list") that require additional parameters.
+/// considering both simple group-based providers (for example, "addons list") and scoped providers
+/// (for example, "app addons:list") that require additional parameters.
 fn find_provider_candidates(
     normalized_group: &str,
     command_spec: &CommandSpec,

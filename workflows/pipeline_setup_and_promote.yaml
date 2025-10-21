@@ -1,4 +1,5 @@
 workflow: pipeline_setup_and_promote
+title: "Pipeline Setup and Promote"
 description: "Create a staging/production pipeline, associate apps, and promote from staging to production."
 inputs:
   pipeline_name:

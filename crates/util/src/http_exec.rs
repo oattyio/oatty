@@ -4,31 +4,114 @@
 //! `CommandSpec`, handling headers, pagination, and response parsing.
 //! It also provides a convenient `fetch_json_array` helper for list endpoints.
 
-use crate::http;
+use crate::{build_path, http, resolve_path, shell_lexing};
 use heroku_api::HerokuClient;
-use heroku_types::CommandSpec;
 use heroku_types::ExecOutcome;
-use reqwest::header::{CONTENT_RANGE, HeaderMap, HeaderName};
+use heroku_types::{CommandSpec, HttpCommandSpec};
+use reqwest::header::{CONTENT_RANGE, HeaderMap};
 use reqwest::{Method, StatusCode};
-use serde_json::{Map as JsonMap, Value};
+use serde_json::{Map as JsonMap, Map, Number, Value};
+use std::collections::HashMap;
+use std::str::FromStr;
 
 /// Perform an asynchronous REST API call against the Heroku platform.
 ///
-/// - Constructs the request from the `CommandSpec` and `path`.
+/// - Constructs the request from the `CommandSpec`.
 /// - Applies Range headers from the body when present.
 /// - Sends the request and parses the response into [`ExecOutcome`].
 /// - Returns a user-friendly `Err(String)` on HTTP/auth/network issues.
-pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>, request_id: u64) -> Result<ExecOutcome, String> {
+pub async fn exec_remote_from_shell_command(
+    spec: &CommandSpec,
+    hydrated_shell_command: String,
+    range_header_override: Option<String>,
+    request_id: u64,
+) -> Result<ExecOutcome, String> {
+    // Parse and validate arguments
+    let tokens = shell_lexing::lex_shell_like(&hydrated_shell_command);
+    let (user_flags, user_args) = spec.parse_arguments(&tokens[2..]).map_err(|e| e.to_string())?;
+    let mut body = build_request_body(spec, user_flags);
+    if let Some(range_header_override) = range_header_override {
+        body.insert("next-range".to_string(), Value::String(range_header_override));
+    }
+    // Prepare client and request
     let http = spec.http().ok_or_else(|| format!("Command '{}' is not HTTP-backed", spec.name))?;
+    let path = resolve_path(&http.path, &user_args);
 
+    match exec_remote_from_spec_inner(http, body, path).await {
+        Ok((status, headers, text, maybe_range_header)) => {
+            let mut pagination = headers
+                .get(CONTENT_RANGE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(http::parse_content_range_value);
+
+            // Handle Next-Range header for 206 responses
+            if status.as_u16() == 206
+                && let Some(pagination_mut) = pagination.as_mut()
+            {
+                pagination_mut.hydrated_shell_command = Some(hydrated_shell_command);
+                if let Some(next_range_header) = headers.get("next-range") {
+                    pagination_mut.next_range = Some(next_range_header.to_str().unwrap().to_string());
+                }
+                if let Some(range_header) = maybe_range_header {
+                    pagination_mut.this_range = Some(range_header);
+                }
+            }
+
+            // Handle common error status codes
+            if !status.is_success() {
+                return Err(format!("HTTP {}: {}", status.as_u16(), text));
+            }
+            let raw_log = format!("{}\n{}", status, text);
+            let log = summarize_execution_outcome(&spec.canonical_id(), raw_log.as_str(), status);
+            let result_json = http::parse_response_json(&text);
+            Ok(ExecOutcome::Http(
+                status.as_u16(),
+                log,
+                result_json.unwrap_or(Value::Null),
+                pagination,
+                request_id,
+            ))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+pub async fn exec_remote_for_provider(spec: &CommandSpec, body: Map<String, Value>, request_id: u64) -> Result<ExecOutcome, String> {
+    let http = spec.http().ok_or_else(|| format!("Command '{}' is not HTTP-backed", spec.name))?;
+    let path = build_path(http.path.as_str(), &body);
+
+    match exec_remote_from_spec_inner(http, body, path).await {
+        Ok((status, _, text, _)) => {
+            let raw_log = format!("{}\n{}", status, text);
+            let log = summarize_execution_outcome(&spec.canonical_id(), raw_log.as_str(), status);
+            let result_json = http::parse_response_json(&text);
+            Ok(ExecOutcome::Http(
+                status.as_u16(),
+                log,
+                result_json.unwrap_or(Value::Null),
+                None,
+                request_id,
+            ))
+        }
+        Err(e) => Err(e),
+    }
+}
+
+async fn exec_remote_from_spec_inner(
+    http: &HttpCommandSpec,
+    body: Map<String, Value>,
+    path: String,
+) -> Result<(StatusCode, HeaderMap, String, Option<String>), String> {
     let client = HerokuClient::new_from_service_id(http.service_id)
         .map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc", e))?;
 
     let method = Method::from_bytes(http.method.as_bytes()).map_err(|e| e.to_string())?;
-    let mut builder = client.request(method.clone(), &http.path);
-
+    let mut builder = client.request(method.clone(), &path);
     // Build and apply Range header
-    builder = apply_range_headers(builder, &body);
+    let maybe_range_header = get_range_header_value(&body);
+    if let Some(range_header) = maybe_range_header.as_ref() {
+        builder = builder.header("Range", range_header);
+    }
 
     // Filter out special range-only fields from JSON body
     let filtered_body = http::strip_range_body_fields(body);
@@ -60,46 +143,66 @@ pub async fn exec_remote(spec: &CommandSpec, body: JsonMap<String, Value>, reque
 
     let status = resp.status();
     let headers = resp.headers().clone();
-    let mut pagination = headers
-        .get(CONTENT_RANGE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(http::parse_content_range_value);
-
-    // Handle Next-Range header for 206 responses
-    if status.as_u16() == 206 {
-        handle_next_range_header(&mut pagination, &headers);
-    }
-
     let text = resp.text().await.unwrap_or_default();
 
-    // Handle common error status codes
-    if !status.is_success() {
-        return Err(format!("HTTP {}: {}", status.as_u16(), text));
-    }
-    let raw_log = format!("{}\n{}", status, text);
-    let log = summarize_execution_outcome(spec, raw_log.as_str(), status);
-    let result_json = http::parse_response_json(&text);
-    Ok(ExecOutcome::Http(
-        status.as_u16(),
-        log,
-        result_json.unwrap_or(Value::Null),
-        pagination,
-        request_id,
-    ))
+    Ok((status, headers, text, maybe_range_header))
 }
 
-fn summarize_execution_outcome(command_spec: &CommandSpec, raw_log: &str, status_code: StatusCode) -> String {
+/// Builds a JSON request body from user-provided flags.
+///
+/// This function converts the parsed flags into a JSON object that can be sent
+/// as the request body for the HTTP command execution.
+///
+/// # Arguments
+///
+/// * `user_flags` - The flags provided by the user
+/// * `command_spec` - The command specification for type information
+///
+/// # Returns
+///
+/// Returns a JSON Map containing the flag values with appropriate types.
+///
+/// # Type Conversion
+///
+/// - Boolean flags are converted to `true` if present
+/// - String flags are converted to their string values
+/// - Flags not in the specification are ignored
+pub fn build_request_body(spec: &CommandSpec, user_flags: HashMap<String, Option<String>>) -> Map<String, Value> {
+    let mut request_body = Map::new();
+
+    for (flag_name, flag_value) in user_flags.into_iter() {
+        if let Some(flag_spec) = spec.flags.iter().find(|f| f.name == flag_name) {
+            if flag_spec.r#type == "boolean" {
+                request_body.insert(flag_name, Value::Bool(true));
+            } else if let Some(value) = flag_value {
+                match flag_spec.r#type.as_str() {
+                    "number" => {
+                        if let Ok(number) = Number::from_str(value.as_str()) {
+                            request_body.insert(flag_name, Value::Number(number));
+                        }
+                    }
+                    _ => {
+                        request_body.insert(flag_name, Value::String(value));
+                    }
+                };
+            }
+        }
+    }
+
+    request_body
+}
+
+fn summarize_execution_outcome(canonical_id: &String, raw_log: &str, status_code: StatusCode) -> String {
     let trimmed_log = raw_log.trim();
-    let canonical_name = command_spec.canonical_id();
 
     if let Some(error_message) = trimmed_log.strip_prefix("Error:") {
         let redacted = crate::redact_sensitive(error_message.trim());
         let truncated = truncate_for_summary(&redacted, 160);
-        return format!("{} • failed: {}", canonical_name, truncated);
+        return format!("{} • failed: {}", canonical_id, truncated);
     }
 
     let success = if status_code.is_success() { "success" } else { "failed" };
-    format!("{} • {}", canonical_name, success)
+    format!("{} • {}", canonical_id, success)
 }
 
 fn truncate_for_summary(text: &str, max_len: usize) -> String {
@@ -204,25 +307,15 @@ pub async fn fetch_json_array(spec: &CommandSpec) -> Result<Vec<Value>, String> 
     }
 }
 
-fn apply_range_headers(builder: reqwest::RequestBuilder, body: &JsonMap<String, Value>) -> reqwest::RequestBuilder {
+fn get_range_header_value(body: &JsonMap<String, Value>) -> Option<String> {
     // Raw Next-Range override takes precedence
-    if let Some(next_raw) = body.get("next-range").and_then(|v| v.as_str()) {
-        return builder.header("Range", next_raw);
+    if let Some(next_raw) = body.get("next-range").and_then(|v| v.as_str()).map(String::from) {
+        return Some(next_raw);
     }
 
     // Compose range header from individual components
     if let Some(range_header) = http::build_range_header_from_body(body) {
-        builder.header("Range", range_header)
-    } else {
-        builder
+        return Some(range_header);
     }
-}
-
-fn handle_next_range_header(pagination: &mut Option<heroku_types::Pagination>, headers: &HeaderMap) {
-    let next_range_header = HeaderName::from_static("next-range");
-    if let Some(p) = pagination.as_mut()
-        && let Some(value) = headers.get(next_range_header)
-    {
-        p.next_range = value.to_str().ok().map(|s| s.to_string());
-    }
+    None
 }

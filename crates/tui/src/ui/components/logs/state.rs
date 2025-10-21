@@ -60,10 +60,11 @@ pub enum LogDetailView {
 
 #[derive(Debug)]
 pub struct LogsState {
-    /// Existing flat string entries used by the current UI list.
-    pub entries: Vec<String>,
+    pub is_visible: bool,
     /// Structured entries for detail view and rich behavior.
     pub rich_entries: Vec<LogEntry>,
+    /// Existing flat string entries used by the current UI list.
+    pub entries: Vec<String>,
     /// Current selection (single or range).
     pub selection: Selection,
     /// Optional detail view mode when open.
@@ -75,39 +76,75 @@ pub struct LogsState {
     pub cached_redacted_json: Option<Value>,
     /// Focus flag for rat-focus integration
     pub container_focus: FocusFlag,
-    /// Last rendered rectangle of the detail modal for hit-testing.
-    pub detail_rect: Option<Rect>,
 }
 
 impl LogsState {
+    /// Appends a plain-text log entry and keeps the rich entry list aligned.
+    ///
+    /// The logs view relies on `entries` and `rich_entries` having identical
+    /// lengths so that selection indices can map between the flat list and the
+    /// richer detail structures. This helper should be used for every textual
+    /// log append to guarantee that invariant.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - The human-readable log message to append.
+    pub fn append_text_entry(&mut self, message: String) {
+        self.append_text_entry_with_level(None, message);
+    }
+
+    /// Appends a plain-text log entry with an optional level descriptor.
+    ///
+    /// # Arguments
+    ///
+    /// * `level` - Optional severity level (for example, `"warn"`).
+    /// * `message` - The human-readable log message to append.
+    pub fn append_text_entry_with_level(&mut self, level: Option<String>, message: String) {
+        self.entries.push(message.clone());
+        self.rich_entries.push(LogEntry::Text { level, msg: message });
+    }
+
+    /// Appends an API log entry preserving both raw and structured payloads.
+    ///
+    /// # Arguments
+    ///
+    /// * `status` - HTTP status code associated with the log entry.
+    /// * `raw` - Raw response text that should appear in the list view.
+    /// * `json` - Parsed JSON payload, if available.
+    pub fn append_api_entry(&mut self, status: u16, raw: String, json: Option<Value>) {
+        self.entries.push(raw.clone());
+        self.rich_entries.push(LogEntry::Api { status, raw, json });
+    }
+
+    /// Appends an MCP log entry with optional structured payload.
+    ///
+    /// # Arguments
+    ///
+    /// * `raw` - Raw MCP output for list display.
+    /// * `json` - Parsed MCP payload, if available.
+    pub fn append_mcp_entry(&mut self, raw: String, json: Option<Value>) {
+        self.entries.push(raw.clone());
+        self.rich_entries.push(LogEntry::Mcp { raw, json });
+    }
+
     pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &Box<ExecOutcome>) {
         match execution_outcome.as_ref() {
             ExecOutcome::Http(status, log, value, ..) => {
-                self.entries.push(log.to_string());
-                self.rich_entries.push(LogEntry::Api {
-                    status: *status,
-                    raw: log.clone(),
-                    json: Some(normalize_result_payload(value.clone())),
-                });
+                self.append_api_entry(*status, log.clone(), Some(normalize_result_payload(value.clone())));
             }
             ExecOutcome::Mcp(log, value, ..) => {
-                self.entries.push(log.to_string());
-                self.rich_entries.push(LogEntry::Mcp {
-                    raw: log.clone(),
-                    json: Some(normalize_result_payload(value.clone())),
-                });
+                self.append_mcp_entry(log.clone(), Some(normalize_result_payload(value.clone())));
+            }
+            ExecOutcome::PluginDetailLoad(name, ..) => {
+                let message = format!("Plugins: loading details for '{}'", name);
+                self.append_text_entry(message);
             }
             ExecOutcome::Log(text)
             | ExecOutcome::PluginDetail(text, ..)
             | ExecOutcome::PluginValidationErr(text, ..)
-            | ExecOutcome::PluginDetailLoad(text, ..)
             | ExecOutcome::PluginsRefresh(text, ..)
             | ExecOutcome::PluginValidationOk(text, ..) => {
-                self.entries.push(text.to_string());
-                self.rich_entries.push(LogEntry::Text {
-                    level: None,
-                    msg: text.to_string(),
-                });
+                self.append_text_entry(text.to_string());
             }
             _ => {}
         }
@@ -116,17 +153,19 @@ impl LogsState {
 
 impl Default for LogsState {
     fn default() -> Self {
-        LogsState {
-            entries: vec!["Welcome to Heroku TUI".into()],
+        let mut state = LogsState {
+            is_visible: true,
             rich_entries: Vec::new(),
+            entries: Vec::new(),
             selection: Selection::default(),
             detail: None,
             pretty_json: true,
             cached_detail_index: None,
             cached_redacted_json: None,
             container_focus: FocusFlag::named("root.logs"),
-            detail_rect: None,
-        }
+        };
+        state.append_text_entry("Welcome to Heroku TUI".to_string());
+        state
     }
 }
 

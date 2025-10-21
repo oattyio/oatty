@@ -11,7 +11,7 @@ use ratatui::{
     layout::{Constraint, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Borders, Cell, List, ListItem, ListState, Paragraph, Row, Scrollbar, ScrollbarState, Table, Wrap},
+    widgets::{Cell, List, ListItem, ListState, Paragraph, Row, Scrollbar, ScrollbarState, Table, Wrap},
 };
 use serde_json::Value;
 
@@ -57,7 +57,6 @@ impl<'a> ResultsTableView<'a> {
             state.kv_entries(),
             select_entry_index(state),
             kv_offset(state),
-            focused,
             json,
             theme,
         );
@@ -65,14 +64,14 @@ impl<'a> ResultsTableView<'a> {
     }
 
     /// Renders a JSON array as a table with pagination-aware selection.
-    fn render_json_table(&mut self, frame: &mut Frame, area: Rect, state: &TableState<'_>, focused: bool, theme: &dyn UiTheme) {
+    fn render_json_table(&mut self, frame: &mut Frame, area: Rect, state: &TableState<'_>, _focused: bool, theme: &dyn UiTheme) {
         let rows = state.rows().unwrap();
         let widths: &[Constraint] = state.column_constraints().map_or(&[][..], |constraints| constraints.as_slice());
         let headers: &[Cell<'_>] = state.headers().map_or(&[][..], |header_cells| header_cells.as_slice());
         let offset = state.count_offset();
         let selected = state.selected_index();
 
-        let visible_rows = area.height as usize;
+        let visible_rows = area.height.saturating_sub(1) as usize;
         if visible_rows == 0 || rows.is_empty() {
             let placeholder = Paragraph::new("No results to display").style(theme.text_muted_style());
             frame.render_widget(placeholder, area);
@@ -89,11 +88,6 @@ impl<'a> ResultsTableView<'a> {
             .rows(rows[start..end].to_owned())
             .widths(widths)
             .header(Row::new(headers.to_owned()).style(th::table_header_row_style(theme)))
-            .block(
-                th::block(theme, None, false)
-                    .borders(Borders::ALL)
-                    .border_style(theme.border_style(focused)),
-            )
             .column_spacing(1)
             .row_highlight_style(th::table_selected_style(theme))
             .style(th::panel_style(theme));
@@ -119,7 +113,6 @@ impl<'a> ResultsTableView<'a> {
         entries: &[KeyValueEntry],
         selection: Option<usize>,
         offset: usize,
-        focused: bool,
         json: &Value,
         theme: &dyn UiTheme,
     ) {
@@ -146,7 +139,6 @@ impl<'a> ResultsTableView<'a> {
                 }
 
                 let list = List::new(items)
-                    .block(th::block(theme, Some("Details"), focused))
                     .highlight_style(th::table_selected_style(theme))
                     .style(th::panel_style(theme));
 
@@ -158,10 +150,7 @@ impl<'a> ResultsTableView<'a> {
                     _ => other.to_string(),
                 };
 
-                let paragraph = Paragraph::new(display)
-                    .block(th::block(theme, Some("Result"), false))
-                    .wrap(Wrap { trim: false })
-                    .style(theme.text_primary_style());
+                let paragraph = Paragraph::new(display).wrap(Wrap { trim: false }).style(theme.text_primary_style());
                 frame.render_widget(paragraph, area);
             }
         }

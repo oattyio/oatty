@@ -11,15 +11,17 @@ use std::collections::HashSet;
 use crate::{
     RunContext,
     executor::{self, CommandRunner, StepResult, StepStatus, runner::NoopRunner},
+    resolve::interpolate_value,
     workflow::{
         bindings::{ProviderArgumentResolver, ProviderBindingOutcome},
         runtime::workflow_spec_from_runtime,
     },
 };
 use anyhow::Result;
-use heroku_types::workflow::RuntimeWorkflow;
+use heroku_types::workflow::{RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault};
 use indexmap::{IndexMap, map::Entry as IndexMapEntry};
 use serde_json::Value;
+use std::env;
 
 /// Captures the outcome of resolving a single provider argument.
 #[derive(Debug, Clone, PartialEq)]
@@ -70,6 +72,17 @@ impl WorkflowRunState {
         }
     }
 
+    /// Populates the run context with default input values when available.
+    ///
+    /// Defaults are only applied to inputs that do not already have a value. Literal defaults are
+    /// interpolated against the current run context, environment defaults consult the in-memory
+    /// environment variables map (falling back to process variables), and workflow-output defaults
+    /// run through the same interpolation pipeline. History-based defaults are currently ignored
+    /// pending integration with a dedicated history store.
+    pub fn apply_input_defaults(&mut self) {
+        apply_runtime_input_defaults(&self.workflow, &mut self.run_context);
+    }
+
     /// Returns an immutable view of the provider state for a given input.
     pub fn provider_state_for(&self, input_name: &str) -> Option<&InputProviderState> {
         self.input_provider_states.get(input_name)
@@ -85,11 +98,16 @@ impl WorkflowRunState {
         let resolver = ProviderArgumentResolver::new(&self.run_context);
 
         for (input_name, definition) in &self.workflow.inputs {
-            if definition.provider_args.is_empty() {
+            if definition.provider_args.is_empty() && definition.depends_on.is_empty() {
                 continue;
             }
 
-            let outcomes = resolver.resolve_arguments(&definition.provider_args);
+            let mut arguments = definition.provider_args.clone();
+            for (argument_name, value) in &definition.depends_on {
+                arguments.entry(argument_name.clone()).or_insert_with(|| value.clone());
+            }
+
+            let outcomes = resolver.resolve_arguments(&arguments);
             let state = self.input_provider_states.entry(input_name.clone()).or_default();
 
             for (argument_name, outcome) in outcomes {
@@ -149,9 +167,9 @@ impl WorkflowRunState {
     }
 
     /// Executes the workflow using the provided runner and records telemetry.
-    pub fn execute_with_runner(&mut self, runner: &dyn CommandRunner) -> Vec<StepResult> {
+    pub fn execute_with_runner(&mut self, runner: &dyn CommandRunner) -> Result<Vec<StepResult>> {
         let spec = workflow_spec_from_runtime(&self.workflow);
-        let results = executor::execute_workflow_with_runner(&spec, &mut self.run_context, runner);
+        let results = executor::execute_workflow_with_runner(&spec, &mut self.run_context, runner)?;
 
         for result in &results {
             self.telemetry.record_step_event(StepTelemetryEvent {
@@ -160,11 +178,11 @@ impl WorkflowRunState {
             });
         }
 
-        results
+        Ok(results)
     }
 
     /// Executes the workflow using the no-op runner (useful for previews and tests).
-    pub fn execute(&mut self) -> Vec<StepResult> {
+    pub fn execute(&mut self) -> Result<Vec<StepResult>> {
         let runner = NoopRunner;
         self.execute_with_runner(&runner)
     }
@@ -181,6 +199,62 @@ impl WorkflowRunState {
     /// Returns a read-only view of the accumulated telemetry.
     pub fn telemetry(&self) -> &WorkflowTelemetry {
         &self.telemetry
+    }
+}
+
+/// Applies workflow input defaults directly to a [`RunContext`].
+///
+/// This helper respects existing input values, only filling entries that are currently absent.
+/// Literal defaults are interpolated against the supplied context, environment defaults first
+/// inspect the in-memory environment map (falling back to process variables), and workflow-output
+/// defaults share the literal interpolation path. History defaults are deliberately excluded
+/// because higher-level callers manage persistence-specific behavior.
+pub(crate) fn apply_runtime_input_defaults(workflow: &RuntimeWorkflow, context: &mut RunContext) {
+    for (input_name, definition) in &workflow.inputs {
+        if context.inputs.contains_key(input_name) {
+            continue;
+        }
+
+        let Some(default_definition) = definition.default.as_ref() else {
+            continue;
+        };
+
+        if let Some(default_value) = resolve_default_value(default_definition, context) {
+            context.inputs.insert(input_name.clone(), default_value);
+        }
+    }
+}
+
+fn resolve_default_value(default: &WorkflowInputDefault, context: &RunContext) -> Option<Value> {
+    match default.from {
+        WorkflowDefaultSource::Literal => default.value.as_ref().map(|raw| interpolate_value(raw, context)),
+        WorkflowDefaultSource::Env => resolve_env_default(default, context),
+        WorkflowDefaultSource::WorkflowOutput => default.value.as_ref().map(|raw| interpolate_value(raw, context)),
+        WorkflowDefaultSource::History => None,
+    }
+}
+
+fn resolve_env_default(default: &WorkflowInputDefault, context: &RunContext) -> Option<Value> {
+    let raw_value = default.value.as_ref()?;
+    let interpolated = interpolate_value(raw_value, context);
+    let key = extract_env_key(&interpolated)?;
+
+    if let Some(value) = context.environment_variables.get(&key) {
+        return Some(Value::String(value.clone()));
+    }
+
+    env::var(&key).ok().map(Value::String)
+}
+
+fn extract_env_key(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+        }
+        Value::Number(number) => Some(number.to_string()),
+        Value::Bool(flag) => Some(flag.to_string()),
+        _ => None,
     }
 }
 
@@ -247,8 +321,8 @@ mod tests {
     use super::*;
     use crate::executor::runner::NoopRunner;
     use heroku_types::workflow::{
-        WorkflowInputDefinition, WorkflowJoinConfiguration, WorkflowProviderArgumentBinding, WorkflowProviderArgumentValue,
-        WorkflowProviderErrorPolicy, WorkflowStepDefinition, WorkflowValueProvider,
+        WorkflowDefaultSource, WorkflowInputDefault, WorkflowInputDefinition, WorkflowJoinConfiguration, WorkflowProviderArgumentBinding,
+        WorkflowProviderArgumentValue, WorkflowProviderErrorPolicy, WorkflowStepDefinition, WorkflowValueProvider,
     };
     use indexmap::indexmap;
 
@@ -274,6 +348,7 @@ mod tests {
                 run: "apps:list".into(),
                 description: None,
                 depends_on: Vec::new(),
+                r#if: None,
                 with: IndexMap::new(),
                 body: Value::Null,
                 repeat: None,
@@ -363,11 +438,115 @@ mod tests {
     }
 
     #[test]
+    fn applies_literal_defaults_when_inputs_are_missing() {
+        let mut workflow = demo_workflow();
+        workflow.inputs.get_mut("target").unwrap().default = Some(WorkflowInputDefault {
+            from: WorkflowDefaultSource::Literal,
+            value: Some(Value::String("preset".into())),
+        });
+
+        let mut state = WorkflowRunState::new(workflow);
+        state.apply_input_defaults();
+
+        assert_eq!(state.run_context.inputs.get("target"), Some(&Value::String("preset".into())));
+    }
+
+    #[test]
+    fn literal_defaults_do_not_override_existing_values() {
+        let mut workflow = demo_workflow();
+        workflow.inputs.get_mut("target").unwrap().default = Some(WorkflowInputDefault {
+            from: WorkflowDefaultSource::Literal,
+            value: Some(Value::String("preset".into())),
+        });
+
+        let mut state = WorkflowRunState::new(workflow);
+        state.set_input_value("target", Value::String("manual".into()));
+        state.apply_input_defaults();
+
+        assert_eq!(state.run_context.inputs.get("target"), Some(&Value::String("manual".into())));
+    }
+
+    #[test]
+    fn applies_environment_defaults_from_run_context() {
+        let mut workflow = demo_workflow();
+        workflow.inputs.get_mut("target").unwrap().default = Some(WorkflowInputDefault {
+            from: WorkflowDefaultSource::Env,
+            value: Some(Value::String("REGION".into())),
+        });
+
+        let mut state = WorkflowRunState::new(workflow);
+        state.run_context.environment_variables.insert("REGION".into(), "eu-west".into());
+        state.apply_input_defaults();
+
+        assert_eq!(state.run_context.inputs.get("target"), Some(&Value::String("eu-west".into())));
+    }
+
+    #[test]
+    fn environment_defaults_fall_back_to_process_environment() {
+        let mut workflow = demo_workflow();
+        workflow.inputs.get_mut("target").unwrap().default = Some(WorkflowInputDefault {
+            from: WorkflowDefaultSource::Env,
+            value: Some(Value::String("HEROKU_WORKFLOW_TEST_HOME".into())),
+        });
+
+        let mut state = WorkflowRunState::new(workflow);
+
+        let key = "HEROKU_WORKFLOW_TEST_HOME";
+        let previous = env::var(key).ok();
+        unsafe {
+            env::set_var(key, "home-value");
+        }
+
+        state.apply_input_defaults();
+
+        assert_eq!(state.run_context.inputs.get("target"), Some(&Value::String("home-value".into())));
+
+        if let Some(original) = previous {
+            unsafe {
+                env::set_var(key, original);
+            }
+        } else {
+            unsafe {
+                env::remove_var(key);
+            }
+        }
+    }
+
+    #[test]
+    fn depends_on_arguments_resolve_from_inputs() {
+        let app_input = WorkflowInputDefinition::default();
+        let mut addon_input = WorkflowInputDefinition::default();
+        addon_input.provider = Some(WorkflowValueProvider::Id("apps addons:list".into()));
+        addon_input.depends_on = indexmap! {
+            "app".into() => WorkflowProviderArgumentValue::Literal("${{ inputs.app }}".into())
+        };
+
+        let workflow = RuntimeWorkflow {
+            identifier: "deps".into(),
+            title: None,
+            description: None,
+            inputs: indexmap! {
+                "app".into() => app_input,
+                "addon".into() => addon_input,
+            },
+            steps: Vec::new(),
+        };
+
+        let mut state = WorkflowRunState::new(workflow);
+        state.set_input_value("app", Value::String("chosen-app".into()));
+        state.evaluate_input_providers().expect("evaluate providers with dependencies");
+
+        let provider_state = state.provider_state_for("addon").expect("missing addon provider state");
+        let outcome = provider_state.argument_outcomes.get("app").expect("missing resolved argument");
+        assert!(matches!(outcome.outcome, ProviderBindingOutcome::Resolved(Value::String(ref value)) if value == "chosen-app"));
+    }
+
+    #[test]
     fn executes_workflow_with_runner() {
         let workflow = demo_workflow();
         let mut state = WorkflowRunState::new(workflow);
 
-        let results = state.execute_with_runner(&NoopRunner);
+        let results = state.execute_with_runner(&NoopRunner).expect("execute workflow");
 
         assert_eq!(results.len(), 1);
         let telemetry = state.telemetry();
@@ -380,7 +559,7 @@ mod tests {
         let workflow = demo_workflow();
         let mut state = WorkflowRunState::new(workflow);
 
-        let _ = state.execute();
+        let _ = state.execute().expect("execute workflow");
 
         let telemetry = state.telemetry();
         assert_eq!(telemetry.step_events().len(), 1);

@@ -1,4 +1,5 @@
 workflow: app_with_db
+title: "Create app with DB"
 description: "Create an app, provision Postgres, and seed config."
 inputs:
   app_name:

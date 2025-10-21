@@ -13,10 +13,14 @@
 //! - For non-boolean flags whose value is pending, only values are suggested
 //!   (enums and provider values) until the value is complete.
 //! - Suggestions never render an empty popup.
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use crate::ui::components::palette::suggestion_engine::SuggestionEngine;
 use crate::ui::theme::Theme;
+use chrono::Utc;
 
 use super::suggestion_engine::{parse_user_flags_args, required_flags_remaining};
 use crate::ui::components::common::TextInputState;
@@ -24,11 +28,16 @@ use crate::ui::theme::theme_helpers::create_spans_with_match;
 use heroku_engine::provider::{PendingProviderFetch, ValueProvider};
 use heroku_registry::{CommandRegistry, find_by_group_and_cmd};
 use heroku_types::{CommandSpec, Effect, ExecOutcome, ItemKind, Modal, SuggestionItem};
-use heroku_util::{lex_shell_like, lex_shell_like_ranged};
+use heroku_util::{
+    HistoryKey, HistoryScope, HistoryScopeKind, HistoryStore, StoredHistoryValue, lex_shell_like, lex_shell_like_ranged,
+    value_contains_secret, value_is_meaningful,
+};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use ratatui::text::Line;
 use ratatui::widgets::ListItem;
+use serde_json::Value;
+use tracing::warn;
 
 /// Locate the index of the token under the cursor.
 ///
@@ -54,13 +63,13 @@ fn token_index_at_cursor(input: &str, cursor: usize) -> Option<usize> {
 ///
 /// This struct manages the current state of the command palette including
 /// input text, cursor position, suggestions, and error states.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PaletteState {
     registry: Arc<Mutex<CommandRegistry>>,
     /// Focus flag for self
-    focus: FocusFlag,
+    container_focus: FocusFlag,
     /// Focus flag for the input field
-    f_input: FocusFlag,
+    pub f_input: FocusFlag,
     /// The current input text
     input: String,
     /// Current cursor position (byte index)
@@ -87,13 +96,23 @@ pub struct PaletteState {
     draft_input: Option<String>,
     /// The hash of the command being waited on by the palette
     cmd_exec_hash: Option<u64>,
+    /// Persistent history store used for palette executions.
+    history_store: Arc<dyn HistoryStore>,
+    /// Identifier representing the active history profile.
+    history_profile_id: String,
+    /// Cached persisted commands keyed by canonical command identifier.
+    stored_commands: HashMap<String, StoredHistoryValue>,
+    /// Pending command identifier awaiting execution completion.
+    pending_command_id: Option<String>,
+    /// Pending command input captured at dispatch time.
+    pending_command_input: Option<String>,
 }
 
 impl PaletteState {
-    pub fn new(registry: Arc<Mutex<CommandRegistry>>) -> Self {
-        Self {
+    pub fn new(registry: Arc<Mutex<CommandRegistry>>, history_store: Arc<dyn HistoryStore>, history_profile_id: String) -> Self {
+        let mut state = Self {
             registry,
-            focus: FocusFlag::named("heroku.palette"),
+            container_focus: FocusFlag::named("heroku.palette"),
             f_input: FocusFlag::named("heroku.palette.input"),
             input: String::new(),
             cursor_position: 0,
@@ -108,7 +127,14 @@ impl PaletteState {
             history_index: None,
             draft_input: None,
             cmd_exec_hash: None,
-        }
+            history_store,
+            history_profile_id,
+            stored_commands: HashMap::new(),
+            pending_command_id: None,
+            pending_command_input: None,
+        };
+        state.load_persisted_history();
+        state
     }
 }
 
@@ -120,7 +146,7 @@ impl HasFocus for PaletteState {
     }
 
     fn focus(&self) -> FocusFlag {
-        self.focus.clone()
+        self.container_focus.clone()
     }
 
     fn area(&self) -> Rect {
@@ -144,10 +170,6 @@ impl PaletteState {
     /// Get the currently selected suggestion index
     pub fn suggestion_index(&self) -> usize {
         self.suggestion_index
-    }
-
-    pub fn cmd_exec_hash(&self) -> Option<u64> {
-        self.cmd_exec_hash
     }
 
     /// Derive the command spec from the current input tokens ("group sub").
@@ -241,6 +263,9 @@ impl PaletteState {
         // Preserve history; exit browsing mode
         self.history_index = None;
         self.draft_input = None;
+        self.cmd_exec_hash = None;
+        self.pending_command_id = None;
+        self.pending_command_input = None;
     }
 
     /// Apply an error message to the palette
@@ -397,10 +422,31 @@ impl PaletteState {
     fn finalize_suggestions(&mut self, items: &mut [SuggestionItem], theme: &dyn crate::ui::theme::Theme) {
         items.sort_by(|a, b| b.score.cmp(&a.score));
 
-        self.suggestion_index = self.suggestion_index.min(items.len().saturating_sub(1));
         self.suggestions = items.to_vec();
         self.is_suggestions_open = !self.suggestions.is_empty();
+        if self.is_suggestions_open {
+            let preferred_index = self
+                .suggestions
+                .iter()
+                .enumerate()
+                .find(|(_, item)| !matches!(item.meta.as_deref(), Some("history") | Some("loading")))
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+            self.suggestion_index = preferred_index;
+        } else {
+            self.suggestion_index = 0;
+        }
 
+        self.refresh_rendered_suggestions(theme);
+
+        self.apply_ghost_text();
+    }
+
+    /// Rebuild the rendered suggestions to reflect the latest suggestion data.
+    ///
+    /// This helper recreates the rendered list items so that highlighting stays in sync
+    /// with the current input token and the active theme.
+    fn refresh_rendered_suggestions(&mut self, theme: &dyn Theme) {
         let current_token = get_current_token(&self.input, self.cursor_position);
         let needle = current_token.trim();
 
@@ -418,8 +464,6 @@ impl PaletteState {
                 ListItem::from(Line::from(spans))
             })
             .collect();
-
-        self.apply_ghost_text();
     }
 
     pub fn apply_ghost_text(&mut self) {
@@ -738,6 +782,8 @@ impl PaletteState {
     /// st.apply_build_suggestions(&Registry::from_embedded_schema().unwrap(), &[]);
     /// ```
     pub fn apply_build_suggestions(&mut self, providers: &[Arc<dyn ValueProvider>], theme: &dyn Theme) -> Vec<PendingProviderFetch> {
+        self.reduce_clear_error();
+        let tokens: Vec<String> = lex_shell_like(&self.input);
         let mut pending_fetches = Vec::new();
         let mut items = {
             let Some(lock) = self.registry.lock().ok() else {
@@ -764,26 +810,23 @@ impl PaletteState {
             }
 
             // Offer end-of-line flag hint if still empty
-            if items.is_empty() {
-                let tokens: Vec<String> = lex_shell_like(&self.input);
-                if tokens.len() >= 2 {
-                    let group = tokens[0].clone();
-                    let name = tokens[1].clone();
-                    if let Ok(spec) = find_by_group_and_cmd(commands, group.as_str(), name.as_str()) {
-                        let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
-                        let (user_flags, user_args, _flag_values) = parse_user_flags_args(&spec, parts);
-                        if let Some(hint) = self.eol_flag_hint(&spec, &user_flags) {
-                            items.push(hint);
-                        } else {
-                            // If command is complete (all positionals filled, no required flags), show run hint
-                            let positionals_complete = user_args.len() >= spec.positional_args.len();
-                            let required_remaining = required_flags_remaining(&spec, &user_flags);
-                            if positionals_complete && !required_remaining {
-                                self.ghost_text = Some(" press Enter to run".to_string());
-                            }
-                        };
+            if items.is_empty() && tokens.len() >= 2 {
+                let group = tokens[0].as_str();
+                let name = tokens[1].as_str();
+                if let Ok(spec) = find_by_group_and_cmd(commands, group, name) {
+                    let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
+                    let (user_flags, user_args, _flag_values) = parse_user_flags_args(&spec, parts);
+                    if let Some(hint) = self.eol_flag_hint(&spec, &user_flags) {
+                        items.push(hint);
+                    } else {
+                        // If command is complete (all positionals filled, no required flags), show run hint
+                        let positionals_complete = user_args.len() >= spec.positional_args.len();
+                        let required_remaining = required_flags_remaining(&spec, &user_flags);
+                        if positionals_complete && !required_remaining {
+                            self.ghost_text = Some(" press Enter to run".to_string());
+                        }
                     };
-                }
+                };
             }
             items
         };
@@ -791,7 +834,6 @@ impl PaletteState {
         self.finalize_suggestions(items.as_mut_slice(), theme);
         // Preserve run hint ghost when suggestions are empty
         if self.suggestions.is_empty() && self.ghost_text.is_none() {
-            let tokens: Vec<String> = lex_shell_like(&self.input);
             if tokens.len() >= 2 {
                 let group = tokens[0].clone();
                 let name = tokens[1].clone();
@@ -816,6 +858,46 @@ impl PaletteState {
         pending_fetches
     }
 
+    /// Handle provider fetch failures by clearing loading state and surfacing an error.
+    ///
+    /// This method removes any transient "loading more…" placeholder, stops the spinner, and
+    /// records an error message so the palette communicates that suggestions failed to load.
+    ///
+    /// # Arguments
+    ///
+    /// * `log_message` - Text describing the provider fetch failure, forwarded from the logs.
+    /// * `theme` - Active theme used to rebuild rendered suggestions after removing placeholders.
+    pub(crate) fn handle_provider_fetch_failure(&mut self, log_message: &str, theme: &dyn Theme) {
+        let has_loading_placeholder = self.suggestions.iter().any(|item| item.meta.as_deref() == Some("loading"));
+        if !self.provider_loading && !has_loading_placeholder {
+            return;
+        }
+
+        self.provider_loading = false;
+
+        let previous_length = self.suggestions.len();
+        self.suggestions.retain(|item| item.meta.as_deref() != Some("loading"));
+        let loading_removed = previous_length != self.suggestions.len();
+
+        self.suggestion_index = self.suggestion_index.min(self.suggestions.len().saturating_sub(1));
+        if self.suggestions.is_empty() {
+            self.rendered_suggestions.clear();
+            self.is_suggestions_open = false;
+            self.ghost_text = None;
+        } else if loading_removed {
+            self.refresh_rendered_suggestions(theme);
+            self.apply_ghost_text();
+        }
+
+        let friendly_message = log_message
+            .strip_prefix("Provider fetch failed:")
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(|detail| format!("Provider suggestions failed: {detail}"))
+            .unwrap_or_else(|| "Provider suggestions failed.".to_string());
+        self.error_message = Some(friendly_message);
+    }
+
     /// Suggest an end-of-line hint for starting flags when any remain.
     fn eol_flag_hint(&self, spec: &CommandSpec, user_flags: &[String]) -> Option<SuggestionItem> {
         let total_flags = spec.flags.len();
@@ -831,6 +913,64 @@ impl PaletteState {
             });
         }
         None
+    }
+
+    fn load_persisted_history(&mut self) {
+        let records = match self.history_store.entries_for_scope(HistoryScopeKind::PaletteCommand) {
+            Ok(records) => records,
+            Err(error) => {
+                warn!(error = %error, "failed to load palette history");
+                return;
+            }
+        };
+
+        let mut filtered: Vec<_> = records
+            .into_iter()
+            .filter(|record| record.key.user_id == self.history_profile_id)
+            .filter(|record| matches!(record.key.scope, HistoryScope::PaletteCommand { .. }))
+            .collect();
+
+        filtered.sort_by(|a, b| a.value.updated_at.cmp(&b.value.updated_at));
+
+        for record in filtered {
+            if let HistoryScope::PaletteCommand { command_id } = record.key.scope {
+                if let Some(input) = record.value.value.as_str() {
+                    if !input.trim().is_empty() {
+                        self.push_history_if_needed(input);
+                        self.stored_commands.insert(command_id.clone(), record.value);
+                    }
+                }
+            }
+        }
+    }
+
+    pub(crate) fn record_pending_execution(&mut self, command_id: String, input: String) {
+        self.pending_command_id = Some(command_id);
+        self.pending_command_input = Some(input.trim().to_string());
+    }
+
+    fn persist_command_history(&mut self, command_id: &str, input: &str) {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        let value = Value::String(trimmed.to_string());
+        if !value_is_meaningful(&value) || value_contains_secret(&value) {
+            return;
+        }
+
+        let stored = StoredHistoryValue {
+            value: value.clone(),
+            updated_at: Utc::now(),
+        };
+        let key = HistoryKey::palette_command(self.history_profile_id.clone(), command_id.to_string());
+
+        if let Err(error) = self.history_store.insert_value(key, value) {
+            warn!(command = %command_id, error = %error, "failed to persist palette history entry");
+        }
+
+        self.stored_commands.insert(command_id.to_string(), stored);
     }
 
     /// Processes general command execution results (non-plugin specific).
@@ -854,8 +994,16 @@ impl PaletteState {
             return effects;
         }
 
-        let input = self.input.to_string();
-        self.push_history_if_needed(input.trim());
+        let history_entry = self.pending_command_input.clone().unwrap_or_else(|| self.input.trim().to_string());
+        self.push_history_if_needed(history_entry.as_str());
+
+        if let Some(command_id) = self.pending_command_id.take() {
+            let input_to_store = self.pending_command_input.take().unwrap_or(history_entry.clone());
+            self.persist_command_history(&command_id, &input_to_store);
+        } else {
+            self.pending_command_input = None;
+        }
+
         self.reduce_clear_all();
         effects.push(Effect::ShowModal(Modal::Results(execution_outcome.clone())));
 
@@ -984,10 +1132,65 @@ pub fn ghost_remainder(input: &str, cursor: usize, insert: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ui::theme::dracula::DraculaTheme;
+    use heroku_util::{DEFAULT_HISTORY_PROFILE, InMemoryHistoryStore};
+
+    fn palette_state_with_registry(registry: Arc<Mutex<CommandRegistry>>) -> PaletteState {
+        let history_store: Arc<dyn HistoryStore> = Arc::new(InMemoryHistoryStore::new());
+        PaletteState::new(registry, history_store, DEFAULT_HISTORY_PROFILE.to_string())
+    }
+
+    fn make_palette_state() -> PaletteState {
+        let registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap()));
+        palette_state_with_registry(registry)
+    }
+
+    #[test]
+    fn persists_command_history_on_success() {
+        use serde_json::json;
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
+
+        let registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap()));
+        let store: Arc<InMemoryHistoryStore> = Arc::new(InMemoryHistoryStore::new());
+        let mut palette = PaletteState::new(
+            Arc::clone(&registry),
+            store.clone() as Arc<dyn HistoryStore>,
+            DEFAULT_HISTORY_PROFILE.to_string(),
+        );
+
+        let command_input = "apps info --app demo";
+        palette.set_input(command_input.to_string());
+        palette.set_cursor(command_input.len());
+
+        let mut hasher = DefaultHasher::new();
+        hasher.write(command_input.as_bytes());
+        let request_hash = hasher.finish();
+
+        let command_id = format!("{}:{}", "apps", "info");
+        palette.record_pending_execution(command_id.clone(), command_input.to_string());
+        palette.set_cmd_exec_hash(request_hash);
+
+        let outcome = ExecOutcome::Http(200, "ok".into(), json!({"ok": true}), None, request_hash);
+        palette.process_general_execution_result(&Box::new(outcome));
+
+        assert_eq!(palette.history.last().map(|s| s.as_str()), Some(command_input));
+        let stored_value = palette.stored_commands.get(&command_id).and_then(|record| record.value.as_str());
+        assert_eq!(stored_value, Some(command_input));
+
+        let stored_records = store.entries_for_scope(HistoryScopeKind::PaletteCommand).unwrap();
+        assert!(stored_records.iter().any(|record| {
+            if let HistoryScope::PaletteCommand { command_id: stored_id } = &record.key.scope {
+                stored_id == &command_id && record.value.value.as_str() == Some(command_input)
+            } else {
+                false
+            }
+        }));
+    }
 
     #[test]
     fn replace_partial_positional_on_accept() {
-        let mut st = PaletteState::new(Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap())));
+        let mut st = make_palette_state();
         st.set_input("apps info hero".into());
         st.set_cursor(st.input().len());
         st.apply_accept_positional_suggestion("heroku-prod");
@@ -996,13 +1199,49 @@ mod tests {
 
     #[test]
     fn replace_placeholder_positional_on_accept_value() {
-        let mut st = PaletteState::new(Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap())));
+        let mut st = make_palette_state();
         // Placeholder for positional arg
         st.set_input("apps info <app> ".into());
         st.set_cursor(st.input().len());
         // Selecting a provider value (non-flag) should replace placeholder
         st.apply_accept_non_command_suggestion("heroku-prod");
         assert_eq!(st.input(), "apps info heroku-prod ");
+    }
+
+    #[test]
+    fn handle_provider_fetch_failure_clears_loading_placeholder_and_sets_error() {
+        let registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().expect("embedded registry")));
+        let mut state = palette_state_with_registry(registry);
+        state.set_input("apps info --app ".to_string());
+        state.provider_loading = true;
+        state.is_suggestions_open = true;
+        state.suggestion_index = 1;
+        state.suggestions = vec![
+            SuggestionItem {
+                display: "loading more…".to_string(),
+                insert_text: String::new(),
+                kind: ItemKind::Value,
+                meta: Some("loading".to_string()),
+                score: i64::MIN,
+            },
+            SuggestionItem {
+                display: "demo".to_string(),
+                insert_text: "demo".to_string(),
+                kind: ItemKind::Value,
+                meta: None,
+                score: 10,
+            },
+        ];
+        let theme = DraculaTheme::new();
+
+        state.handle_provider_fetch_failure("Provider fetch failed: timeout", &theme);
+
+        assert!(!state.provider_loading);
+        assert!(state.suggestions.iter().all(|item| item.meta.as_deref() != Some("loading")));
+        assert_eq!(state.error_message(), Some(&"Provider suggestions failed: timeout".to_string()));
+        assert!(state.is_suggestions_open());
+        assert_eq!(state.suggestions_len(), 1);
+        assert_eq!(state.rendered_suggestions().len(), 1);
     }
 
     // --- Parity tests with common::TextInputState to quantify integration risk ---
@@ -1016,9 +1255,9 @@ mod tests {
         Back,
     }
 
-    fn run_palette(mut input: &str, cursor: usize, ops: &[Op]) -> (String, usize) {
+    fn run_palette(input: &str, cursor: usize, ops: &[Op]) -> (String, usize) {
         let reg = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap()));
-        let mut st = PaletteState::new(reg);
+        let mut st = palette_state_with_registry(reg);
         st.set_input(input.to_string());
         st.set_cursor(cursor);
         for op in ops {

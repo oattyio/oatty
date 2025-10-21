@@ -181,10 +181,10 @@ pub fn status_color_for_value(value: &str, theme: &dyn UiTheme) -> Option<ratatu
 
 pub fn base_key_score(key: &str) -> i32 {
     match key {
+        "human_name" => 120,
         "name" | "description" | "app" | "dyno" | "addon" | "config_var" => 100,
         "status" | "state" | "type" | "region" | "stack" => 80,
         "owner" | "user" | "email" => 60,
-        "created_at" | "updated_at" | "released_at" => 40,
         "id" => -100,
         _ => 20,
     }

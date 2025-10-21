@@ -25,6 +25,7 @@
 //!     steps: vec![
 //!         StepSpec {
 //!             id: "deploy".to_string(),
+//!             depends_on: vec![],
 //!             run: "apps:deploy".to_string(),
 //!             with: None,
 //!             body: None,
@@ -201,6 +202,10 @@ pub struct StepSpec {
     /// be descriptive and unique within the workflow.
     pub id: String,
 
+    /// List of step identifiers that must complete successfully before this step runs.
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+
     /// Command or action to execute
     ///
     /// The run field specifies what action to perform. This can be:
@@ -359,6 +364,7 @@ mod tests {
     fn test_step_spec_with_conditional() {
         let step = StepSpec {
             id: "conditional-step".to_string(),
+            depends_on: vec![],
             run: "test:command".to_string(),
             with: None,
             body: None,

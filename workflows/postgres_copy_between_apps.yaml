@@ -1,4 +1,5 @@
 workflow: postgres_copy_between_apps
+title: "Postgres Copy Between Apps"
 description: "Copy data from a source app's database to a target app's database. Useful for refreshing staging from production."
 inputs:
   source_app:

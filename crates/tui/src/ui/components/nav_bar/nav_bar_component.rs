@@ -217,7 +217,7 @@ impl Component for VerticalNavBarComponent {
                     row_area,
                     &item.icon,
                     theme,
-                    ButtonRenderOptions::new(true, is_focused, is_selected, borders),
+                    ButtonRenderOptions::new(true, is_focused, is_selected, borders, false),
                 );
             }
         }

@@ -100,7 +100,6 @@ pub fn tabs<'a>(theme: &dyn Theme, titles: Vec<Span<'a>>, index: usize) -> Tabs<
 }
 
 /// Style for input fields; caller sets the block border based on focus.
-#[allow(dead_code)]
 pub fn input_style(theme: &dyn Theme, valid: bool, focused: bool) -> Style {
     let ThemeRoles { surface, text, error, .. } = *theme.roles();
     let mut style = Style::default().bg(surface).fg(text);
@@ -114,16 +113,13 @@ pub fn input_style(theme: &dyn Theme, valid: bool, focused: bool) -> Style {
 }
 
 /// Primary button style (filled accent background).
-#[allow(dead_code)]
-pub fn button_primary_style(theme: &dyn Theme, enabled: bool) -> Style {
+pub fn button_primary_style(theme: &dyn Theme, enabled: bool, selected: bool) -> Style {
     if enabled {
         let ThemeRoles { accent_primary, text, .. } = *theme.roles();
-        Style::default().bg(accent_primary).fg(text).add_modifier(Modifier::BOLD)
+        let style = Style::default().fg(text).add_modifier(Modifier::BOLD);
+        if selected { style.bg(accent_primary) } else { style }
     } else {
-        let ThemeRoles {
-            surface_muted, text_muted, ..
-        } = *theme.roles();
-        Style::default().bg(surface_muted).fg(text_muted)
+        theme.text_muted_style()
     }
 }
 
@@ -149,12 +145,6 @@ pub fn badge_style(theme: &dyn Theme) -> Style {
     theme.badge_style()
 }
 
-/// Build a standard paragraph styled with the primary text.
-#[allow(dead_code)]
-pub fn paragraph<'a>(theme: &dyn Theme, text: impl Into<Span<'a>>) -> Paragraph<'a> {
-    Paragraph::new(text.into()).style(theme.text_primary_style())
-}
-
 /// Immutable configuration specifying how a button should be rendered.
 #[derive(Debug, Clone, Copy)]
 pub struct ButtonRenderOptions {
@@ -166,16 +156,19 @@ pub struct ButtonRenderOptions {
     pub selected: bool,
     /// Border configuration to apply when drawing the button.
     pub borders: Borders,
+    /// Whether the button is the primary action.
+    pub is_primary: bool,
 }
 
 impl ButtonRenderOptions {
     /// Construct a new `ButtonRenderOptions` using positional arguments.
-    pub const fn new(enabled: bool, focused: bool, selected: bool, borders: Borders) -> Self {
+    pub const fn new(enabled: bool, focused: bool, selected: bool, borders: Borders, is_primary: bool) -> Self {
         Self {
             enabled,
             focused,
             selected,
             borders,
+            is_primary,
         }
     }
 }
@@ -221,13 +214,17 @@ pub fn render_button(frame: &mut Frame, area: Rect, label: &str, theme: &dyn The
     };
 
     let button_style = if options.enabled {
-        button_secondary_style(theme, true, options.selected)
+        if options.is_primary {
+            button_primary_style(theme, true, options.selected)
+        } else {
+            button_secondary_style(theme, true, options.selected)
+        }
     } else {
         theme.text_muted_style()
     };
 
     let padding = if options.borders.is_empty() {
-        Padding::uniform(1) // Add padding when no borders to match bordered button size
+        Padding::uniform(1) // Add padding when no borders to match the bordered button size
     } else {
         Padding::uniform(0) // No padding when borders are present
     };
@@ -351,5 +348,16 @@ pub fn create_spans_with_match(needle: String, display: String, default_style: S
         spans.push(Span::styled(hay[i..].to_string(), default_style));
     }
 
+    spans
+}
+
+pub fn build_hint_spans(theme: &dyn Theme, hints: &[(&str, &str)]) -> Vec<Span<'static>> {
+    let accent = theme.accent_emphasis_style();
+    let muted = theme.text_muted_style();
+    let mut spans = Vec::with_capacity(hints.len() * 2);
+    for (key, description) in hints {
+        spans.push(Span::styled((*key).to_string(), accent));
+        spans.push(Span::styled((*description).to_string(), muted));
+    }
     spans
 }

@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::Effect;
+use heroku_types::{Effect, ExecOutcome, Msg, Pagination};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -17,7 +17,6 @@ use crate::{
         theme::{roles::Theme as UiTheme, theme_helpers as th},
     },
 };
-
 /// Pagination component for range-based navigation and controls.
 ///
 /// This component provides a comprehensive pagination interface with:
@@ -34,36 +33,25 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct PaginationComponent;
 impl PaginationComponent {
-    /// Synchronize navigation availability with the latest application pagination state.
-    pub fn sync_navigation_state(&mut self, app: &mut App) {
-        let pagination_state = &mut app.table.pagination_state;
-        let history_depth = app.pagination_history.len();
-        pagination_state.current_page = history_depth.saturating_sub(1);
-        pagination_state.prev_available = history_depth > 1;
-
-        if let Some(pagination) = &app.last_pagination {
-            pagination_state.next_range = pagination.next_range.clone();
-        } else {
-            pagination_state.next_range = None;
-        }
-        pagination_state.next_available = pagination_state.next_range.is_some();
-    }
-
     /// Renders the range display (read-only) values.
     ///
     /// Shows the current range field and start/end values as display-only
     /// widgets without any interactive input.
     fn render_range_controls(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
-        let PaginationState {
-            range_mode,
+        let pagination_state = &app.table.pagination_state;
+        if pagination_state.is_visible() {
+            return;
+        }
+
+        let Some(Pagination {
             field,
             range_start,
             range_end,
             ..
-        } = &app.table.pagination_state;
-        if !*range_mode {
+        }) = pagination_state.get_pagination()
+        else {
             return;
-        }
+        };
 
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -169,7 +157,6 @@ impl PaginationComponent {
     /// * `area` - The rectangular area to render within
     /// * `app` - The application state for theme and focus information
     fn render_navigation_controls(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
-        self.sync_navigation_state(app);
         let PaginationState {
             nav_first_f,
             nav_prev_f,
@@ -192,8 +179,8 @@ impl PaginationComponent {
             ])
             .split(area);
 
-        let has_prev = app.table.pagination_state.prev_available;
-        let has_next_page = app.table.pagination_state.next_available;
+        let has_prev = app.table.pagination_state.has_prev_page();
+        let has_next_page = app.table.pagination_state.has_next_page();
         // First page button
         self.render_nav_button(frame, chunks[0], "First", has_prev, nav_first_f.get(), app);
         // Previous page button
@@ -218,13 +205,7 @@ impl PaginationComponent {
     /// * `area` - The rectangular area to render within
     /// * `theme` - The theme to use for styling
     fn render_page_info(&self, frame: &mut Frame, area: Rect, app: &App) {
-        let info_text = if app.table.pagination_state.range_mode {
-            format!(" | {}", app.table.pagination_state.range_info())
-        } else {
-            String::new()
-        };
-
-        let info_paragraph = Paragraph::new(info_text)
+        let info_paragraph = Paragraph::new(app.table.pagination_state.range_info())
             .style(app.ctx.theme.text_secondary_style())
             .alignment(Alignment::Center);
         frame.render_widget(info_paragraph, area);
@@ -313,47 +294,13 @@ impl PaginationComponent {
     fn handle_navigation_actions(&mut self, event: &KeyEvent, app: &mut App) -> Option<Effect> {
         let pagination_state = &mut app.table.pagination_state;
         match event.code {
-            KeyCode::Left => {
-                if pagination_state.prev_available {
-                    pagination_state.prev_page();
-                    Some(Effect::PrevPageRequested(0))
-                } else {
-                    None
-                }
-            }
-            KeyCode::Right => {
-                // Use Raw Next-Range header to request the next page when available
-                if pagination_state.next_available {
-                    pagination_state.next_range.clone().map(|next_range| {
-                        pagination_state.current_page = pagination_state.current_page.saturating_add(1);
-                        pagination_state.prev_available = true;
-                        Effect::NextPageRequested(next_range, 0)
-                    })
-                } else {
-                    None
-                }
-            }
-            KeyCode::End => {
-                if pagination_state.next_available {
-                    pagination_state.last_page();
-                    Some(Effect::LastPageRequested(0))
-                } else {
-                    None
-                }
-            }
-            KeyCode::Home => {
-                if pagination_state.prev_available {
-                    pagination_state.first_page();
-                    Some(Effect::FirstPageRequested(0))
-                } else {
-                    None
-                }
-            }
+            KeyCode::Left => pagination_state.prev_page(),
+            KeyCode::Right => pagination_state.next_page(),
+            KeyCode::End => pagination_state.last_page(),
+            KeyCode::Home => pagination_state.first_page(),
             _ => None,
         }
     }
-
-    // Removed: text input handling for range values (now display-only)
 }
 
 impl Component for PaginationComponent {
@@ -373,11 +320,9 @@ impl Component for PaginationComponent {
     /// Vector of effects to be processed by the application
     fn handle_key_events(&mut self, app: &mut App, event: KeyEvent) -> Vec<Effect> {
         let mut effects = vec![];
-        if !app.table.pagination_state.is_visible {
+        if !app.table.pagination_state.is_visible() {
             return vec![];
         }
-
-        self.sync_navigation_state(app);
 
         match event.code {
             KeyCode::BackTab => {
@@ -400,24 +345,23 @@ impl Component for PaginationComponent {
             KeyCode::Enter => {
                 let pagination_state = &mut app.table.pagination_state;
                 // Activate the focused nav button
-                if pagination_state.nav_first_f.get() && pagination_state.prev_available {
-                    pagination_state.first_page();
-                    effects.push(Effect::FirstPageRequested(0));
-                }
-                if pagination_state.nav_prev_f.get() && pagination_state.prev_available {
-                    pagination_state.prev_page();
-                    effects.push(Effect::PrevPageRequested(0));
-                }
-                if pagination_state.nav_next_f.get()
-                    && pagination_state.next_available
-                    && let Some(next_range) = pagination_state.next_range.clone()
-                {
-                    pagination_state.current_page = pagination_state.current_page.saturating_add(1);
-                    pagination_state.prev_available = true;
-                    effects.push(Effect::NextPageRequested(next_range, 0));
-                }
-                if pagination_state.nav_last_f.get() && pagination_state.next_available {
-                    effects.push(Effect::LastPageRequested(0));
+                let maybe_key_code = if pagination_state.nav_first_f.get() {
+                    Some(KeyCode::Home)
+                } else if pagination_state.nav_prev_f.get() {
+                    Some(KeyCode::Left)
+                } else if pagination_state.nav_next_f.get() {
+                    Some(KeyCode::Right)
+                } else if pagination_state.nav_last_f.get() {
+                    Some(KeyCode::End)
+                } else {
+                    None
+                };
+
+                if let Some(key_code) = maybe_key_code {
+                    let effect = self.handle_navigation_actions(&KeyEvent::new(key_code, KeyModifiers::NONE), app);
+                    if let Some(effect) = effect {
+                        effects.push(effect);
+                    }
                 }
             }
             _ => {}
@@ -468,9 +412,8 @@ impl Component for PaginationComponent {
     /// assert!(!effects.is_empty()); // Navigation logic is triggered.
     /// ```
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
-        self.sync_navigation_state(app);
         let pagination_state = &app.table.pagination_state;
-        let maybe_idx = if pagination_state.is_visible && mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+        let maybe_idx = if pagination_state.is_visible() && mouse.kind == MouseEventKind::Down(MouseButton::Left) {
             let MouseEvent { column, row, .. } = mouse;
             find_target_index_by_mouse_position(&pagination_state.last_area, &pagination_state.per_item_areas, column, row)
         } else {
@@ -478,8 +421,8 @@ impl Component for PaginationComponent {
         };
 
         if let Some(idx) = maybe_idx {
-            let has_next_page = pagination_state.next_available;
-            let has_prev = pagination_state.prev_available;
+            let has_prev = app.table.pagination_state.has_prev_page();
+            let has_next_page = app.table.pagination_state.has_next_page();
             let enabled = idx < 2 && has_prev || idx > 1 && has_next_page;
             if !enabled {
                 return Vec::new();
@@ -490,8 +433,20 @@ impl Component for PaginationComponent {
                 &pagination_state.nav_next_f,
                 &pagination_state.nav_last_f,
             ][idx];
-            ordered_f.set(true);
+            app.focus.focus(ordered_f);
             return self.handle_key_events(app, KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+        }
+        Vec::new()
+    }
+
+    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+        if let Msg::ExecCompleted(exec_outcome) = msg {
+            match exec_outcome.as_ref() {
+                ExecOutcome::Http(_, _, _, maybe_pagination, request_id) => {
+                    app.table.pagination_state.set_pagination(maybe_pagination.clone(), *request_id);
+                }
+                _ => {}
+            }
         }
         Vec::new()
     }
@@ -511,7 +466,7 @@ impl Component for PaginationComponent {
     /// * `area` - The rectangular area to render within
     /// * `app` - The application state for theme and focus information
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
-        if !app.table.pagination_state.is_visible {
+        if !app.table.pagination_state.is_visible() {
             return;
         }
 
@@ -524,7 +479,7 @@ impl Component for PaginationComponent {
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let pagination_state = &app.table.pagination_state;
-        if !pagination_state.is_visible {
+        if !pagination_state.is_visible() {
             return Vec::new();
         }
 
@@ -538,15 +493,7 @@ impl Component for PaginationComponent {
 
         let theme = &*app.ctx.theme;
 
-        [
-            Span::styled("←/→", theme.accent_emphasis_style()),
-            Span::styled(" navigate  ", theme.text_muted_style()),
-            Span::styled("Home/End", theme.accent_emphasis_style()),
-            Span::styled(" jump  ", theme.text_muted_style()),
-            Span::styled("Enter", theme.accent_emphasis_style()),
-            Span::styled(" select", theme.text_muted_style()),
-        ]
-        .to_vec()
+        th::build_hint_spans(theme, &[("←/→", " navigate  "), ("Home/End", " jump  "), ("Enter", " select")])
     }
 
     fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {

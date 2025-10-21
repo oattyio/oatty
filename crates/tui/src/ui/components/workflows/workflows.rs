@@ -114,15 +114,19 @@ impl WorkflowsComponent {
         let filter_input = app.workflows.search_query();
         let (items, filtered_count) = {
             let state = &app.workflows;
-            let identifier_width = state.filtered_identifier_width().clamp(12, 40);
-            let available_summary_width = area.width.saturating_sub(identifier_width as u16).saturating_sub(4) as usize;
+            let title_width = state.filtered_title_width().clamp(12, 40);
+            let available_summary_width = area.width.saturating_sub(title_width as u16).saturating_sub(4) as usize;
 
             let items = state
                 .filtered_indices()
                 .iter()
                 .filter_map(|workflow_index| {
                     state.workflow_by_index(*workflow_index).map(|workflow| {
-                        let identifier_cell = format!("{:<width$}", workflow.identifier, width = identifier_width);
+                        let identifier_cell = format!(
+                            "{:<width$}",
+                            workflow.title.as_ref().unwrap_or(&workflow.identifier),
+                            width = title_width
+                        );
                         let summary = Self::summarize_workflow(workflow, available_summary_width);
                         let primary = theme.text_primary_style();
                         let secondary = theme.text_secondary_style();
@@ -154,20 +158,6 @@ impl WorkflowsComponent {
             .highlight_symbol(if is_list_focused { "> " } else { "" });
 
         frame.render_stateful_widget(list, inner_area, list_state);
-    }
-
-    fn render_footer(&self, frame: &mut Frame, area: Rect, app: &mut App) {
-        let theme = &*app.ctx.theme;
-        let mut footer_text = String::new();
-        if app.workflows.f_search.get() {
-            footer_text.push_str("Esc Clear  •  Enter run  •  ↑↓ select");
-        } else {
-            footer_text.push_str("/ or type to search  •  Enter run  •  ↑↓ select");
-        }
-        let paragraph = Paragraph::new(footer_text)
-            .style(theme.text_secondary_style())
-            .wrap(Wrap { trim: true });
-        frame.render_widget(paragraph, area);
     }
 
     fn summarize_workflow(workflow: &RuntimeWorkflow, max_width: usize) -> String {
@@ -205,7 +195,7 @@ impl Component for WorkflowsComponent {
         }
         let mut effects = Vec::new();
         if let Err(error) = app.workflows.ensure_loaded(&app.ctx.command_registry) {
-            app.logs.entries.push(format!("Failed to load workflows: {error}"));
+            app.append_log_message(format!("Failed to load workflows: {error}"));
             return effects;
         }
         // Defer to the search field if it's focused
@@ -242,17 +232,28 @@ impl Component for WorkflowsComponent {
                 .style(app.ctx.theme.status_error())
                 .wrap(Wrap { trim: true });
             frame.render_widget(block, area);
-            app.logs.entries.push(format!("Workflow load error: {error}"));
+            app.append_log_message(format!("Workflow load error: {error}"));
             return;
         }
 
-        let layout = Layout::vertical([
-            Constraint::Min(5),    // Search and list widget panel
-            Constraint::Length(1), // Footer
-        ])
-        .split(area);
+        self.render_panel(frame, area, app);
+    }
 
-        self.render_panel(frame, layout[0], app);
-        self.render_footer(frame, layout[1], app);
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
+        let theme = &*app.ctx.theme;
+        let mut hints: Vec<(&str, &str)> = Vec::new();
+
+        let search_focused = app.workflows.f_search.get();
+        if search_focused {
+            hints.push(("Esc", " Clear search  "));
+        } else {
+            hints.push(("Shift+Tab", " Focus search  "));
+            hints.push(("Esc", " Clear filter  "));
+        }
+
+        hints.push(("↑/↓", " Select  "));
+        hints.push(("Enter", " Open inputs"));
+
+        th::build_hint_spans(theme, &hints)
     }
 }

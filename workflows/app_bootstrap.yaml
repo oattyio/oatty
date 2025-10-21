@@ -1,5 +1,6 @@
 workflow: app_bootstrap
-description: "Create a new Heroku app, configure basics, provision a database, and open it."
+title: "App Bootstrap"
+description: "Create a new Heroku app, configure basics, provision an addon, and optionally add a buildpack."
 inputs:
   app_name:
     description: "Name for the new app"
@@ -21,10 +22,18 @@ inputs:
     default:
       from: literal
       value: "heroku-22"
-  addon_plan:
-    description: "Database plan to provision (e.g., heroku-postgresql:hobby-dev)"
-    provider: addons plans:list
+  choose_addon:
+    description: "Addon to provision (e.g., heroku-postgresql)"
+    provider: addon-services list
     select: { value_field: name, display_field: name }
+  addon_plan:
+    description: "The plan of the chosen addon (e.g., heroku-postgresql:hobby-dev)"
+    provider: addon-services plans:list
+    select: { value_field: name, display_field: name }
+    provider_args:
+      add_on_service: ${{ inputs.choose_addon }}
+    depends_on:
+      choose_addon: ${{ inputs.choose_addon }}
   config_vars:
     description: "Config vars to set on the app"
     type: object
@@ -43,11 +52,11 @@ steps:
 
   - id: add_buildpack
     when: ${{ !!inputs.buildpack }}
-    run: apps buildpacks:add
+    run: apps buildpacks-installation:update
     with:
       app: ${{ inputs.app_name }}
     body:
-      buildpack: ${{ inputs.buildpack }}
+      updates: ${{ inputs.buildpack }}
 
   - id: set_config
     when: ${{ !!inputs.config_vars }}
@@ -56,14 +65,9 @@ steps:
       app: ${{ inputs.app_name }}
     body: ${{ inputs.config_vars }}
 
-  - id: provision_db
+  - id: provision_addon
     run: apps addons:create
     with:
       app: ${{ inputs.app_name }}
     body:
       plan: ${{ inputs.addon_plan }}
-
-  - id: open
-    run: apps open
-    with:
-      app: ${{ inputs.app_name }}

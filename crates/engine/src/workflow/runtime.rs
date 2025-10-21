@@ -23,6 +23,7 @@ pub fn workflow_spec_from_runtime(workflow: &RuntimeWorkflow) -> WorkflowSpec {
 fn step_definition_to_spec(definition: &WorkflowStepDefinition) -> StepSpec {
     StepSpec {
         id: definition.id.clone(),
+        depends_on: definition.depends_on.clone(),
         run: definition.run.clone(),
         with: convert_with_map(&definition.with),
         body: match definition.body.clone() {
@@ -30,7 +31,7 @@ fn step_definition_to_spec(definition: &WorkflowStepDefinition) -> StepSpec {
             other => Some(other),
         },
         repeat: definition.repeat.as_ref().and_then(convert_repeat),
-        r#if: None,
+        r#if: normalize_condition_expression(definition.r#if.as_deref()),
         output_contract: definition.output_contract.as_ref().map(convert_output_contract),
     }
 }
@@ -73,6 +74,22 @@ fn convert_output_field(field: &WorkflowOutputField) -> ContractField {
     }
 }
 
+fn normalize_condition_expression(raw: Option<&str>) -> Option<String> {
+    let text = raw?.trim();
+    if text.is_empty() {
+        return None;
+    }
+
+    if let Some(stripped) = text.strip_prefix("${{") {
+        let inner = stripped.trim();
+        let inner = inner.strip_suffix("}}").unwrap_or(inner);
+        let inner = inner.trim();
+        if inner.is_empty() { None } else { Some(inner.to_string()) }
+    } else {
+        Some(text.to_string())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,6 +103,7 @@ mod tests {
             run: "apps list".into(),
             description: None,
             depends_on: Vec::new(),
+            r#if: Some("${{ inputs.enabled }}".into()),
             with,
             body: Value::Null,
             repeat: Some(WorkflowRepeat {
@@ -124,6 +142,7 @@ mod tests {
         let step = &spec.steps[0];
         assert_eq!(step.id, "s1");
         assert!(step.with.as_ref().unwrap().contains_key("app"));
+        assert_eq!(step.r#if.as_deref(), Some("inputs.enabled"));
         assert!(step.repeat.is_some());
         assert!(step.output_contract.is_some());
     }

@@ -1,4 +1,5 @@
 workflow: collaborator_lifecycle
+title: "Add a collaborator"
 description: "Add a collaborator to an app and verify their access and permissions."
 inputs:
   app:

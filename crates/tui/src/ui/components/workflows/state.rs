@@ -1,18 +1,27 @@
 use crate::ui::components::common::TextInputState;
 use crate::ui::components::table::TableState;
+use crate::ui::components::workflows::collector::manual_entry::ManualEntryState;
 use crate::ui::components::workflows::input::WorkflowInputViewState;
+use crate::ui::components::workflows::run::RunViewState;
 use crate::ui::theme::Theme;
 use anyhow::{Result, anyhow};
 use heroku_engine::workflow::document::build_runtime_catalog;
 use heroku_engine::{ProviderBindingOutcome, WorkflowRunState};
-use heroku_registry::{CommandRegistry, feat_gate::feature_workflows};
-use heroku_types::workflow::{RuntimeWorkflow, WorkflowInputDefinition, WorkflowValueProvider};
-use heroku_types::{WorkflowInputValidation, WorkflowProviderErrorPolicy};
+use heroku_registry::{CommandRegistry, feat_gate::feature_workflows, utils::find_by_group_and_cmd};
+use heroku_types::WorkflowProviderErrorPolicy;
+use heroku_types::{
+    command::SchemaProperty,
+    workflow::{
+        RuntimeWorkflow, WorkflowInputDefinition, WorkflowRunControl, WorkflowRunEvent, WorkflowRunStatus, WorkflowRunStepStatus,
+        WorkflowValueProvider,
+    },
+};
+use indexmap::IndexMap;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::{layout::Rect, widgets::ListState};
-use regex::Regex;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
+use tokio::sync::mpsc::UnboundedSender;
 
 /// Maintains the workflow catalogue, filtered view, and list selection state for the picker UI.
 #[derive(Debug, Default)]
@@ -163,11 +172,17 @@ impl WorkflowListState {
     }
 
     /// Calculates the width required for the identifier column using the filtered set.
-    pub fn filtered_identifier_width(&self) -> usize {
+    pub fn filtered_title_width(&self) -> usize {
         self.filtered_indices
             .iter()
             .filter_map(|index| self.workflows.get(*index))
-            .map(|workflow| workflow.identifier.len())
+            .map(|workflow| {
+                workflow
+                    .title
+                    .as_ref()
+                    .and_then(|t| Some(t.len()))
+                    .unwrap_or(workflow.identifier.len())
+            })
             .max()
             .unwrap_or(0)
     }
@@ -237,6 +252,13 @@ impl HasFocus for WorkflowListState {
     }
 }
 
+/// Handle that allows the UI to dispatch control commands to the active workflow run.
+#[derive(Debug, Clone)]
+pub struct WorkflowRunControlHandle {
+    pub run_id: String,
+    pub sender: UnboundedSender<WorkflowRunControl>,
+}
+
 /// Aggregates workflow list state with execution metadata, modal visibility, and provider cache snapshots.
 #[derive(Debug, Default)]
 pub struct WorkflowState {
@@ -244,13 +266,16 @@ pub struct WorkflowState {
     active_run_state: Option<WorkflowRunState>,
     selected_metadata: Option<WorkflowSelectionMetadata>,
     input_view: Option<WorkflowInputViewState>,
+    run_view: Option<RunViewState>,
     /// Manual entry modal state (when open); None when not editing.
-    pub manual_entry: Option<ManualEntryViewState>,
+    pub manual_entry: Option<ManualEntryState>,
     /// Provider-backed selector state (when open); None when not selecting.
     pub selector: Option<WorkflowSelectorViewState<'static>>,
     /// The focus flags for the workflow view.
     pub container_focus: FocusFlag,
     pub f_search: FocusFlag,
+    active_run_id: Option<String>,
+    run_control: Option<WorkflowRunControlHandle>,
 }
 
 impl WorkflowState {
@@ -261,10 +286,13 @@ impl WorkflowState {
             active_run_state: None,
             selected_metadata: None,
             input_view: None,
+            run_view: None,
             manual_entry: None,
             selector: None,
             container_focus: FocusFlag::named("workflow.container"),
             f_search: FocusFlag::named("workflow.search"),
+            active_run_id: None,
+            run_control: None,
         }
     }
 
@@ -356,8 +384,8 @@ impl WorkflowState {
     }
 
     /// Computes the identifier column width for the filtered set.
-    pub fn filtered_identifier_width(&self) -> usize {
-        self.list.filtered_identifier_width()
+    pub fn filtered_title_width(&self) -> usize {
+        self.list.filtered_title_width()
     }
 
     /// Provides the derived metadata for the currently selected workflow, if any.
@@ -394,12 +422,25 @@ impl WorkflowState {
     pub fn begin_inputs_session(&mut self, run_state: WorkflowRunState) {
         self.active_run_state = Some(run_state);
         self.input_view = Some(WorkflowInputViewState::new());
+        self.run_view = None;
+        self.active_run_id = None;
+        self.run_control = None;
     }
 
     /// Ends any active inputs session and drops the stored run state.
     pub fn end_inputs_session(&mut self) {
         self.input_view = None;
         self.active_run_state = None;
+        self.run_view = None;
+        self.active_run_id = None;
+        self.run_control = None;
+    }
+
+    /// Hides the input view while keeping the prepared run state available.
+    pub fn close_input_view(&mut self) {
+        self.input_view = None;
+        self.manual_entry = None;
+        self.selector = None;
     }
 
     /// Retrieves the currently active input definition from the application's workflows.
@@ -473,9 +514,155 @@ impl WorkflowState {
     }
 }
 
+fn describe_step_status(status: WorkflowRunStepStatus) -> &'static str {
+    match status {
+        WorkflowRunStepStatus::Pending => "pending",
+        WorkflowRunStepStatus::Running => "running",
+        WorkflowRunStepStatus::Succeeded => "succeeded",
+        WorkflowRunStepStatus::Failed => "failed",
+        WorkflowRunStepStatus::Skipped => "skipped",
+    }
+}
+
+fn describe_run_status(status: WorkflowRunStatus) -> &'static str {
+    match status {
+        WorkflowRunStatus::Pending => "pending",
+        WorkflowRunStatus::Running => "running",
+        WorkflowRunStatus::Paused => "paused",
+        WorkflowRunStatus::CancelRequested => "cancel requested",
+        WorkflowRunStatus::Succeeded => "succeeded",
+        WorkflowRunStatus::Failed => "failed",
+        WorkflowRunStatus::Canceled => "canceled",
+    }
+}
+
+#[cfg(test)]
+mod workflow_run_tests {
+    use super::*;
+    use crate::ui::components::workflows::run::RunViewState;
+    use crate::ui::components::workflows::run::state::RunExecutionStatus;
+    use crate::ui::theme::dracula::DraculaTheme;
+    use chrono::Utc;
+    use heroku_types::workflow::{
+        RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault, WorkflowInputDefinition, WorkflowStepDefinition,
+    };
+    use indexmap::IndexMap;
+    use serde_json::{Value, json};
+
+    fn sample_workflow() -> RuntimeWorkflow {
+        RuntimeWorkflow {
+            identifier: "wf".into(),
+            title: Some("Workflow".into()),
+            description: None,
+            inputs: IndexMap::new(),
+            steps: vec![WorkflowStepDefinition {
+                id: "first".into(),
+                run: "cmd".into(),
+                description: Some("step".into()),
+                depends_on: Vec::new(),
+                r#if: None,
+                with: IndexMap::new(),
+                body: Value::Null,
+                repeat: None,
+                output_contract: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn unresolved_count_ignores_inputs_populated_by_defaults() {
+        let mut inputs = IndexMap::new();
+
+        let mut region = WorkflowInputDefinition::default();
+        region.default = Some(WorkflowInputDefault {
+            from: WorkflowDefaultSource::Literal,
+            value: Some(json!("us")),
+        });
+        inputs.insert("region".into(), region);
+
+        inputs.insert("app".into(), WorkflowInputDefinition::default());
+
+        let workflow = RuntimeWorkflow {
+            identifier: "with_defaults".into(),
+            title: None,
+            description: None,
+            inputs,
+            steps: vec![WorkflowStepDefinition {
+                id: "first".into(),
+                run: "cmd".into(),
+                description: None,
+                depends_on: Vec::new(),
+                r#if: None,
+                with: IndexMap::new(),
+                body: Value::Null,
+                repeat: None,
+                output_contract: None,
+            }],
+        };
+
+        let mut run_state = WorkflowRunState::new(workflow.clone());
+        run_state.apply_input_defaults();
+
+        let mut state = WorkflowState::new();
+        state.begin_inputs_session(run_state);
+
+        assert_eq!(state.unresolved_item_count(), 1);
+        let stored_state = state.active_run_state().expect("active run state");
+        assert_eq!(stored_state.run_context.inputs.get("region"), Some(&json!("us")));
+    }
+
+    #[test]
+    fn apply_run_event_updates_status_and_logs() {
+        let theme = DraculaTheme::new();
+        let workflow = sample_workflow();
+        let run_id = "run-1".to_string();
+        let run_state = WorkflowRunState::new(workflow.clone());
+        let mut view_state = RunViewState::new(run_id.clone(), workflow.identifier.clone(), workflow.title.clone());
+        view_state.initialize_steps(&workflow.steps, &theme);
+
+        let mut state = WorkflowState::new();
+        state.begin_run_session(run_id.clone(), run_state, view_state);
+
+        let logs = state.apply_run_event(&run_id, WorkflowRunEvent::RunStarted { at: Utc::now() }, &theme);
+        assert!(logs.iter().any(|entry| entry.contains("started")));
+        assert_eq!(state.run_view_state().unwrap().status(), RunExecutionStatus::Running);
+
+        let logs = state.apply_run_event(
+            &run_id,
+            WorkflowRunEvent::RunStatusChanged {
+                status: WorkflowRunStatus::CancelRequested,
+                message: Some("aborting...".into()),
+            },
+            &theme,
+        );
+        assert!(logs.iter().any(|entry| entry.contains("aborting")));
+        let view = state.run_view_state().unwrap();
+        assert_eq!(view.status(), RunExecutionStatus::CancelRequested);
+        assert_eq!(view.status_message(), Some("aborting..."));
+
+        let logs = state.apply_run_event(
+            &run_id,
+            WorkflowRunEvent::StepFinished {
+                step_id: "first".into(),
+                status: WorkflowRunStepStatus::Succeeded,
+                output: json!({"ok": true}),
+                logs: vec!["done".into()],
+                attempts: 1,
+                duration_ms: 20,
+            },
+            &theme,
+        );
+        assert!(logs.iter().any(|entry| entry.contains("Step 'first'")));
+        let row = state.run_view_state().unwrap().steps_table().selected_data().cloned().expect("row");
+        assert_eq!(row["Status"], Value::String("succeeded".into()));
+    }
+}
+
 impl HasFocus for WorkflowState {
     fn build(&self, builder: &mut FocusBuilder) {
-        if let Some(view) = &self.input_view {
+        if let Some(run_view) = &self.run_view {
+            run_view.build(builder);
+        } else if let Some(view) = &self.input_view {
             view.build(builder);
         } else {
             let tag = builder.start(self);
@@ -486,7 +673,9 @@ impl HasFocus for WorkflowState {
     }
 
     fn focus(&self) -> FocusFlag {
-        if let Some(view) = &self.input_view {
+        if let Some(run_view) = &self.run_view {
+            run_view.focus()
+        } else if let Some(view) = &self.input_view {
             view.focus()
         } else {
             self.container_focus.clone()
@@ -494,7 +683,9 @@ impl HasFocus for WorkflowState {
     }
 
     fn area(&self) -> Rect {
-        if let Some(view) = &self.input_view {
+        if let Some(run_view) = &self.run_view {
+            run_view.area()
+        } else if let Some(view) = &self.input_view {
             view.area()
         } else {
             self.list.area()
@@ -536,115 +727,89 @@ impl WorkflowSelectionMetadata {
     }
 }
 
-// ---- Manual entry modal state ----
+/// Enriched schema metadata used to annotate selector rows and detail entries.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkflowSelectorFieldMetadata {
+    /// JSON type hint reported by the upstream schema.
+    pub json_type: Option<String>,
+    /// Semantic tags associated with the field (for example, `app_id`).
+    pub tags: Vec<String>,
+    /// Enumerated literals declared for the field, when available.
+    pub enum_values: Vec<String>,
+    /// Indicates whether the field is required for the provider payload.
+    pub required: bool,
+}
+
+/// A staged workflow selector choice that is ready to be applied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkflowSelectorStagedSelection {
+    /// JSON value that will be written into the workflow input slot.
+    pub value: Value,
+    /// Human-readable representation of the value for status messaging.
+    pub display_value: String,
+    /// Source field used to extract the value from the provider row.
+    pub source_field: Option<String>,
+    /// Full JSON row returned by the provider.
+    pub row: Value,
+}
+
+impl WorkflowSelectorStagedSelection {
+    /// Constructs a new staged selection with the provided value metadata.
+    pub fn new(value: Value, display_value: String, source_field: Option<String>, row: Value) -> Self {
+        Self {
+            value,
+            display_value,
+            source_field,
+            row,
+        }
+    }
+}
+
+/// Focus targets available within the workflow selector modal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WorkflowCollectorFocus {
+    /// Provider results table focus, arrow navigation enabled.
+    Table,
+    /// Inline filter input focus, text editing enabled.
+    Filter,
+    /// Confirmation buttons focus, Enter and arrow keys interact with buttons.
+    Buttons(SelectorButtonFocus),
+}
+
+impl Default for WorkflowCollectorFocus {
+    fn default() -> Self {
+        Self::Table
+    }
+}
+
+/// Identifies which selector confirmation button currently holds focus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SelectorButtonFocus {
+    /// Cancel button.
+    Cancel,
+    /// Apply button.
+    Apply,
+}
+
+/// Retained layout metadata capturing screen regions for pointer hit-testing.
 #[derive(Debug, Clone, Default)]
-pub struct ManualEntryViewState {
-    /// Label for the value being entered (input name)
-    pub label: String,
-    /// UTF-8 safe text input buffer and cursor
-    pub text: TextInputState,
-    /// Latest validation error shown inline
-    pub error: Option<String>,
-    /// Optional validation rules from the workflow definition
-    pub validation: Option<WorkflowInputValidation>,
-    /// Optional placeholder shown when empty
-    pub placeholder: Option<String>,
+pub struct WorkflowSelectorLayoutState {
+    /// Rect covering the overall selector content area.
+    pub container_area: Option<Rect>,
+    /// Rect covering the filter input at the top of the modal.
+    pub filter_area: Option<Rect>,
+    /// Rect covering the results table.
+    pub table_area: Option<Rect>,
+    /// Rect covering the detail pane.
+    pub detail_area: Option<Rect>,
+    /// Rect covering the footer (buttons + hints).
+    pub footer_area: Option<Rect>,
+    /// Rect for the Cancel button inside the footer.
+    pub cancel_button_area: Option<Rect>,
+    /// Rect for the Apply button inside the footer.
+    pub apply_button_area: Option<Rect>,
 }
 
-/// Validate a text candidate against the declarative workflow rules.
-///
-/// This helper centralises the validation logic so both manual entry acceptance
-/// and status rendering apply the same checks (allowed values, regex patterns,
-/// length constraints).
-pub fn validate_candidate_value(candidate: &str, validation: &WorkflowInputValidation) -> Result<(), String> {
-    if !validation.allowed_values.is_empty() {
-        let matches_allowed_value = validation.allowed_values.iter().any(|value| {
-            value
-                .as_str()
-                .map(|text| text == candidate)
-                .unwrap_or_else(|| value.to_string() == candidate)
-        });
-
-        if !matches_allowed_value {
-            return Err("value is not in the allowed set".to_string());
-        }
-    }
-
-    if let Some(min_length) = validation.min_length {
-        if candidate.chars().count() < min_length {
-            return Err(format!("value must be at least {} characters", min_length));
-        }
-    }
-
-    if let Some(max_length) = validation.max_length {
-        if candidate.chars().count() > max_length {
-            return Err(format!("value must be at most {} characters", max_length));
-        }
-    }
-
-    if let Some(pattern) = &validation.pattern {
-        let regex = Regex::new(pattern).map_err(|error| format!("invalid pattern '{}': {}", pattern, error))?;
-        if !regex.is_match(candidate) {
-            return Err(format!("value must match the pattern {}", pattern));
-        }
-    }
-
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    fn base_validation() -> WorkflowInputValidation {
-        WorkflowInputValidation {
-            required: false,
-            allowed_values: Vec::new(),
-            pattern: None,
-            min_length: None,
-            max_length: None,
-        }
-    }
-
-    #[test]
-    fn candidate_matching_pattern_passes() {
-        let mut validation = base_validation();
-        validation.pattern = Some("^[a-z]{3,5}$".to_string());
-
-        assert!(validate_candidate_value("app", &validation).is_ok());
-        assert!(validate_candidate_value("valid", &validation).is_ok());
-    }
-
-    #[test]
-    fn candidate_failing_pattern_rejects() {
-        let mut validation = base_validation();
-        validation.pattern = Some("^[a-z]{3,5}$".to_string());
-
-        let error = validate_candidate_value("APP", &validation).expect_err("expected pattern error");
-        assert!(error.contains("pattern"));
-    }
-
-    #[test]
-    fn invalid_pattern_reports_error() {
-        let mut validation = base_validation();
-        validation.pattern = Some("[".to_string());
-
-        let error = validate_candidate_value("app", &validation).expect_err("expected invalid pattern error");
-        assert!(error.contains("invalid pattern"));
-    }
-
-    #[test]
-    fn allowed_values_enforced() {
-        let mut validation = base_validation();
-        validation.allowed_values = vec![serde_json::Value::from("alpha"), serde_json::Value::from("beta")];
-
-        assert!(validate_candidate_value("alpha", &validation).is_ok());
-        let error = validate_candidate_value("delta", &validation).expect_err("expected allowed values error");
-        assert!(error.contains("allowed set"));
-    }
-}
-
-/// Provider-backed selector state rendered in the Workflow Collector modal.
 #[derive(Debug)]
 pub struct WorkflowSelectorViewState<'a> {
     /// Canonical provider identifier (e.g., "apps list").
@@ -669,8 +834,14 @@ pub struct WorkflowSelectorViewState<'a> {
     pub pending_cache_key: Option<String>,
     /// Lightweight inline filter buffer.
     pub filter: TextInputState,
-    /// Whether the filter input is currently focused/active.
-    pub filter_active: bool,
+    /// Current focus target within the selector modal.
+    pub focus: WorkflowCollectorFocus,
+    /// Cached metadata derived from the provider schema.
+    pub field_metadata: IndexMap<String, WorkflowSelectorFieldMetadata>,
+    /// Currently staged selection awaiting confirmation.
+    pub staged_selection: Option<WorkflowSelectorStagedSelection>,
+    /// Layout metadata from the most recent render pass.
+    pub layout: WorkflowSelectorLayoutState,
 }
 
 impl<'a> WorkflowSelectorViewState<'a> {
@@ -679,12 +850,14 @@ impl<'a> WorkflowSelectorViewState<'a> {
         self.status = SelectorStatus::Loaded;
         self.error_message = None;
         self.pending_cache_key = None;
+        self.clear_staged_selection();
     }
 
     pub fn set_error(&mut self, message: String) {
         self.status = SelectorStatus::Error;
         self.error_message = Some(message);
         self.pending_cache_key = None;
+        self.clear_staged_selection();
     }
 
     pub fn refresh_table(&mut self, theme: &dyn Theme) {
@@ -717,6 +890,90 @@ impl<'a> WorkflowSelectorViewState<'a> {
         let json = Value::Array(dataset);
         self.table.apply_result_json(Some(json), theme);
         self.table.normalize();
+        self.clear_staged_selection();
+    }
+
+    pub fn clear_staged_selection(&mut self) {
+        self.staged_selection = None;
+    }
+
+    pub fn set_staged_selection(&mut self, selection: Option<WorkflowSelectorStagedSelection>) {
+        self.staged_selection = selection;
+    }
+
+    pub fn staged_selection(&self) -> Option<&WorkflowSelectorStagedSelection> {
+        self.staged_selection.as_ref()
+    }
+
+    pub fn take_staged_selection(&mut self) -> Option<WorkflowSelectorStagedSelection> {
+        self.staged_selection.take()
+    }
+
+    pub fn focus_filter(&mut self) {
+        self.focus = WorkflowCollectorFocus::Filter;
+        self.filter.set_cursor(self.filter.input().len());
+    }
+
+    pub fn focus_table(&mut self) {
+        self.focus = WorkflowCollectorFocus::Table;
+    }
+
+    pub fn focus_buttons(&mut self, button: SelectorButtonFocus) {
+        self.focus = WorkflowCollectorFocus::Buttons(button);
+    }
+
+    pub fn is_filter_focused(&self) -> bool {
+        matches!(self.focus, WorkflowCollectorFocus::Filter)
+    }
+
+    pub fn apply_enabled(&self) -> bool {
+        self.staged_selection.is_some()
+    }
+
+    pub fn set_layout(&mut self, layout: WorkflowSelectorLayoutState) {
+        self.layout = layout;
+    }
+
+    pub fn layout(&self) -> &WorkflowSelectorLayoutState {
+        &self.layout
+    }
+
+    pub fn button_focus(&self) -> SelectorButtonFocus {
+        match self.focus {
+            WorkflowCollectorFocus::Buttons(button) => button,
+            _ => SelectorButtonFocus::Apply,
+        }
+    }
+
+    pub fn next_focus(&mut self) {
+        match self.focus {
+            WorkflowCollectorFocus::Table => self.focus_filter(),
+            WorkflowCollectorFocus::Filter => self.focus_buttons(SelectorButtonFocus::Cancel),
+            WorkflowCollectorFocus::Buttons(SelectorButtonFocus::Cancel) => self.focus_buttons(SelectorButtonFocus::Apply),
+            WorkflowCollectorFocus::Buttons(SelectorButtonFocus::Apply) => self.focus_table(),
+        }
+    }
+
+    pub fn prev_focus(&mut self) {
+        match self.focus {
+            WorkflowCollectorFocus::Table => self.focus_buttons(SelectorButtonFocus::Apply),
+            WorkflowCollectorFocus::Filter => self.focus_table(),
+            WorkflowCollectorFocus::Buttons(SelectorButtonFocus::Cancel) => self.focus_filter(),
+            WorkflowCollectorFocus::Buttons(SelectorButtonFocus::Apply) => self.focus_buttons(SelectorButtonFocus::Cancel),
+        }
+    }
+
+    pub fn sync_stage_with_selection(&mut self) {
+        let Some(staged) = self.staged_selection.as_ref() else {
+            return;
+        };
+        let Some(current_row) = self.table.selected_data() else {
+            self.clear_staged_selection();
+            return;
+        };
+        if staged.row != *current_row {
+            self.clear_staged_selection();
+        }
     }
 }
 
@@ -741,32 +998,132 @@ impl WorkflowState {
         let Some((name, def)) = run_state.workflow.inputs.get_index(idx) else {
             return;
         };
-        let mut state = ManualEntryViewState::default();
-        state.label = name.to_string();
-        state.validation = def.validate.clone();
-        state.placeholder = def.placeholder.clone();
-        if let Some(existing) = run_state
-            .run_context
-            .inputs
-            .get(name)
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string())
-        {
-            state.text.set_input(existing);
-            // place cursor at end
-            state.text.set_cursor(state.text.input().len());
-        }
+        let existing_value = run_state.run_context.inputs.get(name);
+        let state = ManualEntryState::from_definition(def, name, existing_value);
         self.manual_entry = Some(state);
     }
 
     /// Returns an immutable reference to the manual entry state when present.
-    pub fn manual_entry_state(&self) -> Option<&ManualEntryViewState> {
+    pub fn manual_entry_state(&self) -> Option<&ManualEntryState> {
         self.manual_entry.as_ref()
     }
 
     /// Returns a mutable reference to the manual entry state when present.
-    pub fn manual_entry_state_mut(&mut self) -> Option<&mut ManualEntryViewState> {
+    pub fn manual_entry_state_mut(&mut self) -> Option<&mut ManualEntryState> {
         self.manual_entry.as_mut()
+    }
+
+    /// Begins a run session by persisting the run identifier, engine state, and view state.
+    pub fn begin_run_session(&mut self, run_id: String, run_state: WorkflowRunState, run_view: RunViewState) {
+        self.active_run_state = Some(run_state);
+        self.run_view = Some(run_view);
+        self.active_run_id = Some(run_id);
+        self.run_control = None;
+    }
+
+    /// Stores a freshly prepared run view state.
+    pub fn begin_run_view(&mut self, state: RunViewState) {
+        self.run_view = Some(state);
+    }
+
+    /// Returns the active run view state, if present.
+    pub fn run_view_state(&self) -> Option<&RunViewState> {
+        self.run_view.as_ref()
+    }
+
+    /// Returns the active run view state mutably, if present.
+    pub fn run_view_state_mut(&mut self) -> Option<&mut RunViewState> {
+        self.run_view.as_mut()
+    }
+
+    /// Clears the active run view state.
+    pub fn close_run_view(&mut self) {
+        self.run_view = None;
+    }
+
+    /// Registers the control channel for the currently active run.
+    pub fn register_run_control(&mut self, run_id: &str, sender: UnboundedSender<WorkflowRunControl>) {
+        if self.active_run_id.as_deref() == Some(run_id) {
+            self.run_control = Some(WorkflowRunControlHandle {
+                run_id: run_id.to_string(),
+                sender,
+            });
+        }
+    }
+
+    /// Returns the control sender for the specified run, if available.
+    pub fn run_control_sender(&self, run_id: &str) -> Option<&UnboundedSender<WorkflowRunControl>> {
+        if self.active_run_id.as_deref() == Some(run_id) {
+            self.run_control.as_ref().map(|handle| &handle.sender)
+        } else {
+            None
+        }
+    }
+
+    /// Applies a workflow run event to the state, returning log messages to surface.
+    pub fn apply_run_event(&mut self, run_id: &str, event: WorkflowRunEvent, theme: &dyn Theme) -> Vec<String> {
+        if self.active_run_id.as_deref() != Some(run_id) {
+            return Vec::new();
+        }
+
+        let mut log_messages = Vec::new();
+        let Some(run_view) = self.run_view.as_mut() else {
+            return Vec::new();
+        };
+
+        match event {
+            WorkflowRunEvent::RunStarted { at } => {
+                run_view.handle_run_started(at);
+                log_messages.push(format!("Workflow run '{}' started.", run_id));
+            }
+            WorkflowRunEvent::RunStatusChanged { status, message } => {
+                run_view.apply_status_change(status, message.clone());
+                if let Some(text) = message {
+                    log_messages.push(text);
+                }
+            }
+            WorkflowRunEvent::StepStarted { index, .. } => {
+                run_view.mark_step_running(index, theme);
+            }
+            WorkflowRunEvent::StepFinished {
+                step_id,
+                status,
+                output,
+                logs,
+                attempts,
+                duration_ms,
+            } => {
+                if let Some(state) = self.active_run_state.as_mut() {
+                    state.run_context.steps.insert(step_id.clone(), output.clone());
+                }
+                run_view.mark_step_finished(&step_id, status, attempts, duration_ms, output, logs.clone(), theme);
+                log_messages.push(format!("Step '{}' {}", step_id, describe_step_status(status)));
+                if status == WorkflowRunStepStatus::Failed {
+                    self.run_control = None;
+                }
+            }
+            WorkflowRunEvent::RunOutputAccumulated { key, value, detail } => {
+                run_view.append_output(&key, value, detail, theme);
+            }
+            WorkflowRunEvent::RunCompleted {
+                status,
+                finished_at,
+                error,
+            } => {
+                run_view.handle_run_completed(status, finished_at, error.clone());
+                self.run_control = None;
+                if let Some(text) = error {
+                    log_messages.push(text);
+                } else {
+                    log_messages.push(format!("Workflow run '{}' completed with {}.", run_id, describe_run_status(status)));
+                }
+            }
+            WorkflowRunEvent::StepOutputProduced { .. } => {
+                // Future enhancement: stream intermediate outputs into the detail view.
+            }
+        }
+
+        log_messages
     }
 
     /// Returns the currently active input name, if any.
@@ -776,8 +1133,8 @@ impl WorkflowState {
         run_state.workflow.inputs.get_index(idx).map(|(k, _)| k.clone())
     }
 
-    /// Initializes the Provider-backed selector for the currently active input.
-    pub fn open_selector_for_active_input(&mut self) {
+    /// Initializes the provider-backed selector for the currently active input.
+    pub fn open_selector_for_active_input(&mut self, registry: &Arc<Mutex<CommandRegistry>>) {
         let Some(run_state) = self.active_run_state() else {
             return;
         };
@@ -793,6 +1150,7 @@ impl WorkflowState {
             Some(id) => id,
             None => return,
         };
+        let field_metadata = resolve_selector_field_metadata(registry, &provider_id);
 
         // Collect resolved provider args from the binding outcomes.
         let mut args = serde_json::Map::new();
@@ -819,8 +1177,11 @@ impl WorkflowState {
             error_message: None,
             original_items: None,
             filter: TextInputState::new(),
-            filter_active: false,
             pending_cache_key: None,
+            focus: WorkflowCollectorFocus::Table,
+            field_metadata,
+            staged_selection: None,
+            layout: WorkflowSelectorLayoutState::default(),
         });
     }
 
@@ -832,4 +1193,80 @@ impl WorkflowState {
     pub fn selector_state_mut(&mut self) -> Option<&mut WorkflowSelectorViewState<'static>> {
         self.selector.as_mut()
     }
+}
+
+fn resolve_selector_field_metadata(
+    registry: &Arc<Mutex<CommandRegistry>>,
+    provider_id: &str,
+) -> IndexMap<String, WorkflowSelectorFieldMetadata> {
+    let Some((group, name)) = split_provider_identifier(provider_id) else {
+        return IndexMap::new();
+    };
+
+    let spec = {
+        let Ok(guard) = registry.lock() else {
+            return IndexMap::new();
+        };
+        find_by_group_and_cmd(&guard.commands, &group, &name).ok()
+    };
+
+    let Some(spec) = spec else {
+        return IndexMap::new();
+    };
+
+    spec.http()
+        .and_then(|http| http.output_schema.as_ref())
+        .map(build_field_metadata_from_schema)
+        .unwrap_or_default()
+}
+
+fn split_provider_identifier(provider_id: &str) -> Option<(String, String)> {
+    let (group, name) = provider_id.split_once(char::is_whitespace)?;
+    let group = group.trim();
+    let name = name.trim();
+    if group.is_empty() || name.is_empty() {
+        return None;
+    }
+    Some((group.to_string(), name.to_string()))
+}
+
+fn build_field_metadata_from_schema(schema: &SchemaProperty) -> IndexMap<String, WorkflowSelectorFieldMetadata> {
+    match schema.r#type.as_str() {
+        "object" => collect_object_field_metadata(schema),
+        "array" => schema.items.as_deref().map(build_field_metadata_from_schema).unwrap_or_default(),
+        _ => IndexMap::new(),
+    }
+}
+
+fn collect_object_field_metadata(schema: &SchemaProperty) -> IndexMap<String, WorkflowSelectorFieldMetadata> {
+    let mut metadata = IndexMap::new();
+    let Some(properties) = &schema.properties else {
+        return metadata;
+    };
+
+    let mut keys: Vec<_> = properties.keys().cloned().collect();
+    keys.sort();
+
+    for key in keys {
+        let Some(property) = properties.get(&key) else {
+            continue;
+        };
+        let property = property.as_ref();
+        metadata.insert(
+            key.clone(),
+            WorkflowSelectorFieldMetadata {
+                json_type: sanitize_schema_type(&property.r#type),
+                tags: property.tags.clone(),
+                enum_values: property.enum_values.clone(),
+                required: schema.required.iter().any(|required| required == &key),
+            },
+        );
+    }
+
+    metadata
+}
+
+fn sanitize_schema_type(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
 }

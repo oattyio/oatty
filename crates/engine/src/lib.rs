@@ -64,6 +64,7 @@ pub use resolve::RunContext;
 pub use workflow::bindings::{
     ArgumentPrompt, BindingFailure, BindingSource, MissingReason, ProviderArgumentResolver, ProviderBindingOutcome, SkipDecision,
 };
+pub use workflow::runner::drive_workflow_run;
 pub use workflow::state::{
     InputProviderState, ProviderOutcomeState, ProviderResolutionEvent, ProviderResolutionSource, StepTelemetryEvent, WorkflowRunState,
     WorkflowTelemetry,

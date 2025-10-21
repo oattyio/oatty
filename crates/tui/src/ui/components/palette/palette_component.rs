@@ -8,7 +8,7 @@ use std::hash::{DefaultHasher, Hasher};
 use std::vec;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use heroku_types::{Effect, ItemKind, Modal, Msg};
+use heroku_types::{Effect, ExecOutcome, ItemKind, Modal, Msg};
 use rat_focus::HasFocus;
 use ratatui::{
     Frame,
@@ -102,7 +102,7 @@ impl PaletteComponent {
 
         // Create a block with title and focus styling, matching browser input
         let input_title = self.create_input_title(theme);
-        let is_focused = app.palette.is_focused();
+        let is_focused = app.palette.f_input.get();
         let mut input_block = th::block(theme, None, is_focused);
         input_block = input_block.title(input_title);
 
@@ -329,14 +329,35 @@ impl PaletteComponent {
 
     /// Handles the Enter keypress.
     fn handle_enter(&self, app: &mut App) -> Vec<Effect> {
+        let cmd = app.palette.input().to_string();
+        if app.palette.is_suggestions_open() {
+            if let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index()) {
+                if item.meta.as_deref() == Some("history") && item.insert_text.trim() != cmd.trim() {
+                    let mut hasher = DefaultHasher::new();
+                    hasher.write(cmd.as_bytes());
+                    let hash = hasher.finish();
+                    app.palette.set_cmd_exec_hash(hash);
+                    app.palette.reduce_clear_suggestions();
+                    return vec![Effect::Run {
+                        hydrated_command: cmd,
+                        range_override: None,
+                        request_hash: hash,
+                    }];
+                }
+            }
+        }
+
         // Execute the command
         if !app.palette.is_suggestions_open() {
             let mut hasher = DefaultHasher::new();
-            let cmd = app.palette.input().to_string();
             hasher.write(cmd.as_bytes());
             let hash = hasher.finish();
             app.palette.set_cmd_exec_hash(hash);
-            return vec![Effect::Run(cmd, hash)];
+            return vec![Effect::Run {
+                hydrated_command: cmd,
+                range_override: None,
+                request_hash: hash,
+            }];
         } else {
             // otherwise, select from the list
             if let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index()).cloned() {
@@ -400,7 +421,13 @@ impl Component for PaletteComponent {
                 }
                 Vec::new()
             }
-            Msg::ExecCompleted(outcome) => app.palette.process_general_execution_result(outcome),
+            Msg::ExecCompleted(outcome) => match outcome.as_ref() {
+                ExecOutcome::Log(log_message) if log_message.starts_with("Provider fetch failed:") => {
+                    app.palette.handle_provider_fetch_failure(log_message, &*app.ctx.theme);
+                    Vec::new()
+                }
+                _ => app.palette.process_general_execution_result(outcome),
+            },
             _ => Vec::new(),
         }
     }
@@ -561,27 +588,25 @@ impl Component for PaletteComponent {
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        [
-            Span::styled("Tab", theme.accent_emphasis_style()),
-            Span::styled(" Completions ", theme.text_muted_style()),
-            Span::styled("↑/↓", theme.accent_emphasis_style()),
-            Span::styled(" Cycle  ", theme.text_muted_style()),
-            Span::styled("Enter", theme.accent_emphasis_style()),
-            Span::styled(" Accept  ", theme.text_muted_style()),
-            Span::styled("Ctrl+H", theme.accent_emphasis_style()),
-            Span::styled(" Help  ", theme.text_muted_style()),
-            Span::styled("Esc", theme.accent_emphasis_style()),
-            Span::styled(" Cancel", theme.text_muted_style()),
-        ]
-        .to_vec()
+        th::build_hint_spans(
+            theme,
+            &[
+                ("Tab", " Completions "),
+                ("↑/↓", " Cycle  "),
+                ("Enter", " Accept  "),
+                ("Ctrl+H", " Help  "),
+                ("Esc", " Cancel"),
+            ],
+        )
     }
 
-    fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
+    fn get_preferred_layout(&self, app: &App, area: Rect) -> Vec<Rect> {
+        let has_error = app.palette.error_message().is_some();
         // 3 areas in total, stacked on top of one another
         Layout::vertical([
-            Constraint::Length(3), // input area
-            Constraint::Length(1), // error area
-            Constraint::Min(1),    // Suggestion area
+            Constraint::Length(3),                             // input area
+            Constraint::Length(if has_error { 1 } else { 0 }), // error area
+            Constraint::Min(1),                                // Suggestion area
         ])
         .split(area)
         .to_vec()

@@ -132,62 +132,7 @@ impl Component for PluginsDetailsComponent {
 
         effects
     }
-    /// Renders a modal window within the given area, including its layout and content.
-    ///
-    /// This function is responsible for rendering a modal dialog box with a structured layout
-    /// comprising a main pane and a tools pane, as well as populating these panes with relevant
-    /// content like the header, content area, footer, and tools section.
-    ///
-    /// # Parameters
-    ///
-    /// - `frame`: The current frame to render onto. This represents the canvas where all the UI elements are drawn.
-    /// - `area`: The area within the frame where the modal should be rendered.
-    /// - `app`: A mutable reference to the application state, which provides required data for rendering.
-    ///
-    /// # Layout
-    ///
-    /// The modal is divided into the following regions:
-    /// 1. **Main Pane (Left)**: Occupies 60% of the width and is split further vertically into:
-    ///     - **Header**: Displays the title or summary information.
-    ///     - **Content**: The main body of the modal, which adapts to available height.
-    ///     - **Footer**: Provides additional contextual information or interaction hints.
-    /// 2. **Tools Pane (Right)**: Occupies 40% of the width, with a full-height left border. This displays
-    ///    tools or additional options related to the modal.
-    ///
-    /// # Rendering Steps
-    ///
-    /// 1. Compute the centered rectangle (`modal_area`) for the modal and render a clean background (via `Clear`).
-    /// 2. Render the modal container with borders, title styling, and theme-specific appearance.
-    /// 3. Divide the `modal_area` into two horizontal columns:
-    ///    - The left column (Main Pane).
-    ///    - The right column (Tools Pane) with a left border.
-    /// 4. Further split the Main Pane vertically into header, content, and footer regions.
-    /// 5. Render the respective sections:
-    ///    - Header and content sections are populated based on application state.
-    ///    - Tools Pane displays available tools when data is loaded. Otherwise, it is rendered as an empty area.
-    /// 6. Add footer hints or interactive guidance, styled with the theme-muted text appearance.
-    ///
-    /// # Behavior
-    ///
-    /// - If plugin details are available and loaded in the application state, the tools section is populated dynamically
-    ///   with additional data. Otherwise, it remains empty.
-    /// - The layout adapts to the available area size, ensuring proper alignment and distribution of space using constraints.
-    ///
-    /// # See Also
-    ///
-    /// - [`render_header`]: Renders the header section of the modal.
-    /// - [`render_content`]: Renders the content section of the modal.
-    /// - [`render_tools`]: Renders the tools section within the tools pane.
-    /// - [`get_hint_spans`]: Generates footer hints or guidance for user interaction.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// let mut frame = ...;
-    /// let area = Rect::new(0, 0, 100, 50);
-    /// let mut app = App::new();
-    /// render(&mut frame, area, &mut app);
-    /// ```
+
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         let theme = &*app.ctx.theme;
 
@@ -289,27 +234,15 @@ impl Component for PluginsDetailsComponent {
     ///
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        let mut spans = Vec::new();
-        spans.extend([
-            Span::styled("Esc", theme.accent_emphasis_style()),
-            Span::styled(" Close  ", theme.text_muted_style()),
-            Span::styled("↑/↓", theme.accent_emphasis_style()),
-            Span::styled(" Scroll logs  ", theme.text_muted_style()),
-            Span::styled("Ctrl-R", theme.accent_emphasis_style()),
-            Span::styled(" Refresh  ", theme.text_muted_style()),
-        ]);
+        let mut spans = th::build_hint_spans(theme, &[("Esc", " Close  "), ("↑/↓", " Scroll logs  "), ("Ctrl-R", " Refresh  ")]);
 
         if let Some(details) = app.plugins.details.as_ref()
             && matches!(details.load_state(), PluginDetailsLoadState::Loaded(_))
         {
-            spans.extend([
-                Span::styled("R", theme.accent_emphasis_style()),
-                Span::styled(" Restart  ", theme.text_muted_style()),
-                Span::styled("S", theme.accent_emphasis_style()),
-                Span::styled(" Start  ", theme.text_muted_style()),
-                Span::styled("T", theme.accent_emphasis_style()),
-                Span::styled(" Stop  ", theme.text_muted_style()),
-            ]);
+            spans.extend(th::build_hint_spans(
+                theme,
+                &[("R", " Restart  "), ("S", " Start  "), ("T", " Stop  ")],
+            ));
         }
 
         spans

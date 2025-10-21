@@ -1,4 +1,5 @@
 workflow: postgres_cluster_health_snapshot
+title: "Postgres cluster health snapshot"
 description: "Gather a consistent health snapshot for a Performance-tier Heroku Postgres cluster: topology, pools, settings, and quotas."
 inputs:
   app:

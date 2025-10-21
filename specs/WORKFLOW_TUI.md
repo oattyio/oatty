@@ -144,9 +144,9 @@ inputs:
 ┌─ Run: provision_and_promote ──────────────────────────────────────────────────────────────────────────────────┐
 │ Steps & Inputs (left)                                                    │ Workflow Details (right)           │
 │                                                                          │                                    │
-│ ▸ pipeline        ✓ Looks good!  [provider: pipelines list]  [required]  │ Ready?:           ⚠ Waiting on app │
-│ staging_app       ⚠ No value     [provider: apps list]       [required]  │ Resolved steps:   1 / 3            │
-│ prod_app          ⚠ No value     [provider: apps list]                   │ Next action:      staging_app      │
+│ ▸ pipeline        ✓ Looks good!                              [required]  │ Ready?:           ⚠ Waiting on app │
+│ staging_app       ⚠ No value                                 [required]  │ Resolved steps:   1 / 3            │
+│ prod_app          ⚠ No value                                             │ Next action:      staging_app      │
 │                                                                          │ Selected values:                   │
 │                                                                          │   • pipeline      → demo pipeline  │
 │                                                                          │   • staging_app   → — pending —    │
@@ -157,7 +157,8 @@ inputs:
 │                                                                          │                   apps 24s         │
 │                                                                          │ Errors & notes:   none             │
 └───────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
-  ↑↓ navigate  •  Enter choose  •  / filter  •  r refresh  •  Tab next  •  F2 fallback to manual
+Buttons: [Cancel]   [Run ✓]
+  Esc cancel  •  ↑↓ navigate  •  Enter choose  •  / filter  •  r refresh  •  Tab focus  •  F2 fallback to manual  •  Enter run
 ```
 
 - **Left column** is a compact step list rendered like the runtime List view in
@@ -174,16 +175,65 @@ inputs:
   refresh, fallback), so the aggregate view always mirrors the live state.
 - Manual entry is triggered by pressing `F2` when a provider is present or by default when pressing
   `Enter` when the provider is not present.
+- Defaults declared in the workflow manifest populate the run context immediately. Literal and
+  workflow-output defaults are interpolated before rendering, and environment defaults prefer the
+  run context's environment map before falling back to OS variables. History defaults pull from the
+  per-user history store (`~/.config/heroku/history.json` by default); successful runs persist
+  values automatically, and the UI logs a friendly message whenever a stored value is skipped
+  because it failed validation or matched redaction heuristics.
+- The footer hosts **Cancel** (secondary) and **Run** (primary) buttons. Run stays disabled until every
+  required input resolves; both buttons participate in the focus ring (Tab/Shift+Tab and Left/Right),
+  accept `Enter`/`Space`, and handle mouse clicks. Cancel returns to the workflow list. Run currently
+  calls a stubbed execution hook so backend wiring can land later without changing the UI contract.
 
 ### 2.3 Manual Entry View
+Manual entry now adapts to the declared input type instead of always presenting a raw
+string field. The modal keeps the compact centered layout but swaps the value area
+based on the workflow schema:
+
 ```
 ┌─ Manual entry: pipeline ───────────────────────────────────────────────┐
-│                                                                        │
+│ Enter a value                                                          │
 │  Value: my-pipeline                                                    │
-│                                                                        │
 └────────────────────────────────────────────────────────────────────────┘
  Esc cancel  •  Enter confirm
+
+┌─ Manual entry: leader_instance_count ──────────────────────────────────┐
+│ Enter an integer                                                       │
+│  Value: 2                                                              │
+└────────────────────────────────────────────────────────────────────────┘
+ Esc cancel  •  Enter confirm
+
+┌─ Manual entry: configure_follower ─────────────────────────────────────┐
+│ Select true or false                                                   │
+│ [True ✓]   [False]                                                     │
+└────────────────────────────────────────────────────────────────────────┘
+ Esc cancel  •  Space toggle  •  Enter confirm
+
+┌─ Manual entry: follower_operation ─────────────────────────────────────┐
+│ Choose from the available options                                      │
+│ ┌────────────────────────────────────────────────────────────────────┐ │
+│ │ create                                                             │ │
+│ │ update ✓                                                           │ │
+│ └────────────────────────────────────────────────────────────────────┘ │
+└────────────────────────────────────────────────────────────────────────┘
+ Esc cancel  •  ↑↓ move  •  Space confirm  •  Enter confirm
 ```
+
+- **Text / number / integer** inputs reuse the shared `TextInputState` editing
+  semantics (UTF-8 cursor movement, backspace) and run the existing validation
+  pipeline (`pattern`, length limits, allowed values) before submission. Integer and
+  number variants reject invalid characters and require a parsable value.
+- **Boolean** inputs render two themed buttons. `Left/Right`, `0/1`, `T/F`, or `Space`
+  flip the selection; `Enter` accepts. The footer hints update accordingly.
+- **Enum** inputs render a scrollable list backed by the selector table styling. Up/Down,
+  Home/End, mouse clicks, or `Space`/`Enter` confirm the highlighted option.
+- Validation failures surface inline error text beneath the control without closing the
+  modal. Successful confirmation stores the typed JSON value (string, number, boolean,
+  or the literal enum value) in the workflow run state.
+- Manual entry share the same focusing and hint helpers as other modals, so `Esc`
+  always cancels and returns control to the collector without mutating the previous
+  value.
 
 ### 2.4 Table Selector with Detail Pane (Single-select)
 
@@ -201,7 +251,7 @@ Controls:
 
 ```
 ┌ Apps — Select one (apps list) ────────────────────────────────────────┐
-│ Filter: [bill]   Status: loaded (30s TTL)                             │
+│ Filter: bill                                 Status: loaded           │
 ├──────────────┬───────────┬────────────────────────────────────────────┤
 │ name         │ id        │ meta                                       │
 ├──────────────┼───────────┼────────────────────────────────────────────┤
@@ -262,62 +312,55 @@ Buttons: [Cancel]   [Apply ✓]
 └────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.8.1 Run View (Steps, Logs, Outputs)
-* **Sticky headers**: the Steps, Logs, and Outputs section headers and column headers remain fixed while the panel content scrolls.
-* **Independent pagination**: each panel has its own paging controls and indicators.
+### 2.8.1 Run View (Steps, Outputs, Global Logs)
+* **Sticky headers**: the Steps and Outputs section headers and column headers remain fixed while the panel content scrolls.
+* **Global logs forwarding**: execution logs stream into the shared logs view (`logs::LogsComponent`). The run view surfaces a status hint (`[L] View logs`) instead of embedding a dedicated logs panel.
+* **Inline status controls**: the footer presents `[Cancel]` and `[Pause]/[Continue]` buttons. Pause toggles to Continue when the run is paused; Cancel becomes disabled once the run is terminal or a cancellation request is pending.
+* **Status messaging**: the header/footer append contextual messages (for example `aborting...` or `paused after current step`) emitted by the workflow runner.
 ```
 ┌─ Workflow: provision_and_promote ───────────────────────────────────────────────────────────────┐
-│ Status: running • Started: 10:12:03 • Elapsed: 00:01:42 • [F1] Help • [q] Quit                  │
-├──────────────────────────── Steps (Page 2/5) ───────────────────────────┬─ Logs (Page 1/8) ─────┤
-│ Step                 │ Status     │ Details                            │ [↑/↓] scroll  [PgUp]   │
-│──────────────────────┼────────────┼────────────────────────────────────│ [PgDn] page  [g/G]     │
-│ ● upload_source      │ ok 0.8s    │ bytes=14.2MB, sha=…                │ top/bottom   [L] last  │
-│ ● start_build        │ ok 0.5s    │ app=staging-app                    │ page         [r] foll  │
-│ ● poll_build (3/?)   │ running    │ status=pending                     │ ow tail      [f] filt  │
-│ ○ create_release     │ pending    │                                    │ er            [c] clr  │
-│ ○ promote            │ pending    │                                    │                  log   │
-│ ○ verify_release     │ pending    │                                    │ s                      │
-│ ○ cleanup            │ pending    │                                    │                        │
-│ … (11 items hidden)  │            │                                    │                        │
-│────────────────────────────────────────────────────────────────────────│────────────────────────│
-│ [First] [Prev]  Page 2/5  [Next] [Last]   •   [/] filter steps   •   [s] sort                   │
-├──────────────────────────── Outputs (Page 1/3) ─────────────────────────────────────────────────┤
+│ running • Elapsed: 00:01:42 • Logs forwarded ([L] View) • awaiting build confirmation           │
+│                                                                                                 │
+├──────────────────────────── Steps ──────────────────────────────────────────────────────────────┤
+│ Step                 │ Status           │ Details                                               │
+│──────────────────────┼────────────┼─────────────────────────────────────────────────────────────│
+│ ● upload_source      │ succeeded (0.8s) │ bytes=14.2MB, sha=…                                   │
+│ ● start_build        │ succeeded (0.5s) │ app=staging-app                                       │
+│ ● poll_build (3/?)   │ running          │ status=pending                                        │
+│ ○ create_release     │ pending    │                                                             │
+│ ○ promote            │ pending    │                                                             │
+│ ○ verify_release     │ pending    │                                                             │
+│ ○ cleanup            │ pending    │                                                             │
+│─────────────────────────────────────────────────────────────────────────────────────────────────│
+│                                                                                                 │
+├──────────────────────────── Outputs ────────────────────────────────────────────────────────────┤
 │ Key                  │ Value                                                                    │
 │──────────────────────┼──────────────────────────────────────────────────────────────────────────│
 │ start_build.id       │ bld-9876                                                                 │
 │ start_build.slug     │ slug-3333                                                                │
 │ source_blob.get_url  │ https://sources.heroku.com/...                                           │
-│ … (more)                                                                                        │
 │─────────────────────────────────────────────────────────────────────────────────────────────────│
-│ [First] [Prev]  Page 1/3  [Next] [Last]   •   [y] copy value   •   [Enter] expand details       │
+│ [Cancel]   [Pause]   Status: running • awaiting build confirmation                              │
 └─────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 ### 2.8.2 Run View — Wide Mode (side panel paging + sticky column headers)
 ```
-┌─ Workflow: build_from_tarball ──────────────────────────────────────────────────────────────────┐
-│ Status: running • Build: bld-9876 • Elapsed: 00:00:57 • [t] Toggle layout • [q] Quit            │
-├──────── Steps (Pg 1/4) ────────┬──────────────────────────────── Logs (Pg 3/12) ────────────────┤
-│ Step            │ Status │Dur │ [↑/↓] move  [Space] details  │ [PgUp/PgDn] page  [End] tail     │
-│─────────────────┼────────┼────┤──────────────────────────────┼──────────────────────────────────│
-│ ● create_sources│ ok     │1.2s│ [f] filter                   │ [poll_build] status=pending …    │
-│ ● upload        │ ok     │0.8s│                              │ [poll_build] status=pending …    │
-│ ● start_build   │ ok     │0.5s│                              │ [poll_build] status=running …    │
-│ ● poll_build    │ run    │12s │                              │ [build] slug=slug-3333           │
-│ ○ finalize      │ pend   │    │                              │ …                                │
-│ …               │        │    │                              │                                  │
-│──────────────────────────────────────────────────────────────┼──────────────────────────────────│
-│ [First] [Prev] Page 1/4 [Next] [Last]  • [s] sort by Status  │ [First] [Prev] Page 3/12 [Next]  │
-│                                                         [Last]                                  │
-├────────────────────────── Outputs (Pg 1/2, sticky head) ────────────────────────────────────────┤
-│ Key                │ Value                                                                      │
-│────────────────────┼────────────────────────────────────────────────────────────────────────────│
-│ start_build.id     │ bld-9876                                                                   │
-│ start_build.slug   │ slug-3333                                                                  │
-│ source_blob.get_url│ https://sources.heroku.com/...                                             │
-│ …                                                                                            ▼  │
-│─────────────────────────────────────────────────────────────────────────────────────────────────│
-│ [First] [Prev] Page 1/2 [Next] [Last]  • [y] copy  • [Enter] expand  • [/] filter outputs       │
-└─────────────────────────────────────────────────────────────────────────────────────────────────┘
+┌─ Workflow: build_from_tarball ───────────────────────────────────────────────────────────────────┐
+│ Status: running • Build: bld-9876 • Elapsed: 00:00:57 • Logs forwarded ([L] View) • [t] Toggle   │
+│ layout • [q] Quit                                                                                │
+├──────── Steps ────────────────┬───────────────────────────── Outputs ────────────────────────────┤
+│ Step            │ Status │Dur │ [↑/↓] move  [Space] details  │ Key                  │ Value      │
+│─────────────────┼────────┼────┤──────────────────────────────┼──────────────────────┼────────────│
+│ ● create_sources│ ok     │1.2s│ [/] filter                   │ start_build.id       │ bld-9876   │
+│ ● upload        │ ok     │0.8s│                              │ start_build.slug     │ slug-3333  │
+│ ● start_build   │ ok     │0.5s│                              │ source_blob.get_url  │ https://…  │
+│ ● poll_build    │ run    │12s │                              │ …                    │            │
+│ ○ finalize      │ pend   │    │                              │                      │            │
+│ …               │        │    │                              │                      │            │
+│──────────────────────────────────────────────────────────────┼──────────────────────┼────────────│
+│ [s] sort by Status                                           │ [y] copy • [Enter] expand         │
+│                                                              │ [/] filter outputs                │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
@@ -364,6 +407,7 @@ Providers return arrays of uniform objects. The host maps fields according to `s
 ### 4.4 Chaining
 
 * `provider_args` can reference earlier inputs or step outputs using the same template language used in steps.
+* `depends_on` offers shorthand bindings for provider arguments that mirror `provider_args`; values are merged at runtime so selectors automatically reuse previously chosen inputs.
 
 ---
 

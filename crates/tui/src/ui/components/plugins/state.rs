@@ -1,8 +1,8 @@
+use super::table::PluginsTableState;
 use crate::ui::components::plugins::{PluginDetailsModalState, logs::PluginLogsState, plugin_editor::state::PluginEditViewState};
+use heroku_types::{Effect, ExecOutcome, PluginDetail};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::prelude::Rect;
-
-use super::table::PluginsTableState;
 
 /// UI state for the Plugins view.
 #[derive(Debug, Clone)]
@@ -48,11 +48,83 @@ impl PluginsState {
         self.details.as_mut().expect("details state should be present")
     }
 
-    pub fn clear_details_state(&mut self) {
-        if let Some(details) = &mut self.details {
-            details.reset();
+    /// Handles execution completion messages and processes the results.
+    ///
+    /// This method processes the results of command execution, including
+    /// plugin-specific responses, logs updates, and general command results.
+    /// It handles special plugin responses and falls back to general result
+    /// processing for regular commands.
+    ///
+    /// # Arguments
+    ///
+    /// * `execution_outcome` - The result of the command execution
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if the execution was handled as a special case (plugin response)
+    /// and the caller should return early, `false` if normal processing should continue.
+    pub fn handle_execution_completion(&mut self, execution_outcome: &ExecOutcome) -> Vec<Effect> {
+        // Keep executing=true if other executions are still active
+        match execution_outcome {
+            ExecOutcome::PluginDetailLoad(name, result) => self.handle_plugin_detail_load(name, result.clone()),
+            ExecOutcome::PluginDetail(_, maybe_detail) => self.handle_plugin_detail(maybe_detail.clone()),
+            ExecOutcome::PluginsRefresh(_, maybe_plugins) => self.handle_plugin_refresh_response(maybe_plugins.clone()),
+            _ => {}
         }
-        self.details = None;
+
+        Vec::new()
+    }
+
+    /// Handles plugin details responses from command execution.
+    ///
+    /// # Arguments
+    ///
+    /// * `log` - The raw log output for redaction
+    /// * `maybe_detail` - The plugin detail to apply
+    fn handle_plugin_detail(&mut self, maybe_detail: Option<PluginDetail>) {
+        let Some(detail) = maybe_detail else {
+            return;
+        };
+        if let Some(state) = self.details.as_mut()
+            && state.selected_plugin().is_some_and(|selected| selected == detail.name)
+        {
+            state.apply_detail(detail.clone());
+        }
+        self.table.update_item(detail);
+    }
+
+    fn handle_plugin_detail_load(&mut self, name: &String, result: anyhow::Result<PluginDetail, String>) {
+        match result {
+            Ok(detail) => {
+                if let Some(state) = self.details.as_mut()
+                    && state.selected_plugin().is_some_and(|selected| selected == name)
+                {
+                    state.apply_detail(detail.clone());
+                }
+                self.table.update_item(detail);
+            }
+            Err(error) => {
+                if let Some(state) = self.details.as_mut()
+                    && state.selected_plugin().is_some_and(|selected| selected == name)
+                {
+                    state.mark_error(error);
+                }
+            }
+        }
+    }
+
+    /// Handles plugin refresh responses from command execution.
+    ///
+    /// # Arguments
+    ///
+    /// * `log` - The raw log output for redaction
+    /// * `plugin_updates` - The updates to apply
+    ///
+    fn handle_plugin_refresh_response(&mut self, plugin_updates: Option<Vec<PluginDetail>>) {
+        let Some(updated_plugins) = plugin_updates else {
+            return;
+        };
+        self.table.replace_items(updated_plugins);
     }
 }
 

@@ -1,4 +1,5 @@
 workflow: postgres_storage_quota_guardrail
+title: "Postgres storage quota guardrail"
 description: "Inspect current storage usage for a Heroku Postgres addon and optionally tighten quota thresholds."
 inputs:
   app:

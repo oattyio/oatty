@@ -1,4 +1,5 @@
 workflow: space_with_otel
+title: "Private space with OTel"
 description: "Create a Private Space and configure an OpenTelemetry drain for traces, metrics, and logs."
 inputs:
   team:

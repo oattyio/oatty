@@ -89,6 +89,7 @@ mod tests {
                 run: "apps:list".into(),
                 description: None,
                 depends_on: Vec::new(),
+                r#if: None,
                 with: IndexMap::new(),
                 body: serde_json::Value::Null,
                 repeat: None,

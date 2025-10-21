@@ -1,4 +1,5 @@
 workflow: enable_review_apps
+title: "Enable Review Apps"
 description: "Enable Review Apps on a pipeline with desired auto‑deploy and auto‑destroy settings."
 inputs:
   pipeline:

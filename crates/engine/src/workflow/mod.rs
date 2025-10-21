@@ -7,5 +7,6 @@
 
 pub mod bindings;
 pub mod document;
+pub mod runner;
 pub mod runtime;
 pub mod state;

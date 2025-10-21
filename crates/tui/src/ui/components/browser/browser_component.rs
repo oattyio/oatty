@@ -107,17 +107,10 @@ impl Component for BrowserComponent {
     /// browser modal to guide user interaction.
     ///
     /// # Arguments
-    /// * `frame` - The Ratatui frame to render to
     /// * `app` - The application state containing theme information
-    /// * `area` - The area to render the footer in
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        vec![
-            Span::styled("Esc", theme.accent_emphasis_style()),
-            Span::styled(" Clear ", theme.text_muted_style()),
-            Span::styled("Enter", theme.accent_emphasis_style()),
-            Span::styled(" Send to palette  ", theme.text_muted_style()),
-        ]
+        th::build_hint_spans(theme, &[("Esc", " Clear "), ("Enter", " Send to palette  ")])
     }
 
     fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
@@ -144,11 +137,18 @@ impl BrowserComponent {
     /// * `key` - The key event to process
     fn handle_search_keys(&self, app: &mut App, key: KeyEvent) {
         match key.code {
-            KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
-                app.browser.search_input_push(c);
+            KeyCode::Esc => {
+                app.browser.clear_search_query();
+                app.focus.focus(&app.browser.f_search);
             }
-            KeyCode::Backspace => app.browser.search_input_pop(),
-
+            KeyCode::Char(character) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+                if !character.is_control() {
+                    app.browser.append_search_character(character);
+                }
+            }
+            KeyCode::Backspace => app.browser.remove_search_character(),
+            KeyCode::Left => app.browser.move_search_cursor_left(),
+            KeyCode::Right => app.browser.move_search_cursor_right(),
             KeyCode::Tab | KeyCode::BackTab => {
                 if key.code == KeyCode::Tab {
                     app.focus.next();
@@ -156,8 +156,6 @@ impl BrowserComponent {
                     app.focus.prev();
                 };
             }
-            KeyCode::Down => app.browser.move_selection(1),
-            KeyCode::Up => app.browser.move_selection(-1),
             _ => {}
         }
     }
@@ -165,12 +163,19 @@ impl BrowserComponent {
     fn handle_hot_keys(&self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         match key.code {
             KeyCode::Enter => self.apply_enter(app),
-            KeyCode::Esc => {
-                app.browser.search_input_clear();
-                vec![]
-            }
+            KeyCode::Esc => self.handle_escape(app),
             _ => vec![],
         }
+    }
+
+    fn handle_escape(&self, app: &mut App) -> Vec<Effect> {
+        let search_focused = app.browser.f_search.get();
+        let has_query = !app.browser.search_query().trim().is_empty();
+        if has_query || search_focused {
+            app.browser.clear_search_query();
+            app.focus.focus(&app.browser.f_search);
+        }
+        Vec::new()
     }
 
     /// Handle Enter within the browser context (noop for now).
@@ -276,9 +281,14 @@ impl BrowserComponent {
         let mut search_block = th::block(&*app.ctx.theme, None, is_focused);
         search_block = search_block.title(search_title);
         let inner_area = search_block.inner(area);
-        let search_paragraph = Paragraph::new(app.browser.search_input().as_str())
-            .style(app.ctx.theme.text_primary_style())
-            .block(search_block);
+        let theme = &*app.ctx.theme;
+        let query = app.browser.search_query();
+        let content_line = if is_focused || !query.is_empty() {
+            Line::from(Span::styled(query.to_string(), theme.text_primary_style()))
+        } else {
+            Line::from(Span::from(""))
+        };
+        let search_paragraph = Paragraph::new(content_line).style(theme.text_primary_style()).block(search_block);
         frame.render_widget(search_paragraph, area);
         self.set_search_cursor(frame, app, inner_area);
     }
@@ -312,7 +322,11 @@ impl BrowserComponent {
     /// * `inner_area` - The inner area of the search panel
     fn set_search_cursor(&self, frame: &mut Frame, app: &App, inner_area: Rect) {
         if app.browser.f_search.get() {
-            let cursor_x = inner_area.x.saturating_add(app.browser.search_input().chars().count() as u16);
+            let query = app.browser.search_query();
+            let cursor_byte_index = app.browser.search_cursor().min(query.len());
+            let prefix = &query[..cursor_byte_index];
+            let cursor_columns = prefix.chars().count() as u16;
+            let cursor_x = inner_area.x.saturating_add(cursor_columns);
             let cursor_y = inner_area.y;
             frame.set_cursor_position((cursor_x, cursor_y));
         }
@@ -356,11 +370,11 @@ impl BrowserComponent {
                 })
                 .collect::<Vec<_>>()
         };
-
+        let is_focused = browser.f_commands.get();
         let commands_list = List::new(command_items)
             .block(commands_block)
             .highlight_style(app.ctx.theme.selection_style().add_modifier(Modifier::BOLD))
-            .highlight_symbol("> ");
+            .highlight_symbol(if is_focused { "> " } else { "" });
         let list_state = browser.list_state();
         frame.render_stateful_widget(commands_list, area, list_state);
     }

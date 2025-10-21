@@ -1,4 +1,5 @@
 workflow: postgres_backup_and_download
+title: "Postgres backup and Download"
 description: "Capture a logical backup for a selected database, wait for completion, and download it."
 inputs:
   app:

@@ -165,13 +165,29 @@ pub fn interpolate_value(value: &Value, context: &RunContext) -> Value {
 /// assert!(result); // "production" is truthy
 /// ```
 pub fn eval_condition(expression: &str, context: &RunContext) -> bool {
-    if let Some(result) = evaluate_includes(expression, context) {
-        return result;
+    let trimmed = expression.trim();
+    if trimmed.is_empty() {
+        return false;
     }
-    if let Some(result) = evaluate_equality(expression, context) {
-        return result;
+
+    if let Some(parts) = split_expression(trimmed, "||") {
+        return parts.into_iter().any(|part| eval_condition(part, context));
     }
-    evaluate_truthiness(expression, context)
+    if let Some(parts) = split_expression(trimmed, "&&") {
+        return parts.into_iter().all(|part| eval_condition(part, context));
+    }
+
+    let (negations, inner) = strip_leading_negations(trimmed);
+    let inner = inner.trim();
+    if inner.is_empty() {
+        return negations % 2 == 0;
+    }
+
+    let mut value = evaluate_simple_condition(inner, context);
+    if negations % 2 == 1 {
+        value = !value;
+    }
+    value
 }
 
 /// Evaluates `[...].includes(expr)` style expressions.
@@ -206,12 +222,24 @@ fn evaluate_includes(expression: &str, context: &RunContext) -> Option<bool> {
 
 /// Evaluates `left == right` style equality expressions.
 /// Returns `Some(bool)` if an equality operator is present, otherwise `None`.
-fn evaluate_equality(expression: &str, context: &RunContext) -> Option<bool> {
-    let equality_position = expression.find("==")?;
-    let left_expression = expression[..equality_position].trim();
-    let right_expression = expression[equality_position + 2..].trim().trim_matches('"');
-    let left_value = resolve_expression(left_expression, context).unwrap_or_default();
-    Some(left_value == right_expression)
+fn evaluate_comparison(expression: &str, context: &RunContext) -> Option<bool> {
+    if let Some(position) = find_top_level_operator(expression, "!=") {
+        let left_expression = expression[..position].trim();
+        let right_expression = expression[position + 2..].trim();
+        let left_value = resolve_value_or_literal(left_expression, context).unwrap_or(Value::Null);
+        let right_value = resolve_value_or_literal(right_expression, context).unwrap_or(Value::Null);
+        return Some(left_value != right_value);
+    }
+
+    if let Some(position) = find_top_level_operator(expression, "==") {
+        let left_expression = expression[..position].trim();
+        let right_expression = expression[position + 2..].trim();
+        let left_value = resolve_value_or_literal(left_expression, context).unwrap_or(Value::Null);
+        let right_value = resolve_value_or_literal(right_expression, context).unwrap_or(Value::Null);
+        return Some(left_value == right_value);
+    }
+
+    None
 }
 
 /// Evaluates simple truthiness of an expression.
@@ -221,6 +249,105 @@ fn evaluate_truthiness(expression: &str, context: &RunContext) -> bool {
         Some(resolved_value) => resolved_value == "true" || resolved_value == "1" || !resolved_value.is_empty(),
         None => false,
     }
+}
+
+fn evaluate_simple_condition(expression: &str, context: &RunContext) -> bool {
+    if let Some(result) = evaluate_includes(expression, context) {
+        return result;
+    }
+    if let Some(result) = evaluate_comparison(expression, context) {
+        return result;
+    }
+    evaluate_truthiness(expression, context)
+}
+
+fn split_expression<'a>(expression: &'a str, operator: &str) -> Option<Vec<&'a str>> {
+    let mut parts = Vec::new();
+    let mut start = 0usize;
+    let len = expression.len();
+
+    while start < len {
+        if let Some(relative) = find_top_level_operator(&expression[start..], operator) {
+            let absolute = start + relative;
+            let part = expression[start..absolute].trim();
+            if !part.is_empty() {
+                parts.push(part);
+            }
+            start = absolute + operator.len();
+        } else {
+            let part = expression[start..].trim();
+            if !part.is_empty() {
+                parts.push(part);
+            }
+            break;
+        }
+    }
+
+    if parts.len() > 1 { Some(parts) } else { None }
+}
+
+fn strip_leading_negations(expression: &str) -> (usize, &str) {
+    let mut count = 0usize;
+    let mut remainder = expression.trim_start();
+    loop {
+        if let Some(stripped) = remainder.strip_prefix('!') {
+            if stripped.starts_with('=') {
+                break;
+            }
+            count += 1;
+            remainder = stripped.trim_start();
+        } else {
+            break;
+        }
+    }
+    (count, remainder)
+}
+
+fn find_top_level_operator(expression: &str, operator: &str) -> Option<usize> {
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+    let mut depth = 0i32;
+    let bytes = expression.as_bytes();
+    let op_len = operator.len();
+    let len = expression.len();
+
+    let mut index = 0usize;
+    while index + op_len <= len {
+        let ch = bytes[index] as char;
+        match ch {
+            '\'' if !in_double_quote => {
+                in_single_quote = !in_single_quote;
+                index += 1;
+                continue;
+            }
+            '"' if !in_single_quote => {
+                in_double_quote = !in_double_quote;
+                index += 1;
+                continue;
+            }
+            '(' if !in_single_quote && !in_double_quote => {
+                depth += 1;
+                index += 1;
+                continue;
+            }
+            ')' if !in_single_quote && !in_double_quote => {
+                if depth > 0 {
+                    depth -= 1;
+                }
+                index += 1;
+                continue;
+            }
+            _ => {}
+        }
+
+        if !in_single_quote && !in_double_quote && depth == 0 && &expression[index..index + op_len] == operator {
+            return Some(index);
+        }
+
+        index += 1;
+    }
+
+    None
 }
 
 /// Resolve an expression to a JSON value, supporting literals and context paths.
@@ -561,7 +688,7 @@ fn format_json_value(value: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{Value, json};
 
     #[test]
     fn test_interpolate_inputs_and_steps() {
@@ -614,6 +741,25 @@ mod tests {
 
         let result = eval_condition("inputs.empty", &context);
         assert!(!result);
+    }
+
+    #[test]
+    fn test_eval_condition_boolean_operators_and_negation() {
+        let mut context = RunContext::default();
+        context.inputs.insert("flag".into(), json!(true));
+        context.inputs.insert("other".into(), json!("value"));
+        context.inputs.insert("empty".into(), Value::Null);
+        context.inputs.insert("count".into(), json!(0));
+
+        assert!(eval_condition("inputs.flag && inputs.other", &context));
+        assert!(!eval_condition("inputs.flag && !inputs.other", &context));
+        assert!(eval_condition("inputs.flag || inputs.empty", &context));
+        assert!(eval_condition("inputs.empty || inputs.other", &context));
+        assert!(eval_condition("!!inputs.other", &context));
+        assert!(eval_condition("!inputs.empty", &context));
+        assert!(eval_condition("inputs.count != null", &context));
+        assert!(eval_condition("inputs.other == \"value\"", &context));
+        assert!(!eval_condition("inputs.other != \"value\"", &context));
     }
 
     #[test]

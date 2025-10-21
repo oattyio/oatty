@@ -224,8 +224,8 @@ fn build_provider_contracts(commands: &[CommandSpec]) -> Vec<ProviderContractEnt
     let mut contracts = IndexMap::new();
 
     for command in commands {
-        // Use canonical space-separated identifier ("group name") for provider contracts
-        let command_id = format!("{} {}", command.group, command.name);
+        // Use canonical colon-separated identifier ("group:name") for provider contracts
+        let command_id = format!("{}:{}", command.group, command.name);
 
         let mut contract = ProviderContract::default();
         build_argument_contracts(command, &mut contract);

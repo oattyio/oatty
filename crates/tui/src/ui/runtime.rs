@@ -42,7 +42,7 @@ use tokio::{
     time::{self, MissedTickBehavior},
 };
 
-use crate::app::App;
+use crate::app::{App, WorkflowRunEventReceiver};
 use crate::ui::components::component::Component;
 use crate::{cmd, ui::main};
 use rat_focus::FocusBuilder;
@@ -132,16 +132,15 @@ fn handle_delegate_event(app: &mut App<'_>, event: Event) -> Vec<Effect> {
     let mut effects = Vec::new();
     if event.is_key() {
         let Event::Key(key_event) = event else { return effects };
-        let Some(view) = get_target_view(
+        if let Some(view) = get_target_view(
             app,
             main_view.as_mut(),
             open_modal.as_mut().map(|(modal, _)| modal),
             nav_bar.as_mut(),
             logs_view.as_mut(),
-        ) else {
-            return effects;
-        };
-        effects.extend(view.handle_key_events(app, key_event));
+        ) {
+            effects.extend(view.handle_key_events(app, key_event));
+        }
     } else if event.is_mouse() {
         let Event::Mouse(mouse_event) = event else { return effects };
         if let Some(nav_bar) = nav_bar.as_mut() {
@@ -152,6 +151,9 @@ fn handle_delegate_event(app: &mut App<'_>, event: Event) -> Vec<Effect> {
         }
         if let Some((modal, ..)) = open_modal.as_mut() {
             effects.extend(modal.handle_mouse_events(app, mouse_event))
+        }
+        if let Some(logs) = logs_view.as_mut() {
+            effects.extend(logs.handle_mouse_events(app, mouse_event))
         }
     }
 
@@ -227,6 +229,7 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plu
     let mut input_receiver = spawn_input_thread().await;
     let mut pending_execs: FuturesUnordered<JoinHandle<ExecOutcome>> = FuturesUnordered::new();
     let mut effects: Vec<Effect> = Vec::with_capacity(5);
+    let mut workflow_events: Option<WorkflowRunEventReceiver> = None;
 
     // Ticking strategy: fast while animating, very slow when idle.
     let fast_interval = Duration::from_millis(100);
@@ -307,8 +310,30 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plu
                 needs_render = true;
             }
 
+            maybe_run_event = async {
+                if let Some(receiver) = workflow_events.as_mut() {
+                    receiver.receiver.recv().await.map(|event| (receiver.run_id.clone(), event))
+                } else {
+                    None
+                }
+            }, if workflow_events.is_some() => {
+                match maybe_run_event {
+                    Some((run_id, event)) => {
+                        effects.extend(handle_message(&mut app, Msg::WorkflowRunEvent { run_id, event }));
+                        needs_render = true;
+                    }
+                    None => {
+                        workflow_events = None;
+                    }
+                }
+            }
+
             // Handle Ctrl+C
             _ = signal::ctrl_c() => { break; }
+        }
+
+        if let Some(new_receiver) = app.take_pending_workflow_events() {
+            workflow_events = Some(new_receiver);
         }
 
         // Fallback: detect terminal size changes even if no explicit Resize

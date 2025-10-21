@@ -2,7 +2,7 @@ use crate::ProviderValueResolver;
 use anyhow::{Result, anyhow};
 use heroku_registry::{CommandRegistry, CommandSpec, find_by_group_and_cmd};
 use heroku_types::{Bind, ExecOutcome, ItemKind, SuggestionItem, ValueProvider as ProviderBinding};
-use heroku_util::{build_path, exec_remote, fuzzy_score};
+use heroku_util::{build_path, exec_remote_for_provider, exec_remote_from_shell_command, fuzzy_score};
 use serde_json::{Map as JsonMap, Value};
 use std::hash::DefaultHasher;
 use std::{
@@ -107,13 +107,10 @@ fn fetch_and_cache(
         find_by_group_and_cmd(&registry_lock.commands, &group, &name)?.clone()
     };
 
-    let mut spec_for_http = spec.clone();
-    if let Some(http_spec) = spec_for_http.http_mut() {
-        if !args.is_empty() {
-            http_spec.path = build_path(&http_spec.path, &args);
-        }
+    let spec_for_http = spec.clone();
+    if spec_for_http.http().is_some() {
         let body = args.clone();
-        let result = handle.block_on(async move { exec_remote(&spec_for_http, body, 0).await });
+        let result = handle.block_on(async move { exec_remote_for_provider(&spec_for_http, body, 0).await });
 
         if let Ok(ExecOutcome::Http(_, _, result_value, _, _)) = result
             && let Some(items) = result_value.as_array()

@@ -73,7 +73,7 @@ ctx.inputs.insert("region".into(), serde_json::json!("us"));
 ctx.inputs.insert("addon_plan".into(), serde_json::json!("heroku-postgresql:hobby-dev"));
 
 // Uses the Noop runner by default; safe for previews/tests
-let results = execute_workflow(spec, &mut ctx);
+let results = execute_workflow(spec, &mut ctx)?;
 assert!(!results.is_empty());
 ```
 
@@ -92,7 +92,7 @@ ctx.inputs.insert("app".into(), serde_json::json!("myapp"));
 ctx.inputs.insert("user".into(), serde_json::json!("alice@example.com"));
 ctx.inputs.insert("permissions".into(), serde_json::json!(["view", "deploy"]));
 
-let results = execute_workflow_with_runner(spec, &mut ctx, &runner);
+let results = execute_workflow_with_runner(spec, &mut ctx, &runner)?;
 for r in results { println!("{} -> {:?}", r.id, r.status); }
 ```
 

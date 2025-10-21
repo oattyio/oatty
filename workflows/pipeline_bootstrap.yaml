@@ -1,4 +1,5 @@
 workflow: pipeline_bootstrap
+title: "Pipeline Bootstrap"
 description: "Create a pipeline and couple apps to development, staging, and production stages."
 inputs:
   pipeline_name:

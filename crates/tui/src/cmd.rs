@@ -13,7 +13,7 @@
 //! - [`run_from_effects`] translates state-driven [`Effect`]s into [`Cmd`]s.
 //! - [`run_cmds`] takes these commands and executes them, ensuring logs remain
 //!   user-visible.
-//! - [`execute_http`] and [`exec_remote`] handle async HTTP requests and return
+//! - [`execute_http`] and [`exec_remote_from_shell_command`] handle async HTTP requests and return
 //!   structured [`ExecOutcome`] for UI presentation.
 //!
 //! This design follows a **functional core, imperative shell** pattern:
@@ -21,36 +21,33 @@
 
 use anyhow::Result;
 use anyhow::anyhow;
-use heroku_engine::provider::ProviderFetchPlan;
-use heroku_mcp::config::default_config_path;
-use heroku_mcp::config::save_config_to_path;
-use heroku_mcp::config::validate_config;
-use heroku_mcp::config::validate_server_name;
-use heroku_mcp::config::{McpServer, determine_env_source};
+use chrono::Utc;
+use heroku_api::HerokuClient;
+use heroku_engine::{RegistryCommandRunner, drive_workflow_run, provider::ProviderFetchPlan};
+use heroku_mcp::config::{
+    McpServer, default_config_path, determine_env_source, load_config_from_path, save_config_to_path, validate_config, validate_server_name,
+};
 use heroku_mcp::{McpConfig, PluginEngine};
 use heroku_registry::find_by_group_and_cmd;
 use heroku_registry::{CommandRegistry, CommandSpec};
-use heroku_types::{Effect, EnvVar, Modal, Route};
+use heroku_types::service::ServiceId;
+use heroku_types::{Effect, EnvVar, Modal, Route, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
 use heroku_types::{ExecOutcome, command::CommandExecution};
-use heroku_util::build_range_header_from_body;
-use heroku_util::exec_remote;
+use heroku_util::build_request_body;
+use heroku_util::exec_remote_from_shell_command;
 use heroku_util::lex_shell_like;
-use heroku_util::resolve_path;
 use reqwest::Url;
 use serde_json::Map;
-use serde_json::Number;
 use serde_json::Value;
 use serde_json::from_str;
-use std::collections::{HashMap, VecDeque};
+use std::collections::VecDeque;
 use std::fs::read_to_string;
-use std::str::FromStr;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::vec;
-use tokio::task::JoinHandle;
+use tokio::{sync::mpsc, task::JoinHandle};
 
 use crate::app::App;
-use crate::ui::components::logs::state::LogEntry;
 use crate::ui::components::plugins::EnvRow;
 use crate::ui::components::plugins::PluginTransport;
 
@@ -105,7 +102,12 @@ pub enum Cmd {
     ///     assert!(b.is_empty());
     /// }
     /// ```
-    ExecuteHttp(CommandSpec, Map<String, Value>, u64),
+    ExecuteHttp {
+        spec: CommandSpec,
+        input: String,
+        next_range_override: Option<String>,
+        request_id: u64,
+    },
     /// Fetch provider-backed suggestion values asynchronously.
     FetchProviderValues {
         provider_id: String,
@@ -150,10 +152,6 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
         let effect_commands = match effect {
             Effect::CopyToClipboardRequested(text) => Some(vec![Cmd::ClipboardSet(text)]),
             Effect::CopyLogsRequested(text) => Some(vec![Cmd::ClipboardSet(text)]),
-            Effect::NextPageRequested(next_raw, request_id) => handle_next_page_requested(app, next_raw, request_id),
-            Effect::PrevPageRequested(request_id) => handle_prev_page_requested(app, request_id),
-            Effect::FirstPageRequested(request_id) => handle_first_page_requested(app, request_id),
-            Effect::LastPageRequested(request_id) => handle_last_page_requested(app, request_id),
             Effect::PluginsLoadRequested => Some(vec![Cmd::LoadPlugins]),
             Effect::PluginsStart(name) => Some(vec![Cmd::PluginsStart(name)]),
             Effect::PluginsStop(name) => Some(vec![Cmd::PluginsStop(name)]),
@@ -175,7 +173,11 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
                 effect_queue.extend(app.rebuild_palette_suggestions());
                 result
             }
-            Effect::Run(cmd, hash) => run_command(app, cmd, hash),
+            Effect::Run {
+                hydrated_command,
+                range_override,
+                request_hash,
+            } => run_command(app, hydrated_command, range_override, request_hash),
             Effect::ProviderFetchRequested {
                 provider_id,
                 cache_key,
@@ -185,6 +187,14 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
                 cache_key,
                 args,
             }]),
+            Effect::WorkflowRunRequested { request } => {
+                handle_workflow_run_requested(app, request);
+                None
+            }
+            Effect::WorkflowRunControl { run_id, command } => {
+                handle_workflow_run_control(app, &run_id, command);
+                None
+            }
         };
         if let Some(cmds) = effect_commands {
             commands.extend(cmds);
@@ -192,115 +202,6 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
     }
 
     run_cmds(app, commands).await
-}
-
-/// Handle the next page requested effect by executing the previous command with updated pagination.
-///
-/// Updates the pagination history and creates an HTTP execution command with the new range.
-///
-/// # Arguments
-/// * `app` - The application state containing previous command context
-/// * `next_raw` - The raw next-range value for the Range header
-///
-/// # Returns
-/// A vector containing an HTTP execution command if context is available
-fn handle_next_page_requested(app: &mut App, next_raw: String, request_id: u64) -> Option<Vec<Cmd>> {
-    let mut commands = Vec::new();
-
-    if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
-        // Inject raw next-range override for Range header
-        body.insert("next-range".into(), Value::String(next_raw.clone()));
-
-        // Append to history for Prev/First navigation
-        app.pagination_history.push(Some(next_raw));
-
-        commands.push(Cmd::ExecuteHttp(spec, body, request_id));
-    } else {
-        app.logs.entries.push("Cannot request next page: no prior command context".into());
-    }
-
-    Some(commands)
-}
-
-/// Handle the previous page requested effect by navigating back in pagination history.
-///
-/// Updates the pagination history and creates an HTTP execution command with the previous range.
-///
-/// # Arguments
-/// * `app` - The application state containing previous command context and pagination history
-///
-/// # Returns
-/// A vector containing an HTTP execution command if navigation is possible
-fn handle_prev_page_requested(app: &mut App, request_id: u64) -> Option<Vec<Cmd>> {
-    let mut commands = Vec::new();
-
-    if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
-        if app.pagination_history.len() <= 1 {
-            // No previous page to go to
-            return Some(commands);
-        }
-
-        // Remove current page from history
-        let _ = app.pagination_history.pop();
-
-        // Navigate to previous page
-        if let Some(prev) = app.pagination_history.last().cloned().flatten() {
-            body.insert("next-range".into(), Value::String(prev));
-        } else {
-            let _ = body.remove("next-range");
-        }
-
-        commands.push(Cmd::ExecuteHttp(spec, body, request_id));
-    } else {
-        app.logs
-            .entries
-            .push("Cannot request previous page: no prior command context".into());
-    }
-
-    Some(commands)
-}
-
-/// Handle the first page requested effect by navigating to the beginning of pagination history.
-///
-/// Resets the pagination history to the first entry and creates an HTTP execution command.
-///
-/// # Arguments
-/// * `app` - The application state containing previous command context and pagination history
-///
-/// # Returns
-/// A vector containing an HTTP execution command if context is available
-fn handle_first_page_requested(app: &mut App, request_id: u64) -> Option<Vec<Cmd>> {
-    let mut commands = Vec::new();
-
-    if let (Some(spec), Some(mut body)) = (app.last_spec.clone(), app.last_body.clone()) {
-        // Get the first page range if available
-        if let Some(first) = app.pagination_history.first().cloned().flatten() {
-            body.insert("next-range".into(), Value::String(first));
-        } else {
-            let _ = body.remove("next-range");
-        }
-
-        // Reset history to the first entry
-        let first_opt = app.pagination_history.first().cloned().flatten();
-        app.pagination_history.clear();
-        app.pagination_history.push(first_opt);
-
-        commands.push(Cmd::ExecuteHttp(spec, body, request_id));
-    } else {
-        app.logs.entries.push("Cannot request first page: no prior command context".into());
-    }
-
-    Some(commands)
-}
-
-/// Handle the last page requested effect by attempting to navigate to the final page.
-fn handle_last_page_requested(app: &mut App, request_id: u64) -> Option<Vec<Cmd>> {
-    let next_range = app.last_pagination.as_ref().and_then(|pagination| pagination.next_range.clone());
-
-    match next_range {
-        Some(range) => handle_next_page_requested(app, range, request_id),
-        None => Some(Vec::new()),
-    }
 }
 
 /// Handle the show modal effect by setting the appropriate modal component.
@@ -366,8 +267,15 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
         let outcome = match command {
             Cmd::ApplyPaletteError(error) => apply_palette_error(app, error),
             Cmd::ClipboardSet(text) => execute_clipboard_set(app, text),
-            Cmd::ExecuteHttp(spec, body, request_id) => {
-                batch.pending.push(spawn_execute_http(app, spec, body, request_id));
+            Cmd::ExecuteHttp {
+                spec,
+                input,
+                next_range_override,
+                request_id,
+            } => {
+                batch
+                    .pending
+                    .push(spawn_execute_http(app, spec, input, next_range_override, request_id));
                 continue;
             }
             Cmd::FetchProviderValues {
@@ -419,19 +327,8 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
 /// * `text` - The text content to write to the clipboard
 fn execute_clipboard_set(app: &mut App, text: String) -> ExecOutcome {
     // Perform clipboard write and log outcome
-    match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
-        Ok(()) => {
-            // Success - could add success log here if desired
-        }
-        Err(e) => {
-            app.logs.entries.push(format!("Clipboard error: {}", e));
-        }
-    }
-
-    // Limit log size for performance
-    let log_len = app.logs.entries.len();
-    if log_len > 500 {
-        let _ = app.logs.entries.drain(0..log_len - 500);
+    if let Err(e) = arboard::Clipboard::new().and_then(|mut cb| cb.set_text(text)) {
+        app.append_log_message(format!("Clipboard error: {}", e));
     }
 
     ExecOutcome::default()
@@ -633,7 +530,21 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
     if let Err(e) = validate_config(&cfg) {
         return ExecOutcome::PluginValidationErr(format!("Plugin validation failed: {}", e));
     }
-    let _ = save_config_to_path(&mut cfg, &path);
+    if let Err(error) = save_config_to_path(&mut cfg, &path) {
+        return ExecOutcome::PluginValidationErr(format!("Failed to save MCP configuration: {error}"));
+    }
+
+    let runtime_cfg = match load_config_from_path(&path) {
+        Ok(config) => config,
+        Err(error) => {
+            return ExecOutcome::PluginValidationErr(format!("Saved plugin, but failed to reload configuration: {error}"));
+        }
+    };
+
+    if let Err(error) = app.ctx.plugin_engine.update_config(runtime_cfg).await {
+        return ExecOutcome::PluginValidationErr(format!("Saved plugin, but failed to refresh MCP engine: {error}"));
+    }
+
     // Refresh list
     execute_load_plugins(app).await;
 
@@ -669,13 +580,85 @@ fn collect_key_value_rows(rows: &[EnvRow]) -> Result<Option<Vec<EnvVar>>, Vec<St
     if envs.is_empty() { Ok(None) } else { Ok(Some(envs)) }
 }
 
+fn handle_workflow_run_requested(app: &mut App<'_>, request: WorkflowRunRequest) {
+    let run_id = request.run_id.clone();
+
+    let registry_snapshot = match app.ctx.command_registry.lock() {
+        Ok(guard) => guard.clone(),
+        Err(_) => {
+            app.logs
+                .entries
+                .push("Failed to obtain command registry for workflow run.".to_string());
+            return;
+        }
+    };
+
+    let client = match HerokuClient::new_from_service_id(ServiceId::CoreApi) {
+        Ok(client) => client,
+        Err(error) => {
+            app.append_log_message(format!("Failed to initialize Heroku client: {}", error));
+            return;
+        }
+    };
+
+    let runner = Arc::new(RegistryCommandRunner::new(registry_snapshot, client));
+    let (event_tx, event_rx) = mpsc::unbounded_channel();
+    let (control_tx, control_rx) = mpsc::unbounded_channel();
+
+    let request_clone = request.clone();
+    let run_id_clone = run_id.clone();
+    let runner_clone = Arc::clone(&runner);
+    let event_tx_clone = event_tx.clone();
+
+    tokio::spawn(async move {
+        if let Err(error) = drive_workflow_run(request_clone, runner_clone, control_rx, event_tx_clone).await {
+            let message = format!("Workflow run '{}' failed: {}", run_id_clone, error);
+            let _ = event_tx.send(WorkflowRunEvent::RunStatusChanged {
+                status: WorkflowRunStatus::Failed,
+                message: Some(message.clone()),
+            });
+            let _ = event_tx.send(WorkflowRunEvent::RunCompleted {
+                status: WorkflowRunStatus::Failed,
+                finished_at: Utc::now(),
+                error: Some(message),
+            });
+        }
+    });
+
+    app.workflows.register_run_control(&run_id, control_tx);
+    app.register_workflow_run_stream(run_id, event_rx);
+}
+
+fn handle_workflow_run_control(app: &mut App<'_>, run_id: &str, command: WorkflowRunControl) {
+    match app.workflows.run_control_sender(run_id) {
+        Some(sender) => {
+            if sender.send(command).is_err() {
+                app.logs
+                    .entries
+                    .push(format!("Workflow run '{}' is no longer accepting commands.", run_id));
+            }
+        }
+        None => {
+            app.logs
+                .entries
+                .push(format!("No active workflow run is available for '{}'.", run_id));
+        }
+    }
+}
+
 /// Spawn an HTTP execution on the Tokio scheduler while updating local state
 /// to show the spinner.
-fn spawn_execute_http(app: &mut App<'_>, spec: CommandSpec, body: Map<String, Value>, request_id: u64) -> JoinHandle<ExecOutcome> {
+fn spawn_execute_http(
+    app: &mut App<'_>,
+    spec: CommandSpec,
+    input: String,
+    next_range_override: Option<String>,
+    request_id: u64,
+) -> JoinHandle<ExecOutcome> {
     let active = app.active_exec_count.clone();
     active.fetch_add(1, Ordering::Relaxed);
 
-    tokio::spawn(async move { execute_http_task(active, spec, body, request_id).await })
+    tokio::spawn(async move { execute_http_task(active, spec, input, next_range_override, request_id).await })
 }
 
 fn spawn_fetch_provider_values(app: &App, provider_id: String, cache_key: String, args: Map<String, Value>) -> JoinHandle<ExecOutcome> {
@@ -703,10 +686,11 @@ fn spawn_execute_mcp(app: &mut App<'_>, spec: CommandSpec, arguments: Map<String
 async fn execute_http_task(
     active_exec_count: Arc<AtomicUsize>,
     spec: CommandSpec,
-    body: Map<String, Value>,
+    input: String,
+    next_range_override: Option<String>,
     request_id: u64,
 ) -> ExecOutcome {
-    let result = exec_remote(&spec, body, request_id).await;
+    let result = exec_remote_from_shell_command(&spec, input, next_range_override, request_id).await;
     let outcome = result.unwrap_or_else(|err| ExecOutcome::Log(format!("Error: {}", err)));
 
     active_exec_count.fetch_sub(1, Ordering::Relaxed);
@@ -727,170 +711,6 @@ async fn execute_mcp_task(
     active_exec_count.fetch_sub(1, Ordering::Relaxed);
 
     outcome
-}
-/// Parses command arguments and flags from input tokens.
-///
-/// This function processes the command line tokens after the group and subcommand,
-/// separating positional arguments from flags and validating flag syntax.
-///
-/// # Arguments
-///
-/// * `argument_tokens` - The tokens after the group and subcommand
-/// * `command_spec` - The command specification for validation
-///
-/// # Returns
-///
-/// Returns `Ok((flags, args))` where flags is a map of flag names to values
-/// and args is a vector of positional arguments, or an error if parsing fails.
-///
-/// # Flag Parsing Rules
-///
-/// - `--flag=value` format is supported
-/// - Boolean flags don't require values
-/// - Non-boolean flags require values (next token or after =)
-/// - Unknown flags are rejected
-fn parse_command_arguments(argument_tokens: &[String], command_spec: &CommandSpec) -> Result<ParsedCommandArgs> {
-    let mut user_flags: FlagValueMap = HashMap::new();
-    let mut user_args: Vec<String> = Vec::new();
-    let mut index = 0;
-
-    while index < argument_tokens.len() {
-        let token = &argument_tokens[index];
-
-        if token.starts_with("--") {
-            let flag_name = token.trim_start_matches('-');
-
-            // Handle --flag=value format
-            if let Some(equals_pos) = flag_name.find('=') {
-                let name = &flag_name[..equals_pos];
-                let value = &flag_name[equals_pos + 1..];
-                user_flags.insert(name.to_string(), Some(value.to_string()));
-            } else {
-                // Handle --flag or --flag value format
-                if let Some(flag_spec) = command_spec.flags.iter().find(|f| f.name == flag_name) {
-                    if flag_spec.r#type == "boolean" {
-                        user_flags.insert(flag_name.to_string(), None);
-                    } else {
-                        // Non-boolean flag requires a value
-                        if index + 1 < argument_tokens.len() && !argument_tokens[index + 1].starts_with('-') {
-                            user_flags.insert(flag_name.to_string(), Some(argument_tokens[index + 1].to_string()));
-                            index += 1; // Skip the value token
-                        } else {
-                            return Err(anyhow!("Flag '--{}' requires a value", flag_name));
-                        }
-                    }
-                } else {
-                    return Err(anyhow!("Unknown flag '--{}'", flag_name));
-                }
-            }
-        } else {
-            // Positional argument
-            user_args.push(token.to_string());
-        }
-
-        index += 1;
-    }
-
-    Ok((user_flags, user_args))
-}
-
-/// Validates command arguments and flags against the command specification.
-///
-/// This function ensures that all required positional arguments and flags are
-/// provided with appropriate values.
-///
-/// # Arguments
-///
-/// * `positional_arguments` - The provided positional arguments
-/// * `user_flags` - The provided flags and their values
-/// * `command_spec` - The command specification to validate against
-///
-/// # Returns
-///
-/// Returns `Ok(())` if validation passes, or an error message if validation fails.
-///
-/// # Validation Rules
-///
-/// - All required positional arguments must be provided
-/// - All required flags must be present
-/// - Non-boolean required flags must have non-empty values
-fn validate_command_arguments(
-    positional_arguments: &[String],
-    user_flags: &HashMap<String, Option<String>>,
-    command_spec: &CommandSpec,
-) -> Result<()> {
-    // Validate required positional arguments
-    if positional_arguments.len() < command_spec.positional_args.len() {
-        let missing_arguments: Vec<String> = command_spec.positional_args[positional_arguments.len()..]
-            .iter()
-            .map(|arg| arg.name.to_string())
-            .collect();
-        return Err(anyhow!("Missing required argument(s): {}", missing_arguments.join(", ")));
-    }
-
-    // Validate required flags
-    for flag_spec in &command_spec.flags {
-        if flag_spec.required {
-            if flag_spec.r#type == "boolean" {
-                if !user_flags.contains_key(&flag_spec.name) {
-                    return Err(anyhow!("Missing required flag: --{}", flag_spec.name));
-                }
-            } else {
-                match user_flags.get(&flag_spec.name) {
-                    Some(Some(value)) if !value.is_empty() => {}
-                    _ => {
-                        return Err(anyhow!("Missing required flag value: --{} <value>", flag_spec.name));
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(())
-}
-
-/// Builds a JSON request body from user-provided flags.
-///
-/// This function converts the parsed flags into a JSON object that can be sent
-/// as the request body for the HTTP command execution.
-///
-/// # Arguments
-///
-/// * `user_flags` - The flags provided by the user
-/// * `command_spec` - The command specification for type information
-///
-/// # Returns
-///
-/// Returns a JSON Map containing the flag values with appropriate types.
-///
-/// # Type Conversion
-///
-/// - Boolean flags are converted to `true` if present
-/// - String flags are converted to their string values
-/// - Flags not in the specification are ignored
-fn build_request_body(user_flags: HashMap<String, Option<String>>, command_spec: &CommandSpec) -> Map<String, Value> {
-    let mut request_body = Map::new();
-
-    for (flag_name, flag_value) in user_flags.into_iter() {
-        if let Some(flag_spec) = command_spec.flags.iter().find(|f| f.name == flag_name) {
-            if flag_spec.r#type == "boolean" {
-                request_body.insert(flag_name, Value::Bool(true));
-            } else if let Some(value) = flag_value {
-                match flag_spec.r#type.as_str() {
-                    "number" => {
-                        if let Ok(number) = Number::from_str(value.as_str()) {
-                            request_body.insert(flag_name, Value::Number(number));
-                        }
-                    }
-                    _ => {
-                        request_body.insert(flag_name, Value::String(value));
-                    }
-                };
-            }
-        }
-    }
-
-    request_body
 }
 
 /// Executes a command from the palette input.
@@ -930,17 +750,13 @@ fn build_request_body(user_flags: HashMap<String, Option<String>>, command_spec:
 /// // For input "apps info my-app --verbose"
 /// // Validates command exists, app_id is provided, starts execution
 /// ```
-fn run_command(app: &mut App, hydrated_command: String, request_id: u64) -> Option<Vec<Cmd>> {
+fn run_command(app: &mut App, hydrated_command: String, next_range_override: Option<String>, request_id: u64) -> Option<Vec<Cmd>> {
     let valid = validate_command(app, &hydrated_command, Arc::clone(&app.ctx.command_registry));
 
     match valid {
-        Ok((command_spec, request_body, user_args)) => {
-            app.logs.entries.push(format!("Running: {}", &hydrated_command));
-            app.logs.rich_entries.push(LogEntry::Text {
-                level: Some("info".into()),
-                msg: format!("Running: {}", &hydrated_command),
-            });
-            execute_command(command_spec, request_body, user_args, request_id)
+        Ok((command_spec, input)) => {
+            app.append_log_message_with_level(Some("info".to_string()), format!("Running: {}", &hydrated_command));
+            execute_command(command_spec, input, next_range_override, request_id)
         }
         Err(error) => Some(vec![Cmd::ApplyPaletteError(error.to_string())]),
     }
@@ -950,7 +766,7 @@ fn validate_command(
     app: &mut App,
     hydrated_command: &String,
     command_registry: Arc<Mutex<CommandRegistry>>,
-) -> Result<(CommandSpec, Map<String, Value>, Vec<String>)> {
+) -> Result<(CommandSpec, String)> {
     // Step 1: Parse and validate the palette input
     let input = hydrated_command.trim().to_string();
     if input.is_empty() {
@@ -972,66 +788,43 @@ fn validate_command(
         find_by_group_and_cmd(commands, tokens[0].as_str(), tokens[1].as_str())?
     };
 
-    // Step 3: Parse command arguments and flags from input tokens
-    let (user_flags, user_args) = parse_command_arguments(&tokens[2..], &command_spec)?;
+    persist_execution_context(app, &command_spec, &input);
 
-    // Step 4: Validate command arguments and flags
-    validate_command_arguments(&user_args, &user_flags, &command_spec)?;
-
-    // Step 5: Build request body from flags
-    let request_body = build_request_body(user_flags, &command_spec);
-    // Step 6: Persist execution context for pagination UI and replay
-    persist_execution_context(app, &command_spec, &request_body, &input);
-
-    Ok((command_spec, request_body, user_args))
+    Ok((command_spec, input))
 }
 
-fn persist_execution_context(app: &mut App, command_spec: &CommandSpec, request_body: &Map<String, Value>, input: &str) {
-    app.last_command_ranges = match command_spec.execution() {
-        CommandExecution::Http(http) => Some(http.ranges.clone()),
-        _ => None,
-    };
-    app.last_spec = Some(command_spec.clone());
-    app.last_body = Some(request_body.clone());
-    let initial_range = build_range_header_from_body(request_body);
-
-    app.initial_range = initial_range.clone();
-    app.pagination_history.clear();
-    app.pagination_history.push(initial_range);
-    app.palette.push_history_if_needed(input);
+fn persist_execution_context(app: &mut App, command_spec: &CommandSpec, input: &str) {
+    let command_id = format!("{}:{}", command_spec.group, command_spec.name);
+    let trimmed_input = input.trim();
+    app.palette.record_pending_execution(command_id, trimmed_input.to_string());
+    app.palette.push_history_if_needed(trimmed_input);
 }
 
 fn execute_command(
     command_spec: CommandSpec,
-    request_body: Map<String, Value>,
-    user_args: Vec<String>,
+    hydrated_shell_command: String,
+    next_range_override: Option<String>,
     request_id: u64,
 ) -> Option<Vec<Cmd>> {
     match command_spec.execution() {
-        CommandExecution::Http(http) => {
-            let mut command_spec_to_run = command_spec.clone();
-            let mut positional_argument_map: HashMap<String, String> = HashMap::new();
-            for (index, positional_argument) in command_spec.positional_args.iter().enumerate() {
-                positional_argument_map.insert(positional_argument.name.clone(), user_args.get(index).cloned().unwrap_or_default());
-            }
-
-            if let Some(http_spec) = command_spec_to_run.http_mut() {
-                http_spec.path = resolve_path(&http.path, &positional_argument_map);
-            }
-
-            Some(vec![Cmd::ExecuteHttp(command_spec_to_run, request_body, request_id)])
+        CommandExecution::Http(_) => {
+            let command_spec_to_run = command_spec.clone();
+            Some(vec![Cmd::ExecuteHttp {
+                spec: command_spec_to_run,
+                input: hydrated_shell_command,
+                next_range_override,
+                request_id,
+            }])
         }
         CommandExecution::Mcp(_) => {
-            let mut arguments = request_body;
-            for (index, positional_argument) in command_spec.positional_args.iter().enumerate() {
-                if let Some(value) = user_args.get(index) {
-                    arguments.insert(positional_argument.name.clone(), Value::String(value.clone()));
-                }
+            let tokens = lex_shell_like(&hydrated_shell_command);
+            let (user_flags, user_args) = command_spec.parse_arguments(&tokens[2..]).ok()?;
+            let mut body = build_request_body(&command_spec, user_flags);
+            for (arg, value) in user_args.iter() {
+                body.insert(arg.to_string(), Value::String(value.to_string()));
             }
 
-            Some(vec![Cmd::ExecuteMcp(command_spec, arguments, request_id)])
+            Some(vec![Cmd::ExecuteMcp(command_spec, body, request_id)])
         }
     }
 }
-type FlagValueMap = HashMap<String, Option<String>>;
-type ParsedCommandArgs = (FlagValueMap, Vec<String>);

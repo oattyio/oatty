@@ -453,7 +453,7 @@ impl Component for PluginsTableComponent {
         let is_search_focused = table_state.f_search.get();
         let header_block = theme_helpers::block(theme, Some("Search Plugins"), is_search_focused);
 
-        // Render input inside the block
+        // Search input
         let header_inner = header_block.inner(blocks[0]);
         let filter_text = table_state.filter_text();
         let header = Paragraph::new(filter_text).style(theme.text_primary_style()).block(header_block);
@@ -486,24 +486,19 @@ impl Component for PluginsTableComponent {
         let mut spans = Vec::with_capacity(10);
 
         if app.plugins.table.selected_item().is_some() {
-            spans.extend([
-                Span::styled("Ctrl-E", theme.accent_emphasis_style()),
-                Span::styled(" Edit  ", theme.text_muted_style()),
-            ]);
+            spans.extend(theme_helpers::build_hint_spans(theme, &[("Ctrl-E", " Edit  ")]));
         }
 
-        spans.extend([
-            Span::styled("Enter/Ctrl-D", theme.accent_emphasis_style()),
-            Span::styled(" Details  ", theme.text_muted_style()),
-            Span::styled("Ctrl-S", theme.accent_emphasis_style()),
-            Span::styled(" start  ", theme.text_muted_style()),
-            Span::styled("Ctrl-T", theme.accent_emphasis_style()),
-            Span::styled(" Stop  ", theme.text_muted_style()),
-            Span::styled("Ctrl-R", theme.accent_emphasis_style()),
-            Span::styled(" Restart  ", theme.text_muted_style()),
-            Span::styled("Ctrl-L", theme.accent_emphasis_style()),
-            Span::styled(" Logs  ", theme.text_muted_style()),
-        ]);
+        spans.extend(theme_helpers::build_hint_spans(
+            theme,
+            &[
+                ("Enter/Ctrl-D", " Details  "),
+                ("Ctrl-S", " start  "),
+                ("Ctrl-T", " Stop  "),
+                ("Ctrl-R", " Restart  "),
+                ("Ctrl-L", " Logs  "),
+            ],
+        ));
 
         spans
     }

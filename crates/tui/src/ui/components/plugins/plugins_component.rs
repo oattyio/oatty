@@ -8,9 +8,12 @@
 
 use super::{PluginsEditComponent, PluginsLogsComponent, PluginsTableComponent};
 use crate::ui::components::plugins::plugin_editor::state::PluginEditViewState;
-use crate::{app::App, ui::components::component::Component};
+use crate::{
+    app::App,
+    ui::{components::component::Component, theme::theme_helpers::build_hint_spans},
+};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
-use heroku_types::Effect;
+use heroku_types::{Effect, Msg};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -21,7 +24,7 @@ use ratatui::{
 /// Top-level Plugins view component that orchestrates all plugin-related UI elements.
 ///
 /// This component manages the display and interaction of various plugin management
-/// interfaces including the plugin list table, search functionality, add plugin plugin,
+/// interfaces including the plugin list table, search functionality, add plugin,
 /// plugin details, logs viewer, and environment variable editor. It handles focus
 /// management, keyboard shortcuts, and responsive layout for both fullscreen and
 /// overlay display modes.
@@ -42,6 +45,13 @@ pub struct PluginsComponent {
 }
 
 impl Component for PluginsComponent {
+    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+        if let Msg::ExecCompleted(outcome) = msg {
+            return app.plugins.handle_execution_completion(*&outcome);
+        }
+        Vec::new()
+    }
+
     /// Handles keyboard events for the plugins component and its children.
     ///
     /// This method implements a hierarchical event handling strategy:
@@ -129,7 +139,7 @@ impl Component for PluginsComponent {
     /// * `app` - Mutable reference to the app state
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        let mut spans = vec![];
+        let mut spans = Vec::new();
 
         // The add component is visible
         if let Some(add_state) = app.plugins.add.as_ref() {
@@ -138,22 +148,13 @@ impl Component for PluginsComponent {
                 spans.extend(self.edit_component.get_hint_spans(app));
                 return spans;
             }
-            spans.extend([
-                Span::styled("Esc", theme.accent_emphasis_style()),
-                Span::styled(" Back  ", theme.text_muted_style()),
-            ]);
+            spans.extend(build_hint_spans(theme, &[("Esc", " Back  ")]));
         } else {
             // the add component is not visible
-            spans.extend([
-                Span::styled("Esc", theme.accent_emphasis_style()),
-                Span::styled(" Clear  ", theme.text_muted_style()),
-            ]);
+            spans.extend(build_hint_spans(theme, &[("Esc", " Clear  ")]));
 
             if app.plugins.can_open_add_plugin() {
-                spans.extend([
-                    Span::styled("Ctrl-A", theme.accent_emphasis_style()),
-                    Span::styled(" Add  ", theme.text_muted_style()),
-                ]);
+                spans.extend(build_hint_spans(theme, &[("Ctrl-A", " Add  ")]));
             }
         }
         // the grid is focused
@@ -219,7 +220,7 @@ impl PluginsComponent {
             return self.logs_component.handle_key_events(logs_state, key_event);
         }
 
-        if app.plugins.add.is_some() {
+        if app.plugins.add.as_ref().is_some_and(|add_state| add_state.container_focus.get()) {
             return self.edit_component.handle_key_events(app, key_event);
         }
 
@@ -257,7 +258,9 @@ impl PluginsComponent {
             }
             // Also available when the table component is focused
             KeyCode::Char('a') if control_pressed && app.plugins.can_open_add_plugin() => {
-                app.plugins.add = Some(PluginEditViewState::new());
+                let edit_view_state = PluginEditViewState::new();
+                app.focus.focus(&edit_view_state.f_transport);
+                app.plugins.add = Some(edit_view_state);
             }
             KeyCode::Char('l') if control_pressed && app.plugins.logs_open => {
                 self.handle_logs_toggle_follow_shortcut(app);

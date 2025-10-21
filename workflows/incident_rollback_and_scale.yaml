@@ -1,4 +1,5 @@
 workflow: incident_rollback_and_scale
+title: "Rollback app and Scale"
 description: "Quickly roll back an app to a prior release and scale dynos, then tail logs."
 inputs:
   app:

@@ -1,4 +1,5 @@
 workflow: postgres_cluster_pool_configuration
+title: "Postgres cluster pool configuration"
 description: >
   Configure leader and follower compute pools for a Next-Gen Heroku Postgres cluster:
   set the leader level, toggle high-availability by adjusting instance count, and optionally

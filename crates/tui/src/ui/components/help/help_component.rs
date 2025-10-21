@@ -5,22 +5,22 @@
 //! syntax, arguments, options, and examples.
 use std::vec;
 
-use crossterm::event::{KeyCode, KeyEvent};
-use heroku_types::Effect;
-use ratatui::{
-    Frame,
-    layout::Rect,
-    style::Modifier,
-    text::{Line, Text},
-    widgets::{Paragraph, Wrap},
-};
-
 use crate::{
     app::App,
     ui::{
         components::{component::Component, help::content::build_command_help_text},
         theme::theme_helpers as th,
     },
+};
+use crossterm::event::{KeyCode, KeyEvent};
+use heroku_types::Effect;
+use ratatui::prelude::Span;
+use ratatui::{
+    Frame,
+    layout::Rect,
+    style::Modifier,
+    text::{Line, Text},
+    widgets::{Paragraph, Wrap},
 };
 
 /// Help modal component for displaying command documentation.
@@ -118,7 +118,6 @@ impl Component for HelpComponent {
             text = build_command_help_text(&*app.ctx.theme, spec);
         }
 
-        title.push_str("  [Esc] Close");
         let block = th::block(&*app.ctx.theme, Some(&title), true);
 
         // Clear background, draw block, then split inner area for content/footer
@@ -130,5 +129,17 @@ impl Component for HelpComponent {
             .style(app.ctx.theme.text_primary_style())
             .wrap(Wrap { trim: false });
         frame.render_widget(paragraph, inner);
+    }
+
+    /// Renders the footer with keyboard shortcut hints.
+    ///
+    /// This method displays helpful keyboard shortcuts at the bottom of the
+    /// browser modal to guide user interaction.
+    ///
+    /// # Arguments
+    /// * `app` - The application state containing theme information
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
+        let theme = &*app.ctx.theme;
+        th::build_hint_spans(theme, &[("Esc", " Close ")])
     }
 }

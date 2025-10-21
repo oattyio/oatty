@@ -9,12 +9,12 @@ use std::{
     time::Duration,
 };
 
-use crate::cmd::Cmd;
 use crate::ui::components::nav_bar::VerticalNavBarComponent;
+use crate::ui::components::workflows::run::RunViewState;
 use crate::ui::components::workflows::state::SelectorStatus;
-use crate::ui::components::workflows::{WorkflowCollectorComponent, WorkflowInputsComponent};
+use crate::ui::components::workflows::{RunViewComponent, WorkflowCollectorComponent, WorkflowInputsComponent};
 use crate::ui::components::{
-    BrowserComponent, HelpComponent, PluginsComponent, TableComponent, WorkflowsComponent, logs::LogDetailsComponent,
+    BrowserComponent, HelpComponent, LogsComponent, PluginsComponent, TableComponent, WorkflowsComponent, logs::LogDetailsComponent,
     nav_bar::VerticalNavBarState, plugins::PluginsDetailsComponent,
 };
 use crate::ui::utils::centered_rect;
@@ -23,7 +23,7 @@ use crate::ui::{
         browser::BrowserState,
         component::Component,
         help::HelpState,
-        logs::{LogsState, state::LogEntry},
+        logs::LogsState,
         palette::{PaletteComponent, PaletteState},
         plugins::PluginsState,
         table::TableState,
@@ -31,27 +31,28 @@ use crate::ui::{
     },
     theme,
 };
-use anyhow::{Result, anyhow};
-use heroku_api::HerokuClient;
+use anyhow::Result;
 use heroku_engine::provider::{CacheLookupOutcome, PendingProviderFetch, ProviderRegistry};
-use heroku_engine::{
-    ProviderBindingOutcome, ProviderResolutionSource, RegistryCommandRunner, StepResult, StepStatus, ValueProvider, WorkflowRunState,
-};
-use heroku_mcp::{PluginDetail, PluginEngine};
+use heroku_engine::{ValueProvider, WorkflowRunState};
+use heroku_mcp::PluginEngine;
 use heroku_registry::CommandRegistry;
-use heroku_types::service::ServiceId;
-use heroku_types::workflow::RuntimeWorkflow;
-use heroku_types::{Effect, ExecOutcome, Modal, Msg, Pagination, Route};
+use heroku_types::workflow::validate_candidate_value;
+use heroku_types::{Effect, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
+use heroku_util::{
+    DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, value_contains_secret, value_is_meaningful,
+    workflow_input_uses_history,
+};
 use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use serde_json::{Map as JsonMap, Value as JsonValue};
+use tokio::sync::mpsc::UnboundedReceiver;
+use tracing::warn;
 
 /// Cross-cutting shared context owned by the App.
 ///
 /// Holds runtime-wide objects like the command registry and configuration
 /// flags. This avoids threading multiple references through components and
 /// helps reduce borrow complexity.
-#[derive(Debug)]
 pub struct SharedCtx {
     /// Global Heroku command registry
     pub command_registry: Arc<Mutex<CommandRegistry>>,
@@ -63,6 +64,10 @@ pub struct SharedCtx {
     pub theme: Box<dyn theme::Theme>,
     /// MCP plugin engine (None until initialized in main.rs)
     pub plugin_engine: Arc<PluginEngine>,
+    /// On-disk history store for workflow inputs and palette commands.
+    pub history_store: Arc<dyn HistoryStore>,
+    /// Identifier representing the active history profile.
+    pub history_profile_id: String,
 }
 
 impl SharedCtx {
@@ -71,6 +76,16 @@ impl SharedCtx {
             ProviderRegistry::with_default_http(Arc::clone(&command_registry), Duration::from_secs(30)).expect("provider registry"),
         );
         let providers: Vec<Arc<dyn ValueProvider>> = vec![provider_registry.clone()];
+        let history_store: Arc<dyn HistoryStore> = match JsonHistoryStore::with_defaults() {
+            Ok(store) => Arc::new(store),
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "Failed to initialize history store at default path; falling back to in-memory history."
+                );
+                Arc::new(InMemoryHistoryStore::new())
+            }
+        };
 
         Self {
             command_registry,
@@ -78,7 +93,24 @@ impl SharedCtx {
             provider_registry: provider_registry.clone(),
             theme: theme::load_from_env(),
             plugin_engine,
+            history_store,
+            history_profile_id: DEFAULT_HISTORY_PROFILE.to_string(),
         }
+    }
+}
+
+/// Wraps the event receiver for an in-flight workflow run.
+#[derive(Debug)]
+pub struct WorkflowRunEventReceiver {
+    /// Active workflow run identifier associated with these events.
+    pub run_id: String,
+    /// Stream of workflow events emitted by the background runner.
+    pub receiver: UnboundedReceiver<WorkflowRunEvent>,
+}
+
+impl WorkflowRunEventReceiver {
+    pub fn new(run_id: String, receiver: UnboundedReceiver<WorkflowRunEvent>) -> Self {
+        Self { run_id, receiver }
     }
 }
 
@@ -108,10 +140,6 @@ pub struct App<'a> {
     /// Active execution count used by the event pump to decide whether to
     /// animate
     pub active_exec_count: Arc<AtomicUsize>,
-    /// Last pagination info returned by an execution (if any)
-    pub last_pagination: Option<Pagination>,
-    /// Ranges supported by the last executed command (for pagination UI)
-    pub last_command_ranges: Option<Vec<String>>,
     /// Last executed CommandSpec (for pagination replays)
     pub last_spec: Option<heroku_registry::CommandSpec>,
     /// Last request body used for the executed command
@@ -138,6 +166,10 @@ pub struct App<'a> {
     current_route: Route,
     /// Currently open modal kind (when Some, modal owns focus)
     open_modal_kind: Option<Modal>,
+    /// Pending workflow run event receiver awaiting runtime registration.
+    workflow_event_rx: Option<WorkflowRunEventReceiver>,
+    /// Sequence counter for generating unique workflow run identifiers.
+    workflow_run_sequence: u64,
 }
 
 impl App<'_> {
@@ -161,21 +193,26 @@ impl App<'_> {
     /// // Requires constructing a full Registry and App; ignored in doctests.
     /// ```
     pub fn new(registry: Arc<Mutex<CommandRegistry>>, engine: Arc<PluginEngine>) -> Self {
+        let ctx = SharedCtx::new(Arc::clone(&registry), engine);
+        let palette = PaletteState::new(
+            Arc::clone(&registry),
+            Arc::clone(&ctx.history_store),
+            ctx.history_profile_id.clone(),
+        );
+
         let mut app = Self {
-            ctx: SharedCtx::new(Arc::clone(&registry), engine),
+            ctx,
             browser: BrowserState::new(Arc::clone(&registry)),
             logs: LogsState::default(),
             help: HelpState::default(),
             plugins: PluginsState::new(),
             workflows: WorkflowState::new(),
             table: TableState::default(),
-            palette: PaletteState::new(Arc::clone(&registry)),
+            palette,
             nav_bar: VerticalNavBarState::defaults_for_views(),
             executing: false,
             throbber_idx: 0,
             active_exec_count: Arc::new(AtomicUsize::new(0)),
-            last_pagination: None,
-            last_command_ranges: None,
             last_spec: None,
             last_body: None,
             pagination_history: Vec::new(),
@@ -188,7 +225,9 @@ impl App<'_> {
             app_container_focus: FocusFlag::named("app.container"),
             current_route: Route::Palette,
             open_modal_kind: None,
-            logs_view: None,
+            workflow_event_rx: None,
+            workflow_run_sequence: 0,
+            logs_view: Some(Box::new(LogsComponent::default())),
         };
         app.browser.update_browser_filtered();
 
@@ -197,6 +236,21 @@ impl App<'_> {
         app.focus.focus(&app.palette);
 
         app
+    }
+
+    fn next_run_identifier(&mut self, workflow_identifier: &str) -> String {
+        self.workflow_run_sequence = self.workflow_run_sequence.wrapping_add(1);
+        format!("{}-{}", workflow_identifier, self.workflow_run_sequence)
+    }
+
+    /// Registers a new workflow run event stream. Replaces any pending receiver.
+    pub fn register_workflow_run_stream(&mut self, run_id: String, receiver: UnboundedReceiver<WorkflowRunEvent>) {
+        self.workflow_event_rx = Some(WorkflowRunEventReceiver::new(run_id, receiver));
+    }
+
+    /// Extracts a pending workflow run event receiver for runtime registration.
+    pub fn take_pending_workflow_events(&mut self) -> Option<WorkflowRunEventReceiver> {
+        self.workflow_event_rx.take()
     }
 
     /// Updates the application state based on a message.
@@ -225,6 +279,10 @@ impl App<'_> {
             Msg::Resize(..) => vec![],
             Msg::CopyToClipboard(text) => vec![Effect::CopyToClipboardRequested(text)],
             Msg::ProviderValuesReady { provider_id, cache_key } => self.handle_provider_values_ready(provider_id, cache_key),
+            Msg::WorkflowRunEvent { run_id, event } => {
+                self.handle_workflow_run_event(run_id, event);
+                Vec::new()
+            }
             _ => Vec::new(),
         }
     }
@@ -258,6 +316,25 @@ impl App<'_> {
         }
 
         vec![]
+    }
+
+    fn handle_workflow_run_event(&mut self, run_id: String, event: WorkflowRunEvent) {
+        let persist_history = matches!(
+            &event,
+            WorkflowRunEvent::RunCompleted {
+                status: WorkflowRunStatus::Succeeded,
+                ..
+            }
+        );
+
+        let log_messages = self.workflows.apply_run_event(&run_id, event, &*self.ctx.theme);
+        for message in log_messages {
+            self.append_log_message(message);
+        }
+
+        if persist_history {
+            self.persist_successful_run_history();
+        }
     }
 
     fn effects_for_pending_fetches(&self, fetches: Vec<PendingProviderFetch>) -> Vec<Effect> {
@@ -330,112 +407,100 @@ impl App<'_> {
         effects
     }
 
-    /// Handles execution completion messages and processes the results.
-    ///
-    /// This method processes the results of command execution, including
-    /// plugin-specific responses, logs updates, and general command results.
-    /// It handles special plugin responses and falls back to general result
-    /// processing for regular commands.
-    ///
-    /// # Arguments
-    ///
-    /// * `execution_outcome` - The result of the command execution
-    ///
-    /// # Returns
-    ///
-    /// Returns `true` if the execution was handled as a special case (plugin response)
-    /// and the caller should return early, `false` if normal processing should continue.
-    fn handle_execution_completion(&mut self, execution_outcome: Box<ExecOutcome>) {
-        let execution_outcome = *execution_outcome;
-        // Keep executing=true if other executions are still active
-        match execution_outcome {
-            ExecOutcome::PluginDetailLoad(name, result) => self.handle_plugin_detail_load(name, result),
-            ExecOutcome::PluginDetail(log, maybe_detail) => self.handle_plugin_detail(log, maybe_detail),
-            ExecOutcome::PluginsRefresh(log, maybe_plugins) => self.handle_plugin_refresh_response(log, maybe_plugins),
-            ExecOutcome::Log(log) => self.logs.entries.push(log),
-            _ => {}
-        }
-    }
-
-    /// Handles plugin details responses from command execution.
-    ///
-    /// # Arguments
-    ///
-    /// * `log` - The raw log output for redaction
-    /// * `maybe_detail` - The plugin detail to apply
-    fn handle_plugin_detail(&mut self, log: String, maybe_detail: Option<PluginDetail>) {
-        self.logs.entries.push(log);
-        let Some(detail) = maybe_detail else {
-            return;
-        };
-        if let Some(state) = self.plugins.details.as_mut()
-            && state.selected_plugin().is_some_and(|selected| selected == detail.name)
-        {
-            state.apply_detail(detail.clone());
-        }
-
-        self.plugins.table.update_item(detail);
-    }
-
-    fn handle_plugin_detail_load(&mut self, name: String, result: Result<PluginDetail, String>) {
-        match result {
-            Ok(detail) => {
-                self.logs.entries.push(format!("Plugins: loaded details for '{name}'"));
-                if let Some(state) = self.plugins.details.as_mut()
-                    && state.selected_plugin().is_some_and(|selected| selected == name)
-                {
-                    state.apply_detail(detail.clone());
-                }
-                self.plugins.table.update_item(detail);
+    /// Populate run state inputs with history-backed defaults when available.
+    fn seed_history_defaults(&mut self, run_state: &mut WorkflowRunState) {
+        for (input_name, definition) in &run_state.workflow.inputs {
+            if !workflow_input_uses_history(definition) {
+                continue;
             }
-            Err(error) => {
-                self.logs
-                    .entries
-                    .push(format!("Plugins: failed to load details for '{name}': {error}"));
-                if let Some(state) = self.plugins.details.as_mut()
-                    && state.selected_plugin().is_some_and(|selected| selected == name)
-                {
-                    state.mark_error(error);
+
+            let key = HistoryKey::workflow_input(
+                self.ctx.history_profile_id.clone(),
+                run_state.workflow.identifier.clone(),
+                input_name.clone(),
+            );
+
+            match self.ctx.history_store.get_latest_value(&key) {
+                Ok(Some(stored)) => {
+                    if stored.value.is_null() || value_contains_secret(&stored.value) {
+                        continue;
+                    }
+                    if let Some(validation) = &definition.validate {
+                        if let Err(error) = validate_candidate_value(&stored.value, validation) {
+                            let message = format!("History default for '{}' failed validation: {}", input_name, error);
+                            warn!(
+                                input = %input_name,
+                                workflow = %run_state.workflow.identifier,
+                                "{}",
+                                message
+                            );
+                            self.append_log_message(message);
+                            continue;
+                        }
+                    }
+
+                    run_state.run_context.inputs.insert(input_name.clone(), stored.value);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    let message = format!("Failed to load history default for '{}': {}", input_name, error);
+                    warn!(
+                        input = %input_name,
+                        workflow = %run_state.workflow.identifier,
+                        "{}",
+                        message
+                    );
+                    self.append_log_message(message);
                 }
             }
         }
     }
 
-    /// Handles plugin refresh responses from command execution.
-    ///
-    /// # Arguments
-    ///
-    /// * `log` - The raw log output for redaction
-    /// * `plugin_updates` - The updates to apply
-    ///
-    fn handle_plugin_refresh_response(&mut self, log: String, plugin_updates: Option<Vec<PluginDetail>>) {
-        self.logs.entries.push(log);
-        let Some(updated_plugins) = plugin_updates else {
+    /// Persist successful workflow input values back to history storage.
+    fn persist_successful_run_history(&self) {
+        let Some(run_state) = self.workflows.active_run_state() else {
             return;
         };
-        self.plugins.table.replace_items(updated_plugins);
-    }
 
-    // fn route_exec_outcome(&mut self, destination: ExecOutcomeDestination, normalized_value: JsonValue) -> Vec<Effect> {
-    //     let mut effects = Vec::new();
-    //     match destination {
-    //         ExecOutcomeDestination::WorkflowCollector => {
-    //             let Some(collector_state) = self.workflows.selector_state_mut() else {return Vec::new()};
-    //             collector_state.table.apply_result_json(Some(normalized_value), &*self.ctx.theme);
-    //             collector_state.table.normalize();
-    //             self.focus.focus(&collector_state.table.grid_f);
-    //             collector_state.status = SelectorStatus::Loaded;
-    //             collector_state.error_message = None;
-    //         },
-    //     }
-    //     effects
-    // }
+        for (input_name, definition) in &run_state.workflow.inputs {
+            if !workflow_input_uses_history(definition) {
+                continue;
+            }
 
-    /// Produce a human-readable string representation of a JSON payload for logging.
-    fn stringify_result_payload(value: &JsonValue) -> String {
-        match value {
-            JsonValue::String(text) => text.clone(),
-            _ => value.to_string(),
+            let Some(value) = run_state.run_context.inputs.get(input_name) else {
+                continue;
+            };
+
+            if !value_is_meaningful(value) || value_contains_secret(value) {
+                continue;
+            }
+
+            if let Some(validation) = &definition.validate {
+                if let Err(error) = validate_candidate_value(value, validation) {
+                    warn!(
+                        input = %input_name,
+                        workflow = %run_state.workflow.identifier,
+                        error = %error,
+                        "skipping history persistence for value failing validation"
+                    );
+                    continue;
+                }
+            }
+
+            let key = HistoryKey::workflow_input(
+                self.ctx.history_profile_id.clone(),
+                run_state.workflow.identifier.clone(),
+                input_name.clone(),
+            );
+
+            if let Err(error) = self.ctx.history_store.insert_value(key, value.clone()) {
+                warn!(
+                    input = %input_name,
+                    workflow = %run_state.workflow.identifier,
+                    error = %error,
+                    "failed to persist workflow history value"
+                );
+            }
         }
     }
 
@@ -457,13 +522,43 @@ impl App<'_> {
         }
     }
 
+    /// Appends a plain-text message to the logs collections.
+    ///
+    /// This helper ensures both the flat string list and the rich log entries
+    /// remain in sync so detail views can resolve JSON payloads accurately. It
+    /// also enforces the maximum log retention window.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - The human-readable message to append to the logs.
+    pub fn append_log_message(&mut self, message: impl Into<String>) {
+        self.append_log_message_with_level(None, message);
+    }
+
+    /// Appends a plain-text message with an optional severity level.
+    ///
+    /// This variant is useful when callers want to preserve the originating log
+    /// level for detail presentation.
+    ///
+    /// # Arguments
+    ///
+    /// * `level` - Optional severity level (for example, `"warn"`).
+    /// * `message` - The human-readable message to append to the logs.
+    pub fn append_log_message_with_level(&mut self, level: Option<String>, message: impl Into<String>) {
+        let text = message.into();
+        self.logs.append_text_entry_with_level(level, text);
+        self.trim_logs_if_needed();
+    }
+
     /// Open the interactive input view for the selected workflow.
     fn open_workflow_inputs(&mut self) -> Result<()> {
         let Some(workflow) = self.workflows.selected_workflow() else {
-            self.logs.entries.push("No workflow selected".to_string());
+            self.append_log_message("No workflow selected");
             return Ok(());
         };
         let mut run_state = WorkflowRunState::new(workflow.clone());
+        self.seed_history_defaults(&mut run_state);
+        run_state.apply_input_defaults();
         run_state.evaluate_input_providers()?;
         self.workflows.begin_inputs_session(run_state);
         Ok(())
@@ -474,110 +569,49 @@ impl App<'_> {
         self.workflows.end_inputs_session();
     }
 
-    fn process_run_state(&mut self, mut run_state: WorkflowRunState, already_evaluated: bool) -> Result<Vec<Effect>> {
-        if !already_evaluated {
-            run_state.evaluate_input_providers()?;
+    /// Requests execution of the currently active workflow run.
+    ///
+    pub fn run_active_workflow(&mut self) -> Vec<Effect> {
+        if self.workflows.unresolved_item_count() > 0 {
+            self.append_log_message("Cannot run workflow yet: resolve remaining inputs before running.");
+            return Vec::new();
         }
 
-        if let Some(blocked) = run_state
-            .telemetry()
-            .provider_resolution_events()
-            .iter()
-            .find(|event| matches!(event.outcome, ProviderBindingOutcome::Prompt(_) | ProviderBindingOutcome::Error(_)))
-        {
-            let input = blocked.input.clone();
-            let argument = blocked.argument.clone();
-            let outcome_desc = describe_provider_outcome(&blocked.outcome);
-            self.workflows.set_active_run_state(run_state);
-            self.logs
-                .entries
-                .push(format!("Collector: {}.{} requires attention: {}", input, argument, outcome_desc));
-            return Ok(vec![Effect::ShowModal(Modal::WorkflowCollector)]);
-        }
+        let Some(run_state) = self.workflows.active_run_state().cloned() else {
+            self.append_log_message("No active workflow run is available.");
+            return Vec::new();
+        };
 
-        let registry_snapshot = self
-            .ctx
-            .command_registry
-            .lock()
-            .map_err(|_| anyhow!("could not obtain command registry lock"))?
-            .clone();
+        let display_name = run_state
+            .workflow
+            .title
+            .as_deref()
+            .filter(|title| !title.is_empty())
+            .unwrap_or(&run_state.workflow.identifier)
+            .to_string();
 
-        let client = HerokuClient::new_from_service_id(ServiceId::CoreApi)?;
-        let runner = RegistryCommandRunner::new(registry_snapshot, client);
-        let results = run_state.execute_with_runner(&runner);
+        let run_id = self.next_run_identifier(&run_state.workflow.identifier);
+        let request = WorkflowRunRequest {
+            run_id: run_id.clone(),
+            workflow: run_state.workflow.clone(),
+            inputs: run_state.run_context.inputs.clone(),
+            environment: run_state.run_context.environment_variables.clone(),
+            step_outputs: run_state.run_context.steps.clone(),
+        };
 
-        self.log_workflow_execution(&run_state.workflow, &run_state, &results);
+        let mut run_view = RunViewState::new(
+            run_id.clone(),
+            run_state.workflow.identifier.clone(),
+            run_state.workflow.title.clone(),
+        );
+        run_view.initialize_steps(&run_state.workflow.steps, &*self.ctx.theme);
 
-        let effects = Vec::new();
-        if let Some(last) = results.last()
-            && !last.output.is_null()
-        {
-            self.table.apply_result_json(Some(last.output.clone()), &*self.ctx.theme);
-            self.table.normalize();
-            // effects.push(Effect::ShowModal(Modal::Results));
-        }
+        self.workflows.close_input_view();
+        self.workflows.begin_run_session(run_id.clone(), run_state, run_view);
 
-        Ok(effects)
-    }
-    /// Logs the execution details of a workflow, including telemetry events and step results. The
-    /// method appends log entries to the internal `logs` structure for both concise and rich logging.
-    ///
-    /// # Arguments
-    ///
-    /// * `workflow` - A reference to a `RuntimeWorkflow` that contains information about the executed workflow.
-    /// * `run_state` - A reference to a `WorkflowRunState` that provides access to telemetry events from the execution.
-    /// * `results` - A slice of `StepResult` containing the outcome of each step executed in the workflow.
-    ///
-    /// # Behavior
-    ///
-    /// This method performs the following:
-    /// - Logs a summary entry for the workflow execution, including the workflow identifier and the number of steps executed.
-    /// - Logs a richer `LogEntry::Text` with an "info" level indicating workflow execution.
-    /// - Iterates through the provider resolution events from the workflow run's telemetry and logs detailed entries for each event,
-    ///   describing the source (automatic or manual) and the outcome of the provider resolution.
-    /// - Iterates through the step results and logs a detailed entry for each step, including its identifier and status.
-    /// - Ensures the logs are trimmed if needed to conform to any size constraints.
-    ///
-    /// # Internal Structures
-    ///
-    /// - The `logs.entries` collection stores brief, human-readable log entries as plain text.
-    /// - The `logs.rich_entries` collection stores more structured log entries (like `LogEntry::Text`).
-    ///
-    /// # Dependencies
-    ///
-    /// - Relies on helper functions like `describe_provider_outcome` to translate provider outcomes into human-readable strings.
-    /// - Relies on `format_step_status` to convert step statuses into readable formats.
-    ///
-    /// Note: The method assumes the `self` type has a `trim_logs_if_needed` method to manage the size of log storage.
-    fn log_workflow_execution(&mut self, workflow: &RuntimeWorkflow, run_state: &WorkflowRunState, results: &[StepResult]) {
-        self.logs
-            .entries
-            .push(format!("Workflow '{}' executed ({} steps)", workflow.identifier, results.len()));
-        self.logs.rich_entries.push(LogEntry::Text {
-            level: Some("info".into()),
-            msg: format!("Workflow '{}' executed", workflow.identifier),
-        });
+        self.append_log_message(format!("Workflow '{}' run started.", display_name));
 
-        for event in run_state.telemetry().provider_resolution_events() {
-            self.logs.entries.push(format!(
-                "  provider {}.{} [{}] {}",
-                event.input,
-                event.argument,
-                match event.source {
-                    ProviderResolutionSource::Automatic => "auto",
-                    ProviderResolutionSource::Manual => "manual",
-                },
-                describe_provider_outcome(&event.outcome)
-            ));
-        }
-
-        for step in results {
-            self.logs
-                .entries
-                .push(format!("  step {} {}", step.id, format_step_status(step.status)));
-        }
-
-        self.trim_logs_if_needed();
+        vec![Effect::WorkflowRunRequested { request }, Effect::SwitchTo(Route::WorkflowRun)]
     }
 
     /// Updates the current route of the application and performs necessary state transitions.
@@ -590,6 +624,7 @@ impl App<'_> {
     /// 1. Based on the provided `Route`, determines the corresponding components and their states.
     /// 2. For specific routes:
     ///     * **`Route::WorkflowInputs`**: Attempts to open workflow inputs and logs any errors encountered.
+    ///     * **`Route::WorkflowRun`**: Validates run view state is available; falls back to the workflow list if missing.
     ///     * **`Route::Workflows`**: Ensures workflows are loaded via the registry and logs any errors encountered.
     /// 3. Updates the navigation bar to reflect the new route.
     /// 4. Changes the main view to the component corresponding to the new route.
@@ -610,23 +645,29 @@ impl App<'_> {
     /// app.set_current_route(Route::Palette);
     /// ```
     pub fn set_current_route(&mut self, route: Route) {
+        if matches!(route, Route::WorkflowRun) && self.workflows.run_view_state().is_none() {
+            self.append_log_message("Workflow run view unavailable; falling back to workflow list.");
+            return self.set_current_route(Route::Workflows);
+        }
+
         let (view, state): (Box<dyn Component>, Box<&dyn HasFocus>) = match route {
             Route::Browser => (Box::new(BrowserComponent), Box::new(&self.browser)),
             Route::Palette => (Box::new(PaletteComponent::default()), Box::new(&self.palette)),
             Route::Plugins => (Box::new(PluginsComponent::default()), Box::new(&self.plugins)),
             Route::WorkflowInputs => {
                 if let Err(error) = self.open_workflow_inputs() {
-                    self.logs.entries.push(format!("Failed to open workflow inputs: {error}"));
+                    self.append_log_message(format!("Failed to open workflow inputs: {error}"));
                 }
 
                 (Box::new(WorkflowInputsComponent), Box::new(&self.workflows))
             }
             Route::Workflows => {
                 if let Err(error) = self.workflows.ensure_loaded(&self.ctx.command_registry) {
-                    self.logs.entries.push(format!("Failed to load workflows: {error}"));
+                    self.append_log_message(format!("Failed to load workflows: {error}"));
                 }
                 (Box::new(WorkflowsComponent), Box::new(&self.workflows))
             }
+            Route::WorkflowRun => (Box::new(RunViewComponent::default()), Box::new(&self.workflows)),
         };
 
         self.current_route = self.nav_bar.set_route(route);
@@ -641,8 +682,9 @@ impl App<'_> {
             let modal_view: (Box<dyn Component>, Box<dyn Fn(Rect) -> Rect>) = match modal_kind {
                 Modal::Help => (Box::new(HelpComponent::default()), Box::new(|rect| centered_rect(80, 70, rect))),
                 Modal::Results(exec_outcome) => {
-                    self.table.process_general_execution_result(&exec_outcome, &*self.ctx.theme);
-                    (Box::new(TableComponent::default()), Box::new(|rect| centered_rect(96, 90, rect)))
+                    let mut table = TableComponent::default();
+                    table.handle_message(self, &Msg::ExecCompleted(exec_outcome));
+                    (Box::new(table), Box::new(|rect| centered_rect(96, 90, rect)))
                 }
                 Modal::LogDetails => (
                     Box::new(LogDetailsComponent::default()),
@@ -652,10 +694,15 @@ impl App<'_> {
                     Box::new(PluginsDetailsComponent::default()),
                     Box::new(|rect| centered_rect(90, 80, rect)),
                 ),
-                Modal::WorkflowCollector => (
-                    Box::new(WorkflowCollectorComponent::default()),
-                    Box::new(|rect| centered_rect(96, 90, rect)),
-                ),
+                Modal::WorkflowCollector => {
+                    let component: Box<dyn Component> = Box::new(WorkflowCollectorComponent::default());
+                    let layout: Box<dyn Fn(Rect) -> Rect> = if self.workflows.manual_entry_state().is_some() {
+                        Box::new(|rect| centered_rect(45, 35, rect))
+                    } else {
+                        Box::new(|rect| centered_rect(96, 90, rect))
+                    };
+                    (component, layout)
+                }
             };
             self.open_modal = Some(modal_view);
             // save the current focus to restore when the modal is closed
@@ -675,31 +722,6 @@ impl App<'_> {
         } else {
             self.focus.first();
         }
-    }
-}
-
-fn describe_provider_outcome(outcome: &ProviderBindingOutcome) -> String {
-    match outcome {
-        ProviderBindingOutcome::Resolved(value) => {
-            if let Some(s) = value.as_str() {
-                format!("resolved to '{s}'")
-            } else {
-                format!("resolved to {}", value)
-            }
-        }
-        ProviderBindingOutcome::Prompt(prompt) => format!("prompted (required: {}, reason: {})", prompt.required, prompt.reason.message),
-        ProviderBindingOutcome::Skip(decision) => {
-            format!("skipped ({})", decision.reason.message)
-        }
-        ProviderBindingOutcome::Error(error) => format!("error: {}", error.message),
-    }
-}
-
-fn format_step_status(status: StepStatus) -> &'static str {
-    match status {
-        StepStatus::Succeeded => "succeeded",
-        StepStatus::Failed => "failed",
-        StepStatus::Skipped => "skipped",
     }
 }
 
@@ -735,7 +757,6 @@ impl HasFocus for App<'_> {
         match self.current_route {
             Route::Palette => {
                 builder.widget(&self.palette);
-                builder.widget(&self.logs);
             }
             Route::Browser => {
                 builder.widget(&self.browser);
@@ -743,10 +764,12 @@ impl HasFocus for App<'_> {
             Route::Plugins => {
                 builder.widget(&self.plugins);
             }
-            Route::Workflows | Route::WorkflowInputs => {
+            Route::Workflows | Route::WorkflowInputs | Route::WorkflowRun => {
                 builder.widget(&self.workflows);
-                builder.widget(&self.logs);
             }
+        }
+        if self.logs.is_visible {
+            builder.widget(&self.logs);
         }
 
         builder.end(tag);

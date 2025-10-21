@@ -295,31 +295,19 @@ impl Component for PluginsEditComponent {
         let mut spans = vec![];
 
         if add_state.f_transport.get() {
-            spans.extend([
-                Span::styled("Space bar", theme.accent_emphasis_style()),
-                Span::styled(" Toggle ", theme.text_muted_style()),
-            ]);
+            spans.extend(theme_helpers::build_hint_spans(theme, &[("Space bar", " Toggle ")]));
         }
 
         if add_state.is_key_value_editor_focused() {
             spans.extend(self.kv_component.get_hint_spans(app));
         } else {
-            spans.extend([
-                Span::styled("Esc", theme.accent_emphasis_style()),
-                Span::styled(" Cancel ", theme.text_muted_style()),
-            ]);
+            spans.extend(theme_helpers::build_hint_spans(theme, &[("Esc", " Cancel ")]));
             let (validate_enabled, save_enabled) = add_state.compute_button_enablement();
             if validate_enabled {
-                spans.extend([
-                    Span::styled("Ctrl+V", theme.accent_emphasis_style()),
-                    Span::styled(" Validate ", theme.text_muted_style()),
-                ]);
+                spans.extend(theme_helpers::build_hint_spans(theme, &[("Ctrl+V", " Validate ")]));
             }
             if save_enabled {
-                spans.extend([
-                    Span::styled("Ctrl+S", theme.accent_emphasis_style()),
-                    Span::styled(" Save ", theme.text_muted_style()),
-                ]);
+                spans.extend(theme_helpers::build_hint_spans(theme, &[("Ctrl+S", " Save ")]));
             }
         }
 
@@ -554,21 +542,21 @@ fn render_action_buttons(frame: &mut Frame, area: Rect, theme: &dyn Theme, add_s
         button_columns[1],
         "Validate",
         theme,
-        ButtonRenderOptions::new(validate_enabled, add_state.f_btn_validate.get(), false, Borders::ALL),
+        ButtonRenderOptions::new(validate_enabled, add_state.f_btn_validate.get(), false, Borders::ALL, false),
     );
     render_button(
         frame,
         button_columns[3],
         "Save",
         theme,
-        ButtonRenderOptions::new(save_enabled, add_state.f_btn_save.get(), false, Borders::ALL),
+        ButtonRenderOptions::new(save_enabled, add_state.f_btn_save.get(), false, Borders::ALL, true),
     );
     render_button(
         frame,
         button_columns[5],
         "Cancel",
         theme,
-        ButtonRenderOptions::new(true, add_state.f_btn_cancel.get(), false, Borders::ALL),
+        ButtonRenderOptions::new(true, add_state.f_btn_cancel.get(), false, Borders::ALL, false),
     );
     ActionButtonLayout {
         btn_validate_area: button_columns[1],

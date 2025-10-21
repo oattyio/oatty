@@ -50,7 +50,8 @@ pub fn parse_content_range_value(value: &str) -> Option<Pagination> {
             if let Ok(number) = value.trim_end_matches(';').parse::<usize>() {
                 max = Some(number);
             }
-        } else if let Some(value) = key_value_pair.strip_prefix("order=") {
+        }
+        if let Some(value) = key_value_pair.strip_prefix("order=") {
             order = Some(value.trim_end_matches(';').to_lowercase());
         }
     }
@@ -61,7 +62,9 @@ pub fn parse_content_range_value(value: &str) -> Option<Pagination> {
         field,
         max: max.unwrap_or(200),
         order,
+        hydrated_shell_command: None,
         next_range: None,
+        this_range: None,
     })
 }
 
@@ -163,7 +166,7 @@ pub fn build_range_header_from_body(body: &Map<String, Value>) -> Option<String>
     let mut range_header = format!("{} {};", field, range_segment);
 
     if let Some(sort_order) = order {
-        range_header.push_str(&format!(" order={};", sort_order));
+        range_header.push_str(&format!(" order={},", sort_order));
     }
 
     if let Some(maximum) = max {

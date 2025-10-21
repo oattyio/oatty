@@ -1,5 +1,6 @@
 use std::sync::{Arc, Mutex};
 
+use crate::ui::components::common::TextInputState;
 use heroku_types::{CommandSpec, Field};
 use heroku_util::fuzzy_score;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
@@ -16,7 +17,7 @@ pub struct BrowserState {
     pub f_search: FocusFlag,
     pub f_commands: FocusFlag,
 
-    search_input: String,
+    search_input: TextInputState,
     filtered: Vec<usize>,
     selected: usize,
     list_state: ListState,
@@ -33,7 +34,7 @@ impl BrowserState {
             container_focus: FocusFlag::named("browser"),
             f_search: FocusFlag::named("browser.search"),
             f_commands: FocusFlag::named("browser.commands"),
-            search_input: String::new(),
+            search_input: TextInputState::new(),
             filtered: vec![],
             selected: 0,
             list_state: ListState::default(),
@@ -46,19 +47,39 @@ impl BrowserState {
     // ========================
     // Search & Filtered List
     // ========================
-    pub fn search_input(&self) -> &String {
-        &self.search_input
+    pub fn search_query(&self) -> &str {
+        self.search_input.input()
     }
-    pub fn search_input_push(&mut self, ch: char) {
-        self.search_input.push(ch);
+
+    pub fn search_cursor(&self) -> usize {
+        self.search_input.cursor()
+    }
+
+    pub fn move_search_cursor_left(&mut self) {
+        self.search_input.move_left();
+        // moving cursor alone does not affect filtering
+    }
+
+    pub fn move_search_cursor_right(&mut self) {
+        self.search_input.move_right();
+    }
+
+    pub fn append_search_character(&mut self, character: char) {
+        self.search_input.insert_char(character);
         self.update_browser_filtered();
     }
-    pub fn search_input_pop(&mut self) {
-        self.search_input.pop();
+
+    pub fn remove_search_character(&mut self) {
+        self.search_input.backspace();
         self.update_browser_filtered();
     }
-    pub fn search_input_clear(&mut self) {
-        self.search_input.clear();
+
+    pub fn clear_search_query(&mut self) {
+        if self.search_input.input().is_empty() && self.search_input.cursor() == 0 {
+            return;
+        }
+        self.search_input.set_input("");
+        self.search_input.set_cursor(0);
         self.update_browser_filtered();
     }
 
@@ -85,7 +106,8 @@ impl BrowserState {
                 return;
             };
             let all_commands = &registry_lock.commands;
-            if self.search_input.is_empty() {
+            let query = self.search_input.input();
+            if query.trim().is_empty() {
                 self.filtered = (0..all_commands.len()).collect();
             } else {
                 let mut scored: Vec<(i64, usize)> = all_commands
@@ -97,7 +119,7 @@ impl BrowserState {
                         } else {
                             format!("{} {} {}", command.group, command.name, command.summary)
                         };
-                        fuzzy_score(&exec, &self.search_input).map(|score| (score, idx))
+                        fuzzy_score(&exec, query).map(|score| (score, idx))
                     })
                     .collect();
 
@@ -225,5 +247,41 @@ impl HasFocus for BrowserState {
 
     fn area(&self) -> Rect {
         Rect::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use heroku_registry::CommandRegistry;
+    use std::sync::{Arc, Mutex};
+
+    fn build_state() -> BrowserState {
+        let registry = Arc::new(Mutex::new(CommandRegistry::default()));
+        BrowserState::new(registry)
+    }
+
+    #[test]
+    fn insert_characters_respects_cursor_position() {
+        let mut state = build_state();
+        state.append_search_character('a');
+        state.append_search_character('b');
+        state.move_search_cursor_left();
+        state.append_search_character('c');
+
+        assert_eq!(state.search_query(), "acb");
+        assert_eq!(state.search_cursor(), 2);
+    }
+
+    #[test]
+    fn clear_search_query_resets_buffer_and_cursor() {
+        let mut state = build_state();
+        state.append_search_character('a');
+        state.append_search_character('b');
+        state.move_search_cursor_left();
+        state.clear_search_query();
+
+        assert_eq!(state.search_query(), "");
+        assert_eq!(state.search_cursor(), 0);
     }
 }

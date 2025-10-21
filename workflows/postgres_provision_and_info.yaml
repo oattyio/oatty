@@ -1,4 +1,5 @@
 workflow: postgres_provision_and_info
+title: "Postgres Provision and Info"
 description: "Provision a Heroku Postgres database for an app, wait until it's ready, and display database info."
 inputs:
   app:

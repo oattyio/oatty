@@ -55,19 +55,16 @@ impl Component for PluginsLogsComponent {
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        [
-            Span::styled("Ctrl+F", theme.accent_emphasis_style()),
-            Span::styled(" Search ", theme.text_muted_style()),
-            Span::styled("Ctrl+L", theme.accent_emphasis_style()),
-            Span::styled(" Follow ", theme.text_muted_style()),
-            Span::styled("Ctrl+Y", theme.accent_emphasis_style()),
-            Span::styled(" Copy ", theme.text_muted_style()),
-            Span::styled("Ctrl+U", theme.accent_emphasis_style()),
-            Span::styled(" Copy all ", theme.text_muted_style()),
-            Span::styled("Ctrl+O", theme.accent_emphasis_style()),
-            Span::styled(" Export ", theme.text_muted_style()),
-        ]
-        .to_vec()
+        th::build_hint_spans(
+            theme,
+            &[
+                ("Ctrl+F", " Search "),
+                ("Ctrl+L", " Follow "),
+                ("Ctrl+Y", " Copy "),
+                ("Ctrl+U", " Copy all "),
+                ("Ctrl+O", " Export "),
+            ],
+        )
     }
 }
 

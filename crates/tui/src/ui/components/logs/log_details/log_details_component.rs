@@ -7,7 +7,7 @@ use crate::{
             logs::state::{LogDetailView, LogEntry},
             table::build_key_value_entries,
         },
-        theme::theme_helpers,
+        theme::theme_helpers::{self, build_hint_spans},
         utils::build_copy_text,
     },
 };
@@ -67,7 +67,10 @@ impl LogDetailsComponent {
                         };
                         let selection = if entries.is_empty() { None } else { Some(offset) };
                         app.logs.detail = Some(LogDetailView::Table { offset });
-                        ResultsTableView::render_kv_or_text(frame, area, &entries, selection, offset, true, red_ref, &*app.ctx.theme);
+                        let detail_block = theme_helpers::block(&*app.ctx.theme, Some("Details"), true);
+                        let inner_area = detail_block.inner(area);
+                        frame.render_widget(detail_block, area);
+                        ResultsTableView::render_kv_or_text(frame, inner_area, &entries, selection, offset, red_ref, &*app.ctx.theme);
                         return;
                     }
                     LogEntry::Api { status, raw, .. } => {
@@ -192,12 +195,6 @@ impl Component for LogDetailsComponent {
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        [
-            Span::styled("Esc", theme.accent_emphasis_style()),
-            Span::styled(" Close  ", theme.text_muted_style()),
-            Span::styled("C", theme.accent_emphasis_style()),
-            Span::styled(" Copy  ", theme.text_muted_style()),
-        ]
-        .to_vec()
+        build_hint_spans(theme, &[("Esc", " Close  "), ("C", " Copy  ")])
     }
 }

@@ -28,7 +28,7 @@ pub const A_GREEN: Color = Color::Rgb(0xA3, 0xBE, 0x8C); // #A3BE8C
 // THEME.md authoritative aliases
 pub const BG_MAIN: Color = N0; // App/root background
 pub const BG_PANEL: Color = N1; // Secondary panels/cards/inputs
-pub const BG_MODAL_OVERLAY: Color = Color::Rgb(0x21, 0x26, 0x33); // Darkened overlay for modals
+pub const BG_MODAL_OVERLAY: Color = Color::Rgb(0x1a, 0x1e, 0x28); // Darkened overlay for modals
 pub const UI_BORDER: Color = N2; // Borders/dividers/scrollbars
 pub const TEXT_MUTED: Color = N3; // Ghost text/hints/placeholders
 

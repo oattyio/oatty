@@ -15,12 +15,21 @@ use heroku_engine::{
 };
 use heroku_mcp::{PluginEngine, config::load_config};
 use heroku_registry::{CommandRegistry, build_clap, feat_gate::feature_workflows, find_by_group_and_cmd};
-use heroku_types::{ExecOutcome, RuntimeWorkflow, command::CommandExecution, service::ServiceId, workflow::WorkflowDefinition};
-use heroku_util::resolve_path;
+use heroku_types::{
+    ExecOutcome, RuntimeWorkflow,
+    command::CommandExecution,
+    service::ServiceId,
+    workflow::{WorkflowDefinition, validate_candidate_value},
+};
+use heroku_util::{
+    DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, resolve_path, value_contains_secret,
+    value_is_meaningful, workflow_input_uses_history,
+};
 use reqwest::Method;
 use serde_json::{Map, Value, json};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
+use tracing::warn;
 use tracing_subscriber::fmt;
 
 static TUI_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -266,6 +275,86 @@ fn provider_outcome_to_json(outcome: &ProviderBindingOutcome) -> Value {
     }
 }
 
+fn seed_history_defaults_for_cli(state: &mut WorkflowRunState, store: &dyn HistoryStore) {
+    let user_id = DEFAULT_HISTORY_PROFILE.to_string();
+
+    for (input_name, definition) in &state.workflow.inputs {
+        if !workflow_input_uses_history(definition) {
+            continue;
+        }
+
+        let key = HistoryKey::workflow_input(user_id.clone(), state.workflow.identifier.clone(), input_name.clone());
+
+        match store.get_latest_value(&key) {
+            Ok(Some(stored)) => {
+                if stored.value.is_null() || value_contains_secret(&stored.value) {
+                    continue;
+                }
+                if let Some(validation) = &definition.validate {
+                    if let Err(error) = validate_candidate_value(&stored.value, validation) {
+                        warn!(
+                            input = %input_name,
+                            workflow = %state.workflow.identifier,
+                            error = %error,
+                            "discarded history default that failed validation"
+                        );
+                        continue;
+                    }
+                }
+                state.run_context.inputs.insert(input_name.clone(), stored.value);
+            }
+            Ok(None) => {}
+            Err(error) => warn!(
+                input = %input_name,
+                workflow = %state.workflow.identifier,
+                error = %error,
+                "failed to load history default"
+            ),
+        }
+    }
+}
+
+fn persist_history_after_cli_run(state: &WorkflowRunState, store: &dyn HistoryStore) {
+    let user_id = DEFAULT_HISTORY_PROFILE.to_string();
+
+    for (input_name, definition) in &state.workflow.inputs {
+        if !workflow_input_uses_history(definition) {
+            continue;
+        }
+
+        let Some(value) = state.run_context.inputs.get(input_name) else {
+            continue;
+        };
+
+        if !value_is_meaningful(value) || value_contains_secret(value) {
+            continue;
+        }
+
+        if let Some(validation) = &definition.validate {
+            if let Err(error) = validate_candidate_value(value, validation) {
+                warn!(
+                    input = %input_name,
+                    workflow = %state.workflow.identifier,
+                    error = %error,
+                    "skipping history persistence for invalid value"
+                );
+                continue;
+            }
+        }
+
+        let key = HistoryKey::workflow_input(user_id.clone(), state.workflow.identifier.clone(), input_name.clone());
+
+        if let Err(error) = store.insert_value(key, value.clone()) {
+            warn!(
+                input = %input_name,
+                workflow = %state.workflow.identifier,
+                error = %error,
+                "failed to persist history value"
+            );
+        }
+    }
+}
+
 fn describe_provider_outcome(outcome: &ProviderBindingOutcome) -> String {
     match outcome {
         ProviderBindingOutcome::Resolved(value) => {
@@ -498,6 +587,16 @@ fn preview_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, ma
 fn run_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, matches: &ArgMatches) -> Result<()> {
     let mut state = WorkflowRunState::new(resolve_runtime_workflow(Arc::clone(&registry), matches)?);
 
+    let history_store: Box<dyn HistoryStore> = match JsonHistoryStore::with_defaults() {
+        Ok(store) => Box::new(store),
+        Err(error) => {
+            warn!(error = %error, "failed to initialize history store; using in-memory history");
+            Box::new(InMemoryHistoryStore::new())
+        }
+    };
+
+    seed_history_defaults_for_cli(&mut state, history_store.as_ref());
+
     if let Some(overrides) = matches.get_many::<String>("input") {
         for raw in overrides {
             let (key, value) = raw.split_once('=').context("workflow input overrides must use KEY=VALUE syntax")?;
@@ -505,6 +604,7 @@ fn run_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, matche
         }
     }
 
+    state.apply_input_defaults();
     state.evaluate_input_providers()?;
 
     if let Some(blocked) = state
@@ -528,7 +628,12 @@ fn run_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, matche
 
     let client = HerokuClient::new_from_service_id(ServiceId::CoreApi)?;
     let runner = RegistryCommandRunner::new(registry_snapshot, client);
-    let results = state.execute_with_runner(&runner);
+    let results = state.execute_with_runner(&runner)?;
+    let run_succeeded = results.iter().all(|result| result.status != StepStatus::Failed);
+
+    if run_succeeded {
+        persist_history_after_cli_run(&state, history_store.as_ref());
+    }
 
     if json_output {
         output_workflow_json(&state, &results)?;

@@ -17,6 +17,14 @@ reqwest = { workspace = true }
 heroku-api = { path = "../api" }
 serde_json = { workspace = true }
 percent-encoding = { workspace = true }
+serde = { workspace = true }
+dirs-next = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tempfile = "3.10.1"
+temp-env = "0.3.6"
 
 [build-dependencies]
 serde_json = { workspace = true }

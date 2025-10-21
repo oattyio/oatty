@@ -101,13 +101,6 @@ impl PluginDetailsModalState {
         self.load_state = PluginDetailsLoadState::Loaded(Box::new(PluginDetailsData::new(detail)));
     }
 
-    /// Reset modal state back to the idle baseline.
-    pub fn reset(&mut self) {
-        self.selected_plugin = None;
-        self.load_state = PluginDetailsLoadState::Idle;
-        self.logs_scroll = 0;
-    }
-
     pub fn logs_scroll(&self) -> usize {
         self.logs_scroll
     }

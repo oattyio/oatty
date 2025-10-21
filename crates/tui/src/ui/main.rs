@@ -41,7 +41,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         hint_spans.extend(current.get_hint_spans(app));
     }
 
-    if let Some(logs) = logs_view.as_mut() {
+    if let Some(logs) = logs_view.as_mut()
+        && app.logs.is_visible
+    {
         let logs_area = layout[3];
         logs.render(frame, logs_area, app);
         hint_spans.extend(logs.get_hint_spans(app));
@@ -55,7 +57,23 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
         if let Some((modal, position)) = open_modal.as_mut() {
             let modal_area = position(area);
             frame.render_widget(Clear, modal_area);
-            modal.render(frame, modal_area, app);
+
+            let splits = Layout::vertical([
+                Constraint::Percentage(100), // Modal width
+                Constraint::Length(1),       // Modal hints bar
+            ])
+            .split(modal_area);
+
+            let modal_hints = modal.get_hint_spans(app);
+            if !modal_hints.is_empty() {
+                let hints_widget = Paragraph::new(Line::from(modal_hints))
+                    .style(app.ctx.theme.text_muted_style())
+                    .bg(app.ctx.theme.roles().background);
+                frame.render_widget(hints_widget, splits[1]);
+                modal.render(frame, splits[0], app);
+            } else {
+                modal.render(frame, modal_area, app);
+            }
         }
     }
 
@@ -66,12 +84,8 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     if app.open_modal.is_none() {
         app.open_modal = open_modal;
     }
-    if app.nav_bar_view.is_none() {
-        app.nav_bar_view = nav_bar;
-    }
-    if app.logs_view.is_none() {
-        app.logs_view = logs_view;
-    }
+    app.nav_bar_view = nav_bar;
+    app.logs_view = logs_view;
 }
 fn get_preferred_layout(app: &App, area: Rect) -> Vec<Rect> {
     // a wider area displays 2 columns with the leftmost
@@ -90,24 +104,24 @@ fn get_preferred_layout(app: &App, area: Rect) -> Vec<Rect> {
     .split(outer_areas[1]);
 
     let main_view_areas = if content_areas[0].width >= 141 {
-        let constraints = if app.logs_view.is_some() {
+        let constraints = if app.logs.is_visible {
             [
-                Constraint::Percentage(50), // Main view width
-                Constraint::Percentage(50), // Logs width
+                Constraint::Percentage(80), // Main view
+                Constraint::Fill(1),        // Logs
             ]
         } else {
             [
-                Constraint::Percentage(100), // Main view width
-                Constraint::Percentage(0),   // No logs shown
+                Constraint::Percentage(100), // Main view
+                Constraint::Length(0),       // No logs shown
             ]
         };
 
-        Layout::vertical(constraints).split(content_areas[0])
+        Layout::horizontal(constraints).split(content_areas[0])
     } else {
         // Smaller screens display 3 stacked rows.
         let constraints = [
-            Constraint::Percentage(60), // Command palette area (+ suggestions)
-            Constraint::Percentage(40), // logs / output content
+            Constraint::Percentage(80), // Command palette area (+ suggestions)
+            Constraint::Fill(1),        // logs / output content
         ];
 
         Layout::vertical(constraints).split(content_areas[0])

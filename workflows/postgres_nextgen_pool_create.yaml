@@ -1,4 +1,5 @@
 workflow: postgres_nextgen_pool_create
+title: "Postgres Next-Gen Pool Create"
 description: "Create and activate a Next-Gen Heroku Postgres compute pool, then wait for it to become available."
 inputs:
   app:

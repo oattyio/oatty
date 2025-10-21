@@ -500,22 +500,8 @@ fn suggest_values_for_flag(
         let result = provider.suggest(commands, &command_key, flag_name, partial, &inputs_map);
         aggregate.extend(result);
     }
-    let (provider_items, pending_fetches, mut provider_loading) = aggregate.into_parts();
-
-    let has_binding = spec
-        .flags
-        .iter()
-        .find(|flag| flag.name == flag_name)
-        .and_then(|flag| flag.provider.as_ref())
-        .is_some();
-    if !provider_loading && has_binding {
-        let provider_found = provider_items
-            .iter()
-            .any(|item| matches!(item.kind, ItemKind::Value) && item.meta.as_deref() != Some("enum"));
-        if !provider_found {
-            provider_loading = true;
-        }
-    }
+    let (provider_items, pending_fetches, provider_loading_flag) = aggregate.into_parts();
+    let provider_loading = provider_loading_flag || !pending_fetches.is_empty();
 
     items.extend(provider_items);
     (items, pending_fetches, provider_loading)
@@ -560,25 +546,16 @@ fn suggest_positionals(
         }
         let (mut provider_items, fetches, loading_flag) = aggregate.into_parts();
         pending_fetches = fetches;
-        provider_loading = loading_flag;
+        provider_loading = loading_flag || !pending_fetches.is_empty();
 
         if !current.is_empty() {
             provider_items.retain(|item| item.insert_text != current);
-        }
-        let has_binding = positional_arg.provider.is_some();
-        if has_binding && !provider_loading {
-            let provider_found = provider_items
-                .iter()
-                .any(|item| matches!(item.kind, ItemKind::Value) && item.meta.as_deref() != Some("enum"));
-            if !provider_found {
-                provider_loading = true;
-            }
         }
 
         items.extend(provider_items);
 
         // Fall back to generic placeholder if no provider suggestions
-        if items.is_empty() {
+        if items.is_empty() && current.trim().is_empty() {
             items.push(SuggestionItem {
                 display: format!(
                     "<{}> [ARG] {}",
@@ -770,6 +747,7 @@ pub(crate) fn is_flag_value_complete(input: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use heroku_engine::provider::{PendingProviderFetch, ProviderFetchPlan};
     use heroku_registry::CommandRegistry;
     use heroku_types::{CommandExecution, CommandFlag, HttpCommandSpec, PositionalArgument, ServiceId};
 
@@ -800,6 +778,24 @@ mod tests {
                 }
             }
             ProviderSuggestionSet::ready(items)
+        }
+    }
+
+    #[derive(Debug)]
+    struct PendingProvider;
+
+    impl ValueProvider for PendingProvider {
+        fn suggest(
+            &self,
+            _commands: &[CommandSpec],
+            _command_key: &str,
+            _field: &str,
+            _partial: &str,
+            _inputs: &std::collections::HashMap<String, String>,
+        ) -> ProviderSuggestionSet {
+            let plan = ProviderFetchPlan::new("apps list".into(), "apps list::pending".into(), serde_json::Map::new());
+            let pending = PendingProviderFetch::new(plan, true);
+            ProviderSuggestionSet::with_pending(Vec::new(), pending)
         }
     }
 
@@ -1017,7 +1013,58 @@ mod tests {
         // provider already embedded on flag
         let empty_provider: Arc<dyn ValueProvider> = Arc::new(TestProvider { map: Default::default() });
         let result = SuggestionEngine::build(&reg.commands, &[empty_provider], "apps info --app ");
+        assert!(!result.provider_loading);
+    }
+
+    #[test]
+    fn provider_loading_true_when_pending_fetch_requested() {
+        let spec = CommandSpec {
+            group: "apps".into(),
+            name: "info".into(),
+            summary: "info".into(),
+            positional_args: vec![],
+            flags: vec![CommandFlag {
+                name: "app".into(),
+                short_name: None,
+                required: false,
+                r#type: "string".into(),
+                enum_values: vec![],
+                default_value: None,
+                description: None,
+                provider: Some(heroku_types::ValueProvider::Command {
+                    command_id: "apps:list".into(),
+                    binds: vec![],
+                }),
+            }],
+            execution: CommandExecution::Http(HttpCommandSpec {
+                method: "GET".into(),
+                path: "/apps/{app}".into(),
+                ranges: vec![],
+                service_id: ServiceId::CoreApi,
+                output_schema: None,
+            }),
+        };
+        let reg = registry_with(vec![
+            CommandSpec {
+                group: "apps".into(),
+                name: "list".into(),
+                summary: "list".into(),
+                positional_args: vec![],
+                flags: vec![],
+                execution: CommandExecution::Http(HttpCommandSpec {
+                    method: "GET".into(),
+                    path: "/apps".into(),
+                    ranges: vec![],
+                    service_id: ServiceId::CoreApi,
+                    output_schema: None,
+                }),
+            },
+            spec,
+        ]);
+        let provider: Arc<dyn ValueProvider> = Arc::new(PendingProvider);
+        let result = SuggestionEngine::build(&reg.commands, &[provider], "apps info --app ");
         assert!(result.provider_loading);
+        assert!(!result.pending_fetches.is_empty());
     }
 
     #[test]

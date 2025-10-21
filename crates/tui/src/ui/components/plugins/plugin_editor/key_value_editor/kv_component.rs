@@ -708,10 +708,8 @@ impl KeyValueEditorComponent {
     /// * `theme` - The theme for styling
     /// * `is_editing` - Whether the editor is currently in editing mode
     fn add_common_hints(&self, spans: &mut Vec<Span<'_>>, theme: &dyn Theme, is_editing: bool) {
-        spans.extend([
-            Span::styled("↑/↓", theme.accent_emphasis_style()),
-            Span::styled(if is_editing { " Focus  " } else { " Navigate  " }, theme.text_muted_style()),
-        ]);
+        let description = if is_editing { " Focus  " } else { " Navigate  " };
+        spans.extend(theme_helpers::build_hint_spans(theme, &[("↑/↓", description)]));
     }
 
     /// Add hints specific to editing mode.
@@ -724,12 +722,10 @@ impl KeyValueEditorComponent {
     /// * `spans` - The vector of spans to add hints to
     /// * `theme` - The theme for styling
     fn add_editing_mode_hints(&self, spans: &mut Vec<Span<'_>>, theme: &dyn Theme) {
-        spans.extend([
-            Span::styled("Enter/Ctrl+E", theme.accent_emphasis_style()),
-            Span::styled(" Apply  ", theme.text_muted_style()),
-            Span::styled("Esc", theme.accent_emphasis_style()),
-            Span::styled(" Cancel  ", theme.text_muted_style()),
-        ]);
+        spans.extend(theme_helpers::build_hint_spans(
+            theme,
+            &[("Enter/Ctrl+E", " Apply  "), ("Esc", " Cancel  ")],
+        ));
     }
 
     /// Add hints specific to navigation mode.
@@ -742,16 +738,15 @@ impl KeyValueEditorComponent {
     /// * `spans` - The vector of spans to add hints to
     /// * `theme` - The theme for styling
     fn add_navigation_mode_hints(&self, spans: &mut Vec<Span<'_>>, theme: &dyn Theme) {
-        spans.extend([
-            Span::styled("Home/End", theme.accent_emphasis_style()),
-            Span::styled(" First/Last  ", theme.text_muted_style()),
-            Span::styled("Enter/Ctrl+E", theme.accent_emphasis_style()),
-            Span::styled(" Edit  ", theme.text_muted_style()),
-            Span::styled("Ctrl+N", theme.accent_emphasis_style()),
-            Span::styled(" New  ", theme.text_muted_style()),
-            Span::styled("Delete/Ctrl+D", theme.accent_emphasis_style()),
-            Span::styled(" Delete ", theme.text_muted_style()),
-        ]);
+        spans.extend(theme_helpers::build_hint_spans(
+            theme,
+            &[
+                ("Home/End", " First/Last  "),
+                ("Enter/Ctrl+E", " Edit  "),
+                ("Ctrl+N", " New  "),
+                ("Delete/Ctrl+D", " Delete "),
+            ],
+        ));
     }
 }
 

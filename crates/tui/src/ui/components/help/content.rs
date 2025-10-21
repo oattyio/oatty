@@ -103,14 +103,16 @@ pub(crate) fn build_command_help_text<'a>(theme: &'a dyn crate::ui::theme::roles
         lines.push(Line::from(""));
         lines.push(Line::styled(" OPTIONS:", theme.text_secondary_style().add_modifier(Modifier::BOLD)));
         for flag in &spec.flags {
+            let long_name = format!("--{}", flag.name);
             let mut flag_line = if let Some(short) = &flag.short_name {
+                let short_name = format!("-{},", short);
                 Line::styled(
-                    format!("  -{},  --{}", short, flag.name),
+                    format!("  {:<5}{:<5}", short_name, long_name),
                     theme.text_secondary_style().add_modifier(Modifier::BOLD),
                 )
             } else {
                 Line::styled(
-                    format!("  --{}", flag.name),
+                    format!("  {}", long_name),
                     theme.text_secondary_style().add_modifier(Modifier::BOLD),
                 )
             };

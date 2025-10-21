@@ -30,7 +30,8 @@ once_cell = { workspace = true }
 rat-focus = { workspace = true }
 serde_json = { workspace = true }
 textwrap = { workspace = true }
-serde = { version = "1.0.228", features = ["derive"] }
+indexmap = { workspace = true }
+unicode-width = { workspace = true }
 
 [lib]
 doctest = false

@@ -3,19 +3,19 @@
 //! This module provides a component for rendering the table modal, which
 //! displays JSON results from command execution in a tabular format with
 //! scrolling and navigation capabilities.
-use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
-use heroku_types::{Effect, Msg};
-use rat_focus::HasFocus;
-use ratatui::{
-    Frame,
-    layout::{Constraint, Layout, Rect},
-    text::Span,
-};
-
 use crate::app::App;
 use crate::ui::{
     components::{PaginationComponent, common::ResultsTableView, component::Component},
     theme::theme_helpers as th,
+};
+use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
+use heroku_types::{Effect, Msg};
+use rat_focus::HasFocus;
+use ratatui::widgets::{Borders, Padding};
+use ratatui::{
+    Frame,
+    layout::{Constraint, Layout, Rect},
+    text::Span,
 };
 
 /// Results table modal component for displaying JSON data.
@@ -60,6 +60,16 @@ pub struct TableComponent<'a> {
 }
 
 impl Component for TableComponent<'_> {
+    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+        match msg {
+            Msg::ExecCompleted(exec_outcome) => {
+                app.table.process_general_execution_result(&exec_outcome, &*app.ctx.theme);
+            }
+            _ => {}
+        }
+        self.pagination.handle_message(app, msg)
+    }
+
     /// Handle key events for the result table modal.
     ///
     /// Applies local state updates directly to `app.table` for scrolling and
@@ -70,7 +80,6 @@ impl Component for TableComponent<'_> {
         if key.code == KeyCode::Esc {
             return vec![Effect::CloseModal];
         }
-        self.pagination.sync_navigation_state(app);
         // Delegate to pagination when pagination subcontrols are focused
         let pagination_state = &app.table.pagination_state;
         let focus_on_grid = app.table.grid_f.get();
@@ -131,12 +140,6 @@ impl Component for TableComponent<'_> {
         effects
     }
 
-    // fn handle_msg(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
-    //     match msg {
-    //         Msg::ExecCompleted()
-    //     }
-    // }
-
     /// Renders the table modal with JSON results.
     ///
     /// This method handles the layout, styling, and table generation for the
@@ -157,10 +160,18 @@ impl Component for TableComponent<'_> {
         // Split for content + pagination and footer
         let splits = self.get_preferred_layout(app, inner);
 
-        app.table.set_visible_rows(splits[0].height as usize);
+        let table_block = th::block(&*app.ctx.theme, None, app.table.grid_f.get())
+            .borders(Borders::NONE)
+            .padding(Padding::uniform(1));
+        let table_inner = table_block.inner(splits[0]);
+        frame.render_widget(table_block, splits[0]);
+
+        let visible_rows = table_inner.height.saturating_sub(1).max(1) as usize;
+        app.table.set_visible_rows(visible_rows);
+
         let rendered_table = self
             .view
-            .render_results(frame, splits[0], &app.table, app.table.grid_f.get(), &*app.ctx.theme);
+            .render_results(frame, table_inner, &app.table, app.table.grid_f.get(), &*app.ctx.theme);
 
         if rendered_table {
             self.pagination.render(frame, splits[1], app);
@@ -175,19 +186,16 @@ impl Component for TableComponent<'_> {
         }
 
         let theme = &*app.ctx.theme;
-        let mut spans: Vec<Span> = Vec::new();
-        spans.extend([
-            Span::styled("Esc", theme.accent_emphasis_style()),
-            Span::styled(" close ", theme.text_muted_style()),
-            Span::styled("C", theme.accent_emphasis_style()),
-            Span::styled(" copy ", theme.text_muted_style()),
-            Span::styled("↑/↓", theme.accent_emphasis_style()),
-            Span::styled(" scroll  ", theme.text_muted_style()),
-            Span::styled("PgUp/PgDn", theme.accent_emphasis_style()),
-            Span::styled(" faster  ", theme.text_muted_style()),
-            Span::styled("Home/End", theme.accent_emphasis_style()),
-            Span::styled(" jump", theme.text_muted_style()),
-        ]);
+        let mut spans = th::build_hint_spans(
+            theme,
+            &[
+                ("Esc", " close "),
+                ("C", " copy "),
+                ("↑/↓", " scroll  "),
+                ("PgUp/PgDn", " faster  "),
+                ("Home/End", " jump"),
+            ],
+        );
 
         if has_rows && app.table.pagination_state.is_visible() {
             spans.extend(self.pagination.get_hint_spans(app));

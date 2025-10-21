@@ -150,6 +150,26 @@ impl<'a> TableState<'_> {
         }
     }
 
+    /// Sets the selected row index explicitly, adjusting the scroll offset to keep the row visible.
+    pub fn set_selection(&mut self, index: usize) {
+        let len = self.current_len();
+        if len == 0 {
+            self.selected = 0;
+            self.offset = 0;
+            return;
+        }
+
+        let clamped = index.min(len.saturating_sub(1));
+        self.selected = clamped;
+
+        let visible = self.visible_rows.max(1);
+        if clamped < self.offset {
+            self.offset = clamped;
+        } else if clamped >= self.offset.saturating_add(visible) {
+            self.offset = clamped.saturating_sub(visible - 1);
+        }
+    }
+
     fn create_rows(&self, maybe_value: Option<&[Value]>, theme: &dyn UiTheme) -> Option<Vec<Row<'a>>> {
         if let Some(value) = maybe_value
             && self.columns.is_some()
@@ -257,19 +277,28 @@ impl<'a> TableState<'_> {
     ///
     /// * `execution_outcome` - The result of the command execution
     pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &Box<ExecOutcome>, theme: &dyn Theme) {
-        let ExecOutcome::Http(_, _, value, maybe_pagination, _request_id) = execution_outcome.as_ref() else {
-            return;
-        };
-        if let Some(pagination) = maybe_pagination {
-            self.pagination_state.set_pagination(pagination.clone());
-            self.pagination_state.show_pagination();
-        } else {
-            self.pagination_state.hide_pagination();
-        }
+        let maybe_value = match execution_outcome.as_ref() {
+            ExecOutcome::Http(_, _, value, _, request_id) => {
+                let mut cloned_value = value.clone();
+                if let Some(array) = cloned_value.as_array_mut()
+                    && self.pagination_state.should_reverse(*request_id)
+                {
+                    array.reverse();
+                    serde_json::to_value(array).ok()
+                } else {
+                    Some(cloned_value)
+                }
+            }
 
-        let normalized_value = normalize_result_payload(value.clone());
-        self.apply_result_json(Some(normalized_value), theme);
-        self.normalize();
+            ExecOutcome::Mcp(_, value, _) => Some(value.clone()),
+            _ => None,
+        };
+
+        if let Some(value) = maybe_value {
+            let normalized_value = normalize_result_payload(value.clone());
+            self.apply_result_json(Some(normalized_value), theme);
+            self.normalize();
+        }
     }
 }
 

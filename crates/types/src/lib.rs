@@ -236,13 +236,16 @@ pub mod service {
 pub mod command {
     //! Command metadata describing CLI commands and their inputs.
 
-    use std::collections::HashMap;
-
+    use crate::{provider::ValueProvider, service::ServiceId};
+    use anyhow::Result;
+    use anyhow::anyhow;
     use bincode::{Decode, Encode};
     use serde::{Deserialize, Serialize};
+    use std::collections::HashMap;
 
-    use crate::{provider::ValueProvider, service::ServiceId};
-
+    pub type FlagValueMap = HashMap<String, Option<String>>;
+    pub type ArgValueMap = HashMap<String, String>;
+    pub type ParsedCommandArgs = (FlagValueMap, ArgValueMap);
     /// Represents a command-line flag or option for a Heroku CLI command.
     #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
     pub struct CommandFlag {
@@ -465,6 +468,137 @@ pub mod command {
                 execution: CommandExecution::Mcp(mcp),
             }
         }
+
+        /// Parses command arguments and flags from input tokens.
+        ///
+        /// This function processes the command line tokens after the group and subcommand,
+        /// separating positional arguments from flags and validating flag syntax.
+        ///
+        /// # Arguments
+        ///
+        /// * `argument_tokens` - The tokens after the group and subcommand
+        /// * `command_spec` - The command specification for validation
+        ///
+        /// # Returns
+        ///
+        /// Returns `Ok((flags, args))` where flags is a map of flag names to values
+        /// and args is a vector of positional arguments, or an error if parsing fails.
+        ///
+        /// # Flag Parsing Rules
+        ///
+        /// - `--flag=value` format is supported
+        /// - Boolean flags don't require values
+        /// - Non-boolean flags require values (next token or after =)
+        /// - Unknown flags are rejected
+        pub fn parse_arguments(&self, argument_tokens: &[String]) -> Result<ParsedCommandArgs> {
+            let mut user_flags: FlagValueMap = HashMap::new();
+            let mut user_args: Vec<String> = Vec::new();
+            let mut index = 0;
+
+            while index < argument_tokens.len() {
+                let token = &argument_tokens[index];
+
+                if token.starts_with("--") {
+                    let flag_name = token.trim_start_matches('-');
+
+                    // Handle --flag=value format
+                    if let Some(equals_pos) = flag_name.find('=') {
+                        let name = &flag_name[..equals_pos];
+                        let value = &flag_name[equals_pos + 1..];
+                        user_flags.insert(name.to_string(), Some(value.to_string()));
+                    } else {
+                        // Handle --flag or --flag value format
+                        if let Some(flag_spec) = self.flags.iter().find(|f| f.name == flag_name) {
+                            if flag_spec.r#type == "boolean" {
+                                user_flags.insert(flag_name.to_string(), None);
+                            } else {
+                                // Non-boolean flag requires a value
+                                if index + 1 < argument_tokens.len() && !argument_tokens[index + 1].starts_with('-') {
+                                    user_flags.insert(flag_name.to_string(), Some(argument_tokens[index + 1].to_string()));
+                                    index += 1; // Skip the value token
+                                } else {
+                                    return Err(anyhow!("Flag '--{}' requires a value", flag_name));
+                                }
+                            }
+                        } else {
+                            return Err(anyhow!("Unknown flag '--{}'", flag_name));
+                        }
+                    }
+                } else {
+                    // Positional argument
+                    user_args.push(token.to_string());
+                }
+
+                index += 1;
+            }
+            self.validate_arguments(&user_flags, &user_args)?;
+
+            let user_args_map = self
+                .positional_args
+                .iter()
+                .zip(user_args.iter())
+                .map(|(arg, value)| (arg.name.to_string(), value.to_string()))
+                .collect();
+            Ok((user_flags, user_args_map))
+        }
+
+        /// Validates command arguments and flags against the command specification.
+        ///
+        /// This function ensures that all required positional arguments and flags are
+        /// provided with appropriate values.
+        ///
+        /// # Arguments
+        ///
+        /// * `positional_arguments` - The provided positional arguments
+        /// * `user_flags` - The provided flags and their values
+        /// * `command_spec` - The command specification to validate against
+        ///
+        /// # Returns
+        ///
+        /// Returns `Ok(())` if validation passes, or an error message if validation fails.
+        ///
+        /// # Validation Rules
+        ///
+        /// - All required positional arguments must be provided
+        /// - All required flags must be present
+        /// - Non-boolean required flags must have non-empty values
+        pub fn validate_arguments(&self, user_flags: &HashMap<String, Option<String>>, positional_arguments: &[String]) -> Result<()> {
+            // Validate required positional arguments
+            if positional_arguments.len() > self.positional_args.len() {
+                return Err(anyhow!(
+                    "Too many arguments provided: expected {}, got {}",
+                    self.positional_args.len(),
+                    positional_arguments.len()
+                ));
+            }
+            if positional_arguments.len() < self.positional_args.len() {
+                let missing_arguments: Vec<String> = self.positional_args[positional_arguments.len()..]
+                    .iter()
+                    .map(|arg| arg.name.to_string())
+                    .collect();
+                return Err(anyhow!("Missing required argument(s): {}", missing_arguments.join(", ")));
+            }
+
+            // Validate required flags
+            for flag_spec in &self.flags {
+                if flag_spec.required {
+                    if flag_spec.r#type == "boolean" {
+                        if !user_flags.contains_key(&flag_spec.name) {
+                            return Err(anyhow!("Missing required flag: --{}", flag_spec.name));
+                        }
+                    } else {
+                        match user_flags.get(&flag_spec.name) {
+                            Some(Some(value)) if !value.is_empty() => {}
+                            _ => {
+                                return Err(anyhow!("Missing required flag value: --{} <value>", flag_spec.name));
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(())
+        }
     }
 
     /// Execution metadata for a command.
@@ -601,13 +735,15 @@ pub mod execution {
         PluginValidationOk(String),
         /// Simple log entry
         Log(String),
+        /// Command validation error
+        ValidationErr(String),
         /// Indicates successful completion but with no payload
         #[default]
         None,
     }
 
     /// Pagination metadata parsed from API response headers.
-    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+    #[derive(Debug, Clone, Serialize, Deserialize, Default, Hash, PartialEq, Eq)]
     pub struct Pagination {
         /// The start value of the returned range.
         pub range_start: String,
@@ -617,19 +753,28 @@ pub mod execution {
         pub field: String,
         /// The server page size limit used for this response (defaults to 200).
         pub max: usize,
+        /// The shell command needed to fetch the next/previous page of results.
+        pub hydrated_shell_command: Option<String>,
         /// The sort order for the range ("asc" or "desc") if known.
         #[serde(default)]
         pub order: Option<String>,
         /// Raw value of the Next-Range header for requesting the next page.
         #[serde(default)]
         pub next_range: Option<String>,
+        /// Raw value of the Prev-Range header for requesting the previous page.
+        #[serde(default)]
+        pub this_range: Option<String>,
     }
 }
 
 pub mod messaging {
     //! Application-level messages and side effects.
 
-    use crate::{command::CommandSpec, execution::ExecOutcome};
+    use crate::{
+        command::CommandSpec,
+        execution::ExecOutcome,
+        workflow::{WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest},
+    };
     use serde_json::{Map as JsonMap, Value as JsonValue};
     /// Navigation targets within the TUI.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -642,8 +787,10 @@ pub mod messaging {
         Plugins,
         /// Workflows view for browsing workflow catalog.
         Workflows,
-        /// Workflows view for browsing workflow catalog.
+        /// Workflow input resolution view.
         WorkflowInputs,
+        /// Workflow run view displaying live execution status.
+        WorkflowRun,
     }
 
     /// Modal overlays that can be displayed on top of the main UI.
@@ -670,19 +817,15 @@ pub mod messaging {
     pub enum Effect {
         /// Request to run the current command in the palette
         /// with the hydrated command string and u64 hash of the request.
-        Run(String, u64),
+        Run {
+            hydrated_command: String,
+            range_override: Option<String>,
+            request_hash: u64,
+        },
         /// Request to copy the current command to the clipboard.
         CopyToClipboardRequested(String),
         /// Request to copy the current logs selection (already rendered/redacted).
         CopyLogsRequested(String),
-        /// Request the next page using the `Next-Range` header.
-        NextPageRequested(String, u64),
-        /// Request the previous page using the prior `Range` header, if any.
-        PrevPageRequested(u64),
-        /// Request the first page using the initial `Range` header (or none).
-        FirstPageRequested(u64),
-        /// Request navigation to the last available page.
-        LastPageRequested(u64),
         /// Load MCP plugins from config into `PluginsState`.
         PluginsLoadRequested,
         /// Refresh plugin statuses and health.
@@ -717,6 +860,18 @@ pub mod messaging {
             cache_key: String,
             /// Arguments that should be supplied to the provider request.
             args: JsonMap<String, JsonValue>,
+        },
+        /// Request execution of a workflow run.
+        WorkflowRunRequested {
+            /// Run configuration describing the workflow and context.
+            request: WorkflowRunRequest,
+        },
+        /// Send a control command to an in-flight workflow run.
+        WorkflowRunControl {
+            /// Identifier of the run to target.
+            run_id: String,
+            /// Control command (pause, resume, cancel).
+            command: WorkflowRunControl,
         },
     }
 
@@ -756,6 +911,13 @@ pub mod messaging {
             provider_id: String,
             /// Cache key whose contents are now available from the registry cache.
             cache_key: String,
+        },
+        /// Workflow runner emitted an event for the active run.
+        WorkflowRunEvent {
+            /// Identifier of the run associated with the event.
+            run_id: String,
+            /// Event payload describing the lifecycle change.
+            event: WorkflowRunEvent,
         },
     }
 }
