@@ -503,8 +503,6 @@ fn select_path(value: &Value, path: Option<&str>) -> Option<Value> {
 /// # Limitations
 /// - The square bracket parsing does not currently support complex expressions or nested brackets.
 /// - Quotes (`'` or `"`) are not handled specifically for keys inside brackets; all content is treated as-is.
-///
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -61,11 +61,8 @@ pub struct TableComponent<'a> {
 
 impl Component for TableComponent<'_> {
     fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-        match msg {
-            Msg::ExecCompleted(exec_outcome) => {
-                app.table.process_general_execution_result(&exec_outcome, &*app.ctx.theme);
-            }
-            _ => {}
+        if let Msg::ExecCompleted(exec_outcome) = msg {
+            app.table.process_general_execution_result(exec_outcome, &*app.ctx.theme);
         }
         self.pagination.handle_message(app, msg)
     }
@@ -122,11 +119,11 @@ impl Component for TableComponent<'_> {
             KeyCode::Char('c') => {
                 if let Some(value) = app.table.selected_data() {
                     let s = serde_json::to_string(value).ok().unwrap_or_default();
-                    effects.extend(app.update(Msg::CopyToClipboard(s)));
+                    effects.push(Effect::CopyToClipboardRequested(s));
                 } else if let Some(entry) = app.table.selected_kv_entry() {
                     let serialized = serde_json::to_string(&entry.raw_value).unwrap_or_else(|_| entry.raw_value.to_string());
                     let payload = format!("{}: {}", entry.key, serialized);
-                    effects.extend(app.update(Msg::CopyToClipboard(payload)));
+                    effects.push(Effect::CopyToClipboardRequested(payload));
                 }
             }
             _ => {}

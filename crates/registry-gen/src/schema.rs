@@ -465,7 +465,7 @@ fn generate_short_name_candidates(name: &str) -> Vec<String> {
         }
     }
 
-    let segments: Vec<&str> = name.split(|c: char| c == '-' || c == '_' || c == '.').collect();
+    let segments: Vec<&str> = name.split(|c: char| ['-', '_', '.'].contains(&c)).collect();
     if segments.len() > 1 {
         let mut initials = String::new();
         for segment in segments {
@@ -893,9 +893,7 @@ mod tests {
         let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
         let mut seen = commands
             .iter()
-            .filter_map(|spec| {
-                spec.http().map(|http| (http.method.clone(), http.path.clone(), spec.name.clone()))
-            })
+            .filter_map(|spec| spec.http().map(|http| (http.method.clone(), http.path.clone(), spec.name.clone())))
             .collect::<Vec<_>>();
         seen.sort_by(|a, b| a.0.cmp(&b.0));
 

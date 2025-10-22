@@ -37,10 +37,10 @@ enum ColorCapability {
 /// - `cyberpunk`, `cyberpunk_hc`, `cyberpunk-high-contrast`, `cyberpunk-hc`
 /// - `ansi256`, `ansi256_hc`, `ansi256-high-contrast`, `ansi256-hc`
 pub fn load_from_env() -> Box<dyn Theme> {
-    if let Some(theme_name) = env::var("TUI_THEME").ok() {
-        if let Some(theme) = parse_theme_override(theme_name.trim()) {
-            return theme;
-        }
+    if let Ok(theme_name) = env::var("TUI_THEME")
+        && let Some(theme) = parse_theme_override(theme_name.trim())
+    {
+        return theme;
     }
 
     match detect_color_capability() {

@@ -327,15 +327,17 @@ mod tests {
     use indexmap::indexmap;
 
     fn demo_workflow() -> RuntimeWorkflow {
-        let mut input_definition = WorkflowInputDefinition::default();
-        input_definition.provider = Some(WorkflowValueProvider::Id("apps:list".into()));
-        input_definition.join = Some(WorkflowJoinConfiguration {
-            separator: ",".into(),
-            wrap_each: None,
-        });
-        input_definition.on_error = Some(WorkflowProviderErrorPolicy::Manual);
-        input_definition.provider_args = indexmap! {
-            "app".into() => WorkflowProviderArgumentValue::Literal("demo-app".into())
+        let input_definition = WorkflowInputDefinition {
+            provider: Some(WorkflowValueProvider::Id("apps:list".into())),
+            join: Some(WorkflowJoinConfiguration {
+                separator: ",".into(),
+                wrap_each: None,
+            }),
+            on_error: Some(WorkflowProviderErrorPolicy::Manual),
+            provider_args: indexmap! {
+                "app".into() => WorkflowProviderArgumentValue::Literal("demo-app".into())
+            },
+            ..Default::default()
         };
 
         RuntimeWorkflow {
@@ -515,10 +517,12 @@ mod tests {
     #[test]
     fn depends_on_arguments_resolve_from_inputs() {
         let app_input = WorkflowInputDefinition::default();
-        let mut addon_input = WorkflowInputDefinition::default();
-        addon_input.provider = Some(WorkflowValueProvider::Id("apps addons:list".into()));
-        addon_input.depends_on = indexmap! {
-            "app".into() => WorkflowProviderArgumentValue::Literal("${{ inputs.app }}".into())
+        let addon_input = WorkflowInputDefinition {
+            provider: Some(WorkflowValueProvider::Id("apps addons:list".into())),
+            depends_on: indexmap! {
+                "app".into() => WorkflowProviderArgumentValue::Literal("${{ inputs.app }}".into())
+            },
+            ..Default::default()
         };
 
         let workflow = RuntimeWorkflow {

@@ -82,25 +82,19 @@ impl PaletteComponent {
     ///
     /// The input paragraph widget with proper block styling
     fn create_input_paragraph<'a>(&self, app: &'a App, theme: &'a dyn Theme) -> Paragraph<'a> {
-        let mut spans: Vec<Span<'a>> = Vec::new();
+        let mut spans: Vec<Span<'a>> = vec![Span::styled(app.palette.input().to_string(), theme.text_primary_style())];
 
-        // Add the main input text
-        spans.push(Span::styled(app.palette.input().to_string(), theme.text_primary_style()));
-
-        // Add ghost text if available
         if let Some(ghost) = app.palette.ghost_text()
             && !ghost.is_empty()
         {
             spans.push(Span::styled(ghost.to_string(), theme.text_muted_style()));
         }
 
-        // Add throbber at the end if executing or provider-loading
         if app.executing || app.palette.is_provider_loading() {
             let sym = FRAMES[app.throbber_idx % FRAMES.len()];
             spans.push(Span::styled(format!(" {}", sym), theme.accent_emphasis_style()));
         }
 
-        // Create a block with title and focus styling, matching browser input
         let input_title = self.create_input_title(theme);
         let is_focused = app.palette.f_input.get();
         let mut input_block = th::block(theme, None, is_focused);
@@ -330,21 +324,21 @@ impl PaletteComponent {
     /// Handles the Enter keypress.
     fn handle_enter(&self, app: &mut App) -> Vec<Effect> {
         let cmd = app.palette.input().to_string();
-        if app.palette.is_suggestions_open() {
-            if let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index()) {
-                if item.meta.as_deref() == Some("history") && item.insert_text.trim() != cmd.trim() {
-                    let mut hasher = DefaultHasher::new();
-                    hasher.write(cmd.as_bytes());
-                    let hash = hasher.finish();
-                    app.palette.set_cmd_exec_hash(hash);
-                    app.palette.reduce_clear_suggestions();
-                    return vec![Effect::Run {
-                        hydrated_command: cmd,
-                        range_override: None,
-                        request_hash: hash,
-                    }];
-                }
-            }
+        if app.palette.is_suggestions_open()
+            && let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index())
+            && item.meta.as_deref() == Some("history")
+            && item.insert_text.trim() != cmd.trim()
+        {
+            let mut hasher = DefaultHasher::new();
+            hasher.write(cmd.as_bytes());
+            let hash = hasher.finish();
+            app.palette.set_cmd_exec_hash(hash);
+            app.palette.reduce_clear_suggestions();
+            return vec![Effect::Run {
+                hydrated_command: cmd,
+                range_override: None,
+                request_hash: hash,
+            }];
         }
 
         // Execute the command
@@ -358,28 +352,25 @@ impl PaletteComponent {
                 range_override: None,
                 request_hash: hash,
             }];
-        } else {
-            // otherwise, select from the list
-            if let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index()).cloned() {
-                match item.kind {
-                    ItemKind::Command => {
-                        // Replace input with command exec
-                        app.palette.apply_accept_command_suggestion(&item.insert_text);
-                        app.palette.set_is_suggestions_open(false);
-                        app.palette.reduce_clear_suggestions();
-                    }
-                    ItemKind::Positional => {
-                        // Accept positional suggestion
-                        app.palette.apply_accept_positional_suggestion(&item.insert_text);
-                    }
-                    _ => {
-                        // Accept flag or value suggestion
-                        app.palette.apply_accept_non_command_suggestion(&item.insert_text);
-                    }
+        } else if let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index()).cloned() {
+            match item.kind {
+                ItemKind::Command => {
+                    // Replace input with command exec
+                    app.palette.apply_accept_command_suggestion(&item.insert_text);
+                    app.palette.set_is_suggestions_open(false);
+                    app.palette.reduce_clear_suggestions();
                 }
-                app.palette.set_selected(0);
-                app.palette.set_is_suggestions_open(false);
+                ItemKind::Positional => {
+                    // Accept positional suggestion
+                    app.palette.apply_accept_positional_suggestion(&item.insert_text);
+                }
+                _ => {
+                    // Accept flag or value suggestion
+                    app.palette.apply_accept_non_command_suggestion(&item.insert_text);
+                }
             }
+            app.palette.set_selected(0);
+            app.palette.set_is_suggestions_open(false);
         }
         vec![]
     }

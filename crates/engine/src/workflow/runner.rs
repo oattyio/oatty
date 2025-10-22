@@ -27,10 +27,11 @@ pub async fn drive_workflow_run(
     mut control_rx: UnboundedReceiver<WorkflowRunControl>,
     event_tx: UnboundedSender<WorkflowRunEvent>,
 ) -> Result<()> {
-    let mut context = RunContext::default();
-    context.inputs = request.inputs.clone();
-    context.environment_variables = request.environment.clone();
-    context.steps = request.step_outputs.clone();
+    let mut context = RunContext {
+        environment_variables: request.environment.clone(),
+        inputs: request.inputs.clone(),
+        steps: request.step_outputs.clone(),
+    };
     apply_runtime_input_defaults(&request.workflow, &mut context);
 
     if event_tx.send(WorkflowRunEvent::RunStarted { at: Utc::now() }).is_err() {
@@ -145,80 +146,6 @@ fn execute_step(step: &PreparedStep, context: &mut RunContext, runner: &dyn Comm
         result
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use heroku_types::workflow::{
-        RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault, WorkflowInputDefinition, WorkflowStepDefinition,
-    };
-    use indexmap::{IndexMap, indexmap};
-    use serde_json::{Map as JsonMap, Value};
-    use std::collections::HashMap;
-    use tokio::sync::mpsc::unbounded_channel;
-
-    fn workflow_with_default_condition() -> RuntimeWorkflow {
-        let mut input_definition = WorkflowInputDefinition::default();
-        input_definition.default = Some(WorkflowInputDefault {
-            from: WorkflowDefaultSource::Literal,
-            value: Some(Value::Bool(true)),
-        });
-
-        RuntimeWorkflow {
-            identifier: "default_condition".into(),
-            title: None,
-            description: None,
-            inputs: indexmap! {
-                "flag".into() => input_definition
-            },
-            steps: vec![WorkflowStepDefinition {
-                id: "gate".into(),
-                run: "demo run".into(),
-                description: None,
-                depends_on: Vec::new(),
-                with: IndexMap::new(),
-                body: Value::Null,
-                r#if: Some("${{ inputs.flag }}".into()),
-                repeat: None,
-                output_contract: None,
-            }],
-        }
-    }
-
-    #[tokio::test]
-    async fn drive_workflow_run_respects_literal_defaults() {
-        let workflow = workflow_with_default_condition();
-        let request = WorkflowRunRequest {
-            run_id: "run-1".into(),
-            workflow: workflow.clone(),
-            inputs: JsonMap::new(),
-            environment: HashMap::new(),
-            step_outputs: HashMap::new(),
-        };
-
-        let (control_tx, control_rx) = unbounded_channel();
-        drop(control_tx);
-        let (event_tx, mut event_rx) = unbounded_channel();
-
-        let runner: Arc<dyn CommandRunner + Send + Sync> = Arc::new(executor::runner::NoopRunner);
-        drive_workflow_run(request, runner, control_rx, event_tx)
-            .await
-            .expect("drive workflow run");
-
-        let mut saw_success = false;
-        while let Ok(event) = event_rx.try_recv() {
-            if let WorkflowRunEvent::StepFinished { status, .. } = event {
-                saw_success |= status == WorkflowRunStepStatus::Succeeded;
-            }
-        }
-
-        assert!(
-            saw_success,
-            "expected gate step to succeed when default renders the condition truthy"
-        );
-    }
-}
-
 fn map_step_status(status: StepStatus) -> WorkflowRunStepStatus {
     match status {
         StepStatus::Skipped => WorkflowRunStepStatus::Skipped,
@@ -358,5 +285,80 @@ impl ControlState {
         event_tx
             .send(WorkflowRunEvent::RunStatusChanged { status, message })
             .map_err(|err| anyhow!("failed to emit run status change: {}", err))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use heroku_types::workflow::{
+        RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault, WorkflowInputDefinition, WorkflowStepDefinition,
+    };
+    use indexmap::{IndexMap, indexmap};
+    use serde_json::{Map as JsonMap, Value};
+    use std::collections::HashMap;
+    use tokio::sync::mpsc::unbounded_channel;
+
+    fn workflow_with_default_condition() -> RuntimeWorkflow {
+        let input_definition = WorkflowInputDefinition {
+            default: Some(WorkflowInputDefault {
+                from: WorkflowDefaultSource::Literal,
+                value: Some(Value::Bool(true)),
+            }),
+            ..Default::default()
+        };
+
+        RuntimeWorkflow {
+            identifier: "default_condition".into(),
+            title: None,
+            description: None,
+            inputs: indexmap! {
+                "flag".into() => input_definition
+            },
+            steps: vec![WorkflowStepDefinition {
+                id: "gate".into(),
+                run: "demo run".into(),
+                description: None,
+                depends_on: Vec::new(),
+                with: IndexMap::new(),
+                body: Value::Null,
+                r#if: Some("${{ inputs.flag }}".into()),
+                repeat: None,
+                output_contract: None,
+            }],
+        }
+    }
+
+    #[tokio::test]
+    async fn drive_workflow_run_respects_literal_defaults() {
+        let workflow = workflow_with_default_condition();
+        let request = WorkflowRunRequest {
+            run_id: "run-1".into(),
+            workflow: workflow.clone(),
+            inputs: JsonMap::new(),
+            environment: HashMap::new(),
+            step_outputs: HashMap::new(),
+        };
+
+        let (control_tx, control_rx) = unbounded_channel();
+        drop(control_tx);
+        let (event_tx, mut event_rx) = unbounded_channel();
+
+        let runner: Arc<dyn CommandRunner + Send + Sync> = Arc::new(executor::runner::NoopRunner);
+        drive_workflow_run(request, runner, control_rx, event_tx)
+            .await
+            .expect("drive workflow run");
+
+        let mut saw_success = false;
+        while let Ok(event) = event_rx.try_recv() {
+            if let WorkflowRunEvent::StepFinished { status, .. } = event {
+                saw_success |= status == WorkflowRunStepStatus::Succeeded;
+            }
+        }
+
+        assert!(
+            saw_success,
+            "expected gate step to succeed when default renders the condition truthy"
+        );
     }
 }

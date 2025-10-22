@@ -31,7 +31,7 @@ use heroku_mcp::{McpConfig, PluginEngine};
 use heroku_registry::find_by_group_and_cmd;
 use heroku_registry::{CommandRegistry, CommandSpec};
 use heroku_types::service::ServiceId;
-use heroku_types::{Effect, EnvVar, Modal, Route, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
+use heroku_types::{Effect, EnvVar, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
 use heroku_types::{ExecOutcome, command::CommandExecution};
 use heroku_util::build_request_body;
 use heroku_util::exec_remote_from_shell_command;
@@ -165,9 +165,6 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
             Effect::PluginsExportLogsDefault(name) => Some(vec![Cmd::PluginsExportLogsDefault(name)]),
             Effect::PluginsValidateAdd => Some(vec![Cmd::PluginsValidate]),
             Effect::PluginsSave => Some(vec![Cmd::PluginsSave]),
-            Effect::ShowModal(modal) => handle_show_modal(app, modal),
-            Effect::CloseModal => handle_close_modal(app),
-            Effect::SwitchTo(route) => handle_switch_to(app, route),
             Effect::SendToPalette(spec) => {
                 let result = handle_send_to_palette(app, spec);
                 effect_queue.extend(app.rebuild_palette_suggestions());
@@ -188,13 +185,14 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
                 args,
             }]),
             Effect::WorkflowRunRequested { request } => {
-                handle_workflow_run_requested(app, request);
+                handle_workflow_run_requested(app, *request);
                 None
             }
             Effect::WorkflowRunControl { run_id, command } => {
                 handle_workflow_run_control(app, &run_id, command);
                 None
             }
+            _ => None,
         };
         if let Some(cmds) = effect_commands {
             commands.extend(cmds);
@@ -202,45 +200,6 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
     }
 
     run_cmds(app, commands).await
-}
-
-/// Handle the show modal effect by setting the appropriate modal component.
-///
-/// # Arguments
-/// * `app` - The application state
-/// * `modal` - The modal type to show
-///
-/// # Returns
-/// A vector containing no commands (modal changes are direct UI state updates)
-fn handle_show_modal(app: &mut App, modal: Modal) -> Option<Vec<Cmd>> {
-    app.set_open_modal_kind(Some(modal));
-    None // No commands needed for direct UI state update
-}
-
-/// Handle the close modal effect by clearing the open modal.
-///
-/// # Arguments
-/// * `app` - The application state
-///
-/// # Returns
-/// A vector containing no commands (modal changes are direct UI state updates)
-fn handle_close_modal(app: &mut App) -> Option<Vec<Cmd>> {
-    // retain focus so it can be restored when the modal closes
-    app.set_open_modal_kind(None);
-    None // No commands needed for direct UI state update
-}
-
-/// Handle the switch to route effect by setting the appropriate main view.
-///
-/// # Arguments
-/// * `app` - The application state
-/// * `route` - The route to switch to
-///
-/// # Returns
-/// A vector containing no commands (view changes are direct UI state updates)
-fn handle_switch_to(app: &mut App, route: Route) -> Option<Vec<Cmd>> {
-    app.set_current_route(route);
-    None
 }
 
 /// When pressing the Enter key in the browser, populate the palette with the
@@ -762,11 +721,7 @@ fn run_command(app: &mut App, hydrated_command: String, next_range_override: Opt
     }
 }
 
-fn validate_command(
-    app: &mut App,
-    hydrated_command: &String,
-    command_registry: Arc<Mutex<CommandRegistry>>,
-) -> Result<(CommandSpec, String)> {
+fn validate_command(app: &mut App, hydrated_command: &str, command_registry: Arc<Mutex<CommandRegistry>>) -> Result<(CommandSpec, String)> {
     // Step 1: Parse and validate the palette input
     let input = hydrated_command.trim().to_string();
     if input.is_empty() {

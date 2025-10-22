@@ -127,8 +127,18 @@ impl LogsState {
         self.rich_entries.push(LogEntry::Mcp { raw, json });
     }
 
-    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &Box<ExecOutcome>) {
-        match execution_outcome.as_ref() {
+    /// Toggles the visibility of the logs view.
+    pub fn toggle_visible(&mut self) {
+        self.is_visible = !self.is_visible;
+    }
+
+    /// Processes a general execution result and appends the appropriate log entry.
+    ///
+    /// # Arguments
+    ///
+    /// * `execution_outcome` - The execution outcome to process.
+    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &ExecOutcome) {
+        match execution_outcome {
             ExecOutcome::Http(status, log, value, ..) => {
                 self.append_api_entry(*status, log.clone(), Some(normalize_result_payload(value.clone())));
             }
@@ -154,7 +164,7 @@ impl LogsState {
 impl Default for LogsState {
     fn default() -> Self {
         let mut state = LogsState {
-            is_visible: true,
+            is_visible: false,
             rich_entries: Vec::new(),
             entries: Vec::new(),
             selection: Selection::default(),

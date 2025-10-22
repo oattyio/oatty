@@ -69,7 +69,7 @@ impl PaginationState {
         // and will need to know this later.
         if is_reversed {
             let prev = pagination.as_ref().unwrap();
-            self.inverted_by_hash.push(self.get_hash(&prev));
+            self.inverted_by_hash.push(self.get_hash(prev));
             self.pagination_history.push(prev.clone());
         }
         self.pagination = pagination;
@@ -193,7 +193,7 @@ impl PaginationState {
         }
     }
     pub fn has_prev_page(&self) -> bool {
-        self.pagination_history.len() > 0
+        !self.pagination_history.is_empty()
     }
 
     fn get_hash(&self, pagination: &Pagination) -> u64 {
@@ -206,13 +206,13 @@ impl PaginationState {
         // use the first page to get the last page
         // by reversing the order. This requires reversing
         // the order of the results on the round trip.
-        pagination.order = pagination.order.as_ref().or(Some(&"asc".to_string())).and_then(|ord| {
+        pagination.order = pagination.order.as_ref().or(Some(&"asc".to_string())).map(|ord| {
             // default is ascending, so we need to reverse it
-            return if ord.starts_with("desc") {
-                Some("asc".to_string())
+            if ord.starts_with("desc") {
+                "asc".to_string()
             } else {
-                Some("desc".to_string())
-            };
+                "desc".to_string()
+            }
         });
 
         pagination

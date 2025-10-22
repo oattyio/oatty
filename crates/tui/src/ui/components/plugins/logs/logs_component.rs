@@ -43,11 +43,8 @@ impl Component for PluginsLogsComponent {
     }
 
     fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-        match msg {
-            Msg::ExecCompleted(outcome) => {
-                app.logs.process_general_execution_result(&outcome);
-            }
-            _ => {}
+        if let Msg::ExecCompleted(outcome) = msg {
+            app.logs.process_general_execution_result(outcome);
         }
 
         Vec::new()
@@ -84,16 +81,5 @@ impl PluginsLogsComponent {
 
         let list = List::new(items).block(block).style(theme.text_primary_style());
         frame.render_widget(list, area);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn plugins_logs_component_constructs() {
-        let _c = PluginsLogsComponent::default();
-        assert!(true);
     }
 }

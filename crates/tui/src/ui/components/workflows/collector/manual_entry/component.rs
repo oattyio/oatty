@@ -80,44 +80,44 @@ impl ManualEntryComponent {
         match kind {
             ManualEntryKind::Boolean => {
                 state.clear_error();
-                if let Some(area) = state.layout.primary_button_area {
-                    if contains(area, mouse.column, mouse.row) {
-                        if let Some(flag) = state.value.boolean_mut() {
-                            *flag = true;
-                        }
-                        return Vec::new();
+                if let Some(area) = state.layout.primary_button_area
+                    && contains(area, mouse.column, mouse.row)
+                {
+                    if let Some(flag) = state.value.boolean_mut() {
+                        *flag = true;
                     }
+                    return Vec::new();
                 }
-                if let Some(area) = state.layout.secondary_button_area {
-                    if contains(area, mouse.column, mouse.row) {
-                        if let Some(flag) = state.value.boolean_mut() {
-                            *flag = false;
-                        }
-                        return Vec::new();
+                if let Some(area) = state.layout.secondary_button_area
+                    && contains(area, mouse.column, mouse.row)
+                {
+                    if let Some(flag) = state.value.boolean_mut() {
+                        *flag = false;
                     }
+                    return Vec::new();
                 }
             }
             ManualEntryKind::Enum => {
                 state.clear_error();
-                if let Some(area) = state.layout.enum_list_area {
-                    if contains(area, mouse.column, mouse.row) {
-                        if let Some(enum_state) = state.value.enum_state_mut() {
-                            if let Some(index) = index_from_list_position(enum_state, area, mouse.row) {
-                                enum_state.select(index);
-                            }
-                        }
-                        return Vec::new();
+                if let Some(area) = state.layout.enum_list_area
+                    && contains(area, mouse.column, mouse.row)
+                {
+                    if let Some(enum_state) = state.value.enum_state_mut()
+                        && let Some(index) = index_from_list_position(enum_state, area, mouse.row)
+                    {
+                        enum_state.select(index);
                     }
+                    return Vec::new();
                 }
             }
             ManualEntryKind::Text | ManualEntryKind::Integer | ManualEntryKind::Number => {
-                if let Some(area) = state.layout.value_area {
-                    if contains(area, mouse.column, mouse.row) {
-                        state.clear_error();
-                        if let Some(buffer) = state.value.text_buffer_mut() {
-                            let cursor = position_from_column(buffer, area, mouse.column);
-                            buffer.set_cursor(cursor);
-                        }
+                if let Some(area) = state.layout.value_area
+                    && contains(area, mouse.column, mouse.row)
+                {
+                    state.clear_error();
+                    if let Some(buffer) = state.value.text_buffer_mut() {
+                        let cursor = position_from_column(buffer, area, mouse.column);
+                        buffer.set_cursor(cursor);
                     }
                 }
             }
@@ -163,14 +163,15 @@ impl ManualEntryComponent {
                 Paragraph::new(error.clone()).style(theme.status_error()).wrap(Wrap { trim: true }),
                 layout[2],
             );
-        } else if let Some(validation) = state.validation.as_ref() {
-            if validation.required && matches!(state.kind, ManualEntryKind::Enum) {
-                let message = "Choose a value to continue";
-                frame.render_widget(
-                    Paragraph::new(message).style(theme.text_muted_style()).wrap(Wrap { trim: true }),
-                    layout[2],
-                );
-            }
+        } else if let Some(validation) = state.validation.as_ref()
+            && validation.required
+            && matches!(state.kind, ManualEntryKind::Enum)
+        {
+            let message = "Choose a value to continue";
+            frame.render_widget(
+                Paragraph::new(message).style(theme.text_muted_style()).wrap(Wrap { trim: true }),
+                layout[2],
+            );
         }
     }
 
@@ -213,21 +214,21 @@ impl ManualEntryComponent {
             }
         };
 
-        if let Some(validation) = validation {
-            if let Err(message) = validate_candidate_value(&candidate, &validation) {
-                if let Some(state) = app.workflows.manual_entry_state_mut() {
-                    state.set_error(message);
-                }
-                return Vec::new();
+        if let Some(validation) = validation
+            && let Err(message) = validate_candidate_value(&candidate, &validation)
+        {
+            if let Some(state) = app.workflows.manual_entry_state_mut() {
+                state.set_error(message);
             }
+            return Vec::new();
         }
 
         let input_name = app.workflows.active_input_name();
-        if let Some(run_state) = app.workflows.active_run_state_mut() {
-            if let Some(name) = input_name {
-                run_state.run_context_mut().inputs.insert(name, candidate);
-                let _ = run_state.evaluate_input_providers();
-            }
+        if let Some(run_state) = app.workflows.active_run_state_mut()
+            && let Some(name) = input_name
+        {
+            run_state.run_context_mut().inputs.insert(name, candidate);
+            let _ = run_state.evaluate_input_providers();
         }
 
         app.workflows.manual_entry = None;
@@ -422,7 +423,7 @@ fn position_from_column(buffer: &TextInputState, area: Rect, column: u16) -> usi
         if cumulative as u16 >= relative {
             return byte_index;
         }
-        cumulative += ch.width().unwrap_or(1) as usize;
+        cumulative += ch.width().unwrap_or(1);
     }
     text.len()
 }
@@ -455,8 +456,11 @@ mod tests {
 
     #[test]
     fn build_candidate_value_handles_integer_input() {
-        let mut state = ManualEntryState::default();
-        state.kind = ManualEntryKind::Integer;
+        let mut state = ManualEntryState {
+            kind: ManualEntryKind::Integer,
+            ..Default::default()
+        };
+
         let mut buffer = TextInputState::default();
         buffer.set_input("42");
         state.value = ManualEntryValueState::Number(buffer);
@@ -467,8 +471,10 @@ mod tests {
 
     #[test]
     fn build_candidate_value_errors_on_invalid_number() {
-        let mut state = ManualEntryState::default();
-        state.kind = ManualEntryKind::Number;
+        let mut state = ManualEntryState {
+            kind: ManualEntryKind::Number,
+            ..Default::default()
+        };
         let mut buffer = TextInputState::default();
         buffer.set_input("abc");
         state.value = ManualEntryValueState::Number(buffer);
@@ -479,8 +485,10 @@ mod tests {
 
     #[test]
     fn build_candidate_value_returns_selected_enum_option() {
-        let mut state = ManualEntryState::default();
-        state.kind = ManualEntryKind::Enum;
+        let mut state = ManualEntryState {
+            kind: ManualEntryKind::Enum,
+            ..Default::default()
+        };
         let options = vec![
             ManualEntryEnumOption {
                 label: "alpha".to_string(),

@@ -39,10 +39,6 @@ impl PaginationComponent {
     /// widgets without any interactive input.
     fn render_range_controls(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         let pagination_state = &app.table.pagination_state;
-        if pagination_state.is_visible() {
-            return;
-        }
-
         let Some(Pagination {
             field,
             range_start,
@@ -439,14 +435,23 @@ impl Component for PaginationComponent {
         Vec::new()
     }
 
+    /// Handles the message for the pagination component.
+    ///
+    /// # Arguments
+    /// * `app` - The application state
+    /// * `msg` - The message to handle
+    ///
+    /// # Returns
+    /// A vector of effects to be processed by the application
+    ///
+    /// # Behavior
+    /// - If the message is an execution completed message, it sets the pagination state.
+    /// - Returns an empty vector if the message is not an execution completed message.
     fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-        if let Msg::ExecCompleted(exec_outcome) = msg {
-            match exec_outcome.as_ref() {
-                ExecOutcome::Http(_, _, _, maybe_pagination, request_id) => {
-                    app.table.pagination_state.set_pagination(maybe_pagination.clone(), *request_id);
-                }
-                _ => {}
-            }
+        if let Msg::ExecCompleted(exec_outcome) = msg
+            && let ExecOutcome::Http(_, _, _, maybe_pagination, request_id) = exec_outcome.as_ref()
+        {
+            app.table.pagination_state.set_pagination(maybe_pagination.clone(), *request_id);
         }
         Vec::new()
     }

@@ -964,7 +964,6 @@ mod tests {
                 "workflow": "backup_db",
                 "steps": []
             })
-            .to_string()
         )?;
 
         let mut workflows = load_workflows(Some(&root))?;

@@ -180,9 +180,11 @@ mod tests {
 
     #[test]
     fn test_validate_stdio_server() {
-        let mut server = McpServer::default();
-        server.command = Some("node".to_string());
-        server.args = Some(vec!["-e".to_string(), "console.log('hello')".to_string()]);
+        let server = McpServer {
+            command: Some("node".to_string()),
+            args: Some(vec!["-e".to_string(), "console.log('hello')".to_string()]),
+            ..Default::default()
+        };
 
         assert!(validate_server(&server).is_ok());
     }
@@ -195,16 +197,20 @@ mod tests {
 
     #[test]
     fn test_validate_http_server() {
-        let mut server = McpServer::default();
-        server.base_url = Some(Url::parse("https://example.com").unwrap());
+        let server = McpServer {
+            base_url: Some(Url::parse("https://example.com").unwrap()),
+            ..Default::default()
+        };
 
         assert!(validate_server(&server).is_ok());
     }
 
     #[test]
     fn test_validate_http_server_rejects_non_http() {
-        let mut server = McpServer::default();
-        server.base_url = Some(Url::parse("ws://example.com").unwrap());
+        let server = McpServer {
+            base_url: Some(Url::parse("ws://example.com").unwrap()),
+            ..Default::default()
+        };
 
         assert!(validate_server(&server).is_err());
     }

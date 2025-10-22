@@ -2,7 +2,12 @@
 **/*.rs.bk
 .DS_Store
 .idea/
-.vscode/
+
+# VS Code workspace-specific files (not the config directory)
+.vscode/*.code-workspace
+.vscode/settings.local.json
+
+# Python cache
 **/.pytest_cache
 **/.mypy_cache
 **/.ruff_cache
@@ -11,4 +16,3 @@
 .env
 .env.local
 .env.*.local
-

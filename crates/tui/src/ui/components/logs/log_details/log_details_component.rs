@@ -22,7 +22,7 @@ use ratatui::{
 };
 use serde_json::Value;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub struct LogDetailsComponent;
 
 impl LogDetailsComponent {

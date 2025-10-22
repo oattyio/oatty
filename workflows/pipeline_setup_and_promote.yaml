@@ -6,10 +6,14 @@ inputs:
     description: "Name for the pipeline"
     type: string
   staging_app:
-    description: "Name for the staging app to create"
+    provider: apps list
+    select: { value_field: name, display_field: name }
+    description: "Name of the app to use for staging"
     type: string
   production_app:
-    description: "Name for the production app to create"
+    provider: apps list
+    select: { value_field: name, display_field: name }
+    description: "Name of the app to use for production"
     type: string
   region:
     provider: regions list
@@ -51,6 +55,19 @@ steps:
 
   - id: promote
     description: "Promote latest slug from staging to production"
-    run: pipelines promote
+    run: pipeline-promotion create
     with:
-      app: ${{ inputs.staging_app }}
+      pipeline: ${{ steps.create_pipeline.output.id }}
+      target: production
+      source: ${{ inputs.staging_app }}
+
+  - id: get_promotion_result
+    run: pipeline-promotion info
+    body:
+      pipeline: ${{ steps.create_pipeline.output.id }}
+      promotion: ${{ steps.promote.output.id }}
+
+  - id: tail_logs
+    description: "Tail logs to verify promotion result"
+    run: apps logs
+    with:

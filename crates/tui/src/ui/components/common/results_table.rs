@@ -64,7 +64,7 @@ impl<'a> ResultsTableView<'a> {
     }
 
     /// Renders a JSON array as a table with pagination-aware selection.
-    fn render_json_table(&mut self, frame: &mut Frame, area: Rect, state: &TableState<'_>, _focused: bool, theme: &dyn UiTheme) {
+    fn render_json_table(&mut self, frame: &mut Frame, area: Rect, state: &TableState<'_>, focused: bool, theme: &dyn UiTheme) {
         let rows = state.rows().unwrap();
         let widths: &[Constraint] = state.column_constraints().map_or(&[][..], |constraints| constraints.as_slice());
         let headers: &[Cell<'_>] = state.headers().map_or(&[][..], |header_cells| header_cells.as_slice());
@@ -89,7 +89,7 @@ impl<'a> ResultsTableView<'a> {
             .widths(widths)
             .header(Row::new(headers.to_owned()).style(th::table_header_row_style(theme)))
             .column_spacing(1)
-            .row_highlight_style(th::table_selected_style(theme))
+            .row_highlight_style(if focused { th::table_selected_style(theme) } else { Style::default() })
             .style(th::panel_style(theme));
 
         let selected_in_view = selected.saturating_sub(start);

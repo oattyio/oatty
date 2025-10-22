@@ -153,9 +153,9 @@ inputs:
 │                                                                          │ Auto-reset note:  downstream steps │
 │                                                                          │                   reset when a     │
 │                                                                          │                   prior step edits.│
-│                                                                          │ Cache age:        pipelines 12s    │
-│                                                                          │                   apps 24s         │
+│                                                                          │                                    │
 │                                                                          │ Errors & notes:   none             │
+│                                                                          │                                    │
 └───────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 Buttons: [Cancel]   [Run ✓]
   Esc cancel  •  ↑↓ navigate  •  Enter choose  •  / filter  •  r refresh  •  Tab focus  •  F2 fallback to manual  •  Enter run
@@ -167,9 +167,9 @@ Buttons: [Cancel]   [Run ✓]
 - **Right column** summarizes workflow readiness: completion state, next unresolved step,
   currently selected values (show `— pending —` for unresolved items), cache freshness, and
   any validation errors.
-- Unless step values are mutually exclusive of on-another e.g., no chained providers, when a previously 
+- Unless step values are mutually exclusive of on-another e.g., no chained providers, when a previously
   resolved step changes, every chained step reverts to its default value (or unresolved if no default).
-  The detail pane immediately reflects the reset so users see which values need attention before execution. 
+  The detail pane immediately reflects the reset so users see which values need attention before execution.
   The detail pane should show a note about the auto-reset behavior if applicable.
 - The detail pane updates after every interaction (selection change, manual value entry,
   refresh, fallback), so the aggregate view always mirrors the live state.
@@ -298,7 +298,7 @@ Buttons: [Cancel]   [Apply ✓]
 ```
 ┌ Apps (apps list) ──────────────────────────────────────────────────────┐
 │ ⚠ Unable to fetch apps (timeout).                                      │
-│                                                                        |   
+│                                                                        |
 │ You can: [R]etry  •  [F2] Enter manually  •  [C]ached (12s old)        │
 └────────────────────────────────────────────────────────────────────────┘
 ```

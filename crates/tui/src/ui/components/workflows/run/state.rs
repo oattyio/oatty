@@ -201,7 +201,7 @@ impl RunDetailState {
         let next = if delta.is_positive() {
             current.saturating_add(delta as usize).min(entry_count.saturating_sub(1))
         } else {
-            current.saturating_sub(delta.unsigned_abs() as usize)
+            current.saturating_sub(delta.unsigned_abs())
         };
         self.selection = Some(next);
         self.offset = min(next, entry_count.saturating_sub(1));

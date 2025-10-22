@@ -432,109 +432,6 @@ fn is_base64_like(value: &str, analysis: &CharacterAnalysis) -> bool {
     (analysis.has_lowercase && analysis.has_uppercase && analysis.has_digit && has_base64_symbol)
         || (analysis.unique_characters >= MIN_UNIQUE_CHARACTERS && has_base64_symbol)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn redacts_shell_style_sensitive_env_vars() {
-        let input = "export AWS_SECRET_ACCESS_KEY=supersecret";
-        let expected = "export AWS_SECRET_ACCESS_KEY=[REDACTED]";
-
-        assert_eq!(redact_sensitive(input), expected);
-    }
-
-    #[test]
-    fn redacts_json_style_sensitive_entries() {
-        let input = r#"{"clientSecret": "top-secret"}"#;
-        let expected = r#"{"clientSecret": "[REDACTED]"}"#;
-
-        assert_eq!(redact_sensitive(input), expected);
-    }
-
-    #[test]
-    fn ignores_non_sensitive_environment_variables() {
-        let input = "PORT=8080";
-        assert_eq!(redact_sensitive(input), input);
-    }
-
-    #[test]
-    fn redacts_bare_value_tokens() {
-        let input = "sk_live_1234567890abcdef123456";
-        assert_eq!(redact_sensitive(input), "[REDACTED]");
-    }
-
-    #[test]
-    fn redacts_bare_prefixed_heroku_token() {
-        let input = "HRKU-AALJCYR7SRzPkj9_BGqhi1jAI1J5P4WfD6ITENvdVydAPCnNcAlrMMahHrTo";
-        assert_eq!(redact_sensitive(input), "[REDACTED]");
-    }
-
-    #[test]
-    fn redacts_slack_webhook_url() {
-        let input = "https://hooks.slack.com/services/T123ABC45/B678DEF90/abcdefGhijk";
-        assert_eq!(redact_sensitive(input), "[REDACTED]");
-    }
-
-    #[test]
-    fn redacts_npm_legacy_auth_token() {
-        let input = "//registry.npmjs.org/:_authToken=abcdef1234567890";
-        assert_eq!(redact_sensitive(input), "[REDACTED]");
-    }
-
-    #[test]
-    fn redacts_heroku_api_key_assignment() {
-        let input = "HEROKU_API_KEY=01234567-89ab-cdef-0123-456789abcdef";
-        let expected = "HEROKU_API_KEY=[REDACTED]";
-
-        assert_eq!(redact_sensitive(input), expected);
-    }
-
-    #[test]
-    fn redacts_heroku_postgres_url_value() {
-        let input = "postgres://user:superSecretPass@ec2-34-201-12-34.compute-1.amazonaws.com:5432/dbname";
-
-        assert_eq!(redact_sensitive(input), "[REDACTED]");
-    }
-
-    #[test]
-    fn identifies_known_secret_formats() {
-        let sendgrid_token = format!("SG.{}.{}", "a".repeat(22), "b".repeat(43));
-        let azure_account = format!("AccountKey={}", "A".repeat(88));
-        let npm_legacy = "//registry.npmjs.org/:_authToken=abcdef1234567890";
-
-        assert!(is_secret("sk_live_1234567890abcdef123456"));
-        assert!(is_secret("ghp_abcdEFGHijklMNOPqrstUVWXyz0123456789"));
-        assert!(is_secret("github_pat_11ABCDxyz0123456789ABCDEFGH"));
-        assert!(is_secret("ya29.A0AVA9y1ExampleTokenValue1234567890ABCDEFGHI"));
-        assert!(is_secret("HRKU-AALJCYR7SRzPkj9_BGqhi1jAI1J5P4WfD6ITENvdVydAPCnNcAlrMMahHrTo"));
-        assert!(is_secret("heroku_abcdefabcdefabcdefabcdefabcdefab"));
-        assert!(is_secret(
-            "postgres://user:superSecretPass@ec2-34-201-12-34.compute-1.amazonaws.com:5432/dbname"
-        ));
-        assert!(is_secret(&sendgrid_token));
-        assert!(is_secret(&azure_account));
-        assert!(is_secret(npm_legacy));
-        assert!(is_secret(
-            "s-s4t2af-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
-        ));
-    }
-
-    #[test]
-    fn identifies_pem_blocks_as_secret() {
-        let pem = "-----BEGIN PRIVATE KEY-----\nABCDEF\n-----END PRIVATE KEY-----";
-        assert!(is_secret(pem));
-    }
-
-    #[test]
-    fn does_not_flag_non_secret_values() {
-        assert!(!is_secret("http://localhost:3000"));
-        assert!(!is_secret("plain-text-value"));
-        assert!(!is_secret("12345678901234567890"));
-    }
-}
-
 /// Fuzzy matcher for subsequence scoring, handling space-separated tokens.
 ///
 /// Returns `Some(score)` if all characters in each space-separated token of `needle`
@@ -816,5 +713,140 @@ pub fn redact_json(v: &Value) -> Value {
             Value::Object(out)
         }
         other => other.clone(),
+    }
+}
+
+/// Truncates a string with an ellipsis if it exceeds the maximum length.
+///
+/// # Arguments
+/// * `s` - The input string to truncate
+/// * `max_len` - The maximum length of the string
+///
+/// # Returns
+/// A new string with the ellipsis added if the string exceeds the maximum length
+///
+/// # Example
+/// ```rust
+/// use heroku_util::text_processing::truncate_with_ellipsis;
+///
+/// let s = "Hello, world!";
+/// assert_eq!(truncate_with_ellipsis(s, 5), "Hello…");
+/// ```
+pub fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
+    if s.chars().count() > max_len {
+        let mut truncated = s.chars().take(max_len).collect::<String>();
+        truncated.push('…'); // Unicode ellipsis character
+        truncated
+    } else {
+        s.to_string()
+    }
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncates_string_with_ellipsis() {
+        let s = "Hello, world!";
+        assert_eq!(truncate_with_ellipsis(s, 5), "Hello…");
+    }
+
+    #[test]
+    fn redacts_shell_style_sensitive_env_vars() {
+        let input = "export AWS_SECRET_ACCESS_KEY=supersecret";
+        let expected = "export AWS_SECRET_ACCESS_KEY=[REDACTED]";
+
+        assert_eq!(redact_sensitive(input), expected);
+    }
+
+    #[test]
+    fn redacts_json_style_sensitive_entries() {
+        let input = r#"{"clientSecret": "top-secret"}"#;
+        let expected = r#"{"clientSecret": "[REDACTED]"}"#;
+
+        assert_eq!(redact_sensitive(input), expected);
+    }
+
+    #[test]
+    fn ignores_non_sensitive_environment_variables() {
+        let input = "PORT=8080";
+        assert_eq!(redact_sensitive(input), input);
+    }
+
+    #[test]
+    fn redacts_bare_value_tokens() {
+        let input = "sk_live_1234567890abcdef123456";
+        assert_eq!(redact_sensitive(input), "[REDACTED]");
+    }
+
+    #[test]
+    fn redacts_bare_prefixed_heroku_token() {
+        let input = "HRKU-AALJCYR7SRzPkj9_BGqhi1jAI1J5P4WfD6ITENvdVydAPCnNcAlrMMahHrTo";
+        assert_eq!(redact_sensitive(input), "[REDACTED]");
+    }
+
+    #[test]
+    fn redacts_slack_webhook_url() {
+        let input = "https://hooks.slack.com/services/T123ABC45/B678DEF90/abcdefGhijk";
+        assert_eq!(redact_sensitive(input), "[REDACTED]");
+    }
+
+    #[test]
+    fn redacts_npm_legacy_auth_token() {
+        let input = "//registry.npmjs.org/:_authToken=abcdef1234567890";
+        assert_eq!(redact_sensitive(input), "[REDACTED]");
+    }
+
+    #[test]
+    fn redacts_heroku_api_key_assignment() {
+        let input = "HEROKU_API_KEY=01234567-89ab-cdef-0123-456789abcdef";
+        let expected = "HEROKU_API_KEY=[REDACTED]";
+
+        assert_eq!(redact_sensitive(input), expected);
+    }
+
+    #[test]
+    fn redacts_heroku_postgres_url_value() {
+        let input = "postgres://user:superSecretPass@ec2-34-201-12-34.compute-1.amazonaws.com:5432/dbname";
+
+        assert_eq!(redact_sensitive(input), "[REDACTED]");
+    }
+
+    #[test]
+    fn identifies_known_secret_formats() {
+        let sendgrid_token = format!("SG.{}.{}", "a".repeat(22), "b".repeat(43));
+        let azure_account = format!("AccountKey={}", "A".repeat(88));
+        let npm_legacy = "//registry.npmjs.org/:_authToken=abcdef1234567890";
+
+        assert!(is_secret("sk_live_1234567890abcdef123456"));
+        assert!(is_secret("ghp_abcdEFGHijklMNOPqrstUVWXyz0123456789"));
+        assert!(is_secret("github_pat_11ABCDxyz0123456789ABCDEFGH"));
+        assert!(is_secret("ya29.A0AVA9y1ExampleTokenValue1234567890ABCDEFGHI"));
+        assert!(is_secret("HRKU-AALJCYR7SRzPkj9_BGqhi1jAI1J5P4WfD6ITENvdVydAPCnNcAlrMMahHrTo"));
+        assert!(is_secret("heroku_abcdefabcdefabcdefabcdefabcdefab"));
+        assert!(is_secret(
+            "postgres://user:superSecretPass@ec2-34-201-12-34.compute-1.amazonaws.com:5432/dbname"
+        ));
+        assert!(is_secret(&sendgrid_token));
+        assert!(is_secret(&azure_account));
+        assert!(is_secret(npm_legacy));
+        assert!(is_secret(
+            "s-s4t2af-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        ));
+    }
+
+    #[test]
+    fn identifies_pem_blocks_as_secret() {
+        let pem = "-----BEGIN PRIVATE KEY-----\nABCDEF\n-----END PRIVATE KEY-----";
+        assert!(is_secret(pem));
+    }
+
+    #[test]
+    fn does_not_flag_non_secret_values() {
+        assert!(!is_secret("http://localhost:3000"));
+        assert!(!is_secret("plain-text-value"));
+        assert!(!is_secret("12345678901234567890"));
     }
 }

@@ -176,13 +176,7 @@ impl WorkflowListState {
         self.filtered_indices
             .iter()
             .filter_map(|index| self.workflows.get(*index))
-            .map(|workflow| {
-                workflow
-                    .title
-                    .as_ref()
-                    .and_then(|t| Some(t.len()))
-                    .unwrap_or(workflow.identifier.len())
-            })
+            .map(|workflow| workflow.title.as_ref().map(|t| t.len()).unwrap_or(workflow.identifier.len()))
             .max()
             .unwrap_or(0)
     }
@@ -573,12 +567,14 @@ mod workflow_run_tests {
     fn unresolved_count_ignores_inputs_populated_by_defaults() {
         let mut inputs = IndexMap::new();
 
-        let mut region = WorkflowInputDefinition::default();
-        region.default = Some(WorkflowInputDefault {
-            from: WorkflowDefaultSource::Literal,
-            value: Some(json!("us")),
-        });
-        inputs.insert("region".into(), region);
+        let region = WorkflowInputDefinition {
+            default: Some(WorkflowInputDefault {
+                from: WorkflowDefaultSource::Literal,
+                value: Some(json!("us")),
+            }),
+            ..Default::default()
+        };
+        inputs.insert("region".into(), region.clone());
 
         inputs.insert("app".into(), WorkflowInputDefinition::default());
 
@@ -766,20 +762,15 @@ impl WorkflowSelectorStagedSelection {
 }
 
 /// Focus targets available within the workflow selector modal.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WorkflowCollectorFocus {
     /// Provider results table focus, arrow navigation enabled.
+    #[default]
     Table,
     /// Inline filter input focus, text editing enabled.
     Filter,
     /// Confirmation buttons focus, Enter and arrow keys interact with buttons.
     Buttons(SelectorButtonFocus),
-}
-
-impl Default for WorkflowCollectorFocus {
-    fn default() -> Self {
-        Self::Table
-    }
 }
 
 /// Identifies which selector confirmation button currently holds focus.
@@ -872,12 +863,11 @@ impl<'a> WorkflowSelectorViewState<'a> {
                 .into_iter()
                 .filter(|item| match item {
                     Value::Object(map) => {
-                        if let Some(display_field) = self.display_field.as_deref() {
-                            if let Some(value) = map.get(display_field) {
-                                if let Some(text) = value.as_str() {
-                                    return text.to_lowercase().starts_with(&query);
-                                }
-                            }
+                        if let Some(display_field) = self.display_field.as_deref()
+                            && let Some(value) = map.get(display_field)
+                            && let Some(text) = value.as_str()
+                        {
+                            return text.to_lowercase().starts_with(&query);
                         }
                         map.values()
                             .any(|value| value.as_str().map(|text| text.to_lowercase().contains(&query)).unwrap_or(false))

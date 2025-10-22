@@ -61,9 +61,8 @@ impl Component for WorkflowCollectorComponent {
         }
 
         // Fallback: allow closing if neither manual nor selector is present
-        match key.code {
-            KeyCode::Esc => effects.push(Effect::CloseModal),
-            _ => {}
+        if key.code == KeyCode::Esc {
+            effects.push(Effect::CloseModal)
         }
         effects
     }
@@ -134,13 +133,13 @@ impl Component for WorkflowCollectorComponent {
                     return Vec::new();
                 }
                 CollectorMouseTarget::TableBody => {
-                    if let Some(area) = layout.table_area {
-                        if let Some(index) = self.row_index_from_position(selector, area, mouse.row) {
-                            selector.table.set_selection(index);
-                            selector.sync_stage_with_selection();
-                            let _ = self.stage_current_row(selector);
-                            selector.focus_table();
-                        }
+                    if let Some(area) = layout.table_area
+                        && let Some(index) = self.row_index_from_position(selector, area, mouse.row)
+                    {
+                        selector.table.set_selection(index);
+                        selector.sync_stage_with_selection();
+                        let _ = self.stage_current_row(selector);
+                        selector.focus_table();
                     }
                     return Vec::new();
                 }
@@ -156,7 +155,7 @@ impl Component for WorkflowCollectorComponent {
                     effects.extend(self.refresh_selector_items(
                         selector,
                         &*app.ctx.theme,
-                        &*app.ctx.provider_registry,
+                        &app.ctx.provider_registry,
                         provider_id,
                         resolved_args,
                     ));
@@ -205,92 +204,6 @@ impl Component for WorkflowCollectorComponent {
             return Self::selector_hint_spans(theme, selector);
         }
         Vec::new()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ui::components::common::TextInputState;
-    use crate::ui::components::table::TableState;
-    use crate::ui::components::workflows::state::WorkflowSelectorLayoutState;
-    use indexmap::IndexMap;
-    use serde_json::json;
-
-    fn base_selector() -> WorkflowSelectorViewState<'static> {
-        WorkflowSelectorViewState {
-            provider_id: "apps list".into(),
-            resolved_args: serde_json::Map::new(),
-            table: TableState::default(),
-            value_field: None,
-            display_field: None,
-            on_error: None,
-            status: SelectorStatus::Loaded,
-            error_message: None,
-            original_items: None,
-            pending_cache_key: None,
-            filter: TextInputState::new(),
-            focus: WorkflowCollectorFocus::Table,
-            field_metadata: IndexMap::new(),
-            staged_selection: None,
-            layout: WorkflowSelectorLayoutState::default(),
-        }
-    }
-
-    #[test]
-    fn detail_selection_prefers_staged_field() {
-        let mut selector = base_selector();
-        selector.set_staged_selection(Some(WorkflowSelectorStagedSelection::new(
-            JsonValue::String("app-1".into()),
-            "app-1".into(),
-            Some("name".into()),
-            json!({"name": "app-1"}),
-        )));
-
-        let entries = vec![
-            KeyValueEntry {
-                key: "name".into(),
-                display_key: "Name".into(),
-                display_value: "app-1".into(),
-                raw_value: json!("app-1"),
-            },
-            KeyValueEntry {
-                key: "id".into(),
-                display_key: "Id".into(),
-                display_value: "1".into(),
-                raw_value: json!("1"),
-            },
-        ];
-
-        let component = WorkflowCollectorComponent::default();
-        let (selection, offset) = component.detail_selection(&entries, &selector);
-        assert_eq!(selection, Some(0));
-        assert_eq!(offset, 0);
-    }
-
-    #[test]
-    fn detail_selection_uses_value_field_leaf_when_unstaged() {
-        let mut selector = base_selector();
-        selector.value_field = Some("metadata.name".into());
-        let entries = vec![
-            KeyValueEntry {
-                key: "name".into(),
-                display_key: "Name".into(),
-                display_value: "app-1".into(),
-                raw_value: json!("app-1"),
-            },
-            KeyValueEntry {
-                key: "id".into(),
-                display_key: "Id".into(),
-                display_value: "1".into(),
-                raw_value: json!("1"),
-            },
-        ];
-
-        let component = WorkflowCollectorComponent::default();
-        let (selection, offset) = component.detail_selection(&entries, &selector);
-        assert_eq!(selection, Some(0));
-        assert_eq!(offset, 0);
     }
 }
 
@@ -521,7 +434,7 @@ impl WorkflowCollectorComponent {
                 resolved_args,
             } => {
                 if let Some(selector) = app.workflows.selector_state_mut() {
-                    effects.extend(self.refresh_selector_items(selector, theme, &*app.ctx.provider_registry, provider_id, resolved_args));
+                    effects.extend(self.refresh_selector_items(selector, theme, &app.ctx.provider_registry, provider_id, resolved_args));
                 }
             }
             SelectorAction::Apply(selection) => {
@@ -544,7 +457,7 @@ impl WorkflowCollectorComponent {
         let row = sel.table.selected_data()?;
         if let Some(path) = sel.value_field.as_deref() {
             let value = select_path(row, Some(path))?;
-            let field_name = path.split('.').last().map(|segment| segment.to_string());
+            let field_name = path.split('.').next_back().map(|segment| segment.to_string());
             return match value {
                 JsonValue::String(s) => Some((JsonValue::String(s.clone()), field_name)),
                 JsonValue::Number(n) => Some((JsonValue::Number(n.clone()), field_name)),
@@ -603,9 +516,15 @@ impl WorkflowCollectorComponent {
         frame.render_widget(Paragraph::new(self.build_filter_line(sel, theme)), header_layout[0]);
         frame.render_widget(Paragraph::new(self.build_status_line(sel, theme)), header_layout[1]);
 
-        let mut layout_state = WorkflowSelectorLayoutState::default();
-        layout_state.container_area = Some(rect);
-        layout_state.filter_area = Some(header_layout[0]);
+        let mut layout_state = WorkflowSelectorLayoutState {
+            container_area: Some(rect),
+            filter_area: Some(header_layout[0]),
+            table_area: Some(table_area),
+            detail_area,
+            footer_area: Some(footer_area),
+            cancel_button_area: None,
+            apply_button_area: None,
+        };
 
         let mut results_view = ResultsTableView::default();
         let table_focused = matches!(sel.focus, WorkflowCollectorFocus::Table);
@@ -684,7 +603,7 @@ impl WorkflowCollectorComponent {
         if filter_text.is_empty() && !selector.is_filter_focused() {
             spans.push(Span::styled("[type to filter]".to_string(), theme.text_muted_style()));
         } else {
-            let value = format!("{}", filter_text);
+            let value = filter_text.to_string();
             if selector.is_filter_focused() {
                 spans.push(Span::styled(value, theme.selection_style()));
             } else {
@@ -723,28 +642,27 @@ impl WorkflowCollectorComponent {
             return (None, 0);
         }
 
-        if let Some(staged) = selector.staged_selection() {
-            if let Some(field) = &staged.source_field {
-                if let Some(index) = entries.iter().position(|entry| entry.key == *field) {
-                    let offset = min(index, entries.len().saturating_sub(1));
-                    return (Some(index), offset);
-                }
-            }
+        if let Some(staged) = selector.staged_selection()
+            && let Some(field) = &staged.source_field
+            && let Some(index) = entries.iter().position(|entry| entry.key == *field)
+        {
+            let offset = min(index, entries.len().saturating_sub(1));
+            return (Some(index), offset);
         }
 
         if let Some(field) = selector.value_field.as_deref() {
-            let leaf = field.split('.').last().unwrap_or(field);
+            let leaf = field.split('.').next_back().unwrap_or(field);
             if let Some(index) = entries.iter().position(|entry| entry.key == leaf) {
                 let offset = min(index, entries.len().saturating_sub(1));
                 return (Some(index), offset);
             }
         }
 
-        if let Some(field) = selector.display_field.as_deref() {
-            if let Some(index) = entries.iter().position(|entry| entry.key == field) {
-                let offset = min(index, entries.len().saturating_sub(1));
-                return (Some(index), offset);
-            }
+        if let Some(field) = selector.display_field.as_deref()
+            && let Some(index) = entries.iter().position(|entry| entry.key == field)
+        {
+            let offset = min(index, entries.len().saturating_sub(1));
+            return (Some(index), offset);
         }
 
         (None, 0)
@@ -756,28 +674,28 @@ impl WorkflowCollectorComponent {
         }
 
         let mut lines: Vec<Line<'static>> = Vec::new();
-        if let Some(field) = self.active_field_key(selector) {
-            if let Some(metadata) = selector.field_metadata.get(&field) {
-                let mut type_text = format!("Type: {}", metadata.json_type.clone().unwrap_or_else(|| "unknown".to_string()));
-                if metadata.required {
-                    type_text.push_str(" • required");
-                }
-                lines.push(Line::from(Span::styled(type_text, theme.text_secondary_style())));
+        if let Some(field) = self.active_field_key(selector)
+            && let Some(metadata) = selector.field_metadata.get(&field)
+        {
+            let mut type_text = format!("Type: {}", metadata.json_type.clone().unwrap_or_else(|| "unknown".to_string()));
+            if metadata.required {
+                type_text.push_str(" • required");
+            }
+            lines.push(Line::from(Span::styled(type_text, theme.text_secondary_style())));
 
-                if !metadata.tags.is_empty() {
-                    let tags = metadata.tags.iter().map(|tag| format!("#{tag}")).collect::<Vec<_>>().join(" ");
-                    lines.push(Line::from(Span::styled(format!("Tags: {tags}"), theme.text_muted_style())));
-                }
+            if !metadata.tags.is_empty() {
+                let tags = metadata.tags.iter().map(|tag| format!("#{tag}")).collect::<Vec<_>>().join(" ");
+                lines.push(Line::from(Span::styled(format!("Tags: {tags}"), theme.text_muted_style())));
+            }
 
-                if !metadata.enum_values.is_empty() {
-                    let preview_count = min(metadata.enum_values.len(), 5);
-                    let preview = metadata.enum_values[..preview_count].join(", ");
-                    let suffix = if metadata.enum_values.len() > preview_count { "…" } else { "" };
-                    lines.push(Line::from(Span::styled(
-                        format!("Enums: {preview}{suffix}"),
-                        theme.text_muted_style(),
-                    )));
-                }
+            if !metadata.enum_values.is_empty() {
+                let preview_count = min(metadata.enum_values.len(), 5);
+                let preview = metadata.enum_values[..preview_count].join(", ");
+                let suffix = if metadata.enum_values.len() > preview_count { "…" } else { "" };
+                lines.push(Line::from(Span::styled(
+                    format!("Enums: {preview}{suffix}"),
+                    theme.text_muted_style(),
+                )));
             }
         }
 
@@ -792,13 +710,13 @@ impl WorkflowCollectorComponent {
     }
 
     fn active_field_key(&self, selector: &WorkflowSelectorViewState<'_>) -> Option<String> {
-        if let Some(staged) = selector.staged_selection() {
-            if let Some(field) = &staged.source_field {
-                return Some(field.clone());
-            }
+        if let Some(staged) = selector.staged_selection()
+            && let Some(field) = &staged.source_field
+        {
+            return Some(field.clone());
         }
         if let Some(field) = selector.value_field.as_ref() {
-            return Some(field.split('.').last().unwrap_or(field).to_string());
+            return Some(field.split('.').next_back().unwrap_or(field).to_string());
         }
         if let Some(field) = selector.display_field.as_ref() {
             return Some(field.clone());
@@ -841,5 +759,91 @@ impl WorkflowCollectorComponent {
                 ],
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::components::common::TextInputState;
+    use crate::ui::components::table::TableState;
+    use crate::ui::components::workflows::state::WorkflowSelectorLayoutState;
+    use indexmap::IndexMap;
+    use serde_json::json;
+
+    fn base_selector() -> WorkflowSelectorViewState<'static> {
+        WorkflowSelectorViewState {
+            provider_id: "apps list".into(),
+            resolved_args: serde_json::Map::new(),
+            table: TableState::default(),
+            value_field: None,
+            display_field: None,
+            on_error: None,
+            status: SelectorStatus::Loaded,
+            error_message: None,
+            original_items: None,
+            pending_cache_key: None,
+            filter: TextInputState::new(),
+            focus: WorkflowCollectorFocus::Table,
+            field_metadata: IndexMap::new(),
+            staged_selection: None,
+            layout: WorkflowSelectorLayoutState::default(),
+        }
+    }
+
+    #[test]
+    fn detail_selection_prefers_staged_field() {
+        let mut selector = base_selector();
+        selector.set_staged_selection(Some(WorkflowSelectorStagedSelection::new(
+            JsonValue::String("app-1".into()),
+            "app-1".into(),
+            Some("name".into()),
+            json!({"name": "app-1"}),
+        )));
+
+        let entries = vec![
+            KeyValueEntry {
+                key: "name".into(),
+                display_key: "Name".into(),
+                display_value: "app-1".into(),
+                raw_value: json!("app-1"),
+            },
+            KeyValueEntry {
+                key: "id".into(),
+                display_key: "Id".into(),
+                display_value: "1".into(),
+                raw_value: json!("1"),
+            },
+        ];
+
+        let component = WorkflowCollectorComponent::default();
+        let (selection, offset) = component.detail_selection(&entries, &selector);
+        assert_eq!(selection, Some(0));
+        assert_eq!(offset, 0);
+    }
+
+    #[test]
+    fn detail_selection_uses_value_field_leaf_when_unstaged() {
+        let mut selector = base_selector();
+        selector.value_field = Some("metadata.name".into());
+        let entries = vec![
+            KeyValueEntry {
+                key: "name".into(),
+                display_key: "Name".into(),
+                display_value: "app-1".into(),
+                raw_value: json!("app-1"),
+            },
+            KeyValueEntry {
+                key: "id".into(),
+                display_key: "Id".into(),
+                display_value: "1".into(),
+                raw_value: json!("1"),
+            },
+        ];
+
+        let component = WorkflowCollectorComponent::default();
+        let (selection, offset) = component.detail_selection(&entries, &selector);
+        assert_eq!(selection, Some(0));
+        assert_eq!(offset, 0);
     }
 }

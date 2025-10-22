@@ -6,6 +6,7 @@ use crate::{
 };
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use heroku_types::Effect;
+use ratatui::text::Span;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -271,5 +272,18 @@ impl Component for VerticalNavBarComponent {
         let row_count = app.nav_bar.items.len();
         let constraints = vec![Constraint::Length(3); row_count];
         Layout::vertical(constraints).margin(1).split(area).to_vec()
+    }
+
+    /// Generates a list of styled `Span` elements representing UI hints based on the application context.
+    ///
+    /// # Parameters
+    ///
+    /// * `self` - The instance of the struct implementing this method.
+    /// * `app` - A reference to the current `App` instance, which provides access to context and theme data.
+    ///
+    /// # Returns
+    /// A vector of `Span` elements representing the styled text elements for the UI hints.
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
+        th::build_hint_spans(&*app.ctx.theme, &[(" Enter", " Select view"), (" ↑/↓", " Navigate")]).to_vec()
     }
 }

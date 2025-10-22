@@ -39,7 +39,7 @@ impl Component for WorkflowInputsComponent {
                 return effects;
             }
             KeyCode::Esc => {
-                effects.extend(handle_cancel_action(app));
+                effects.push(Effect::SwitchTo(Route::Workflows));
                 return effects;
             }
             _ => {}
@@ -62,20 +62,20 @@ impl Component for WorkflowInputsComponent {
                 KeyCode::Down => {
                     if app.workflows.active_run_state().is_some() {
                         let rows = build_input_rows(app);
-                        if let Some(state) = app.workflows.input_view_state_mut() {
-                            if let Some(next) = advance_selection(&rows, state.selected(), Direction::Forward) {
-                                state.set_selected(next);
-                            }
+                        if let Some(state) = app.workflows.input_view_state_mut()
+                            && let Some(next) = advance_selection(&rows, state.selected(), Direction::Forward)
+                        {
+                            state.set_selected(next);
                         }
                     }
                 }
                 KeyCode::Up => {
                     if app.workflows.active_run_state().is_some() {
                         let rows = build_input_rows(app);
-                        if let Some(state) = app.workflows.input_view_state_mut() {
-                            if let Some(prev) = advance_selection(&rows, state.selected(), Direction::Backward) {
-                                state.set_selected(prev);
-                            }
+                        if let Some(state) = app.workflows.input_view_state_mut()
+                            && let Some(prev) = advance_selection(&rows, state.selected(), Direction::Backward)
+                        {
+                            state.set_selected(prev);
                         }
                     }
                 }
@@ -116,7 +116,7 @@ impl Component for WorkflowInputsComponent {
             match key.code {
                 KeyCode::Left | KeyCode::Up => focus_input_list(app),
                 KeyCode::Right => focus_run_button(app),
-                KeyCode::Enter | KeyCode::Char(' ') => effects.extend(handle_cancel_action(app)),
+                KeyCode::Enter | KeyCode::Char(' ') => effects.push(Effect::SwitchTo(Route::Workflows)),
                 _ => {}
             }
             return effects;
@@ -146,18 +146,18 @@ impl Component for WorkflowInputsComponent {
             return Vec::new();
         };
 
-        if let Some(area) = layout.cancel_button_area {
-            if rect_contains(area, mouse.column, mouse.row) {
-                app.focus.focus(&cancel_flag);
-                return handle_cancel_action(app);
-            }
+        if let Some(area) = layout.cancel_button_area
+            && rect_contains(area, mouse.column, mouse.row)
+        {
+            app.focus.focus(&cancel_flag);
+            return vec![Effect::SwitchTo(Route::Workflows)];
         }
 
-        if let Some(area) = layout.run_button_area {
-            if rect_contains(area, mouse.column, mouse.row) {
-                app.focus.focus(&run_flag);
-                return app.run_active_workflow();
-            }
+        if let Some(area) = layout.run_button_area
+            && rect_contains(area, mouse.column, mouse.row)
+        {
+            app.focus.focus(&run_flag);
+            return app.run_active_workflow();
         }
 
         Vec::new()
@@ -178,10 +178,9 @@ impl Component for WorkflowInputsComponent {
             state.clamp_selection(rows.len());
             if let Some(selected) = rows.get(state.selected())
                 && selected.is_blocked()
+                && let Some(first) = first_enabled_index(&rows)
             {
-                if let Some(first) = first_enabled_index(&rows) {
-                    state.set_selected(first);
-                }
+                state.set_selected(first);
             }
         }
 
@@ -335,10 +334,10 @@ fn render_inputs_list(frame: &mut Frame, area: Rect, app: &App, rows: &[Workflow
             ));
         }
 
-        if let Some(message) = &row.status_message {
-            if row.blocked_reason.as_ref() != Some(message) {
-                segments.push(Span::styled(format!("{message}"), theme.text_muted_style()));
-            }
+        if let Some(message) = &row.status_message
+            && row.blocked_reason.as_ref() != Some(message)
+        {
+            segments.push(Span::styled(message.to_string(), theme.text_muted_style()));
         }
 
         if row.is_blocked() {
@@ -406,32 +405,6 @@ fn render_input_details(frame: &mut Frame, area: Rect, app: &App, rows: &[Workfl
         selected_lines.push(Line::from(line_segments));
     }
 
-    // Cache age summary (best-effort: show provider labels; age unknown if not tracked)
-    let mut cache_lines: Vec<Line> = Vec::new();
-    {
-        use std::collections::BTreeMap;
-        let mut providers: BTreeMap<&str, Option<String>> = BTreeMap::new();
-        for row in rows {
-            if let Some(label) = row.provider_label.as_deref() {
-                // Age unknown in the current model; show placeholder "—"
-                providers.entry(label).or_insert(None);
-            }
-        }
-        if providers.is_empty() {
-            cache_lines.push(Line::from(Span::styled("Cache age: —", theme.text_muted_style())));
-        } else {
-            cache_lines.push(Line::from(vec![Span::styled("Cache age:", theme.text_secondary_style())]));
-            for (label, _age) in providers.into_iter() {
-                cache_lines.push(Line::from(vec![
-                    Span::styled("  • ", theme.text_secondary_style()),
-                    Span::styled(format!("{:<12}", label), theme.text_primary_style()),
-                    Span::styled(" ", theme.text_secondary_style()),
-                    Span::styled("—", theme.text_muted_style()),
-                ]));
-            }
-        }
-    }
-
     // Errors & notes aggregation
     let mut error_notes: Vec<String> = Vec::new();
     for row in rows {
@@ -485,10 +458,6 @@ fn render_input_details(frame: &mut Frame, area: Rect, app: &App, rows: &[Workfl
         Span::styled("Auto-reset note: ", theme.text_secondary_style()),
         Span::styled("downstream steps reset when a prior step edits.", theme.text_muted_style()),
     ]));
-
-    // Spacer and cache ages
-    lines.push(Line::from(""));
-    lines.extend(cache_lines);
 
     // Spacer and errors
     lines.push(Line::from(""));
@@ -605,7 +574,7 @@ fn build_input_row(run_state: &WorkflowRunState, name: &str, definition: &Workfl
     }
 
     let raw_value = run_state.run_context.inputs.get(name);
-    let has_value = raw_value.map_or(false, has_meaningful_input_value);
+    let has_value = raw_value.is_some_and(has_meaningful_input_value);
 
     if matches!(status, InputStatus::Error) {
         // Preserve error state and explanatory message coming from provider resolution.
@@ -717,20 +686,15 @@ fn dependency_block_reason(run_state: &WorkflowRunState, definition: &WorkflowIn
     for value in definition.depends_on.values() {
         match value {
             WorkflowProviderArgumentValue::Binding(binding) => {
-                if let Some(input_name) = binding.from_input.as_deref() {
-                    if !run_state
-                        .run_context
-                        .inputs
-                        .get(input_name)
-                        .map_or(false, has_meaningful_input_value)
-                    {
-                        return Some(format!("Waiting on input '{input_name}'"));
-                    }
+                if let Some(input_name) = binding.from_input.as_deref()
+                    && !run_state.run_context.inputs.get(input_name).is_some_and(has_meaningful_input_value)
+                {
+                    return Some(format!("Waiting on input '{input_name}'"));
                 }
-                if let Some(step_id) = binding.from_step.as_deref() {
-                    if !run_state.run_context.steps.get(step_id).map_or(false, has_meaningful_input_value) {
-                        return Some(format!("Waiting on step '{step_id}'"));
-                    }
+                if let Some(step_id) = binding.from_step.as_deref()
+                    && !run_state.run_context.steps.get(step_id).is_some_and(has_meaningful_input_value)
+                {
+                    return Some(format!("Waiting on step '{step_id}'"));
                 }
             }
             WorkflowProviderArgumentValue::Literal(template) => {
@@ -739,13 +703,13 @@ fn dependency_block_reason(run_state: &WorkflowRunState, definition: &WorkflowIn
                         .run_context
                         .inputs
                         .get(&input_name)
-                        .map_or(false, has_meaningful_input_value)
+                        .is_some_and(has_meaningful_input_value)
                     {
                         return Some(format!("Waiting on input '{input_name}'"));
                     }
                 }
                 for step_id in extract_template_steps(template) {
-                    if !run_state.run_context.steps.get(&step_id).map_or(false, has_meaningful_input_value) {
+                    if !run_state.run_context.steps.get(&step_id).is_some_and(has_meaningful_input_value) {
                         return Some(format!("Waiting on step '{step_id}'"));
                     }
                 }
@@ -771,12 +735,11 @@ fn extract_template_identifiers(template: &str, prefix: &str) -> Vec<String> {
         let after = &remaining[start + 3..];
         if let Some(end) = after.find("}}") {
             let expression = after[..end].trim();
-            if let Some(rest) = expression.strip_prefix(prefix) {
-                if let Some(identifier) = parse_identifier(rest) {
-                    if !results.contains(&identifier) {
-                        results.push(identifier);
-                    }
-                }
+            if let Some(rest) = expression.strip_prefix(prefix)
+                && let Some(identifier) = parse_identifier(rest)
+                && !results.contains(&identifier)
+            {
+                results.push(identifier);
             }
             remaining = &after[end + 2..];
         } else {
@@ -815,11 +778,6 @@ fn has_meaningful_input_value(value: &serde_json::Value) -> bool {
         serde_json::Value::Object(properties) => !properties.is_empty(),
         _ => true,
     }
-}
-
-fn handle_cancel_action(app: &mut App) -> Vec<Effect> {
-    app.close_workflow_inputs();
-    vec![Effect::SwitchTo(Route::Workflows)]
 }
 
 fn focus_input_list(app: &mut App) {

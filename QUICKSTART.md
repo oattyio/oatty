@@ -1,0 +1,323 @@
+# Quick Start Guide
+
+Get up and running with the Heroku CLI (Rust) in 5 minutes.
+
+## Prerequisites
+
+- **Rust** (nightly toolchain) - Install from [rustup.rs](https://rustup.rs/)
+- **Heroku API Key** - Get yours from [dashboard.heroku.com/account](https://dashboard.heroku.com/account)
+
+## Setup (Automated)
+
+Run the setup script:
+
+```bash
+bash scripts/dev-setup.sh
+```
+
+This will:
+
+- ✅ Verify Rust installation
+- ✅ Install required toolchain components
+- ✅ Create configuration files
+- ✅ Build the project
+- ✅ Run tests
+
+## Setup (Manual)
+
+If you prefer manual setup:
+
+```bash
+# 1. Clone and navigate
+cd /Users/jwilaby/Documents/dev/next-gen-cli
+
+# 2. Create environment file
+cp .env.example .env
+# Edit .env and add your HEROKU_API_KEY
+
+# 3. Build
+cargo build --workspace
+
+# 4. Test
+cargo test --workspace
+```
+
+## Running the CLI
+
+### Interactive TUI Mode
+
+Launch the Terminal UI:
+
+```bash
+cargo run -p heroku-cli
+```
+
+**TUI Controls:**
+
+- Type to search/filter commands
+- `↑`/`↓` - Navigate commands
+- `Enter` - Select command and fill inputs
+- `Tab`/`Shift+Tab` - Cycle through input fields
+- `Space` - Toggle boolean flags
+- `←`/`→` - Cycle enum values
+- `Enter` (on inputs) - Execute command
+- `Ctrl+Y` - Copy command to clipboard
+- `Ctrl+H` - Show help
+- `Ctrl+C` - Quit
+
+### CLI Mode
+
+Run commands directly:
+
+```bash
+# List all apps
+cargo run -p heroku-cli -- apps list
+
+# Get info about an app
+cargo run -p heroku-cli -- apps info my-app
+
+# Create a new app
+cargo run -p heroku-cli -- apps create --name demo-app
+
+# List releases
+cargo run -p heroku-cli -- releases list my-app
+```
+
+## Development Workflow
+
+### Using Make (Recommended)
+
+```bash
+# Show all available commands
+make help
+
+# Build the project
+make build
+
+# Run tests
+make test
+
+# Format and lint
+make fmt
+make clippy
+
+# Run pre-commit checks (format + lint + test)
+make pre-commit
+
+# Launch TUI
+make run-tui
+
+# Run CLI command
+make run-cli ARGS="apps list"
+```
+
+### Using Cargo Directly
+
+```bash
+# Build all crates
+cargo build --workspace
+
+# Run tests
+cargo test --workspace
+
+# Run clippy (linter)
+cargo clippy --workspace -- -D warnings
+
+# Format code
+cargo fmt --all
+
+# Build optimized release binary
+cargo build --release -p heroku-cli
+# Binary will be at: target/release/heroku-cli
+```
+
+### Using VS Code / Cursor
+
+1. **Open the project** in VS Code/Cursor
+2. **Install recommended extensions** (Command Palette → "Extensions: Show Recommended Extensions")
+3. **Start debugging**: Press `F5` or go to Run → Start Debugging
+4. **Run tasks**: `Cmd+Shift+P` → "Tasks: Run Task"
+5. **Build**: `Cmd+Shift+B`
+
+## Common Tasks
+
+### Change Log Level
+
+```bash
+# Debug logging
+HEROKU_LOG=debug cargo run -p heroku-cli
+
+# Trace logging (very verbose)
+HEROKU_LOG=trace cargo run -p heroku-cli
+```
+
+### Change Theme
+
+```bash
+# Use Nord theme
+TUI_THEME=nord cargo run -p heroku-cli
+
+# Use high-contrast Dracula
+TUI_THEME=dracula_hc cargo run -p heroku-cli
+```
+
+### Generate Command Manifest
+
+```bash
+# Generate JSON manifest (for inspection)
+cargo run -p heroku-registry-gen -- --json \
+    schemas/heroku-schema.enhanced.json \
+    target/manifest.json
+
+# Or use make
+make manifest-json
+```
+
+### Watch Mode (Auto-rebuild)
+
+Install `cargo-watch`:
+
+```bash
+cargo install cargo-watch
+```
+
+Then run:
+
+```bash
+# Auto-rebuild on changes
+cargo watch -x "build --workspace"
+
+# Auto-run tests on changes
+cargo watch -x "test --workspace"
+
+# Or use make
+make test-watch
+```
+
+## Project Structure
+
+```
+next-gen-cli/
+├── crates/
+│   ├── cli/        # Main CLI binary
+│   ├── tui/        # Terminal UI (Ratatui)
+│   ├── registry/   # Command registry
+│   ├── engine/     # Workflow execution
+│   ├── api/        # API client
+│   ├── mcp/        # Plugin system
+│   └── util/       # Utilities
+├── schemas/        # API schemas
+├── workflows/      # Workflow definitions
+└── .vscode/        # VS Code config
+```
+
+## Environment Variables
+
+Create a `.env` file (see `.env.example`):
+
+```bash
+# Required
+HEROKU_API_KEY=your-api-key-here
+
+# Optional
+HEROKU_LOG=debug              # Log level
+TUI_THEME=dracula             # Theme
+DEBUG=1                       # Debug mode
+RUST_BACKTRACE=1              # Show backtraces
+```
+
+## Debugging
+
+### Command Line
+
+```bash
+# Run with backtrace
+RUST_BACKTRACE=1 cargo run -p heroku-cli -- apps list
+
+# Full backtrace
+RUST_BACKTRACE=full cargo run -p heroku-cli
+```
+
+### VS Code / Cursor
+
+1. Set breakpoints by clicking in the gutter
+2. Press `F5` to start debugging
+3. Choose a debug configuration:
+   - **Debug CLI - TUI Mode** - Debug the TUI
+   - **Debug CLI - Apps List** - Debug a specific command
+   - **Debug CLI - Custom Command** - Debug with any args
+
+## Testing
+
+```bash
+# Run all tests
+cargo test --workspace
+
+# Run tests for specific crate
+cargo test -p heroku-cli
+
+# Run a specific test
+cargo test test_name -- --exact
+
+# Show test output
+cargo test -- --nocapture
+```
+
+## Code Quality
+
+Before committing:
+
+```bash
+# Format code
+cargo fmt --all
+
+# Run linter
+cargo clippy --workspace -- -D warnings
+
+# Run tests
+cargo test --workspace
+
+# Or run all at once
+make pre-commit
+```
+
+## Getting Help
+
+- **Full Guide**: See [DEVELOPMENT.md](./DEVELOPMENT.md)
+- **Architecture**: See [ARCHITECTURE.md](./ARCHITECTURE.md)
+- **Contributing**: See [CONTRIBUTING.md](./CONTRIBUTING.md)
+- **Features**: See [README.md](./README.md)
+- **VS Code Setup**: See [.vscode/README.md](.vscode/README.md)
+
+## Troubleshooting
+
+### "Heroku API authentication failed"
+
+→ Set `HEROKU_API_KEY` in `.env` or environment
+
+### TUI not rendering correctly
+
+→ Ensure your terminal supports 256 colors and UTF-8
+
+### Build errors
+
+→ Make sure you're using Rust nightly: `rustup show`
+
+### Slow compilation
+
+→ Use `cargo check` for faster feedback without code generation
+
+### Keychain prompts (macOS)
+
+→ See "Code Signing" section in [README.md](./README.md)
+
+## Next Steps
+
+1. ✅ **Read the docs**: [DEVELOPMENT.md](./DEVELOPMENT.md) has comprehensive info
+2. ✅ **Explore the code**: Start with `crates/cli/src/main.rs`
+3. ✅ **Try the TUI**: `cargo run -p heroku-cli`
+4. ✅ **Run some commands**: `cargo run -p heroku-cli -- apps list`
+5. ✅ **Set up your editor**: Install VS Code extensions
+6. ✅ **Pick a task**: Check issues or roadmap
+
+Happy coding! 🦀

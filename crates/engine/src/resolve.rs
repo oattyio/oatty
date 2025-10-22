@@ -289,16 +289,12 @@ fn split_expression<'a>(expression: &'a str, operator: &str) -> Option<Vec<&'a s
 fn strip_leading_negations(expression: &str) -> (usize, &str) {
     let mut count = 0usize;
     let mut remainder = expression.trim_start();
-    loop {
-        if let Some(stripped) = remainder.strip_prefix('!') {
-            if stripped.starts_with('=') {
-                break;
-            }
-            count += 1;
-            remainder = stripped.trim_start();
-        } else {
+    while let Some(stripped) = remainder.strip_prefix('!') {
+        if stripped.starts_with('=') {
             break;
         }
+        count += 1;
+        remainder = stripped.trim_start();
     }
     (count, remainder)
 }

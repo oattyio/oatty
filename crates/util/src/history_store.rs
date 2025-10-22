@@ -288,10 +288,10 @@ impl HistoryStore for InMemoryHistoryStore {
 }
 
 fn expand_tilde_path(path: PathBuf) -> PathBuf {
-    if let Some(first) = path.components().next() {
-        if first.as_os_str() != "~" {
-            return path;
-        }
+    if let Some(first) = path.components().next()
+        && first.as_os_str() != "~"
+    {
+        return path;
     }
 
     let input = path.to_string_lossy();
@@ -469,11 +469,14 @@ mod tests {
 
     #[test]
     fn workflow_input_history_detection() {
-        let mut definition = WorkflowInputDefinition::default();
-        definition.default = Some(heroku_types::workflow::WorkflowInputDefault {
-            from: WorkflowDefaultSource::History,
-            value: None,
-        });
+        let mut definition = WorkflowInputDefinition {
+            default: Some(heroku_types::workflow::WorkflowInputDefault {
+                from: WorkflowDefaultSource::History,
+                value: None,
+            }),
+            ..WorkflowInputDefinition::default()
+        };
+
         assert!(workflow_input_uses_history(&definition));
 
         definition.default = Some(heroku_types::workflow::WorkflowInputDefault {

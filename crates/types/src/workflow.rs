@@ -522,6 +522,23 @@ fn default_value_map() -> IndexMap<String, JsonValue> {
     IndexMap::new()
 }
 
+impl WorkflowInputDefinition {
+    /// Returns true when this input should not block readiness.
+    ///
+    /// New authoring semantics: inputs are required by default unless `optional: true` is set.
+    /// Legacy `validate.required` is ignored for readiness; it may still be used by
+    /// future per-field validation, but does not affect required/optional at the
+    /// workflow level.
+    pub fn is_optional(&self) -> bool {
+        self.optional
+    }
+
+    /// Returns true when a value must be supplied before running the workflow.
+    pub fn is_required(&self) -> bool {
+        !self.optional
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -586,22 +603,5 @@ steps:
 
         let definition: WorkflowDefinition = serde_yaml::from_str(yaml).expect("parse workflow");
         assert_eq!(definition.steps[0].r#if.as_deref(), Some("${{ inputs.flag }}"));
-    }
-}
-
-impl WorkflowInputDefinition {
-    /// Returns true when this input should not block readiness.
-    ///
-    /// New authoring semantics: inputs are required by default unless `optional: true` is set.
-    /// Legacy `validate.required` is ignored for readiness; it may still be used by
-    /// future per-field validation, but does not affect required/optional at the
-    /// workflow level.
-    pub fn is_optional(&self) -> bool {
-        self.optional
-    }
-
-    /// Returns true when a value must be supplied before running the workflow.
-    pub fn is_required(&self) -> bool {
-        !self.optional
     }
 }

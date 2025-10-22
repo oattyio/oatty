@@ -5,12 +5,13 @@
 //! handle their own state, events, and rendering while integrating with the
 //! main application through a consistent interface.
 
+use std::fmt::Debug;
+
 use crate::app::App;
 use crossterm::event::{KeyEvent, MouseEvent};
 use heroku_types::{Effect, Msg};
 use ratatui::layout::Position;
 use ratatui::{Frame, layout::Rect, text::Span};
-use std::fmt::Debug;
 
 /// A trait representing a UI component with its own state and behavior.
 ///
@@ -176,14 +177,14 @@ pub trait Component: Debug {
     /// ```rust,ignore
     /// fn render(&mut self, frame: &mut Frame, rect: Rect, app: &App) {
     ///     use ratatui::widgets::{Block, Borders, Paragraph};
-    ///     
+    ///
     ///     let block = Block::default()
     ///         .title("My Component")
     ///         .borders(Borders::ALL);
-    ///     
+    ///
     ///     let widget = Paragraph::new(&self.content)
     ///         .block(block);
-    ///     
+    ///
     ///     frame.render_widget(widget, rect);
     /// }
     /// ```

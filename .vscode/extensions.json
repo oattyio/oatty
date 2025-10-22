@@ -1,0 +1,17 @@
+{
+    "recommendations": [
+        // Rust Development
+        "rust-lang.rust-analyzer",
+        "vadimcn.vscode-lldb",
+
+        // TOML Support
+        "tamasfe.even-better-toml",
+
+        // YAML Support
+        "redhat.vscode-yaml",
+
+        // Markdown
+        "yzhang.markdown-all-in-one",
+    ],
+    "unwantedRecommendations": []
+}

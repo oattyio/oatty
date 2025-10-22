@@ -20,15 +20,10 @@ pub enum ManualEntryKind {
 }
 
 /// Identifies which region within the manual entry view currently holds focus.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManualEntryFocus {
+    #[default]
     Value,
-}
-
-impl Default for ManualEntryFocus {
-    fn default() -> Self {
-        ManualEntryFocus::Value
-    }
 }
 
 /// Represents a single selectable literal for enum-style manual entry.
@@ -253,10 +248,10 @@ fn build_enum_state(options: &[JsonValue], existing: Option<&JsonValue>) -> Manu
     let mut rendered_options = Vec::new();
     let mut selected_index = 0usize;
     for (idx, option) in options.iter().enumerate() {
-        if let Some(current) = existing {
-            if values_match(option, current) {
-                selected_index = idx;
-            }
+        if let Some(current) = existing
+            && values_match(option, current)
+        {
+            selected_index = idx;
         }
         rendered_options.push(ManualEntryEnumOption {
             label: render_value("", option),
@@ -297,7 +292,7 @@ fn values_match(expected: &JsonValue, candidate: &JsonValue) -> bool {
         return true;
     }
     match (expected, candidate) {
-        (_, JsonValue::String(text)) => expected.to_string() == *text,
+        (_, JsonValue::String(text)) => &expected.to_string() == text,
         (JsonValue::String(expected_text), other) => expected_text == &other.to_string(),
         _ => false,
     }
@@ -310,8 +305,10 @@ mod tests {
 
     #[test]
     fn builder_uses_enum_kind_when_enumerations_present() {
-        let mut definition = WorkflowInputDefinition::default();
-        definition.enumerated_values = vec![json!("alpha"), json!("beta")];
+        let definition = WorkflowInputDefinition {
+            enumerated_values: vec![json!("alpha"), json!("beta")],
+            ..Default::default()
+        };
 
         let state = ManualEntryState::from_definition(&definition, "option", None);
         assert!(matches!(state.kind, ManualEntryKind::Enum));
@@ -323,8 +320,10 @@ mod tests {
 
     #[test]
     fn builder_prefills_boolean_from_existing_value() {
-        let mut definition = WorkflowInputDefinition::default();
-        definition.r#type = Some("boolean".to_string());
+        let definition = WorkflowInputDefinition {
+            r#type: Some("boolean".to_string()),
+            ..Default::default()
+        };
 
         let state = ManualEntryState::from_definition(&definition, "flag", Some(&Value::Bool(true)));
         assert!(matches!(state.kind, ManualEntryKind::Boolean));
@@ -333,8 +332,10 @@ mod tests {
 
     #[test]
     fn builder_prefills_number_buffer_from_existing_value() {
-        let mut definition = WorkflowInputDefinition::default();
-        definition.r#type = Some("number".to_string());
+        let definition = WorkflowInputDefinition {
+            r#type: Some("number".to_string()),
+            ..Default::default()
+        };
 
         let state = ManualEntryState::from_definition(&definition, "count", Some(&json!(42.5)));
         assert!(matches!(state.kind, ManualEntryKind::Number));

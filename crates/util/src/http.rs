@@ -46,10 +46,10 @@ pub fn parse_content_range_value(value: &str) -> Option<Pagination> {
     let mut order: Option<String> = None;
 
     for key_value_pair in parts.iter().skip(1) {
-        if let Some(value) = key_value_pair.strip_prefix("max=") {
-            if let Ok(number) = value.trim_end_matches(';').parse::<usize>() {
-                max = Some(number);
-            }
+        if let Some(value) = key_value_pair.strip_prefix("max=")
+            && let Ok(number) = value.trim_end_matches(';').parse::<usize>()
+        {
+            max = Some(number);
         }
         if let Some(value) = key_value_pair.strip_prefix("order=") {
             order = Some(value.trim_end_matches(';').to_lowercase());
@@ -209,32 +209,6 @@ pub fn status_error_message(status_code: u16) -> Option<String> {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::Number;
-
-    #[test]
-    fn builds_range_header_with_semicolon_delimiters() {
-        let mut body = Map::new();
-        body.insert("range-field".into(), Value::String("Name".into()));
-        body.insert("range-start".into(), Value::String("app1".into()));
-        body.insert("range-end".into(), Value::String("app9".into()));
-        body.insert("order".into(), Value::String("DESC".into()));
-        body.insert("max".into(), Value::Number(Number::from(100)));
-
-        let header = build_range_header_from_body(&body).expect("range header");
-        assert_eq!(header, "name app1..app9; order=desc; max=100;");
-    }
-
-    #[test]
-    fn returns_none_when_range_field_missing() {
-        let mut body = Map::new();
-        body.insert("range-start".into(), Value::String("app1".into()));
-        assert!(build_range_header_from_body(&body).is_none());
-    }
-}
-
 /// Parse response text as JSON, returning the parsed value and a flag indicating table suitability.
 ///
 /// This function attempts to parse HTTP response text as JSON and provides
@@ -261,4 +235,30 @@ mod tests {
 /// ```
 pub fn parse_response_json(text: &str) -> Option<Value> {
     serde_json::from_str::<Value>(text).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::Number;
+
+    #[test]
+    fn builds_range_header_with_semicolon_delimiters() {
+        let mut body = Map::new();
+        body.insert("range-field".into(), Value::String("Name".into()));
+        body.insert("range-start".into(), Value::String("app1".into()));
+        body.insert("range-end".into(), Value::String("app9".into()));
+        body.insert("order".into(), Value::String("DESC".into()));
+        body.insert("max".into(), Value::Number(Number::from(100)));
+
+        let header = build_range_header_from_body(&body).expect("range header");
+        assert_eq!(header, "name app1..app9; order=desc; max=100;");
+    }
+
+    #[test]
+    fn returns_none_when_range_field_missing() {
+        let mut body = Map::new();
+        body.insert("range-start".into(), Value::String("app1".into()));
+        assert!(build_range_header_from_body(&body).is_none());
+    }
 }

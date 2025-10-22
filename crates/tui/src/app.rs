@@ -9,24 +9,12 @@ use std::{
     time::Duration,
 };
 
-use crate::ui::components::nav_bar::VerticalNavBarComponent;
+use crate::ui::components::nav_bar::VerticalNavBarState;
 use crate::ui::components::workflows::run::RunViewState;
 use crate::ui::components::workflows::state::SelectorStatus;
-use crate::ui::components::workflows::{RunViewComponent, WorkflowCollectorComponent, WorkflowInputsComponent};
-use crate::ui::components::{
-    BrowserComponent, HelpComponent, LogsComponent, PluginsComponent, TableComponent, WorkflowsComponent, logs::LogDetailsComponent,
-    nav_bar::VerticalNavBarState, plugins::PluginsDetailsComponent,
-};
-use crate::ui::utils::centered_rect;
 use crate::ui::{
     components::{
-        browser::BrowserState,
-        component::Component,
-        help::HelpState,
-        logs::LogsState,
-        palette::{PaletteComponent, PaletteState},
-        plugins::PluginsState,
-        table::TableState,
+        browser::BrowserState, help::HelpState, logs::LogsState, palette::PaletteState, plugins::PluginsState, table::TableState,
         workflows::WorkflowState,
     },
     theme,
@@ -44,7 +32,6 @@ use heroku_util::{
 };
 use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
-use serde_json::{Map as JsonMap, Value as JsonValue};
 use tokio::sync::mpsc::UnboundedReceiver;
 use tracing::warn;
 
@@ -115,6 +102,14 @@ impl WorkflowRunEventReceiver {
 }
 
 pub struct App<'a> {
+    /// Container focus flag for the top-level app focus scope
+    app_container_focus: FocusFlag,
+    /// Currently open modal kind (when Some, modal owns focus)
+    pub open_modal_kind: Option<Modal>,
+    /// Pending workflow run event receiver awaiting runtime registration.
+    workflow_event_rx: Option<WorkflowRunEventReceiver>,
+    /// Sequence counter for generating unique workflow run identifiers.
+    workflow_run_sequence: u64,
     /// Shared, cross-cutting context (registry, config)
     pub ctx: SharedCtx,
     /// State for the command palette input
@@ -140,36 +135,10 @@ pub struct App<'a> {
     /// Active execution count used by the event pump to decide whether to
     /// animate
     pub active_exec_count: Arc<AtomicUsize>,
-    /// Last executed CommandSpec (for pagination replays)
-    pub last_spec: Option<heroku_registry::CommandSpec>,
-    /// Last request body used for the executed command
-    pub last_body: Option<JsonMap<String, JsonValue>>,
-    /// History of Range headers used per page request (None means no Range header)
-    pub pagination_history: Vec<Option<String>>,
-    /// Initial Range header used (if any)
-    pub initial_range: Option<String>,
-    /// Current main view component
-    pub main_view: Option<Box<dyn Component>>,
-    /// Main view for the nav bar
-    pub nav_bar_view: Option<Box<dyn Component>>,
-    /// Currently open modal component
-    pub open_modal: Option<(Box<dyn Component>, Box<dyn Fn(Rect) -> Rect>)>,
-    /// Currently open logs view component
-    pub logs_view: Option<Box<dyn Component>>,
     /// Global focus tree for keyboard/mouse traversal
     pub focus: Focus,
-    /// the widget_id of the focus just before a modal is opened
-    transient_focus_id: Option<usize>,
-    /// Container focus flag for the top-level app focus scope
-    app_container_focus: FocusFlag,
     /// Currently active main route for dynamic focus ring building
-    current_route: Route,
-    /// Currently open modal kind (when Some, modal owns focus)
-    open_modal_kind: Option<Modal>,
-    /// Pending workflow run event receiver awaiting runtime registration.
-    workflow_event_rx: Option<WorkflowRunEventReceiver>,
-    /// Sequence counter for generating unique workflow run identifiers.
-    workflow_run_sequence: u64,
+    pub current_route: Route,
 }
 
 impl App<'_> {
@@ -213,21 +182,12 @@ impl App<'_> {
             executing: false,
             throbber_idx: 0,
             active_exec_count: Arc::new(AtomicUsize::new(0)),
-            last_spec: None,
-            last_body: None,
-            pagination_history: Vec::new(),
-            initial_range: None,
-            main_view: Some(Box::new(PaletteComponent::default())),
-            open_modal: None,
-            nav_bar_view: Some(Box::new(VerticalNavBarComponent::new())),
             focus: Focus::default(),
-            transient_focus_id: None,
             app_container_focus: FocusFlag::named("app.container"),
             current_route: Route::Palette,
             open_modal_kind: None,
             workflow_event_rx: None,
             workflow_run_sequence: 0,
-            logs_view: Some(Box::new(LogsComponent::default())),
         };
         app.browser.update_browser_filtered();
 
@@ -273,16 +233,12 @@ impl App<'_> {
     /// ```rust,ignore
     /// // Example requires real App/Msg types; ignored to avoid compile in doctests.
     /// ```
-    pub fn update(&mut self, message: Msg) -> Vec<Effect> {
+    pub fn update(&mut self, message: &Msg) -> Vec<Effect> {
         match message {
             Msg::Tick => self.handle_tick_message(),
             Msg::Resize(..) => vec![],
-            Msg::CopyToClipboard(text) => vec![Effect::CopyToClipboardRequested(text)],
-            Msg::ProviderValuesReady { provider_id, cache_key } => self.handle_provider_values_ready(provider_id, cache_key),
-            Msg::WorkflowRunEvent { run_id, event } => {
-                self.handle_workflow_run_event(run_id, event);
-                Vec::new()
-            }
+            Msg::CopyToClipboard(text) => vec![Effect::CopyToClipboardRequested(text.clone())],
+            Msg::ProviderValuesReady { provider_id, cache_key } => self.handle_provider_values_ready(provider_id.clone(), cache_key.clone()),
             _ => Vec::new(),
         }
     }
@@ -385,7 +341,7 @@ impl App<'_> {
 
         if let Some(selector) = self.workflows.selector_state_mut() {
             let matches_identifier = selector.provider_id == provider_id;
-            let matches_cache_key = selector.pending_cache_key.as_deref().map_or(true, |key| key == cache_key.as_str());
+            let matches_cache_key = selector.pending_cache_key.as_deref().is_none_or(|key| key == cache_key.as_str());
             if matches_identifier && matches_cache_key {
                 match self
                     .ctx
@@ -425,18 +381,18 @@ impl App<'_> {
                     if stored.value.is_null() || value_contains_secret(&stored.value) {
                         continue;
                     }
-                    if let Some(validation) = &definition.validate {
-                        if let Err(error) = validate_candidate_value(&stored.value, validation) {
-                            let message = format!("History default for '{}' failed validation: {}", input_name, error);
-                            warn!(
-                                input = %input_name,
-                                workflow = %run_state.workflow.identifier,
-                                "{}",
-                                message
-                            );
-                            self.append_log_message(message);
-                            continue;
-                        }
+                    if let Some(validation) = &definition.validate
+                        && let Err(error) = validate_candidate_value(&stored.value, validation)
+                    {
+                        let message = format!("History default for '{}' failed validation: {}", input_name, error);
+                        warn!(
+                            input = %input_name,
+                            workflow = %run_state.workflow.identifier,
+                            "{}",
+                            message
+                        );
+                        self.append_log_message(message);
+                        continue;
                     }
 
                     run_state.run_context.inputs.insert(input_name.clone(), stored.value);
@@ -475,16 +431,16 @@ impl App<'_> {
                 continue;
             }
 
-            if let Some(validation) = &definition.validate {
-                if let Err(error) = validate_candidate_value(value, validation) {
-                    warn!(
-                        input = %input_name,
-                        workflow = %run_state.workflow.identifier,
-                        error = %error,
-                        "skipping history persistence for value failing validation"
-                    );
-                    continue;
-                }
+            if let Some(validation) = &definition.validate
+                && let Err(error) = validate_candidate_value(value, validation)
+            {
+                warn!(
+                    input = %input_name,
+                    workflow = %run_state.workflow.identifier,
+                    error = %error,
+                    "skipping history persistence for value failing validation"
+                );
+                continue;
             }
 
             let key = HistoryKey::workflow_input(
@@ -551,7 +507,7 @@ impl App<'_> {
     }
 
     /// Open the interactive input view for the selected workflow.
-    fn open_workflow_inputs(&mut self) -> Result<()> {
+    pub fn open_workflow_inputs(&mut self) -> Result<()> {
         let Some(workflow) = self.workflows.selected_workflow() else {
             self.append_log_message("No workflow selected");
             return Ok(());
@@ -611,117 +567,12 @@ impl App<'_> {
 
         self.append_log_message(format!("Workflow '{}' run started.", display_name));
 
-        vec![Effect::WorkflowRunRequested { request }, Effect::SwitchTo(Route::WorkflowRun)]
-    }
-
-    /// Updates the current route of the application and performs necessary state transitions.
-    /// Note that this method is not intended to be called directly. Instead, use Effect::SwitchTo.
-    ///
-    /// # Arguments
-    /// * `route` - A `Route` enum variant representing the new route to be set.
-    ///
-    /// # Behavior
-    /// 1. Based on the provided `Route`, determines the corresponding components and their states.
-    /// 2. For specific routes:
-    ///     * **`Route::WorkflowInputs`**: Attempts to open workflow inputs and logs any errors encountered.
-    ///     * **`Route::WorkflowRun`**: Validates run view state is available; falls back to the workflow list if missing.
-    ///     * **`Route::Workflows`**: Ensures workflows are loaded via the registry and logs any errors encountered.
-    /// 3. Updates the navigation bar to reflect the new route.
-    /// 4. Changes the main view to the component corresponding to the new route.
-    /// 5. Updates the focus behavior using a `FocusBuilder` and sets the focus to the respective state.
-    ///
-    /// # Errors
-    /// - Logs errors related to loading workflows or opening workflow inputs if the operations fail.
-    ///
-    /// # Side Effects
-    /// - Updates internal state fields:
-    ///   * `current_route` - Tracks the currently active route.
-    ///   * `main_view` - Holds the new route's component as a boxed trait object.
-    ///   * `focus` - Responsible for managing the focus and is updated dynamically based on the route.
-    ///
-    /// # Example
-    /// ```rust
-    /// let mut app = MyApp::new();
-    /// app.set_current_route(Route::Palette);
-    /// ```
-    pub fn set_current_route(&mut self, route: Route) {
-        if matches!(route, Route::WorkflowRun) && self.workflows.run_view_state().is_none() {
-            self.append_log_message("Workflow run view unavailable; falling back to workflow list.");
-            return self.set_current_route(Route::Workflows);
-        }
-
-        let (view, state): (Box<dyn Component>, Box<&dyn HasFocus>) = match route {
-            Route::Browser => (Box::new(BrowserComponent), Box::new(&self.browser)),
-            Route::Palette => (Box::new(PaletteComponent::default()), Box::new(&self.palette)),
-            Route::Plugins => (Box::new(PluginsComponent::default()), Box::new(&self.plugins)),
-            Route::WorkflowInputs => {
-                if let Err(error) = self.open_workflow_inputs() {
-                    self.append_log_message(format!("Failed to open workflow inputs: {error}"));
-                }
-
-                (Box::new(WorkflowInputsComponent), Box::new(&self.workflows))
-            }
-            Route::Workflows => {
-                if let Err(error) = self.workflows.ensure_loaded(&self.ctx.command_registry) {
-                    self.append_log_message(format!("Failed to load workflows: {error}"));
-                }
-                (Box::new(WorkflowsComponent), Box::new(&self.workflows))
-            }
-            Route::WorkflowRun => (Box::new(RunViewComponent::default()), Box::new(&self.workflows)),
-        };
-
-        self.current_route = self.nav_bar.set_route(route);
-        self.main_view = Some(view);
-        self.focus = FocusBuilder::build_for(self);
-        self.focus.focus(*state);
-    }
-
-    /// Update the open modal kind (use None to clear).
-    pub fn set_open_modal_kind(&mut self, modal: Option<Modal>) {
-        if let Some(modal_kind) = modal.clone() {
-            let modal_view: (Box<dyn Component>, Box<dyn Fn(Rect) -> Rect>) = match modal_kind {
-                Modal::Help => (Box::new(HelpComponent::default()), Box::new(|rect| centered_rect(80, 70, rect))),
-                Modal::Results(exec_outcome) => {
-                    let mut table = TableComponent::default();
-                    table.handle_message(self, &Msg::ExecCompleted(exec_outcome));
-                    (Box::new(table), Box::new(|rect| centered_rect(96, 90, rect)))
-                }
-                Modal::LogDetails => (
-                    Box::new(LogDetailsComponent::default()),
-                    Box::new(|rect| centered_rect(80, 70, rect)),
-                ),
-                Modal::PluginDetails => (
-                    Box::new(PluginsDetailsComponent::default()),
-                    Box::new(|rect| centered_rect(90, 80, rect)),
-                ),
-                Modal::WorkflowCollector => {
-                    let component: Box<dyn Component> = Box::new(WorkflowCollectorComponent::default());
-                    let layout: Box<dyn Fn(Rect) -> Rect> = if self.workflows.manual_entry_state().is_some() {
-                        Box::new(|rect| centered_rect(45, 35, rect))
-                    } else {
-                        Box::new(|rect| centered_rect(96, 90, rect))
-                    };
-                    (component, layout)
-                }
-            };
-            self.open_modal = Some(modal_view);
-            // save the current focus to restore when the modal is closed
-            self.transient_focus_id = self.focus.focused().map(|focus| focus.widget_id());
-        } else {
-            self.open_modal = None;
-        }
-        self.open_modal_kind = modal;
-    }
-
-    pub fn restore_focus(&mut self) {
-        if let Some(id) = self.transient_focus_id
-            && self.open_modal.is_none()
-        {
-            self.focus.by_widget_id(id);
-            self.transient_focus_id = None;
-        } else {
-            self.focus.first();
-        }
+        vec![
+            Effect::WorkflowRunRequested {
+                request: Box::new(request.clone()),
+            },
+            Effect::SwitchTo(Route::WorkflowRun),
+        ]
     }
 }
 

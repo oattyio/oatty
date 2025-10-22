@@ -29,16 +29,16 @@ pub fn validate_candidate_value(candidate: &Value, validation: &WorkflowInputVal
 
     match candidate {
         Value::String(text) => {
-            if let Some(min_length) = validation.min_length {
-                if text.chars().count() < min_length {
-                    return Err(format!("value must be at least {} characters", min_length));
-                }
+            if let Some(min_length) = validation.min_length
+                && text.chars().count() < min_length
+            {
+                return Err(format!("value must be at least {} characters", min_length));
             }
 
-            if let Some(max_length) = validation.max_length {
-                if text.chars().count() > max_length {
-                    return Err(format!("value must be at most {} characters", max_length));
-                }
+            if let Some(max_length) = validation.max_length
+                && text.chars().count() > max_length
+            {
+                return Err(format!("value must be at most {} characters", max_length));
             }
 
             if let Some(pattern) = &validation.pattern {
@@ -68,7 +68,7 @@ fn json_values_match(expected: &Value, candidate: &Value) -> bool {
     match (expected, candidate) {
         (Value::String(expected_text), Value::String(candidate_text)) => expected_text == candidate_text,
         (Value::String(expected_text), other) => expected_text == &other.to_string(),
-        (other, Value::String(candidate_text)) => other.to_string() == *candidate_text,
+        (other, Value::String(candidate_text)) => other == &candidate_text.to_string(),
         _ => false,
     }
 }

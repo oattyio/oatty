@@ -540,8 +540,8 @@ mod tests {
 
     #[test]
     fn plugins_table_component_constructs() {
-        let component = PluginsTableComponent::default();
-        assert_eq!(component, PluginsTableComponent::default());
+        let component = PluginsTableComponent;
+        assert_eq!(component, PluginsTableComponent);
     }
 
     #[test]

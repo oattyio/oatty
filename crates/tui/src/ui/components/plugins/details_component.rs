@@ -637,14 +637,3 @@ fn format_tool<'a>(theme: &dyn Theme, tool: &'a PluginToolSummary, area: Rect) -
 
     ListItem::new(lines)
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn plugins_details_component_constructs() {
-        let _component = PluginsDetailsComponent::default();
-        assert!(true);
-    }
-}

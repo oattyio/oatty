@@ -842,6 +842,7 @@ pub enum PluginEngineError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::McpServer;
     use crate::config::McpConfig;
     use serde_json::{Value, json};
     use url::Url;
@@ -1199,10 +1200,12 @@ mod tests {
     #[tokio::test]
     async fn test_engine_registers_tags_from_config() {
         let mut cfg = McpConfig::default();
-        let mut server = crate::config::McpServer::default();
-        server.base_url = Some(Url::parse("https://example.com").unwrap());
-        server.tags = Some(vec!["alpha".into(), "beta".into()]);
-        server.disabled = Some(true);
+        let server = McpServer {
+            base_url: Some(Url::parse("https://example.com").unwrap()),
+            tags: Some(vec!["alpha".into(), "beta".into()]),
+            disabled: Some(true),
+            ..Default::default()
+        };
         cfg.mcp_servers.insert("svc".into(), server);
 
         let registry = Arc::new(Mutex::new(CommandRegistry {

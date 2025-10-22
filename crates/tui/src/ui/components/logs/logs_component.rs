@@ -293,9 +293,8 @@ impl LogsComponent {
 
 impl Component for LogsComponent {
     fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-        match msg {
-            Msg::ExecCompleted(outcome) => app.logs.process_general_execution_result(outcome),
-            _ => {}
+        if let Msg::ExecCompleted(outcome) = msg {
+            app.logs.process_general_execution_result(outcome)
         }
         Vec::new()
     }
@@ -403,7 +402,7 @@ impl Component for LogsComponent {
             .logs
             .entries
             .iter()
-            .map(|l| ListItem::new(self.styled_line(&*app.ctx.theme, l)))
+            .map(|l| ListItem::from(self.styled_line(&*app.ctx.theme, l)))
             .collect();
 
         // Configure the main log list widget

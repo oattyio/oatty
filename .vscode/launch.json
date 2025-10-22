@@ -1,0 +1,205 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug CLI - TUI Mode",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--package=heroku-cli",
+                    "--bin=heroku-cli"
+                ],
+                "filter": {
+                    "name": "heroku-cli",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "RUST_BACKTRACE": "1",
+                "HEROKU_LOG": "debug",
+                "TUI_THEME": "ansi256",
+                "FEATURE_WORKFLOWS": "1"
+            }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug CLI - Apps List",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--package=heroku-cli",
+                    "--bin=heroku-cli"
+                ],
+                "filter": {
+                    "name": "heroku-cli",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "apps",
+                "list"
+            ],
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "RUST_BACKTRACE": "1",
+                "HEROKU_LOG": "debug"
+            }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug CLI - Apps Info",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--package=heroku-cli",
+                    "--bin=heroku-cli"
+                ],
+                "filter": {
+                    "name": "heroku-cli",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "apps",
+                "info",
+                "${input:appName}"
+            ],
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "RUST_BACKTRACE": "1",
+                "HEROKU_LOG": "debug"
+            }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug CLI - Custom Command",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--package=heroku-cli",
+                    "--bin=heroku-cli"
+                ],
+                "filter": {
+                    "name": "heroku-cli",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "RUST_BACKTRACE": "1",
+                "HEROKU_LOG": "debug"
+            },
+            "preLaunchTask": "rust: custom-command-prompt"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug Registry Generator",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--package=heroku-registry-gen",
+                    "--bin=heroku-registry-gen"
+                ],
+                "filter": {
+                    "name": "heroku-registry-gen",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "--json",
+                "schemas/heroku-schema.enhanced.json",
+                "target/debug-manifest.json"
+            ],
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "RUST_BACKTRACE": "1"
+            }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug Unit Test (Current File)",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--lib",
+                    "--package=${input:packageName}"
+                ],
+                "filter": {
+                    "name": "${input:testName}",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "RUST_BACKTRACE": "1"
+            }
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug All Tests in Workspace",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--workspace",
+                    "--no-run"
+                ]
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "envFile": "${workspaceFolder}/.env",
+            "env": {
+                "RUST_BACKTRACE": "1"
+            }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "appName",
+            "type": "promptString",
+            "description": "Enter the Heroku app name",
+            "default": "my-app"
+        },
+        {
+            "id": "packageName",
+            "type": "pickString",
+            "description": "Select the package to test",
+            "options": [
+                "heroku-cli",
+                "heroku-tui",
+                "heroku-registry",
+                "heroku-registry-gen",
+                "heroku-engine",
+                "heroku-api",
+                "heroku-util",
+                "heroku-types",
+                "heroku-mcp"
+            ],
+            "default": "heroku-cli"
+        },
+        {
+            "id": "testName",
+            "type": "promptString",
+            "description": "Enter the test name (or leave empty for all tests)",
+            "default": ""
+        }
+    ]
+}

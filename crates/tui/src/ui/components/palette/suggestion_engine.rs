@@ -1,5 +1,5 @@
 use heroku_types::{CommandExecution, CommandSpec, ItemKind, SuggestionItem};
-use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
+use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged, truncate_with_ellipsis};
 use std::sync::Arc;
 
 use heroku_engine::provider::{PendingProviderFetch, ProviderSuggestionSet, ValueProvider};
@@ -308,29 +308,34 @@ fn suggest_commands(commands: &[CommandSpec], prefix: &str) -> Vec<SuggestionIte
         return items;
     }
 
+    let mut exec_lengths = vec![];
+    let mut matched = vec![];
     for command in commands {
-        let CommandSpec {
-            group, name, execution, ..
-        } = command;
-        let executable = if name.is_empty() {
-            group.to_string()
-        } else {
-            format!("{} {}", group, name)
+        let executable = command.canonical_id();
+        if let Some(score) = fuzzy_score(&executable, prefix) {
+            exec_lengths.push(executable.len());
+            matched.push((score, command));
+        }
+    }
+    exec_lengths.sort();
+    exec_lengths.pop();
+    exec_lengths.remove(0);
+    let max_len = exec_lengths.iter().sum::<usize>().div_ceil(matched.len()).clamp(20, 30) + 2;
+
+    for (score, command) in matched {
+        let executable = command.canonical_id();
+        let exec_type = match command.execution {
+            CommandExecution::Http { .. } => "[CMD]",
+            CommandExecution::Mcp(..) => "[MCP]",
         };
 
-        if let Some(score) = fuzzy_score(&executable, prefix) {
-            let exec_type = match execution {
-                CommandExecution::Http { .. } => "[CMD]",
-                CommandExecution::Mcp(..) => "[MCP]",
-            };
-            items.push(SuggestionItem {
-                display: format!("{:<32} {} {:<98}", executable, exec_type, command.summary),
-                insert_text: executable,
-                kind: ItemKind::Command,
-                meta: None,
-                score,
-            });
-        }
+        items.push(SuggestionItem {
+            display: format!("{:<max_len$} {} {:<98}", truncate_with_ellipsis(executable.as_str(), max_len - 2), exec_type, command.summary),
+            insert_text: executable,
+            kind: ItemKind::Command,
+            meta: None,
+            score,
+        });
     }
     items
 }

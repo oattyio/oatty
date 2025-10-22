@@ -199,15 +199,15 @@ impl Component for RunViewComponent {
             app.append_log_message("Logs shortcut not yet wired for the run view.");
         }
 
-        if let Some(request) = focus_request {
-            if let Some(run_state) = app.workflows.run_view_state() {
-                match request {
-                    FocusRequest::StepsTable => app.focus.focus(run_state.steps_focus_flag()),
-                    FocusRequest::OutputsTable => app.focus.focus(run_state.outputs_focus_flag()),
-                    FocusRequest::DetailPane => app.focus.focus(run_state.detail_focus_flag()),
-                    FocusRequest::CancelButton => app.focus.focus(run_state.cancel_button_focus_flag()),
-                    FocusRequest::PauseButton => app.focus.focus(run_state.pause_button_focus_flag()),
-                }
+        if let Some(request) = focus_request
+            && let Some(run_state) = app.workflows.run_view_state()
+        {
+            match request {
+                FocusRequest::StepsTable => app.focus.focus(run_state.steps_focus_flag()),
+                FocusRequest::OutputsTable => app.focus.focus(run_state.outputs_focus_flag()),
+                FocusRequest::DetailPane => app.focus.focus(run_state.detail_focus_flag()),
+                FocusRequest::CancelButton => app.focus.focus(run_state.cancel_button_focus_flag()),
+                FocusRequest::PauseButton => app.focus.focus(run_state.pause_button_focus_flag()),
             }
         }
         effects
@@ -320,7 +320,7 @@ impl Component for RunViewComponent {
             };
             let columns = Layout::horizontal(column_spec).split(body_area);
 
-            if let Some(steps_area) = columns.get(0).copied() {
+            if let Some(steps_area) = columns.first().copied() {
                 render_steps_table(frame, steps_area, theme, run_state, &mut self.steps_view);
                 layout_state.set_steps_area(steps_area);
                 mouse_targets.push((steps_area, RunViewMouseTarget::StepsTable));
@@ -350,7 +350,7 @@ impl Component for RunViewComponent {
             };
             let rows = Layout::vertical(body_spec).split(body_area);
 
-            if let Some(steps_area) = rows.get(0).copied() {
+            if let Some(steps_area) = rows.first().copied() {
                 render_steps_table(frame, steps_area, theme, run_state, &mut self.steps_view);
                 layout_state.set_steps_area(steps_area);
                 mouse_targets.push((steps_area, RunViewMouseTarget::StepsTable));
@@ -390,31 +390,31 @@ impl Component for RunViewComponent {
         if run_state.detail_focus_flag().get() {
             return build_hint_spans(
                 theme,
-                &[("Esc", " Close detail "), ("↑/↓", " Navigate detail "), ("Tab", " Cycle focus ")],
+                &[(" Esc", " Close detail "), ("↑/↓", " Navigate detail "), (" Tab", " Cycle focus ")],
             );
         }
 
         if run_state.cancel_button_focus_flag().get() {
             return build_hint_spans(
                 theme,
-                &[("←/→", " Switch button "), ("Enter", " Cancel run "), ("Tab", " Cycle focus ")],
+                &[(" ←/→", " Switch button "), (" Enter", " Cancel run "), (" Tab", " Cycle focus ")],
             );
         }
 
         if run_state.pause_button_focus_flag().get() {
             let label = pause_button_label(run_state.status());
-            return build_hint_spans(theme, &[("←/→", " Switch button "), ("Enter", label), ("Tab", " Cycle focus ")]);
+            return build_hint_spans(theme, &[(" ←/→", " Switch button "), (" Enter", label), (" Tab", " Cycle focus ")]);
         }
 
         build_hint_spans(
             theme,
             &[
-                ("Esc", " Close detail "),
-                ("↑/↓", " Navigate "),
-                ("Enter", " Toggle detail "),
-                ("L", " View logs "),
+                (" Esc", " Close detail "),
+                (" ↑/↓", " Navigate "),
+                (" Enter", " Toggle detail "),
+                (" L", " View logs "),
                 ("T", " Toggle layout "),
-                ("Tab", " Cycle focus "),
+                (" Tab", " Cycle focus "),
             ],
         )
     }

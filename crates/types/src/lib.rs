@@ -815,6 +815,8 @@ pub mod messaging {
     #[derive(Debug, Clone)]
     #[allow(clippy::enum_variant_names)]
     pub enum Effect {
+        /// Log a message
+        Log(String),
         /// Request to run the current command in the palette
         /// with the hydrated command string and u64 hash of the request.
         Run {
@@ -864,7 +866,7 @@ pub mod messaging {
         /// Request execution of a workflow run.
         WorkflowRunRequested {
             /// Run configuration describing the workflow and context.
-            request: WorkflowRunRequest,
+            request: Box<WorkflowRunRequest>,
         },
         /// Send a control command to an in-flight workflow run.
         WorkflowRunControl {

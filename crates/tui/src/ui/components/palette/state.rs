@@ -833,26 +833,24 @@ impl PaletteState {
 
         self.finalize_suggestions(items.as_mut_slice(), theme);
         // Preserve run hint ghost when suggestions are empty
-        if self.suggestions.is_empty() && self.ghost_text.is_none() {
-            if tokens.len() >= 2 {
-                let group = tokens[0].clone();
-                let name = tokens[1].clone();
-                let Some(spec) = self
-                    .registry
-                    .lock()
-                    .ok()
-                    .and_then(|lock| find_by_group_and_cmd(&lock.commands, group.as_str(), name.as_str()).ok())
-                else {
-                    return pending_fetches;
-                };
+        if self.suggestions.is_empty() && self.ghost_text.is_none() && tokens.len() >= 2 {
+            let group = tokens[0].clone();
+            let name = tokens[1].clone();
+            let Some(spec) = self
+                .registry
+                .lock()
+                .ok()
+                .and_then(|lock| find_by_group_and_cmd(&lock.commands, group.as_str(), name.as_str()).ok())
+            else {
+                return pending_fetches;
+            };
 
-                let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
-                let (user_flags, user_args, _flag_values) = parse_user_flags_args(&spec, parts);
-                let positionals_complete = user_args.len() >= spec.positional_args.len();
-                let required_remaining = required_flags_remaining(&spec, &user_flags);
-                if positionals_complete && !required_remaining {
-                    self.ghost_text = Some(" press Enter to run".to_string());
-                }
+            let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
+            let (user_flags, user_args, _flag_values) = parse_user_flags_args(&spec, parts);
+            let positionals_complete = user_args.len() >= spec.positional_args.len();
+            let required_remaining = required_flags_remaining(&spec, &user_flags);
+            if positionals_complete && !required_remaining {
+                self.ghost_text = Some(" press Enter to run".to_string());
             }
         }
         pending_fetches
@@ -933,13 +931,12 @@ impl PaletteState {
         filtered.sort_by(|a, b| a.value.updated_at.cmp(&b.value.updated_at));
 
         for record in filtered {
-            if let HistoryScope::PaletteCommand { command_id } = record.key.scope {
-                if let Some(input) = record.value.value.as_str() {
-                    if !input.trim().is_empty() {
-                        self.push_history_if_needed(input);
-                        self.stored_commands.insert(command_id.clone(), record.value);
-                    }
-                }
+            if let HistoryScope::PaletteCommand { command_id } = record.key.scope
+                && let Some(input) = record.value.value.as_str()
+                && !input.trim().is_empty()
+            {
+                self.push_history_if_needed(input);
+                self.stored_commands.insert(command_id.clone(), record.value);
             }
         }
     }
@@ -981,16 +978,16 @@ impl PaletteState {
     /// # Arguments
     ///
     /// * `execution_outcome` - The result of the command execution
-    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &Box<ExecOutcome>) -> Vec<Effect> {
+    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &ExecOutcome) -> Vec<Effect> {
         let mut effects = Vec::new();
-        let (value, request_id) = match execution_outcome.as_ref() {
-            ExecOutcome::Http(_, _, value, _, request_id) => (value.clone(), request_id.clone()),
-            ExecOutcome::Mcp(_, value, request_id) => (value.clone(), request_id.clone()),
+        let (value, request_id) = match execution_outcome {
+            ExecOutcome::Http(_, _, value, _, request_id) => (value.clone(), request_id),
+            ExecOutcome::Mcp(_, value, request_id) => (value.clone(), request_id),
             _ => return effects,
         };
 
         // nothing to do
-        if !self.cmd_exec_hash.is_some_and(|h| h == request_id) || value.is_null() {
+        if self.cmd_exec_hash.is_none_or(|h| h != *request_id) || value.is_null() {
             return effects;
         }
 
@@ -1005,7 +1002,7 @@ impl PaletteState {
         }
 
         self.reduce_clear_all();
-        effects.push(Effect::ShowModal(Modal::Results(execution_outcome.clone())));
+        effects.push(Effect::ShowModal(Modal::Results(Box::new(execution_outcome.clone()))));
 
         effects
     }

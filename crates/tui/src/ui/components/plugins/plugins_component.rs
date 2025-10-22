@@ -47,7 +47,7 @@ pub struct PluginsComponent {
 impl Component for PluginsComponent {
     fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
         if let Msg::ExecCompleted(outcome) = msg {
-            return app.plugins.handle_execution_completion(*&outcome);
+            return app.plugins.handle_execution_completion(outcome);
         }
         Vec::new()
     }
@@ -403,21 +403,5 @@ impl PluginsComponent {
                 app.plugins.logs_open = false;
             }
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Tests that the PluginsComponent can be constructed successfully.
-    ///
-    /// This is a basic smoke test to ensure that the component can be instantiated
-    /// without panicking and that all its fields are properly initialized.
-    #[test]
-    fn plugins_component_constructs_successfully() {
-        let _component = PluginsComponent::default();
-        // If we reach this point, the component was constructed successfully
-        assert!(true);
     }
 }

@@ -2,10 +2,13 @@ use crate::app::App;
 use crate::ui::components::component::Component;
 use crate::ui::theme::theme_helpers as th;
 use crate::ui::theme::theme_helpers::create_spans_with_match;
+use anyhow::{anyhow, Result};
 use crossterm::event::{KeyCode, KeyEvent};
+use heroku_engine::WorkflowRunState;
 use heroku_types::Effect::SwitchTo;
 use heroku_types::workflow::RuntimeWorkflow;
-use heroku_types::{Effect, Route};
+use heroku_types::{validate_candidate_value, Effect, Msg, Route, WorkflowRunEvent, WorkflowRunStatus};
+use heroku_util::{value_contains_secret, value_is_meaningful, workflow_input_uses_history, HistoryKey};
 use ratatui::widgets::ListItem;
 use ratatui::{
     Frame,
@@ -14,12 +17,14 @@ use ratatui::{
     text::{Line, Span},
     widgets::{List, Paragraph, Wrap},
 };
+use tracing::warn;
 
 /// Renders the workflow picker view, including search, filtered listing, and footer hints.
 #[derive(Debug, Default)]
 pub struct WorkflowsComponent;
 
 impl WorkflowsComponent {
+
     fn handle_search_key(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         // Only handle here when the search field is active, mirroring browser behavior
         if !app.workflows.f_search.get() {
@@ -179,6 +184,137 @@ impl WorkflowsComponent {
         }
         summary
     }
+
+    fn handle_workflow_run_event(&mut self, app: &mut App, run_id: String, event: WorkflowRunEvent) {
+        let persist_history = matches!(
+            &event,
+            WorkflowRunEvent::RunCompleted {
+                status: WorkflowRunStatus::Succeeded,
+                ..
+            }
+        );
+
+        let log_messages = app.workflows.apply_run_event(&run_id, event, &*app.ctx.theme);
+        for message in log_messages {
+            app.append_log_message(message);
+        }
+
+        if persist_history {
+            self.persist_successful_run_history(app);
+        }
+    }
+
+    /// Populate run state inputs with history-backed defaults when available.
+    fn seed_history_defaults(&mut self, app: &mut App, run_state: &mut WorkflowRunState) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        for (input_name, definition) in &run_state.workflow.inputs {
+            if !workflow_input_uses_history(definition) {
+                continue;
+            }
+
+            let key = HistoryKey::workflow_input(
+                app.ctx.history_profile_id.clone(),
+                run_state.workflow.identifier.clone(),
+                input_name.clone(),
+            );
+
+            match app.ctx.history_store.get_latest_value(&key) {
+                Ok(Some(stored)) => {
+                    if stored.value.is_null() || value_contains_secret(&stored.value) {
+                        continue;
+                    }
+                    if let Some(validation) = &definition.validate
+                        && let Err(error) = validate_candidate_value(&stored.value, validation)
+                    {
+                        let message = format!("History default for '{}' failed validation: {}", input_name, error);
+                        warn!(
+                            input = %input_name,
+                            workflow = %run_state.workflow.identifier,
+                            "{}",
+                            message
+                        );
+                        effects.push(Effect::Log(message));
+                        continue;
+                    }
+
+                    run_state.run_context.inputs.insert(input_name.clone(), stored.value);
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    let message = format!("Failed to load history default for '{}': {}", input_name, error);
+                    warn!(
+                        input = %input_name,
+                        workflow = %run_state.workflow.identifier,
+                        "{}",
+                        message
+                    );
+                    effects.push(Effect::Log(message));
+                }
+            }
+        }
+        effects
+    }
+
+    /// Open the interactive input view for the selected workflow.
+    pub fn open_workflow_inputs(&mut self, app: &mut App) -> Result<()> {
+        let Some(workflow) = app.workflows.selected_workflow() else {
+            return Err(anyhow!("No workflow selected"));
+        };
+        let mut run_state = WorkflowRunState::new(workflow.clone());
+        self.seed_history_defaults(app, &mut run_state);
+        run_state.apply_input_defaults();
+        run_state.evaluate_input_providers()?;
+        app.workflows.begin_inputs_session(run_state);
+        Ok(())
+    }
+
+    /// Persist successful workflow input values back to history storage.
+    pub fn persist_successful_run_history(&self, app: &mut App) {
+        let Some(run_state) = app.workflows.active_run_state() else {
+            return;
+        };
+
+        for (input_name, definition) in &run_state.workflow.inputs {
+            if !workflow_input_uses_history(definition) {
+                continue;
+            }
+
+            let Some(value) = run_state.run_context.inputs.get(input_name) else {
+                continue;
+            };
+
+            if !value_is_meaningful(value) || value_contains_secret(value) {
+                continue;
+            }
+
+            if let Some(validation) = &definition.validate
+                && let Err(error) = validate_candidate_value(value, validation)
+            {
+                warn!(
+                    input = %input_name,
+                    workflow = %run_state.workflow.identifier,
+                    error = %error,
+                    "skipping history persistence for value failing validation"
+                );
+                continue;
+            }
+
+            let key = HistoryKey::workflow_input(
+                app.ctx.history_profile_id.clone(),
+                run_state.workflow.identifier.clone(),
+                input_name.clone(),
+            );
+
+            if let Err(error) = app.ctx.history_store.insert_value(key, value.clone()) {
+                warn!(
+                    input = %input_name,
+                    workflow = %run_state.workflow.identifier,
+                    error = %error,
+                    "failed to persist workflow history value"
+                );
+            }
+        }
+    }
 }
 
 impl Component for WorkflowsComponent {
@@ -217,13 +353,24 @@ impl Component for WorkflowsComponent {
             KeyCode::Up => app.workflows.select_prev(),
             KeyCode::Enter => {
                 if app.workflows.selected_workflow().is_some() {
-                    effects.push(SwitchTo(Route::WorkflowInputs));
+                    if let Err(error) = self.open_workflow_inputs(app) {
+                        effects.push(Effect::Log(format!("Failed to open workflow inputs: {error}")));
+                    } else {
+                        effects.push(SwitchTo(Route::WorkflowInputs));
+                    }
                 }
             }
             _ => {}
         }
 
         effects
+    }
+
+    fn handle_message(&mut self, app: &mut App, msg: &heroku_types::Msg) -> Vec<Effect> {
+        if let Msg::WorkflowRunEvent { run_id, event } = msg {
+            self.handle_workflow_run_event(app, run_id.clone(), event.clone());
+        }
+        Vec::new()
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
