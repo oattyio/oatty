@@ -3,12 +3,15 @@ title: "CI Manual Run"
 description: "Trigger a Heroku CI test run for a given pipeline and branch."
 inputs:
   pipeline:
+    name: "Pipeline"
     provider: pipelines list
     select: { value_field: id, display_field: name }
   branch:
+    name: "Branch"
     description: "Git branch to test"
     type: string
   commit_sha:
+    name: "Commit SHA"
     description: "Optional commit SHA to test"
     type: string
     optional: true

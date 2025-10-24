@@ -3,15 +3,19 @@ title: "Private space with OTel"
 description: "Create a Private Space and configure an OpenTelemetry drain for traces, metrics, and logs."
 inputs:
   team:
+    name: "Team"
     provider: teams list
     select: { value_field: id, display_field: name }
   space_name:
+    name: "Space Name"
     description: "Name of new space"
     type: string
   region:
+    name: "Region"
     provider: regions list
     select: { value_field: name, display_field: name }
   otlp_endpoint:
+    name: "OTLP Endpoint"
     description: "OpenTelemetry collector endpoint URL"
     type: string
 steps:

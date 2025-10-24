@@ -164,6 +164,8 @@ Buttons: [Cancel]   [Run ✓]
 - **Left column** is a compact step list rendered like the runtime List view in
   `workflows/input.rs` (status prefix, provider label, required badge, highlight marker) without
   inlining provider result tables, and each step stays on a single line for quick scanning.
+- Input labels prefer the authored `name` field on each input definition and fall back to
+  the identifier when it is omitted, keeping existing manifests backwards compatible.
 - **Right column** summarizes workflow readiness: completion state, next unresolved step,
   currently selected values (show `— pending —` for unresolved items), cache freshness, and
   any validation errors.
@@ -192,25 +194,25 @@ string field. The modal keeps the compact centered layout but swaps the value ar
 based on the workflow schema:
 
 ```
-┌─ Manual entry: pipeline ───────────────────────────────────────────────┐
+┌─ Manual entry: Pipeline ───────────────────────────────────────────────┐
 │ Enter a value                                                          │
 │  Value: my-pipeline                                                    │
 └────────────────────────────────────────────────────────────────────────┘
  Esc cancel  •  Enter confirm
 
-┌─ Manual entry: leader_instance_count ──────────────────────────────────┐
+┌─ Manual entry: Leader Instance Count ──────────────────────────────────┐
 │ Enter an integer                                                       │
 │  Value: 2                                                              │
 └────────────────────────────────────────────────────────────────────────┘
  Esc cancel  •  Enter confirm
 
-┌─ Manual entry: configure_follower ─────────────────────────────────────┐
+┌─ Manual entry: Configure Follower ─────────────────────────────────────┐
 │ Select true or false                                                   │
 │ [True ✓]   [False]                                                     │
 └────────────────────────────────────────────────────────────────────────┘
  Esc cancel  •  Space toggle  •  Enter confirm
 
-┌─ Manual entry: follower_operation ─────────────────────────────────────┐
+┌─ Manual entry: Follower Operation ─────────────────────────────────────┐
 │ Choose from the available options                                      │
 │ ┌────────────────────────────────────────────────────────────────────┐ │
 │ │ create                                                             │ │

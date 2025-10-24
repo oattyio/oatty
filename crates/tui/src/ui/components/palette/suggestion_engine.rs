@@ -330,7 +330,12 @@ fn suggest_commands(commands: &[CommandSpec], prefix: &str) -> Vec<SuggestionIte
         };
 
         items.push(SuggestionItem {
-            display: format!("{:<max_len$} {} {:<98}", truncate_with_ellipsis(executable.as_str(), max_len - 2), exec_type, command.summary),
+            display: format!(
+                "{:<max_len$} {} {:<98}",
+                truncate_with_ellipsis(executable.as_str(), max_len - 2),
+                exec_type,
+                command.summary
+            ),
             insert_text: executable,
             kind: ItemKind::Command,
             meta: None,

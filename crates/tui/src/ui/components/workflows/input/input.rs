@@ -540,6 +540,15 @@ fn build_input_rows(app: &App) -> Vec<WorkflowInputRow> {
     rows
 }
 
+fn friendly_input_label(run_state: &WorkflowRunState, identifier: &str) -> String {
+    run_state
+        .workflow
+        .inputs
+        .get(identifier)
+        .map(|definition| definition.display_name(identifier).into_owned())
+        .unwrap_or_else(|| identifier.to_string())
+}
+
 fn build_input_row(run_state: &WorkflowRunState, name: &str, definition: &WorkflowInputDefinition) -> WorkflowInputRow {
     let required = definition.is_required();
 
@@ -547,6 +556,7 @@ fn build_input_row(run_state: &WorkflowRunState, name: &str, definition: &Workfl
         WorkflowValueProvider::Id(id) => id.clone(),
         WorkflowValueProvider::Detailed(detail) => detail.id.clone(),
     });
+    let display_name = definition.display_name(name).into_owned();
 
     let provider_state = run_state.provider_state_for(name);
     let mut status = InputStatus::Pending;
@@ -615,7 +625,7 @@ fn build_input_row(run_state: &WorkflowRunState, name: &str, definition: &Workfl
     let description = definition.description.clone();
 
     WorkflowInputRow {
-        name: name.to_string(),
+        name: display_name,
         required,
         provider_label,
         status,
@@ -689,7 +699,8 @@ fn dependency_block_reason(run_state: &WorkflowRunState, definition: &WorkflowIn
                 if let Some(input_name) = binding.from_input.as_deref()
                     && !run_state.run_context.inputs.get(input_name).is_some_and(has_meaningful_input_value)
                 {
-                    return Some(format!("Waiting on input '{input_name}'"));
+                    let label = friendly_input_label(run_state, input_name);
+                    return Some(format!("Waiting on input '{label}'"));
                 }
                 if let Some(step_id) = binding.from_step.as_deref()
                     && !run_state.run_context.steps.get(step_id).is_some_and(has_meaningful_input_value)
@@ -705,7 +716,8 @@ fn dependency_block_reason(run_state: &WorkflowRunState, definition: &WorkflowIn
                         .get(&input_name)
                         .is_some_and(has_meaningful_input_value)
                     {
-                        return Some(format!("Waiting on input '{input_name}'"));
+                        let label = friendly_input_label(run_state, &input_name);
+                        return Some(format!("Waiting on input '{label}'"));
                     }
                 }
                 for step_id in extract_template_steps(template) {

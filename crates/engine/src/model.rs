@@ -21,6 +21,7 @@
 //!
 //! let workflow_spec = WorkflowSpec {
 //!     workflow: Some("deploy-app".to_string()),
+//!     name: Some("Deploy App".to_string()),
 //!     inputs: HashMap::new(),
 //!     steps: vec![
 //!         StepSpec {
@@ -67,6 +68,13 @@ pub struct WorkflowSpec {
     /// field is typically derived from the key in the workflows map.
     #[serde(default)]
     pub workflow: Option<String>,
+    /// Optional human-friendly display name for the workflow.
+    ///
+    /// When present, user interfaces prefer this value instead of the identifier when
+    /// presenting the workflow to an operator. Consumers should gracefully fall back to
+    /// `workflow` should this value be missing or blank.
+    #[serde(default)]
+    pub name: Option<String>,
 
     /// Declarative input definitions for the workflow
     ///
@@ -99,6 +107,12 @@ pub struct InputSpec {
     /// and any constraints or requirements.
     #[serde(default)]
     pub description: Option<String>,
+    /// Optional human-friendly label for the input.
+    ///
+    /// Workflows can supply this value to present nicer labels than the raw identifier.
+    /// Consumers must fall back to the identifier when this field is absent or blank.
+    #[serde(default)]
+    pub name: Option<String>,
 
     /// Data type of the input parameter
     ///
@@ -350,6 +364,7 @@ mod tests {
         let mut bundle = WorkflowBundle::default();
         let workflow_spec = WorkflowSpec {
             workflow: Some("test-workflow".to_string()),
+            name: Some("Test workflow".to_string()),
             inputs: HashMap::new(),
             steps: vec![],
         };
@@ -382,6 +397,7 @@ mod tests {
     fn test_input_spec_with_provider() {
         let input = InputSpec {
             description: Some("Select an application".to_string()),
+            name: Some("Application".to_string()),
             r#type: Some("string".to_string()),
             provider: Some("apps:list".to_string()),
             provider_args: Some(

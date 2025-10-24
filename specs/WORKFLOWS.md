@@ -25,12 +25,14 @@ description: "Creates an app, provisions Postgres, seeds config."
 
 inputs:
   app_name:
+    name: "App Name"
     description: "App name shown in dashboards and CLI"
     type: string
     validate:
       required: true
       pattern: "^[a-z](?:[a-z0-9-]{1,28}[a-z0-9])$"
   region:
+    name: "Region"
     provider: regions list
     select:
       value_field: name
@@ -80,6 +82,7 @@ lower snake case and match the identifiers you reference via `${{ inputs.<name> 
 | Field            | Type                         | Default        | Purpose |
 |------------------|------------------------------|----------------|---------|
 | `description`    | string                       | `null`         | Copy shown in the input list and detail pane. |
+| `name`           | string                       | `null`         | Optional human-friendly label rendered in the UI. The identifier is used when this field is absent or blank. |
 | `type`           | string                       | `null`         | Optional hint (`string`, `number`, `boolean`, `array<uuid>`, etc.) used by manual entry UX. |
 | `provider`       | string \| object             | `null`         | Value provider identifier. May be a shorthand string (`apps list`) or a detailed object `{ id, field }`. |
 | `select`         | object                       | `{}`           | Describes how to extract fields from provider records (see §3.2). |
@@ -96,7 +99,9 @@ lower snake case and match the identifiers you reference via `${{ inputs.<name> 
 | `enum` / `enumerated_values` | array<JSON>     | `[]`           | Author-supplied literal options used by manual entry UI and validation. |
 
 Inputs without a `provider` rely on manual entry; the TUI surfaces controls derived from `type`,
-`enum`, and `validate`.
+`enum`, and `validate`. Provide a `name` for each input when you want a friendlier label than the identifier;
+when omitted, the identifier is reused in the UI.
+
 
 ### 3.2 Provider Selection Metadata
 

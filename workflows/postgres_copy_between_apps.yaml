@@ -3,20 +3,24 @@ title: "Postgres Copy Between Apps"
 description: "Copy data from a source app's database to a target app's database. Useful for refreshing staging from production."
 inputs:
   source_app:
+    name: "Source App"
     description: "App to copy FROM"
     provider: apps list
     select: { value_field: name, display_field: name }
   source_db:
+    name: "Source DB"
     description: "Source DB attachment on source app (e.g., HEROKU_POSTGRESQL_IVORY_URL)"
     provider: apps addons:list
     depends_on:
       app: ${{ inputs.source_app }}
     select: { value_field: name, display_field: name }
   target_app:
+    name: "Target App"
     description: "App to copy TO"
     provider: apps list
     select: { value_field: name, display_field: name }
   target_db:
+    name: "Target DB"
     description: "Target DB attachment on target app"
     provider: apps addons:list
     depends_on:

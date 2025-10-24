@@ -3,9 +3,11 @@ title: "Postgres backup and Download"
 description: "Capture a logical backup for a selected database, wait for completion, and download it."
 inputs:
   app:
+    name: "App"
     provider: apps list
     select: { value_field: name, display_field: name }
   database:
+    name: "Database"
     description: "Database attachment name to back up (e.g., HEROKU_POSTGRESQL_IVORY_URL)"
     provider: apps addons:list
     depends_on:

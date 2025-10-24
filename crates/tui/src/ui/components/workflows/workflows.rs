@@ -2,13 +2,13 @@ use crate::app::App;
 use crate::ui::components::component::Component;
 use crate::ui::theme::theme_helpers as th;
 use crate::ui::theme::theme_helpers::create_spans_with_match;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use crossterm::event::{KeyCode, KeyEvent};
 use heroku_engine::WorkflowRunState;
 use heroku_types::Effect::SwitchTo;
 use heroku_types::workflow::RuntimeWorkflow;
-use heroku_types::{validate_candidate_value, Effect, Msg, Route, WorkflowRunEvent, WorkflowRunStatus};
-use heroku_util::{value_contains_secret, value_is_meaningful, workflow_input_uses_history, HistoryKey};
+use heroku_types::{Effect, Msg, Route, WorkflowRunEvent, WorkflowRunStatus, validate_candidate_value};
+use heroku_util::{HistoryKey, value_contains_secret, value_is_meaningful, workflow_input_uses_history};
 use ratatui::widgets::ListItem;
 use ratatui::{
     Frame,
@@ -24,7 +24,6 @@ use tracing::warn;
 pub struct WorkflowsComponent;
 
 impl WorkflowsComponent {
-
     fn handle_search_key(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         // Only handle here when the search field is active, mirroring browser behavior
         if !app.workflows.f_search.get() {
@@ -185,7 +184,8 @@ impl WorkflowsComponent {
         summary
     }
 
-    fn handle_workflow_run_event(&mut self, app: &mut App, run_id: String, event: WorkflowRunEvent) {
+    fn handle_workflow_run_event(&mut self, app: &mut App, run_id: String, event: WorkflowRunEvent) -> Vec<Effect> {
+        let mut effects = Vec::new();
         let persist_history = matches!(
             &event,
             WorkflowRunEvent::RunCompleted {
@@ -196,12 +196,14 @@ impl WorkflowsComponent {
 
         let log_messages = app.workflows.apply_run_event(&run_id, event, &*app.ctx.theme);
         for message in log_messages {
-            app.append_log_message(message);
+            effects.push(Effect::Log(message));
         }
 
         if persist_history {
             self.persist_successful_run_history(app);
         }
+
+        effects
     }
 
     /// Populate run state inputs with history-backed defaults when available.
@@ -318,6 +320,13 @@ impl WorkflowsComponent {
 }
 
 impl Component for WorkflowsComponent {
+    fn handle_message(&mut self, app: &mut App, msg: &heroku_types::Msg) -> Vec<Effect> {
+        if let Msg::WorkflowRunEvent { run_id, event } = msg {
+            return self.handle_workflow_run_event(app, run_id.clone(), event.clone());
+        }
+        Vec::new()
+    }
+
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         // Handle tab/backtab to switch focus between the search field and the list
         match key.code {
@@ -364,13 +373,6 @@ impl Component for WorkflowsComponent {
         }
 
         effects
-    }
-
-    fn handle_message(&mut self, app: &mut App, msg: &heroku_types::Msg) -> Vec<Effect> {
-        if let Msg::WorkflowRunEvent { run_id, event } = msg {
-            self.handle_workflow_run_event(app, run_id.clone(), event.clone());
-        }
-        Vec::new()
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {

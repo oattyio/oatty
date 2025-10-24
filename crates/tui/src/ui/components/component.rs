@@ -240,6 +240,12 @@ pub trait Component: Debug {
     fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
         vec![area]
     }
+
+    /// Notifies the view that the route is about to exit
+    /// and this view will be dereferenced.
+    fn on_route_exit(&mut self, app: &mut App) -> Vec<Effect> {
+        Vec::new()
+    }
 }
 /// Finds the index of the button from a list of rectangular target areas that contains the given mouse coordinates.
 ///

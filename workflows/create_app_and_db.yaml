@@ -3,11 +3,13 @@ title: "Create app with DB"
 description: "Create an app, provision Postgres, and seed config."
 inputs:
   app_name:
+    name: "App Name"
     description: "Name for the application"
     type: string
     validate:
       pattern: "^[a-z](?:[a-z0-9-]{1,28}[a-z0-9])$"
   region:
+    name: "Region"
     provider: regions list
     select:
       value_field: name
@@ -16,6 +18,7 @@ inputs:
       from: literal
       value: "us"
   addon_plan:
+    name: "Addon Plan"
     description: "Heroku Postgres plan"
     provider:
       id: addon-services plans:list

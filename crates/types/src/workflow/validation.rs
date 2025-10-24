@@ -68,7 +68,13 @@ fn json_values_match(expected: &Value, candidate: &Value) -> bool {
     match (expected, candidate) {
         (Value::String(expected_text), Value::String(candidate_text)) => expected_text == candidate_text,
         (Value::String(expected_text), other) => expected_text == &other.to_string(),
-        (other, Value::String(candidate_text)) => other == &candidate_text.to_string(),
+        (other, Value::String(candidate_text)) => {
+            if let Ok(parsed) = serde_json::from_str::<Value>(candidate_text) {
+                other == &parsed
+            } else {
+                other == &Value::String(candidate_text.clone())
+            }
+        }
         _ => false,
     }
 }

@@ -25,7 +25,7 @@ use heroku_engine::{ValueProvider, WorkflowRunState};
 use heroku_mcp::PluginEngine;
 use heroku_registry::CommandRegistry;
 use heroku_types::workflow::validate_candidate_value;
-use heroku_types::{Effect, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
+use heroku_types::{Effect, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest};
 use heroku_util::{
     DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, value_contains_secret, value_is_meaningful,
     workflow_input_uses_history,
@@ -238,7 +238,9 @@ impl App<'_> {
             Msg::Tick => self.handle_tick_message(),
             Msg::Resize(..) => vec![],
             Msg::CopyToClipboard(text) => vec![Effect::CopyToClipboardRequested(text.clone())],
-            Msg::ProviderValuesReady { provider_id, cache_key } => self.handle_provider_values_ready(provider_id.clone(), cache_key.clone()),
+            Msg::ProviderValuesReady { provider_id, cache_key } => {
+                self.handle_provider_values_ready(provider_id.clone(), cache_key.clone())
+            }
             _ => Vec::new(),
         }
     }
@@ -272,25 +274,6 @@ impl App<'_> {
         }
 
         vec![]
-    }
-
-    fn handle_workflow_run_event(&mut self, run_id: String, event: WorkflowRunEvent) {
-        let persist_history = matches!(
-            &event,
-            WorkflowRunEvent::RunCompleted {
-                status: WorkflowRunStatus::Succeeded,
-                ..
-            }
-        );
-
-        let log_messages = self.workflows.apply_run_event(&run_id, event, &*self.ctx.theme);
-        for message in log_messages {
-            self.append_log_message(message);
-        }
-
-        if persist_history {
-            self.persist_successful_run_history();
-        }
     }
 
     fn effects_for_pending_fetches(&self, fetches: Vec<PendingProviderFetch>) -> Vec<Effect> {

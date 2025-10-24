@@ -3,11 +3,13 @@ title: "App Bootstrap"
 description: "Create a new Heroku app, configure basics, provision an addon, and optionally add a buildpack."
 inputs:
   app_name:
+    name: "App Name"
     description: "Name for the new app"
     type: string
     validate:
       pattern: "^[a-z](?:[a-z0-9-]{1,28}[a-z0-9])$"
   region:
+    name: "Region"
     description: "Region to create the app in"
     provider: regions list
     select: { value_field: name, display_field: name }
@@ -15,6 +17,7 @@ inputs:
       from: literal
       value: "us"
   stack:
+    name: "Stack"
     description: "Stack to use (e.g., heroku-22)"
     type: string
     provider: stacks list
@@ -23,10 +26,12 @@ inputs:
       from: literal
       value: "heroku-22"
   choose_addon:
+    name: "Choose Addon"
     description: "Addon to provision (e.g., heroku-postgresql)"
     provider: addon-services list
     select: { value_field: name, display_field: name }
   addon_plan:
+    name: "Addon Plan"
     description: "The plan of the chosen addon (e.g., heroku-postgresql:hobby-dev)"
     provider: addon-services plans:list
     select: { value_field: name, display_field: name }
@@ -35,10 +40,12 @@ inputs:
     depends_on:
       choose_addon: ${{ inputs.choose_addon }}
   config_vars:
+    name: "Config Vars"
     description: "Config vars to set on the app"
     type: object
     optional: true
   buildpack:
+    name: "Buildpack"
     description: "Optional buildpack to add"
     type: string
     optional: true

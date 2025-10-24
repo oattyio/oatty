@@ -418,6 +418,11 @@ impl Component for RunViewComponent {
             ],
         )
     }
+
+    fn on_route_exit(&mut self, app: &mut App) -> Vec<Effect> {
+        app.workflows.end_inputs_session();
+        Vec::new()
+    }
 }
 
 fn render_empty(frame: &mut Frame, area: Rect, theme: &dyn Theme) {

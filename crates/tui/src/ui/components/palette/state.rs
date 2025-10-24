@@ -35,7 +35,7 @@ use heroku_util::{
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use ratatui::text::Line;
-use ratatui::widgets::ListItem;
+use ratatui::widgets::{ListItem, ListState};
 use serde_json::Value;
 use tracing::warn;
 
@@ -70,6 +70,8 @@ pub struct PaletteState {
     container_focus: FocusFlag,
     /// Focus flag for the input field
     pub f_input: FocusFlag,
+    /// list state for the suggestion list
+    pub list_state: ListState,
     /// The current input text
     input: String,
     /// Current cursor position (byte index)
@@ -78,8 +80,6 @@ pub struct PaletteState {
     ghost_text: Option<String>,
     /// Whether the suggestions popup is currently open
     is_suggestions_open: bool,
-    /// Index of the currently selected suggestion
-    suggestion_index: usize,
     /// List of current suggestions
     suggestions: Vec<SuggestionItem>,
     /// Pre-rendered suggestion list items for efficient display
@@ -118,7 +118,7 @@ impl PaletteState {
             cursor_position: 0,
             ghost_text: None,
             is_suggestions_open: false,
-            suggestion_index: 0,
+            list_state: ListState::default(),
             suggestions: Vec::new(),
             rendered_suggestions: Vec::new(),
             error_message: None,
@@ -167,11 +167,6 @@ impl PaletteState {
         self.suggestions.len()
     }
 
-    /// Get the currently selected suggestion index
-    pub fn suggestion_index(&self) -> usize {
-        self.suggestion_index
-    }
-
     /// Derive the command spec from the current input tokens ("group sub").
     fn selected_command_from_input(&self, commands: &[CommandSpec]) -> Option<CommandSpec> {
         let tokens: Vec<String> = lex_shell_like(&self.input);
@@ -186,7 +181,7 @@ impl PaletteState {
     /// Derive the command spec from the currently selected suggestion when it
     /// is a command.
     fn selected_command_from_suggestion(&self, commands: &[CommandSpec]) -> Option<CommandSpec> {
-        let item = self.suggestions.get(self.suggestion_index)?;
+        let item = self.suggestions.get(self.list_state.selected()?)?;
         if !matches!(item.kind, ItemKind::Command) {
             return None;
         }
@@ -259,8 +254,6 @@ impl PaletteState {
         self.is_suggestions_open = false;
         self.error_message = None;
         self.ghost_text = None;
-        self.suggestion_index = 0;
-        // Preserve history; exit browsing mode
         self.history_index = None;
         self.draft_input = None;
         self.cmd_exec_hash = None;
@@ -282,7 +275,6 @@ impl PaletteState {
     pub fn apply_suggestions(&mut self, suggestions: Vec<SuggestionItem>) {
         self.suggestions = suggestions;
         self.rendered_suggestions.clear();
-        self.suggestion_index = self.suggestion_index.min(self.suggestions.len().saturating_sub(1));
         self.is_suggestions_open = !self.suggestions.is_empty();
         self.apply_ghost_text();
     }
@@ -292,7 +284,6 @@ impl PaletteState {
         self.suggestions.clear();
         self.rendered_suggestions.clear();
         self.is_suggestions_open = false;
-        self.suggestion_index = 0;
         self.ghost_text = None;
         self.provider_loading = false;
     }
@@ -326,12 +317,6 @@ impl PaletteState {
     /// Set the popup open state
     pub(crate) fn set_is_suggestions_open(&mut self, open: bool) {
         self.is_suggestions_open = open;
-    }
-
-    /// Set the selected suggestion index
-    pub(crate) fn set_selected(&mut self, selected: usize) {
-        self.suggestion_index = selected;
-        self.apply_ghost_text();
     }
 
     /// Insert text at the end of the input with a separating space and advance
@@ -432,9 +417,9 @@ impl PaletteState {
                 .find(|(_, item)| !matches!(item.meta.as_deref(), Some("history") | Some("loading")))
                 .map(|(idx, _)| idx)
                 .unwrap_or(0);
-            self.suggestion_index = preferred_index;
+            self.list_state.select(Some(preferred_index));
         } else {
-            self.suggestion_index = 0;
+            self.list_state.select(None);
         }
 
         self.refresh_rendered_suggestions(theme);
@@ -473,7 +458,7 @@ impl PaletteState {
         }
         self.ghost_text = self
             .suggestions
-            .get(self.suggestion_index)
+            .get(self.list_state.selected().unwrap_or(0))
             .map(|top| ghost_remainder(&self.input, self.cursor_position, &top.insert_text));
     }
 
@@ -877,7 +862,7 @@ impl PaletteState {
         self.suggestions.retain(|item| item.meta.as_deref() != Some("loading"));
         let loading_removed = previous_length != self.suggestions.len();
 
-        self.suggestion_index = self.suggestion_index.min(self.suggestions.len().saturating_sub(1));
+        self.list_state.select_previous();
         if self.suggestions.is_empty() {
             self.rendered_suggestions.clear();
             self.is_suggestions_open = false;
@@ -1212,7 +1197,7 @@ mod tests {
         state.set_input("apps info --app ".to_string());
         state.provider_loading = true;
         state.is_suggestions_open = true;
-        state.suggestion_index = 1;
+        state.list_state.select(Some(1));
         state.suggestions = vec![
             SuggestionItem {
                 display: "loading more…".to_string(),

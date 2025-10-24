@@ -3,22 +3,27 @@ title: "Postgres Next-Gen Pool Create"
 description: "Create and activate a Next-Gen Heroku Postgres compute pool, then wait for it to become available."
 inputs:
   app:
+    name: "App"
     provider: apps list
     select: { value_field: name, display_field: name }
   addon:
+    name: "Addon"
     description: "Heroku Postgres addon name or ID (Next-Gen performance tier)."
     provider: apps addons:list
     depends_on:
       app: ${{ inputs.app }}
     select: { value_field: name, display_field: name }
   pool_name:
+    name: "Pool Name"
     description: "Unique name for the new compute pool (e.g., writer-east)."
     type: string
   instance_count:
+    name: "Instance Count"
     description: "Number of compute instances to provision in the pool."
     type: integer
     enum: [1, 2, 3]
   performance_level:
+    name: "Performance Level"
     description: "Performance level for the pool (e.g., 32G-Performance). Use the lookup step below if unsure."
     provider:
       id: data postgres:levels:info

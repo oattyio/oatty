@@ -3,15 +3,18 @@ title: "Enable Review Apps"
 description: "Enable Review Apps on a pipeline with desired auto‑deploy and auto‑destroy settings."
 inputs:
   pipeline:
+    name: "Pipeline"
     provider: pipelines list
     select: { value_field: id, display_field: name }
   autodestroy:
+    name: "Auto Destroy"
     description: "Automatically destroy review apps after branch deletion"
     type: boolean
     default:
       from: literal
       value: true
   autodeploy:
+    name: "Auto Deploy"
     description: "Automatically deploy review apps for opened PRs"
     type: boolean
     default:

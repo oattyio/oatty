@@ -3,21 +3,25 @@ title: "Rollback app and Scale"
 description: "Quickly roll back an app to a prior release and scale dynos, then tail logs."
 inputs:
   app:
+    name: "App"
     provider: apps list
     select: { value_field: name, display_field: name }
   release:
+    name: "Release"
     description: "Target release version to roll back to (e.g., v123)"
     provider: apps releases list
     select: { value_field: version, display_field: version }
     depends_on:
       app: ${{ inputs.app }}
   formation:
+    name: "Formation"
     description: "Dyno formation to scale"
     type: string
     default:
       from: literal
       value: "web"
   quantity:
+    name: "Quantity"
     description: "Number of dynos to scale to"
     type: number
     default:

@@ -3,18 +3,23 @@ title: "Pipeline Bootstrap"
 description: "Create a pipeline and couple apps to development, staging, and production stages."
 inputs:
   pipeline_name:
+    name: "Pipeline Name"
     description: "Name for pipeline"
     type: string
   team:
+    name: "Team"
     provider: teams list
     select: { value_field: id, display_field: name }
   dev_app:
+    name: "Dev App"
     provider: apps list
     select: { value_field: name, display_field: name }
   staging_app:
+    name: "Staging App"
     provider: apps list
     select: { value_field: name, display_field: name }
   prod_app:
+    name: "Prod App"
     provider: apps list
     select: { value_field: name, display_field: name }
 steps:

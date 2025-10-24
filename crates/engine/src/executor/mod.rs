@@ -117,6 +117,7 @@ impl Default for StepResult {
 ///
 /// let spec = WorkflowSpec {
 ///     workflow: Some("demo".into()),
+///     name: Some("Demo".into()),
 ///     inputs: Default::default(),
 ///     steps: vec![StepSpec {
 ///         id: "s1".into(),
@@ -437,6 +438,7 @@ mod tests {
     fn prepare_plan_interpolates_inputs() {
         let spec = WorkflowSpec {
             workflow: Some("demo".into()),
+            name: Some("Demo".into()),
             inputs: Default::default(),
             steps: vec![StepSpec {
                 id: "s1".into(),
@@ -525,6 +527,7 @@ mod tests {
     fn prepare_plan_respects_dependencies_even_when_declared_out_of_order() {
         let spec = WorkflowSpec {
             workflow: Some("demo".into()),
+            name: Some("Demo".into()),
             inputs: Default::default(),
             steps: vec![
                 StepSpec {
@@ -552,6 +555,7 @@ mod tests {
     fn prepare_plan_errors_on_unknown_dependency() {
         let spec = WorkflowSpec {
             workflow: Some("demo".into()),
+            name: Some("Demo".into()),
             inputs: Default::default(),
             steps: vec![StepSpec {
                 id: "only".into(),
@@ -570,6 +574,7 @@ mod tests {
     fn prepare_plan_errors_on_cycle() {
         let spec = WorkflowSpec {
             workflow: Some("demo".into()),
+            name: Some("Demo".into()),
             inputs: Default::default(),
             steps: vec![
                 StepSpec {
@@ -606,6 +611,7 @@ mod tests {
     fn dependent_steps_skip_when_prerequisite_fails() {
         let spec = WorkflowSpec {
             workflow: Some("demo".into()),
+            name: Some("Demo".into()),
             inputs: Default::default(),
             steps: vec![
                 StepSpec {

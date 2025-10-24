@@ -89,7 +89,11 @@ impl<'a> ResultsTableView<'a> {
             .widths(widths)
             .header(Row::new(headers.to_owned()).style(th::table_header_row_style(theme)))
             .column_spacing(1)
-            .row_highlight_style(if focused { th::table_selected_style(theme) } else { Style::default() })
+            .row_highlight_style(if focused {
+                th::table_selected_style(theme)
+            } else {
+                Style::default()
+            })
             .style(th::panel_style(theme));
 
         let selected_in_view = selected.saturating_sub(start);

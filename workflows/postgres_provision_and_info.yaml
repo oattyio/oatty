@@ -3,9 +3,11 @@ title: "Postgres Provision and Info"
 description: "Provision a Heroku Postgres database for an app, wait until it's ready, and display database info."
 inputs:
   app:
+    name: "App"
     provider: apps list
     select: { value_field: name, display_field: name }
   plan:
+    name: "Plan"
     description: "Heroku Postgres plan (e.g., heroku-postgresql:hobby-dev)"
     provider: addons plans:list
     select: { value_field: name, display_field: name }

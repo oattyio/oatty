@@ -989,7 +989,8 @@ impl WorkflowState {
             return;
         };
         let existing_value = run_state.run_context.inputs.get(name);
-        let state = ManualEntryState::from_definition(def, name, existing_value);
+        let label = def.display_name(name).into_owned();
+        let state = ManualEntryState::from_definition(def, &label, existing_value);
         self.manual_entry = Some(state);
     }
 

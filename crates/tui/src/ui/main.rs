@@ -85,15 +85,20 @@ impl MainView {
     /// let mut app = MyApp::new();
     /// app.set_current_route(Route::Palette);
     /// ```
-    pub fn set_current_route(&mut self, app: &mut App, route: Route) {
+    pub fn set_current_route(&mut self, app: &mut App, route: Route) -> Vec<Effect> {
         if matches!(route, Route::WorkflowRun) && app.workflows.run_view_state().is_none() {
             app.append_log_message("Workflow run view unavailable; falling back to workflow list.");
             return self.set_current_route(app, Route::Workflows);
         }
 
+        let mut effects = Vec::new();
+        if let Some(mut old_view) = self.content_view.take() {
+            effects.extend(old_view.on_route_exit(app));
+        }
+
         let (view, state): (Box<dyn Component>, Box<&dyn HasFocus>) = match route {
             Route::Browser => (Box::new(BrowserComponent), Box::new(&app.browser)),
-            Route::Palette => (Box::new(PaletteComponent), Box::new(&app.palette)),
+            Route::Palette => (Box::new(PaletteComponent::new()), Box::new(&app.palette)),
             Route::Plugins => (Box::new(PluginsComponent::default()), Box::new(&app.plugins)),
             Route::WorkflowInputs => (Box::new(WorkflowInputsComponent), Box::new(&app.workflows)),
             Route::Workflows => (Box::new(WorkflowsComponent), Box::new(&app.workflows)),
@@ -104,6 +109,8 @@ impl MainView {
         self.content_view = Some(view);
         app.focus = FocusBuilder::build_for(app);
         app.focus.focus(*state);
+
+        effects
     }
 
     /// Update the open modal kind (use None to clear).
@@ -144,7 +151,9 @@ impl MainView {
     }
 
     pub fn restore_focus(&mut self, app: &mut App) {
-        if let Some(id) = self.transient_focus_id && app.open_modal_kind.is_none() {
+        if let Some(id) = self.transient_focus_id
+            && app.open_modal_kind.is_none()
+        {
             app.focus.by_widget_id(id);
             self.transient_focus_id = None;
         } else {
@@ -154,6 +163,56 @@ impl MainView {
 }
 
 impl Component for MainView {
+    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+        let mut effects = app.update(msg);
+
+        effects.extend(self.nav_bar_view.handle_message(app, msg));
+        effects.extend(self.content_view.as_mut().map(|c| c.handle_message(app, msg)).unwrap_or_default());
+        effects.extend(self.logs_view.handle_message(app, msg));
+
+        effects
+    }
+
+    fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
+        if key.code == KeyCode::Char('l') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            app.logs.toggle_visible();
+            return Vec::new();
+        }
+
+        if let Some(target) = self.modal_view.as_mut() {
+            return target.0.handle_key_events(app, key);
+        }
+
+        if app.nav_bar.container_focus.get() {
+            return self.nav_bar_view.handle_key_events(app, key);
+        }
+
+        if app.logs.is_visible && app.logs.container_focus.get() {
+            return self.logs_view.handle_key_events(app, key);
+        }
+
+        if let Some(content) = self.content_view.as_mut() {
+            return content.handle_key_events(app, key);
+        }
+
+        Vec::new()
+    }
+
+    fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
+        let mut effects = Vec::new();
+
+        effects.extend(self.nav_bar_view.handle_mouse_events(app, mouse));
+        effects.extend(
+            self.content_view
+                .as_mut()
+                .map(|c| c.handle_mouse_events(app, mouse))
+                .unwrap_or_default(),
+        );
+        effects.extend(self.logs_view.handle_mouse_events(app, mouse));
+
+        effects
+    }
+
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         // Fill the entire background with the theme's background color for consistency
         let bg_fill = Paragraph::new("").style(Style::default().bg(app.ctx.theme.roles().background));
@@ -199,56 +258,6 @@ impl Component for MainView {
                 modal.render(frame, modal_area, app);
             }
         }
-    }
-
-    fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
-        if key.code == KeyCode::Char('l') && key.modifiers.contains(KeyModifiers::CONTROL) {
-            app.logs.toggle_visible();
-            return Vec::new();
-        }
-
-        if let Some(target) = self.modal_view.as_mut() {
-            return target.0.handle_key_events(app, key);
-        }
-
-        if app.nav_bar.container_focus.get() {
-            return self.nav_bar_view.handle_key_events(app, key);
-        }
-
-        if app.logs.is_visible && app.logs.container_focus.get() {
-            return self.logs_view.handle_key_events(app, key);
-        }
-
-        if let Some(content) = self.content_view.as_mut() {
-            return content.handle_key_events(app, key);
-        }
-
-        Vec::new()
-    }
-
-    fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
-        let mut effects = Vec::new();
-
-        effects.extend(self.nav_bar_view.handle_mouse_events(app, mouse));
-        effects.extend(
-            self.content_view
-                .as_mut()
-                .map(|c| c.handle_mouse_events(app, mouse))
-                .unwrap_or_default(),
-        );
-        effects.extend(self.logs_view.handle_mouse_events(app, mouse));
-
-        effects
-    }
-
-    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-        let mut effects = app.update(msg);
-
-        effects.extend(self.nav_bar_view.handle_message(app, msg));
-        effects.extend(self.content_view.as_mut().map(|c| c.handle_message(app, msg)).unwrap_or_default());
-        effects.extend(self.logs_view.handle_message(app, msg));
-
-        effects
     }
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {

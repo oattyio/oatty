@@ -15,6 +15,7 @@ use serde_json::{Map as JsonMap, Value};
 pub fn workflow_spec_from_runtime(workflow: &RuntimeWorkflow) -> WorkflowSpec {
     WorkflowSpec {
         workflow: Some(workflow.identifier.clone()),
+        name: workflow.title.clone(),
         inputs: HashMap::new(),
         steps: workflow.steps.iter().map(step_definition_to_spec).collect(),
     }

@@ -3,19 +3,23 @@ title: "Pipeline Setup and Promote"
 description: "Create a staging/production pipeline, associate apps, and promote from staging to production."
 inputs:
   pipeline_name:
+    name: "Pipeline Name"
     description: "Name for the pipeline"
     type: string
   staging_app:
+    name: "Staging App"
     provider: apps list
     select: { value_field: name, display_field: name }
     description: "Name of the app to use for staging"
     type: string
   production_app:
+    name: "Production App"
     provider: apps list
     select: { value_field: name, display_field: name }
     description: "Name of the app to use for production"
     type: string
   region:
+    name: "Region"
     provider: regions list
     select: { value_field: name, display_field: name }
     default:

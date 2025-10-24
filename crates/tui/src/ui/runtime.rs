@@ -283,7 +283,7 @@ async fn process_effects(
         .extract_if(0.., |effect| matches!(effect, Effect::SwitchTo(_)))
         .collect::<Vec<Effect>>();
     if let Some(Effect::SwitchTo(route)) = switch_to_effect.pop() {
-        main_view.set_current_route(app, route);
+        effects.extend(main_view.set_current_route(app, route));
     }
     let mut show_modal_effect = effects
         .extract_if(0.., |effect| matches!(effect, Effect::ShowModal(_)))

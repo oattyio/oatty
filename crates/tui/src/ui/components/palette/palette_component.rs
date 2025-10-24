@@ -68,6 +68,9 @@ struct PaletteLayout {
 pub struct PaletteComponent;
 
 impl PaletteComponent {
+    pub fn new() -> Self {
+        Self::default()
+    }
     /// Creates the input paragraph widget with the current state.
     ///
     /// This function creates the input paragraph with throbber, input text, and
@@ -161,8 +164,8 @@ impl PaletteComponent {
     /// # Returns
     ///
     /// The suggestions list widget
-    fn create_suggestions_list<'a>(&'_ self, app: &'a App, theme: &dyn Theme) -> List<'a> {
-        List::new(app.palette.rendered_suggestions().to_vec())
+    fn create_suggestions_list<'a>(&'_ self, suggestions: &[ListItem<'static>], theme: &dyn Theme) -> List<'a> {
+        List::new(suggestions.to_vec())
             .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
             .style(th::panel_style(theme))
             .highlight_symbol("> ")
@@ -293,11 +296,11 @@ impl PaletteComponent {
     fn handle_suggestion_navigation(&self, app: &mut App, direction: KeyCode) {
         let len = app.palette.suggestions().len();
         if len > 0 {
-            let selected = app.palette.suggestion_index() as isize;
-            let delta = if direction == KeyCode::Down { 1isize } else { -1isize };
-            // Wrap around using modulus with length as isize
-            let new_selected = (selected + delta).rem_euclid(len as isize) as usize;
-            app.palette.set_selected(new_selected);
+            if direction == KeyCode::Down {
+                app.palette.list_state.select_next()
+            } else {
+                app.palette.list_state.select_previous()
+            };
             app.palette.apply_ghost_text();
         }
     }
@@ -324,8 +327,10 @@ impl PaletteComponent {
     /// Handles the Enter keypress.
     fn handle_enter(&self, app: &mut App) -> Vec<Effect> {
         let cmd = app.palette.input().to_string();
+        let selected_index = app.palette.list_state.selected().unwrap_or(0);
         if app.palette.is_suggestions_open()
-            && let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index())
+            && let Some(item) = app.palette.suggestions().get(selected_index)
+            && item.kind == ItemKind::Command
             && item.meta.as_deref() == Some("history")
             && item.insert_text.trim() != cmd.trim()
         {
@@ -352,7 +357,7 @@ impl PaletteComponent {
                 range_override: None,
                 request_hash: hash,
             }];
-        } else if let Some(item) = app.palette.suggestions().get(app.palette.suggestion_index()).cloned() {
+        } else if let Some(item) = app.palette.suggestions().get(selected_index).cloned() {
             match item.kind {
                 ItemKind::Command => {
                     // Replace input with command exec
@@ -369,7 +374,8 @@ impl PaletteComponent {
                     app.palette.apply_accept_non_command_suggestion(&item.insert_text);
                 }
             }
-            app.palette.set_selected(0);
+            app.palette.list_state.select(None);
+            app.palette.apply_ghost_text();
             app.palette.set_is_suggestions_open(false);
         }
         vec![]
@@ -562,18 +568,9 @@ impl Component for PaletteComponent {
             app.palette.error_message().is_none() && app.palette.is_suggestions_open() && !app.palette.suggestions().is_empty();
 
         if should_show_suggestions {
-            let suggestions_list = self.create_suggestions_list(app, theme);
-
-            // Update list state
-            let sel = if app.palette.suggestions().is_empty() {
-                None
-            } else {
-                Some(app.palette.suggestion_index().min(app.palette.suggestions().len() - 1))
-            };
-            let mut list_state = ListState::default();
-            list_state.select(sel);
-
-            frame.render_stateful_widget(suggestions_list, suggestions_area, &mut list_state);
+            let suggestions = app.palette.rendered_suggestions();
+            let suggestions_list = self.create_suggestions_list(suggestions, theme);
+            frame.render_stateful_widget(suggestions_list, suggestions_area, &mut app.palette.list_state);
         }
     }
 

@@ -742,7 +742,6 @@ pub fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -9,7 +9,7 @@ use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
-use std::collections::HashMap;
+use std::{borrow::Cow, collections::HashMap};
 
 pub mod validation;
 pub use validation::validate_candidate_value;
@@ -55,6 +55,9 @@ pub struct WorkflowInputDefinition {
     /// Descriptive text explaining the purpose of the input.
     #[serde(default)]
     pub description: Option<String>,
+    /// Optional human-friendly label rendered in UIs.
+    #[serde(default)]
+    pub name: Option<String>,
     /// Declares the primitive type (string, number, array, etc.).
     #[serde(default)]
     pub r#type: Option<String>,
@@ -107,6 +110,7 @@ impl Default for WorkflowInputDefinition {
     fn default() -> Self {
         Self {
             description: None,
+            name: None,
             r#type: None,
             provider: None,
             select: None,
@@ -537,6 +541,18 @@ impl WorkflowInputDefinition {
     pub fn is_required(&self) -> bool {
         !self.optional
     }
+
+    /// Returns the preferred human-readable label for this input.
+    ///
+    /// When the author supplied an explicit `name`, that value is returned after trimming. If the
+    /// field is missing or blank, the raw identifier is surfaced instead so callers never receive
+    /// an empty label.
+    pub fn display_name<'a>(&'a self, fallback: &'a str) -> Cow<'a, str> {
+        match self.name.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+            Some(label) => Cow::Owned(label.to_string()),
+            None => Cow::Borrowed(fallback),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -603,5 +619,23 @@ steps:
 
         let definition: WorkflowDefinition = serde_yaml::from_str(yaml).expect("parse workflow");
         assert_eq!(definition.steps[0].r#if.as_deref(), Some("${{ inputs.flag }}"));
+    }
+
+    #[test]
+    fn display_name_prefers_explicit_label() {
+        let mut definition = WorkflowInputDefinition::default();
+        definition.name = Some("Chosen Label".into());
+
+        let label = definition.display_name("fallback");
+        assert_eq!(label.as_ref(), "Chosen Label");
+    }
+
+    #[test]
+    fn display_name_falls_back_to_identifier_when_blank() {
+        let mut definition = WorkflowInputDefinition::default();
+        definition.name = Some("   ".into());
+
+        let label = definition.display_name("input_key");
+        assert_eq!(label.as_ref(), "input_key");
     }
 }
