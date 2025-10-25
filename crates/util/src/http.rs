@@ -130,7 +130,7 @@ pub fn strip_range_body_fields(mut body: Map<String, Value>) -> Map<String, Valu
 /// body.insert("order".to_string(), "desc".into());
 ///
 /// let header = build_range_header_from_body(&body).unwrap();
-/// assert_eq!(header, "name a..z; order=desc; max=100;");
+/// assert_eq!(header, "name a..z; order=desc, max=100;");
 /// ```
 pub fn build_range_header_from_body(body: &Map<String, Value>) -> Option<String> {
     fn clean_string(value: &Value) -> Option<String> {
@@ -225,13 +225,11 @@ pub fn status_error_message(status_code: u16) -> Option<String> {
 /// ```rust
 /// use heroku_util::http::parse_response_json;
 ///
-/// let (json, is_table_suitable) = parse_response_json(r#"{"name": "myapp"}"#);
+/// let json = parse_response_json(r#"{"name": "myapp"}"#);
 /// assert!(json.is_some());
-/// assert!(is_table_suitable);
 ///
-/// let (json, is_table_suitable) = parse_response_json("invalid json");
+/// let json = parse_response_json("invalid json");
 /// assert!(json.is_none());
-/// assert!(!is_table_suitable);
 /// ```
 pub fn parse_response_json(text: &str) -> Option<Value> {
     serde_json::from_str::<Value>(text).ok()
@@ -252,7 +250,7 @@ mod tests {
         body.insert("max".into(), Value::Number(Number::from(100)));
 
         let header = build_range_header_from_body(&body).expect("range header");
-        assert_eq!(header, "name app1..app9; order=desc; max=100;");
+        assert_eq!(header, "name app1..app9; order=desc, max=100;");
     }
 
     #[test]

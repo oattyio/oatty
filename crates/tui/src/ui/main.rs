@@ -1,5 +1,6 @@
 use crate::app::App;
 use crate::ui::components::palette::PaletteComponent;
+use crate::ui::components::theme_picker::ThemePickerComponent;
 use crate::ui::components::workflows::{RunViewComponent, WorkflowInputsComponent};
 use crate::ui::components::{BrowserComponent, PluginsComponent, WorkflowsComponent};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
@@ -97,11 +98,11 @@ impl MainView {
         }
 
         let (view, state): (Box<dyn Component>, Box<&dyn HasFocus>) = match route {
-            Route::Browser => (Box::new(BrowserComponent), Box::new(&app.browser)),
+            Route::Browser => (Box::new(BrowserComponent::default()), Box::new(&app.browser)),
             Route::Palette => (Box::new(PaletteComponent::new()), Box::new(&app.palette)),
             Route::Plugins => (Box::new(PluginsComponent::default()), Box::new(&app.plugins)),
             Route::WorkflowInputs => (Box::new(WorkflowInputsComponent), Box::new(&app.workflows)),
-            Route::Workflows => (Box::new(WorkflowsComponent), Box::new(&app.workflows)),
+            Route::Workflows => (Box::new(WorkflowsComponent::default()), Box::new(&app.workflows)),
             Route::WorkflowRun => (Box::new(RunViewComponent::default()), Box::new(&app.workflows)),
         };
 
@@ -131,6 +132,16 @@ impl MainView {
                     Box::new(PluginsDetailsComponent),
                     ModalLayout(Box::new(|rect| centered_rect(90, 80, rect))),
                 ),
+                Modal::ThemePicker => {
+                    if !app.ctx.theme_picker_available {
+                        return;
+                    }
+                    app.theme_picker.set_active_theme(&app.ctx.active_theme_id);
+                    (
+                        Box::new(ThemePickerComponent::default()),
+                        ModalLayout(Box::new(|rect| centered_rect(70, 80, rect))),
+                    )
+                }
                 Modal::WorkflowCollector => {
                     let component: Box<dyn Component> = Box::new(WorkflowCollectorComponent::default());
                     let layout = if app.workflows.manual_entry_state().is_some() {
@@ -174,13 +185,20 @@ impl Component for MainView {
     }
 
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
+        if let Some(target) = self.modal_view.as_mut() {
+            return target.0.handle_key_events(app, key);
+        }
+
         if key.code == KeyCode::Char('l') && key.modifiers.contains(KeyModifiers::CONTROL) {
             app.logs.toggle_visible();
             return Vec::new();
         }
 
-        if let Some(target) = self.modal_view.as_mut() {
-            return target.0.handle_key_events(app, key);
+        if key.code == KeyCode::Char('t') && key.modifiers.contains(KeyModifiers::CONTROL) {
+            if app.ctx.theme_picker_available {
+                return vec![Effect::ShowModal(Modal::ThemePicker)];
+            }
+            return Vec::new();
         }
 
         if app.nav_bar.container_focus.get() {
@@ -200,6 +218,9 @@ impl Component for MainView {
 
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
         let mut effects = Vec::new();
+        if let Some(target) = self.modal_view.as_mut() {
+            return target.0.handle_mouse_events(app, mouse);
+        }
 
         effects.extend(self.nav_bar_view.handle_mouse_events(app, mouse));
         effects.extend(
@@ -262,7 +283,6 @@ impl Component for MainView {
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let mut hint_spans: Vec<Span> = vec![Span::styled("Hints: ", app.ctx.theme.text_muted_style())];
-        hint_spans.extend(th::build_hint_spans(&*app.ctx.theme, &[("Ctrl+L", " Toggle logs ")]));
 
         if app.nav_bar.container_focus.get() {
             hint_spans.extend(self.nav_bar_view.get_hint_spans(app));
@@ -277,6 +297,11 @@ impl Component for MainView {
         if let Some(content) = self.content_view.as_ref() {
             hint_spans.extend(content.get_hint_spans(app));
         }
+
+        hint_spans.extend(th::build_hint_spans(
+            &*app.ctx.theme,
+            &[("Ctrl+L", " Toggle logs "), ("Ctrl+T", " Theme picker ")],
+        ));
 
         hint_spans
     }

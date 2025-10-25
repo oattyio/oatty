@@ -4,7 +4,7 @@ use heroku_types::{Effect, Modal, Route, WorkflowInputDefinition, WorkflowProvid
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::Modifier,
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Borders, List, ListItem, ListState, Paragraph, Wrap},
 };
@@ -12,7 +12,7 @@ use ratatui::{
 use crate::app::App;
 use crate::ui::components::component::Component;
 use crate::ui::components::workflows::input::state::WorkflowInputLayout;
-use crate::ui::components::workflows::view_utils::format_preview;
+use crate::ui::components::workflows::view_utils::{JsonSyntaxRole, classify_json_value, format_preview, style_for_role};
 use crate::ui::theme::{
     roles::Theme,
     theme_helpers::{self as th, ButtonRenderOptions},
@@ -312,15 +312,14 @@ fn render_inputs_list(frame: &mut Frame, area: Rect, app: &App, rows: &[Workflow
             InputStatus::Blocked => Span::styled(format!("{:<15}", "Waiting..."), theme.status_warning().add_modifier(Modifier::BOLD)),
         };
 
-        let name_style = if row.is_blocked() {
-            theme.text_muted_style().add_modifier(Modifier::DIM)
-        } else {
-            theme.text_primary_style()
-        };
+        let mut name_style: Style = theme.syntax_type_style();
+        if row.is_blocked() {
+            name_style = name_style.add_modifier(Modifier::DIM);
+        }
 
         let mut segments = vec![Span::styled(format!("{:<20}", row.name), name_style), status_span];
         if row.required {
-            segments.push(Span::styled("[required]", theme.text_secondary_style()));
+            segments.push(Span::styled("[required]", theme.syntax_keyword_style()));
         }
 
         if row.provider_label.is_some() {
@@ -337,7 +336,13 @@ fn render_inputs_list(frame: &mut Frame, area: Rect, app: &App, rows: &[Workflow
         if let Some(message) = &row.status_message
             && row.blocked_reason.as_ref() != Some(message)
         {
-            segments.push(Span::styled(message.to_string(), theme.text_muted_style()));
+            let message_style = match row.status {
+                InputStatus::Resolved => theme.text_muted_style(),
+                InputStatus::Pending => theme.text_muted_style(),
+                InputStatus::Error => theme.status_error(),
+                InputStatus::Blocked => theme.status_warning(),
+            };
+            segments.push(Span::styled(message.to_string(), message_style));
         }
 
         if row.is_blocked() {
@@ -386,20 +391,49 @@ fn render_input_details(frame: &mut Frame, area: Rect, app: &App, rows: &[Workfl
     // Selected values list
     let mut selected_lines: Vec<Line> = Vec::new();
     for row in rows {
-        let mut line_segments = vec![
-            Span::styled("  • ", theme.text_secondary_style()),
-            Span::styled(format!("{:<14}", row.name), theme.text_primary_style()),
-            Span::styled(" → ", theme.text_secondary_style()),
-        ];
+        let mut line_segments = vec![Span::styled("  • ", theme.text_secondary_style())];
 
+        let mut name_style: Style = theme.syntax_type_style();
         if row.is_blocked() {
-            let reason = row.blocked_reason.as_deref().unwrap_or("Waiting on dependencies");
-            line_segments.push(Span::styled("— blocked —", theme.status_warning()));
-            line_segments.push(Span::styled(format!(" {reason}"), theme.status_warning()));
-        } else if let Some(value) = row.current_value.as_deref() {
-            line_segments.push(Span::styled(value.to_string(), theme.status_success()));
-        } else {
-            line_segments.push(Span::styled("— pending —", theme.text_muted_style()));
+            name_style = name_style.add_modifier(Modifier::DIM);
+        }
+        line_segments.push(Span::styled(format!("{:<14}", row.name), name_style));
+        line_segments.push(Span::styled(" → ", theme.syntax_keyword_style()));
+
+        match row.status {
+            InputStatus::Resolved => {
+                line_segments.push(Span::styled("✓ ", theme.status_success()));
+                if let Some(preview) = &row.current_value {
+                    line_segments.push(Span::styled(preview.text.clone(), style_for_role(preview.role, theme)));
+                } else {
+                    line_segments.push(Span::styled("— pending —", theme.text_muted_style()));
+                }
+            }
+            InputStatus::Pending => {
+                line_segments.push(Span::styled("— pending —", theme.text_muted_style()));
+            }
+            InputStatus::Error => {
+                line_segments.push(Span::styled("✖ ", theme.status_error()));
+            }
+            InputStatus::Blocked => {
+                line_segments.push(Span::styled("— blocked —", theme.status_warning()));
+            }
+        }
+
+        if let Some(reason) = &row.blocked_reason {
+            line_segments.push(Span::styled(format!(" [{}]", reason), theme.status_warning()));
+        }
+
+        if let Some(message) = &row.status_message
+            && row.blocked_reason.as_ref() != Some(message)
+        {
+            let message_style = match row.status {
+                InputStatus::Resolved => theme.text_muted_style(),
+                InputStatus::Pending => theme.text_muted_style(),
+                InputStatus::Error => theme.status_error(),
+                InputStatus::Blocked => theme.status_warning(),
+            };
+            line_segments.push(Span::styled(format!(" {message}"), message_style));
         }
 
         selected_lines.push(Line::from(line_segments));
@@ -621,18 +655,27 @@ fn build_input_row(run_state: &WorkflowRunState, name: &str, definition: &Workfl
         }
     }
 
-    let current_value = raw_value.map(format_preview);
-    let description = definition.description.clone();
-
+    let current_value = raw_value.map(|value| WorkflowValuePreview::new(format_preview(value), classify_json_value(value)));
     WorkflowInputRow {
         name: display_name,
         required,
         provider_label,
         status,
         status_message,
-        description,
         current_value,
         blocked_reason,
+    }
+}
+
+#[derive(Debug, Clone)]
+struct WorkflowValuePreview {
+    text: String,
+    role: JsonSyntaxRole,
+}
+
+impl WorkflowValuePreview {
+    fn new(text: String, role: JsonSyntaxRole) -> Self {
+        Self { text, role }
     }
 }
 
@@ -643,8 +686,7 @@ struct WorkflowInputRow {
     provider_label: Option<String>,
     status: InputStatus,
     status_message: Option<String>,
-    description: Option<String>,
-    current_value: Option<String>,
+    current_value: Option<WorkflowValuePreview>,
     blocked_reason: Option<String>,
 }
 

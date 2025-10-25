@@ -1,14 +1,16 @@
 use crate::ui::components::common::TextInputState;
 use crate::ui::components::table::TableState;
 use crate::ui::components::workflows::collector::manual_entry::ManualEntryState;
+use crate::ui::components::workflows::collector::{
+    SelectorStatus, WorkflowCollectorFocus, WorkflowSelectorFieldMetadata, WorkflowSelectorLayoutState, WorkflowSelectorViewState,
+};
 use crate::ui::components::workflows::input::WorkflowInputViewState;
-use crate::ui::components::workflows::run::RunViewState;
+use crate::ui::components::workflows::list::WorkflowListState;
+use crate::ui::components::workflows::run::{RunViewState, StepFinishedData, WorkflowRunControlHandle};
 use crate::ui::theme::Theme;
-use anyhow::{Result, anyhow};
-use heroku_engine::workflow::document::build_runtime_catalog;
+use anyhow::Result;
 use heroku_engine::{ProviderBindingOutcome, WorkflowRunState};
-use heroku_registry::{CommandRegistry, feat_gate::feature_workflows, utils::find_by_group_and_cmd};
-use heroku_types::WorkflowProviderErrorPolicy;
+use heroku_registry::{CommandRegistry, utils::find_by_group_and_cmd};
 use heroku_types::{
     command::SchemaProperty,
     workflow::{
@@ -18,247 +20,16 @@ use heroku_types::{
 };
 use indexmap::IndexMap;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
-use ratatui::{layout::Rect, widgets::ListState};
-use serde_json::Value;
+use ratatui::layout::Rect;
+use ratatui::widgets::ListState;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::UnboundedSender;
-
-/// Maintains the workflow catalogue, filtered view, and list selection state for the picker UI.
-#[derive(Debug, Default)]
-pub struct WorkflowListState {
-    pub selected: usize,
-    pub f_list: FocusFlag,
-
-    workflows: Vec<RuntimeWorkflow>,
-    filtered_indices: Vec<usize>,
-    search_input: TextInputState,
-    list_state: ListState,
-    container_focus: FocusFlag,
-}
-
-impl WorkflowListState {
-    /// Creates a new workflow list state with default focus and selection values.
-    pub fn new() -> Self {
-        Self {
-            workflows: Vec::new(),
-            filtered_indices: Vec::new(),
-            search_input: TextInputState::new(),
-            selected: 0,
-            list_state: ListState::default(),
-            container_focus: FocusFlag::named("root.workflows"),
-            f_list: FocusFlag::named("root.workflows.list"),
-        }
-    }
-
-    /// Loads workflow definitions from the registry when the feature flag is enabled.
-    ///
-    /// The list is populated once, and later calls are inexpensive no-ops.
-    pub fn ensure_loaded(&mut self, registry: &Arc<Mutex<CommandRegistry>>) -> Result<()> {
-        if !feature_workflows() {
-            self.workflows.clear();
-            self.filtered_indices.clear();
-            self.search_input.set_input("");
-            self.search_input.set_cursor(0);
-            self.list_state.select(None);
-            return Ok(());
-        }
-
-        if self.workflows.is_empty() {
-            let definitions = &registry.lock().map_err(|_| anyhow!("could not lock registry"))?.workflows;
-
-            let catalog = build_runtime_catalog(definitions)?;
-            self.workflows = catalog.into_values().collect();
-            self.rebuild_filter();
-        }
-
-        Ok(())
-    }
-
-    /// Returns the selected workflow from the filtered list, if one is available.
-    pub fn selected_workflow(&self) -> Option<&RuntimeWorkflow> {
-        self.filtered_indices
-            .get(self.selected)
-            .and_then(|index| self.workflows.get(*index))
-    }
-
-    /// Advances the selection to the next visible workflow, wrapping cyclically.
-    pub fn select_next(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        self.selected = (self.selected + 1) % self.filtered_indices.len();
-        self.list_state.select(Some(self.selected));
-    }
-
-    /// Moves the selection to the previous visible workflow, wrapping cyclically.
-    pub fn select_prev(&mut self) {
-        if self.filtered_indices.is_empty() {
-            return;
-        }
-        if self.selected == 0 {
-            self.selected = self.filtered_indices.len() - 1;
-        } else {
-            self.selected -= 1;
-        }
-        self.list_state.select(Some(self.selected));
-    }
-
-    /// Exposes the internal list state for Ratatui rendering.
-    pub fn list_state(&mut self) -> &mut ListState {
-        &mut self.list_state
-    }
-
-    /// Returns the search query currently active for filtering.
-    pub fn search_query(&self) -> &str {
-        self.search_input.input()
-    }
-
-    /// Returns the current cursor (byte index) within the search query.
-    pub fn search_cursor(&self) -> usize {
-        self.search_input.cursor()
-    }
-
-    /// Move search cursor one character to the left (UTF‑8 safe).
-    pub fn move_search_left(&mut self) {
-        self.search_input.move_left();
-        // moving cursor alone does not affect filtering
-    }
-
-    /// Move search cursor one character to the right (UTF‑8 safe).
-    pub fn move_search_right(&mut self) {
-        self.search_input.move_right();
-    }
-
-    /// Appends a character to the search query and rebuilds the filtered view.
-    pub fn append_search_char(&mut self, character: char) {
-        self.search_input.insert_char(character);
-        self.rebuild_filter();
-    }
-
-    /// Removes the character before the cursor and rebuilds the filter.
-    pub fn pop_search_char(&mut self) {
-        self.search_input.backspace();
-        self.rebuild_filter();
-    }
-
-    /// Clears the search query and shows all workflows.
-    pub fn clear_search(&mut self) {
-        if self.search_input.is_empty() {
-            return;
-        }
-        self.search_input.set_input("");
-        self.search_input.set_cursor(0);
-        self.rebuild_filter();
-    }
-
-    /// Returns the number of workflows matching the current filter.
-    pub fn filtered_count(&self) -> usize {
-        self.filtered_indices.len()
-    }
-
-    /// Returns the total number of workflows loaded from the registry.
-    pub fn total_count(&self) -> usize {
-        self.workflows.len()
-    }
-
-    /// Provides the filtered indices for callers that need to inspect visible workflows.
-    pub fn filtered_indices(&self) -> &[usize] {
-        &self.filtered_indices
-    }
-
-    /// Returns the workflow stored at a specific absolute index.
-    pub fn workflow_by_index(&self, index: usize) -> Option<&RuntimeWorkflow> {
-        self.workflows.get(index)
-    }
-
-    /// Calculates the width required for the identifier column using the filtered set.
-    pub fn filtered_title_width(&self) -> usize {
-        self.filtered_indices
-            .iter()
-            .filter_map(|index| self.workflows.get(*index))
-            .map(|workflow| workflow.title.as_ref().map(|t| t.len()).unwrap_or(workflow.identifier.len()))
-            .max()
-            .unwrap_or(0)
-    }
-
-    fn rebuild_filter(&mut self) {
-        if self.workflows.is_empty() {
-            self.filtered_indices.clear();
-            self.selected = 0;
-            self.list_state.select(None);
-            return;
-        }
-
-        let query = self.search_query().trim().to_lowercase();
-        if query.is_empty() {
-            self.filtered_indices = (0..self.workflows.len()).collect();
-        } else {
-            self.filtered_indices = self
-                .workflows
-                .iter()
-                .enumerate()
-                .filter(|(_, workflow)| Self::matches_search(workflow, &query))
-                .map(|(index, _)| index)
-                .collect();
-        }
-
-        if self.filtered_indices.is_empty() {
-            self.selected = 0;
-            self.list_state.select(None);
-        } else {
-            if self.selected >= self.filtered_indices.len() {
-                self.selected = 0;
-            }
-            self.list_state.select(Some(self.selected));
-        }
-    }
-
-    fn matches_search(workflow: &RuntimeWorkflow, lower_query: &str) -> bool {
-        let identifier_matches = workflow.identifier.to_lowercase().contains(lower_query);
-        let title_matches = workflow
-            .title
-            .as_deref()
-            .map(|title| title.to_lowercase().contains(lower_query))
-            .unwrap_or(false);
-        let description_matches = workflow
-            .description
-            .as_deref()
-            .map(|description| description.to_lowercase().contains(lower_query))
-            .unwrap_or(false);
-
-        identifier_matches || title_matches || description_matches
-    }
-}
-
-impl HasFocus for WorkflowListState {
-    fn build(&self, builder: &mut FocusBuilder) {
-        let tag = builder.start(self);
-        builder.leaf_widget(&self.f_list);
-        builder.end(tag);
-    }
-
-    fn focus(&self) -> FocusFlag {
-        self.container_focus.clone()
-    }
-
-    fn area(&self) -> Rect {
-        Rect::default()
-    }
-}
-
-/// Handle that allows the UI to dispatch control commands to the active workflow run.
-#[derive(Debug, Clone)]
-pub struct WorkflowRunControlHandle {
-    pub run_id: String,
-    pub sender: UnboundedSender<WorkflowRunControl>,
-}
 
 /// Aggregates workflow list state with execution metadata, modal visibility, and provider cache snapshots.
 #[derive(Debug, Default)]
 pub struct WorkflowState {
     pub list: WorkflowListState,
     active_run_state: Option<WorkflowRunState>,
-    selected_metadata: Option<WorkflowSelectionMetadata>,
     input_view: Option<WorkflowInputViewState>,
     run_view: Option<RunViewState>,
     /// Manual entry modal state (when open); None when not editing.
@@ -278,7 +49,6 @@ impl WorkflowState {
         Self {
             list: WorkflowListState::new(),
             active_run_state: None,
-            selected_metadata: None,
             input_view: None,
             run_view: None,
             manual_entry: None,
@@ -293,7 +63,6 @@ impl WorkflowState {
     /// Lazily loads workflows from the registry and refreshes derived metadata.
     pub fn ensure_loaded(&mut self, registry: &Arc<Mutex<CommandRegistry>>) -> Result<()> {
         self.list.ensure_loaded(registry)?;
-        self.refresh_selection_metadata();
         Ok(())
     }
 
@@ -330,31 +99,26 @@ impl WorkflowState {
     /// Updates the search query and recalculates the filtered list.
     pub fn append_search_char(&mut self, character: char) {
         self.list.append_search_char(character);
-        self.refresh_selection_metadata();
     }
 
     /// Removes the trailing character from the search query.
     pub fn pop_search_char(&mut self) {
         self.list.pop_search_char();
-        self.refresh_selection_metadata();
     }
 
     /// Clears any search filters currently applied to the workflow catalogue.
     pub fn clear_search(&mut self) {
         self.list.clear_search();
-        self.refresh_selection_metadata();
     }
 
     /// Advances the selection to the next workflow and updates metadata.
     pub fn select_next(&mut self) {
         self.list.select_next();
-        self.refresh_selection_metadata();
     }
 
     /// Moves the selection to the previous workflow and updates metadata.
     pub fn select_prev(&mut self) {
         self.list.select_prev();
-        self.refresh_selection_metadata();
     }
 
     /// Exposes the Ratatui list state for rendering.
@@ -379,17 +143,7 @@ impl WorkflowState {
 
     /// Computes the identifier column width for the filtered set.
     pub fn filtered_title_width(&self) -> usize {
-        self.list.filtered_title_width()
-    }
-
-    /// Provides the derived metadata for the currently selected workflow, if any.
-    pub fn selected_metadata(&self) -> Option<&WorkflowSelectionMetadata> {
-        self.selected_metadata.as_ref()
-    }
-
-    /// Stores an active workflow run state for interaction with the collector.
-    pub fn set_active_run_state(&mut self, state: WorkflowRunState) {
-        self.active_run_state = Some(state);
+        self.list.filtered_title_width() + 1 // for the trailing space
     }
 
     /// Retrieves the active run state immutably.
@@ -501,10 +255,6 @@ impl WorkflowState {
                 required && run_state.run_context.inputs.get(*name).is_none()
             })
             .count()
-    }
-
-    fn refresh_selection_metadata(&mut self) {
-        self.selected_metadata = self.list.selected_workflow().map(WorkflowSelectionMetadata::from_runtime);
     }
 }
 
@@ -689,290 +439,11 @@ impl HasFocus for WorkflowState {
     }
 }
 
-/// Derived metadata describing the currently selected workflow for quick access in the UI.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkflowSelectionMetadata {
-    /// Canonical workflow identifier.
-    pub identifier: String,
-    /// Optional human-friendly title supplied by authors.
-    pub title: Option<String>,
-    /// Optional description summarizing workflow responsibilities.
-    pub description: Option<String>,
-    /// Number of declared inputs in the workflow definition.
-    pub input_count: usize,
-    /// Number of steps that will execute when the workflow runs.
-    pub step_count: usize,
-}
-
 fn provider_identifier(definition: &WorkflowInputDefinition) -> Option<String> {
     definition.provider.as_ref().map(|provider| match provider {
         WorkflowValueProvider::Id(id) => id.clone(),
         WorkflowValueProvider::Detailed(detail) => detail.id.clone(),
     })
-}
-
-impl WorkflowSelectionMetadata {
-    fn from_runtime(workflow: &RuntimeWorkflow) -> Self {
-        Self {
-            identifier: workflow.identifier.clone(),
-            title: workflow.title.clone(),
-            description: workflow.description.clone(),
-            input_count: workflow.inputs.len(),
-            step_count: workflow.steps.len(),
-        }
-    }
-}
-
-/// Enriched schema metadata used to annotate selector rows and detail entries.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct WorkflowSelectorFieldMetadata {
-    /// JSON type hint reported by the upstream schema.
-    pub json_type: Option<String>,
-    /// Semantic tags associated with the field (for example, `app_id`).
-    pub tags: Vec<String>,
-    /// Enumerated literals declared for the field, when available.
-    pub enum_values: Vec<String>,
-    /// Indicates whether the field is required for the provider payload.
-    pub required: bool,
-}
-
-/// A staged workflow selector choice that is ready to be applied.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct WorkflowSelectorStagedSelection {
-    /// JSON value that will be written into the workflow input slot.
-    pub value: Value,
-    /// Human-readable representation of the value for status messaging.
-    pub display_value: String,
-    /// Source field used to extract the value from the provider row.
-    pub source_field: Option<String>,
-    /// Full JSON row returned by the provider.
-    pub row: Value,
-}
-
-impl WorkflowSelectorStagedSelection {
-    /// Constructs a new staged selection with the provided value metadata.
-    pub fn new(value: Value, display_value: String, source_field: Option<String>, row: Value) -> Self {
-        Self {
-            value,
-            display_value,
-            source_field,
-            row,
-        }
-    }
-}
-
-/// Focus targets available within the workflow selector modal.
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WorkflowCollectorFocus {
-    /// Provider results table focus, arrow navigation enabled.
-    #[default]
-    Table,
-    /// Inline filter input focus, text editing enabled.
-    Filter,
-    /// Confirmation buttons focus, Enter and arrow keys interact with buttons.
-    Buttons(SelectorButtonFocus),
-}
-
-/// Identifies which selector confirmation button currently holds focus.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SelectorButtonFocus {
-    /// Cancel button.
-    Cancel,
-    /// Apply button.
-    Apply,
-}
-
-/// Retained layout metadata capturing screen regions for pointer hit-testing.
-#[derive(Debug, Clone, Default)]
-pub struct WorkflowSelectorLayoutState {
-    /// Rect covering the overall selector content area.
-    pub container_area: Option<Rect>,
-    /// Rect covering the filter input at the top of the modal.
-    pub filter_area: Option<Rect>,
-    /// Rect covering the results table.
-    pub table_area: Option<Rect>,
-    /// Rect covering the detail pane.
-    pub detail_area: Option<Rect>,
-    /// Rect covering the footer (buttons + hints).
-    pub footer_area: Option<Rect>,
-    /// Rect for the Cancel button inside the footer.
-    pub cancel_button_area: Option<Rect>,
-    /// Rect for the Apply button inside the footer.
-    pub apply_button_area: Option<Rect>,
-}
-
-#[derive(Debug)]
-pub struct WorkflowSelectorViewState<'a> {
-    /// Canonical provider identifier (e.g., "apps list").
-    pub provider_id: String,
-    /// Arguments resolved for the provider (from prior inputs/steps).
-    pub resolved_args: serde_json::Map<String, serde_json::Value>,
-    /// Backing table state used for rendering results.
-    pub table: TableState<'a>,
-    /// Optional value_field from `select` used to extract the workflow value.
-    pub value_field: Option<String>,
-    /// Optional display_field used as primary for filtering.
-    pub display_field: Option<String>,
-    /// Provider on_error policy to drive fallback behavior.
-    pub on_error: Option<WorkflowProviderErrorPolicy>,
-    /// Current status label ("loading…", "loaded", or error text).
-    pub status: SelectorStatus,
-    /// Optional error message to surface inline.
-    pub error_message: Option<String>,
-    /// Original unfiltered provider items (array of rows).
-    pub original_items: Option<Vec<serde_json::Value>>,
-    /// Cache key currently awaiting asynchronous fetch completion.
-    pub pending_cache_key: Option<String>,
-    /// Lightweight inline filter buffer.
-    pub filter: TextInputState,
-    /// Current focus target within the selector modal.
-    pub focus: WorkflowCollectorFocus,
-    /// Cached metadata derived from the provider schema.
-    pub field_metadata: IndexMap<String, WorkflowSelectorFieldMetadata>,
-    /// Currently staged selection awaiting confirmation.
-    pub staged_selection: Option<WorkflowSelectorStagedSelection>,
-    /// Layout metadata from the most recent render pass.
-    pub layout: WorkflowSelectorLayoutState,
-}
-
-impl<'a> WorkflowSelectorViewState<'a> {
-    pub fn set_items(&mut self, items: Vec<serde_json::Value>) {
-        self.original_items = Some(items);
-        self.status = SelectorStatus::Loaded;
-        self.error_message = None;
-        self.pending_cache_key = None;
-        self.clear_staged_selection();
-    }
-
-    pub fn set_error(&mut self, message: String) {
-        self.status = SelectorStatus::Error;
-        self.error_message = Some(message);
-        self.pending_cache_key = None;
-        self.clear_staged_selection();
-    }
-
-    pub fn refresh_table(&mut self, theme: &dyn Theme) {
-        let Some(items) = self.original_items.clone() else {
-            return;
-        };
-        let query = self.filter.input().trim().to_lowercase();
-        let dataset: Vec<Value> = if query.is_empty() {
-            items
-        } else {
-            items
-                .into_iter()
-                .filter(|item| match item {
-                    Value::Object(map) => {
-                        if let Some(display_field) = self.display_field.as_deref()
-                            && let Some(value) = map.get(display_field)
-                            && let Some(text) = value.as_str()
-                        {
-                            return text.to_lowercase().starts_with(&query);
-                        }
-                        map.values()
-                            .any(|value| value.as_str().map(|text| text.to_lowercase().contains(&query)).unwrap_or(false))
-                    }
-                    Value::String(text) => text.to_lowercase().contains(&query),
-                    _ => false,
-                })
-                .collect()
-        };
-        let json = Value::Array(dataset);
-        self.table.apply_result_json(Some(json), theme);
-        self.table.normalize();
-        self.clear_staged_selection();
-    }
-
-    pub fn clear_staged_selection(&mut self) {
-        self.staged_selection = None;
-    }
-
-    pub fn set_staged_selection(&mut self, selection: Option<WorkflowSelectorStagedSelection>) {
-        self.staged_selection = selection;
-    }
-
-    pub fn staged_selection(&self) -> Option<&WorkflowSelectorStagedSelection> {
-        self.staged_selection.as_ref()
-    }
-
-    pub fn take_staged_selection(&mut self) -> Option<WorkflowSelectorStagedSelection> {
-        self.staged_selection.take()
-    }
-
-    pub fn focus_filter(&mut self) {
-        self.focus = WorkflowCollectorFocus::Filter;
-        self.filter.set_cursor(self.filter.input().len());
-    }
-
-    pub fn focus_table(&mut self) {
-        self.focus = WorkflowCollectorFocus::Table;
-    }
-
-    pub fn focus_buttons(&mut self, button: SelectorButtonFocus) {
-        self.focus = WorkflowCollectorFocus::Buttons(button);
-    }
-
-    pub fn is_filter_focused(&self) -> bool {
-        matches!(self.focus, WorkflowCollectorFocus::Filter)
-    }
-
-    pub fn apply_enabled(&self) -> bool {
-        self.staged_selection.is_some()
-    }
-
-    pub fn set_layout(&mut self, layout: WorkflowSelectorLayoutState) {
-        self.layout = layout;
-    }
-
-    pub fn layout(&self) -> &WorkflowSelectorLayoutState {
-        &self.layout
-    }
-
-    pub fn button_focus(&self) -> SelectorButtonFocus {
-        match self.focus {
-            WorkflowCollectorFocus::Buttons(button) => button,
-            _ => SelectorButtonFocus::Apply,
-        }
-    }
-
-    pub fn next_focus(&mut self) {
-        match self.focus {
-            WorkflowCollectorFocus::Table => self.focus_filter(),
-            WorkflowCollectorFocus::Filter => self.focus_buttons(SelectorButtonFocus::Cancel),
-            WorkflowCollectorFocus::Buttons(SelectorButtonFocus::Cancel) => self.focus_buttons(SelectorButtonFocus::Apply),
-            WorkflowCollectorFocus::Buttons(SelectorButtonFocus::Apply) => self.focus_table(),
-        }
-    }
-
-    pub fn prev_focus(&mut self) {
-        match self.focus {
-            WorkflowCollectorFocus::Table => self.focus_buttons(SelectorButtonFocus::Apply),
-            WorkflowCollectorFocus::Filter => self.focus_table(),
-            WorkflowCollectorFocus::Buttons(SelectorButtonFocus::Cancel) => self.focus_filter(),
-            WorkflowCollectorFocus::Buttons(SelectorButtonFocus::Apply) => self.focus_buttons(SelectorButtonFocus::Cancel),
-        }
-    }
-
-    pub fn sync_stage_with_selection(&mut self) {
-        let Some(staged) = self.staged_selection.as_ref() else {
-            return;
-        };
-        let Some(current_row) = self.table.selected_data() else {
-            self.clear_staged_selection();
-            return;
-        };
-        if staged.row != *current_row {
-            self.clear_staged_selection();
-        }
-    }
-}
-
-/// Loading status for the selector.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SelectorStatus {
-    Loading,
-    Loaded,
-    Error,
 }
 
 impl WorkflowState {
@@ -1012,11 +483,6 @@ impl WorkflowState {
         self.run_control = None;
     }
 
-    /// Stores a freshly prepared run view state.
-    pub fn begin_run_view(&mut self, state: RunViewState) {
-        self.run_view = Some(state);
-    }
-
     /// Returns the active run view state, if present.
     pub fn run_view_state(&self) -> Option<&RunViewState> {
         self.run_view.as_ref()
@@ -1027,18 +493,10 @@ impl WorkflowState {
         self.run_view.as_mut()
     }
 
-    /// Clears the active run view state.
-    pub fn close_run_view(&mut self) {
-        self.run_view = None;
-    }
-
     /// Registers the control channel for the currently active run.
     pub fn register_run_control(&mut self, run_id: &str, sender: UnboundedSender<WorkflowRunControl>) {
         if self.active_run_id.as_deref() == Some(run_id) {
-            self.run_control = Some(WorkflowRunControlHandle {
-                run_id: run_id.to_string(),
-                sender,
-            });
+            self.run_control = Some(WorkflowRunControlHandle { sender });
         }
     }
 
@@ -1087,7 +545,17 @@ impl WorkflowState {
                 if let Some(state) = self.active_run_state.as_mut() {
                     state.run_context.steps.insert(step_id.clone(), output.clone());
                 }
-                run_view.mark_step_finished(&step_id, status, attempts, duration_ms, output, logs.clone(), theme);
+                run_view.mark_step_finished(
+                    &step_id,
+                    StepFinishedData {
+                        status,
+                        attempts,
+                        duration_ms,
+                        output,
+                        logs: logs.clone(),
+                    },
+                    theme,
+                );
                 log_messages.push(format!("Step '{}' {}", step_id, describe_step_status(status)));
                 if status == WorkflowRunStepStatus::Failed {
                     self.run_control = None;
@@ -1176,11 +644,12 @@ impl WorkflowState {
         });
     }
 
-    /// Returns the selector state if present.
+    /// Returns the provider selector modal state when it is active.
     pub fn selector_state(&self) -> Option<&WorkflowSelectorViewState<'static>> {
         self.selector.as_ref()
     }
-    /// Returns a mutable selector state if present.
+
+    /// Returns a mutable reference to the provider selector modal state when it is active.
     pub fn selector_state_mut(&mut self) -> Option<&mut WorkflowSelectorViewState<'static>> {
         self.selector.as_mut()
     }

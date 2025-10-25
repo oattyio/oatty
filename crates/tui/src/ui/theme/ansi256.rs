@@ -23,9 +23,9 @@ impl Ansi256Theme {
                 border: Color::Indexed(239),
                 divider: Color::Indexed(239),
 
-                text: Color::Indexed(255),          // ~#EEEEEE
-                text_secondary: Color::Indexed(61), // ~#5F5FAF
-                text_muted: Color::Indexed(61),
+                text: Color::Indexed(255),           // ~#EEEEEE
+                text_secondary: Color::Indexed(250), // ~#5F5FAF
+                text_muted: Color::Indexed(247),
 
                 accent_primary: Color::Indexed(212),   // ~#FF87D7
                 accent_secondary: Color::Indexed(117), // ~#87D7FF
@@ -39,6 +39,12 @@ impl Ansi256Theme {
                 selection_bg: Color::Indexed(239),
                 selection_fg: Color::Indexed(255),
                 focus: Color::Indexed(117),
+                search_highlight: Color::Indexed(229), // ≈ #ffffaf search highlight
+                syntax_keyword: Color::Indexed(212),
+                syntax_function: Color::Indexed(141),
+                syntax_string: Color::Indexed(120),
+                syntax_number: Color::Indexed(215),
+                syntax_type: Color::Indexed(123),
                 modal_bg: Color::Indexed(235), // slightly darker overlay
 
                 scrollbar_track: Color::Indexed(239),
@@ -86,6 +92,12 @@ impl Ansi256ThemeHighContrast {
                 selection_bg: Color::Indexed(239),
                 selection_fg: Color::Indexed(255),
                 focus: Color::Indexed(117),
+                search_highlight: Color::Indexed(229),
+                syntax_keyword: Color::Indexed(212),
+                syntax_function: Color::Indexed(141),
+                syntax_string: Color::Indexed(120),
+                syntax_number: Color::Indexed(215),
+                syntax_type: Color::Indexed(123),
                 modal_bg: Color::Indexed(235),
 
                 scrollbar_track: Color::Indexed(239),

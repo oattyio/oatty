@@ -243,7 +243,7 @@ pub trait Component: Debug {
 
     /// Notifies the view that the route is about to exit
     /// and this view will be dereferenced.
-    fn on_route_exit(&mut self, app: &mut App) -> Vec<Effect> {
+    fn on_route_exit(&mut self, _app: &mut App) -> Vec<Effect> {
         Vec::new()
     }
 }

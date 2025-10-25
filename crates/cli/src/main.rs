@@ -290,16 +290,16 @@ fn seed_history_defaults_for_cli(state: &mut WorkflowRunState, store: &dyn Histo
                 if stored.value.is_null() || value_contains_secret(&stored.value) {
                     continue;
                 }
-                if let Some(validation) = &definition.validate {
-                    if let Err(error) = validate_candidate_value(&stored.value, validation) {
-                        warn!(
-                            input = %input_name,
-                            workflow = %state.workflow.identifier,
-                            error = %error,
-                            "discarded history default that failed validation"
-                        );
-                        continue;
-                    }
+                if let Some(validation) = &definition.validate
+                    && let Err(error) = validate_candidate_value(&stored.value, validation)
+                {
+                    warn!(
+                        input = %input_name,
+                        workflow = %state.workflow.identifier,
+                        error = %error,
+                        "discarded history default that failed validation"
+                    );
+                    continue;
                 }
                 state.run_context.inputs.insert(input_name.clone(), stored.value);
             }
@@ -330,16 +330,16 @@ fn persist_history_after_cli_run(state: &WorkflowRunState, store: &dyn HistorySt
             continue;
         }
 
-        if let Some(validation) = &definition.validate {
-            if let Err(error) = validate_candidate_value(value, validation) {
-                warn!(
-                    input = %input_name,
-                    workflow = %state.workflow.identifier,
-                    error = %error,
-                    "skipping history persistence for invalid value"
-                );
-                continue;
-            }
+        if let Some(validation) = &definition.validate
+            && let Err(error) = validate_candidate_value(value, validation)
+        {
+            warn!(
+                input = %input_name,
+                workflow = %state.workflow.identifier,
+                error = %error,
+                "skipping history persistence for invalid value"
+            );
+            continue;
         }
 
         let key = HistoryKey::workflow_input(user_id.clone(), state.workflow.identifier.clone(), input_name.clone());

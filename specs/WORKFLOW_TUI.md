@@ -153,9 +153,9 @@ inputs:
 │                                                                          │ Auto-reset note:  downstream steps │
 │                                                                          │                   reset when a     │
 │                                                                          │                   prior step edits.│
-│                                                                          │                                    │
+│                                                                          │ Cache age:        pipelines 12s    │
+│                                                                          │                   apps 24s         │
 │                                                                          │ Errors & notes:   none             │
-│                                                                          │                                    │
 └───────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
 Buttons: [Cancel]   [Run ✓]
   Esc cancel  •  ↑↓ navigate  •  Enter choose  •  / filter  •  r refresh  •  Tab focus  •  F2 fallback to manual  •  Enter run
@@ -164,14 +164,12 @@ Buttons: [Cancel]   [Run ✓]
 - **Left column** is a compact step list rendered like the runtime List view in
   `workflows/input.rs` (status prefix, provider label, required badge, highlight marker) without
   inlining provider result tables, and each step stays on a single line for quick scanning.
-- Input labels prefer the authored `name` field on each input definition and fall back to
-  the identifier when it is omitted, keeping existing manifests backwards compatible.
 - **Right column** summarizes workflow readiness: completion state, next unresolved step,
   currently selected values (show `— pending —` for unresolved items), cache freshness, and
   any validation errors.
-- Unless step values are mutually exclusive of on-another e.g., no chained providers, when a previously
+- Unless step values are mutually exclusive of on-another e.g., no chained providers, when a previously 
   resolved step changes, every chained step reverts to its default value (or unresolved if no default).
-  The detail pane immediately reflects the reset so users see which values need attention before execution.
+  The detail pane immediately reflects the reset so users see which values need attention before execution. 
   The detail pane should show a note about the auto-reset behavior if applicable.
 - The detail pane updates after every interaction (selection change, manual value entry,
   refresh, fallback), so the aggregate view always mirrors the live state.
@@ -194,25 +192,25 @@ string field. The modal keeps the compact centered layout but swaps the value ar
 based on the workflow schema:
 
 ```
-┌─ Manual entry: Pipeline ───────────────────────────────────────────────┐
+┌─ Manual entry: pipeline ───────────────────────────────────────────────┐
 │ Enter a value                                                          │
 │  Value: my-pipeline                                                    │
 └────────────────────────────────────────────────────────────────────────┘
  Esc cancel  •  Enter confirm
 
-┌─ Manual entry: Leader Instance Count ──────────────────────────────────┐
+┌─ Manual entry: leader_instance_count ──────────────────────────────────┐
 │ Enter an integer                                                       │
 │  Value: 2                                                              │
 └────────────────────────────────────────────────────────────────────────┘
  Esc cancel  •  Enter confirm
 
-┌─ Manual entry: Configure Follower ─────────────────────────────────────┐
+┌─ Manual entry: configure_follower ─────────────────────────────────────┐
 │ Select true or false                                                   │
 │ [True ✓]   [False]                                                     │
 └────────────────────────────────────────────────────────────────────────┘
  Esc cancel  •  Space toggle  •  Enter confirm
 
-┌─ Manual entry: Follower Operation ─────────────────────────────────────┐
+┌─ Manual entry: follower_operation ─────────────────────────────────────┐
 │ Choose from the available options                                      │
 │ ┌────────────────────────────────────────────────────────────────────┐ │
 │ │ create                                                             │ │
@@ -300,7 +298,7 @@ Buttons: [Cancel]   [Apply ✓]
 ```
 ┌ Apps (apps list) ──────────────────────────────────────────────────────┐
 │ ⚠ Unable to fetch apps (timeout).                                      │
-│                                                                        |
+│                                                                        |   
 │ You can: [R]etry  •  [F2] Enter manually  •  [C]ached (12s old)        │
 └────────────────────────────────────────────────────────────────────────┘
 ```

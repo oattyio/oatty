@@ -9,10 +9,11 @@
 use std::{cmp::min, collections::HashMap};
 
 use chrono::{DateTime, Duration, Utc};
-use heroku_types::workflow::{WorkflowRunStatus, WorkflowRunStepStatus, WorkflowStepDefinition};
+use heroku_types::workflow::{WorkflowRunControl, WorkflowRunStatus, WorkflowRunStepStatus, WorkflowStepDefinition};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use serde_json::{Map as JsonMap, Value};
+use tokio::sync::mpsc::UnboundedSender;
 
 use crate::ui::{
     components::table::state::{KeyValueEntry, TableState, build_key_value_entries},
@@ -29,6 +30,12 @@ pub enum RunExecutionStatus {
     Succeeded,
     Failed,
     Canceled,
+}
+
+/// Handle that allows the UI to dispatch control commands to the active workflow run.
+#[derive(Debug, Clone)]
+pub struct WorkflowRunControlHandle {
+    pub sender: UnboundedSender<WorkflowRunControl>,
 }
 
 impl RunExecutionStatus {
@@ -120,31 +127,6 @@ impl RunViewLayout {
     /// Returns the outer area recorded during the last render pass.
     pub fn last_area(&self) -> Option<Rect> {
         self.last_area
-    }
-
-    /// Returns the most recent steps table area.
-    pub fn steps_area(&self) -> Option<Rect> {
-        self.steps_area
-    }
-
-    /// Returns the most recent outputs table area.
-    pub fn outputs_area(&self) -> Option<Rect> {
-        self.outputs_area
-    }
-
-    /// Returns the most recent detail pane area.
-    pub fn detail_area(&self) -> Option<Rect> {
-        self.detail_area
-    }
-
-    /// Returns the most recent cancel button area.
-    pub fn cancel_button_area(&self) -> Option<Rect> {
-        self.cancel_button_area
-    }
-
-    /// Returns the most recent pause button area.
-    pub fn pause_button_area(&self) -> Option<Rect> {
-        self.pause_button_area
     }
 
     /// Returns the configured mouse target rectangles.
@@ -240,6 +222,16 @@ impl RunDetailState {
     }
 }
 
+/// Aggregates metadata captured when a workflow step finishes.
+#[derive(Debug)]
+pub struct StepFinishedData {
+    pub status: WorkflowRunStepStatus,
+    pub attempts: u32,
+    pub duration_ms: u64,
+    pub output: Value,
+    pub logs: Vec<String>,
+}
+
 /// State container for the workflow run view.
 #[derive(Debug)]
 pub struct RunViewState {
@@ -302,11 +294,6 @@ impl RunViewState {
         }
     }
 
-    /// Returns the workflow title when provided.
-    pub fn workflow_title(&self) -> Option<&str> {
-        self.workflow_title.as_deref()
-    }
-
     /// Computes a display name favoring the title over the identifier.
     pub fn display_name(&self) -> &str {
         self.workflow_title
@@ -323,11 +310,6 @@ impl RunViewState {
     /// Returns any supplemental status message (for example, aborting…).
     pub fn status_message(&self) -> Option<&str> {
         self.status_message.as_deref()
-    }
-
-    /// Sets the supplemental status message.
-    pub fn set_status_message(&mut self, message: Option<String>) {
-        self.status_message = message;
     }
 
     /// Initializes step rows from the workflow definition.
@@ -364,16 +346,7 @@ impl RunViewState {
     }
 
     /// Applies the final status and payload for a finished step.
-    pub fn mark_step_finished(
-        &mut self,
-        step_id: &str,
-        status: WorkflowRunStepStatus,
-        attempts: u32,
-        duration_ms: u64,
-        output: Value,
-        logs: Vec<String>,
-        theme: &dyn Theme,
-    ) {
+    pub fn mark_step_finished(&mut self, step_id: &str, data: StepFinishedData, theme: &dyn Theme) {
         let Some(&index) = self.step_indices.get(step_id) else {
             return;
         };
@@ -386,13 +359,16 @@ impl RunViewState {
 
         let mut row = JsonMap::new();
         row.insert("Step".into(), Value::String(step_id.to_string()));
-        row.insert("Status".into(), Value::String(step_status_label(status).to_string()));
-        row.insert("Details".into(), Value::String(step_summary(status, attempts, duration_ms)));
+        row.insert("Status".into(), Value::String(step_status_label(data.status).to_string()));
+        row.insert(
+            "Details".into(),
+            Value::String(step_summary(data.status, data.attempts, data.duration_ms)),
+        );
         row.insert("Description".into(), Value::String(description));
-        row.insert("Attempts".into(), Value::Number(serde_json::Number::from(attempts)));
-        row.insert("DurationMs".into(), Value::Number(serde_json::Number::from(duration_ms)));
-        row.insert("Logs".into(), Value::Array(logs.into_iter().map(Value::String).collect()));
-        row.insert("Output".into(), output);
+        row.insert("Attempts".into(), Value::Number(serde_json::Number::from(data.attempts)));
+        row.insert("DurationMs".into(), Value::Number(serde_json::Number::from(data.duration_ms)));
+        row.insert("Logs".into(), Value::Array(data.logs.into_iter().map(Value::String).collect()));
+        row.insert("Output".into(), data.output);
 
         self.step_rows[index] = Value::Object(row);
         self.set_last_update_at(Utc::now());
@@ -462,29 +438,14 @@ impl RunViewState {
         self.started_at = Some(timestamp);
     }
 
-    /// Returns the start timestamp, if recorded.
-    pub fn started_at(&self) -> Option<DateTime<Utc>> {
-        self.started_at
-    }
-
     /// Records the completion timestamp.
     pub fn set_completed_at(&mut self, timestamp: DateTime<Utc>) {
         self.completed_at = Some(timestamp);
     }
 
-    /// Returns the completion timestamp, if recorded.
-    pub fn completed_at(&self) -> Option<DateTime<Utc>> {
-        self.completed_at
-    }
-
     /// Updates the last update timestamp for freshness tracking.
     pub fn set_last_update_at(&mut self, timestamp: DateTime<Utc>) {
         self.last_update_at = Some(timestamp);
-    }
-
-    /// Returns the last update timestamp, if recorded.
-    pub fn last_update_at(&self) -> Option<DateTime<Utc>> {
-        self.last_update_at
     }
 
     /// Calculates the elapsed duration since `started_at`.
@@ -497,17 +458,13 @@ impl RunViewState {
         self.is_wide_mode
     }
 
-    /// Enables or disables wide mode explicitly.
-    pub fn set_wide_mode(&mut self, wide: bool) {
-        self.is_wide_mode = wide;
-    }
-
     /// Toggles the wide mode flag.
     pub fn toggle_wide_mode(&mut self) {
         self.is_wide_mode = !self.is_wide_mode;
     }
 
-    /// Provides immutable access to the steps table state.
+    #[cfg(test)]
+    /// Provides immutable access to the steps table state (tests only).
     pub fn steps_table(&self) -> &TableState<'static> {
         &self.steps_table
     }
@@ -515,11 +472,6 @@ impl RunViewState {
     /// Provides mutable access to the steps table state.
     pub fn steps_table_mut(&mut self) -> &mut TableState<'static> {
         &mut self.steps_table
-    }
-
-    /// Provides immutable access to the outputs table state.
-    pub fn outputs_table(&self) -> &TableState<'static> {
-        &self.outputs_table
     }
 
     /// Provides mutable access to the outputs table state.
@@ -548,11 +500,6 @@ impl RunViewState {
     /// Returns the current detail state, if visible.
     pub fn detail(&self) -> Option<&RunDetailState> {
         self.detail.as_ref()
-    }
-
-    /// Returns the current detail state mutably, if visible.
-    pub fn detail_mut(&mut self) -> Option<&mut RunDetailState> {
-        self.detail.as_mut()
     }
 
     /// Returns the focus flag used for the detail pane.
@@ -588,22 +535,6 @@ impl RunViewState {
     /// Returns the most recently captured layout.
     pub fn layout(&self) -> &RunViewLayout {
         &self.layout
-    }
-
-    /// Updates the steps table with new rows sourced from JSON.
-    pub fn apply_steps_json(&mut self, value: Option<Value>, theme: &dyn Theme) {
-        if let Some(Value::Array(rows)) = &value {
-            self.step_rows = rows.clone();
-        }
-        self.steps_table.apply_result_json(value, theme);
-    }
-
-    /// Updates the outputs table with new rows sourced from JSON.
-    pub fn apply_outputs_json(&mut self, value: Option<Value>, theme: &dyn Theme) {
-        if let Some(Value::Array(rows)) = &value {
-            self.output_rows = rows.clone();
-        }
-        self.outputs_table.apply_result_json(value, theme);
     }
 
     /// Returns the JSON payload backing the current detail pane, if visible.
@@ -642,11 +573,6 @@ impl RunViewState {
         if let Some(detail_state) = self.detail.as_mut() {
             detail_state.adjust_selection(entry_count, delta);
         }
-    }
-
-    /// Exposes the container focus flag used by the focus tree.
-    pub fn container_focus_flag(&self) -> &FocusFlag {
-        &self.container_focus
     }
 }
 
@@ -740,7 +666,7 @@ mod tests {
         let mut state = RunViewState::new("run-1".into(), "workflow".into(), Some("Example".into()));
         state.initialize_steps(&[make_step("alpha", Some("first step"))], &theme);
 
-        let row = state.steps_table().selected_data().cloned().expect("row exists");
+        let row = state.steps_table.selected_data().cloned().expect("row exists");
         assert_eq!(row["Step"], Value::String("alpha".into()));
         assert_eq!(row["Status"], Value::String("pending".into()));
         assert_eq!(row["Details"], Value::String("first step".into()));
@@ -754,15 +680,17 @@ mod tests {
 
         state.mark_step_finished(
             "alpha",
-            WorkflowRunStepStatus::Succeeded,
-            2,
-            150,
-            json!({"result": "ok"}),
-            vec!["completed".into()],
+            StepFinishedData {
+                status: WorkflowRunStepStatus::Succeeded,
+                attempts: 2,
+                duration_ms: 150,
+                output: json!({"result": "ok"}),
+                logs: vec!["completed".into()],
+            },
             &theme,
         );
 
-        let row = state.steps_table().selected_data().cloned().expect("row exists");
+        let row = state.steps_table.selected_data().cloned().expect("row exists");
         assert_eq!(row["Status"], Value::String("succeeded".into()));
         let summary = row["Details"].as_str().expect("summary");
         assert!(summary.contains("succeeded"));
@@ -777,7 +705,7 @@ mod tests {
 
         state.append_output("alpha", json!(42), None, &theme);
 
-        let row = state.outputs_table().selected_data().cloned().expect("row exists");
+        let row = state.outputs_table.selected_data().cloned().expect("row exists");
         assert_eq!(row["Key"], Value::String("alpha".into()));
         assert_eq!(row["Value"], Value::String("42".into()));
         assert_eq!(row["RawValue"], json!(42));

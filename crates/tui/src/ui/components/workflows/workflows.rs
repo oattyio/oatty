@@ -3,12 +3,14 @@ use crate::ui::components::component::Component;
 use crate::ui::theme::theme_helpers as th;
 use crate::ui::theme::theme_helpers::create_spans_with_match;
 use anyhow::{Result, anyhow};
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use heroku_engine::WorkflowRunState;
 use heroku_types::Effect::SwitchTo;
 use heroku_types::workflow::RuntimeWorkflow;
-use heroku_types::{Effect, Msg, Route, WorkflowRunEvent, WorkflowRunStatus, validate_candidate_value};
-use heroku_util::{HistoryKey, value_contains_secret, value_is_meaningful, workflow_input_uses_history};
+use heroku_types::{Effect, Msg, Route, validate_candidate_value};
+use heroku_util::{HistoryKey, value_contains_secret, workflow_input_uses_history};
+use rat_focus::HasFocus;
+use ratatui::layout::Position;
 use ratatui::widgets::ListItem;
 use ratatui::{
     Frame,
@@ -21,7 +23,10 @@ use tracing::warn;
 
 /// Renders the workflow picker view, including search, filtered listing, and footer hints.
 #[derive(Debug, Default)]
-pub struct WorkflowsComponent;
+pub struct WorkflowsComponent {
+    search_area: Rect,
+    list_area: Rect,
+}
 
 impl WorkflowsComponent {
     fn handle_search_key(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -108,14 +113,17 @@ impl WorkflowsComponent {
         }
     }
 
-    fn render_workflow_list(&self, frame: &mut Frame, area: Rect, app: &mut App, title: &str) {
+    fn render_workflow_list(&mut self, frame: &mut Frame, area: Rect, app: &mut App, title: &str) {
         let theme = &*app.ctx.theme;
         let is_focused = app.workflows.list.f_list.get();
         let block = th::block(theme, Some(title), is_focused);
-        let inner_area = block.inner(area);
+        let list_area = block.inner(area);
         frame.render_widget(block, area);
 
         let filter_input = app.workflows.search_query();
+        let identifier_style = theme.syntax_type_style();
+        let summary_style = theme.syntax_string_style();
+        let highlight_style = theme.search_highlight_style();
         let (items, filtered_count) = {
             let state = &app.workflows;
             let title_width = state.filtered_title_width().clamp(12, 40);
@@ -132,12 +140,9 @@ impl WorkflowsComponent {
                             width = title_width
                         );
                         let summary = Self::summarize_workflow(workflow, available_summary_width);
-                        let primary = theme.text_primary_style();
-                        let secondary = theme.text_secondary_style();
-                        let accent = theme.accent_emphasis_style();
-                        let input = filter_input.to_string();
-                        let mut spans = create_spans_with_match(input.clone(), identifier_cell, primary, accent);
-                        spans.extend(create_spans_with_match(input, summary, secondary, accent));
+                        let needle = filter_input.to_string();
+                        let mut spans = create_spans_with_match(needle.clone(), identifier_cell, identifier_style, highlight_style);
+                        spans.extend(create_spans_with_match(needle, summary, summary_style, highlight_style));
                         ListItem::from(Line::from(spans))
                     })
                 })
@@ -152,16 +157,20 @@ impl WorkflowsComponent {
                 "No workflows match the current search."
             };
             let message_paragraph = Paragraph::new(message).style(theme.text_muted_style()).wrap(Wrap { trim: true });
-            frame.render_widget(message_paragraph, inner_area);
+            frame.render_widget(message_paragraph, list_area);
             return;
         }
         let is_list_focused = app.workflows.list.f_list.get();
         let list_state = app.workflows.list_state();
+        if !is_list_focused {
+            list_state.select(None);
+        }
         let list = List::new(items)
             .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
             .highlight_symbol(if is_list_focused { "> " } else { "" });
 
-        frame.render_stateful_widget(list, inner_area, list_state);
+        frame.render_stateful_widget(list, list_area, list_state);
+        self.list_area = list_area;
     }
 
     fn summarize_workflow(workflow: &RuntimeWorkflow, max_width: usize) -> String {
@@ -182,28 +191,6 @@ impl WorkflowsComponent {
             summary.push_str("...");
         }
         summary
-    }
-
-    fn handle_workflow_run_event(&mut self, app: &mut App, run_id: String, event: WorkflowRunEvent) -> Vec<Effect> {
-        let mut effects = Vec::new();
-        let persist_history = matches!(
-            &event,
-            WorkflowRunEvent::RunCompleted {
-                status: WorkflowRunStatus::Succeeded,
-                ..
-            }
-        );
-
-        let log_messages = app.workflows.apply_run_event(&run_id, event, &*app.ctx.theme);
-        for message in log_messages {
-            effects.push(Effect::Log(message));
-        }
-
-        if persist_history {
-            self.persist_successful_run_history(app);
-        }
-
-        effects
     }
 
     /// Populate run state inputs with history-backed defaults when available.
@@ -257,6 +244,16 @@ impl WorkflowsComponent {
         effects
     }
 
+    fn hit_test_list(&mut self, app: &mut App, position: Position) -> Vec<Effect> {
+        let offset_y = self.list_area.y as usize;
+        let idx = (position.y as usize).saturating_sub(offset_y);
+        if app.workflows.list.workflow_by_index(idx).is_some() {
+            app.workflows.list.list_state().select(Some(idx));
+            return self.handle_key_events(app, KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+        }
+        Vec::new()
+    }
+
     /// Open the interactive input view for the selected workflow.
     pub fn open_workflow_inputs(&mut self, app: &mut App) -> Result<()> {
         let Some(workflow) = app.workflows.selected_workflow() else {
@@ -269,61 +266,10 @@ impl WorkflowsComponent {
         app.workflows.begin_inputs_session(run_state);
         Ok(())
     }
-
-    /// Persist successful workflow input values back to history storage.
-    pub fn persist_successful_run_history(&self, app: &mut App) {
-        let Some(run_state) = app.workflows.active_run_state() else {
-            return;
-        };
-
-        for (input_name, definition) in &run_state.workflow.inputs {
-            if !workflow_input_uses_history(definition) {
-                continue;
-            }
-
-            let Some(value) = run_state.run_context.inputs.get(input_name) else {
-                continue;
-            };
-
-            if !value_is_meaningful(value) || value_contains_secret(value) {
-                continue;
-            }
-
-            if let Some(validation) = &definition.validate
-                && let Err(error) = validate_candidate_value(value, validation)
-            {
-                warn!(
-                    input = %input_name,
-                    workflow = %run_state.workflow.identifier,
-                    error = %error,
-                    "skipping history persistence for value failing validation"
-                );
-                continue;
-            }
-
-            let key = HistoryKey::workflow_input(
-                app.ctx.history_profile_id.clone(),
-                run_state.workflow.identifier.clone(),
-                input_name.clone(),
-            );
-
-            if let Err(error) = app.ctx.history_store.insert_value(key, value.clone()) {
-                warn!(
-                    input = %input_name,
-                    workflow = %run_state.workflow.identifier,
-                    error = %error,
-                    "failed to persist workflow history value"
-                );
-            }
-        }
-    }
 }
 
 impl Component for WorkflowsComponent {
-    fn handle_message(&mut self, app: &mut App, msg: &heroku_types::Msg) -> Vec<Effect> {
-        if let Msg::WorkflowRunEvent { run_id, event } = msg {
-            return self.handle_workflow_run_event(app, run_id.clone(), event.clone());
-        }
+    fn handle_message(&mut self, _app: &mut App, _msg: &Msg) -> Vec<Effect> {
         Vec::new()
     }
 
@@ -373,6 +319,23 @@ impl Component for WorkflowsComponent {
         }
 
         effects
+    }
+
+    fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
+        if let MouseEventKind::Down(_) = mouse.kind {
+            let position = Position {
+                x: mouse.column,
+                y: mouse.row,
+            };
+            if self.search_area.contains(position) {
+                app.focus.focus(&app.workflows.f_search);
+            } else if self.list_area.contains(position) {
+                app.focus.focus(&app.workflows.list.focus());
+                return self.hit_test_list(app, position);
+            }
+        }
+
+        Vec::new()
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {

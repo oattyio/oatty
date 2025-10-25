@@ -82,6 +82,12 @@ impl NordTheme {
                 selection_fg: TEXT_SELECTED,
                 // Focus underline/border
                 focus: ACCENT_TEAL,
+                search_highlight: ACCENT_TEAL,
+                syntax_keyword: A_RED,
+                syntax_function: A_GREEN,
+                syntax_string: A_YELLOW,
+                syntax_number: A_ORANGE,
+                syntax_type: ACCENT_TEAL,
                 modal_bg: BG_MODAL_OVERLAY,
 
                 // Scrollbars
@@ -130,6 +136,12 @@ impl NordThemeHighContrast {
                 selection_bg: N3, // darker neutral surface selection
                 selection_fg: TEXT_SELECTED,
                 focus: ACCENT_DARK,
+                search_highlight: ACCENT_TEAL,
+                syntax_keyword: A_RED,
+                syntax_function: A_GREEN,
+                syntax_string: A_YELLOW,
+                syntax_number: A_ORANGE,
+                syntax_type: ACCENT_TEAL,
                 modal_bg: BG_MODAL_OVERLAY,
 
                 scrollbar_track: UI_BORDER,

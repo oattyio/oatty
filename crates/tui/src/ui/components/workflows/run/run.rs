@@ -390,7 +390,7 @@ impl Component for RunViewComponent {
         if run_state.detail_focus_flag().get() {
             return build_hint_spans(
                 theme,
-                &[(" Esc", " Close detail "), ("↑/↓", " Navigate detail "), (" Tab", " Cycle focus ")],
+                &[(" Esc", " Close detail "), (" ↑/↓", " Navigate detail "), (" Tab", " Cycle focus ")],
             );
         }
 
@@ -413,7 +413,7 @@ impl Component for RunViewComponent {
                 (" ↑/↓", " Navigate "),
                 (" Enter", " Toggle detail "),
                 (" L", " View logs "),
-                ("T", " Toggle layout "),
+                (" T", " Toggle layout "),
                 (" Tab", " Cycle focus "),
             ],
         )

@@ -624,4 +624,21 @@ mod tests {
         let resolved = resolver.resolve_arguments(&arguments);
         assert_eq!(resolved["app"], ProviderBindingOutcome::Resolved(json!("example-app")));
     }
+
+    #[test]
+    fn errors_when_binding_refs_multiple_sources() {
+        let context = RunContext::default();
+        let resolver = resolver_with_context(context);
+
+        let binding = WorkflowProviderArgumentBinding {
+            from_step: Some("s1".into()),
+            from_input: Some("app".into()),
+            path: None,
+            required: None,
+            on_missing: None,
+        };
+
+        let outcome = resolver.resolve_argument("app", &WorkflowProviderArgumentValue::Binding(binding));
+        assert!(matches!(outcome, ProviderBindingOutcome::Error(failure) if failure.message.contains("either a step or an input")));
+    }
 }

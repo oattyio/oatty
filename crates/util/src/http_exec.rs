@@ -58,8 +58,16 @@ pub async fn exec_remote_from_shell_command(
             }
 
             // Handle common error status codes
+            // by returning an ExecOutcome with an error message
+            // and a null result JSON object
             if !status.is_success() {
-                return Err(format!("HTTP {}: {}", status.as_u16(), text));
+                return Ok(ExecOutcome::Http(
+                    status.as_u16(),
+                    format!("HTTP {}: {}", status.as_u16(), text),
+                    Value::Null,
+                    pagination,
+                    request_id,
+                ));
             }
             let raw_log = format!("{}\n{}", status, text);
             let log = summarize_execution_outcome(&spec.canonical_id(), raw_log.as_str(), status);

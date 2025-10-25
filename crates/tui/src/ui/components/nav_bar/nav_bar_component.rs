@@ -1,4 +1,4 @@
-use super::VerticalNavBarState;
+use super::{NavItemAction, VerticalNavBarState};
 use crate::ui::components::{Component, find_target_index_by_mouse_position};
 use crate::{
     app::App,
@@ -36,6 +36,12 @@ impl VerticalNavBarComponent {
     /// Computes whether any item is focused (used to style borders/selection).
     fn any_item_focused(&self, state: &VerticalNavBarState) -> bool {
         state.item_focus_flags.iter().any(|f| f.get())
+    }
+    fn push_action_effect(effects: &mut Vec<Effect>, action: &NavItemAction) {
+        match action {
+            NavItemAction::Route(route) => effects.push(Effect::SwitchTo(route.clone())),
+            NavItemAction::Modal(modal) => effects.push(Effect::ShowModal(modal.clone())),
+        }
     }
 }
 impl Component for VerticalNavBarComponent {
@@ -75,7 +81,7 @@ impl Component for VerticalNavBarComponent {
             KeyCode::Enter => {
                 if let Some((item, idx)) = state.get_focused_list_item() {
                     state.selected_index = idx;
-                    effects.push(Effect::SwitchTo(item.route.clone()));
+                    Self::push_action_effect(&mut effects, &item.action);
                 }
             }
             _ => {}
@@ -87,7 +93,7 @@ impl Component for VerticalNavBarComponent {
     ///
     /// This function processes mouse events such as clicks within the navigation bar area.
     /// It determines if a mouse click corresponds to a button in the navigation bar, and if so,
-    /// updates the application's state based on the button's associated route and focus flag.
+    /// updates the application's state based on the button's associated action (route or modal) and focus flag.
     ///
     /// # Arguments
     ///
@@ -103,7 +109,7 @@ impl Component for VerticalNavBarComponent {
     /// - When the `mouse` event is of kind `MouseEventKind::Down(MouseButton::Left)`:
     ///   - It calculates if the mouse click corresponds to any button in the navigation bar by using the `find_button_index_from_rect` method.
     ///   - If the index of the button is found:
-    ///     - Updates the application's current route using `app.set_current_route` with the button's associated route.
+    ///     - Dispatches the item's action (route switch or modal open).
     ///     - Updates the application's focus state using `app.focus.focus` with the button's associated focus flag, if applicable.
     /// - If no button is clicked, or the event is not a left-mouse down event, the application state remains unchanged.
     ///
@@ -136,7 +142,7 @@ impl Component for VerticalNavBarComponent {
         if let Some(idx) = maybe_idx {
             if let Some(item) = app.nav_bar.items.get(idx).cloned() {
                 app.nav_bar.selected_index = idx;
-                effects.push(Effect::SwitchTo(item.route.clone()));
+                Self::push_action_effect(&mut effects, &item.action);
             }
 
             if let Some(flag) = app.nav_bar.item_focus_flags.get(idx) {
@@ -226,6 +232,19 @@ impl Component for VerticalNavBarComponent {
         app.nav_bar.per_item_areas = nav_bar_items
     }
 
+    /// Generates a list of styled `Span` elements representing UI hints based on the application context.
+    ///
+    /// # Parameters
+    ///
+    /// * `self` - The instance of the struct implementing this method.
+    /// * `app` - A reference to the current `App` instance, which provides access to context and theme data.
+    ///
+    /// # Returns
+    /// A vector of `Span` elements representing the styled text elements for the UI hints.
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
+        th::build_hint_spans(&*app.ctx.theme, &[(" Enter", " Select view"), (" ↑/↓", " Navigate")]).to_vec()
+    }
+
     /// Generates a list of rectangular layout regions based on the preferred layout configuration.
     ///
     /// This function calculates a vertical layout for the given area by dividing it into multiple
@@ -272,18 +291,5 @@ impl Component for VerticalNavBarComponent {
         let row_count = app.nav_bar.items.len();
         let constraints = vec![Constraint::Length(3); row_count];
         Layout::vertical(constraints).margin(1).split(area).to_vec()
-    }
-
-    /// Generates a list of styled `Span` elements representing UI hints based on the application context.
-    ///
-    /// # Parameters
-    ///
-    /// * `self` - The instance of the struct implementing this method.
-    /// * `app` - A reference to the current `App` instance, which provides access to context and theme data.
-    ///
-    /// # Returns
-    /// A vector of `Span` elements representing the styled text elements for the UI hints.
-    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
-        th::build_hint_spans(&*app.ctx.theme, &[(" Enter", " Select view"), (" ↑/↓", " Navigate")]).to_vec()
     }
 }

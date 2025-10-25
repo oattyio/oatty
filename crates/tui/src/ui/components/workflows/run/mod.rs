@@ -4,8 +4,8 @@
 //! workflow execution view. The run view presents step progress, surfaced
 //! outputs, and footer controls while reusing shared table rendering utilities.
 
-pub mod component;
+pub mod run;
 pub mod state;
 
-pub use component::RunViewComponent;
-pub use state::RunViewState;
+pub use run::RunViewComponent;
+pub use state::{RunViewState, StepFinishedData, WorkflowRunControlHandle};

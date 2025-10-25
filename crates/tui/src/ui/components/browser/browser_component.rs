@@ -17,8 +17,14 @@
 //! an interactive way to discover and select commands without needing to remember
 //! exact command names or syntax.
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crate::app::App;
+use crate::ui::components::browser::state::CursorDirection;
+use crate::ui::components::help::content::build_command_help_text;
+use crate::ui::theme::theme_helpers::highlight_segments;
+use crate::ui::{components::component::Component, theme::theme_helpers as th};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use heroku_types::{Effect, Route};
+use ratatui::layout::Position;
 use ratatui::style::Modifier;
 use ratatui::{
     Frame,
@@ -26,10 +32,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::*,
 };
-
-use crate::app::App;
-use crate::ui::components::help::content::build_command_help_text;
-use crate::ui::{components::component::Component, theme::theme_helpers as th};
 
 /// A modal component for browsing and selecting Heroku commands interactively.
 ///
@@ -46,10 +48,12 @@ use crate::ui::{components::component::Component, theme::theme_helpers as th};
 /// - **Keyboard shortcuts**: Global shortcuts for common actions like closing or copying
 ///
 /// # State Management
-/// The component operates on the `BrowserState` which is owned by the app context.
+/// The component operates on the `BrowserState,` which is owned by the app context.
 /// This allows other parts of the UI to coordinate with the browser's state.
 #[derive(Debug, Default)]
-pub struct BrowserComponent;
+pub struct BrowserComponent {
+    search_area: Rect,
+}
 
 impl Component for BrowserComponent {
     /// Handles keyboard events for the browser component.
@@ -81,6 +85,19 @@ impl Component for BrowserComponent {
         effects
     }
 
+    fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
+        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind
+            && self.search_area.contains(Position {
+                x: mouse.column,
+                y: mouse.row,
+            })
+        {
+            app.focus.focus(&app.browser.f_search);
+        }
+
+        Vec::new()
+    }
+
     /// Renders the browser modal with all its panels and components.
     ///
     /// This method creates a centered modal overlay that contains the search panel,
@@ -95,6 +112,7 @@ impl Component for BrowserComponent {
         let layout_chunks = self.get_preferred_layout(app, rect);
 
         self.render_search_panel(frame, app, layout_chunks[0]);
+        self.search_area = layout_chunks[0];
 
         let main_layout = self.create_main_layout(layout_chunks[1]);
         self.render_commands_panel(frame, app, main_layout[0]);
@@ -178,7 +196,8 @@ impl BrowserComponent {
         Vec::new()
     }
 
-    /// Handle Enter within the browser context (noop for now).
+    /// Applies the 'enter' keypress action by switching to the palette
+    /// and sending the selected command to the input
     pub fn apply_enter(&self, app: &App) -> Vec<Effect> {
         if let Some(spec) = app.browser.selected_command().cloned() {
             return vec![Effect::SwitchTo(Route::Palette), Effect::SendToPalette(Box::new(spec))];
@@ -186,9 +205,9 @@ impl BrowserComponent {
         vec![]
     }
 
-    /// Handles keyboard input when the commands list panel has focus.
+    /// Handles keyboard input when the command list panel has focus.
     ///
-    /// This method processes keyboard events specific to the commands list,
+    /// This method processes keyboard events specific to the command list,
     /// including up/down navigation, Enter to select, and Tab/BackTab for focus
     /// switching between panels.
     ///
@@ -197,8 +216,8 @@ impl BrowserComponent {
     /// * `key` - The key event to process
     fn handle_commands_keys(&self, app: &mut App, key: KeyEvent) {
         match key.code {
-            KeyCode::Down => app.browser.move_selection(1),
-            KeyCode::Up => app.browser.move_selection(-1),
+            KeyCode::Down => app.browser.move_selection(CursorDirection::Down),
+            KeyCode::Up => app.browser.move_selection(CursorDirection::Up),
             KeyCode::Tab | KeyCode::BackTab => {
                 if key.code == KeyCode::Tab {
                     app.focus.next();
@@ -247,7 +266,7 @@ impl BrowserComponent {
     /// Creates the main horizontal layout for commands and help panels.
     ///
     /// This method splits the available area into two sections: 30% for the
-    /// commands list and 70% for the inline help panel.
+    /// command list and 70% for the inline help panel.
     ///
     /// # Arguments
     /// * `area` - The area to split into panels
@@ -293,7 +312,7 @@ impl BrowserComponent {
         self.set_search_cursor(frame, app, inner_area);
     }
 
-    /// Creates the title for the search panel with optional debug indicator.
+    /// Creates the title for the search panel with an optional debug indicator.
     ///
     /// This method generates the title line for the search panel, including
     /// a debug indicator when debug mode is enabled.
@@ -355,18 +374,35 @@ impl BrowserComponent {
                 return;
             };
             let all_commands = &lock.commands;
+            let search_query = browser.search_query();
+            let theme = &*app.ctx.theme;
             browser
                 .filtered()
                 .iter()
                 .map(|command_index| {
-                    let command_group = &all_commands[*command_index].group;
-                    let command_name = &all_commands[*command_index].name;
-                    let display_text = if command_name.is_empty() {
-                        command_group.to_string()
-                    } else {
-                        format!("{} {}", command_group, command_name)
-                    };
-                    ListItem::new(display_text).style(app.ctx.theme.text_primary_style())
+                    let group = &all_commands[*command_index].group;
+                    let name = &all_commands[*command_index].name;
+                    let mut spans: Vec<Span<'_>> = Vec::new();
+                    if !group.is_empty() {
+                        spans.extend(highlight_segments(
+                            search_query,
+                            group,
+                            theme.syntax_type_style(),
+                            theme.search_highlight_style(),
+                        ));
+                        if !name.is_empty() {
+                            spans.push(Span::raw(" "));
+                        }
+                    }
+                    if !name.is_empty() {
+                        spans.extend(highlight_segments(
+                            search_query,
+                            name,
+                            theme.syntax_function_style(),
+                            theme.search_highlight_style(),
+                        ));
+                    }
+                    ListItem::new(Line::from(spans)).style(app.ctx.theme.text_primary_style())
                 })
                 .collect::<Vec<_>>()
         };
@@ -375,14 +411,14 @@ impl BrowserComponent {
             .block(commands_block)
             .highlight_style(app.ctx.theme.selection_style().add_modifier(Modifier::BOLD))
             .highlight_symbol(if is_focused { "> " } else { "" });
-        let list_state = browser.list_state();
+        let list_state = &mut browser.list_state;
         frame.render_stateful_widget(commands_list, area, list_state);
     }
 
     /// Renders the inline help panel with command documentation.
     ///
     /// This method displays detailed help information for the currently selected
-    /// command, or a placeholder message if no command is selected.
+    ///  command or a placeholder message if no command is selected.
     ///
     /// # Arguments
     /// * `frame` - The Ratatui frame to render to
@@ -406,7 +442,7 @@ mod tests {
     use heroku_types::{CommandSpec, ServiceId, command::HttpCommandSpec};
     #[test]
     fn test_format_command_display_name_with_colon() {
-        let component = BrowserComponent;
+        let component = BrowserComponent::default();
         let command_spec = CommandSpec::new_http(
             "apps".to_string(),
             "apps:create".to_string(),
@@ -422,7 +458,7 @@ mod tests {
 
     #[test]
     fn test_format_command_display_name_without_colon() {
-        let component = BrowserComponent;
+        let component = BrowserComponent::default();
         let command_spec = CommandSpec::new_http(
             "apps".to_string(),
             "apps".to_string(),
@@ -438,7 +474,7 @@ mod tests {
 
     #[test]
     fn test_format_command_display_name_empty_name() {
-        let component = BrowserComponent;
+        let component = BrowserComponent::default();
         let command_spec = CommandSpec::new_http(
             "apps".to_string(),
             "".to_string(),

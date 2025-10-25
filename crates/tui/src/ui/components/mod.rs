@@ -11,6 +11,7 @@ pub mod palette;
 pub mod plugins;
 #[allow(clippy::module_inception)]
 pub mod table;
+pub mod theme_picker;
 #[allow(clippy::module_inception)]
 pub mod workflows;
 
@@ -22,4 +23,5 @@ pub use logs::LogsComponent;
 pub use pagination::PaginationComponent;
 pub use plugins::PluginsComponent;
 pub use table::TableComponent;
+pub use theme_picker::ThemePickerComponent;
 pub use workflows::WorkflowsComponent;

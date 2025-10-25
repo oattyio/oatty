@@ -10,25 +10,23 @@ use std::{
 };
 
 use crate::ui::components::nav_bar::VerticalNavBarState;
+use crate::ui::components::workflows::collector::SelectorStatus;
 use crate::ui::components::workflows::run::RunViewState;
-use crate::ui::components::workflows::state::SelectorStatus;
 use crate::ui::{
     components::{
         browser::BrowserState, help::HelpState, logs::LogsState, palette::PaletteState, plugins::PluginsState, table::TableState,
-        workflows::WorkflowState,
+        theme_picker::ThemePickerState, workflows::WorkflowState,
     },
     theme,
 };
-use anyhow::Result;
+use heroku_engine::ValueProvider;
 use heroku_engine::provider::{CacheLookupOutcome, PendingProviderFetch, ProviderRegistry};
-use heroku_engine::{ValueProvider, WorkflowRunState};
 use heroku_mcp::PluginEngine;
 use heroku_registry::CommandRegistry;
-use heroku_types::workflow::validate_candidate_value;
-use heroku_types::{Effect, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest};
+use heroku_types::{Effect, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus, validate_candidate_value};
 use heroku_util::{
-    DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, value_contains_secret, value_is_meaningful,
-    workflow_input_uses_history,
+    DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, UserPreferences, value_contains_secret,
+    value_is_meaningful, workflow_input_uses_history,
 };
 use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
@@ -55,6 +53,12 @@ pub struct SharedCtx {
     pub history_store: Arc<dyn HistoryStore>,
     /// Identifier representing the active history profile.
     pub history_profile_id: String,
+    /// Persisted user preferences (theme picker, appearance decisions, etc.).
+    pub preferences: Arc<UserPreferences>,
+    /// Canonical identifier for the currently loaded theme.
+    pub active_theme_id: String,
+    /// Whether the runtime can show the theme picker (truecolor terminals only).
+    pub theme_picker_available: bool,
 }
 
 impl SharedCtx {
@@ -73,15 +77,28 @@ impl SharedCtx {
                 Arc::new(InMemoryHistoryStore::new())
             }
         };
+        let preferences = Arc::new(UserPreferences::with_defaults().unwrap_or_else(|error| {
+            warn!(
+                error = %error,
+                "Failed to load preferences from disk; falling back to ephemeral in-memory store."
+            );
+            UserPreferences::ephemeral()
+        }));
+        let preferred_theme = preferences.preferred_theme();
+        let loaded_theme = theme::load(preferred_theme.as_deref());
+        let theme_picker_available = theme::supports_theme_picker();
 
         Self {
             command_registry,
             providers,
             provider_registry: provider_registry.clone(),
-            theme: theme::load_from_env(),
+            theme: loaded_theme.theme,
             plugin_engine,
             history_store,
             history_profile_id: DEFAULT_HISTORY_PROFILE.to_string(),
+            preferences,
+            active_theme_id: loaded_theme.definition.id.to_string(),
+            theme_picker_available,
         }
     }
 }
@@ -128,6 +145,8 @@ pub struct App<'a> {
     pub logs: LogsState,
     /// Vertical navigation bar state (left rail)
     pub nav_bar: VerticalNavBarState,
+    /// Theme picker / appearance state
+    pub theme_picker: ThemePickerState,
     /// Whether a command is currently executing
     pub executing: bool,
     /// Animation frame for the execution throbber
@@ -168,7 +187,7 @@ impl App<'_> {
             Arc::clone(&ctx.history_store),
             ctx.history_profile_id.clone(),
         );
-
+        let theme_picker_available = ctx.theme_picker_available;
         let mut app = Self {
             ctx,
             browser: BrowserState::new(Arc::clone(&registry)),
@@ -178,7 +197,8 @@ impl App<'_> {
             workflows: WorkflowState::new(),
             table: TableState::default(),
             palette,
-            nav_bar: VerticalNavBarState::defaults_for_views(),
+            nav_bar: VerticalNavBarState::defaults_for_views(theme_picker_available),
+            theme_picker: ThemePickerState::default(),
             executing: false,
             throbber_idx: 0,
             active_exec_count: Arc::new(AtomicUsize::new(0)),
@@ -194,6 +214,7 @@ impl App<'_> {
         // Initialize rat-focus and set a sensible starting focus inside the palette
         app.focus = FocusBuilder::build_for(&app);
         app.focus.focus(&app.palette);
+        app.theme_picker.set_active_theme(&app.ctx.active_theme_id);
 
         app
     }
@@ -201,6 +222,21 @@ impl App<'_> {
     fn next_run_identifier(&mut self, workflow_identifier: &str) -> String {
         self.workflow_run_sequence = self.workflow_run_sequence.wrapping_add(1);
         format!("{}-{}", workflow_identifier, self.workflow_run_sequence)
+    }
+
+    /// Applies the theme selected inside the picker, rebuilds UI focus state, and persists the choice.
+    pub fn apply_theme_selection(&mut self, theme_id: &str) {
+        let Some(definition) = theme::catalog::find_by_id(theme_id) else {
+            warn!(theme_id, "Unknown theme id requested; ignoring.");
+            return;
+        };
+
+        self.ctx.theme = definition.build();
+        self.ctx.active_theme_id = definition.id.to_string();
+        self.theme_picker.set_active_theme(definition.id);
+        if let Err(error) = self.ctx.preferences.set_preferred_theme(Some(definition.id.to_string())) {
+            warn!(%error, "Failed to persist preferred theme selection");
+        }
     }
 
     /// Registers a new workflow run event stream. Replaces any pending receiver.
@@ -241,6 +277,7 @@ impl App<'_> {
             Msg::ProviderValuesReady { provider_id, cache_key } => {
                 self.handle_provider_values_ready(provider_id.clone(), cache_key.clone())
             }
+            Msg::WorkflowRunEvent { run_id, event } => self.process_workflow_run_event(run_id, event),
             _ => Vec::new(),
         }
     }
@@ -346,103 +383,6 @@ impl App<'_> {
         effects
     }
 
-    /// Populate run state inputs with history-backed defaults when available.
-    fn seed_history_defaults(&mut self, run_state: &mut WorkflowRunState) {
-        for (input_name, definition) in &run_state.workflow.inputs {
-            if !workflow_input_uses_history(definition) {
-                continue;
-            }
-
-            let key = HistoryKey::workflow_input(
-                self.ctx.history_profile_id.clone(),
-                run_state.workflow.identifier.clone(),
-                input_name.clone(),
-            );
-
-            match self.ctx.history_store.get_latest_value(&key) {
-                Ok(Some(stored)) => {
-                    if stored.value.is_null() || value_contains_secret(&stored.value) {
-                        continue;
-                    }
-                    if let Some(validation) = &definition.validate
-                        && let Err(error) = validate_candidate_value(&stored.value, validation)
-                    {
-                        let message = format!("History default for '{}' failed validation: {}", input_name, error);
-                        warn!(
-                            input = %input_name,
-                            workflow = %run_state.workflow.identifier,
-                            "{}",
-                            message
-                        );
-                        self.append_log_message(message);
-                        continue;
-                    }
-
-                    run_state.run_context.inputs.insert(input_name.clone(), stored.value);
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    let message = format!("Failed to load history default for '{}': {}", input_name, error);
-                    warn!(
-                        input = %input_name,
-                        workflow = %run_state.workflow.identifier,
-                        "{}",
-                        message
-                    );
-                    self.append_log_message(message);
-                }
-            }
-        }
-    }
-
-    /// Persist successful workflow input values back to history storage.
-    fn persist_successful_run_history(&self) {
-        let Some(run_state) = self.workflows.active_run_state() else {
-            return;
-        };
-
-        for (input_name, definition) in &run_state.workflow.inputs {
-            if !workflow_input_uses_history(definition) {
-                continue;
-            }
-
-            let Some(value) = run_state.run_context.inputs.get(input_name) else {
-                continue;
-            };
-
-            if !value_is_meaningful(value) || value_contains_secret(value) {
-                continue;
-            }
-
-            if let Some(validation) = &definition.validate
-                && let Err(error) = validate_candidate_value(value, validation)
-            {
-                warn!(
-                    input = %input_name,
-                    workflow = %run_state.workflow.identifier,
-                    error = %error,
-                    "skipping history persistence for value failing validation"
-                );
-                continue;
-            }
-
-            let key = HistoryKey::workflow_input(
-                self.ctx.history_profile_id.clone(),
-                run_state.workflow.identifier.clone(),
-                input_name.clone(),
-            );
-
-            if let Err(error) = self.ctx.history_store.insert_value(key, value.clone()) {
-                warn!(
-                    input = %input_name,
-                    workflow = %run_state.workflow.identifier,
-                    error = %error,
-                    "failed to persist workflow history value"
-                );
-            }
-        }
-    }
-
     /// Trims log entries if they exceed the maximum allowed size.
     ///
     /// This method maintains reasonable memory usage by limiting the number
@@ -489,23 +429,73 @@ impl App<'_> {
         self.trim_logs_if_needed();
     }
 
-    /// Open the interactive input view for the selected workflow.
-    pub fn open_workflow_inputs(&mut self) -> Result<()> {
-        let Some(workflow) = self.workflows.selected_workflow() else {
-            self.append_log_message("No workflow selected");
-            return Ok(());
-        };
-        let mut run_state = WorkflowRunState::new(workflow.clone());
-        self.seed_history_defaults(&mut run_state);
-        run_state.apply_input_defaults();
-        run_state.evaluate_input_providers()?;
-        self.workflows.begin_inputs_session(run_state);
-        Ok(())
+    fn process_workflow_run_event(&mut self, run_id: &str, event: &WorkflowRunEvent) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        let persist_history = matches!(
+            event,
+            WorkflowRunEvent::RunCompleted {
+                status: WorkflowRunStatus::Succeeded,
+                ..
+            }
+        );
+
+        let log_messages = self.workflows.apply_run_event(run_id, event.clone(), &*self.ctx.theme);
+        for message in log_messages {
+            effects.push(Effect::Log(message));
+        }
+
+        if persist_history {
+            self.persist_successful_workflow_run_history();
+        }
+
+        effects
     }
 
-    /// Close the workflow input view, discarding any unsubmitted run state.
-    pub fn close_workflow_inputs(&mut self) {
-        self.workflows.end_inputs_session();
+    fn persist_successful_workflow_run_history(&mut self) {
+        let Some(run_state) = self.workflows.active_run_state() else {
+            return;
+        };
+
+        for (input_name, definition) in &run_state.workflow.inputs {
+            if !workflow_input_uses_history(definition) {
+                continue;
+            }
+
+            let Some(value) = run_state.run_context.inputs.get(input_name) else {
+                continue;
+            };
+
+            if !value_is_meaningful(value) || value_contains_secret(value) {
+                continue;
+            }
+
+            if let Some(validation) = &definition.validate
+                && let Err(error) = validate_candidate_value(value, validation)
+            {
+                warn!(
+                    input = %input_name,
+                    workflow = %run_state.workflow.identifier,
+                    error = %error,
+                    "skipping history persistence for value failing validation"
+                );
+                continue;
+            }
+
+            let key = HistoryKey::workflow_input(
+                self.ctx.history_profile_id.clone(),
+                run_state.workflow.identifier.clone(),
+                input_name.clone(),
+            );
+
+            if let Err(error) = self.ctx.history_store.insert_value(key, value.clone()) {
+                warn!(
+                    input = %input_name,
+                    workflow = %run_state.workflow.identifier,
+                    error = %error,
+                    "failed to persist workflow history value"
+                );
+            }
+        }
     }
 
     /// Requests execution of the currently active workflow run.
@@ -577,7 +567,7 @@ impl HasFocus for App<'_> {
                 Modal::WorkflowCollector => {
                     // no focusable fields; leave ring empty (collector stub)
                 }
-                Modal::PluginDetails | Modal::Help => {
+                Modal::PluginDetails | Modal::Help | Modal::ThemePicker => {
                     // no focusable fields; leave the ring empty
                 }
             }

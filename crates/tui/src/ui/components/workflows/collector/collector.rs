@@ -5,10 +5,11 @@ use crate::ui::components::common::ResultsTableView;
 use crate::ui::components::component::{Component, find_target_index_by_mouse_position};
 use crate::ui::components::table::state::KeyValueEntry;
 use crate::ui::components::workflows::collector::manual_entry::ManualEntryComponent;
-use crate::ui::components::workflows::state::{
+use crate::ui::components::workflows::collector::{
     SelectorButtonFocus, SelectorStatus, WorkflowCollectorFocus, WorkflowSelectorLayoutState, WorkflowSelectorStagedSelection,
     WorkflowSelectorViewState,
 };
+use crate::ui::components::workflows::view_utils::{classify_json_value, style_for_role};
 use crate::ui::theme::Theme;
 use crate::ui::theme::theme_helpers::{self as th, ButtonRenderOptions, build_hint_spans};
 use crate::ui::utils::render_value;
@@ -18,6 +19,7 @@ use heroku_engine::{ProviderValueResolver, resolve::select_path};
 use heroku_types::{Effect, WorkflowProviderErrorPolicy};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
 use serde_json::{Value as JsonValue, Value};
@@ -29,6 +31,10 @@ enum CollectorMouseTarget {
     FilterInput,
     TableBody,
 }
+/// Component that orchestrates workflow input collection modals (manual entry and selector).
+///
+/// The collector routes events to the appropriate modal based on the active state inside
+/// `WorkflowState` and renders either the provider-backed selector or the manual entry dialog.
 #[derive(Debug, Default)]
 pub struct WorkflowCollectorComponent {
     manual_entry: ManualEntryComponent,
@@ -203,6 +209,11 @@ impl Component for WorkflowCollectorComponent {
         if let Some(selector) = app.workflows.selector_state() {
             return Self::selector_hint_spans(theme, selector);
         }
+        Vec::new()
+    }
+
+    fn on_route_exit(&mut self, app: &mut App) -> Vec<Effect> {
+        app.workflows.end_inputs_session();
         Vec::new()
     }
 }
@@ -449,13 +460,13 @@ impl WorkflowCollectorComponent {
         effects
     }
 
-    fn apply_filter(&self, sel: &mut WorkflowSelectorViewState<'_>, theme: &dyn Theme) {
-        sel.refresh_table(theme);
+    fn apply_filter(&self, selector: &mut WorkflowSelectorViewState<'_>, theme: &dyn Theme) {
+        selector.refresh_table(theme);
     }
 
-    fn extract_selected_value(&self, sel: &WorkflowSelectorViewState<'_>) -> Option<(JsonValue, Option<String>)> {
-        let row = sel.table.selected_data()?;
-        if let Some(path) = sel.value_field.as_deref() {
+    fn extract_selected_value(&self, selector: &WorkflowSelectorViewState<'_>) -> Option<(JsonValue, Option<String>)> {
+        let row = selector.table.selected_data()?;
+        if let Some(path) = selector.value_field.as_deref() {
             let value = select_path(row, Some(path))?;
             let field_name = path.split('.').next_back().map(|segment| segment.to_string());
             return match value {
@@ -489,21 +500,19 @@ impl WorkflowCollectorComponent {
 
     fn render_selector(&self, frame: &mut Frame, rect: Rect, app: &mut App) {
         let theme = &*app.ctx.theme;
-        let sel = app.workflows.selector_state_mut().expect("selector state");
-        sel.sync_stage_with_selection();
+        let selector = app.workflows.selector_state_mut().expect("selector state");
+        selector.sync_stage_with_selection();
 
-        let title = format!("Select one ({})", sel.provider_id);
-        let block = th::block(theme, Some(title.as_str()), false)
-            .borders(Borders::NONE)
-            .padding(Padding::uniform(1));
+        let title = format!("Select one ({})", selector.provider_id);
+        let block = th::block(theme, Some(title.as_str()), false).padding(Padding::uniform(1));
         let inner = block.inner(rect);
         frame.render_widget(block, rect);
 
-        let detail_required = sel.value_field.is_none();
+        let detail_required = selector.value_field.is_none();
         let layout_spec = if detail_required {
-            vec![Constraint::Length(2), Constraint::Min(6), Constraint::Min(5), Constraint::Length(3)]
+            vec![Constraint::Length(4), Constraint::Min(6), Constraint::Min(5), Constraint::Length(3)]
         } else {
-            vec![Constraint::Length(2), Constraint::Min(8), Constraint::Length(3)]
+            vec![Constraint::Length(4), Constraint::Min(8), Constraint::Length(3)]
         };
         let layout = Layout::vertical(layout_spec).split(inner);
 
@@ -512,9 +521,9 @@ impl WorkflowCollectorComponent {
         let detail_area = if detail_required { Some(layout[2]) } else { None };
         let footer_area = if detail_required { layout[3] } else { layout[2] };
 
-        let header_layout = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).split(header_area);
-        frame.render_widget(Paragraph::new(self.build_filter_line(sel, theme)), header_layout[0]);
-        frame.render_widget(Paragraph::new(self.build_status_line(sel, theme)), header_layout[1]);
+        let header_layout = Layout::vertical([Constraint::Length(3), Constraint::Length(1)]).split(header_area);
+        self.render_filter_panel(frame, header_layout[0], selector, theme);
+        self.render_status_line(frame, header_layout[1], selector, theme);
 
         let mut layout_state = WorkflowSelectorLayoutState {
             container_area: Some(rect),
@@ -527,28 +536,24 @@ impl WorkflowCollectorComponent {
         };
 
         let mut results_view = ResultsTableView::default();
-        let table_focused = matches!(sel.focus, WorkflowCollectorFocus::Table);
-        let table_block = th::block(theme, None, table_focused);
-        let table_inner = table_block.inner(table_area);
-        frame.render_widget(table_block, table_area);
+        let table_focused = matches!(selector.focus, WorkflowCollectorFocus::Table);
+        let visible_rows = table_area.height.saturating_sub(1).max(1) as usize;
+        selector.table.set_visible_rows(visible_rows);
 
-        let visible_rows = table_inner.height.saturating_sub(1).max(1) as usize;
-        sel.table.set_visible_rows(visible_rows);
-
-        results_view.render_results(frame, table_inner, &sel.table, table_focused, theme);
+        results_view.render_results(frame, table_area, &selector.table, table_focused, theme);
         layout_state.table_area = Some(table_area);
 
         if let Some(area) = detail_area {
             let detail_layout = Layout::vertical([Constraint::Min(3), Constraint::Length(2)]).split(area);
-            let row_json = sel.table.selected_data().cloned().unwrap_or(Value::Null);
-            let entries = sel.table.kv_entries();
-            let (detail_selection, detail_offset) = self.detail_selection(entries, sel);
+            let row_json = selector.table.selected_data().cloned().unwrap_or(Value::Null);
+            let entries = selector.table.kv_entries();
+            let (detail_selection, detail_offset) = self.detail_selection(entries, selector);
             let detail_block = th::block(theme, Some("Details"), table_focused);
             let detail_inner = detail_block.inner(detail_layout[0]);
             frame.render_widget(detail_block, detail_layout[0]);
 
             ResultsTableView::render_kv_or_text(frame, detail_inner, entries, detail_selection, detail_offset, &row_json, theme);
-            self.render_detail_metadata(frame, detail_layout[1], sel, theme);
+            self.render_detail_metadata(frame, detail_layout[1], selector, theme);
             layout_state.detail_area = Some(area);
         } else {
             layout_state.detail_area = None;
@@ -556,15 +561,15 @@ impl WorkflowCollectorComponent {
 
         let footer_layout = Layout::horizontal([Constraint::Length(24), Constraint::Min(0)]).split(footer_area);
         let button_layout = Layout::horizontal([Constraint::Length(12), Constraint::Length(12)]).split(footer_layout[0]);
-        let buttons_focused = matches!(sel.focus, WorkflowCollectorFocus::Buttons(_));
+        let buttons_focused = matches!(selector.focus, WorkflowCollectorFocus::Buttons(_));
 
-        let cancel_selected = matches!(sel.button_focus(), SelectorButtonFocus::Cancel);
+        let cancel_selected = matches!(selector.button_focus(), SelectorButtonFocus::Cancel);
         let cancel_options = ButtonRenderOptions::new(true, buttons_focused && cancel_selected, cancel_selected, Borders::ALL, false);
         th::render_button(frame, button_layout[0], "Cancel", theme, cancel_options);
 
-        let apply_selected = matches!(sel.button_focus(), SelectorButtonFocus::Apply);
+        let apply_selected = matches!(selector.button_focus(), SelectorButtonFocus::Apply);
         let apply_options = ButtonRenderOptions::new(
-            sel.apply_enabled(),
+            selector.apply_enabled(),
             buttons_focused && apply_selected,
             apply_selected,
             Borders::ALL,
@@ -575,7 +580,42 @@ impl WorkflowCollectorComponent {
         layout_state.footer_area = Some(footer_area);
         layout_state.cancel_button_area = Some(button_layout[0]);
         layout_state.apply_button_area = Some(button_layout[1]);
-        sel.set_layout(layout_state);
+        selector.set_layout(layout_state);
+    }
+
+    fn render_filter_panel(&self, frame: &mut Frame, area: Rect, selector: &WorkflowSelectorViewState<'_>, theme: &dyn Theme) {
+        let filter_block_title = Line::from(Span::styled(
+            "Filter Results",
+            theme.text_secondary_style().add_modifier(Modifier::BOLD),
+        ));
+        let is_focused = selector.is_filter_focused();
+        let mut block = th::block(theme, None, is_focused);
+        block = block.title(filter_block_title);
+        let inner_area = block.inner(area);
+        let filter_text = selector.filter.input();
+
+        let content_line = if is_focused || !filter_text.is_empty() {
+            Line::from(Span::styled(filter_text.to_string(), theme.text_primary_style()))
+        } else {
+            Line::from(Span::from(""))
+        };
+
+        let paragraph = Paragraph::new(content_line).block(block).wrap(Wrap { trim: true });
+        frame.render_widget(paragraph, area);
+
+        if is_focused {
+            let cursor_index = selector.filter.cursor().min(filter_text.len());
+            let prefix = &filter_text[..cursor_index];
+            let cursor_columns = prefix.chars().count() as u16;
+            let cursor_x = inner_area.x.saturating_add(cursor_columns);
+            let cursor_y = inner_area.y;
+            frame.set_cursor_position((cursor_x, cursor_y));
+        }
+    }
+
+    fn render_status_line(&self, frame: &mut Frame, area: Rect, selector: &WorkflowSelectorViewState<'_>, theme: &dyn Theme) {
+        let status_line = self.build_status_line(selector, theme);
+        frame.render_widget(Paragraph::new(status_line), area);
     }
 
     fn row_index_from_position(&self, selector: &WorkflowSelectorViewState<'_>, table_area: Rect, mouse_row: u16) -> Option<usize> {
@@ -595,42 +635,29 @@ impl WorkflowCollectorComponent {
         if target_index < total_rows { Some(target_index) } else { None }
     }
 
-    fn build_filter_line(&self, selector: &WorkflowSelectorViewState<'_>, theme: &dyn Theme) -> Line<'static> {
-        let mut spans = Vec::new();
-        spans.push(Span::styled("Filter", theme.text_secondary_style()));
-        spans.push(Span::raw(": "));
-        let filter_text = selector.filter.input();
-        if filter_text.is_empty() && !selector.is_filter_focused() {
-            spans.push(Span::styled("[type to filter]".to_string(), theme.text_muted_style()));
-        } else {
-            let value = filter_text.to_string();
-            if selector.is_filter_focused() {
-                spans.push(Span::styled(value, theme.selection_style()));
-            } else {
-                spans.push(Span::styled(value, theme.text_primary_style()));
-            }
-        }
-        Line::from(spans)
-    }
-
     fn build_status_line(&self, selector: &WorkflowSelectorViewState<'_>, theme: &dyn Theme) -> Line<'static> {
         let mut spans = Vec::new();
-        let status_text = match selector.status {
-            SelectorStatus::Loading => "loading…",
-            SelectorStatus::Loaded => "loaded",
-            SelectorStatus::Error => "error",
+        let (indicator, label, style) = match selector.status {
+            SelectorStatus::Loading => ("⟳", "Loading…", theme.status_info()),
+            SelectorStatus::Loaded => ("✓", "Ready", theme.status_success()),
+            SelectorStatus::Error => ("✖", "Error", theme.status_error()),
         };
-        spans.push(Span::styled("Status: ".to_string(), theme.text_secondary_style()));
-        spans.push(Span::styled(status_text.to_string(), theme.text_primary_style()));
+
+        spans.push(Span::styled("Status ", theme.text_secondary_style()));
+        spans.push(Span::styled(format!("{indicator} {label}"), style));
 
         if let Some(error) = &selector.error_message {
             spans.push(Span::raw("  •  "));
             spans.push(Span::styled(error.clone(), theme.status_error()));
         } else if let Some(staged) = selector.staged_selection() {
-            spans.push(Span::raw("  •  Selected: "));
-            spans.push(Span::styled(staged.display_value.clone(), theme.status_success()));
+            spans.push(Span::styled("  •  Selected: ", theme.text_secondary_style()));
+            spans.push(Span::styled("✓ ", theme.status_success()));
+            spans.push(Span::styled(
+                staged.display_value.clone(),
+                style_for_role(classify_json_value(&staged.value), theme),
+            ));
             if let Some(field) = &staged.source_field {
-                spans.push(Span::styled(format!(" ({field})"), theme.text_muted_style()));
+                spans.push(Span::styled(format!(" ({field})"), theme.syntax_type_style()));
             }
         }
 
@@ -677,25 +704,42 @@ impl WorkflowCollectorComponent {
         if let Some(field) = self.active_field_key(selector)
             && let Some(metadata) = selector.field_metadata.get(&field)
         {
-            let mut type_text = format!("Type: {}", metadata.json_type.clone().unwrap_or_else(|| "unknown".to_string()));
+            let type_label = metadata.json_type.clone().unwrap_or_else(|| "unknown".to_string());
+            let mut type_spans = vec![
+                Span::styled("Type: ", theme.text_secondary_style()),
+                Span::styled(type_label, theme.syntax_type_style()),
+            ];
             if metadata.required {
-                type_text.push_str(" • required");
+                type_spans.push(Span::styled(" • required", theme.syntax_keyword_style()));
             }
-            lines.push(Line::from(Span::styled(type_text, theme.text_secondary_style())));
+            lines.push(Line::from(type_spans));
 
             if !metadata.tags.is_empty() {
-                let tags = metadata.tags.iter().map(|tag| format!("#{tag}")).collect::<Vec<_>>().join(" ");
-                lines.push(Line::from(Span::styled(format!("Tags: {tags}"), theme.text_muted_style())));
+                let mut tag_spans = Vec::with_capacity(metadata.tags.len() * 2 + 1);
+                tag_spans.push(Span::styled("Tags: ", theme.text_secondary_style()));
+                for (index, tag) in metadata.tags.iter().enumerate() {
+                    if index > 0 {
+                        tag_spans.push(Span::styled(" ", theme.text_secondary_style()));
+                    }
+                    tag_spans.push(Span::styled(format!("#{tag}"), theme.syntax_keyword_style()));
+                }
+                lines.push(Line::from(tag_spans));
             }
 
             if !metadata.enum_values.is_empty() {
                 let preview_count = min(metadata.enum_values.len(), 5);
-                let preview = metadata.enum_values[..preview_count].join(", ");
-                let suffix = if metadata.enum_values.len() > preview_count { "…" } else { "" };
-                lines.push(Line::from(Span::styled(
-                    format!("Enums: {preview}{suffix}"),
-                    theme.text_muted_style(),
-                )));
+                let mut enum_spans = Vec::with_capacity(preview_count * 2 + 2);
+                enum_spans.push(Span::styled("Enums: ", theme.text_secondary_style()));
+                for (index, value) in metadata.enum_values.iter().take(preview_count).enumerate() {
+                    if index > 0 {
+                        enum_spans.push(Span::styled(", ", theme.text_secondary_style()));
+                    }
+                    enum_spans.push(Span::styled(value.clone(), theme.syntax_string_style()));
+                }
+                if metadata.enum_values.len() > preview_count {
+                    enum_spans.push(Span::styled(" …", theme.text_secondary_style()));
+                }
+                lines.push(Line::from(enum_spans));
             }
         }
 
@@ -767,7 +811,7 @@ mod tests {
     use super::*;
     use crate::ui::components::common::TextInputState;
     use crate::ui::components::table::TableState;
-    use crate::ui::components::workflows::state::WorkflowSelectorLayoutState;
+    use crate::ui::components::workflows::collector::WorkflowSelectorLayoutState;
     use indexmap::IndexMap;
     use serde_json::json;
 

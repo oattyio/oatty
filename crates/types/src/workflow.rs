@@ -589,7 +589,7 @@ steps:
         let definition: WorkflowDefinition = serde_yaml::from_str(yaml_text).expect("parse sample workflow");
         assert_eq!(definition.workflow, "app_with_db");
         assert!(definition.inputs.contains_key("app_name"));
-        assert_eq!(definition.steps.len(), 3);
+        assert_eq!(definition.steps.len(), 4);
     }
 
     #[test]

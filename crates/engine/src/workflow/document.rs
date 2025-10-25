@@ -110,4 +110,18 @@ mod tests {
         let error = build_runtime_catalog(&definitions).expect_err("expected duplicate error");
         assert!(error.to_string().contains("duplicate workflow identifier"));
     }
+
+    #[test]
+    fn rejects_workflows_without_steps() {
+        let definition = WorkflowDefinition {
+            workflow: "missing_steps".into(),
+            title: None,
+            description: None,
+            inputs: IndexMap::new(),
+            steps: Vec::new(),
+        };
+
+        let error = runtime_workflow_from_definition(&definition).expect_err("expected missing steps error");
+        assert!(error.to_string().contains("must declare at least one step"));
+    }
 }

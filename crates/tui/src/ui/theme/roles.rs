@@ -27,6 +27,18 @@ pub struct ThemeRoles {
     pub selection_bg: Color,
     pub selection_fg: Color,
     pub focus: Color,
+    /// Foreground color used to highlight search matches or other important inline hits.
+    pub search_highlight: Color,
+    /// Keyword/token color following the active syntax theme rules.
+    pub syntax_keyword: Color,
+    /// Function/method color following the active syntax theme rules.
+    pub syntax_function: Color,
+    /// String literal color following the active syntax theme rules.
+    pub syntax_string: Color,
+    /// Numeric literal color following the active syntax theme rules.
+    pub syntax_number: Color,
+    /// Type/identifier color following the active syntax theme rules.
+    pub syntax_type: Color,
 
     /// Background color used when displaying modal overlays.
     ///
@@ -69,6 +81,27 @@ pub trait Theme: Send + Sync + Debug {
     /// Style used for the darkened background that appears behind modal dialogs.
     fn modal_background_style(&self) -> Style {
         Style::default().bg(self.roles().modal_bg)
+    }
+
+    /// Standard highlight style for search matches (color-only per Dracula spec).
+    fn search_highlight_style(&self) -> Style {
+        Style::default().fg(self.roles().search_highlight)
+    }
+
+    fn syntax_keyword_style(&self) -> Style {
+        Style::default().fg(self.roles().syntax_keyword)
+    }
+    fn syntax_function_style(&self) -> Style {
+        Style::default().fg(self.roles().syntax_function)
+    }
+    fn syntax_string_style(&self) -> Style {
+        Style::default().fg(self.roles().syntax_string)
+    }
+    fn syntax_number_style(&self) -> Style {
+        Style::default().fg(self.roles().syntax_number)
+    }
+    fn syntax_type_style(&self) -> Style {
+        Style::default().fg(self.roles().syntax_type)
     }
 
     // Status styles

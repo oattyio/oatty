@@ -43,26 +43,6 @@ impl WorkflowInputViewState {
         self.selected = index;
     }
 
-    pub fn select_next(&mut self, total: usize) {
-        if total == 0 {
-            self.selected = 0;
-        } else {
-            self.selected = (self.selected + 1) % total;
-        }
-    }
-
-    pub fn select_prev(&mut self, total: usize) {
-        if total == 0 {
-            self.selected = 0;
-            return;
-        }
-        if self.selected == 0 {
-            self.selected = total - 1;
-        } else {
-            self.selected -= 1;
-        }
-    }
-
     pub fn clamp_selection(&mut self, total: usize) {
         if total == 0 {
             self.selected = 0;

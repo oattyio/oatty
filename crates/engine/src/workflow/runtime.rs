@@ -108,7 +108,7 @@ mod tests {
             with,
             body: Value::Null,
             repeat: Some(WorkflowRepeat {
-                until: Some("steps.s1.status == \"succeeded\"".into()),
+                until: Some("steps.s1.status == \\\"succeeded\\\"".into()),
                 every: Some("5s".into()),
                 timeout: None,
                 max_attempts: None,
@@ -146,5 +146,83 @@ mod tests {
         assert_eq!(step.r#if.as_deref(), Some("inputs.enabled"));
         assert!(step.repeat.is_some());
         assert!(step.output_contract.is_some());
+    }
+
+    #[test]
+    fn repeat_without_until_is_ignored() {
+        let mut runtime = sample_runtime_workflow();
+        runtime.steps[0].repeat = Some(WorkflowRepeat {
+            until: None,
+            every: Some("5s".into()),
+            timeout: Some("1m".into()),
+            max_attempts: Some(3),
+        });
+
+        let spec = workflow_spec_from_runtime(&runtime);
+        assert!(spec.steps[0].repeat.is_none());
+    }
+
+    #[test]
+    fn step_body_and_flags_are_preserved() {
+        let mut with = IndexMap::new();
+        with.insert("app".into(), Value::String("${{ inputs.app }}".into()));
+        let step = WorkflowStepDefinition {
+            id: "body_step".into(),
+            run: "apps:create".into(),
+            description: None,
+            depends_on: vec!["s1".into()],
+            r#if: Some("${{ inputs.flag }}".into()),
+            with,
+            body: serde_json::json!({
+                "name": "${{ inputs.app }}",
+                "region": "us"
+            }),
+            repeat: None,
+            output_contract: None,
+        };
+        let runtime = RuntimeWorkflow {
+            identifier: "demo".into(),
+            title: None,
+            description: None,
+            inputs: IndexMap::new(),
+            steps: vec![step],
+        };
+
+        let spec = workflow_spec_from_runtime(&runtime);
+        let spec_step = &spec.steps[0];
+        assert_eq!(spec_step.run, "apps:create");
+        assert_eq!(spec_step.depends_on, vec!["s1"]);
+
+        let flags = spec_step.with.as_ref().expect("with map missing");
+        assert_eq!(flags.get("app"), Some(&Value::String("${{ inputs.app }}".into())));
+
+        let body = spec_step.body.as_ref().expect("body missing");
+        assert_eq!(body["region"], "us");
+        assert_eq!(body["name"], "${{ inputs.app }}");
+    }
+
+    #[test]
+    fn normalizes_condition_expressions() {
+        let step = WorkflowStepDefinition {
+            id: "conditional".into(),
+            run: "apps:list".into(),
+            description: None,
+            depends_on: Vec::new(),
+            r#if: Some("  ${{  inputs.flag  }}  ".into()),
+            with: IndexMap::new(),
+            body: Value::Null,
+            repeat: None,
+            output_contract: None,
+        };
+        let runtime = RuntimeWorkflow {
+            identifier: "conditional_test".into(),
+            title: None,
+            description: None,
+            inputs: IndexMap::new(),
+            steps: vec![step],
+        };
+
+        let spec = workflow_spec_from_runtime(&runtime);
+        assert_eq!(spec.steps[0].r#if.as_deref(), Some("inputs.flag"));
     }
 }

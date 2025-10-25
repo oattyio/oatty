@@ -9,8 +9,10 @@ pub mod suggestion {
     /// Identifies the kind of suggestion item presented to the user.
     #[derive(Clone, Debug, PartialEq)]
     pub enum ItemKind {
-        /// A command name (for example, "apps:list").
+        /// A canonical command ID (for example, "apps:list").
         Command,
+        /// A Canonical MCP Tool ID (for example, "brave web:search").
+        MCP,
         /// A flag or option (for example, "--app" or "--region").
         Flag,
         /// A value for a flag or positional argument.
@@ -156,7 +158,7 @@ pub mod service {
     use serde::{Deserialize, Serialize};
 
     /// Default accept header shared across Heroku APIs.
-    const HEROKU_JSON_ACCEPT_HEADER: &str = "application/vnd.heroku+json; version=3";
+    const HEROKU_JSON_ACCEPT_HEADER: &str = "application/vnd.heroku+json; version=3.sdk";
 
     /// Identifies the backend service targeted by a generated request.
     #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Default, Serialize, Deserialize, Encode, Decode)]
@@ -426,7 +428,7 @@ pub mod command {
             }
         }
 
-        /// Returns the canonical name for this command.
+        /// Returns the canonical ID for this command.
         pub fn canonical_id(&self) -> String {
             format!("{} {}", self.group, self.name)
         }
@@ -806,6 +808,8 @@ pub mod messaging {
         WorkflowCollector,
         /// Plugin details modal presenting plugin metadata.
         PluginDetails,
+        /// Theme picker modal allowing runtime palette switching.
+        ThemePicker,
     }
 
     /// Side effects that can be triggered by state changes.

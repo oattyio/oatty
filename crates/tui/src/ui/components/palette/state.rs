@@ -24,20 +24,24 @@ use chrono::Utc;
 
 use super::suggestion_engine::{parse_user_flags_args, required_flags_remaining};
 use crate::ui::components::common::TextInputState;
-use crate::ui::theme::theme_helpers::create_spans_with_match;
+use crate::ui::theme::theme_helpers::{create_spans_with_match, highlight_segments};
 use heroku_engine::provider::{PendingProviderFetch, ValueProvider};
 use heroku_registry::{CommandRegistry, find_by_group_and_cmd};
 use heroku_types::{CommandSpec, Effect, ExecOutcome, ItemKind, Modal, SuggestionItem};
 use heroku_util::{
     HistoryKey, HistoryScope, HistoryScopeKind, HistoryStore, StoredHistoryValue, lex_shell_like, lex_shell_like_ranged,
-    value_contains_secret, value_is_meaningful,
+    truncate_with_ellipsis, value_contains_secret, value_is_meaningful,
 };
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
-use ratatui::layout::Rect;
-use ratatui::text::Line;
 use ratatui::widgets::{ListItem, ListState};
+use ratatui::{
+    layout::Rect,
+    style::{Modifier, Style},
+    text::{Line, Span},
+};
 use serde_json::Value;
 use tracing::warn;
+use unicode_width::UnicodeWidthStr;
 
 /// Locate the index of the token under the cursor.
 ///
@@ -84,6 +88,8 @@ pub struct PaletteState {
     suggestions: Vec<SuggestionItem>,
     /// Pre-rendered suggestion list items for efficient display
     rendered_suggestions: Vec<ListItem<'static>>,
+    /// Cached width of the suggestions list area, used for truncation calculations.
+    suggestions_view_width: Option<u16>,
     /// Optional error message to display
     error_message: Option<String>,
     /// Whether provider-backed suggestions are actively loading
@@ -121,6 +127,7 @@ impl PaletteState {
             list_state: ListState::default(),
             suggestions: Vec::new(),
             rendered_suggestions: Vec::new(),
+            suggestions_view_width: None,
             error_message: None,
             provider_loading: false,
             history: Vec::new(),
@@ -241,6 +248,16 @@ impl PaletteState {
     /// Get the current rendered suggestions list
     pub fn rendered_suggestions(&self) -> &[ListItem<'static>] {
         &self.rendered_suggestions
+    }
+
+    /// Updates the cached width of the suggestions popup for truncation logic.
+    pub fn update_suggestions_view_width(&mut self, width: u16, theme: &dyn Theme) {
+        if self.suggestions_view_width != Some(width) {
+            self.suggestions_view_width = Some(width);
+            if !self.suggestions.is_empty() {
+                self.refresh_rendered_suggestions(theme);
+            }
+        }
     }
 
     // ===== REDUCERS =====
@@ -402,9 +419,9 @@ impl PaletteState {
         self.with_text_input(|ti| ti.backspace());
     }
 
-    /// Finalize suggestion list for the UI: rank, truncate, ghost text, and
+    /// Finalize the suggestions list for the UI: rank, truncate, ghost text, and
     /// state flags.
-    fn finalize_suggestions(&mut self, items: &mut [SuggestionItem], theme: &dyn crate::ui::theme::Theme) {
+    fn finalize_suggestions(&mut self, items: &mut [SuggestionItem], theme: &dyn Theme) {
         items.sort_by(|a, b| b.score.cmp(&a.score));
 
         self.suggestions = items.to_vec();
@@ -423,7 +440,6 @@ impl PaletteState {
         }
 
         self.refresh_rendered_suggestions(theme);
-
         self.apply_ghost_text();
     }
 
@@ -435,17 +451,29 @@ impl PaletteState {
         let current_token = get_current_token(&self.input, self.cursor_position);
         let needle = current_token.trim();
 
+        let width_hint = self.suggestions_view_width;
         self.rendered_suggestions = self
             .suggestions
             .iter()
             .map(|suggestion_item| {
-                let display = suggestion_item.display.clone();
-                let spans = create_spans_with_match(
-                    needle.to_string(),
-                    display,
-                    theme.text_primary_style(),
-                    theme.accent_emphasis_style(),
-                );
+                let spans = match suggestion_item.kind {
+                    ItemKind::Command | ItemKind::MCP => build_command_spans(suggestion_item, needle, theme, width_hint),
+                    ItemKind::Flag => build_flag_spans(suggestion_item, needle, theme, width_hint),
+                    ItemKind::Value => build_value_spans(suggestion_item, needle, theme, width_hint),
+                    ItemKind::Positional => build_positional_spans(suggestion_item, needle, theme, width_hint),
+                };
+
+                let spans = if spans.is_empty() {
+                    create_spans_with_match(
+                        needle.to_string(),
+                        suggestion_item.display.clone(),
+                        theme.text_primary_style(),
+                        theme.search_highlight_style(),
+                    )
+                } else {
+                    spans
+                };
+
                 ListItem::from(Line::from(spans))
             })
             .collect();
@@ -965,14 +993,19 @@ impl PaletteState {
     /// * `execution_outcome` - The result of the command execution
     pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &ExecOutcome) -> Vec<Effect> {
         let mut effects = Vec::new();
-        let (value, request_id) = match execution_outcome {
-            ExecOutcome::Http(_, _, value, _, request_id) => (value.clone(), request_id),
-            ExecOutcome::Mcp(_, value, request_id) => (value.clone(), request_id),
+        let (status, log, value, request_id) = match execution_outcome {
+            ExecOutcome::Http(status_code, log, value, _, request_id) => (status_code, log, value.clone(), request_id),
+            ExecOutcome::Mcp(log, value, request_id) => (&200, log, value.clone(), request_id),
             _ => return effects,
         };
 
         // nothing to do
         if self.cmd_exec_hash.is_none_or(|h| h != *request_id) || value.is_null() {
+            return effects;
+        }
+
+        if *status > 399 {
+            self.error_message = Some(format!("Command failed error: status {} - {}", status, log));
             return effects;
         }
 
@@ -1111,6 +1144,268 @@ pub fn ghost_remainder(input: &str, cursor: usize, insert: &str) -> String {
         String::new()
     }
 }
+
+const LIST_HIGHLIGHT_SYMBOL_WIDTH: u16 = 2;
+const DEFAULT_COMMAND_SUMMARY_WIDTH: u16 = 72;
+const DEFAULT_FLAG_DESCRIPTION_WIDTH: u16 = 80;
+const DEFAULT_VALUE_META_WIDTH: u16 = 60;
+const DEFAULT_POSITIONAL_HELP_WIDTH: u16 = 80;
+const MIN_TRUNCATION_WIDTH: u16 = 4;
+
+#[derive(Default)]
+struct SpanCollector {
+    spans: Vec<Span<'static>>,
+    width: u16,
+}
+
+impl SpanCollector {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            spans: Vec::with_capacity(capacity),
+            width: 0,
+        }
+    }
+
+    fn push(&mut self, span: Span<'static>) {
+        self.width = self.width.saturating_add(span_display_width(&span));
+        self.spans.push(span);
+    }
+
+    fn extend(&mut self, spans: Vec<Span<'static>>) {
+        for span in spans {
+            self.push(span);
+        }
+    }
+
+    fn remaining_with_fallback(&self, width_hint: Option<u16>, fallback: u16) -> u16 {
+        width_hint.unwrap_or(fallback).saturating_sub(self.width)
+    }
+
+    fn into_vec(self) -> Vec<Span<'static>> {
+        self.spans
+    }
+}
+
+fn span_display_width(span: &Span<'_>) -> u16 {
+    UnicodeWidthStr::width(span.content.as_ref()) as u16
+}
+
+fn truncate_to_width(text: &str, available: u16) -> String {
+    if available == 0 {
+        return String::new();
+    }
+    let character_count = text.chars().count() as u16;
+    if character_count <= available {
+        return text.to_string();
+    }
+    if available == 1 {
+        return "…".to_string();
+    }
+    let max_columns = available.saturating_sub(1) as usize;
+    truncate_with_ellipsis(text, max_columns)
+}
+
+fn normalized_width_hint(width_hint: Option<u16>) -> Option<u16> {
+    width_hint
+        .and_then(|hint| hint.checked_sub(LIST_HIGHLIGHT_SYMBOL_WIDTH))
+        .filter(|width| *width > 0)
+}
+
+fn build_command_spans(item: &SuggestionItem, needle: &str, theme: &dyn Theme, width_hint: Option<u16>) -> Vec<Span<'static>> {
+    let canonical = item.insert_text.trim();
+    if canonical.is_empty() {
+        return Vec::new();
+    }
+
+    let width_hint = normalized_width_hint(width_hint);
+    let highlight = theme.search_highlight_style();
+    let exec_type = match item.kind {
+        ItemKind::Command => "CMD",
+        ItemKind::MCP => "MCP",
+        _ => &String::new(),
+    };
+
+    let mut collector = SpanCollector::with_capacity(8);
+    collector.push(badge_span(theme, exec_type));
+    collector.push(Span::raw(" "));
+
+    let (group, command) = canonical.split_once(' ').unwrap_or(("", canonical));
+    if !group.is_empty() {
+        collector.extend(highlight_segments(needle, group, theme.syntax_type_style(), highlight));
+        if !command.is_empty() {
+            collector.push(Span::raw(" "));
+        }
+    }
+    if !command.is_empty() {
+        collector.extend(highlight_segments(needle, command, theme.syntax_function_style(), highlight));
+    }
+
+    match item.meta.as_deref() {
+        Some("history") => {
+            collector.push(Span::raw("  "));
+            collector.push(Span::styled("(history)", theme.text_muted_style()));
+        }
+        Some("loading") => {}
+        Some(summary) if !summary.trim().is_empty() => {
+            collector.push(Span::raw("  "));
+            let available = collector.remaining_with_fallback(width_hint, DEFAULT_COMMAND_SUMMARY_WIDTH);
+            if available >= MIN_TRUNCATION_WIDTH {
+                let truncated = truncate_to_width(summary.trim(), available);
+                collector.extend(highlight_segments(
+                    needle,
+                    truncated.as_str(),
+                    theme.text_secondary_style(),
+                    highlight,
+                ));
+            }
+        }
+        _ => {}
+    }
+
+    collector.into_vec()
+}
+
+fn build_flag_spans(item: &SuggestionItem, needle: &str, theme: &dyn Theme, width_hint: Option<u16>) -> Vec<Span<'static>> {
+    if item.meta.as_deref() == Some("loading") {
+        return vec![Span::styled(item.display.clone(), theme.text_muted_style())];
+    }
+
+    let highlight = theme.search_highlight_style();
+    let width_hint = normalized_width_hint(width_hint);
+    let mut collector = SpanCollector::with_capacity(8);
+    collector.push(badge_span(theme, "FLAG"));
+    collector.push(Span::raw(" "));
+
+    let flag_label = item.insert_text.trim();
+    if !flag_label.is_empty() {
+        collector.extend(highlight_segments(needle, flag_label, theme.syntax_keyword_style(), highlight));
+    }
+
+    if item.display.contains("[required]") {
+        collector.push(Span::raw(" "));
+        collector.push(Span::styled(
+            "(required)",
+            theme.syntax_keyword_style().add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    if let Some(description) = item.meta.as_deref()
+        && description != "loading"
+        && !description.trim().is_empty()
+    {
+        let trimmed = description.trim();
+        collector.push(Span::raw("  "));
+        let available = collector.remaining_with_fallback(width_hint, DEFAULT_FLAG_DESCRIPTION_WIDTH);
+        if available >= MIN_TRUNCATION_WIDTH {
+            let truncated = truncate_to_width(trimmed, available);
+            collector.extend(highlight_segments(
+                needle,
+                truncated.as_str(),
+                theme.text_secondary_style(),
+                highlight,
+            ));
+        }
+    }
+
+    collector.into_vec()
+}
+
+fn build_value_spans(item: &SuggestionItem, needle: &str, theme: &dyn Theme, width_hint: Option<u16>) -> Vec<Span<'static>> {
+    if item.meta.as_deref() == Some("loading") {
+        return vec![Span::styled(item.display.clone(), theme.text_muted_style())];
+    }
+
+    let highlight = theme.search_highlight_style();
+    let width_hint = normalized_width_hint(width_hint);
+    let badge_label = match item.meta.as_deref() {
+        Some("enum") => "ENUM",
+        _ => "VAL",
+    };
+
+    let mut collector = SpanCollector::with_capacity(8);
+    collector.push(badge_span(theme, badge_label));
+    collector.push(Span::raw(" "));
+
+    let value_text = if !item.display.trim().is_empty() {
+        item.display.trim().to_string()
+    } else {
+        item.insert_text.trim().to_string()
+    };
+
+    collector.extend(highlight_segments(
+        needle,
+        value_text.as_str(),
+        infer_value_style(theme, value_text.as_str()),
+        highlight,
+    ));
+
+    if let Some(meta) = item.meta.as_deref()
+        && !meta.is_empty()
+        && meta != "enum"
+        && meta != "loading"
+        && !meta.trim().is_empty()
+    {
+        let trimmed = meta.trim();
+        collector.push(Span::raw("  "));
+        let available = collector.remaining_with_fallback(width_hint, DEFAULT_VALUE_META_WIDTH);
+        if available >= MIN_TRUNCATION_WIDTH {
+            let truncated = truncate_to_width(trimmed, available);
+            collector.push(Span::styled(truncated, theme.text_muted_style()));
+        }
+    }
+
+    collector.into_vec()
+}
+
+fn build_positional_spans(item: &SuggestionItem, needle: &str, theme: &dyn Theme, width_hint: Option<u16>) -> Vec<Span<'static>> {
+    let highlight = theme.search_highlight_style();
+    let width_hint = normalized_width_hint(width_hint);
+    let mut collector = SpanCollector::with_capacity(8);
+    collector.push(badge_span(theme, "ARG"));
+    collector.push(Span::raw(" "));
+
+    let label = item.insert_text.trim();
+    if !label.is_empty() {
+        collector.extend(highlight_segments(needle, label, theme.syntax_type_style(), highlight));
+    }
+
+    if let Some(help) = item.meta.as_deref()
+        && !help.trim().is_empty()
+    {
+        collector.push(Span::raw("  "));
+        let available = collector.remaining_with_fallback(width_hint, DEFAULT_POSITIONAL_HELP_WIDTH);
+        if available >= MIN_TRUNCATION_WIDTH {
+            let truncated = truncate_to_width(help.trim(), available);
+            collector.extend(highlight_segments(
+                needle,
+                truncated.as_str(),
+                theme.text_secondary_style(),
+                highlight,
+            ));
+        }
+    }
+
+    collector.into_vec()
+}
+
+fn badge_span(theme: &dyn Theme, label: &str) -> Span<'static> {
+    let roles = theme.roles();
+    Span::styled(
+        format!("[{}]", label),
+        Style::default().fg(roles.accent_secondary).add_modifier(Modifier::BOLD),
+    )
+}
+
+fn infer_value_style(theme: &dyn Theme, value: &str) -> Style {
+    if value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false") || value.eq_ignore_ascii_case("null") {
+        theme.syntax_keyword_style()
+    } else if value.parse::<f64>().is_ok() {
+        theme.syntax_number_style()
+    } else {
+        theme.syntax_string_style()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1224,6 +1519,27 @@ mod tests {
         assert!(state.is_suggestions_open());
         assert_eq!(state.suggestions_len(), 1);
         assert_eq!(state.rendered_suggestions().len(), 1);
+    }
+
+    #[test]
+    fn command_spans_respect_available_width_hint() {
+        let theme = DraculaTheme::new();
+        let suggestion = SuggestionItem {
+            display: "apps info".to_string(),
+            insert_text: "apps info".to_string(),
+            kind: ItemKind::Command,
+            meta: Some("This description is intentionally verbose to validate width-based truncation logic.".to_string()),
+            score: 100,
+        };
+
+        let width_hint = 24;
+        let spans = super::build_command_spans(&suggestion, "", &theme, Some(width_hint));
+        let rendered_width: u16 = spans.iter().map(super::span_display_width).sum();
+        let max_width = width_hint.saturating_sub(super::LIST_HIGHLIGHT_SYMBOL_WIDTH);
+        assert!(
+            rendered_width <= max_width,
+            "rendered width {rendered_width} exceeds available {max_width}"
+        );
     }
 
     // --- Parity tests with common::TextInputState to quantify integration risk ---

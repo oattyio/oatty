@@ -99,19 +99,6 @@ pub fn tabs<'a>(theme: &dyn Theme, titles: Vec<Span<'a>>, index: usize) -> Tabs<
         .style(theme.text_secondary_style())
 }
 
-/// Style for input fields; caller sets the block border based on focus.
-pub fn input_style(theme: &dyn Theme, valid: bool, focused: bool) -> Style {
-    let ThemeRoles { surface, text, error, .. } = *theme.roles();
-    let mut style = Style::default().bg(surface).fg(text);
-    if !valid {
-        style = style.fg(error);
-    }
-    if focused {
-        style = style.add_modifier(Modifier::BOLD);
-    }
-    style
-}
-
 /// Primary button style (filled accent background).
 pub fn button_primary_style(theme: &dyn Theme, enabled: bool, selected: bool) -> Style {
     if enabled {
@@ -310,6 +297,16 @@ pub fn create_radio_button(label: &str, is_selected: bool, is_focused: bool, the
     }
 }
 
+pub fn highlight_segments(needle: &str, text: &str, base: Style, highlight: Style) -> Vec<Span<'static>> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    if needle.is_empty() {
+        vec![Span::styled(text.to_string(), base)]
+    } else {
+        create_spans_with_match(needle.to_string(), text.to_string(), base, highlight)
+    }
+}
 pub fn create_spans_with_match(needle: String, display: String, default_style: Style, emphasis_style: Style) -> Vec<Span<'static>> {
     if needle.is_empty() {
         return vec![Span::styled(display, default_style)];
@@ -332,10 +329,7 @@ pub fn create_spans_with_match(needle: String, display: String, default_style: S
 
         // Add highlighted match
         let end = start + needle.len();
-        spans.push(Span::styled(
-            hay[start..end].to_string(),
-            emphasis_style.add_modifier(Modifier::BOLD),
-        ));
+        spans.push(Span::styled(hay[start..end].to_string(), emphasis_style));
 
         i = end;
         if i >= hay.len() {
@@ -343,7 +337,7 @@ pub fn create_spans_with_match(needle: String, display: String, default_style: S
         }
     }
 
-    // Add remaining text after last match
+    // Add remaining text after the last match
     if i < hay.len() {
         spans.push(Span::styled(hay[i..].to_string(), default_style));
     }

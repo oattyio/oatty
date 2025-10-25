@@ -448,8 +448,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("history.json");
         let store = JsonHistoryStore::new(Some(path.clone()), 10).unwrap();
-        let store = std::sync::Arc::new(store);
-
+        let store = Arc::new(store);
         let mut handles = Vec::new();
         for index in 0..5 {
             let handle_store = Arc::clone(&store);
@@ -462,9 +461,9 @@ mod tests {
         for handle in handles {
             handle.join().unwrap();
         }
-
-        let latest = store.get_latest_value(&workflow_key()).unwrap().unwrap();
-        assert!(latest.value.is_number());
+        let key = HistoryKey::workflow_input("default_profile", "wf", "input");
+        let latest = store.get_latest_value(&key).unwrap();
+        assert!(latest.unwrap().value.is_number());
     }
 
     #[test]

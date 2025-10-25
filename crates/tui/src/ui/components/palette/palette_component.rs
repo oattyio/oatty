@@ -69,7 +69,7 @@ pub struct PaletteComponent;
 
 impl PaletteComponent {
     pub fn new() -> Self {
-        Self::default()
+        Self
     }
     /// Creates the input paragraph widget with the current state.
     ///
@@ -568,6 +568,7 @@ impl Component for PaletteComponent {
             app.palette.error_message().is_none() && app.palette.is_suggestions_open() && !app.palette.suggestions().is_empty();
 
         if should_show_suggestions {
+            app.palette.update_suggestions_view_width(suggestions_area.width, theme);
             let suggestions = app.palette.rendered_suggestions();
             let suggestions_list = self.create_suggestions_list(suggestions, theme);
             frame.render_stateful_widget(suggestions_list, suggestions_area, &mut app.palette.list_state);

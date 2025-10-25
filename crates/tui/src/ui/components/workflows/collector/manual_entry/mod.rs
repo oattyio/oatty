@@ -4,9 +4,9 @@
 //! handling keyboard/mouse input plus rendering. The collector owns an instance
 //! and delegates to it whenever the manual entry modal is open.
 
-pub mod component;
+pub mod manual_entry;
 pub mod state;
 
-pub use component::ManualEntryComponent;
+pub use manual_entry::ManualEntryComponent;
 #[allow(unused_imports)]
 pub use state::{ManualEntryEnumOption, ManualEntryEnumState, ManualEntryFocus, ManualEntryKind, ManualEntryLayoutState, ManualEntryState};

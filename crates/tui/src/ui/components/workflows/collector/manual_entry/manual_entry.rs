@@ -9,7 +9,7 @@ use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKin
 use heroku_types::Effect;
 use heroku_types::workflow::validate_candidate_value;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Layout, Rect};
+use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
 use serde_json::{Number, Value};
@@ -81,7 +81,10 @@ impl ManualEntryComponent {
             ManualEntryKind::Boolean => {
                 state.clear_error();
                 if let Some(area) = state.layout.primary_button_area
-                    && contains(area, mouse.column, mouse.row)
+                    && area.contains(Position {
+                        x: mouse.column,
+                        y: mouse.row,
+                    })
                 {
                     if let Some(flag) = state.value.boolean_mut() {
                         *flag = true;
@@ -89,7 +92,10 @@ impl ManualEntryComponent {
                     return Vec::new();
                 }
                 if let Some(area) = state.layout.secondary_button_area
-                    && contains(area, mouse.column, mouse.row)
+                    && area.contains(Position {
+                        x: mouse.column,
+                        y: mouse.row,
+                    })
                 {
                     if let Some(flag) = state.value.boolean_mut() {
                         *flag = false;
@@ -100,7 +106,10 @@ impl ManualEntryComponent {
             ManualEntryKind::Enum => {
                 state.clear_error();
                 if let Some(area) = state.layout.enum_list_area
-                    && contains(area, mouse.column, mouse.row)
+                    && area.contains(Position {
+                        x: mouse.column,
+                        y: mouse.row,
+                    })
                 {
                     if let Some(enum_state) = state.value.enum_state_mut()
                         && let Some(index) = index_from_list_position(enum_state, area, mouse.row)
@@ -112,7 +121,10 @@ impl ManualEntryComponent {
             }
             ManualEntryKind::Text | ManualEntryKind::Integer | ManualEntryKind::Number => {
                 if let Some(area) = state.layout.value_area
-                    && contains(area, mouse.column, mouse.row)
+                    && area.contains(Position {
+                        x: mouse.column,
+                        y: mouse.row,
+                    })
                 {
                     state.clear_error();
                     if let Some(buffer) = state.value.text_buffer_mut() {
@@ -426,10 +438,6 @@ fn position_from_column(buffer: &TextInputState, area: Rect, column: u16) -> usi
         cumulative += ch.width().unwrap_or(1);
     }
     text.len()
-}
-
-fn contains(area: Rect, column: u16, row: u16) -> bool {
-    column >= area.x && column < area.x + area.width && row >= area.y && row < area.y + area.height
 }
 
 fn index_from_list_position(enum_state: &ManualEntryEnumState, area: Rect, mouse_row: u16) -> Option<usize> {

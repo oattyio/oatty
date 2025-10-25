@@ -1,7 +1,8 @@
-mod collector;
+pub(crate) mod collector;
 pub mod field_picker;
 #[allow(clippy::module_inception)]
 mod input;
+pub mod list;
 pub mod run;
 pub mod state;
 pub mod view_utils;

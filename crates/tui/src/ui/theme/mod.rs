@@ -10,6 +10,7 @@ use std::env;
 use tracing::debug;
 
 pub mod ansi256;
+pub mod catalog;
 pub mod cyberpunk;
 pub mod dracula;
 pub mod nord;
@@ -17,10 +18,26 @@ pub mod roles;
 pub mod theme_helpers;
 
 pub use ansi256::{Ansi256Theme, Ansi256ThemeHighContrast};
+pub use catalog::{ThemeDefinition, ThemeSwatch};
 pub use cyberpunk::{CyberpunkTheme, CyberpunkThemeHighContrast};
 pub use dracula::{DraculaTheme, DraculaThemeHighContrast};
 pub use nord::{NordTheme, NordThemeHighContrast};
 pub use roles::Theme;
+
+/// Theme plus metadata describing how it was selected.
+pub struct LoadedTheme {
+    pub definition: &'static ThemeDefinition,
+    pub theme: Box<dyn Theme>,
+}
+
+impl LoadedTheme {
+    fn from_definition(definition: &'static ThemeDefinition) -> Self {
+        Self {
+            definition,
+            theme: definition.build(),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ColorCapability {
@@ -28,42 +45,32 @@ enum ColorCapability {
     Ansi256,
 }
 
-/// Selects a theme based on `TUI_THEME` environment variable.
-///
-/// Supported values:
-/// - `dracula` (default)
-/// - `dracula_hc`, `dracula-high-contrast`, `dracula-hc`
-/// - `nord`, `nord_hc`, `nord-high-contrast`, `nord-hc`
-/// - `cyberpunk`, `cyberpunk_hc`, `cyberpunk-high-contrast`, `cyberpunk-hc`
-/// - `ansi256`, `ansi256_hc`, `ansi256-high-contrast`, `ansi256-hc`
-pub fn load_from_env() -> Box<dyn Theme> {
-    if let Ok(theme_name) = env::var("TUI_THEME")
-        && let Some(theme) = parse_theme_override(theme_name.trim())
-    {
-        return theme;
+/// Selects a theme based on environment variables, persisted preferences, and terminal capabilities.
+pub fn load(preferred_theme: Option<&str>) -> LoadedTheme {
+    let capability = detect_color_capability();
+    if matches!(capability, ColorCapability::Ansi256) {
+        debug!("ANSI-only terminal detected; ignoring theme overrides and forcing fallback palette.");
+        return LoadedTheme::from_definition(catalog::default_ansi());
     }
 
-    match detect_color_capability() {
-        ColorCapability::Truecolor => Box::new(DraculaTheme::new()),
-        ColorCapability::Ansi256 => {
-            debug!("Detected ANSI 256-color terminal; loading fallback palette");
-            Box::new(Ansi256Theme::new())
-        }
+    if let Ok(theme_name) = env::var("TUI_THEME")
+        && let Some(definition) = catalog::resolve(theme_name.trim())
+    {
+        return LoadedTheme::from_definition(definition);
     }
+
+    if let Some(name) = preferred_theme
+        && let Some(definition) = catalog::resolve(name.trim())
+    {
+        return LoadedTheme::from_definition(definition);
+    }
+
+    LoadedTheme::from_definition(catalog::default_truecolor())
 }
 
-fn parse_theme_override(theme_name: &str) -> Option<Box<dyn Theme>> {
-    match theme_name.to_ascii_lowercase().as_str() {
-        "cyberpunk_hc" | "cyberpunk-high-contrast" | "cyberpunk-hc" | "cyberpunkhc" => Some(Box::new(CyberpunkThemeHighContrast::new())),
-        "cyberpunk" => Some(Box::new(CyberpunkTheme::new())),
-        "dracula_hc" | "dracula-high-contrast" | "dracula-hc" | "draculahc" => Some(Box::new(DraculaThemeHighContrast::new())),
-        "dracula" => Some(Box::new(DraculaTheme::new())),
-        "nord_hc" | "nord-high-contrast" | "nord-hc" | "nordhc" => Some(Box::new(NordThemeHighContrast::new())),
-        "nord" => Some(Box::new(NordTheme::new())),
-        "ansi256_hc" | "ansi256-high-contrast" | "ansi256-hc" | "ansi256hc" => Some(Box::new(Ansi256ThemeHighContrast::new())),
-        "ansi256" => Some(Box::new(Ansi256Theme::new())),
-        _ => None,
-    }
+/// Backwards-compatible helper retaining the original API expected by older code paths and docs.
+pub fn load_from_env() -> Box<dyn Theme> {
+    load(None).theme
 }
 
 fn detect_color_capability() -> ColorCapability {
@@ -105,4 +112,9 @@ fn is_truthy(value: &str) -> bool {
         value.to_ascii_lowercase().as_str(),
         "1" | "true" | "yes" | "on" | "enable" | "enabled"
     )
+}
+
+/// Returns `true` when the current terminal supports truecolor output and the theme picker should be shown.
+pub fn supports_theme_picker() -> bool {
+    matches!(detect_color_capability(), ColorCapability::Truecolor)
 }

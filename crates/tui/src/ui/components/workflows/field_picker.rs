@@ -4,11 +4,13 @@
 //! Collector. It exposes navigation helpers, rendering hooks, and reusable
 //! formatting utilities so other surfaces can present the same tree view when
 //! needed.
+#![allow(dead_code)]
 
 use heroku_engine::WorkflowRunState;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Paragraph, Wrap},
 };
@@ -16,20 +18,25 @@ use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::collections::HashSet;
 
 use crate::ui::components::workflows::format_preview;
+use crate::ui::theme::theme_helpers::highlight_segments;
 use crate::ui::theme::{roles::Theme, theme_helpers as th};
 
 fn render_filter(frame: &mut Frame, area: Rect, theme: &dyn Theme, filter: &str, active: bool) {
-    let display = if filter.is_empty() { "[type to filter]" } else { filter };
-    let mut spans = vec![
-        Span::styled("Filter: ", theme.text_secondary_style()),
-        Span::styled(display.to_string(), theme.text_primary_style()),
-    ];
+    let title = Line::from(Span::styled(
+        "Filter Fields",
+        theme.text_secondary_style().add_modifier(Modifier::BOLD),
+    ));
+    let mut block = th::block(theme, None, active);
+    block = block.title(title);
 
-    if active {
-        spans.push(Span::styled("  (editing)", theme.text_muted_style()));
-    }
+    let highlight = theme.search_highlight_style();
+    let content_spans = if filter.is_empty() {
+        vec![Span::styled("[type to filter]", theme.text_muted_style())]
+    } else {
+        highlight_segments(filter, filter, theme.syntax_keyword_style(), highlight)
+    };
 
-    let paragraph = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true });
+    let paragraph = Paragraph::new(Line::from(content_spans)).block(block).wrap(Wrap { trim: true });
 
     frame.render_widget(paragraph, area);
 }
@@ -60,31 +67,46 @@ fn render_tree_list(frame: &mut Frame, area: Rect, theme: &dyn Theme, tree: &Pic
         return;
     }
 
+    let highlight = theme.search_highlight_style();
     let mut lines = Vec::with_capacity(tree.visible.len());
     for (row, index) in tree.visible.iter().enumerate() {
         let node = &tree.nodes[*index];
+        let mut spans: Vec<Span<'static>> = Vec::new();
+
         let indent = "  ".repeat(node.depth);
+        if !indent.is_empty() {
+            spans.push(Span::raw(indent));
+        }
+
         let marker = if node.has_children {
             if tree.is_expanded(&node.path) { "▾" } else { "▸" }
         } else {
             " "
         };
+        spans.push(Span::styled(marker.to_string(), theme.syntax_keyword_style()));
+        spans.push(Span::raw(" "));
 
-        let mut content = format!("{indent}{marker} {}", node.label);
+        spans.extend(highlight_segments(filter, &node.label, theme.syntax_type_style(), highlight));
+
         if !node.has_children {
             let preview = format_preview(&node.value);
             if !preview.is_empty() {
-                content.push_str(&format!(" → {}", preview));
+                spans.push(Span::raw("  "));
+                spans.push(Span::styled("→ ", theme.syntax_keyword_style()));
+                spans.extend(highlight_segments(
+                    filter,
+                    &preview,
+                    value_preview_style(theme, &node.value),
+                    highlight,
+                ));
             }
         }
 
-        let style = if row == tree.selected_index {
-            theme.selection_style()
-        } else {
-            theme.text_primary_style()
-        };
-
-        lines.push(Line::from(Span::styled(content, style)));
+        let mut line = Line::from(spans);
+        if row == tree.selected_index {
+            line = line.style(theme.selection_style());
+        }
+        lines.push(line);
     }
 
     let paragraph = Paragraph::new(lines).wrap(Wrap { trim: false });
@@ -99,17 +121,18 @@ fn render_detail_panel(frame: &mut Frame, area: Rect, theme: &dyn Theme, node: O
     let mut lines: Vec<Line> = Vec::new();
 
     if let Some(node) = node {
+        let preview = format_preview(&node.value);
         lines.push(Line::from(vec![
             Span::styled("Path: ", theme.text_secondary_style()),
-            Span::styled(node.path.clone(), theme.text_primary_style()),
+            Span::styled(node.path.clone(), theme.syntax_type_style()),
         ]));
         lines.push(Line::from(vec![
             Span::styled("Type: ", theme.text_secondary_style()),
-            Span::styled(value_type_label(&node.value), theme.text_primary_style()),
+            Span::styled(value_type_label(&node.value), theme.syntax_keyword_style()),
         ]));
         lines.push(Line::from(vec![
             Span::styled("Value: ", theme.text_secondary_style()),
-            Span::styled(format_preview(&node.value), theme.text_primary_style()),
+            Span::styled(preview, value_preview_style(theme, &node.value)),
         ]));
     } else {
         lines.push(Line::from(Span::styled(
@@ -132,6 +155,16 @@ fn render_footer(frame: &mut Frame, area: Rect, theme: &dyn Theme) {
         Span::styled("[f] close", theme.text_secondary_style()),
     ]);
     frame.render_widget(Paragraph::new(line).wrap(Wrap { trim: true }), area);
+}
+
+fn value_preview_style(theme: &dyn Theme, value: &JsonValue) -> Style {
+    match value {
+        JsonValue::String(_) => theme.syntax_string_style(),
+        JsonValue::Number(_) => theme.syntax_number_style(),
+        JsonValue::Bool(_) => theme.syntax_keyword_style(),
+        JsonValue::Null => theme.text_muted_style(),
+        JsonValue::Array(_) | JsonValue::Object(_) => theme.syntax_type_style(),
+    }
 }
 
 #[derive(Debug, Default)]
