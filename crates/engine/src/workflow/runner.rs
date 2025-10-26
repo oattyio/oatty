@@ -39,8 +39,8 @@ pub async fn drive_workflow_run(
     }
 
     let spec = workflow_spec_from_runtime(&request.workflow);
-    let plan = match executor::prepare_plan(&spec, &context) {
-        Ok(plan) => plan,
+    let step_specs = match executor::order_steps_for_execution(&spec.steps) {
+        Ok(steps) => steps,
         Err(error) => {
             let message = error.to_string();
             let _ = event_tx.send(WorkflowRunEvent::RunStatusChanged {
@@ -63,7 +63,7 @@ pub async fn drive_workflow_run(
     let mut statuses: HashMap<String, WorkflowRunStepStatus> = HashMap::new();
     let mut any_failed = false;
 
-    for (index, step) in plan.steps.iter().enumerate() {
+    for (index, step_spec) in step_specs.iter().enumerate() {
         drain_pending_commands(&mut control_state, &mut control_rx, &event_tx)?;
         if control_state.cancel_requested {
             break;
@@ -75,35 +75,35 @@ pub async fn drive_workflow_run(
                 break;
             }
         }
-
-        if let Some(blocked) = dependency_block(step, &statuses) {
-            statuses.insert(step.id.clone(), WorkflowRunStepStatus::Skipped);
-            emit_step_finished(&event_tx, &blocked, WorkflowRunStepStatus::Skipped, step, 0)?;
+        let prepared_step = executor::prepare_step(step_spec, &context);
+        if let Some(blocked) = dependency_block(&prepared_step, &statuses) {
+            statuses.insert(step_spec.id.clone(), WorkflowRunStepStatus::Skipped);
+            emit_step_finished(&event_tx, &blocked, WorkflowRunStepStatus::Skipped, &prepared_step, 0)?;
             continue;
         }
 
-        let label = labels.get(&step.id).cloned().flatten();
+        let label = labels.get(&step_spec.id).cloned().flatten();
         let _ = event_tx.send(WorkflowRunEvent::StepStarted {
             index,
-            step_id: step.id.clone(),
+            step_id: step_spec.id.clone(),
             label: label.clone(),
             started_at: Utc::now(),
         });
 
         let started_at = Instant::now();
-        let result = execute_step(step, &mut context, runner.as_ref());
+        let result = execute_step(&prepared_step, &mut context, runner.as_ref(), &event_tx);
         let duration_ms = started_at.elapsed().as_millis().try_into().unwrap_or(u64::MAX);
         let status = map_step_status(result.status);
-        statuses.insert(step.id.clone(), status);
+        statuses.insert(step_spec.id.clone(), status);
         if matches!(status, WorkflowRunStepStatus::Failed) {
             any_failed = true;
         }
 
-        emit_step_finished(&event_tx, &result, status, step, duration_ms)?;
+        emit_step_finished(&event_tx, &result, status, &prepared_step, duration_ms)?;
 
         if matches!(status, WorkflowRunStepStatus::Succeeded) {
             let _ = event_tx.send(WorkflowRunEvent::RunOutputAccumulated {
-                key: step.id.clone(),
+                key: step_spec.id.clone(),
                 value: result.output.clone(),
                 detail: None,
             });
@@ -137,9 +137,21 @@ pub async fn drive_workflow_run(
     Ok(())
 }
 
-fn execute_step(step: &PreparedStep, context: &mut RunContext, runner: &dyn CommandRunner) -> StepResult {
+fn execute_step(
+    step: &PreparedStep,
+    context: &mut RunContext,
+    runner: &dyn CommandRunner,
+    event_tx: &UnboundedSender<WorkflowRunEvent>,
+) -> StepResult {
     if step.repeat.is_some() {
-        executor::run_step_repeating_with(step, context, runner)
+        let step_id = step.id.clone();
+        executor::run_step_repeating_with_observer(step, context, runner, |attempt| {
+            let _ = event_tx.send(WorkflowRunEvent::StepAttempt {
+                step_id: step_id.clone(),
+                attempt,
+                max_attempts: step.repeat.as_ref().and_then(|repeat| repeat.max_attempts),
+            });
+        })
     } else {
         let result = executor::run_step_with(step, context, runner);
         context.steps.insert(step.id.clone(), result.output.clone());

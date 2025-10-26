@@ -12,13 +12,11 @@ pub mod plugins;
 #[allow(clippy::module_inception)]
 pub mod table;
 pub mod theme_picker;
-#[allow(clippy::module_inception)]
 pub mod workflows;
 
 pub use browser::BrowserComponent;
 pub use component::*;
 pub use help::HelpComponent;
-#[allow(unused_imports)]
 pub use logs::LogsComponent;
 pub use pagination::PaginationComponent;
 pub use plugins::PluginsComponent;

@@ -57,15 +57,6 @@ pub struct PreparedStep {
     pub repeat: Option<StepRepeat>,
 }
 
-/// A plan is an ordered list of prepared steps.
-///
-/// The plan is created by `prepare_plan` and executed by the workflow helpers.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Plan {
-    /// The ordered steps to run.
-    pub steps: Vec<PreparedStep>,
-}
-
 /// Status of an executed step.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum StepStatus {
@@ -104,64 +95,30 @@ impl Default for StepResult {
     }
 }
 
-/// Prepare a plan from a workflow spec by interpolating inputs/env into step parameters.
+/// Prepare a step from a workflow spec by interpolating inputs/env into step parameters.
 ///
-/// References to prior `steps.<id>` are not resolved during planning; they are
-/// evaluated at execution time when the step is actually run.
-///
-/// Example:
-/// ```rust
-/// use heroku_engine::resolve::RunContext;
-/// use heroku_engine::model::{WorkflowSpec, StepSpec};
-/// use serde_json::json;
-///
-/// let spec = WorkflowSpec {
-///     workflow: Some("demo".into()),
-///     name: Some("Demo".into()),
-///     inputs: Default::default(),
-///     steps: vec![StepSpec {
-///         id: "s1".into(),
-///         depends_on: vec![],
-///         run: "echo".into(),
-///         with: Some(json!({"name": "${{ inputs.app }}"}).as_object().unwrap().clone()),
-///         body: None,
-///         repeat: None,
-///         r#if: None,
-///         output_contract: None,
-///     }],
-/// };
-/// let mut ctx = RunContext::default();
-/// ctx.inputs.insert("app".into(), json!("myapp"));
-/// let plan = heroku_engine::executor::prepare_plan(&spec, &ctx).expect("prepare plan");
-/// assert_eq!(plan.steps[0].with.as_ref().unwrap()["name"], "myapp");
-/// ```
-pub fn prepare_plan(spec: &WorkflowSpec, run_context: &RunContext) -> Result<Plan> {
-    let ordered_steps = order_steps_for_execution(&spec.steps)?;
-
-    let steps = ordered_steps
-        .into_iter()
-        .map(|s: &StepSpec| PreparedStep {
-            id: s.id.clone(),
-            depends_on: s.depends_on.clone(),
-            run: s.run.clone(),
-            with: s.with.as_ref().map(|m| {
-                // Interpolate by wrapping in a JSON object, then unwrap back to a map
-                let v = Value::Object(m.clone());
-                match interpolate_value(&v, run_context) {
-                    Value::Object(obj) => obj,
-                    _ => m.clone(),
-                }
-            }),
-            body: s.body.as_ref().map(|v| interpolate_value(v, run_context)),
-            r#if: s.r#if.clone(),
-            repeat: s.repeat.clone(),
-        })
-        .collect();
-
-    Ok(Plan { steps })
+/// This function call must be performed as late as possible to
+/// resolve references to prior `steps.<id>` bindings.
+pub fn prepare_step(step: &StepSpec, run_context: &RunContext) -> PreparedStep {
+    PreparedStep {
+        id: step.id.clone(),
+        depends_on: step.depends_on.clone(),
+        run: step.run.clone(),
+        with: step.with.as_ref().map(|m| {
+            // Interpolate by wrapping in a JSON object, then unwrap back to a map
+            let v = Value::Object(m.clone());
+            match interpolate_value(&v, run_context) {
+                Value::Object(obj) => obj,
+                _ => m.clone(),
+            }
+        }),
+        body: step.body.as_ref().map(|v| interpolate_value(v, run_context)),
+        r#if: step.r#if.clone(),
+        repeat: step.repeat.clone(),
+    }
 }
 
-fn order_steps_for_execution(steps: &[StepSpec]) -> Result<Vec<&StepSpec>> {
+pub fn order_steps_for_execution(steps: &[StepSpec]) -> Result<Vec<&StepSpec>> {
     let mut lookup: IndexMap<String, &StepSpec> = IndexMap::new();
     for step in steps {
         if lookup.contains_key(&step.id) {
@@ -268,7 +225,19 @@ pub fn run_step_with(step: &PreparedStep, ctx: &RunContext, runner: &dyn Command
 /// On success, returns the last `StepResult` that satisfied the `until` condition with
 /// an accurate `attempts` count. If the guard trips, returns `Failed` with logs.
 pub fn run_step_repeating_with(step: &PreparedStep, ctx: &mut RunContext, runner: &dyn CommandRunner) -> StepResult {
-    // If condition fails up-front, skip without attempts
+    run_step_repeating_with_observer(step, ctx, runner, |_| {})
+}
+
+pub(crate) fn run_step_repeating_with_observer<F>(
+    step: &PreparedStep,
+    ctx: &mut RunContext,
+    runner: &dyn CommandRunner,
+    mut observer: F,
+) -> StepResult
+where
+    F: FnMut(u32),
+{
+    // If the condition fails up-front, skip without attempts
     if let Some(cond) = &step.r#if
         && !eval_condition(cond, ctx)
     {
@@ -292,6 +261,7 @@ pub fn run_step_repeating_with(step: &PreparedStep, ctx: &mut RunContext, runner
     let mut attempts = 0u32;
     let result: StepResult = loop {
         attempts += 1;
+        observer(attempts);
         let single = run_step_with(step, ctx, runner);
         // Persist output into context
         ctx.steps.insert(step.id.clone(), single.output.clone());
@@ -316,54 +286,39 @@ pub fn run_step_repeating_with(step: &PreparedStep, ctx: &mut RunContext, runner
     result
 }
 
-/// Convenience wrapper using the default `NoopRunner`.
-///
-/// This is useful for previews and for unit tests that do not need to hit the
-/// real registry or network.
-pub fn run_step(step: &PreparedStep, ctx: &mut RunContext) -> StepResult {
-    let runner = NoopRunner;
-    if step.repeat.is_some() {
-        run_step_repeating_with(step, ctx, &runner)
-    } else {
-        let res = run_step_with(step, ctx, &runner);
-        // Persist once for consistency
-        ctx.steps.insert(step.id.clone(), res.output.clone());
-        res
-    }
-}
-
 /// Execute all steps sequentially, updating the context after each.
 ///
 /// Each step's output is persisted under `ctx.steps[step.id]` after it runs.
 pub fn execute_workflow(spec: &WorkflowSpec, ctx: &mut RunContext) -> Result<Vec<StepResult>> {
-    let plan = prepare_plan(spec, ctx)?;
+    let ordered_steps = order_steps_for_execution(&spec.steps)?;
     let runner = NoopRunner;
-    Ok(execute_plan_steps(&plan, ctx, &runner))
+    Ok(execute_plan_steps(ordered_steps, ctx, &runner))
 }
 
 /// Execute all steps using a custom command runner.
 ///
 /// Use this to run real commands via `RegistryCommandRunner` or a custom implementation.
 pub fn execute_workflow_with_runner(spec: &WorkflowSpec, ctx: &mut RunContext, runner: &dyn CommandRunner) -> Result<Vec<StepResult>> {
-    let plan = prepare_plan(spec, ctx)?;
-    Ok(execute_plan_steps(&plan, ctx, runner))
+    let ordered_steps = order_steps_for_execution(&spec.steps)?;
+    Ok(execute_plan_steps(ordered_steps, ctx, runner))
 }
 
-fn execute_plan_steps(plan: &Plan, ctx: &mut RunContext, runner: &dyn CommandRunner) -> Vec<StepResult> {
-    let mut results = Vec::with_capacity(plan.steps.len());
+fn execute_plan_steps(steps: Vec<&StepSpec>, ctx: &mut RunContext, runner: &dyn CommandRunner) -> Vec<StepResult> {
+    let mut results = Vec::with_capacity(steps.len());
     let mut statuses: HashMap<String, StepStatus> = HashMap::new();
 
-    for step in plan.steps.iter() {
-        if let Some(blocked) = dependency_block(step, &statuses) {
+    for step in steps.iter() {
+        let prepared_step = prepare_step(step, ctx);
+        if let Some(blocked) = dependency_block(&prepared_step, &statuses) {
             statuses.insert(step.id.clone(), blocked.status);
             results.push(blocked);
             continue;
         }
 
         let result = if step.repeat.is_some() {
-            run_step_repeating_with(step, ctx, runner)
+            run_step_repeating_with(&prepared_step, ctx, runner)
         } else {
-            let single = run_step_with(step, ctx, runner);
+            let single = run_step_with(&prepared_step, ctx, runner);
             ctx.steps.insert(step.id.clone(), single.output.clone());
             single
         };
@@ -453,8 +408,8 @@ mod tests {
         };
         let mut ctx = RunContext::default();
         ctx.inputs.insert("app".into(), json!("myapp"));
-        let plan = prepare_plan(&spec, &ctx).expect("plan");
-        let step = &plan.steps[0];
+        let steps = order_steps_for_execution(&spec.steps).expect("plan");
+        let step = prepare_step(steps[0], &ctx);
         assert_eq!(step.with.as_ref().unwrap()["name"], "myapp");
     }
 
@@ -546,8 +501,8 @@ mod tests {
         };
 
         let ctx = RunContext::default();
-        let plan = prepare_plan(&spec, &ctx).expect("plan");
-        let ordered_ids: Vec<&str> = plan.steps.iter().map(|s| s.id.as_str()).collect();
+        let steps = order_steps_for_execution(&spec.steps).expect("plan");
+        let ordered_ids: Vec<&str> = steps.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ordered_ids, vec!["first", "second"]);
     }
 
@@ -565,8 +520,7 @@ mod tests {
             }],
         };
 
-        let ctx = RunContext::default();
-        let error = prepare_plan(&spec, &ctx).expect_err("should fail");
+        let error = order_steps_for_execution(&spec.steps).expect_err("should fail");
         assert!(error.to_string().contains("depends on unknown step"), "unexpected error: {error}");
     }
 
@@ -592,8 +546,7 @@ mod tests {
             ],
         };
 
-        let ctx = RunContext::default();
-        let error = prepare_plan(&spec, &ctx).expect_err("should detect cycle");
+        let error = order_steps_for_execution(&spec.steps).expect_err("should detect cycle");
         assert!(error.to_string().contains("cycle detected"), "unexpected error: {error}");
     }
 

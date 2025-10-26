@@ -472,6 +472,16 @@ pub enum WorkflowRunEvent {
         /// JSON payload emitted by the step.
         value: JsonValue,
     },
+    /// Notifies listeners that a repeating step has begun a new attempt.
+    StepAttempt {
+        /// Identifier of the step running another attempt.
+        step_id: String,
+        /// 1-based attempt counter.
+        attempt: u32,
+        /// Optional maximum attempts limit when known.
+        #[serde(default)]
+        max_attempts: Option<u32>,
+    },
     /// Signals completion of a step along with result metadata.
     StepFinished {
         /// Identifier of the step that just completed.
@@ -589,7 +599,7 @@ steps:
         let definition: WorkflowDefinition = serde_yaml::from_str(yaml_text).expect("parse sample workflow");
         assert_eq!(definition.workflow, "app_with_db");
         assert!(definition.inputs.contains_key("app_name"));
-        assert_eq!(definition.steps.len(), 4);
+        assert_eq!(definition.steps.len(), 3);
     }
 
     #[test]

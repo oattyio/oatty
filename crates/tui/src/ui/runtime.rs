@@ -27,14 +27,24 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures_util::{StreamExt, stream::FuturesUnordered};
-use heroku_mcp::PluginEngine;
+use heroku_mcp::{
+    PluginEngine,
+    config::{default_config_path, load_config_from_path},
+};
 use heroku_types::{Effect, ExecOutcome, Msg};
+use notify::{Config as NotifyConfig, Event as NotifyEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{Terminal, prelude::*};
-use std::sync::atomic::Ordering;
 use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::atomic::{AtomicU64, Ordering},
+    sync::mpsc::RecvTimeoutError,
     sync::{Arc, Mutex},
+    thread,
     time::Duration,
 };
+use tokio::runtime::Handle;
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio::task::JoinHandle;
 use tokio::{
     signal,
@@ -49,6 +59,38 @@ use crate::ui::components::palette::PaletteComponent;
 use crate::ui::main::MainView;
 use rat_focus::FocusBuilder;
 
+/// Handle for the MCP config watcher thread, ensuring proper shutdown on drop.
+struct McpConfigWatchHandle {
+    shutdown_tx: Option<std::sync::mpsc::Sender<()>>,
+    join_handle: Option<thread::JoinHandle<()>>,
+}
+
+impl McpConfigWatchHandle {
+    fn new(shutdown_tx: std::sync::mpsc::Sender<()>, join_handle: thread::JoinHandle<()>) -> Self {
+        Self {
+            shutdown_tx: Some(shutdown_tx),
+            join_handle: Some(join_handle),
+        }
+    }
+
+    fn stop(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = self.join_handle.take() {
+            if let Err(error) = handle.join() {
+                tracing::warn!("Watcher thread join failed: {:?}", error);
+            }
+        }
+    }
+}
+
+impl Drop for McpConfigWatchHandle {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 /// Spawn a dedicated input thread that blocks on terminal input and forwards
 /// `crossterm` events over a Tokio channel.
 ///
@@ -59,7 +101,7 @@ async fn spawn_input_thread() -> mpsc::Receiver<Event> {
     let (sender, receiver) = mpsc::channel(500);
     tokio::spawn(async move {
         loop {
-            if event::poll(Duration::from_millis(10)).expect("poll failed") {
+            if event::poll(Duration::from_millis(16)).is_ok() {
                 match event::read() {
                     Ok(event) => {
                         let should_send = event
@@ -97,6 +139,111 @@ fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture)?;
     terminal.show_cursor()?;
+    Ok(())
+}
+
+fn spawn_mcp_config_watcher(plugin_engine: Arc<PluginEngine>) -> anyhow::Result<(McpConfigWatchHandle, mpsc::UnboundedReceiver<Effect>)> {
+    let config_path = default_config_path();
+    if let Some(parent) = config_path.parent() {
+        if let Err(error) = fs::create_dir_all(parent) {
+            tracing::warn!(path = %parent.display(), %error, "Failed to ensure MCP config directory exists");
+        }
+    }
+    let watch_root = config_path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
+    let (effects_tx, effects_rx) = mpsc::unbounded_channel();
+    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
+    let runtime_handle = Handle::current();
+    let debounce_counter = Arc::new(AtomicU64::new(0));
+
+    let join_handle = thread::spawn({
+        let plugin_engine = Arc::clone(&plugin_engine);
+        let config_path = config_path.clone();
+        let watch_root = watch_root.clone();
+        let effects_tx = effects_tx.clone();
+        let debounce_counter = Arc::clone(&debounce_counter);
+        move || {
+            let (event_tx, event_rx) = std::sync::mpsc::channel::<notify::Result<NotifyEvent>>();
+            let mut watcher = match RecommendedWatcher::new(
+                move |res| {
+                    let _ = event_tx.send(res);
+                },
+                NotifyConfig::default(),
+            ) {
+                Ok(watcher) => watcher,
+                Err(error) => {
+                    tracing::warn!(%error, "Failed to initialize MCP config watcher");
+                    return;
+                }
+            };
+            if let Err(error) = watcher.watch(&watch_root, RecursiveMode::NonRecursive) {
+                tracing::warn!(%error, path = %watch_root.display(), "Failed to watch MCP config directory");
+                return;
+            }
+
+            loop {
+                match shutdown_rx.try_recv() {
+                    Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
+                }
+
+                match event_rx.recv_timeout(Duration::from_millis(250)) {
+                    Ok(Ok(event)) => {
+                        if !event_targets_config(&event, &config_path) {
+                            continue;
+                        }
+                        let sequence = debounce_counter.fetch_add(1, Ordering::SeqCst) + 1;
+                        let engine_clone = Arc::clone(&plugin_engine);
+                        let effects_tx = effects_tx.clone();
+                        let counter_clone = Arc::clone(&debounce_counter);
+                        let path_clone = config_path.clone();
+                        let runtime = runtime_handle.clone();
+
+                        runtime.spawn(async move {
+                            tokio::time::sleep(Duration::from_millis(350)).await;
+                            if counter_clone.load(Ordering::SeqCst) != sequence {
+                                return;
+                            }
+                            match reload_mcp_config_from_disk(engine_clone, path_clone.clone()).await {
+                                Ok(()) => {
+                                    let _ = effects_tx.send(Effect::Log("Detected MCP config change; reloading plugins".into()));
+                                    let _ = effects_tx.send(Effect::PluginsLoadRequested);
+                                }
+                                Err(error) => {
+                                    tracing::warn!(%error, "Failed to reload MCP config");
+                                    let _ = effects_tx.send(Effect::Log(format!("Reloading MCP config failed: {error}")));
+                                }
+                            }
+                        });
+                    }
+                    Ok(Err(error)) => {
+                        tracing::warn!(%error, "MCP config watcher emitted error");
+                    }
+                    Err(RecvTimeoutError::Timeout) => {}
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+            }
+        }
+    });
+
+    Ok((McpConfigWatchHandle::new(shutdown_tx, join_handle), effects_rx))
+}
+
+fn event_targets_config(event: &NotifyEvent, config_path: &Path) -> bool {
+    event.paths.iter().any(|changed| {
+        if changed == config_path {
+            return true;
+        }
+        match (changed.canonicalize(), config_path.canonicalize()) {
+            (Ok(lhs), Ok(rhs)) => lhs == rhs,
+            _ => false,
+        }
+    })
+}
+
+async fn reload_mcp_config_from_disk(plugin_engine: Arc<PluginEngine>, config_path: PathBuf) -> anyhow::Result<()> {
+    let path_clone = config_path.clone();
+    let config = tokio::task::spawn_blocking(move || load_config_from_path(&path_clone)).await??;
+    plugin_engine.update_config(config).await?;
     Ok(())
 }
 
@@ -154,6 +301,14 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plu
         &mut effects,
     )
     .await;
+
+    let (_config_watch_handle, mut config_watch_effects) = match spawn_mcp_config_watcher(app.ctx.plugin_engine.clone()) {
+        Ok((handle, rx)) => (Some(handle), Some(rx)),
+        Err(error) => {
+            tracing::warn!(%error, "Failed to start MCP config watcher");
+            (None, None)
+        }
+    };
     // Track the last known terminal size to synthesize Resize messages when
     // some terminals fail to emit them reliably (e.g., certain iTerm2 setups).
     let mut last_size: Option<(u16, u16)> = crossterm::terminal::size().ok();
@@ -190,17 +345,14 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plu
 
             // Periodic animation tick
             _ = ticker.tick() => {
-                if needs_animation {
-                    effects.extend(main_view.handle_message(&mut app, &Msg::Tick));
-                    needs_render = true;
-                }
+                effects.extend(main_view.handle_message(&mut app, &Msg::Tick));
+                needs_render = needs_animation || !effects.is_empty();
                 if !effects.is_empty() {
                     // make a copy of the effects to avoid processing
                     // new effects while processing old ones
                     let mut dest = Vec::with_capacity(effects.len());
                     dest.append(&mut effects);
                     process_effects(&mut app, &mut main_view, dest, &mut pending_execs, &mut effects).await;
-                     needs_render = true;
                 }
             }
 
@@ -242,6 +394,22 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plu
 
             // Handle Ctrl+C
             _ = signal::ctrl_c() => { break; }
+        }
+
+        if let Some(rx) = config_watch_effects.as_mut() {
+            loop {
+                match rx.try_recv() {
+                    Ok(effect) => {
+                        effects.push(effect);
+                        needs_render = true;
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => {
+                        config_watch_effects = None;
+                        break;
+                    }
+                }
+            }
         }
 
         if let Some(new_receiver) = app.take_pending_workflow_events() {

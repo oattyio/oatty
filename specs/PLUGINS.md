@@ -26,6 +26,10 @@ experience. The specification reflects the multi-crate implementation that ships
 - **Security & Secrets:** Sensitive values are redacted in UI, logs, and audit trails. `${secret:}`
   entries resolve through `keyring-rs`, and OAuth tokens can be pulled from the OS keychain for
   remote transports.
+- **Live Reload:** The TUI watches `~/.config/heroku/mcp.json` for changes. When a valid write is
+  detected, the MCP engine reloads the configuration, rewrites the registry, and restarts any
+  plugins that were running before the edit so the UI reflects manual changes without re-launching
+  the CLI.
 - **TUI Experience:** Ratatui widgets provide plugin list, detail, logs, environment editor,
   secrets editor, and add/edit workflows with keyboard-first navigation and responsive layouts.
 
@@ -39,7 +43,12 @@ experience. The specification reflects the multi-crate implementation that ships
    transport fields (`command` for stdio, `baseUrl` for HTTP/SSE). Unsupported schemes or malformed
    headers raise structured errors.
 3. Configuration writes (`save_config`) pretty-print the JSON and ensure directories exist with
-   restrictive permissions when possible.
+   restrictive permissions when possible. When editing an existing plugin via the UI, renaming the
+   server updates both the key and the value so the old entry is removed before the new one is
+   inserted, preventing duplicate records.
+4. A file watcher (driven from the TUI runtime) triggers `load_config_from_path` and
+   `PluginEngine::update_config` whenever `mcp.json` changes on disk. Invalid JSON is logged and
+   ignored until the file parses successfully.
 
 ### Engine Layer (`crates/mcp::plugin`)
 
@@ -51,6 +60,9 @@ experience. The specification reflects the multi-crate implementation that ships
    - `CommandRegistry` injection (register/unregister synthetic command specs).
 2. A background status listener subscribes to client events. Tool updates refresh caches and
    rebuild synthetic command specs grouped by plugin/tool naming conventions.
+3. Configuration reloads stop every registered plugin, flush caches, and rebuild the registry from
+   the new file. Afterward, only the plugins that were previously running (and remain enabled in the
+   updated config) are restarted, minimizing churn while ensuring changes take effect uniformly.
 3. Tool invocations return `ExecOutcome::Mcp`, including pretty-printed JSON payloads. Failures are
    audited and surfaced in plugin logs.
 

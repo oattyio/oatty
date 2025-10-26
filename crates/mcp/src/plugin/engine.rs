@@ -14,7 +14,10 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
+use tokio::{
+    sync::{Mutex as TokioMutex, RwLock},
+    task::JoinHandle,
+};
 
 /// Plugin engine that orchestrates all MCP plugin operations.
 #[derive(Debug)]
@@ -38,8 +41,8 @@ pub struct PluginEngine {
     /// Lifecycle manager for plugin lifecycle.
     lifecycle_manager: LifecycleManager,
 
-    /// Configuration.
-    config: McpConfig,
+    /// Configuration guarded for concurrent updates.
+    config: RwLock<McpConfig>,
 
     /// Shared vec containing all commands
     command_registry: Arc<Mutex<CommandRegistry>>,
@@ -62,7 +65,7 @@ impl PluginEngine {
             tool_cache: Arc::new(TokioMutex::new(HashMap::new())),
             synthetic_specs: Arc::new(TokioMutex::new(HashMap::new())),
             lifecycle_manager,
-            config,
+            config: RwLock::new(config),
             command_registry,
             status_listener: TokioMutex::new(None),
         })
@@ -76,7 +79,9 @@ impl PluginEngine {
 
         let registry = PluginRegistry::new();
 
-        for (name, server) in &self.config.mcp_servers {
+        let config_snapshot = self.config.read().await.clone();
+
+        for (name, server) in &config_snapshot.mcp_servers {
             let mut plugin_detail = PluginDetail::new(
                 name.clone(),
                 if server.is_stdio() {
@@ -416,8 +421,17 @@ impl PluginEngine {
                 reason: "registry unavailable".into(),
             }));
         };
-        // Stop all existing plugins
+        // Capture which plugins should be restarted after reload.
+        let mut restart_candidates = Vec::new();
         for name in registry.get_plugin_names().await {
+            let was_running = registry
+                .get_plugin_status(&name)
+                .await
+                .map(|status| status == PluginStatus::Running)
+                .unwrap_or(false);
+            if was_running {
+                restart_candidates.push(name.clone());
+            }
             if let Err(e) = self.stop_plugin(&name).await {
                 tracing::warn!("Failed to stop plugin {} during config update: {}", name, e);
             }
@@ -439,6 +453,11 @@ impl PluginEngine {
             .await
             .map_err(|e| PluginEngineError::ClientManagerError(e.to_string()))?;
 
+        {
+            let mut guard = self.config.write().await;
+            *guard = config.clone();
+        }
+
         // Clear and rebuild registry
         registry.clear().await?;
 
@@ -458,6 +477,19 @@ impl PluginEngine {
 
             registry.register_plugin(plugin_detail).await?;
             self.lifecycle_manager.register_plugin(name.clone()).await;
+        }
+
+        // Restart plugins that were previously running and still exist + enabled.
+        for name in restart_candidates {
+            let Some(entry) = config.mcp_servers.get(&name) else {
+                continue;
+            };
+            if entry.is_disabled() {
+                continue;
+            }
+            if let Err(error) = self.start_plugin(&name).await {
+                tracing::warn!("Failed to restart plugin {} after config update: {}", name, error);
+            }
         }
 
         tracing::info!("Plugin engine configuration updated");

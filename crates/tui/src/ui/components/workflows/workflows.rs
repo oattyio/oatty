@@ -248,7 +248,7 @@ impl WorkflowsComponent {
         let offset_y = self.list_area.y as usize;
         let idx = (position.y as usize).saturating_sub(offset_y);
         if app.workflows.list.workflow_by_index(idx).is_some() {
-            app.workflows.list.list_state().select(Some(idx));
+            app.workflows.list.set_selected_workflow(idx);
             return self.handle_key_events(app, KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
         }
         Vec::new()

@@ -62,6 +62,23 @@ pub enum RunViewMouseTarget {
     PauseButton,
 }
 
+/// Describes how the detail pane visibility changed after a toggle request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DetailPaneVisibilityChange {
+    BecameVisible,
+    BecameHidden,
+}
+
+/// Snapshot of which UI region currently holds focus.
+#[derive(Debug, Clone, Copy)]
+pub struct RunFocusSnapshot {
+    pub steps_table_focused: bool,
+    pub outputs_table_focused: bool,
+    pub detail_pane_focused: bool,
+    pub cancel_button_focused: bool,
+    pub pause_button_focused: bool,
+}
+
 /// Layout metadata captured during the most recent render pass.
 #[derive(Debug, Default, Clone)]
 pub struct RunViewLayout {
@@ -255,6 +272,8 @@ pub struct RunViewState {
     step_rows: Vec<Value>,
     step_indices: HashMap<String, usize>,
     step_descriptions: HashMap<String, Option<String>>,
+    step_repeat_limits: HashMap<String, Option<u32>>,
+    running_repeat_steps: HashMap<String, RepeatAnimationState>,
     output_rows: Vec<Value>,
 }
 
@@ -290,6 +309,8 @@ impl RunViewState {
             step_rows: Vec::new(),
             step_indices: HashMap::new(),
             step_descriptions: HashMap::new(),
+            step_repeat_limits: HashMap::new(),
+            running_repeat_steps: HashMap::new(),
             output_rows: Vec::new(),
         }
     }
@@ -317,6 +338,8 @@ impl RunViewState {
         self.step_rows.clear();
         self.step_indices.clear();
         self.step_descriptions.clear();
+        self.step_repeat_limits.clear();
+        self.running_repeat_steps.clear();
 
         for (index, step) in steps.iter().enumerate() {
             let mut row = JsonMap::new();
@@ -328,6 +351,9 @@ impl RunViewState {
             self.step_rows.push(Value::Object(row));
             self.step_indices.insert(step.id.clone(), index);
             self.step_descriptions.insert(step.id.clone(), step.description.clone());
+            if let Some(repeat) = step.repeat.as_ref() {
+                self.step_repeat_limits.insert(step.id.clone(), repeat.max_attempts);
+            }
         }
 
         self.rebuild_steps_table(theme);
@@ -336,10 +362,23 @@ impl RunViewState {
     }
 
     /// Marks a step as running using its index within the workflow definition order.
-    pub fn mark_step_running(&mut self, index: usize, theme: &dyn Theme) {
+    pub fn mark_step_running(&mut self, index: usize, step_id: &str, theme: &dyn Theme) {
         if let Some(row) = self.step_rows.get_mut(index).and_then(Value::as_object_mut) {
             row.insert("Status".into(), Value::String("running".into()));
-            row.insert("Details".into(), Value::String("Running...".into()));
+            if self.step_repeat_limits.contains_key(step_id) {
+                let limit = self.step_repeat_limits.get(step_id).cloned().flatten();
+                let detail_text = {
+                    let animation = self
+                        .running_repeat_steps
+                        .entry(step_id.to_string())
+                        .or_insert_with(RepeatAnimationState::new);
+                    animation.set_attempt(1);
+                    animation.describe(limit)
+                };
+                row.insert("Details".into(), Value::String(detail_text));
+            } else {
+                row.insert("Details".into(), Value::String("Running...".into()));
+            }
         }
         self.set_last_update_at(Utc::now());
         self.rebuild_steps_table(theme);
@@ -371,6 +410,7 @@ impl RunViewState {
         row.insert("Output".into(), data.output);
 
         self.step_rows[index] = Value::Object(row);
+        self.running_repeat_steps.remove(step_id);
         self.set_last_update_at(Utc::now());
         self.rebuild_steps_table(theme);
     }
@@ -409,6 +449,60 @@ impl RunViewState {
     pub fn handle_run_completed(&mut self, status: WorkflowRunStatus, finished_at: DateTime<Utc>, message: Option<String>) {
         self.set_completed_at(finished_at);
         self.apply_status_change(status, message);
+    }
+
+    /// Advances the spinner animation for repeating steps that are currently running.
+    pub fn advance_repeat_animations(&mut self, theme: &dyn Theme) {
+        if self.running_repeat_steps.is_empty() {
+            return;
+        }
+
+        let mut dirty = false;
+        let step_ids: Vec<String> = self.running_repeat_steps.keys().cloned().collect();
+        for step_id in step_ids {
+            if let Some(state) = self.running_repeat_steps.get_mut(&step_id) {
+                state.advance();
+                let limit = self.step_repeat_limits.get(&step_id).copied().flatten();
+                let detail_text = state.describe(limit);
+                dirty |= self.update_running_repeat_row(&step_id, detail_text);
+            }
+        }
+
+        if dirty {
+            self.rebuild_steps_table(theme);
+        }
+    }
+
+    /// Updates the visible attempt counter for an in-flight repeating step.
+    pub fn update_repeat_attempt(&mut self, step_id: &str, attempt: u32, max_attempts: Option<u32>, theme: &dyn Theme) {
+        if let Some(limit) = max_attempts {
+            self.step_repeat_limits.insert(step_id.to_string(), Some(limit));
+        }
+
+        let limit = self.step_repeat_limits.get(step_id).copied().flatten();
+        let detail_text = {
+            let animation = self
+                .running_repeat_steps
+                .entry(step_id.to_string())
+                .or_insert_with(RepeatAnimationState::new);
+            animation.set_attempt(attempt);
+            animation.describe(limit)
+        };
+
+        if self.update_running_repeat_row(step_id, detail_text) {
+            self.rebuild_steps_table(theme);
+        }
+    }
+
+    fn update_running_repeat_row(&mut self, step_id: &str, detail_text: String) -> bool {
+        let Some(&index) = self.step_indices.get(step_id) else {
+            return false;
+        };
+        let Some(row) = self.step_rows.get_mut(index).and_then(Value::as_object_mut) else {
+            return false;
+        };
+        row.insert("Details".into(), Value::String(detail_text));
+        true
     }
 
     fn rebuild_steps_table(&mut self, theme: &dyn Theme) {
@@ -492,6 +586,19 @@ impl RunViewState {
         }
     }
 
+    /// Toggles the detail pane for the requested source and reports the resulting visibility.
+    pub fn toggle_detail_for(&mut self, source: RunDetailSource) -> DetailPaneVisibilityChange {
+        if self.is_detail_visible() && self.detail().is_some_and(|detail| detail.source() == source) {
+            self.hide_detail();
+            DetailPaneVisibilityChange::BecameHidden
+        } else {
+            self.show_detail(source);
+            self.set_detail_selection(Some(0));
+            self.clamp_detail_entries();
+            DetailPaneVisibilityChange::BecameVisible
+        }
+    }
+
     /// Hides the detail pane and resets selection metadata.
     pub fn hide_detail(&mut self) {
         self.detail = None;
@@ -527,6 +634,17 @@ impl RunViewState {
         &self.outputs_table.container_focus
     }
 
+    /// Captures the current focus ownership across primary regions.
+    pub fn focus_snapshot(&self) -> RunFocusSnapshot {
+        RunFocusSnapshot {
+            steps_table_focused: self.steps_table.container_focus.get(),
+            outputs_table_focused: self.outputs_table.container_focus.get(),
+            detail_pane_focused: self.detail_focus.get(),
+            cancel_button_focused: self.cancel_button_focus.get(),
+            pause_button_focused: self.pause_button_focus.get(),
+        }
+    }
+
     /// Records the latest render layout information.
     pub fn set_layout(&mut self, layout: RunViewLayout) {
         self.layout = layout;
@@ -553,7 +671,7 @@ impl RunViewState {
 
     /// Ensures the detail selection and offset remain within bounds after updates.
     pub fn clamp_detail_entries(&mut self) {
-        let entry_count = self.current_detail_entries().map(|entries| entries.len()).unwrap_or(0);
+        let entry_count = self.detail_entry_count();
         if let Some(detail_state) = self.detail.as_mut() {
             detail_state.clamp_offset(entry_count);
         }
@@ -561,7 +679,7 @@ impl RunViewState {
 
     /// Sets the detail selection explicitly.
     pub fn set_detail_selection(&mut self, selection: Option<usize>) {
-        let entry_count = self.current_detail_entries().map(|entries| entries.len()).unwrap_or(0);
+        let entry_count = self.detail_entry_count();
         if let Some(detail_state) = self.detail.as_mut() {
             detail_state.set_selection(selection, entry_count);
         }
@@ -569,10 +687,14 @@ impl RunViewState {
 
     /// Adjusts the detail selection with a signed delta.
     pub fn adjust_detail_selection(&mut self, delta: isize) {
-        let entry_count = self.current_detail_entries().map(|entries| entries.len()).unwrap_or(0);
+        let entry_count = self.detail_entry_count();
         if let Some(detail_state) = self.detail.as_mut() {
             detail_state.adjust_selection(entry_count, delta);
         }
+    }
+
+    fn detail_entry_count(&self) -> usize {
+        self.current_detail_entries().map(|entries| entries.len()).unwrap_or(0)
     }
 }
 
@@ -628,6 +750,38 @@ fn step_summary(status: WorkflowRunStepStatus, attempts: u32, duration_ms: u64) 
     }
 }
 
+const RUNNING_SPINNER_FRAMES: [&str; 3] = [".", "..", "..."];
+
+#[derive(Debug, Clone)]
+struct RepeatAnimationState {
+    attempt: u32,
+    spinner_index: usize,
+}
+
+impl RepeatAnimationState {
+    fn new() -> Self {
+        Self {
+            attempt: 1,
+            spinner_index: 0,
+        }
+    }
+
+    fn advance(&mut self) {
+        self.spinner_index = (self.spinner_index + 1) % RUNNING_SPINNER_FRAMES.len();
+    }
+
+    fn set_attempt(&mut self, attempt: u32) {
+        self.attempt = attempt.max(1);
+        self.spinner_index = 0;
+    }
+
+    fn describe(&self, limit: Option<u32>) -> String {
+        let frame = RUNNING_SPINNER_FRAMES[self.spinner_index];
+        let limit_label = limit.map(|value| value.to_string()).unwrap_or_else(|| "∞".to_string());
+        format!("Running{} (attempt {}/{})", frame, self.attempt, limit_label)
+    }
+}
+
 fn summarize_value(value: &Value) -> String {
     match value {
         Value::Null => "null".to_string(),
@@ -642,7 +796,7 @@ fn summarize_value(value: &Value) -> String {
 mod tests {
     use super::*;
     use crate::ui::theme::dracula::DraculaTheme;
-    use heroku_types::workflow::WorkflowStepDefinition;
+    use heroku_types::workflow::{WorkflowRepeat, WorkflowStepDefinition};
     use indexmap::IndexMap;
     use serde_json::{Value, json};
 
@@ -709,5 +863,55 @@ mod tests {
         assert_eq!(row["Key"], Value::String("alpha".into()));
         assert_eq!(row["Value"], Value::String("42".into()));
         assert_eq!(row["RawValue"], json!(42));
+    }
+
+    #[test]
+    fn repeat_steps_show_animated_running_status() {
+        let theme = DraculaTheme::new();
+        let mut repeating_step = make_step("alpha", None);
+        repeating_step.repeat = Some(WorkflowRepeat {
+            until: Some("steps.alpha.output.status == \"ready\"".into()),
+            every: Some("5s".into()),
+            timeout: None,
+            max_attempts: None,
+        });
+
+        let mut state = RunViewState::new("run-1".into(), "workflow".into(), None);
+        state.initialize_steps(&[repeating_step], &theme);
+
+        state.mark_step_running(0, "alpha", &theme);
+        let row = state.steps_table.selected_data().cloned().expect("row exists");
+        assert_eq!(row["Details"], Value::String("Running. (attempt 1/∞)".into()));
+
+        state.update_repeat_attempt("alpha", 3, Some(5), &theme);
+        let row = state.steps_table.selected_data().cloned().expect("row exists");
+        assert_eq!(row["Details"], Value::String("Running. (attempt 3/5)".into()));
+
+        state.advance_repeat_animations(&theme);
+        let row = state.steps_table.selected_data().cloned().expect("row exists");
+        assert_eq!(row["Details"], Value::String("Running.. (attempt 3/5)".into()));
+    }
+
+    #[test]
+    fn toggle_detail_for_cycles_visibility() {
+        let theme = DraculaTheme::new();
+        let mut state = RunViewState::new("run-1".into(), "workflow".into(), None);
+        state.initialize_steps(&[make_step("alpha", None)], &theme);
+
+        let first_toggle = state.toggle_detail_for(RunDetailSource::Steps);
+        assert_eq!(first_toggle, DetailPaneVisibilityChange::BecameVisible);
+        assert!(state.is_detail_visible());
+        assert!(matches!(state.detail().map(|detail| detail.source()), Some(RunDetailSource::Steps)));
+
+        let second_toggle = state.toggle_detail_for(RunDetailSource::Steps);
+        assert_eq!(second_toggle, DetailPaneVisibilityChange::BecameHidden);
+        assert!(!state.is_detail_visible());
+
+        let third_toggle = state.toggle_detail_for(RunDetailSource::Outputs);
+        assert_eq!(third_toggle, DetailPaneVisibilityChange::BecameVisible);
+        assert!(matches!(
+            state.detail().map(|detail| detail.source()),
+            Some(RunDetailSource::Outputs)
+        ));
     }
 }

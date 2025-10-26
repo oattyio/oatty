@@ -531,8 +531,15 @@ impl WorkflowState {
                     log_messages.push(text);
                 }
             }
-            WorkflowRunEvent::StepStarted { index, .. } => {
-                run_view.mark_step_running(index, theme);
+            WorkflowRunEvent::StepStarted { index, step_id, .. } => {
+                run_view.mark_step_running(index, &step_id, theme);
+            }
+            WorkflowRunEvent::StepAttempt {
+                step_id,
+                attempt,
+                max_attempts,
+            } => {
+                run_view.update_repeat_attempt(&step_id, attempt, max_attempts, theme);
             }
             WorkflowRunEvent::StepFinished {
                 step_id,

@@ -437,6 +437,7 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
         return ExecOutcome::default();
     };
     let name = add_view_state.name.trim().to_string();
+    let original_name = add_view_state.original_name.as_deref();
     let mut server = McpServer::default();
     match add_view_state.transport {
         PluginTransport::Remote => {
@@ -485,6 +486,7 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
     } else {
         McpConfig::default()
     };
+    apply_plugin_name_change(&mut cfg, original_name, &name);
     cfg.mcp_servers.insert(name.clone(), server);
     if let Err(e) = validate_config(&cfg) {
         return ExecOutcome::PluginValidationErr(format!("Plugin validation failed: {}", e));
@@ -537,6 +539,38 @@ fn collect_key_value_rows(rows: &[EnvRow]) -> Result<Option<Vec<EnvVar>>, Vec<St
     }
 
     if envs.is_empty() { Ok(None) } else { Ok(Some(envs)) }
+}
+
+/// Remove the previous plugin entry when the user renames a server.
+fn apply_plugin_name_change(config: &mut McpConfig, original_name: Option<&str>, desired_name: &str) {
+    if let Some(previous) = original_name
+        && previous != desired_name
+    {
+        config.mcp_servers.remove(previous);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_plugin_name_change_removed_old_key() {
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert("old".into(), McpServer::default());
+        apply_plugin_name_change(&mut config, Some("old"), "new");
+
+        assert!(!config.mcp_servers.contains_key("old"));
+    }
+
+    #[test]
+    fn apply_plugin_name_change_keeps_existing_when_name_same() {
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert("same".into(), McpServer::default());
+        apply_plugin_name_change(&mut config, Some("same"), "same");
+
+        assert!(config.mcp_servers.contains_key("same"));
+    }
 }
 
 fn handle_workflow_run_requested(app: &mut App<'_>, request: WorkflowRunRequest) {

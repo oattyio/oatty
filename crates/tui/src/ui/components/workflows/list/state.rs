@@ -70,6 +70,11 @@ impl WorkflowListState {
             .and_then(|index| self.workflows.get(*index))
     }
 
+    pub fn set_selected_workflow(&mut self, index: usize) {
+        self.selected = index;
+        self.list_state.select(Some(self.selected));
+    }
+
     /// Advances the selection to the next visible workflow, wrapping cyclically.
     pub fn select_next(&mut self) {
         if self.filtered_indices.is_empty() {
@@ -110,7 +115,6 @@ impl WorkflowListState {
     /// Move search cursor one character to the left (UTF‑8 safe).
     pub fn move_search_left(&mut self) {
         self.search_input.move_left();
-        // moving cursor alone does not affect filtering
     }
 
     /// Move search cursor one character to the right (UTF‑8 safe).

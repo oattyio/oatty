@@ -55,8 +55,7 @@ pub mod workflow;
 
 // Re-export commonly used types for convenience
 pub use executor::{
-    CommandRunner, Plan, PreparedStep, RegistryCommandRunner, StepResult, StepStatus, execute_workflow, execute_workflow_with_runner,
-    prepare_plan, run_step,
+    CommandRunner, PreparedStep, RegistryCommandRunner, StepResult, StepStatus, execute_workflow, execute_workflow_with_runner,
 };
 pub use model::{InputSpec, StepSpec, WorkflowBundle, WorkflowSpec};
 pub use provider::{ProviderContract, ProviderValueResolver, ValueProvider};

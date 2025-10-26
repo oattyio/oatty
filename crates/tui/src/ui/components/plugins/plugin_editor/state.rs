@@ -13,6 +13,8 @@ pub struct PluginEditViewState {
     /// Selected transport for the plugin: Local (stdio) or Remote (http/sse)
     pub transport: PluginTransport,
     pub name: String,
+    /// Remembers the original plugin name when editing an existing entry.
+    pub original_name: Option<String>,
     pub name_cursor: usize,
     pub command: String,
     pub command_cursor: usize,
@@ -45,6 +47,7 @@ impl PluginEditViewState {
             visible: true,
             transport: PluginTransport::Local,
             name: String::new(),
+            original_name: None,
             name_cursor: 0,
             command: String::new(),
             command_cursor: 0,
@@ -74,7 +77,8 @@ impl PluginEditViewState {
     pub fn from_detail(client: PluginDetail) -> Self {
         let mut instance = Self::new();
         instance.transport = PluginTransport::from(client.transport_type.as_str());
-        instance.name = client.name;
+        instance.original_name = Some(client.name.clone());
+        instance.name = client.name.clone();
         instance.name_cursor = instance.name.len();
 
         instance.args = client.args.unwrap_or_default();

@@ -2,12 +2,12 @@
 //!
 //! This component renders the workflow execution experience, displaying step
 //! progress, surfaced outputs, and control actions while reusing the shared
-//! results table utilities. Interaction handling covers keyboard and mouse
+//! result table utilities. Interaction handling covers keyboard and mouse
 //! paths, keeping behavior consistent with other workflow views.
 
 use chrono::{Duration, Utc};
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::{Effect, WorkflowRunControl};
+use heroku_types::{Effect, Msg, WorkflowRunControl};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -17,7 +17,9 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::ui::components::workflows::run::state::{RunDetailSource, RunExecutionStatus, RunViewLayout, RunViewMouseTarget, RunViewState};
+use crate::ui::components::workflows::run::state::{
+    DetailPaneVisibilityChange, RunDetailSource, RunExecutionStatus, RunViewLayout, RunViewMouseTarget, RunViewState,
+};
 use crate::ui::components::{
     common::ResultsTableView,
     component::{Component, find_target_index_by_mouse_position},
@@ -44,156 +46,52 @@ pub struct RunViewComponent {
 }
 
 impl Component for RunViewComponent {
+    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+        if let Msg::Tick = msg {
+            if let Some(run_state) = app.workflows.run_view_state_mut() {
+                let theme = &*app.ctx.theme;
+                run_state.advance_repeat_animations(theme);
+            }
+        }
+        Vec::new()
+    }
+
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
-        match key.code {
-            KeyCode::Tab => {
-                app.focus.next();
-                return Vec::new();
-            }
-            KeyCode::BackTab => {
-                app.focus.prev();
-                return Vec::new();
-            }
-            _ => {}
+        if Self::handle_focus_cycle_keys(app, key.code) {
+            return Vec::new();
         }
 
-        let mut focus_request: Option<FocusRequest> = None;
-        let mut effects: Vec<Effect> = Vec::new();
-
-        let mut log_shortcut_requested = false;
-
-        {
+        let (focus_request, log_shortcut_requested, effects) = {
             let Some(run_state) = app.workflows.run_view_state_mut() else {
-                return effects;
+                return Vec::new();
             };
+
+            let mut focus_request: Option<FocusRequest> = None;
+            let mut effects: Vec<Effect> = Vec::new();
+            let mut log_shortcut_requested = false;
+
             let run_id = run_state.run_id().to_string();
+            Self::handle_global_shortcuts(run_state, key.code, &mut focus_request, &mut log_shortcut_requested);
 
-            let steps_focused = run_state.steps_focus_flag().get();
-            let outputs_focused = run_state.outputs_focus_flag().get();
-            let detail_focused = run_state.detail_focus_flag().get();
-            let cancel_focused = run_state.cancel_button_focus_flag().get();
-            let pause_focused = run_state.pause_button_focus_flag().get();
-
-            match key.code {
-                KeyCode::Char('t' | 'T') => {
-                    run_state.toggle_wide_mode();
-                }
-                KeyCode::Char('l' | 'L') => {
-                    log_shortcut_requested = true;
-                }
-                KeyCode::Esc => {
-                    if run_state.is_detail_visible() {
-                        let source = run_state.detail().map(|detail| detail.source());
-                        run_state.hide_detail();
-                        match source {
-                            Some(RunDetailSource::Steps) => focus_request = Some(FocusRequest::StepsTable),
-                            Some(RunDetailSource::Outputs) => focus_request = Some(FocusRequest::OutputsTable),
-                            None => {}
-                        }
-                    }
-                }
-                _ => {}
+            let focus_snapshot = run_state.focus_snapshot();
+            if focus_snapshot.steps_table_focused {
+                focus_request = focus_request.or(Self::handle_steps_table_keys(run_state, key.code));
+            } else if focus_snapshot.outputs_table_focused {
+                focus_request = focus_request.or(Self::handle_outputs_table_keys(run_state, key.code));
+            } else if focus_snapshot.detail_pane_focused {
+                focus_request = focus_request.or(Self::handle_detail_keys(run_state, key.code));
+            } else if focus_snapshot.cancel_button_focused {
+                let (request, control_effects) = Self::handle_cancel_button_keys(run_state, &run_id, key.code);
+                focus_request = focus_request.or(request);
+                effects.extend(control_effects);
+            } else if focus_snapshot.pause_button_focused {
+                let (request, control_effects) = Self::handle_pause_button_keys(run_state, &run_id, key.code);
+                focus_request = focus_request.or(request);
+                effects.extend(control_effects);
             }
 
-            if steps_focused {
-                match key.code {
-                    KeyCode::Up => run_state.steps_table_mut().reduce_scroll(-1),
-                    KeyCode::Down => run_state.steps_table_mut().reduce_scroll(1),
-                    KeyCode::PageUp => run_state.steps_table_mut().reduce_scroll(-5),
-                    KeyCode::PageDown => run_state.steps_table_mut().reduce_scroll(5),
-                    KeyCode::Home => run_state.steps_table_mut().reduce_home(),
-                    KeyCode::End => run_state.steps_table_mut().reduce_end(),
-                    KeyCode::Enter => {
-                        if run_state.is_detail_visible()
-                            && matches!(run_state.detail().map(|detail| detail.source()), Some(RunDetailSource::Steps))
-                        {
-                            run_state.hide_detail();
-                        } else {
-                            run_state.show_detail(RunDetailSource::Steps);
-                            run_state.set_detail_selection(Some(0));
-                            focus_request = Some(FocusRequest::DetailPane);
-                        }
-                    }
-                    _ => {}
-                }
-                run_state.clamp_detail_entries();
-            } else if outputs_focused {
-                match key.code {
-                    KeyCode::Up => run_state.outputs_table_mut().reduce_scroll(-1),
-                    KeyCode::Down => run_state.outputs_table_mut().reduce_scroll(1),
-                    KeyCode::PageUp => run_state.outputs_table_mut().reduce_scroll(-5),
-                    KeyCode::PageDown => run_state.outputs_table_mut().reduce_scroll(5),
-                    KeyCode::Home => run_state.outputs_table_mut().reduce_home(),
-                    KeyCode::End => run_state.outputs_table_mut().reduce_end(),
-                    KeyCode::Enter => {
-                        if run_state.is_detail_visible()
-                            && matches!(run_state.detail().map(|detail| detail.source()), Some(RunDetailSource::Outputs))
-                        {
-                            run_state.hide_detail();
-                        } else {
-                            run_state.show_detail(RunDetailSource::Outputs);
-                            run_state.set_detail_selection(Some(0));
-                            focus_request = Some(FocusRequest::DetailPane);
-                        }
-                    }
-                    _ => {}
-                }
-                run_state.clamp_detail_entries();
-            } else if detail_focused {
-                match key.code {
-                    KeyCode::Up => run_state.adjust_detail_selection(-1),
-                    KeyCode::Down => run_state.adjust_detail_selection(1),
-                    KeyCode::PageUp => run_state.adjust_detail_selection(-5),
-                    KeyCode::PageDown => run_state.adjust_detail_selection(5),
-                    KeyCode::Home => run_state.set_detail_selection(Some(0)),
-                    KeyCode::End => {
-                        let entry_count = run_state.current_detail_entries().map(|entries| entries.len()).unwrap_or(0);
-                        if entry_count > 0 {
-                            run_state.set_detail_selection(Some(entry_count.saturating_sub(1)));
-                        }
-                    }
-                    KeyCode::Esc => {
-                        let source = run_state.detail().map(|detail| detail.source());
-                        run_state.hide_detail();
-                        match source {
-                            Some(RunDetailSource::Steps) => focus_request = Some(FocusRequest::StepsTable),
-                            Some(RunDetailSource::Outputs) => focus_request = Some(FocusRequest::OutputsTable),
-                            None => {}
-                        }
-                    }
-                    _ => {}
-                }
-                run_state.clamp_detail_entries();
-            } else if cancel_focused {
-                match key.code {
-                    KeyCode::Left | KeyCode::Up => focus_request = Some(FocusRequest::PauseButton),
-                    KeyCode::Right | KeyCode::Down => focus_request = Some(FocusRequest::StepsTable),
-                    KeyCode::Enter | KeyCode::Char(' ') => {
-                        if cancel_enabled(run_state.status()) {
-                            effects.push(Effect::WorkflowRunControl {
-                                run_id: run_id.clone(),
-                                command: WorkflowRunControl::Cancel,
-                            });
-                        }
-                    }
-                    _ => {}
-                }
-            } else if pause_focused {
-                match key.code {
-                    KeyCode::Left | KeyCode::Up => focus_request = Some(FocusRequest::OutputsTable),
-                    KeyCode::Right | KeyCode::Down => focus_request = Some(FocusRequest::CancelButton),
-                    KeyCode::Enter | KeyCode::Char(' ') => {
-                        if let Some(command) = pause_command_for_status(run_state.status()) {
-                            effects.push(Effect::WorkflowRunControl {
-                                run_id: run_id.clone(),
-                                command,
-                            });
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
+            (focus_request, log_shortcut_requested, effects)
+        };
 
         if log_shortcut_requested {
             app.append_log_message("Logs shortcut not yet wired for the run view.");
@@ -210,6 +108,7 @@ impl Component for RunViewComponent {
                 FocusRequest::PauseButton => app.focus.focus(run_state.pause_button_focus_flag()),
             }
         }
+
         effects
     }
 
@@ -218,68 +117,11 @@ impl Component for RunViewComponent {
             return Vec::new();
         }
 
-        let layout_snapshot = {
-            let Some(run_state) = app.workflows.run_view_state() else {
-                return Vec::new();
-            };
-            run_state.layout().clone()
-        };
-
-        let Some(container_area) = layout_snapshot.last_area() else {
+        let Some(target) = Self::hit_test_mouse_target(app, mouse) else {
             return Vec::new();
         };
 
-        let Some(index) =
-            find_target_index_by_mouse_position(&container_area, layout_snapshot.mouse_target_areas(), mouse.column, mouse.row)
-        else {
-            return Vec::new();
-        };
-
-        let Some(target) = layout_snapshot.mouse_target_roles().get(index).copied() else {
-            return Vec::new();
-        };
-
-        match target {
-            RunViewMouseTarget::StepsTable => {
-                if let Some(run_state) = app.workflows.run_view_state() {
-                    app.focus.focus(run_state.steps_focus_flag());
-                }
-            }
-            RunViewMouseTarget::OutputsTable => {
-                if let Some(run_state) = app.workflows.run_view_state() {
-                    app.focus.focus(run_state.outputs_focus_flag());
-                }
-            }
-            RunViewMouseTarget::DetailPane => {
-                if let Some(run_state) = app.workflows.run_view_state() {
-                    app.focus.focus(run_state.detail_focus_flag());
-                }
-            }
-            RunViewMouseTarget::CancelButton => {
-                if let Some(run_state) = app.workflows.run_view_state() {
-                    app.focus.focus(run_state.cancel_button_focus_flag());
-                    if cancel_enabled(run_state.status()) {
-                        return vec![Effect::WorkflowRunControl {
-                            run_id: run_state.run_id().to_string(),
-                            command: WorkflowRunControl::Cancel,
-                        }];
-                    }
-                }
-            }
-            RunViewMouseTarget::PauseButton => {
-                if let Some(run_state) = app.workflows.run_view_state() {
-                    app.focus.focus(run_state.pause_button_focus_flag());
-                    if let Some(command) = pause_command_for_status(run_state.status()) {
-                        return vec![Effect::WorkflowRunControl {
-                            run_id: run_state.run_id().to_string(),
-                            command,
-                        }];
-                    }
-                }
-            }
-        }
-
-        Vec::new()
+        Self::handle_mouse_target(app, target)
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
@@ -305,72 +147,13 @@ impl Component for RunViewComponent {
 
         render_header(frame, header_area, theme, run_state);
 
-        let mut layout_state = RunViewLayout::default();
-        layout_state.set_last_area(inner);
-        layout_state.set_header_area(header_area);
-
+        let mut layout_state = Self::prepare_layout_state(inner, header_area);
         let mut mouse_targets: Vec<(Rect, RunViewMouseTarget)> = Vec::new();
 
         if run_state.is_wide_mode() {
-            let detail_visible = run_state.is_detail_visible();
-            let column_spec: Vec<Constraint> = if detail_visible {
-                vec![Constraint::Percentage(45), Constraint::Percentage(35), Constraint::Percentage(20)]
-            } else {
-                vec![Constraint::Percentage(55), Constraint::Percentage(45)]
-            };
-            let columns = Layout::horizontal(column_spec).split(body_area);
-
-            if let Some(steps_area) = columns.first().copied() {
-                render_steps_table(frame, steps_area, theme, run_state, &mut self.steps_view);
-                layout_state.set_steps_area(steps_area);
-                mouse_targets.push((steps_area, RunViewMouseTarget::StepsTable));
-            }
-
-            if let Some(outputs_area) = columns.get(1).copied() {
-                render_outputs_table(frame, outputs_area, theme, run_state, &mut self.outputs_view);
-                layout_state.set_outputs_area(outputs_area);
-                mouse_targets.push((outputs_area, RunViewMouseTarget::OutputsTable));
-            }
-
-            if detail_visible {
-                if let Some(area) = columns.get(2).copied() {
-                    render_detail_pane(frame, area, theme, run_state);
-                    layout_state.set_detail_area(Some(area));
-                    mouse_targets.push((area, RunViewMouseTarget::DetailPane));
-                }
-            } else {
-                layout_state.set_detail_area(None);
-            }
+            self.render_wide_body(frame, body_area, theme, run_state, &mut layout_state, &mut mouse_targets);
         } else {
-            let detail_visible = run_state.is_detail_visible();
-            let body_spec = if detail_visible {
-                vec![Constraint::Percentage(55), Constraint::Percentage(45), Constraint::Length(6)]
-            } else {
-                vec![Constraint::Percentage(60), Constraint::Percentage(40)]
-            };
-            let rows = Layout::vertical(body_spec).split(body_area);
-
-            if let Some(steps_area) = rows.first().copied() {
-                render_steps_table(frame, steps_area, theme, run_state, &mut self.steps_view);
-                layout_state.set_steps_area(steps_area);
-                mouse_targets.push((steps_area, RunViewMouseTarget::StepsTable));
-            }
-
-            if let Some(outputs_area) = rows.get(1).copied() {
-                render_outputs_table(frame, outputs_area, theme, run_state, &mut self.outputs_view);
-                layout_state.set_outputs_area(outputs_area);
-                mouse_targets.push((outputs_area, RunViewMouseTarget::OutputsTable));
-            }
-
-            if detail_visible {
-                if let Some(detail_area) = rows.get(2).copied() {
-                    render_detail_pane(frame, detail_area, theme, run_state);
-                    layout_state.set_detail_area(Some(detail_area));
-                    mouse_targets.push((detail_area, RunViewMouseTarget::DetailPane));
-                }
-            } else {
-                layout_state.set_detail_area(None);
-            }
+            self.render_compact_body(frame, body_area, theme, run_state, &mut layout_state, &mut mouse_targets);
         }
 
         let (cancel_area, pause_area) = render_footer(frame, footer_area, theme, run_state, &mut mouse_targets);
@@ -422,6 +205,299 @@ impl Component for RunViewComponent {
     fn on_route_exit(&mut self, app: &mut App) -> Vec<Effect> {
         app.workflows.end_inputs_session();
         Vec::new()
+    }
+}
+
+impl RunViewComponent {
+    fn handle_focus_cycle_keys(app: &mut App, code: KeyCode) -> bool {
+        match code {
+            KeyCode::Tab => {
+                app.focus.next();
+                true
+            }
+            KeyCode::BackTab => {
+                app.focus.prev();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn handle_global_shortcuts(
+        run_state: &mut RunViewState,
+        code: KeyCode,
+        focus_request: &mut Option<FocusRequest>,
+        log_shortcut_requested: &mut bool,
+    ) {
+        match code {
+            KeyCode::Char('t' | 'T') => run_state.toggle_wide_mode(),
+            KeyCode::Char('l' | 'L') => *log_shortcut_requested = true,
+            KeyCode::Esc => {
+                if let Some(request) = Self::close_detail(run_state) {
+                    *focus_request = Some(request);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn close_detail(run_state: &mut RunViewState) -> Option<FocusRequest> {
+        if !run_state.is_detail_visible() {
+            return None;
+        }
+        let source = run_state.detail().map(|detail| detail.source());
+        run_state.hide_detail();
+        match source {
+            Some(RunDetailSource::Steps) => Some(FocusRequest::StepsTable),
+            Some(RunDetailSource::Outputs) => Some(FocusRequest::OutputsTable),
+            None => None,
+        }
+    }
+
+    fn handle_steps_table_keys(run_state: &mut RunViewState, code: KeyCode) -> Option<FocusRequest> {
+        let mut focus_request = None;
+        match code {
+            KeyCode::Up => run_state.steps_table_mut().reduce_scroll(-1),
+            KeyCode::Down => run_state.steps_table_mut().reduce_scroll(1),
+            KeyCode::PageUp => run_state.steps_table_mut().reduce_scroll(-5),
+            KeyCode::PageDown => run_state.steps_table_mut().reduce_scroll(5),
+            KeyCode::Home => run_state.steps_table_mut().reduce_home(),
+            KeyCode::End => run_state.steps_table_mut().reduce_end(),
+            KeyCode::Enter => {
+                let change = run_state.toggle_detail_for(RunDetailSource::Steps);
+                focus_request = Self::handle_detail_toggle_result(RunDetailSource::Steps, change);
+            }
+            _ => {}
+        }
+        run_state.clamp_detail_entries();
+        focus_request
+    }
+
+    fn handle_outputs_table_keys(run_state: &mut RunViewState, code: KeyCode) -> Option<FocusRequest> {
+        let mut focus_request = None;
+        match code {
+            KeyCode::Up => run_state.outputs_table_mut().reduce_scroll(-1),
+            KeyCode::Down => run_state.outputs_table_mut().reduce_scroll(1),
+            KeyCode::PageUp => run_state.outputs_table_mut().reduce_scroll(-5),
+            KeyCode::PageDown => run_state.outputs_table_mut().reduce_scroll(5),
+            KeyCode::Home => run_state.outputs_table_mut().reduce_home(),
+            KeyCode::End => run_state.outputs_table_mut().reduce_end(),
+            KeyCode::Enter => {
+                let change = run_state.toggle_detail_for(RunDetailSource::Outputs);
+                focus_request = Self::handle_detail_toggle_result(RunDetailSource::Outputs, change);
+            }
+            _ => {}
+        }
+        run_state.clamp_detail_entries();
+        focus_request
+    }
+
+    fn handle_detail_keys(run_state: &mut RunViewState, code: KeyCode) -> Option<FocusRequest> {
+        match code {
+            KeyCode::Up => run_state.adjust_detail_selection(-1),
+            KeyCode::Down => run_state.adjust_detail_selection(1),
+            KeyCode::PageUp => run_state.adjust_detail_selection(-5),
+            KeyCode::PageDown => run_state.adjust_detail_selection(5),
+            KeyCode::Home => run_state.set_detail_selection(Some(0)),
+            KeyCode::End => {
+                let entry_count = run_state.current_detail_entries().map(|entries| entries.len()).unwrap_or(0);
+                if entry_count > 0 {
+                    run_state.set_detail_selection(Some(entry_count.saturating_sub(1)));
+                }
+            }
+            KeyCode::Esc => return Self::close_detail(run_state),
+            _ => {}
+        }
+        run_state.clamp_detail_entries();
+        None
+    }
+
+    fn handle_cancel_button_keys(run_state: &RunViewState, run_id: &str, code: KeyCode) -> (Option<FocusRequest>, Vec<Effect>) {
+        match code {
+            KeyCode::Left | KeyCode::Up => (Some(FocusRequest::PauseButton), Vec::new()),
+            KeyCode::Right | KeyCode::Down => (Some(FocusRequest::StepsTable), Vec::new()),
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                if cancel_enabled(run_state.status()) {
+                    (
+                        None,
+                        vec![Effect::WorkflowRunControl {
+                            run_id: run_id.to_string(),
+                            command: WorkflowRunControl::Cancel,
+                        }],
+                    )
+                } else {
+                    (None, Vec::new())
+                }
+            }
+            _ => (None, Vec::new()),
+        }
+    }
+
+    fn handle_pause_button_keys(run_state: &RunViewState, run_id: &str, code: KeyCode) -> (Option<FocusRequest>, Vec<Effect>) {
+        match code {
+            KeyCode::Left | KeyCode::Up => (Some(FocusRequest::OutputsTable), Vec::new()),
+            KeyCode::Right | KeyCode::Down => (Some(FocusRequest::CancelButton), Vec::new()),
+            KeyCode::Enter | KeyCode::Char(' ') => {
+                if let Some(command) = pause_command_for_status(run_state.status()) {
+                    (
+                        None,
+                        vec![Effect::WorkflowRunControl {
+                            run_id: run_id.to_string(),
+                            command,
+                        }],
+                    )
+                } else {
+                    (None, Vec::new())
+                }
+            }
+            _ => (None, Vec::new()),
+        }
+    }
+
+    fn handle_detail_toggle_result(source: RunDetailSource, change: DetailPaneVisibilityChange) -> Option<FocusRequest> {
+        match change {
+            DetailPaneVisibilityChange::BecameVisible => Some(FocusRequest::DetailPane),
+            DetailPaneVisibilityChange::BecameHidden => match source {
+                RunDetailSource::Steps => Some(FocusRequest::StepsTable),
+                RunDetailSource::Outputs => Some(FocusRequest::OutputsTable),
+            },
+        }
+    }
+
+    fn hit_test_mouse_target(app: &App, mouse: MouseEvent) -> Option<RunViewMouseTarget> {
+        let layout_snapshot = app.workflows.run_view_state().map(|state| state.layout().clone())?;
+        let container_area = layout_snapshot.last_area()?;
+        let index = find_target_index_by_mouse_position(&container_area, layout_snapshot.mouse_target_areas(), mouse.column, mouse.row)?;
+        layout_snapshot.mouse_target_roles().get(index).copied()
+    }
+
+    fn handle_mouse_target(app: &mut App, target: RunViewMouseTarget) -> Vec<Effect> {
+        let Some(run_state) = app.workflows.run_view_state() else {
+            return Vec::new();
+        };
+        match target {
+            RunViewMouseTarget::StepsTable => {
+                app.focus.focus(run_state.steps_focus_flag());
+                Vec::new()
+            }
+            RunViewMouseTarget::OutputsTable => {
+                app.focus.focus(run_state.outputs_focus_flag());
+                Vec::new()
+            }
+            RunViewMouseTarget::DetailPane => {
+                app.focus.focus(run_state.detail_focus_flag());
+                Vec::new()
+            }
+            RunViewMouseTarget::CancelButton => {
+                app.focus.focus(run_state.cancel_button_focus_flag());
+                if cancel_enabled(run_state.status()) {
+                    vec![Effect::WorkflowRunControl {
+                        run_id: run_state.run_id().to_string(),
+                        command: WorkflowRunControl::Cancel,
+                    }]
+                } else {
+                    Vec::new()
+                }
+            }
+            RunViewMouseTarget::PauseButton => {
+                app.focus.focus(run_state.pause_button_focus_flag());
+                if let Some(command) = pause_command_for_status(run_state.status()) {
+                    vec![Effect::WorkflowRunControl {
+                        run_id: run_state.run_id().to_string(),
+                        command,
+                    }]
+                } else {
+                    Vec::new()
+                }
+            }
+        }
+    }
+
+    fn prepare_layout_state(container_area: Rect, header_area: Rect) -> RunViewLayout {
+        let mut layout_state = RunViewLayout::default();
+        layout_state.set_last_area(container_area);
+        layout_state.set_header_area(header_area);
+        layout_state
+    }
+
+    fn render_wide_body(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        theme: &dyn Theme,
+        run_state: &mut RunViewState,
+        layout_state: &mut RunViewLayout,
+        mouse_targets: &mut Vec<(Rect, RunViewMouseTarget)>,
+    ) {
+        let detail_visible = run_state.is_detail_visible();
+        let column_spec: Vec<Constraint> = if detail_visible {
+            vec![Constraint::Percentage(45), Constraint::Percentage(35), Constraint::Percentage(20)]
+        } else {
+            vec![Constraint::Percentage(55), Constraint::Percentage(45)]
+        };
+        let columns = Layout::horizontal(column_spec).split(area);
+
+        if let Some(steps_area) = columns.first().copied() {
+            render_steps_table(frame, steps_area, theme, run_state, &mut self.steps_view);
+            layout_state.set_steps_area(steps_area);
+            mouse_targets.push((steps_area, RunViewMouseTarget::StepsTable));
+        }
+
+        if let Some(outputs_area) = columns.get(1).copied() {
+            render_outputs_table(frame, outputs_area, theme, run_state, &mut self.outputs_view);
+            layout_state.set_outputs_area(outputs_area);
+            mouse_targets.push((outputs_area, RunViewMouseTarget::OutputsTable));
+        }
+
+        if detail_visible {
+            if let Some(area) = columns.get(2).copied() {
+                render_detail_pane(frame, area, theme, run_state);
+                layout_state.set_detail_area(Some(area));
+                mouse_targets.push((area, RunViewMouseTarget::DetailPane));
+            }
+        } else {
+            layout_state.set_detail_area(None);
+        }
+    }
+
+    fn render_compact_body(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        theme: &dyn Theme,
+        run_state: &mut RunViewState,
+        layout_state: &mut RunViewLayout,
+        mouse_targets: &mut Vec<(Rect, RunViewMouseTarget)>,
+    ) {
+        let detail_visible = run_state.is_detail_visible();
+        let body_spec = if detail_visible {
+            vec![Constraint::Percentage(55), Constraint::Percentage(45), Constraint::Length(6)]
+        } else {
+            vec![Constraint::Percentage(60), Constraint::Percentage(40)]
+        };
+        let rows = Layout::vertical(body_spec).split(area);
+
+        if let Some(steps_area) = rows.first().copied() {
+            render_steps_table(frame, steps_area, theme, run_state, &mut self.steps_view);
+            layout_state.set_steps_area(steps_area);
+            mouse_targets.push((steps_area, RunViewMouseTarget::StepsTable));
+        }
+
+        if let Some(outputs_area) = rows.get(1).copied() {
+            render_outputs_table(frame, outputs_area, theme, run_state, &mut self.outputs_view);
+            layout_state.set_outputs_area(outputs_area);
+            mouse_targets.push((outputs_area, RunViewMouseTarget::OutputsTable));
+        }
+
+        if detail_visible {
+            if let Some(detail_area) = rows.get(2).copied() {
+                render_detail_pane(frame, detail_area, theme, run_state);
+                layout_state.set_detail_area(Some(detail_area));
+                mouse_targets.push((detail_area, RunViewMouseTarget::DetailPane));
+            }
+        } else {
+            layout_state.set_detail_area(None);
+        }
     }
 }
 

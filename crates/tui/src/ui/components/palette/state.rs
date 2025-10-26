@@ -1000,12 +1000,18 @@ impl PaletteState {
         };
 
         // nothing to do
-        if self.cmd_exec_hash.is_none_or(|h| h != *request_id) || value.is_null() {
+        if self.cmd_exec_hash.is_none_or(|h| h != *request_id) {
             return effects;
         }
 
         if *status > 399 {
             self.error_message = Some(format!("Command failed error: status {} - {}", status, log));
+            return effects;
+        }
+
+        if value.is_null() {
+            self.error_message = Some("Command completed successfully but no value was returned".to_string());
+            self.reduce_clear_all();
             return effects;
         }
 

@@ -7,6 +7,7 @@
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use heroku_types::Effect;
+use std::collections::HashMap;
 // Focus management uses FocusFlag booleans on state; no ring needed here
 use ratatui::{
     Frame,
@@ -58,7 +59,7 @@ struct RadioButtonLayout {
 pub struct PluginsEditComponent {
     kv_component: KeyValueEditorComponent,
     // Map Focus widget IDs to persistent text input states for inline fields
-    focus_id_to_input: std::collections::HashMap<usize, TextInputState>,
+    focus_id_to_input: HashMap<usize, TextInputState>,
 }
 
 impl PluginsEditComponent {
@@ -188,10 +189,7 @@ impl Component for PluginsEditComponent {
                 return vec![Effect::PluginsSave];
             }
             KeyCode::Enter => {
-                let effects = handle_enter_key(app);
-                if !effects.is_empty() {
-                    return effects;
-                }
+                return handle_enter_key(app);
             }
             KeyCode::Backspace => self.edit_and_reset_validation(app, |ti| ti.backspace()),
             KeyCode::Char(character) if !key_event.modifiers.contains(KeyModifiers::CONTROL) => {
