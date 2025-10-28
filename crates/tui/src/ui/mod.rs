@@ -4,7 +4,7 @@
 //! including the main layout, modals, components, and utilities.
 
 pub mod components;
-pub mod main;
+pub mod main_component;
 pub mod runtime;
 pub mod theme;
 pub mod utils;

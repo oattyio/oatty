@@ -31,8 +31,8 @@ pub struct McpToolMetadata {
 impl McpToolMetadata {
     /// Build metadata from the raw RMCP tool payload.
     pub fn from_rmcp(tool: &RmcpTool) -> Self {
-        let input_schema = Value::Object((tool.input_schema.as_ref()).clone());
-        let output_schema = tool.output_schema.as_ref().map(|schema| Value::Object((schema.as_ref()).clone()));
+        let input_schema = Value::Object(tool.input_schema.as_ref().clone());
+        let output_schema = tool.output_schema.as_ref().map(|schema| Value::Object(schema.as_ref().clone()));
         let annotations = tool.annotations.as_ref().and_then(|ann| serde_json::to_value(ann).ok());
 
         Self {

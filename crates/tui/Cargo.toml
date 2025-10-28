@@ -14,7 +14,7 @@ ratatui = { workspace = true }
 crossterm = { workspace = true }
 tracing = { workspace = true }
 reqwest = { workspace = true }
-notify = "6.1"
+notify = "8.2.0"
 heroku-registry = { path = "../registry" }
 heroku-util = { path = "../util" }
 heroku-types = { path = "../types" }

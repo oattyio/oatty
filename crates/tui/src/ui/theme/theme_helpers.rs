@@ -64,7 +64,7 @@ pub fn table_row_styles(theme: &dyn Theme) -> (Style, Style) {
         ..
     } = *theme.roles();
     // Subtly darken both surface tones for zebra striping without modifiers.
-    // Keep contrast high while making alternate rows feel slightly recessed.
+    // Keep the contrast high while making alternate rows feel slightly recessed.
     let even_bg = darken_rgb(surface, 0.60);
     let odd_bg = darken_rgb(surface_muted, 0.60);
     let even = Style::default().bg(even_bg).fg(text);
@@ -133,7 +133,7 @@ pub fn badge_style(theme: &dyn Theme) -> Style {
 }
 
 /// Immutable configuration specifying how a button should be rendered.
-#[derive(Debug, Clone, Copy)]
+#[derive(Default, Debug, Clone, Copy)]
 pub struct ButtonRenderOptions {
     /// Whether the button is interactable and should display active styling.
     pub enabled: bool,
@@ -354,4 +354,40 @@ pub fn build_hint_spans(theme: &dyn Theme, hints: &[(&str, &str)]) -> Vec<Span<'
         spans.push(Span::styled((*description).to_string(), muted));
     }
     spans
+}
+/// Build a [`Line`] showing a focus indicator, label, and string value using syntax colors.
+pub(crate) fn build_syntax_highlighted_line(
+    label: &str,
+    value: &str,
+    placeholder: &str,
+    focused: bool,
+    theme: &dyn Theme,
+) -> Line<'static> {
+    let spans: Vec<Span> = vec![
+        build_focus_indicator_span(focused, theme),
+        build_label_span(label, theme),
+        build_value_span(value, placeholder, theme),
+    ];
+    Line::from(spans)
+}
+
+/// Build the arrow focus indicator used ahead of inline fields.
+pub(crate) fn build_focus_indicator_span(focused: bool, theme: &dyn Theme) -> Span<'static> {
+    let indicator = if focused { "› " } else { "  " };
+    Span::styled(indicator.to_string(), theme.text_secondary_style())
+}
+
+/// Build the field label span using the syntax keyword foreground color.
+pub(crate) fn build_label_span(label: &str, theme: &dyn Theme) -> Span<'static> {
+    Span::styled(format!("{label}: "), theme.syntax_keyword_style())
+}
+
+/// Build the field value span, falling back to a placeholder if empty.
+pub(crate) fn build_value_span(value: &str, placeholder: &str, theme: &dyn Theme) -> Span<'static> {
+    if value.is_empty() {
+        let placeholder_style = theme.syntax_string_style().patch(theme.text_muted_style());
+        Span::styled(placeholder.to_string(), placeholder_style)
+    } else {
+        Span::styled(value.to_string(), theme.syntax_string_style())
+    }
 }

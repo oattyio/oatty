@@ -7,19 +7,21 @@
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use heroku_types::Effect;
-use std::collections::HashMap;
 // Focus management uses FocusFlag booleans on state; no ring needed here
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
+    style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph},
+    widgets::{Borders, Paragraph},
 };
+use std::collections::HashMap;
 
 use super::{
     key_value_editor::KeyValueEditorComponent,
     state::{PluginEditViewState, PluginTransport},
 };
+use crate::ui::theme::theme_helpers::build_syntax_highlighted_line;
 use crate::{
     app::App,
     ui::{
@@ -170,7 +172,6 @@ impl Component for PluginsEditComponent {
                 add_state.transport = PluginTransport::Remote;
             }
             KeyCode::Left => {
-                // Move cursor in active text field (UTF-8 safe) via focused widget
                 let _ = self.edit_focused_input(app, |ti| ti.move_left());
             }
             KeyCode::Right => {
@@ -223,10 +224,9 @@ impl Component for PluginsEditComponent {
             ];
             app.focus.focus(focusables[idx]);
             // normalize the index to the focusables array
-            if !(2..=6).contains(&idx) {
+            if !(2..=8).contains(&idx) {
                 return handle_enter_key(app);
             }
-            return Vec::new();
         }
         Vec::new()
     }
@@ -246,14 +246,6 @@ impl Component for PluginsEditComponent {
         let Some(add_state) = &mut app.plugins.add else { return };
 
         let theme = &*app.ctx.theme;
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(theme.border_style(add_state.container_focus.get()))
-            .style(theme_helpers::panel_style(theme))
-            .title(Span::styled("Add Plugin", theme.text_secondary_style()));
-
-        let inner_area = block.inner(area);
-        frame.render_widget(block, area);
 
         let layout = Layout::vertical([
             Constraint::Min(1),          // Transport
@@ -261,7 +253,7 @@ impl Component for PluginsEditComponent {
             Constraint::Percentage(100), // Env/Headers editors
             Constraint::Min(3),          // Action Buttons
         ])
-        .split(inner_area);
+        .split(area);
 
         let transport_layout = render_radio_buttons(frame, layout[0], theme, add_state);
         let form_layout = render_form_fields(frame, layout[1], theme, add_state);
@@ -273,7 +265,7 @@ impl Component for PluginsEditComponent {
 
         // Update the state with the new layout
         // so mouse events can be handled
-        add_state.last_area = inner_area;
+        add_state.last_area = area;
         add_state.per_item_area = vec![
             transport_layout.transport_local,  // Local Radio
             transport_layout.transport_remote, // Remote radio
@@ -479,22 +471,9 @@ fn render_labeled_input_field(
     placeholder: &str,
     focused: bool,
 ) {
-    let mut spans: Vec<Span> = Vec::new();
-    spans.push(Span::styled(if focused { "› " } else { "  " }, theme.text_secondary_style()));
-    spans.push(Span::styled(format!("{}: ", label), theme.text_primary_style()));
-    if value.is_empty() {
-        spans.push(Span::styled(placeholder.to_string(), theme.text_muted_style()));
-    } else {
-        spans.push(Span::styled(value.to_string(), theme.text_primary_style()));
-    }
-
-    let style = if focused {
-        theme.selection_style()
-    } else {
-        theme.text_primary_style()
-    };
-    let paragraph = Paragraph::new(Line::from(spans)).style(style);
-    frame.render_widget(paragraph, area);
+    let line = build_syntax_highlighted_line(label, value, placeholder, focused, theme);
+    let paragraph_style = if focused { theme.selection_style() } else { Style::default() };
+    frame.render_widget(Paragraph::new(line).style(paragraph_style), area);
 }
 
 /// Render a validation message for the "edit plugin" form.
@@ -527,7 +506,6 @@ fn render_validation_message(frame: &mut Frame, area: Rect, theme: &dyn Theme, r
 fn render_action_buttons(frame: &mut Frame, area: Rect, theme: &dyn Theme, add_state: &PluginEditViewState) -> ActionButtonLayout {
     let (validate_enabled, save_enabled) = add_state.compute_button_enablement();
     let button_columns = Layout::horizontal([
-        Constraint::Min(0),     // Flexible space
         Constraint::Length(12), // Validate button
         Constraint::Length(2),  // Spacer
         Constraint::Length(10), // Save button
@@ -537,29 +515,29 @@ fn render_action_buttons(frame: &mut Frame, area: Rect, theme: &dyn Theme, add_s
     .split(area);
     render_button(
         frame,
-        button_columns[1],
+        button_columns[0],
         "Validate",
         theme,
         ButtonRenderOptions::new(validate_enabled, add_state.f_btn_validate.get(), false, Borders::ALL, false),
     );
     render_button(
         frame,
-        button_columns[3],
+        button_columns[2],
         "Save",
         theme,
         ButtonRenderOptions::new(save_enabled, add_state.f_btn_save.get(), false, Borders::ALL, true),
     );
     render_button(
         frame,
-        button_columns[5],
+        button_columns[4],
         "Cancel",
         theme,
         ButtonRenderOptions::new(true, add_state.f_btn_cancel.get(), false, Borders::ALL, false),
     );
     ActionButtonLayout {
-        btn_validate_area: button_columns[1],
-        btn_save_area: button_columns[3],
-        btn_cancel_area: button_columns[5],
+        btn_validate_area: button_columns[0],
+        btn_save_area: button_columns[2],
+        btn_cancel_area: button_columns[4],
     }
 }
 

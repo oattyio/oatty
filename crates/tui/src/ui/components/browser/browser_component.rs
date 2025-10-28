@@ -53,6 +53,8 @@ use ratatui::{
 #[derive(Debug, Default)]
 pub struct BrowserComponent {
     search_area: Rect,
+    list_area: Rect,
+    mouse_over_idx: Option<usize>,
 }
 
 impl Component for BrowserComponent {
@@ -86,13 +88,25 @@ impl Component for BrowserComponent {
     }
 
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
-        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind
-            && self.search_area.contains(Position {
-                x: mouse.column,
-                y: mouse.row,
-            })
-        {
-            app.focus.focus(&app.browser.f_search);
+        let pos = Position {
+            x: mouse.column,
+            y: mouse.row,
+        };
+        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+            if self.search_area.contains(pos) {
+                app.focus.focus(&app.browser.f_search);
+            }
+            if self.list_area.contains(pos) {
+                app.focus.focus(&app.browser.f_commands);
+                if let Some(idx) = self.hit_test_list(app, &pos) {
+                    app.browser.list_state.select(Some(idx));
+                    app.browser.commit_selection();
+                }
+            }
+        }
+
+        if let MouseEventKind::Moved = mouse.kind {
+            self.mouse_over_idx = self.hit_test_list(app, &pos)
         }
 
         Vec::new()
@@ -231,8 +245,8 @@ impl BrowserComponent {
 
     /// Creates the help content (title and text) based on the selected command.
     fn create_help_content<'a>(&self, app: &'a App) -> (String, ratatui::text::Text<'a>) {
-        if let Some(selected_command_spec) = app.browser.selected_command() {
-            let command_display_name = self.format_command_display_name(selected_command_spec);
+        if let Some(selected_command_spec) = app.browser.selected_command().cloned() {
+            let command_display_name = self.format_command_display_name(&selected_command_spec);
             let help_title = format!("Help — {}", command_display_name);
             let help_text = build_command_help_text(&*app.ctx.theme, selected_command_spec);
             (help_title, help_text)
@@ -325,7 +339,7 @@ impl BrowserComponent {
     fn create_search_title(&self, app: &App) -> Line<'_> {
         let theme = &*app.ctx.theme;
         Line::from(Span::styled(
-            "Browse Commands",
+            "Search Commands",
             theme.text_secondary_style().add_modifier(Modifier::BOLD),
         ))
     }
@@ -351,6 +365,16 @@ impl BrowserComponent {
         }
     }
 
+    fn hit_test_list(&mut self, app: &mut App, pos: &Position) -> Option<usize> {
+        let list_offset = app.browser.list_state.offset();
+        let idx = (pos.y - self.list_area.y) as usize + list_offset;
+        if idx >= app.browser.filtered().len() {
+            return None;
+        }
+
+        Some(idx)
+    }
+
     /// Renders the commands list panel with selection highlighting.
     ///
     /// This method creates a scrollable list of filtered commands with proper
@@ -360,16 +384,16 @@ impl BrowserComponent {
     /// * `frame` - The Ratatui frame to render to
     /// * `app` - The application state containing commands and theme information
     /// * `area` - The area to render the commands panel in
-    fn render_commands_panel(&self, frame: &mut Frame, app: &mut App, area: Rect) {
+    fn render_commands_panel(&mut self, frame: &mut Frame, app: &mut App, area: Rect) {
         let browser = &mut app.browser;
         let commands_title = format!("Commands ({})", browser.filtered().len());
         let is_focused = browser.f_commands.get();
         let commands_block = th::block(&*app.ctx.theme, Some(&commands_title), is_focused);
         let inner_height = commands_block.inner(area).height as usize;
         browser.set_viewport_rows(inner_height);
-
+        let selection_style = app.ctx.theme.selection_style().add_modifier(Modifier::BOLD);
         // Create command items and get list state separately to avoid borrowing conflicts
-        let command_items = {
+        let command_items: Vec<ListItem<'_>> = {
             let Some(lock) = browser.registry.lock().ok() else {
                 return;
             };
@@ -379,7 +403,8 @@ impl BrowserComponent {
             browser
                 .filtered()
                 .iter()
-                .map(|command_index| {
+                .enumerate()
+                .map(|(idx, command_index)| {
                     let group = &all_commands[*command_index].group;
                     let name = &all_commands[*command_index].name;
                     let mut spans: Vec<Span<'_>> = Vec::new();
@@ -402,17 +427,30 @@ impl BrowserComponent {
                             theme.search_highlight_style(),
                         ));
                     }
-                    ListItem::new(Line::from(spans)).style(app.ctx.theme.text_primary_style())
+                    let mut list_item = ListItem::new(Line::from(spans)).style(app.ctx.theme.text_primary_style());
+                    if self.mouse_over_idx.is_some_and(|hover| hover == idx) {
+                        list_item = list_item.style(selection_style);
+                    }
+
+                    list_item
+
                 })
-                .collect::<Vec<_>>()
+                .collect()
         };
         let is_focused = browser.f_commands.get();
         let commands_list = List::new(command_items)
             .block(commands_block)
-            .highlight_style(app.ctx.theme.selection_style().add_modifier(Modifier::BOLD))
+            .highlight_style(selection_style)
             .highlight_symbol(if is_focused { "> " } else { "" });
         let list_state = &mut browser.list_state;
         frame.render_stateful_widget(commands_list, area, list_state);
+
+        self.list_area = Rect {
+            x: area.x,
+            y: area.y + 1, // 1 for border-top
+            width: area.width,
+            height: area.height.saturating_sub(2), // 1 for border-top and 1 for border-bottom
+        };
     }
 
     /// Renders the inline help panel with command documentation.
@@ -426,7 +464,7 @@ impl BrowserComponent {
     /// * `area` - The area to render the help panel in
     fn render_inline_help_panel(&self, frame: &mut Frame, app: &mut App, area: Rect) {
         let (help_title, help_text) = self.create_help_content(app);
-        let help_block = th::block(&*app.ctx.theme, Some(&help_title), false);
+        let help_block = th::block(&*app.ctx.theme, Some(&help_title), app.browser.f_help.get());
         let inner_area = help_block.inner(area);
         frame.render_widget(help_block, area);
         let help_paragraph = Paragraph::new(help_text)

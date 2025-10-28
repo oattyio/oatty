@@ -7,7 +7,7 @@
 use std::hash::{DefaultHasher, Hasher};
 use std::vec;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use heroku_types::{Effect, ExecOutcome, ItemKind, Modal, Msg};
 use rat_focus::HasFocus;
 use ratatui::{
@@ -25,6 +25,7 @@ use crate::ui::{
 };
 
 static FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+#[derive(Default, Debug, Clone)]
 struct PaletteLayout {
     input_area: Rect,
     error_area: Rect,
@@ -65,11 +66,13 @@ struct PaletteLayout {
 /// palette.init()?;
 /// ```
 #[derive(Debug, Default)]
-pub struct PaletteComponent;
+pub struct PaletteComponent {
+    palette_layout: PaletteLayout,
+}
 
 impl PaletteComponent {
     pub fn new() -> Self {
-        Self
+        Self::default()
     }
     /// Creates the input paragraph widget with the current state.
     ///
@@ -164,7 +167,7 @@ impl PaletteComponent {
     /// # Returns
     ///
     /// The suggestions list widget
-    fn create_suggestions_list<'a>(&'_ self, suggestions: &[ListItem<'static>], theme: &dyn Theme) -> List<'a> {
+    fn create_suggestions_list<'a>(&'_ self, suggestions: Vec<ListItem<'static>>, theme: &dyn Theme) -> List<'a> {
         List::new(suggestions.to_vec())
             .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
             .style(th::panel_style(theme))
@@ -526,6 +529,44 @@ impl Component for PaletteComponent {
         effects
     }
 
+    fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
+        let PaletteLayout {
+            suggestions_area,
+            input_area,
+            ..
+        } = &self.palette_layout;
+        let position = Position {
+            x: mouse.column,
+            y: mouse.row,
+        };
+        let hit_test_suggestions = app.palette.is_suggestions_open() && suggestions_area.contains(position);
+        let list_offset = app.palette.list_state.offset();
+        let idx = if hit_test_suggestions {
+            Some(position.y as usize - suggestions_area.y as usize + list_offset)
+        } else {
+            None
+        };
+
+        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+            if input_area.contains(position) {
+                app.focus.focus(&app.palette.f_input);
+            }
+
+            if hit_test_suggestions {
+                app.palette.list_state.select(idx);
+                app.palette.apply_ghost_text();
+                return self.handle_enter(app);
+            }
+        }
+
+        if let MouseEventKind::Moved = mouse.kind {
+            app.palette.update_mouse_over_idx(idx);
+            app.palette.apply_ghost_text();
+        }
+
+        Vec::new()
+    }
+
     /// Renders the command palette with input and suggestions.
     ///
     /// This method orchestrates the rendering of all palette components:
@@ -545,22 +586,23 @@ impl Component for PaletteComponent {
     /// * `rect` - The rectangular area to render in
     /// * `app` - The application state containing palette data
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
+        let palette_layout = self.get_palette_layout(app, rect);
         let PaletteLayout {
             input_area,
             error_area,
             suggestions_area,
-        } = self.get_palette_layout(app, rect);
+        } = &palette_layout;
         let theme = &*app.ctx.theme;
         // Render input line with throbber and ghost text
         let input_para = self.create_input_paragraph(app, theme);
-        frame.render_widget(input_para, input_area);
+        frame.render_widget(input_para, *input_area);
 
         // Position cursor in the input line
-        self.position_cursor(frame, input_area, app, theme);
+        self.position_cursor(frame, *input_area, app, theme);
 
         // Render error message if present
         if let Some(error_para) = self.create_error_paragraph(app, theme) {
-            frame.render_widget(error_para, error_area);
+            frame.render_widget(error_para, *error_area);
         }
 
         // Render suggestions popup
@@ -569,10 +611,11 @@ impl Component for PaletteComponent {
 
         if should_show_suggestions {
             app.palette.update_suggestions_view_width(suggestions_area.width, theme);
-            let suggestions = app.palette.rendered_suggestions();
+            let suggestions = app.palette.rendered_suggestions().to_vec();
             let suggestions_list = self.create_suggestions_list(suggestions, theme);
-            frame.render_stateful_widget(suggestions_list, suggestions_area, &mut app.palette.list_state);
+            frame.render_stateful_widget(suggestions_list, *suggestions_area, &mut app.palette.list_state);
         }
+        self.palette_layout = palette_layout;
     }
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {

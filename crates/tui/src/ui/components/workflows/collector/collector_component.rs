@@ -180,7 +180,7 @@ impl Component for WorkflowCollectorComponent {
     }
 
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
-        // If manual entry state exists, render Manual Entry View; else render a selector
+        // If a manual entry state exists, render Manual Entry View; else render a selector
         if app.workflows.manual_entry_state().is_some() {
             self.manual_entry.render(frame, rect, app);
             return;
@@ -333,7 +333,7 @@ impl WorkflowCollectorComponent {
         theme: &dyn Theme,
         provider_registry: &ProviderRegistry,
         provider_id: String,
-        resolved_args: serde_json::Map<String, serde_json::Value>,
+        resolved_args: serde_json::Map<String, Value>,
     ) -> Vec<Effect> {
         match provider_registry.fetch_values(&provider_id, &resolved_args) {
             Ok(items_vec) => {

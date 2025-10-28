@@ -6,7 +6,7 @@
 //! plugins management interface, providing a unified view that can display different
 //! subcomponents based on user interaction and app state.
 
-use super::{PluginsEditComponent, PluginsLogsComponent, PluginsTableComponent};
+use super::{PluginsEditComponent, PluginsTableComponent};
 use crate::ui::components::plugins::plugin_editor::state::PluginEditViewState;
 use crate::{
     app::App,
@@ -18,7 +18,6 @@ use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
     text::Span,
-    widgets::Clear,
 };
 
 /// Top-level Plugins view component that orchestrates all plugin-related UI elements.
@@ -38,8 +37,6 @@ use ratatui::{
 pub struct PluginsComponent {
     /// Child component for displaying the plugin list table
     table_component: PluginsTableComponent,
-    /// Child component for displaying plugin logs
-    logs_component: PluginsLogsComponent,
     /// Child component for the add plugin
     edit_component: PluginsEditComponent,
 }
@@ -106,7 +103,6 @@ impl Component for PluginsComponent {
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
         let mut effects = vec![];
         effects.extend(self.table_component.handle_mouse_events(app, mouse));
-        effects.extend(self.logs_component.handle_mouse_events(app, mouse));
         effects.extend(self.edit_component.handle_mouse_events(app, mouse));
         effects
     }
@@ -124,7 +120,6 @@ impl Component for PluginsComponent {
     /// * `app` - Mutable reference to the app state
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         self.render_body_section(frame, area, app);
-        self.render_overlay_components(frame, area, app);
     }
 
     /// Renders the hint bar content
@@ -151,11 +146,7 @@ impl Component for PluginsComponent {
             spans.extend(build_hint_spans(theme, &[("Esc", " Back  ")]));
         } else {
             // the add component is not visible
-            spans.extend(build_hint_spans(theme, &[("Esc", " Clear  ")]));
-
-            if app.plugins.can_open_add_plugin() {
-                spans.extend(build_hint_spans(theme, &[("Ctrl-A", " Add  ")]));
-            }
+            spans.extend(build_hint_spans(theme, &[("Esc", " Clear  "), ("Ctrl+A", " Add  ")]));
         }
         // the grid is focused
         if app.plugins.table.f_grid.get() {
@@ -164,32 +155,6 @@ impl Component for PluginsComponent {
 
         spans
     }
-}
-
-/// Creates a centered rectangle within the given area using percentage-based dimensions.
-///
-/// This utility function calculates a new rectangle that is centered within the
-/// provided area, with dimensions specified as percentages of the original area's
-/// width and height. This is commonly used for creating overlay dialogs and
-/// modal windows.
-///
-/// # Arguments
-///
-/// * `area` - The base rectangular area to center within
-/// * `width_percentage` - Percentage of the area's width to use (0-100)
-/// * `height_percentage` - Percentage of the area's height to use (0-100)
-///
-/// # Returns
-///
-/// Returns a new `Rect` that is centered within the provided area with the
-/// specified percentage-based dimensions.
-fn create_centered_rectangle(area: Rect, width_percentage: u16, height_percentage: u16) -> Rect {
-    let width = area.width.saturating_mul(width_percentage).saturating_div(100);
-    let height = area.height.saturating_mul(height_percentage).saturating_div(100);
-    let x = area.x + (area.width.saturating_sub(width)) / 2;
-    let y = area.y + (area.height.saturating_sub(height)) / 2;
-
-    Rect { x, y, width, height }
 }
 
 impl PluginsComponent {
@@ -214,10 +179,6 @@ impl PluginsComponent {
         // This ensures consistent focus management whether overlays are open or not
         if matches!(key_event.code, KeyCode::Tab | KeyCode::BackTab) {
             return vec![];
-        }
-
-        if let Some(logs_state) = &mut app.plugins.logs {
-            return self.logs_component.handle_key_events(logs_state, key_event);
         }
 
         if app.plugins.add.as_ref().is_some_and(|add_state| add_state.container_focus.get()) {
@@ -257,22 +218,10 @@ impl PluginsComponent {
                 effects.push(Effect::PluginsValidateAdd);
             }
             // Also available when the table component is focused
-            KeyCode::Char('a') if control_pressed && app.plugins.can_open_add_plugin() => {
+            KeyCode::Char('a') if control_pressed => {
                 let edit_view_state = PluginEditViewState::new();
                 app.focus.focus(&edit_view_state.f_transport);
                 app.plugins.add = Some(edit_view_state);
-            }
-            KeyCode::Char('l') if control_pressed && app.plugins.logs_open => {
-                self.handle_logs_toggle_follow_shortcut(app);
-            }
-            KeyCode::Char('y') if control_pressed && app.plugins.logs_open => {
-                self.handle_copy_last_log_line_shortcut(app, &mut effects);
-            }
-            KeyCode::Char('u') if control_pressed && app.plugins.logs_open => {
-                self.handle_copy_all_logs_shortcut(app, &mut effects);
-            }
-            KeyCode::Char('o') if control_pressed && app.plugins.logs_open => {
-                self.handle_export_logs_shortcut(app, &mut effects);
             }
             _ => {}
         }
@@ -281,50 +230,14 @@ impl PluginsComponent {
 
     /// Handles the search shortcut (Ctrl+F) which activates search in the appropriate context.
     fn handle_search_shortcut(&mut self, app: &mut App) {
-        if app.plugins.logs_open {
-            if let Some(logs_state) = &mut app.plugins.logs {
-                logs_state.search_active = true;
-            }
-        } else {
-            app.plugins.table.f_search.set(true);
-            app.plugins.table.f_grid.set(false);
-        }
+        app.plugins.table.f_search.set(true);
+        app.plugins.table.f_grid.set(false);
     }
 
     /// Handles the clear filter shortcut (Ctrl+K) which clears the search filter.
     fn handle_clear_filter_shortcut(&mut self, app: &mut App) {
         if app.plugins.table.f_search.get() {
             app.plugins.table.clear_filter();
-        }
-    }
-
-    /// Handles the logs toggle follow shortcut (Ctrl+L when logs are open).
-    fn handle_logs_toggle_follow_shortcut(&mut self, app: &mut App) {
-        if let Some(logs_state) = &mut app.plugins.logs {
-            logs_state.toggle_follow();
-        }
-    }
-
-    /// Handles copying the last log line (Ctrl+Y when logs are open).
-    fn handle_copy_last_log_line_shortcut(&self, app: &App, effects: &mut Vec<Effect>) {
-        if let Some(logs_state) = &app.plugins.logs {
-            let last_line = logs_state.lines.last().cloned().unwrap_or_default();
-            effects.push(Effect::CopyLogsRequested(last_line));
-        }
-    }
-
-    /// Handles copying all logs (Ctrl+U when logs are open).
-    fn handle_copy_all_logs_shortcut(&self, app: &App, effects: &mut Vec<Effect>) {
-        if let Some(logs_state) = &app.plugins.logs {
-            let all_logs = logs_state.lines.join("\n");
-            effects.push(Effect::CopyLogsRequested(all_logs));
-        }
-    }
-
-    /// Handles exporting logs (Ctrl+O when logs are open).
-    fn handle_export_logs_shortcut(&self, app: &App, effects: &mut Vec<Effect>) {
-        if let Some(logs_state) = &app.plugins.logs {
-            effects.push(Effect::PluginsExportLogsDefault(logs_state.name.clone()));
         }
     }
 
@@ -379,29 +292,6 @@ impl PluginsComponent {
         } else {
             // Default table view
             self.table_component.render(frame, body_area, app);
-        }
-    }
-
-    /// Renders overlay components (details, logs, environment editor) on top of the main shell.
-    ///
-    /// This method handles the rendering of modal overlays that appear on top of the
-    /// main plugins interface. Each overlay is rendered in a centered rectangle with
-    /// appropriate dimensions and clears the background area before rendering.
-    ///
-    /// # Arguments
-    ///
-    /// * `frame` - Mutable reference to the terminal frame for rendering
-    /// * `outer_area` - The outer rectangular area for overlay positioning
-    /// * `app` - Mutable reference to the app state
-    fn render_overlay_components(&mut self, frame: &mut Frame, outer_area: Rect, app: &mut App) {
-        if app.plugins.logs_open {
-            if let Some(_logs_state) = &app.plugins.logs {
-                let logs_area = create_centered_rectangle(outer_area, 90, 60);
-                frame.render_widget(Clear, logs_area);
-                self.logs_component.render(frame, logs_area, app);
-            } else {
-                app.plugins.logs_open = false;
-            }
         }
     }
 }

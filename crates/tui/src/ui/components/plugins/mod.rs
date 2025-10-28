@@ -6,7 +6,6 @@
 
 mod details_component;
 mod details_state;
-mod logs;
 mod plugin_editor;
 mod plugins_component;
 mod state;
@@ -17,7 +16,6 @@ mod types;
 pub use details_component::PluginsDetailsComponent;
 pub use details_state::{PluginDetailsData, PluginDetailsLoadState, PluginDetailsModalState};
 pub use heroku_mcp::{PluginDetail, PluginToolSummary};
-pub use logs::PluginsLogsComponent;
 pub use plugin_editor::PluginTransport;
 pub use plugin_editor::PluginsEditComponent;
 pub use plugins_component::PluginsComponent;

@@ -1,5 +1,5 @@
 pub mod state;
-pub mod table;
+pub mod plugin_component;
 
 pub use state::{TableState, build_key_value_entries};
-pub use table::TableComponent;
+pub use plugin_component::TableComponent;

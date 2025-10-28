@@ -512,7 +512,7 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
     // Dismiss Add view and select the newly added plugin if present
     app.plugins.add = None;
     if let Some(index) = app.plugins.table.items.iter().position(|item| item.name == name) {
-        app.plugins.table.selected = Some(index);
+        app.plugins.table.table_state.select(Some(index));
     }
     ExecOutcome::Log(format!("Plugins: added '{}'", name))
 }

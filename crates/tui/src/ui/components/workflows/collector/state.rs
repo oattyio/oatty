@@ -105,7 +105,7 @@ pub struct WorkflowSelectorViewState<'a> {
     /// Canonical provider identifier (e.g., "apps list").
     pub provider_id: String,
     /// Arguments resolved for the provider (from prior inputs/steps).
-    pub resolved_args: serde_json::Map<String, serde_json::Value>,
+    pub resolved_args: serde_json::Map<String, Value>,
     /// Backing table state used for rendering results.
     pub table: TableState<'a>,
     /// Optional value_field from `select` used to extract the workflow value.
@@ -119,7 +119,7 @@ pub struct WorkflowSelectorViewState<'a> {
     /// Optional error message to surface inline.
     pub error_message: Option<String>,
     /// Original unfiltered provider items (array of rows).
-    pub original_items: Option<Vec<serde_json::Value>>,
+    pub original_items: Option<Vec<Value>>,
     /// Cache key currently awaiting asynchronous fetch completion.
     pub pending_cache_key: Option<String>,
     /// Lightweight inline filter buffer.
@@ -136,7 +136,7 @@ pub struct WorkflowSelectorViewState<'a> {
 
 impl<'a> WorkflowSelectorViewState<'a> {
     /// Replaces selector items and resets status to loaded.
-    pub fn set_items(&mut self, items: Vec<serde_json::Value>) {
+    pub fn set_items(&mut self, items: Vec<Value>) {
         self.original_items = Some(items);
         self.status = SelectorStatus::Loaded;
         self.error_message = None;

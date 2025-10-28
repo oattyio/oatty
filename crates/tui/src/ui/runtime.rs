@@ -18,7 +18,6 @@
 //! Entry Point
 //! - `run_app(registry)` is called from `lib::run` and performs setup,
 //!   event processing, and teardown.
-
 use anyhow::Result;
 use crossterm::event::MouseEventKind;
 use crossterm::{
@@ -34,6 +33,7 @@ use heroku_mcp::{
 use heroku_types::{Effect, ExecOutcome, Msg};
 use notify::{Config as NotifyConfig, Event as NotifyEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{Terminal, prelude::*};
+use std::time::Instant;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -56,7 +56,7 @@ use crate::app::{App, WorkflowRunEventReceiver};
 use crate::cmd;
 use crate::ui::components::component::Component;
 use crate::ui::components::palette::PaletteComponent;
-use crate::ui::main::MainView;
+use crate::ui::main_component::MainView;
 use rat_focus::FocusBuilder;
 
 /// Handle for the MCP config watcher thread, ensuring proper shutdown on drop.
@@ -77,10 +77,10 @@ impl McpConfigWatchHandle {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
         }
-        if let Some(handle) = self.join_handle.take() {
-            if let Err(error) = handle.join() {
-                tracing::warn!("Watcher thread join failed: {:?}", error);
-            }
+        if let Some(handle) = self.join_handle.take()
+            && let Err(error) = handle.join()
+        {
+            tracing::warn!("Watcher thread join failed: {:?}", error);
         }
     }
 }
@@ -99,14 +99,19 @@ impl Drop for McpConfigWatchHandle {
 /// here — the blocking behavior is isolated to this thread.
 async fn spawn_input_thread() -> mpsc::Receiver<Event> {
     let (sender, receiver) = mpsc::channel(500);
+    let mut las_mouse_event: Option<Instant> = Some(Instant::now());
     tokio::spawn(async move {
         loop {
             if event::poll(Duration::from_millis(16)).is_ok() {
                 match event::read() {
                     Ok(event) => {
-                        let should_send = event
-                            .as_mouse_event()
-                            .is_none_or(|mouse_event| matches!(mouse_event.kind, MouseEventKind::Down(_)));
+                        // Throttle mouse move events to once per 16ms.
+                        let is_mouse_move = event.as_mouse_event().is_some_and(|e| e.kind == MouseEventKind::Moved);
+                        let should_send = !is_mouse_move || las_mouse_event.is_some_and(|last| last.elapsed() > Duration::from_millis(16));
+                        if is_mouse_move && should_send {
+                            las_mouse_event = Some(Instant::now());
+                        }
+
                         if should_send && let Err(e) = sender.send(event).await {
                             tracing::warn!("Failed to send event: {}", e);
                             break;
@@ -142,12 +147,12 @@ fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) 
     Ok(())
 }
 
-fn spawn_mcp_config_watcher(plugin_engine: Arc<PluginEngine>) -> anyhow::Result<(McpConfigWatchHandle, mpsc::UnboundedReceiver<Effect>)> {
+fn spawn_mcp_config_watcher(plugin_engine: Arc<PluginEngine>) -> Result<(McpConfigWatchHandle, mpsc::UnboundedReceiver<Effect>)> {
     let config_path = default_config_path();
-    if let Some(parent) = config_path.parent() {
-        if let Err(error) = fs::create_dir_all(parent) {
-            tracing::warn!(path = %parent.display(), %error, "Failed to ensure MCP config directory exists");
-        }
+    if let Some(parent) = config_path.parent()
+        && let Err(error) = fs::create_dir_all(parent)
+    {
+        tracing::warn!(path = %parent.display(), %error, "Failed to ensure MCP config directory exists");
     }
     let watch_root = config_path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
     let (effects_tx, effects_rx) = mpsc::unbounded_channel();
@@ -240,7 +245,7 @@ fn event_targets_config(event: &NotifyEvent, config_path: &Path) -> bool {
     })
 }
 
-async fn reload_mcp_config_from_disk(plugin_engine: Arc<PluginEngine>, config_path: PathBuf) -> anyhow::Result<()> {
+async fn reload_mcp_config_from_disk(plugin_engine: Arc<PluginEngine>, config_path: PathBuf) -> Result<()> {
     let path_clone = config_path.clone();
     let config = tokio::task::spawn_blocking(move || load_config_from_path(&path_clone)).await??;
     plugin_engine.update_config(config).await?;
@@ -275,7 +280,7 @@ fn handle_input_event(app: &mut App<'_>, main_view: &mut MainView, input_event: 
 /// producer, runs the async event loop, and performs cleanup on exit.
 pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
     let mut app = App::new(registry, plugin_engine);
-    let mut main_view = MainView::new(Some(Box::new(PaletteComponent)));
+    let mut main_view = MainView::new(Some(Box::new(PaletteComponent::default())));
     let mut terminal = setup_terminal()?;
 
     // Input comes from a dedicated blocking thread to ensure reliability.

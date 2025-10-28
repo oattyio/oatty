@@ -379,7 +379,7 @@ mod tests {
 
     struct EchoRunner;
     impl CommandRunner for EchoRunner {
-        fn run(&self, run: &str, with: Option<&Value>, body: Option<&Value>, _ctx: &RunContext) -> anyhow::Result<Value> {
+        fn run(&self, run: &str, with: Option<&Value>, body: Option<&Value>, _ctx: &RunContext) -> Result<Value> {
             Ok(json!({
                 "cmd": run,
                 "with": with.cloned().unwrap_or(Value::Null),
@@ -500,7 +500,6 @@ mod tests {
             ],
         };
 
-        let ctx = RunContext::default();
         let steps = order_steps_for_execution(&spec.steps).expect("plan");
         let ordered_ids: Vec<&str> = steps.iter().map(|s| s.id.as_str()).collect();
         assert_eq!(ordered_ids, vec!["first", "second"]);
@@ -552,9 +551,9 @@ mod tests {
 
     struct FailRunner;
     impl CommandRunner for FailRunner {
-        fn run(&self, run: &str, _with: Option<&Value>, _body: Option<&Value>, _ctx: &RunContext) -> anyhow::Result<Value> {
+        fn run(&self, run: &str, _with: Option<&Value>, _body: Option<&Value>, _ctx: &RunContext) -> Result<Value> {
             if run == "fail" {
-                anyhow::bail!("boom");
+                bail!("boom");
             }
             Ok(json!({ "status": "ok" }))
         }

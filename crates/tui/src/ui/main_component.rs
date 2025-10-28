@@ -138,7 +138,7 @@ impl MainView {
                     }
                     app.theme_picker.set_active_theme(&app.ctx.active_theme_id);
                     (
-                        Box::new(ThemePickerComponent::default()),
+                        Box::new(ThemePickerComponent),
                         ModalLayout(Box::new(|rect| centered_rect(70, 80, rect))),
                     )
                 }
@@ -260,7 +260,7 @@ impl Component for MainView {
         // Render modal overlays if active
         if let Some((modal, position)) = self.modal_view.as_mut() {
             render_overlay(frame, app);
-            let modal_area = (position.0)(area);
+            let modal_area = position.0(area);
             frame.render_widget(Clear, modal_area);
 
             let modal_hints = modal.get_hint_spans(app);
@@ -300,7 +300,7 @@ impl Component for MainView {
 
         hint_spans.extend(th::build_hint_spans(
             &*app.ctx.theme,
-            &[("Ctrl+L", " Toggle logs "), ("Ctrl+T", " Theme picker ")],
+            &[(" Ctrl+L", " Toggle logs "), ("Ctrl+T", " Theme picker ")],
         ));
 
         hint_spans
@@ -338,10 +338,17 @@ impl Component for MainView {
             Layout::horizontal(constraints).split(content_areas[0])
         } else {
             // Smaller screens display 3 stacked rows.
-            let constraints = [
-                Constraint::Percentage(80), // Command palette area (+ suggestions)
-                Constraint::Fill(1),        // logs / output content
-            ];
+            let constraints = if app.logs.is_visible {
+                [
+                    Constraint::Percentage(80), // Command palette area (+ suggestions)
+                    Constraint::Fill(1),        // logs / output content
+                ]
+            } else {
+                [
+                    Constraint::Percentage(80), // Command palette area (+ suggestions)
+                    Constraint::Length(0),      // logs / output content
+                ]
+            };
 
             Layout::vertical(constraints).split(content_areas[0])
         };

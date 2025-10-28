@@ -47,11 +47,11 @@ pub struct RunViewComponent {
 
 impl Component for RunViewComponent {
     fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-        if let Msg::Tick = msg {
-            if let Some(run_state) = app.workflows.run_view_state_mut() {
-                let theme = &*app.ctx.theme;
-                run_state.advance_repeat_animations(theme);
-            }
+        if let Msg::Tick = msg
+            && let Some(run_state) = app.workflows.run_view_state_mut()
+        {
+            let theme = &*app.ctx.theme;
+            run_state.advance_repeat_animations(theme);
         }
         Vec::new()
     }

@@ -793,7 +793,7 @@ fn extract_template_identifiers(template: &str, prefix: &str) -> Vec<String> {
                 && let Some(identifier) = parse_identifier(rest)
                 && !results.contains(&identifier)
             {
-                results.push(identifier);
+                results.push(identifier.clone());
             }
             remaining = &after[end + 2..];
         } else {

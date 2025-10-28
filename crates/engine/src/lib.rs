@@ -163,7 +163,7 @@ steps:
     run: "apps:deploy"
 "#;
 
-        std::fs::write(&workflow_path, workflow_content).unwrap();
+        fs::write(&workflow_path, workflow_content).unwrap();
 
         let result = parse_workflow_file(&workflow_path);
         assert!(result.is_ok());
@@ -188,7 +188,7 @@ workflows:
     steps: []
 "#;
 
-        std::fs::write(&workflow_path, workflow_content).unwrap();
+        fs::write(&workflow_path, workflow_content).unwrap();
 
         let bundle = parse_workflow_file(&workflow_path).expect("parse multi-workflow bundle");
         assert_eq!(bundle.workflows.len(), 2);

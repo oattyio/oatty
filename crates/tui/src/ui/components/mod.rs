@@ -21,5 +21,4 @@ pub use logs::LogsComponent;
 pub use pagination::PaginationComponent;
 pub use plugins::PluginsComponent;
 pub use table::TableComponent;
-pub use theme_picker::ThemePickerComponent;
 pub use workflows::WorkflowsComponent;

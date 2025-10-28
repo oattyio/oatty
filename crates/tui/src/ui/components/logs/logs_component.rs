@@ -32,13 +32,10 @@ use super::{
     state::{LogDetailView, LogEntry},
 };
 use crate::app::App;
-use crate::{
-    app,
-    ui::{
-        components::component::Component,
-        theme::{roles::Theme as UiTheme, theme_helpers as th},
-        utils::build_copy_text,
-    },
+use crate::ui::{
+    components::component::Component,
+    theme::{roles::Theme as UiTheme, theme_helpers as th},
+    utils::build_copy_text,
 };
 
 /// Component for displaying and interacting with application logs.
@@ -68,7 +65,7 @@ impl LogsComponent {
     ///
     /// * `Some(usize)` - The selected index if entries exist
     /// * `None` - If no entries are available
-    fn selected_index(&self, app: &app::App) -> Option<usize> {
+    fn selected_index(&self, app: &App) -> Option<usize> {
         if app.logs.entries.is_empty() {
             None
         } else {
@@ -87,7 +84,7 @@ impl LogsComponent {
     /// * `app` - Mutable reference to application state
     /// * `delta` - Number of positions to move (positive for down, negative for
     ///   up)
-    fn move_cursor(&self, app: &mut app::App, delta: isize) {
+    fn move_cursor(&self, app: &mut App, delta: isize) {
         if app.logs.entries.is_empty() {
             return;
         }
@@ -109,7 +106,7 @@ impl LogsComponent {
     /// * `app` - Mutable reference to application state
     /// * `delta` - Number of positions to extend (positive for down, negative
     ///   for up)
-    fn extend_selection(&self, app: &mut app::App, delta: isize) {
+    fn extend_selection(&self, app: &mut App, delta: isize) {
         if app.logs.entries.is_empty() {
             return;
         }
@@ -133,7 +130,7 @@ impl LogsComponent {
     ///
     /// * `Some(LogEntry)` - The selected API log entry if single selection
     /// * `None` - If no selection, multi-selection, or non-API entry
-    fn is_single_api(&self, app: &app::App) -> Option<LogEntry> {
+    fn is_single_api(&self, app: &App) -> Option<LogEntry> {
         if app.logs.selection.is_single() {
             let idx = app.logs.selection.cursor;
             return app.logs.rich_entries.get(idx).cloned();
@@ -159,7 +156,7 @@ impl LogsComponent {
     /// # Arguments
     ///
     /// * `app` - Mutable reference to application state
-    fn choose_detail(&self, app: &mut app::App) -> Vec<Effect> {
+    fn choose_detail(&self, app: &mut App) -> Vec<Effect> {
         let mut modal_to_open = Modal::LogDetails;
 
         if !app.logs.selection.is_single() {
@@ -321,7 +318,7 @@ impl Component for LogsComponent {
     /// # Returns
     ///
     /// A vector of effects to be processed by the application
-    fn handle_key_events(&mut self, app: &mut app::App, key: KeyEvent) -> Vec<Effect> {
+    fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         if app.logs.detail.is_some() {
             let mut detail_component = LogDetailsComponent;
             return detail_component.handle_key_events(app, key);
@@ -391,7 +388,7 @@ impl Component for LogsComponent {
     /// * `frame` - The terminal frame to render to
     /// * `rect` - The rectangular area allocated for this component
     /// * `app` - The application state containing logs and UI state
-    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut app::App) {
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
         let focused = app.logs.container_focus.get();
         let title = format!("Logs ({})", app.logs.entries.len());
         let block = th::block(&*app.ctx.theme, Some(&title), focused);
@@ -440,7 +437,7 @@ impl Component for LogsComponent {
         }
     }
 
-    fn get_hint_spans(&self, app: &app::App) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         // Only render when logs are focused (rat-focus)
         if !app.logs.container_focus.get() {
             return vec![];

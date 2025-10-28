@@ -16,10 +16,12 @@ use heroku_types::Effect;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
+    style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
 
+use crate::ui::theme::theme_helpers::build_syntax_highlighted_line;
 use crate::{
     app::App,
     ui::{
@@ -420,14 +422,15 @@ impl KeyValueEditorComponent {
 
                 let (display_key, display_value) = self.build_row_display_values(row, is_edit_row, editing_buffers);
                 let arrow = if is_selected { "›" } else { " " };
-                let key_cell = format!("{} {}", arrow, display_key);
+                let key_cell = build_table_key_cell(&display_key, arrow, theme);
+                let value_cell = build_table_value_cell(&display_value, row.is_secret && !is_edit_row, theme);
                 let row_style = if is_selected {
                     theme_helpers::table_selected_style(theme)
                 } else {
                     theme_helpers::table_row_style(theme, index)
                 };
 
-                Row::new(vec![key_cell, display_value]).style(row_style)
+                Row::new(vec![key_cell, value_cell]).style(row_style)
             })
             .collect()
     }
@@ -555,28 +558,13 @@ impl KeyValueEditorComponent {
     /// * `theme` - The theme for styling
     /// * `display` - Presentation metadata for the inline field
     fn render_inline_field(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, display: InlineFieldDisplay<'_>) {
-        let InlineFieldDisplay {
-            label,
-            value,
-            placeholder,
-            focused,
-        } = display;
-        let mut spans = Vec::new();
-        spans.push(Span::styled(if focused { "› " } else { "  " }, theme.text_secondary_style()));
-        spans.push(Span::styled(format!("{}: ", label), theme.text_primary_style()));
-        if value.is_empty() {
-            spans.push(Span::styled(placeholder.to_string(), theme.text_muted_style()));
-        } else {
-            spans.push(Span::styled(value.to_string(), theme.text_primary_style()));
-        }
-
-        let style = if focused {
+        let line = build_syntax_highlighted_line(display.label, display.value, display.placeholder, display.focused, theme);
+        let paragraph_style = if display.focused {
             theme.selection_style()
         } else {
-            theme.text_primary_style()
+            Style::default()
         };
-        let paragraph = Paragraph::new(Line::from(spans)).style(style);
-        frame.render_widget(paragraph, area);
+        frame.render_widget(Paragraph::new(line).style(paragraph_style), area);
     }
 
     /// Position the cursor for the currently active inline field.
@@ -614,6 +602,25 @@ impl KeyValueEditorComponent {
         let cursor_y = target_area.y;
         frame.set_cursor_position((cursor_x, cursor_y));
     }
+}
+
+/// Build the table cell for the key column, mixing the selection arrow and syntax colors.
+fn build_table_key_cell<'a>(display_key: &str, arrow: &str, theme: &dyn Theme) -> Cell<'a> {
+    let spans = vec![
+        Span::styled(format!("{arrow} "), theme.text_secondary_style()),
+        Span::styled(display_key.to_string(), theme.syntax_type_style()),
+    ];
+    Cell::from(Line::from(spans))
+}
+
+/// Build the table cell for the value column, dimming masked secrets for clarity.
+fn build_table_value_cell<'a>(display_value: &str, masked: bool, theme: &dyn Theme) -> Cell<'a> {
+    let value_style = if masked {
+        theme.text_muted_style()
+    } else {
+        theme.syntax_string_style()
+    };
+    Cell::from(Span::styled(display_value.to_string(), value_style))
 }
 
 impl Component for KeyValueEditorComponent {

@@ -47,7 +47,7 @@ pub struct SharedCtx {
     pub provider_registry: Arc<ProviderRegistry>,
     /// Active UI theme (Dracula by default) loaded from env
     pub theme: Box<dyn theme::Theme>,
-    /// MCP plugin engine (None until initialized in main.rs)
+    /// MCP plugin engine (None until initialized in main_component)
     pub plugin_engine: Arc<PluginEngine>,
     /// On-disk history store for workflow inputs and palette commands.
     pub history_store: Arc<dyn HistoryStore>,

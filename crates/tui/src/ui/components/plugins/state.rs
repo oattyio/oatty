@@ -1,21 +1,17 @@
 use super::table::PluginsTableState;
-use crate::ui::components::plugins::{PluginDetailsModalState, logs::PluginLogsState, plugin_editor::state::PluginEditViewState};
+use crate::ui::components::plugins::{PluginDetailsModalState, plugin_editor::state::PluginEditViewState};
 use heroku_types::{Effect, ExecOutcome, PluginDetail};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::prelude::Rect;
 
 /// UI state for the Plugins view.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PluginsState {
     pub container_focus: FocusFlag,
     /// Table-specific state including filter, selection, and grid focus.
     pub table: PluginsTableState,
-    /// Logs drawer state, if open.
-    pub logs: Option<PluginLogsState>,
-    /// Add plugin view state
+    /// Add a plugin view state
     pub add: Option<PluginEditViewState>,
-    /// Whether the plugin logs overlay is currently open
-    pub logs_open: bool,
     /// Plugin details modal state, if open
     pub details: Option<PluginDetailsModalState>,
 }
@@ -25,20 +21,9 @@ impl PluginsState {
         Self {
             container_focus: FocusFlag::named("plugins"),
             table: PluginsTableState::new(),
-            logs: None,
             add: None,
-            logs_open: false,
             details: None,
         }
-    }
-
-    /// Checks if the add plugin can be opened (no other overlays are open).
-    pub fn can_open_add_plugin(&self) -> bool {
-        self.logs.is_none()
-    }
-
-    pub fn open_logs(&mut self, name: String) {
-        self.logs = Some(PluginLogsState::new(name));
     }
 
     pub fn ensure_details_state(&mut self) -> &mut PluginDetailsModalState {
@@ -143,11 +128,6 @@ impl HasFocus for PluginsState {
         }
         // Header search input and main grid
         builder.widget(&self.table);
-
-        // Include overlays if open
-        if let Some(logs) = &self.logs {
-            builder.widget(logs);
-        }
         builder.end(tag);
     }
 

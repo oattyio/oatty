@@ -69,13 +69,13 @@ fn token_index_at_cursor(input: &str, cursor: usize) -> Option<usize> {
 /// input text, cursor position, suggestions, and error states.
 #[derive(Clone)]
 pub struct PaletteState {
-    registry: Arc<Mutex<CommandRegistry>>,
-    /// Focus flag for self
-    container_focus: FocusFlag,
     /// Focus flag for the input field
     pub f_input: FocusFlag,
     /// list state for the suggestion list
     pub list_state: ListState,
+    registry: Arc<Mutex<CommandRegistry>>,
+    /// Focus flag for self
+    container_focus: FocusFlag,
     /// The current input text
     input: String,
     /// Current cursor position (byte index)
@@ -84,6 +84,8 @@ pub struct PaletteState {
     ghost_text: Option<String>,
     /// Whether the suggestions popup is currently open
     is_suggestions_open: bool,
+    /// The index of the current mouse hovered suggestion, if any
+    mouse_over_idx: Option<usize>,
     /// List of current suggestions
     suggestions: Vec<SuggestionItem>,
     /// Pre-rendered suggestion list items for efficient display
@@ -118,12 +120,15 @@ impl PaletteState {
     pub fn new(registry: Arc<Mutex<CommandRegistry>>, history_store: Arc<dyn HistoryStore>, history_profile_id: String) -> Self {
         let mut state = Self {
             registry,
+            history_store,
+            history_profile_id,
             container_focus: FocusFlag::named("heroku.palette"),
             f_input: FocusFlag::named("heroku.palette.input"),
             input: String::new(),
             cursor_position: 0,
             ghost_text: None,
             is_suggestions_open: false,
+            mouse_over_idx: None,
             list_state: ListState::default(),
             suggestions: Vec::new(),
             rendered_suggestions: Vec::new(),
@@ -134,8 +139,6 @@ impl PaletteState {
             history_index: None,
             draft_input: None,
             cmd_exec_hash: None,
-            history_store,
-            history_profile_id,
             stored_commands: HashMap::new(),
             pending_command_id: None,
             pending_command_input: None,
@@ -252,11 +255,9 @@ impl PaletteState {
 
     /// Updates the cached width of the suggestions popup for truncation logic.
     pub fn update_suggestions_view_width(&mut self, width: u16, theme: &dyn Theme) {
-        if self.suggestions_view_width != Some(width) {
-            self.suggestions_view_width = Some(width);
-            if !self.suggestions.is_empty() {
-                self.refresh_rendered_suggestions(theme);
-            }
+        self.suggestions_view_width = Some(width);
+        if !self.suggestions.is_empty() {
+            self.refresh_rendered_suggestions(theme);
         }
     }
 
@@ -334,6 +335,11 @@ impl PaletteState {
     /// Set the popup open state
     pub(crate) fn set_is_suggestions_open(&mut self, open: bool) {
         self.is_suggestions_open = open;
+    }
+
+    /// set the mouse over index
+    pub(crate) fn update_mouse_over_idx(&mut self, idx: Option<usize>) {
+        self.mouse_over_idx = idx;
     }
 
     /// Insert text at the end of the input with a separating space and advance
@@ -455,7 +461,8 @@ impl PaletteState {
         self.rendered_suggestions = self
             .suggestions
             .iter()
-            .map(|suggestion_item| {
+            .enumerate()
+            .map(|(idx, suggestion_item)| {
                 let spans = match suggestion_item.kind {
                     ItemKind::Command | ItemKind::MCP => build_command_spans(suggestion_item, needle, theme, width_hint),
                     ItemKind::Flag => build_flag_spans(suggestion_item, needle, theme, width_hint),
@@ -474,7 +481,12 @@ impl PaletteState {
                     spans
                 };
 
-                ListItem::from(Line::from(spans))
+                let mut list_item = ListItem::from(Line::from(spans));
+                if self.mouse_over_idx.is_some_and(|hover| hover == idx) {
+                    list_item = list_item.style(theme.selection_style().add_modifier(Modifier::BOLD));
+                }
+
+                list_item
             })
             .collect();
     }
@@ -1228,7 +1240,7 @@ fn build_command_spans(item: &SuggestionItem, needle: &str, theme: &dyn Theme, w
     let exec_type = match item.kind {
         ItemKind::Command => "CMD",
         ItemKind::MCP => "MCP",
-        _ => &String::new(),
+        _ => "",
     };
 
     let mut collector = SpanCollector::with_capacity(8);
@@ -1539,9 +1551,9 @@ mod tests {
         };
 
         let width_hint = 24;
-        let spans = super::build_command_spans(&suggestion, "", &theme, Some(width_hint));
-        let rendered_width: u16 = spans.iter().map(super::span_display_width).sum();
-        let max_width = width_hint.saturating_sub(super::LIST_HIGHLIGHT_SYMBOL_WIDTH);
+        let spans = build_command_spans(&suggestion, "", &theme, Some(width_hint));
+        let rendered_width: u16 = spans.iter().map(span_display_width).sum();
+        let max_width = width_hint.saturating_sub(LIST_HIGHLIGHT_SYMBOL_WIDTH);
         assert!(
             rendered_width <= max_width,
             "rendered width {rendered_width} exceeds available {max_width}"

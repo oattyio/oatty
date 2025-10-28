@@ -300,6 +300,27 @@ impl PaginationComponent {
 }
 
 impl Component for PaginationComponent {
+    /// Handles the message for the pagination component.
+    ///
+    /// # Arguments
+    /// * `app` - The application state
+    /// * `msg` - The message to handle
+    ///
+    /// # Returns
+    /// A vector of effects to be processed by the application
+    ///
+    /// # Behavior
+    /// - If the message is an execution completed message, it sets the pagination state.
+    /// - Returns an empty vector if the message is not an execution completed message.
+    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+        if let Msg::ExecCompleted(exec_outcome) = msg
+            && let ExecOutcome::Http(_, _, _, maybe_pagination, request_id) = exec_outcome.as_ref()
+        {
+            app.table.pagination_state.set_pagination(maybe_pagination.clone(), *request_id);
+        }
+        Vec::new()
+    }
+
     /// Handles keyboard events for the pagination component.
     ///
     /// Processes keyboard input to manage:
@@ -431,27 +452,6 @@ impl Component for PaginationComponent {
             ][idx];
             app.focus.focus(ordered_f);
             return self.handle_key_events(app, KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
-        }
-        Vec::new()
-    }
-
-    /// Handles the message for the pagination component.
-    ///
-    /// # Arguments
-    /// * `app` - The application state
-    /// * `msg` - The message to handle
-    ///
-    /// # Returns
-    /// A vector of effects to be processed by the application
-    ///
-    /// # Behavior
-    /// - If the message is an execution completed message, it sets the pagination state.
-    /// - Returns an empty vector if the message is not an execution completed message.
-    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-        if let Msg::ExecCompleted(exec_outcome) = msg
-            && let ExecOutcome::Http(_, _, _, maybe_pagination, request_id) = exec_outcome.as_ref()
-        {
-            app.table.pagination_state.set_pagination(maybe_pagination.clone(), *request_id);
         }
         Vec::new()
     }

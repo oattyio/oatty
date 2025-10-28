@@ -1,5 +1,5 @@
-pub mod input;
+mod input_component;
 pub mod state;
 
-pub use input::WorkflowInputsComponent;
+pub use input_component::WorkflowInputsComponent;
 pub use state::WorkflowInputViewState;

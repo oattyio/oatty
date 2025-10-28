@@ -72,6 +72,13 @@ impl ThemePickerComponent {
 }
 
 impl Component for ThemePickerComponent {
+    fn handle_message(&mut self, app: &mut App, msg: &heroku_types::Msg) -> Vec<Effect> {
+        match (msg, app.open_modal_kind.as_ref()) {
+            (heroku_types::Msg::Resize(_, _), Some(Modal::ThemePicker)) => Vec::new(),
+            _ => Vec::new(),
+        }
+    }
+
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         match key.code {
             KeyCode::Esc => return vec![Effect::CloseModal],
@@ -135,12 +142,5 @@ impl Component for ThemePickerComponent {
             &*app.ctx.theme,
             &[(" ↑/↓", " Navigate  "), (" Enter", " Apply  "), (" Esc", " Close ")],
         )
-    }
-
-    fn handle_message(&mut self, app: &mut App, msg: &heroku_types::Msg) -> Vec<Effect> {
-        match (msg, app.open_modal_kind.as_ref()) {
-            (heroku_types::Msg::Resize(_, _), Some(Modal::ThemePicker)) => Vec::new(),
-            _ => Vec::new(),
-        }
     }
 }

@@ -15,6 +15,7 @@ pub enum CursorDirection {
 #[derive(Debug, Clone)]
 pub struct BrowserState {
     pub registry: Arc<Mutex<heroku_registry::CommandRegistry>>,
+    pub list_state: ListState,
     selected_command: Option<CommandSpec>,
     input_fields: Vec<Field>,
     current_field_idx: usize,
@@ -22,10 +23,10 @@ pub struct BrowserState {
     container_focus: FocusFlag,
     pub f_search: FocusFlag,
     pub f_commands: FocusFlag,
+    pub f_help: FocusFlag,
 
     search_input: TextInputState,
     filtered: Vec<usize>,
-    pub list_state: ListState,
     viewport_rows: usize,
 }
 
@@ -39,6 +40,7 @@ impl BrowserState {
             container_focus: FocusFlag::named("browser"),
             f_search: FocusFlag::named("browser.search"),
             f_commands: FocusFlag::named("browser.commands"),
+            f_help: FocusFlag::named("browser.help"),
             search_input: TextInputState::new(),
             filtered: vec![],
             list_state: ListState::default(),
@@ -137,6 +139,10 @@ impl BrowserState {
             }
             CursorDirection::None => {}
         }
+        self.commit_selection();
+    }
+
+    pub fn commit_selection(&mut self) {
         let selected_idx = self.list_state.selected().unwrap_or(0);
         let idx = *self.filtered.get(selected_idx).unwrap_or(&0usize);
         let maybe_command = {
@@ -205,6 +211,7 @@ impl HasFocus for BrowserState {
         let tag = builder.start(self);
         builder.leaf_widget(&self.f_search);
         builder.leaf_widget(&self.f_commands);
+        builder.leaf_widget(&self.f_help);
         builder.end(tag);
     }
 

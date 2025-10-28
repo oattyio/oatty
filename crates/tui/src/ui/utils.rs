@@ -166,7 +166,7 @@ pub fn is_status_like(key: &str) -> bool {
     matches!(key.to_ascii_lowercase().as_str(), "status" | "state")
 }
 
-pub fn status_color_for_value(value: &str, theme: &dyn UiTheme) -> Option<ratatui::style::Color> {
+pub fn status_color_for_value(value: &str, theme: &dyn UiTheme) -> Option<Color> {
     let v = value.to_ascii_lowercase();
     if matches!(v.as_str(), "ok" | "succeeded" | "success" | "passed") {
         Some(theme.roles().success)

@@ -18,7 +18,7 @@ pub mod roles;
 pub mod theme_helpers;
 
 pub use ansi256::{Ansi256Theme, Ansi256ThemeHighContrast};
-pub use catalog::{ThemeDefinition, ThemeSwatch};
+pub use catalog::ThemeDefinition;
 pub use cyberpunk::{CyberpunkTheme, CyberpunkThemeHighContrast};
 pub use dracula::{DraculaTheme, DraculaThemeHighContrast};
 pub use nord::{NordTheme, NordThemeHighContrast};
@@ -66,11 +66,6 @@ pub fn load(preferred_theme: Option<&str>) -> LoadedTheme {
     }
 
     LoadedTheme::from_definition(catalog::default_truecolor())
-}
-
-/// Backwards-compatible helper retaining the original API expected by older code paths and docs.
-pub fn load_from_env() -> Box<dyn Theme> {
-    load(None).theme
 }
 
 fn detect_color_capability() -> ColorCapability {

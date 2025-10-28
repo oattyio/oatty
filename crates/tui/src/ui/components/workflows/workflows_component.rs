@@ -3,7 +3,7 @@ use crate::ui::components::component::Component;
 use crate::ui::theme::theme_helpers as th;
 use crate::ui::theme::theme_helpers::create_spans_with_match;
 use anyhow::{Result, anyhow};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use heroku_engine::WorkflowRunState;
 use heroku_types::Effect::SwitchTo;
 use heroku_types::workflow::RuntimeWorkflow;
@@ -26,6 +26,7 @@ use tracing::warn;
 pub struct WorkflowsComponent {
     search_area: Rect,
     list_area: Rect,
+    mouse_over_idx: Option<usize>,
 }
 
 impl WorkflowsComponent {
@@ -129,10 +130,11 @@ impl WorkflowsComponent {
             let title_width = state.filtered_title_width().clamp(12, 40);
             let available_summary_width = area.width.saturating_sub(title_width as u16).saturating_sub(4) as usize;
 
-            let items = state
+            let items: Vec<ListItem> = state
                 .filtered_indices()
                 .iter()
-                .filter_map(|workflow_index| {
+                .enumerate()
+                .filter_map(|(idx, workflow_index)| {
                     state.workflow_by_index(*workflow_index).map(|workflow| {
                         let identifier_cell = format!(
                             "{:<width$}",
@@ -143,10 +145,14 @@ impl WorkflowsComponent {
                         let needle = filter_input.to_string();
                         let mut spans = create_spans_with_match(needle.clone(), identifier_cell, identifier_style, highlight_style);
                         spans.extend(create_spans_with_match(needle, summary, summary_style, highlight_style));
-                        ListItem::from(Line::from(spans))
+                        let mut list_item = ListItem::from(Line::from(spans));
+                        if self.mouse_over_idx.is_some_and(|mouse_idx| mouse_idx == idx) {
+                            list_item = list_item.style(theme.selection_style().add_modifier(Modifier::BOLD));
+                        }
+                        list_item
                     })
                 })
-                .collect::<Vec<_>>();
+                .collect();
             (items, state.filtered_count())
         };
 
@@ -244,14 +250,12 @@ impl WorkflowsComponent {
         effects
     }
 
-    fn hit_test_list(&mut self, app: &mut App, position: Position) -> Vec<Effect> {
-        let offset_y = self.list_area.y as usize;
-        let idx = (position.y as usize).saturating_sub(offset_y);
+    fn hit_test_list(&mut self, app: &mut App, position: Position) -> Option<usize> {
+        let offset = app.workflows.list.list_state().offset();
+        let idx = (position.y as usize).saturating_sub(self.list_area.y as usize) + offset;
         if app.workflows.list.workflow_by_index(idx).is_some() {
-            app.workflows.list.set_selected_workflow(idx);
-            return self.handle_key_events(app, KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
-        }
-        Vec::new()
+            Some(idx)
+        } else {None}
     }
 
     /// Open the interactive input view for the selected workflow.
@@ -269,9 +273,6 @@ impl WorkflowsComponent {
 }
 
 impl Component for WorkflowsComponent {
-    fn handle_message(&mut self, _app: &mut App, _msg: &Msg) -> Vec<Effect> {
-        Vec::new()
-    }
 
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         // Handle tab/backtab to switch focus between the search field and the list
@@ -322,17 +323,25 @@ impl Component for WorkflowsComponent {
     }
 
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
-        if let MouseEventKind::Down(_) = mouse.kind {
-            let position = Position {
-                x: mouse.column,
-                y: mouse.row,
-            };
+        let position = Position {
+            x: mouse.column,
+            y: mouse.row,
+        };
+
+        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
             if self.search_area.contains(position) {
                 app.focus.focus(&app.workflows.f_search);
-            } else if self.list_area.contains(position) {
-                app.focus.focus(&app.workflows.list.focus());
-                return self.hit_test_list(app, position);
             }
+
+            if self.list_area.contains(position) && let Some(idx) = self.hit_test_list(app, position) {
+                app.focus.focus(&app.workflows.list.focus());
+                app.workflows.list.set_selected_workflow(idx);
+                return self.handle_key_events(app, KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+            }
+        }
+
+        if let MouseEventKind::Moved = mouse.kind {
+           self.mouse_over_idx = self.hit_test_list(app, position);
         }
 
         Vec::new()
