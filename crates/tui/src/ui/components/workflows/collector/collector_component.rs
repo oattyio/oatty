@@ -75,6 +75,16 @@ impl Component for WorkflowCollectorComponent {
             return self.manual_entry.handle_key_events(app, key);
         }
 
+        match key.code {
+            KeyCode::BackTab => {
+                app.focus.prev();
+            }
+            KeyCode::Tab => {
+                app.focus.next();
+            }
+            _ => {}
+        }
+
         // Provider-backed selector handling when present
         if app.workflows.collector_state_mut().is_some() {
             return self.handle_selector_key_events(app, key);
@@ -91,13 +101,27 @@ impl Component for WorkflowCollectorComponent {
         if app.workflows.manual_entry_state().is_some() {
             return self.manual_entry.handle_mouse_events(app, mouse);
         }
+        let position = Position::new(mouse.column, mouse.row);
+        // Scroll highlighting
 
+        match mouse.kind {
+            MouseEventKind::Moved | MouseEventKind::Up(MouseButton::Left) => {
+                let index = if self.layout.table_area.contains(position) {
+                    Some(self.hit_test_results_table(position))
+                } else {
+                    None
+                };
+                app.table.set_mouse_over_idx(index);
+            }
+            _ => {}
+        }
+
+        // Mouse clicks
         if app.workflows.collector_state().is_none() || mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return Vec::new();
         }
         let mut effects = Vec::new();
         let collector = app.workflows.collector_state_mut().unwrap();
-        let position = Position::new(mouse.column, mouse.row);
 
         if self.layout.cancel_button_area.contains(position) {
             app.focus.focus(&collector.f_cancel);
@@ -116,6 +140,7 @@ impl Component for WorkflowCollectorComponent {
         }
 
         if self.layout.table_area.contains(position) {
+            app.focus.focus(&collector.f_table);
             let index = self.hit_test_results_table(position);
             self.results_table_view.table_state.select(Some(index));
             collector.sync_stage_with_selection(Some(index));
@@ -217,7 +242,7 @@ impl Component for WorkflowCollectorComponent {
 impl WorkflowCollectorComponent {
     fn hit_test_results_table(&self, mouse_position: Position) -> usize {
         let offset = self.results_table_view.table_state.offset();
-        let index = (mouse_position.y.saturating_sub(1) - self.layout.table_area.y) as usize + offset;
+        let index = mouse_position.y.saturating_sub(1 + self.layout.table_area.y) as usize + offset;
         index
     }
     fn handle_filter_keys(&self, app: &mut App, key: KeyEvent) {
@@ -264,8 +289,8 @@ impl WorkflowCollectorComponent {
             KeyCode::F(2) => {
                 app.workflows.open_manual_for_active_input();
             }
-            KeyCode::Up => self.results_table_view.table_state.scroll_up_by(1),
-            KeyCode::Down => self.results_table_view.table_state.scroll_down_by(1),
+            KeyCode::Up => self.results_table_view.table_state.select_previous(),
+            KeyCode::Down => self.results_table_view.table_state.select_next(),
             KeyCode::PageUp => self.results_table_view.table_state.scroll_up_by(5),
             KeyCode::PageDown => self.results_table_view.table_state.scroll_down_by(5),
             KeyCode::Home => self.results_table_view.table_state.scroll_up_by(u16::MAX),
@@ -427,12 +452,6 @@ impl WorkflowCollectorComponent {
             return effects;
         };
         match key.code {
-            KeyCode::BackTab => {
-                app.focus.prev();
-            }
-            KeyCode::Tab => {
-                app.focus.next();
-            }
             KeyCode::Esc => {
                 if collector.f_filter.get() && !collector.filter.is_empty() {
                     collector.filter.set_input("");
@@ -513,10 +532,10 @@ impl WorkflowCollectorComponent {
         self.render_filter_panel(frame, layout.filter_panel, collector, theme);
         self.render_status_line(frame, layout.status_area, collector, theme);
 
-        let mut results_view = ResultsTableView::default();
         let table_focused = collector.f_table.get();
 
-        results_view.render_results(frame, layout.table_area, &collector.table, table_focused, theme);
+        self.results_table_view
+            .render_results(frame, layout.table_area, &collector.table, table_focused, theme);
         if collector.value_field.is_none() {
             let idx = self.results_table_view.table_state.selected().unwrap_or(0);
             let row_json = collector.table.selected_data(idx).cloned().unwrap_or(Value::Null);
@@ -535,6 +554,7 @@ impl WorkflowCollectorComponent {
 
         let apply_options = ButtonRenderOptions::new(collector.apply_enabled(), collector.f_apply.get(), false, Borders::ALL, true);
         th::render_button(frame, layout.apply_button_area, "Apply", theme, apply_options);
+
         self.layout = layout;
     }
 

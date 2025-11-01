@@ -4,7 +4,9 @@
 //! including header parsing, request body manipulation, and response handling.
 
 use heroku_types::Pagination;
+use reqwest::StatusCode;
 use serde_json::{Map, Value};
+use thiserror::Error;
 
 /// Parse Content-Range header value into a Pagination struct.
 ///
@@ -233,6 +235,88 @@ pub fn status_error_message(status_code: u16) -> Option<String> {
 /// ```
 pub fn parse_response_json(text: &str) -> Option<Value> {
     serde_json::from_str::<Value>(text).ok()
+}
+
+/// Parse HTTP response text into JSON, providing detailed errors on failure.
+///
+/// This helper performs strict JSON deserialization and decorates any parsing
+/// error with context about the originating HTTP status code plus a truncated
+/// preview of the response body. Use this when a JSON response is required and
+/// the caller should surface failures instead of silently degrading to `null`.
+///
+/// # Arguments
+/// * `text` - The raw HTTP response body text
+/// * `status` - Optional HTTP status code for error context
+///
+/// # Errors
+/// Returns a [`JsonParseError`] describing the parse failure. The message
+/// includes the original serde error and up to 200 characters of the response
+/// body (with whitespace collapsed) to aid debugging truncated or malformed
+/// payloads.
+pub fn parse_response_json_strict(text: &str, status: Option<StatusCode>) -> Result<Value, JsonParseError> {
+    serde_json::from_str::<Value>(text).map_err(|error| {
+        let status_note = status
+            .map(|code| format!("status {code}"))
+            .unwrap_or_else(|| "unknown status".to_string());
+        let preview = truncate_response_preview(text, 200);
+
+        JsonParseError::new(status_note, error, preview)
+    })
+}
+
+fn truncate_response_preview(text: &str, limit: usize) -> String {
+    if text.trim().is_empty() {
+        return "<empty>".to_string();
+    }
+
+    let mut preview = String::new();
+    for ch in text.chars() {
+        if preview.len() >= limit {
+            preview.push_str("...");
+            break;
+        }
+        match ch {
+            '\n' | '\r' | '\t' => {
+                if !preview.ends_with(' ') {
+                    preview.push(' ');
+                }
+            }
+            _ => preview.push(ch),
+        }
+    }
+
+    preview.trim().to_string()
+}
+
+/// Error returned when strict JSON parsing of an HTTP response fails.
+#[derive(Debug, Error)]
+#[error("failed to parse JSON response ({status_note}): {source}. body preview: {body_preview}")]
+pub struct JsonParseError {
+    status_note: String,
+    #[source]
+    source: serde_json::Error,
+    body_preview: String,
+}
+
+impl JsonParseError {
+    /// Create a new [`JsonParseError`] with contextual information.
+    pub fn new(status_note: String, source: serde_json::Error, body_preview: String) -> Self {
+        Self {
+            status_note,
+            source,
+            body_preview,
+        }
+    }
+
+    /// Access the truncated response preview captured during parsing.
+    pub fn body_preview(&self) -> &str {
+        &self.body_preview
+    }
+
+    /// Access the underlying serde parse error for logging or inspection.
+    pub fn source_error(&self) -> &serde_json::Error {
+        &self.source
+    }
 }
 
 #[cfg(test)]

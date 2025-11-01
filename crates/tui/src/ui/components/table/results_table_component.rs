@@ -62,10 +62,14 @@ pub struct TableComponent {
 }
 
 impl TableComponent {
-    fn hit_test_table(&mut self, table_area: Rect, mouse_position: Position) -> usize {
+    fn hit_test_table(&mut self, table_area: Rect, mouse_position: Position) -> Option<usize> {
         let list_offset = self.view.table_state.offset();
         let idx = mouse_position.y.saturating_sub(table_area.y + 1) as usize + list_offset; // +1 for header
-        idx
+        if self.table_area.contains(mouse_position) {
+            Some(idx)
+        } else {
+            None
+        }
     }
 }
 
@@ -156,12 +160,13 @@ impl Component for TableComponent {
                 MouseEventKind::ScrollDown => {
                     self.view.table_state.scroll_down_by(1);
                 }
-                MouseEventKind::Moved | MouseEventKind::Up(MouseButton::Left) => {
-                    let idx = self.hit_test_table(self.table_area, pos);
-                    app.table.set_mouse_over_idx(Some(idx));
-                }
                 _ => {}
             }
+        }
+        // Update the mouse over index when the mouse moves or is released
+        if mouse.kind == MouseEventKind::Moved || mouse.kind == MouseEventKind::Up(MouseButton::Left) {
+            let idx = self.hit_test_table(self.table_area, pos);
+            app.table.set_mouse_over_idx(idx);
         }
 
         effects

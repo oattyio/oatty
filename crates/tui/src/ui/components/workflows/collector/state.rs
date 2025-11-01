@@ -9,6 +9,7 @@ use crate::ui::components::common::TextInputState;
 use crate::ui::components::table::ResultsTableState;
 use crate::ui::theme::Theme;
 use heroku_types::WorkflowProviderErrorPolicy;
+use heroku_util::fuzzy_score;
 use indexmap::IndexMap;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
@@ -110,34 +111,38 @@ impl<'a> CollectorViewState<'a> {
 
     /// Applies the current filter and refreshes the backing table state.
     pub fn refresh_table(&mut self, theme: &dyn Theme) {
-        let Some(items) = self.original_items.clone() else {
+        self.clear_staged_selection();
+        let Some(items) = self.original_items.as_ref() else {
             return;
         };
+
         let query = self.filter.input().trim().to_lowercase();
-        let dataset: Vec<Value> = if query.is_empty() {
-            items
-        } else {
-            items
-                .into_iter()
-                .filter(|item| match item {
-                    Value::Object(map) => {
-                        if let Some(display_field) = self.display_field.as_deref()
-                            && let Some(value) = map.get(display_field)
-                            && let Some(text) = value.as_str()
-                        {
-                            return text.to_lowercase().starts_with(&query);
-                        }
-                        map.values()
-                            .any(|value| value.as_str().map(|text| text.to_lowercase().contains(&query)).unwrap_or(false))
-                    }
-                    Value::String(text) => text.to_lowercase().contains(&query),
-                    _ => false,
-                })
-                .collect()
-        };
+
+        if query.is_empty() {
+            self.table.apply_result_json(Some(Value::Array(items.clone())), theme);
+            return;
+        }
+        let mut scores: Vec<(i64, usize)> = items
+            .into_iter()
+            .enumerate()
+            .map(|(index, item)| match item {
+                Value::Object(map) => (
+                    map.values()
+                        .map(|x| fuzzy_score(x.as_str().unwrap_or(""), &query).unwrap_or(0i64))
+                        .reduce(|a, b| a.max(b))
+                        .unwrap_or(0i64),
+                    index,
+                ),
+                Value::String(text) => (fuzzy_score(text.to_lowercase().as_str(), &query).unwrap_or(0i64), index),
+                _ => (0i64, index),
+            })
+            .filter(|(score, _)| *score > 0)
+            .collect();
+        scores.sort_by(|a, b| b.0.cmp(&a.0));
+        let dataset = scores.into_iter().map(|(_, index)| items[index].clone()).collect();
+
         let json = Value::Array(dataset);
         self.table.apply_result_json(Some(json), theme);
-        self.clear_staged_selection();
     }
 
     /// Clears any staged selection currently pending confirmation.

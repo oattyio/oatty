@@ -550,29 +550,6 @@ fn apply_plugin_name_change(config: &mut McpConfig, original_name: Option<&str>,
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn apply_plugin_name_change_removed_old_key() {
-        let mut config = McpConfig::default();
-        config.mcp_servers.insert("old".into(), McpServer::default());
-        apply_plugin_name_change(&mut config, Some("old"), "new");
-
-        assert!(!config.mcp_servers.contains_key("old"));
-    }
-
-    #[test]
-    fn apply_plugin_name_change_keeps_existing_when_name_same() {
-        let mut config = McpConfig::default();
-        config.mcp_servers.insert("same".into(), McpServer::default());
-        apply_plugin_name_change(&mut config, Some("same"), "same");
-
-        assert!(config.mcp_servers.contains_key("same"));
-    }
-}
-
 fn handle_workflow_run_requested(app: &mut App<'_>, request: WorkflowRunRequest) {
     let run_id = request.run_id.clone();
 
@@ -815,5 +792,28 @@ fn execute_command(
 
             Some(vec![Cmd::ExecuteMcp(command_spec, body, request_id)])
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn apply_plugin_name_change_removed_old_key() {
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert("old".into(), McpServer::default());
+        apply_plugin_name_change(&mut config, Some("old"), "new");
+
+        assert!(!config.mcp_servers.contains_key("old"));
+    }
+
+    #[test]
+    fn apply_plugin_name_change_keeps_existing_when_name_same() {
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert("same".into(), McpServer::default());
+        apply_plugin_name_change(&mut config, Some("same"), "same");
+
+        assert!(config.mcp_servers.contains_key("same"));
     }
 }

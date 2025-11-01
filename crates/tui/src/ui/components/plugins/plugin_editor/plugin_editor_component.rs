@@ -224,7 +224,7 @@ impl Component for PluginsEditComponent {
             ];
             app.focus.focus(focusables[idx]);
             // normalize the index to the focusables array
-            if !(2..=8).contains(&idx) {
+            if (2..=8).contains(&idx) {
                 return handle_enter_key(app);
             }
         }

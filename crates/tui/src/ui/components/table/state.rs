@@ -105,7 +105,7 @@ impl<'a> ResultsTableState<'_> {
                 }
                 // Alternating row backgrounds using a theme helper.
                 let row_style = table_row_style(theme, idx);
-                rows.push( Row::new(cells).style(row_style));
+                rows.push(Row::new(cells).style(row_style));
             }
             return Some(rows);
         }

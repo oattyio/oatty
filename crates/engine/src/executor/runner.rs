@@ -10,7 +10,7 @@ use heroku_api::HerokuClient;
 use heroku_registry::{CommandRegistry, CommandSpec, find_by_group_and_cmd};
 use heroku_util::{
     build_path,
-    http::{build_range_header_from_body, strip_range_body_fields},
+    http::{build_range_header_from_body, parse_response_json_strict, strip_range_body_fields},
 };
 
 /// Execute a single command.
@@ -139,11 +139,19 @@ impl CommandRunner for RegistryCommandRunner {
         }
 
         let fut = async move {
-            let resp = req.send().await.map_err(|e| anyhow::anyhow!(e))?;
-            let val = resp.json::<Value>().await.unwrap_or(Value::Null);
+            let response = req.send().await.map_err(|error| anyhow::anyhow!(error))?;
+            let response = response.error_for_status().map_err(|error| anyhow::anyhow!(error))?;
+            let status = response.status();
+            let body_text = response.text().await.map_err(|error| anyhow::anyhow!(error))?;
+
+            if body_text.trim().is_empty() {
+                return Ok::<Value, anyhow::Error>(Value::Null);
+            }
+
+            let parsed = parse_response_json_strict(&body_text, Some(status)).map_err(|error| anyhow::anyhow!(error))?;
             // Return the raw JSON payload so downstream bindings can access fields directly
             // via `steps.<id>.output.*` without an extra nesting layer.
-            Ok::<Value, anyhow::Error>(val)
+            Ok::<Value, anyhow::Error>(parsed)
         };
 
         // Execute request synchronously, reusing the current runtime when available.

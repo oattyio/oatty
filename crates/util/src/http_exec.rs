@@ -70,15 +70,17 @@ pub async fn exec_remote_from_shell_command(
                 ));
             }
             let raw_log = format!("{}\n{}", status, text);
-            let log = summarize_execution_outcome(&spec.canonical_id(), raw_log.as_str(), status);
-            let result_json = http::parse_response_json(&text);
-            Ok(ExecOutcome::Http(
-                status.as_u16(),
-                log,
-                result_json.unwrap_or(Value::Null),
-                pagination,
-                request_id,
-            ))
+            let mut log = summarize_execution_outcome(&spec.canonical_id(), raw_log.as_str(), status);
+            let result_json = match http::parse_response_json_strict(&text, Some(status)) {
+                Ok(value) => value,
+                Err(error) => {
+                    let error_message = error.to_string();
+                    let sanitized_error = crate::redact_sensitive(&error_message);
+                    log.push_str(&format!("\nJSON parse error: {sanitized_error}"));
+                    Value::Null
+                }
+            };
+            Ok(ExecOutcome::Http(status.as_u16(), log, result_json, pagination, request_id))
         }
         Err(e) => Err(e),
     }
@@ -91,15 +93,17 @@ pub async fn exec_remote_for_provider(spec: &CommandSpec, body: Map<String, Valu
     match exec_remote_from_spec_inner(http, body, path).await {
         Ok((status, _, text, _)) => {
             let raw_log = format!("{}\n{}", status, text);
-            let log = summarize_execution_outcome(&spec.canonical_id(), raw_log.as_str(), status);
-            let result_json = http::parse_response_json(&text);
-            Ok(ExecOutcome::Http(
-                status.as_u16(),
-                log,
-                result_json.unwrap_or(Value::Null),
-                None,
-                request_id,
-            ))
+            let mut log = summarize_execution_outcome(&spec.canonical_id(), raw_log.as_str(), status);
+            let result_json = match http::parse_response_json_strict(&text, Some(status)) {
+                Ok(value) => value,
+                Err(error) => {
+                    let error_message = error.to_string();
+                    let sanitized_error = crate::redact_sensitive(&error_message);
+                    log.push_str(&format!("\nJSON parse error: {sanitized_error}"));
+                    Value::Null
+                }
+            };
+            Ok(ExecOutcome::Http(status.as_u16(), log, result_json, None, request_id))
         }
         Err(e) => Err(e),
     }
@@ -308,10 +312,14 @@ pub async fn fetch_json_array(spec: &CommandSpec) -> Result<Vec<Value>, String> 
         return Err(format!("{}\n{}", status, text));
     }
 
-    match serde_json::from_str::<Value>(&text) {
-        Ok(Value::Array(arr)) => Ok(arr),
+    match http::parse_response_json_strict(&text, Some(status)) {
+        Ok(Value::Array(array)) => Ok(array),
         Ok(_) => Err("Response is not a JSON array".into()),
-        Err(e) => Err(format!("Invalid JSON: {}", e)),
+        Err(error) => {
+            let error_message = error.to_string();
+            let sanitized_error = crate::redact_sensitive(&error_message);
+            Err(format!("Invalid JSON: {}", sanitized_error))
+        }
     }
 }
 

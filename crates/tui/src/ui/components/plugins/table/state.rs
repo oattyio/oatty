@@ -1,6 +1,7 @@
 //! Table state for the MCP plugins view, covering filtering, focus, and selection.
 
 use crate::ui::components::plugins::PluginDetail;
+use heroku_types::PluginStatus;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use ratatui::widgets::TableState;
@@ -230,8 +231,15 @@ impl HasFocus for PluginsTableState {
         builder.leaf_widget(&self.f_grid);
         builder.leaf_widget(&self.f_add);
         if self.has_selection() {
-            builder.leaf_widget(&self.f_start);
-            builder.leaf_widget(&self.f_stop);
+            let is_running = self
+                .selected_item()
+                .map(|item| item.status == PluginStatus::Running)
+                .unwrap_or(false);
+            if !is_running {
+                builder.leaf_widget(&self.f_start);
+            } else {
+                builder.leaf_widget(&self.f_stop);
+            }
             builder.leaf_widget(&self.f_edit);
             builder.leaf_widget(&self.f_delete);
         }

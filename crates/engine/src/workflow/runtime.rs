@@ -46,7 +46,7 @@ fn convert_with_map(values: &IndexMap<String, Value>) -> Option<JsonMap<String, 
 }
 
 fn convert_repeat(repeat: &WorkflowRepeat) -> Option<StepRepeat> {
-    let until = repeat.until.clone().unwrap_or_default();
+    let until = normalize_condition_expression(repeat.until.as_deref()).unwrap_or_default();
     let every = repeat.every.clone().unwrap_or_else(|| "1s".to_string());
 
     if until.is_empty() {
@@ -146,6 +146,24 @@ mod tests {
         assert_eq!(step.r#if.as_deref(), Some("inputs.enabled"));
         assert!(step.repeat.is_some());
         assert!(step.output_contract.is_some());
+    }
+
+    #[test]
+    fn repeat_until_allows_template_wrapper() {
+        let mut runtime = sample_runtime_workflow();
+        runtime.steps[0].repeat = Some(WorkflowRepeat {
+            until: Some("${{ steps.s1.status == \"succeeded\" }}".into()),
+            every: Some("5s".into()),
+            timeout: Some("1m".into()),
+            max_attempts: Some(5),
+        });
+
+        let spec = workflow_spec_from_runtime(&runtime);
+        let repeat = spec.steps[0].repeat.as_ref().expect("repeat missing");
+        assert_eq!(repeat.until, "steps.s1.status == \"succeeded\"");
+        assert_eq!(repeat.every, "5s");
+        assert_eq!(repeat.timeout.as_deref(), Some("1m"));
+        assert_eq!(repeat.max_attempts, Some(5));
     }
 
     #[test]

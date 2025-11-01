@@ -565,10 +565,14 @@ impl HasFocus for App<'_> {
                     builder.widget(&self.logs);
                 }
                 Modal::WorkflowCollector => {
-                    // no focusable fields; leave ring empty (collector stub)
+                    if let Some(state) = self.workflows.collector.as_ref() {
+                        builder.widget(state);
+                    } else if let Some(state) = self.workflows.manual_entry.as_ref() {
+                        builder.widget(state);
+                    }
                 }
                 Modal::PluginDetails | Modal::Help | Modal::ThemePicker => {
-                    // no focusable fields; leave the ring empty
+                    // focusable fields TBD; leave the ring empty
                 }
             }
             builder.end(tag);
