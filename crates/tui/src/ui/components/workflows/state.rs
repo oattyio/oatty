@@ -1,9 +1,7 @@
 use crate::ui::components::common::TextInputState;
-use crate::ui::components::table::TableState;
+use crate::ui::components::table::ResultsTableState;
 use crate::ui::components::workflows::collector::manual_entry::ManualEntryState;
-use crate::ui::components::workflows::collector::{
-    SelectorStatus, WorkflowCollectorFocus, WorkflowSelectorFieldMetadata, WorkflowSelectorLayoutState, WorkflowSelectorViewState,
-};
+use crate::ui::components::workflows::collector::{CollectorViewState, SelectorStatus, WorkflowSelectorFieldMetadata};
 use crate::ui::components::workflows::input::WorkflowInputViewState;
 use crate::ui::components::workflows::list::WorkflowListState;
 use crate::ui::components::workflows::run::{RunViewState, StepFinishedData, WorkflowRunControlHandle};
@@ -29,16 +27,16 @@ use tokio::sync::mpsc::UnboundedSender;
 #[derive(Debug, Default)]
 pub struct WorkflowState {
     pub list: WorkflowListState,
-    active_run_state: Option<WorkflowRunState>,
-    input_view: Option<WorkflowInputViewState>,
-    run_view: Option<RunViewState>,
     /// Manual entry modal state (when open); None when not editing.
     pub manual_entry: Option<ManualEntryState>,
     /// Provider-backed selector state (when open); None when not selecting.
-    pub selector: Option<WorkflowSelectorViewState<'static>>,
+    pub collector: Option<CollectorViewState<'static>>,
     /// The focus flags for the workflow view.
     pub container_focus: FocusFlag,
     pub f_search: FocusFlag,
+    active_run_state: Option<WorkflowRunState>,
+    input_view: Option<WorkflowInputViewState>,
+    run_view: Option<RunViewState>,
     active_run_id: Option<String>,
     run_control: Option<WorkflowRunControlHandle>,
 }
@@ -52,7 +50,7 @@ impl WorkflowState {
             input_view: None,
             run_view: None,
             manual_entry: None,
-            selector: None,
+            collector: None,
             container_focus: FocusFlag::named("workflow.container"),
             f_search: FocusFlag::named("workflow.search"),
             active_run_id: None,
@@ -188,7 +186,7 @@ impl WorkflowState {
     pub fn close_input_view(&mut self) {
         self.input_view = None;
         self.manual_entry = None;
-        self.selector = None;
+        self.collector = None;
     }
 
     /// Retrieves the currently active input definition from the application's workflows.
@@ -399,7 +397,13 @@ mod workflow_run_tests {
             &theme,
         );
         assert!(logs.iter().any(|entry| entry.contains("Step 'first'")));
-        let row = state.run_view_state().unwrap().steps_table().selected_data().cloned().expect("row");
+        let row = state
+            .run_view_state()
+            .unwrap()
+            .steps_table()
+            .selected_data(0)
+            .cloned()
+            .expect("row");
         assert_eq!(row["Status"], Value::String("succeeded".into()));
     }
 }
@@ -630,9 +634,9 @@ impl WorkflowState {
 
         let value_field = def.select.as_ref().and_then(|s| s.value_field.clone());
 
-        let table: TableState<'static> = Default::default();
+        let table: ResultsTableState<'static> = Default::default();
 
-        self.selector = Some(WorkflowSelectorViewState {
+        self.collector = Some(CollectorViewState {
             provider_id,
             resolved_args: args,
             table,
@@ -644,21 +648,20 @@ impl WorkflowState {
             original_items: None,
             filter: TextInputState::new(),
             pending_cache_key: None,
-            focus: WorkflowCollectorFocus::Table,
             field_metadata,
             staged_selection: None,
-            layout: WorkflowSelectorLayoutState::default(),
+            ..Default::default()
         });
     }
 
     /// Returns the provider selector modal state when it is active.
-    pub fn selector_state(&self) -> Option<&WorkflowSelectorViewState<'static>> {
-        self.selector.as_ref()
+    pub fn collector_state(&self) -> Option<&CollectorViewState<'static>> {
+        self.collector.as_ref()
     }
 
     /// Returns a mutable reference to the provider selector modal state when it is active.
-    pub fn selector_state_mut(&mut self) -> Option<&mut WorkflowSelectorViewState<'static>> {
-        self.selector.as_mut()
+    pub fn collector_state_mut(&mut self) -> Option<&mut CollectorViewState<'static>> {
+        self.collector.as_mut()
     }
 }
 

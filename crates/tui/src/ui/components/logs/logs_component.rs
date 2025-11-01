@@ -320,7 +320,7 @@ impl Component for LogsComponent {
     /// A vector of effects to be processed by the application
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         if app.logs.detail.is_some() {
-            let mut detail_component = LogDetailsComponent;
+            let mut detail_component = LogDetailsComponent::default();
             return detail_component.handle_key_events(app, key);
         }
 
@@ -425,14 +425,17 @@ impl Component for LogsComponent {
             let content_len = app.logs.entries.len();
             if content_len > 0 {
                 let visible = rect.height.saturating_sub(2) as usize; // Account for borders
-                let sel = self.selected_index(app).unwrap_or(0);
-                let max_top = content_len.saturating_sub(visible);
-                let top = sel.min(max_top);
-                let mut sb_state = ScrollbarState::new(content_len).position(top);
-                let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                    .thumb_style(Style::default().fg(app.ctx.theme.roles().scrollbar_thumb))
-                    .track_style(Style::default().fg(app.ctx.theme.roles().scrollbar_track));
-                frame.render_stateful_widget(sb, rect, &mut sb_state);
+                if visible > 0 && content_len > visible {
+                    let sel = self.selected_index(app).unwrap_or(0);
+                    let max_top = content_len.saturating_sub(visible);
+                    let top = sel.min(max_top);
+                    let scrollable_range = content_len.saturating_sub(visible).saturating_add(1);
+                    let mut sb_state = ScrollbarState::new(scrollable_range).position(top).viewport_content_length(visible);
+                    let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                        .thumb_style(Style::default().fg(app.ctx.theme.roles().scrollbar_thumb))
+                        .track_style(Style::default().fg(app.ctx.theme.roles().scrollbar_track));
+                    frame.render_stateful_widget(sb, rect, &mut sb_state);
+                }
             }
         }
     }

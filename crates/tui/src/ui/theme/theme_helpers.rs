@@ -41,7 +41,7 @@ pub fn table_header_row_style(theme: &dyn Theme) -> Style {
 
 /// Darken an RGB color by a multiplicative factor (0.0..=1.0).
 /// If the color is not RGB, returns it unchanged.
-fn darken_rgb(color: Color, factor: f32) -> Color {
+pub(crate) fn darken_rgb(color: Color, factor: f32) -> Color {
     match color {
         Color::Rgb(r, g, b) => {
             let f = factor.clamp(0.0, 1.0);
@@ -54,21 +54,27 @@ fn darken_rgb(color: Color, factor: f32) -> Color {
     }
 }
 
+/// Lighten an RGB color by blending it toward white according to `factor` (0.0..=1.0).
+/// Returns the original color unchanged when the color is not RGB.
+pub(crate) fn lighten_rgb(color: Color, factor: f32) -> Color {
+    match color {
+        Color::Rgb(r, g, b) => {
+            let f = factor.clamp(0.0, 1.0);
+            let lr = (r as f32 + (255.0 - r as f32) * f).round().clamp(0.0, 255.0) as u8;
+            let lg = (g as f32 + (255.0 - g as f32) * f).round().clamp(0.0, 255.0) as u8;
+            let lb = (b as f32 + (255.0 - b as f32) * f).round().clamp(0.0, 255.0) as u8;
+            Color::Rgb(lr, lg, lb)
+        }
+        other => other,
+    }
+}
+
 /// Returns alternating row styles for zebra striping (even/odd),
 /// using slightly darker variants of the background/surface.
 pub fn table_row_styles(theme: &dyn Theme) -> (Style, Style) {
-    let ThemeRoles {
-        surface,
-        surface_muted,
-        text,
-        ..
-    } = *theme.roles();
-    // Subtly darken both surface tones for zebra striping without modifiers.
-    // Keep the contrast high while making alternate rows feel slightly recessed.
-    let even_bg = darken_rgb(surface, 0.60);
-    let odd_bg = darken_rgb(surface_muted, 0.60);
-    let even = Style::default().bg(even_bg).fg(text);
-    let odd = Style::default().bg(odd_bg).fg(text);
+    let text = theme.roles().text;
+    let even = theme.table_row_even_style().fg(text);
+    let odd = theme.table_row_odd_style().fg(text);
     (even, odd)
 }
 

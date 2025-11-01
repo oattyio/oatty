@@ -14,6 +14,7 @@ use crate::{
 };
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 use heroku_types::{CommandSpec, Effect};
+use ratatui::layout::Position;
 use ratatui::prelude::Span;
 use ratatui::{
     Frame,
@@ -48,11 +49,14 @@ use ratatui::{
 /// ```rust,ignore
 /// use heroku_tui::ui::components::HelpComponent;
 ///
-/// let mut help = HelpComponent::new();
+/// let mut help = HelpComponent::default();
 /// help.init()?;
 /// ```
 #[derive(Debug, Default)]
-pub struct HelpComponent;
+pub struct HelpComponent {
+    focused: bool,
+    render_area: Rect,
+}
 
 impl Component for HelpComponent {
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
@@ -68,9 +72,16 @@ impl Component for HelpComponent {
     }
 
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
+        let position = Position {
+            x: mouse.column,
+            y: mouse.row,
+        };
+        if !self.render_area.contains(position) {
+            return Vec::new();
+        }
         match mouse.kind {
-            MouseEventKind::ScrollDown => app.help.scroll_lines(3),
-            MouseEventKind::ScrollUp => app.help.scroll_lines(-3),
+            MouseEventKind::ScrollDown => app.help.scroll_lines(1),
+            MouseEventKind::ScrollUp => app.help.scroll_lines(-1),
             _ => {}
         }
         Vec::new()
@@ -116,7 +127,7 @@ impl Component for HelpComponent {
         let theme = &*app.ctx.theme;
         let help = &mut app.help;
         let (title, text) = self.resolve_title_and_text(spec, theme);
-        let block = th::block(theme, Some(&title), true);
+        let block = th::block(theme, Some(&title), self.focused);
 
         frame.render_widget(block.clone(), rect);
         let inner = block.inner(rect);
@@ -131,6 +142,8 @@ impl Component for HelpComponent {
         paragraph = paragraph.scroll((help.scroll_offset(), 0));
         frame.render_widget(paragraph, inner);
         self.render_scrollbar(frame, inner, app);
+
+        self.render_area = rect;
     }
 
     /// Renders the footer with keyboard shortcut hints.
@@ -155,6 +168,10 @@ impl Component for HelpComponent {
 }
 
 impl HelpComponent {
+    pub fn set_focused(&mut self, focused: bool) {
+        self.focused = focused;
+    }
+
     fn handle_scroll_key(app: &mut App, code: KeyCode) -> bool {
         match code {
             KeyCode::Up | KeyCode::Char('k') => {
@@ -205,8 +222,12 @@ impl HelpComponent {
         }
 
         let theme = &*app.ctx.theme;
-        let content_height = usize::from(app.help.content_height().max(1));
-        let mut scrollbar_state = ScrollbarState::new(content_height).position(app.help.scroll_offset() as usize);
+        let viewport_height = usize::from(app.help.viewport_height().max(1));
+        let max_scroll_offset = app.help.content_height().saturating_sub(app.help.viewport_height());
+        let content_length = usize::from(max_scroll_offset.saturating_add(1));
+        let mut scrollbar_state = ScrollbarState::new(content_length)
+            .position(app.help.scroll_offset() as usize)
+            .viewport_content_length(viewport_height);
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .thumb_style(Style::default().fg(theme.roles().scrollbar_thumb))
             .track_style(Style::default().fg(theme.roles().scrollbar_track));

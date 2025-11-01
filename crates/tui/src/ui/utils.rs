@@ -351,104 +351,110 @@ pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize) -> Vec
     }
     out
 }
-/// Renders a given `Value` into a `String` representation, applying specific formatting
-/// or obfuscation rules based on the provided key and value type.
+/// Represents the rendered form of a JSON value, combining the plain textual
+/// output with styled spans that can be used directly by Ratatui widgets.
+#[derive(Debug, Clone)]
+pub struct RenderedValue {
+    plain_text: String,
+    spans: Vec<Span<'static>>,
+}
+
+impl RenderedValue {
+    /// Returns the rendered text without any styling information.
+    pub fn plain_text(&self) -> &str {
+        &self.plain_text
+    }
+
+    /// Consumes the rendered value and returns the unstyled text.
+    pub fn into_plain_text(self) -> String {
+        self.plain_text
+    }
+
+    /// Consumes the rendered value and returns the styled spans for direct use in Ratatui widgets.
+    pub fn into_spans(self) -> Vec<Span<'static>> {
+        self.spans
+    }
+}
+
+/// Maximum recursion depth when rendering nested objects to prevent infinite descent into deeply nested maps.
+const MAX_RENDER_VALUE_DEPTH: usize = 3;
+
+/// Renders a given `Value` into both a string representation and styled spans, applying
+/// specific formatting or obfuscation rules based on the provided key and value type.
+///
+/// The function preserves the previous string rendering logic (masking secrets, formatting
+/// date-like values, etc.) while also producing a syntax-highlighted sequence of spans that
+/// consumers can hand directly to Ratatui widgets. When no theme is provided the spans are
+/// rendered with default styling.
 ///
 /// # Parameters
-/// - `key`: A reference to a `&str` representing the key associated with the `value`.
-///   This is used to determine if specific rules, such as masking sensitive
-///   data or formatting date-like strings, should be applied.
-/// - `value`: A reference to a `Value` instance representing the data to be rendered
-///   into a string. The `Value` type can represent various data types, such
-///   as strings, numbers, booleans, nulls, objects, etc., often used
-///   in JSON data representations.
-///
-/// # Behavior
-/// - If `value` is a `Value::String`:
-///     - Checks if the key is sensitive using `is_sensitive_key(key)`. If true, applies
-///       a middle obfuscation mask with `ellipsize_middle_if_sha_like()` (truncates
-///       sensitive data, typically SHA-like strings, to a shorter form).
-///     - Otherwise, checks if the key suggests a date using `is_date_like_key(key)`. If true,
-///       attempts to format the string as a date in `MM/DD/YYYY` format using
-///       `format_date_mmddyyyy()`. If formatting fails, returns the original string.
-///     - If neither condition is met, returns the string unchanged.
-/// - If `value` is a `Value::Number`, converts it to a `String` using the number's
-///   `to_string()` method.
-/// - If `value` is a `Value::Bool`, converts it to a string representation (`"true"` or `"false"`).
-/// - If `value` is a `Value::Null`, returns the string `"null"`.
-/// - If `value` is a `Value::Object`, attempts to render the object as follows:
-///     - Scores the keys of the object using `get_scored_keys()`.
-///     - If the highest scoring key exists, retrieves its associated value.
-///         - If this nested value is a string, it is returned as-is.
-///         - Otherwise, converts the nested value to a string.
-///     - If no keys are present, falls back to converting the entire `Value` object
-///       to a string representation.
-/// - For any other value types (e.g., arrays), falls back to converting the value
-///   directly to a string representation using its `to_string()` method.
+/// - `key`: Key associated with the value. Used to drive masking and date formatting heuristics.
+/// - `value`: The JSON value to render.
+/// - `theme`: Optional theme used to pick syntax highlight colors.
 ///
 /// # Returns
-/// - A `String` containing the rendered representation of the `value` based on the rules described above.
-///
-/// # Example
-/// ```
-/// use serde_json::Value;
-///
-/// let key = "password";
-/// let value = Value::String("123456789abcdef123456789abcdef".to_string());
-/// let rendered = render_value(key, &value);
-/// assert_eq!(rendered, "1234...cdef"); // Sensitive key obfuscation applied.
-///
-/// let key = "date_of_birth";
-/// let value = Value::String("2023-09-15".to_string());
-/// let rendered = render_value(key, &value);
-/// assert_eq!(rendered, "09/15/2023"); // Date formatting applied.
-///
-/// let key = "active";
-/// let value = Value::Bool(true);
-/// let rendered = render_value(key, &value);
-/// assert_eq!(rendered, "true"); // Boolean converted to string.
-///
-/// let key = "some_key";
-/// let value = Value::Null;
-/// let rendered = render_value(key, &value);
-/// assert_eq!(rendered, "null"); // Null value represented as "null".
-///
-/// let key = "nested_obj";
-/// let value = serde_json::json!({
-///     "score1": "value1",
-///     "score2": "value2"
-/// });
-/// let rendered = render_value(key, &value);
-/// assert_eq!(rendered, "value1"); // First/highest score key's value returned as string.
-/// ```
-pub fn render_value(key: &str, value: &Value) -> String {
+/// A [`RenderedValue`] containing the plain text and styled spans for the provided JSON value.
+pub fn render_value(key: &str, value: &Value, theme: Option<&dyn UiTheme>) -> RenderedValue {
+    render_value_impl(key, value, theme, 0)
+}
+
+fn render_value_impl(key: &str, value: &Value, theme: Option<&dyn UiTheme>, depth: usize) -> RenderedValue {
     match value {
-        Value::String(s) => {
-            if is_sensitive_key(key) {
-                ellipsize_middle_if_sha_like(s, 12)
+        Value::String(text) => {
+            let rendered = if is_sensitive_key(key) {
+                ellipsize_middle_if_sha_like(text, 12)
             } else if is_date_like_key(key) {
-                format_date_mmddyyyy(s).unwrap_or_else(|| s.clone())
+                format_date_mmddyyyy(text).unwrap_or_else(|| text.clone())
             } else {
-                s.clone()
-            }
+                text.clone()
+            };
+            build_rendered_value(rendered, theme.map(|t| t.syntax_string_style()).unwrap_or_default())
         }
-        Value::Number(n) => n.to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Null => "null".to_string(),
-        // Take the highest scoring key from the object as a string
+        Value::Number(number) => build_rendered_value(number.to_string(), theme.map(|t| t.syntax_number_style()).unwrap_or_default()),
+        Value::Bool(flag) => build_rendered_value(flag.to_string(), theme.map(|t| t.syntax_keyword_style()).unwrap_or_default()),
+        Value::Null => build_rendered_value("null".to_string(), theme.map(|t| t.text_muted_style()).unwrap_or_default()),
         Value::Object(map) => {
-            if let Some(key) = get_scored_keys(map).first() {
-                let value = map.get(key).unwrap();
-                if let Some(s) = value.as_str() {
-                    s.to_string()
+            if depth < MAX_RENDER_VALUE_DEPTH {
+                if let Some(best_key) = get_scored_keys(map).first()
+                    && let Some(nested_value) = map.get(best_key)
+                {
+                    return render_value_impl(best_key, nested_value, theme, depth + 1);
+                }
+            }
+            build_rendered_value(value.to_string(), theme.map(|t| t.syntax_type_style()).unwrap_or_default())
+        }
+        Value::Array(array) => {
+            if array.is_empty() {
+                build_rendered_value("[]".to_string(), theme.map(|t| t.syntax_type_style()).unwrap_or_default())
+            } else if depth < MAX_RENDER_VALUE_DEPTH {
+                // Attempt to render the first scalar element for readability; fallback to a full array otherwise.
+                let mut rendered_element = None;
+                for entry in array {
+                    match entry {
+                        Value::Object(_) | Value::Array(_) => continue,
+                        _ => {
+                            rendered_element = Some(render_value_impl("", entry, theme, depth + 1));
+                            break;
+                        }
+                    }
+                }
+                if let Some(rendered) = rendered_element {
+                    rendered
                 } else {
-                    value.to_string()
+                    build_rendered_value(value.to_string(), theme.map(|t| t.syntax_type_style()).unwrap_or_default())
                 }
             } else {
-                value.to_string()
+                build_rendered_value(value.to_string(), theme.map(|t| t.syntax_type_style()).unwrap_or_default())
             }
         }
-        _ => value.to_string(),
+    }
+}
+
+fn build_rendered_value(plain_text: String, style: Style) -> RenderedValue {
+    let span = Span::styled(plain_text.clone(), style);
+    RenderedValue {
+        plain_text,
+        spans: vec![span],
     }
 }
 

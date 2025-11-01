@@ -1,42 +1,96 @@
-//! Cyberpunk-inspired theme definitions for the TUI layer.
-//!
-//! This module provides a neon-forward, high-contrast palette tuned for dark
-//! terminals. Colors are mapped into the semantic [`ThemeRoles`] structure so
-//! components can render consistently without hard-coding styling details.
+//! Cyberpunk-inspired theme definitions aligned with the canonical JetBrains
+//! Cyberpunk theme palette. The colors declared here are mapped into
+//! [`ThemeRoles`] so UI components can rely on semantic roles instead of
+//! hard-coded values.
 
 use ratatui::style::Color;
 
-use super::roles::{Theme, ThemeRoles};
+use super::{
+    roles::{Theme, ThemeRoles},
+    theme_helpers::{darken_rgb, lighten_rgb},
+};
 
-/// Primary surfaces for the cyberpunk palette.
-const BACKGROUND_BASE: Color = Color::Rgb(0x0D, 0x02, 0x21); // #0d0221
-const BACKGROUND_PANEL: Color = Color::Rgb(0x16, 0x06, 0x3B); // #16063b
-const BACKGROUND_MODAL_OVERLAY: Color = Color::Rgb(0x09, 0x01, 0x1B); // #09011b
-const SURFACE_MUTED: Color = Color::Rgb(0x24, 0x00, 0x46); // #240046
-const BORDER_DEFAULT: Color = Color::Rgb(0x41, 0x33, 0x7A); // #41337a
+// Surface colors sourced from the original theme.
+const GREY4: Color = Color::Rgb(0x21, 0x21, 0x21); // #212121
+const GREY5: Color = Color::Rgb(0x27, 0x27, 0x27); // #272727
+const GREY6: Color = Color::Rgb(0x2E, 0x2E, 0x2E); // #2E2E2E
+const GREY8: Color = Color::Rgb(0x3B, 0x3B, 0x3B); // #3B3B3B
+const GREY9: Color = Color::Rgb(0x42, 0x42, 0x42); // #424242
+const GREY10: Color = Color::Rgb(0x4A, 0x4A, 0x4A); // #4A4A4A
 
-/// Typography colors.
-const TEXT_PRIMARY: Color = Color::Rgb(0xF8, 0xEE, 0xFF); // #f8eeff
-const TEXT_SECONDARY: Color = Color::Rgb(0x9A, 0x86, 0xFD); // #9a86fd
-const TEXT_MUTED: Color = Color::Rgb(0x6A, 0x64, 0xA4); // #6a64a4
+// Typography colors.
+const TEXT_PRIMARY: Color = Color::Rgb(0xDB, 0xDB, 0xDB); // #DBDBDB
+const TEXT_SECONDARY: Color = Color::Rgb(0xCA, 0xCA, 0xCA); // #CACACA
+const TEXT_MUTED: Color = Color::Rgb(0x77, 0x77, 0x77); // #777777
+const TEXT_SELECTED: Color = Color::Rgb(0xED, 0xED, 0xED); // #EDEDED
 
-/// Accent palette.
-const ACCENT_PRIMARY: Color = Color::Rgb(0x00, 0xF6, 0xFF); // #00f6ff
-const ACCENT_SECONDARY: Color = Color::Rgb(0xFF, 0x4E, 0xCD); // #ff4ecd
-const ACCENT_SUBTLE: Color = Color::Rgb(0x7C, 0xFF, 0xCB); // #7cffcb
+// Accent palette.
+const ACCENT_PRIMARY: Color = Color::Rgb(0x00, 0xF0, 0xFF); // #00F0FF
+const ACCENT_SECONDARY: Color = Color::Rgb(0x36, 0x8A, 0xEC); // #368AEC
+const ACCENT_SUBTLE: Color = Color::Rgb(0xA1, 0x86, 0xE1); // #A186E1
+const ACCENT_PINK: Color = Color::Rgb(0xFF, 0xAE, 0xF4); // #FFAEF4
 
-/// Status colors suitable for bright neon themes.
+// Status colors from the canonical palette.
 const STATUS_INFO: Color = ACCENT_PRIMARY;
-const STATUS_SUCCESS: Color = Color::Rgb(0x72, 0xF1, 0xB8); // #72f1b8
-const STATUS_WARNING: Color = Color::Rgb(0xFF, 0xD1, 0x66); // #ffd166
-const STATUS_ERROR: Color = Color::Rgb(0xFF, 0x29, 0x65); // #ff2965
+const STATUS_SUCCESS: Color = Color::Rgb(0x51, 0xF6, 0x6F); // #51F66F
+const STATUS_WARNING: Color = Color::Rgb(0xFF, 0xC0, 0x7A); // #FFC07A
+const STATUS_ERROR: Color = Color::Rgb(0xF3, 0x50, 0x5C); // #F3505C
 
-/// Selection and focus styling.
-const SELECTION_BACKGROUND: Color = Color::Rgb(0x2A, 0x1A, 0x5E); // #2a1a5e
-const SELECTION_FOREGROUND: Color = TEXT_PRIMARY;
-const FOCUS_BORDER: Color = ACCENT_SECONDARY;
-const SCROLLBAR_TRACK: Color = Color::Rgb(0x1C, 0x10, 0x3F); // #1c103f
+// Selection and focus styling.
+const SELECTION_BACKGROUND: Color = GREY9;
+const SELECTION_INACTIVE_BACKGROUND: Color = GREY8;
+const SCROLLBAR_TRACK: Color = GREY9;
 const SCROLLBAR_THUMB: Color = ACCENT_SECONDARY;
+
+fn build_cyberpunk_roles() -> ThemeRoles {
+    ThemeRoles {
+        background: GREY6,
+        surface: GREY5,
+        surface_muted: GREY8,
+        border: GREY4,
+        divider: GREY9,
+        text: TEXT_PRIMARY,
+        text_secondary: TEXT_SECONDARY,
+        text_muted: TEXT_MUTED,
+        accent_primary: ACCENT_PRIMARY,
+        accent_secondary: ACCENT_SECONDARY,
+        accent_subtle: ACCENT_SUBTLE,
+        info: STATUS_INFO,
+        success: STATUS_SUCCESS,
+        warning: STATUS_WARNING,
+        error: STATUS_ERROR,
+        selection_bg: SELECTION_BACKGROUND,
+        selection_fg: TEXT_SELECTED,
+        focus: ACCENT_SECONDARY,
+        search_highlight: STATUS_WARNING,
+        syntax_keyword: ACCENT_PINK,
+        syntax_function: ACCENT_PRIMARY,
+        syntax_string: STATUS_SUCCESS,
+        syntax_number: STATUS_WARNING,
+        syntax_type: ACCENT_SUBTLE,
+        modal_bg: GREY4,
+        scrollbar_track: SCROLLBAR_TRACK,
+        scrollbar_thumb: SCROLLBAR_THUMB,
+        table_row_even: darken_rgb(GREY5, 0.55),
+        table_row_odd: darken_rgb(GREY4, 0.55),
+    }
+}
+
+fn build_cyberpunk_high_contrast_roles() -> ThemeRoles {
+    let mut roles = build_cyberpunk_roles();
+    roles.surface_muted = lighten_rgb(roles.surface_muted, 0.12);
+    roles.border = lighten_rgb(roles.border, 0.25);
+    roles.divider = lighten_rgb(roles.divider, 0.15);
+    roles.text = TEXT_SELECTED;
+    roles.text_secondary = TEXT_SELECTED;
+    roles.text_muted = TEXT_SECONDARY;
+    roles.selection_bg = lighten_rgb(SELECTION_INACTIVE_BACKGROUND, 0.10);
+    roles.focus = ACCENT_PRIMARY;
+    roles.scrollbar_thumb = lighten_rgb(roles.scrollbar_thumb, 0.20);
+    roles.table_row_even = darken_rgb(GREY5, 0.45);
+    roles.table_row_odd = darken_rgb(GREY4, 0.45);
+    roles
+}
 
 /// Cyberpunk theme tuned for dark backgrounds and neon accents.
 #[derive(Debug, Clone)]
@@ -45,38 +99,10 @@ pub struct CyberpunkTheme {
 }
 
 impl CyberpunkTheme {
-    /// Builds the standard cyberpunk theme.
+    /// Construct the standard cyberpunk theme using canonical palette values.
     pub fn new() -> Self {
         Self {
-            roles: ThemeRoles {
-                background: BACKGROUND_BASE,
-                surface: BACKGROUND_PANEL,
-                surface_muted: SURFACE_MUTED,
-                border: BORDER_DEFAULT,
-                divider: BORDER_DEFAULT,
-                text: TEXT_PRIMARY,
-                text_secondary: TEXT_SECONDARY,
-                text_muted: TEXT_MUTED,
-                accent_primary: ACCENT_PRIMARY,
-                accent_secondary: ACCENT_SECONDARY,
-                accent_subtle: ACCENT_SUBTLE,
-                info: STATUS_INFO,
-                success: STATUS_SUCCESS,
-                warning: STATUS_WARNING,
-                error: STATUS_ERROR,
-                selection_bg: SELECTION_BACKGROUND,
-                selection_fg: SELECTION_FOREGROUND,
-                focus: FOCUS_BORDER,
-                search_highlight: STATUS_WARNING,
-                syntax_keyword: ACCENT_SECONDARY,
-                syntax_function: ACCENT_PRIMARY,
-                syntax_string: STATUS_SUCCESS,
-                syntax_number: STATUS_WARNING,
-                syntax_type: ACCENT_SUBTLE,
-                modal_bg: BACKGROUND_MODAL_OVERLAY,
-                scrollbar_track: SCROLLBAR_TRACK,
-                scrollbar_thumb: SCROLLBAR_THUMB,
-            },
+            roles: build_cyberpunk_roles(),
         }
     }
 }
@@ -87,45 +113,17 @@ impl Theme for CyberpunkTheme {
     }
 }
 
-/// High-contrast variant with sharper borders and amplified text contrast.
+/// High-contrast variant derived from the canonical cyberpunk palette.
 #[derive(Debug, Clone)]
 pub struct CyberpunkThemeHighContrast {
     roles: ThemeRoles,
 }
 
 impl CyberpunkThemeHighContrast {
-    /// Builds the high-contrast cyberpunk theme.
+    /// Construct the high-contrast cyberpunk theme by brightening text and borders.
     pub fn new() -> Self {
         Self {
-            roles: ThemeRoles {
-                background: BACKGROUND_BASE,
-                surface: BACKGROUND_PANEL,
-                surface_muted: SURFACE_MUTED,
-                border: ACCENT_SECONDARY,
-                divider: ACCENT_SECONDARY,
-                text: TEXT_PRIMARY,
-                text_secondary: TEXT_PRIMARY,
-                text_muted: TEXT_SECONDARY,
-                accent_primary: ACCENT_PRIMARY,
-                accent_secondary: ACCENT_SECONDARY,
-                accent_subtle: ACCENT_SUBTLE,
-                info: STATUS_INFO,
-                success: STATUS_SUCCESS,
-                warning: STATUS_WARNING,
-                error: STATUS_ERROR,
-                selection_bg: Color::Rgb(0x3C, 0x1F, 0x7B), // brighter selection #3c1f7b
-                selection_fg: SELECTION_FOREGROUND,
-                focus: ACCENT_PRIMARY,
-                search_highlight: STATUS_WARNING,
-                syntax_keyword: ACCENT_SECONDARY,
-                syntax_function: ACCENT_PRIMARY,
-                syntax_string: STATUS_SUCCESS,
-                syntax_number: STATUS_WARNING,
-                syntax_type: ACCENT_SUBTLE,
-                modal_bg: BACKGROUND_MODAL_OVERLAY,
-                scrollbar_track: SCROLLBAR_TRACK,
-                scrollbar_thumb: ACCENT_PRIMARY,
-            },
+            roles: build_cyberpunk_high_contrast_roles(),
         }
     }
 }

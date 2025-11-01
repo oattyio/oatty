@@ -18,8 +18,8 @@
 //! exact command names or syntax.
 
 use crate::app::App;
+use crate::ui::components::HelpComponent;
 use crate::ui::components::browser::state::CursorDirection;
-use crate::ui::components::help::content::build_command_help_text;
 use crate::ui::theme::theme_helpers::highlight_segments;
 use crate::ui::{components::component::Component, theme::theme_helpers as th};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -55,6 +55,7 @@ pub struct BrowserComponent {
     search_area: Rect,
     list_area: Rect,
     mouse_over_idx: Option<usize>,
+    help_component: HelpComponent,
 }
 
 impl Component for BrowserComponent {
@@ -88,28 +89,41 @@ impl Component for BrowserComponent {
     }
 
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
+        let effects = self.help_component.handle_mouse_events(app, mouse);
         let pos = Position {
             x: mouse.column,
             y: mouse.row,
         };
-        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
-            if self.search_area.contains(pos) {
-                app.focus.focus(&app.browser.f_search);
-            }
-            if self.list_area.contains(pos) {
-                app.focus.focus(&app.browser.f_commands);
-                if let Some(idx) = self.hit_test_list(app, &pos) {
-                    app.browser.list_state.select(Some(idx));
-                    app.browser.commit_selection();
+
+        match mouse.kind {
+            MouseEventKind::Up(MouseButton::Left) => {
+                if self.search_area.contains(pos) {
+                    app.focus.focus(&app.browser.f_search);
+                }
+                if self.list_area.contains(pos) {
+                    app.focus.focus(&app.browser.f_commands);
+                    if let Some(idx) = self.hit_test_list(app, &pos) {
+                        app.browser.list_state.select(Some(idx));
+                        app.browser.commit_selection();
+                    }
                 }
             }
+            MouseEventKind::Moved => self.mouse_over_idx = self.hit_test_list(app, &pos),
+
+            MouseEventKind::ScrollDown => {
+                if self.list_area.contains(pos) {
+                    app.browser.list_state.scroll_down_by(1);
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                if self.list_area.contains(pos) {
+                    app.browser.list_state.scroll_up_by(1);
+                }
+            }
+            _ => {}
         }
 
-        if let MouseEventKind::Moved = mouse.kind {
-            self.mouse_over_idx = self.hit_test_list(app, &pos)
-        }
-
-        Vec::new()
+        effects
     }
 
     /// Renders the browser modal with all its panels and components.
@@ -240,40 +254,6 @@ impl BrowserComponent {
                 }
             }
             _ => {}
-        }
-    }
-
-    /// Creates the help content (title and text) based on the selected command.
-    fn create_help_content<'a>(&self, app: &'a App) -> (String, ratatui::text::Text<'a>) {
-        if let Some(selected_command_spec) = app.browser.selected_command().cloned() {
-            let command_display_name = self.format_command_display_name(&selected_command_spec);
-            let help_title = format!("Help — {}", command_display_name);
-            let help_text = build_command_help_text(&*app.ctx.theme, selected_command_spec);
-            (help_title, help_text)
-        } else {
-            let default_title = "Help".to_string();
-            let default_text = ratatui::text::Text::from(Line::from(Span::styled(
-                "Select a command to view detailed help.",
-                app.ctx.theme.text_secondary_style().add_modifier(Modifier::BOLD),
-            )));
-            (default_title, default_text)
-        }
-    }
-
-    /// Formats the command name for display in the help panel.
-    fn format_command_display_name(&self, command_spec: &heroku_types::CommandSpec) -> String {
-        if command_spec.name.is_empty() {
-            return command_spec.group.clone();
-        }
-
-        let mut name_parts = command_spec.name.splitn(2, ':');
-        let group_name = name_parts.next().unwrap_or("");
-        let remaining_name = name_parts.next().unwrap_or("");
-
-        if remaining_name.is_empty() {
-            group_name.to_string()
-        } else {
-            format!("{} {}", group_name, remaining_name)
         }
     }
 
@@ -433,7 +413,6 @@ impl BrowserComponent {
                     }
 
                     list_item
-
                 })
                 .collect()
         };
@@ -462,67 +441,8 @@ impl BrowserComponent {
     /// * `frame` - The Ratatui frame to render to
     /// * `app` - The application state containing selected command and theme information
     /// * `area` - The area to render the help panel in
-    fn render_inline_help_panel(&self, frame: &mut Frame, app: &mut App, area: Rect) {
-        let (help_title, help_text) = self.create_help_content(app);
-        let help_block = th::block(&*app.ctx.theme, Some(&help_title), app.browser.f_help.get());
-        let inner_area = help_block.inner(area);
-        frame.render_widget(help_block, area);
-        let help_paragraph = Paragraph::new(help_text)
-            .style(app.ctx.theme.text_primary_style())
-            .wrap(Wrap { trim: false });
-        frame.render_widget(help_paragraph, inner_area);
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use heroku_types::{CommandSpec, ServiceId, command::HttpCommandSpec};
-    #[test]
-    fn test_format_command_display_name_with_colon() {
-        let component = BrowserComponent::default();
-        let command_spec = CommandSpec::new_http(
-            "apps".to_string(),
-            "apps:create".to_string(),
-            "Create a new app".to_string(),
-            Vec::new(),
-            Vec::new(),
-            HttpCommandSpec::new("POST", "/apps", ServiceId::CoreApi, Vec::new(), None),
-        );
-
-        let result = component.format_command_display_name(&command_spec);
-        assert_eq!(result, "apps create");
-    }
-
-    #[test]
-    fn test_format_command_display_name_without_colon() {
-        let component = BrowserComponent::default();
-        let command_spec = CommandSpec::new_http(
-            "apps".to_string(),
-            "apps".to_string(),
-            "List apps".to_string(),
-            Vec::new(),
-            Vec::new(),
-            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new(), None),
-        );
-
-        let result = component.format_command_display_name(&command_spec);
-        assert_eq!(result, "apps");
-    }
-
-    #[test]
-    fn test_format_command_display_name_empty_name() {
-        let component = BrowserComponent::default();
-        let command_spec = CommandSpec::new_http(
-            "apps".to_string(),
-            "".to_string(),
-            "Apps command".to_string(),
-            Vec::new(),
-            Vec::new(),
-            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new(), None),
-        );
-
-        let result = component.format_command_display_name(&command_spec);
-        assert_eq!(result, "apps");
+    fn render_inline_help_panel(&mut self, frame: &mut Frame, app: &mut App, area: Rect) {
+        self.help_component.set_focused(app.browser.f_help.get());
+        self.help_component.render(frame, area, app);
     }
 }

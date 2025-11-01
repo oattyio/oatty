@@ -42,6 +42,10 @@ impl HelpState {
         self.clamp_scroll();
     }
 
+    pub fn viewport_height(&self) -> u16 {
+        self.viewport_height
+    }
+
     /// Updates the measured content height (in rows) for the current help text.
     pub fn update_content_height(&mut self, height: u16) {
         self.content_height = height;

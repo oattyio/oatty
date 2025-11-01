@@ -41,8 +41,17 @@ enum FocusRequest {
 
 #[derive(Debug, Default)]
 pub struct RunViewComponent {
-    steps_view: ResultsTableView<'static>,
-    outputs_view: ResultsTableView<'static>,
+    steps_view: ResultsTableView,
+    outputs_view: ResultsTableView,
+    detail_view: ResultsTableView,
+}
+
+#[derive(Debug, Default)]
+struct RunViewLayoutState {
+    footer_area: Rect,
+    cancel_button_area: Rect,
+    pause_button_area: Rect,
+    mouse_targets: Vec<(Rect, RunViewMouseTarget)>,
 }
 
 impl Component for RunViewComponent {
@@ -75,11 +84,11 @@ impl Component for RunViewComponent {
 
             let focus_snapshot = run_state.focus_snapshot();
             if focus_snapshot.steps_table_focused {
-                focus_request = focus_request.or(Self::handle_steps_table_keys(run_state, key.code));
+                focus_request = focus_request.or(self.handle_steps_table_keys(run_state, key.code));
             } else if focus_snapshot.outputs_table_focused {
-                focus_request = focus_request.or(Self::handle_outputs_table_keys(run_state, key.code));
+                focus_request = focus_request.or(self.handle_outputs_table_keys(run_state, key.code));
             } else if focus_snapshot.detail_pane_focused {
-                focus_request = focus_request.or(Self::handle_detail_keys(run_state, key.code));
+                focus_request = focus_request.or(self.handle_detail_keys(run_state, key.code));
             } else if focus_snapshot.cancel_button_focused {
                 let (request, control_effects) = Self::handle_cancel_button_keys(run_state, &run_id, key.code);
                 focus_request = focus_request.or(request);
@@ -139,7 +148,12 @@ impl Component for RunViewComponent {
             return;
         };
 
-        let layout_regions = Layout::vertical([Constraint::Length(3), Constraint::Min(6), Constraint::Length(3)]).split(inner);
+        let layout_regions = Layout::vertical([
+            Constraint::Length(3), // header
+            Constraint::Min(6),    // body
+            Constraint::Length(3), // footer
+        ])
+        .split(inner);
 
         let header_area = layout_regions[0];
         let body_area = layout_regions[1];
@@ -149,12 +163,7 @@ impl Component for RunViewComponent {
 
         let mut layout_state = Self::prepare_layout_state(inner, header_area);
         let mut mouse_targets: Vec<(Rect, RunViewMouseTarget)> = Vec::new();
-
-        if run_state.is_wide_mode() {
-            self.render_wide_body(frame, body_area, theme, run_state, &mut layout_state, &mut mouse_targets);
-        } else {
-            self.render_compact_body(frame, body_area, theme, run_state, &mut layout_state, &mut mouse_targets);
-        }
+        self.render_body(frame, body_area, theme, run_state, &mut layout_state, &mut mouse_targets);
 
         let (cancel_area, pause_area) = render_footer(frame, footer_area, theme, run_state, &mut mouse_targets);
         layout_state.set_footer_area(footer_area);
@@ -200,6 +209,33 @@ impl Component for RunViewComponent {
                 (" Tab", " Cycle focus "),
             ],
         )
+    }
+
+    fn get_preferred_layout(&self, app: &App, area: Rect) -> Vec<Rect> {
+        let (detail_visible, is_wide_mode) = app
+            .workflows
+            .run_view_state()
+            .map(|state| (state.is_detail_visible(), state.is_wide_mode()))
+            .unwrap_or_default();
+
+        let column_spec: Vec<Constraint> = if detail_visible {
+            if is_wide_mode {
+                // wide mode - detail visible
+                vec![Constraint::Percentage(45), Constraint::Percentage(35), Constraint::Percentage(20)]
+            } else {
+                // compact mode - detail visible
+                vec![Constraint::Percentage(55), Constraint::Percentage(45), Constraint::Length(6)]
+            }
+        } else {
+            if is_wide_mode {
+                // wide mode - detail hidden
+                vec![Constraint::Percentage(55), Constraint::Percentage(45)]
+            } else {
+                // compact mode - detail hidden
+                vec![Constraint::Percentage(60), Constraint::Percentage(40)]
+            }
+        };
+        Layout::horizontal(column_spec).split(area).to_vec()
     }
 
     fn on_route_exit(&mut self, app: &mut App) -> Vec<Effect> {
@@ -254,61 +290,53 @@ impl RunViewComponent {
         }
     }
 
-    fn handle_steps_table_keys(run_state: &mut RunViewState, code: KeyCode) -> Option<FocusRequest> {
+    fn handle_steps_table_keys(&mut self, run_state: &mut RunViewState, code: KeyCode) -> Option<FocusRequest> {
         let mut focus_request = None;
         match code {
-            KeyCode::Up => run_state.steps_table_mut().reduce_scroll(-1),
-            KeyCode::Down => run_state.steps_table_mut().reduce_scroll(1),
-            KeyCode::PageUp => run_state.steps_table_mut().reduce_scroll(-5),
-            KeyCode::PageDown => run_state.steps_table_mut().reduce_scroll(5),
-            KeyCode::Home => run_state.steps_table_mut().reduce_home(),
-            KeyCode::End => run_state.steps_table_mut().reduce_end(),
+            KeyCode::Up => self.steps_view.table_state.scroll_up_by(1),
+            KeyCode::Down => self.steps_view.table_state.scroll_down_by(1),
+            KeyCode::PageUp => self.steps_view.table_state.scroll_up_by(5),
+            KeyCode::PageDown => self.steps_view.table_state.scroll_down_by(5),
+            KeyCode::Home => self.steps_view.table_state.scroll_up_by(u16::MAX),
+            KeyCode::End => self.steps_view.table_state.scroll_down_by(u16::MAX),
             KeyCode::Enter => {
                 let change = run_state.toggle_detail_for(RunDetailSource::Steps);
                 focus_request = Self::handle_detail_toggle_result(RunDetailSource::Steps, change);
             }
             _ => {}
         }
-        run_state.clamp_detail_entries();
         focus_request
     }
 
-    fn handle_outputs_table_keys(run_state: &mut RunViewState, code: KeyCode) -> Option<FocusRequest> {
+    fn handle_outputs_table_keys(&mut self, run_state: &mut RunViewState, code: KeyCode) -> Option<FocusRequest> {
         let mut focus_request = None;
         match code {
-            KeyCode::Up => run_state.outputs_table_mut().reduce_scroll(-1),
-            KeyCode::Down => run_state.outputs_table_mut().reduce_scroll(1),
-            KeyCode::PageUp => run_state.outputs_table_mut().reduce_scroll(-5),
-            KeyCode::PageDown => run_state.outputs_table_mut().reduce_scroll(5),
-            KeyCode::Home => run_state.outputs_table_mut().reduce_home(),
-            KeyCode::End => run_state.outputs_table_mut().reduce_end(),
+            KeyCode::Up => self.outputs_view.table_state.scroll_up_by(1),
+            KeyCode::Down => self.outputs_view.table_state.scroll_down_by(1),
+            KeyCode::PageUp => self.outputs_view.table_state.scroll_up_by(5),
+            KeyCode::PageDown => self.outputs_view.table_state.scroll_down_by(5),
+            KeyCode::Home => self.outputs_view.table_state.scroll_up_by(u16::MAX),
+            KeyCode::End => self.outputs_view.table_state.scroll_down_by(u16::MAX),
             KeyCode::Enter => {
                 let change = run_state.toggle_detail_for(RunDetailSource::Outputs);
                 focus_request = Self::handle_detail_toggle_result(RunDetailSource::Outputs, change);
             }
             _ => {}
         }
-        run_state.clamp_detail_entries();
         focus_request
     }
 
-    fn handle_detail_keys(run_state: &mut RunViewState, code: KeyCode) -> Option<FocusRequest> {
+    fn handle_detail_keys(&mut self, run_state: &mut RunViewState, code: KeyCode) -> Option<FocusRequest> {
         match code {
-            KeyCode::Up => run_state.adjust_detail_selection(-1),
-            KeyCode::Down => run_state.adjust_detail_selection(1),
-            KeyCode::PageUp => run_state.adjust_detail_selection(-5),
-            KeyCode::PageDown => run_state.adjust_detail_selection(5),
-            KeyCode::Home => run_state.set_detail_selection(Some(0)),
-            KeyCode::End => {
-                let entry_count = run_state.current_detail_entries().map(|entries| entries.len()).unwrap_or(0);
-                if entry_count > 0 {
-                    run_state.set_detail_selection(Some(entry_count.saturating_sub(1)));
-                }
-            }
+            KeyCode::Up => self.detail_view.table_state.scroll_up_by(1),
+            KeyCode::Down => self.detail_view.table_state.scroll_down_by(1),
+            KeyCode::PageUp => self.detail_view.table_state.scroll_up_by(5),
+            KeyCode::PageDown => self.detail_view.table_state.scroll_down_by(5),
+            KeyCode::Home => self.detail_view.table_state.scroll_up_by(u16::MAX),
+            KeyCode::End => self.detail_view.table_state.scroll_down_by(u16::MAX),
             KeyCode::Esc => return Self::close_detail(run_state),
             _ => {}
         }
-        run_state.clamp_detail_entries();
         None
     }
 
@@ -420,7 +448,7 @@ impl RunViewComponent {
         layout_state
     }
 
-    fn render_wide_body(
+    fn render_body(
         &mut self,
         frame: &mut Frame,
         area: Rect,
@@ -451,7 +479,7 @@ impl RunViewComponent {
 
         if detail_visible {
             if let Some(area) = columns.get(2).copied() {
-                render_detail_pane(frame, area, theme, run_state);
+                self.render_detail_pane(frame, area, theme, run_state);
                 layout_state.set_detail_area(Some(area));
                 mouse_targets.push((area, RunViewMouseTarget::DetailPane));
             }
@@ -491,13 +519,24 @@ impl RunViewComponent {
 
         if detail_visible {
             if let Some(detail_area) = rows.get(2).copied() {
-                render_detail_pane(frame, detail_area, theme, run_state);
+                self.render_detail_pane(frame, detail_area, theme, run_state);
                 layout_state.set_detail_area(Some(detail_area));
                 mouse_targets.push((detail_area, RunViewMouseTarget::DetailPane));
             }
         } else {
             layout_state.set_detail_area(None);
         }
+    }
+
+    fn render_detail_pane(&mut self, frame: &mut Frame, area: Rect, theme: &dyn Theme, run_state: &RunViewState) {
+        let inner_block = th::block(theme, Some("Details"), run_state.detail_focus_flag().get()).borders(Borders::NONE);
+        let inner_area = inner_block.inner(area);
+        frame.render_widget(inner_block, area);
+        let idx = self.detail_view.table_state.selected().unwrap_or(0);
+        let entries = run_state.current_detail_entries(idx).unwrap_or_default();
+        let payload = run_state.current_detail_payload(idx).cloned().unwrap_or(Value::Null);
+
+        self.detail_view.render_kv_or_text(frame, inner_area, &entries, &payload, theme);
     }
 }
 
@@ -546,57 +585,24 @@ fn render_header(frame: &mut Frame, area: Rect, theme: &dyn Theme, run_state: &R
     frame.render_widget(paragraph, area);
 }
 
-fn render_steps_table(
-    frame: &mut Frame,
-    area: Rect,
-    theme: &dyn Theme,
-    run_state: &mut RunViewState,
-    view: &mut ResultsTableView<'static>,
-) {
+fn render_steps_table(frame: &mut Frame, area: Rect, theme: &dyn Theme, run_state: &mut RunViewState, view: &mut ResultsTableView) {
     let steps_focused = run_state.steps_focus_flag().get();
     let inner_block = th::block(theme, Some("Steps"), steps_focused).borders(Borders::NONE);
     let inner_area = inner_block.inner(area);
     frame.render_widget(inner_block, area);
 
-    let visible_rows = inner_area.height.saturating_sub(1).max(1) as usize;
-    {
-        let table_state = run_state.steps_table_mut();
-        table_state.set_visible_rows(visible_rows);
-        view.render_results(frame, inner_area, table_state, steps_focused, theme);
-    }
+    let table_state = run_state.steps_table_mut();
+    view.render_results(frame, inner_area, table_state, steps_focused, theme);
 }
 
-fn render_outputs_table(
-    frame: &mut Frame,
-    area: Rect,
-    theme: &dyn Theme,
-    run_state: &mut RunViewState,
-    view: &mut ResultsTableView<'static>,
-) {
+fn render_outputs_table(frame: &mut Frame, area: Rect, theme: &dyn Theme, run_state: &mut RunViewState, view: &mut ResultsTableView) {
     let outputs_focused = run_state.outputs_focus_flag().get();
     let inner_block = th::block(theme, Some("Outputs"), outputs_focused).borders(Borders::NONE);
     let inner_area = inner_block.inner(area);
     frame.render_widget(inner_block, area);
 
-    let visible_rows = inner_area.height.saturating_sub(1).max(1) as usize;
-    {
-        let table_state = run_state.outputs_table_mut();
-        table_state.set_visible_rows(visible_rows);
-        view.render_results(frame, inner_area, table_state, outputs_focused, theme);
-    }
-}
-
-fn render_detail_pane(frame: &mut Frame, area: Rect, theme: &dyn Theme, run_state: &RunViewState) {
-    let inner_block = th::block(theme, Some("Details"), run_state.detail_focus_flag().get()).borders(Borders::NONE);
-    let inner_area = inner_block.inner(area);
-    frame.render_widget(inner_block, area);
-
-    let entries = run_state.current_detail_entries().unwrap_or_default();
-    let selection = run_state.detail().and_then(|state| state.selection());
-    let offset = run_state.detail().map(|state| state.offset()).unwrap_or(0);
-    let payload = run_state.current_detail_payload().cloned().unwrap_or(Value::Null);
-
-    ResultsTableView::render_kv_or_text(frame, inner_area, &entries, selection, offset, &payload, theme);
+    let table_state = run_state.outputs_table_mut();
+    view.render_results(frame, inner_area, table_state, outputs_focused, theme);
 }
 
 fn render_footer(

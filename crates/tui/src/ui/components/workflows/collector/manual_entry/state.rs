@@ -1,6 +1,7 @@
 use std::cmp::min;
 
 use indexmap::IndexSet;
+use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
 use serde_json::Value as JsonValue;
@@ -17,13 +18,6 @@ pub enum ManualEntryKind {
     Number,
     Boolean,
     Enum,
-}
-
-/// Identifies which region within the manual entry view currently holds focus.
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ManualEntryFocus {
-    #[default]
-    Value,
 }
 
 /// Represents a single selectable literal for enum-style manual entry.
@@ -82,15 +76,6 @@ impl ManualEntryEnumState {
         let next = current.saturating_sub(1);
         self.select(next);
     }
-}
-
-/// Tracks rendered rectangles for pointer hit-testing.
-#[derive(Debug, Default, Clone)]
-pub struct ManualEntryLayoutState {
-    pub value_area: Option<Rect>,
-    pub primary_button_area: Option<Rect>,
-    pub secondary_button_area: Option<Rect>,
-    pub enum_list_area: Option<Rect>,
 }
 
 /// Captures the mutable value backing the manual entry view.
@@ -155,8 +140,9 @@ pub struct ManualEntryState {
     pub validation: Option<WorkflowInputValidation>,
     pub kind: ManualEntryKind,
     pub value: ManualEntryValueState,
-    pub focus: ManualEntryFocus,
-    pub layout: ManualEntryLayoutState,
+    /// Container and widget focus.
+    pub container_focus: FocusFlag,
+    pub f_input: FocusFlag,
 }
 
 impl Default for ManualEntryState {
@@ -168,9 +154,25 @@ impl Default for ManualEntryState {
             validation: None,
             kind: ManualEntryKind::Text,
             value: ManualEntryValueState::Text(TextInputState::default()),
-            focus: ManualEntryFocus::Value,
-            layout: ManualEntryLayoutState::default(),
+            container_focus: FocusFlag::default(),
+            f_input: FocusFlag::default(),
         }
+    }
+}
+
+impl HasFocus for ManualEntryState {
+    fn build(&self, builder: &mut FocusBuilder) {
+        let start = builder.start(self);
+        builder.leaf_widget(&self.f_input);
+        builder.end(start);
+    }
+
+    fn focus(&self) -> FocusFlag {
+        self.container_focus.clone()
+    }
+
+    fn area(&self) -> Rect {
+        Rect::default()
     }
 }
 
@@ -254,7 +256,7 @@ fn build_enum_state(options: &[JsonValue], existing: Option<&JsonValue>) -> Manu
             selected_index = idx;
         }
         rendered_options.push(ManualEntryEnumOption {
-            label: render_value("", option),
+            label: render_value("", option, None).into_plain_text(),
             value: option.clone(),
         });
     }
@@ -267,7 +269,7 @@ fn render_existing_scalar(existing: &JsonValue) -> Option<String> {
         JsonValue::Number(number) => Some(number.to_string()),
         JsonValue::Bool(flag) => Some(flag.to_string()),
         JsonValue::Null => None,
-        other => Some(render_value("", other)),
+        other => Some(render_value("", other, None).into_plain_text()),
     }
 }
 

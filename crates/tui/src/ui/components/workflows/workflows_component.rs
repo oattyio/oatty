@@ -5,9 +5,8 @@ use crate::ui::theme::theme_helpers::create_spans_with_match;
 use anyhow::{Result, anyhow};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use heroku_engine::WorkflowRunState;
-use heroku_types::Effect::SwitchTo;
 use heroku_types::workflow::RuntimeWorkflow;
-use heroku_types::{Effect, Msg, Route, validate_candidate_value};
+use heroku_types::{Effect, Route, validate_candidate_value};
 use heroku_util::{HistoryKey, value_contains_secret, workflow_input_uses_history};
 use rat_focus::HasFocus;
 use ratatui::layout::Position;
@@ -255,7 +254,9 @@ impl WorkflowsComponent {
         let idx = (position.y as usize).saturating_sub(self.list_area.y as usize) + offset;
         if app.workflows.list.workflow_by_index(idx).is_some() {
             Some(idx)
-        } else {None}
+        } else {
+            None
+        }
     }
 
     /// Open the interactive input view for the selected workflow.
@@ -273,7 +274,6 @@ impl WorkflowsComponent {
 }
 
 impl Component for WorkflowsComponent {
-
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         // Handle tab/backtab to switch focus between the search field and the list
         match key.code {
@@ -312,7 +312,7 @@ impl Component for WorkflowsComponent {
                     if let Err(error) = self.open_workflow_inputs(app) {
                         effects.push(Effect::Log(format!("Failed to open workflow inputs: {error}")));
                     } else {
-                        effects.push(SwitchTo(Route::WorkflowInputs));
+                        effects.push(Effect::SwitchTo(Route::WorkflowInputs));
                     }
                 }
             }
@@ -333,7 +333,9 @@ impl Component for WorkflowsComponent {
                 app.focus.focus(&app.workflows.f_search);
             }
 
-            if self.list_area.contains(position) && let Some(idx) = self.hit_test_list(app, position) {
+            if self.list_area.contains(position)
+                && let Some(idx) = self.hit_test_list(app, position)
+            {
                 app.focus.focus(&app.workflows.list.focus());
                 app.workflows.list.set_selected_workflow(idx);
                 return self.handle_key_events(app, KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
@@ -341,7 +343,7 @@ impl Component for WorkflowsComponent {
         }
 
         if let MouseEventKind::Moved = mouse.kind {
-           self.mouse_over_idx = self.hit_test_list(app, position);
+            self.mouse_over_idx = self.hit_test_list(app, position);
         }
 
         Vec::new()

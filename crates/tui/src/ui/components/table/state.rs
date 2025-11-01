@@ -14,6 +14,7 @@ use crate::ui::{
 use heroku_types::ExecOutcome;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
+use ratatui::prelude::{Line, Modifier, Span};
 use ratatui::{
     layout::Constraint,
     style::Style,
@@ -22,10 +23,7 @@ use ratatui::{
 use serde_json::Value;
 
 #[derive(Debug, Default)]
-pub struct TableState<'a> {
-    offset: usize,
-    selected: usize,
-    visible_rows: usize,
+pub struct ResultsTableState<'a> {
     result_json: Option<Value>,
     rows: Option<Vec<Row<'a>>>,
     columns: Option<Vec<ColumnWithSize>>,
@@ -35,23 +33,12 @@ pub struct TableState<'a> {
     pub pagination_state: PaginationState,
     pub container_focus: FocusFlag,
     pub grid_f: FocusFlag,
+    pub mouse_over_idx: Option<usize>,
 }
 
-// Default derived above
-
-impl<'a> TableState<'_> {
-    // Selectors
-    pub fn count_offset(&self) -> usize {
-        self.offset
-    }
-    pub fn selected_index(&self) -> usize {
-        self.selected
-    }
-    pub fn visible_rows(&self) -> usize {
-        self.visible_rows
-    }
-    pub fn set_visible_rows(&mut self, rows: usize) {
-        self.visible_rows = rows;
+impl<'a> ResultsTableState<'_> {
+    pub fn set_mouse_over_idx(&mut self, idx: Option<usize>) {
+        self.mouse_over_idx = idx;
     }
     pub fn selected_result_json(&self) -> Option<&Value> {
         self.result_json.as_ref()
@@ -65,9 +52,9 @@ impl<'a> TableState<'_> {
     pub fn headers(&self) -> Option<&Vec<Cell<'_>>> {
         self.headers.as_ref()
     }
-    pub fn selected_data(&self) -> Option<&Value> {
+    pub fn selected_data(&self, idx: usize) -> Option<&Value> {
         if let Some(json_array) = Self::array_from_json(self.result_json.as_ref()) {
-            return json_array.get(self.selected);
+            return json_array.get(idx);
         }
         None
     }
@@ -76,17 +63,12 @@ impl<'a> TableState<'_> {
         &self.kv_entries
     }
 
-    pub fn selected_kv_entry(&self) -> Option<&KeyValueEntry> {
+    pub fn selected_kv_entry(&self, idx: usize) -> Option<&KeyValueEntry> {
         if self.kv_entries.is_empty() {
             return None;
         }
-        let index = self.selected.min(self.kv_entries.len() - 1);
+        let index = idx.min(self.kv_entries.len() - 1);
         self.kv_entries.get(index)
-    }
-
-    pub fn normalize(&mut self) {
-        self.offset = 0;
-        self.selected = 0;
     }
 
     pub fn apply_result_json(&mut self, value: Option<Value>, theme: &dyn UiTheme) {
@@ -97,77 +79,6 @@ impl<'a> TableState<'_> {
         self.headers = self.create_headers(theme);
         self.column_constraints = self.create_constraints();
         self.kv_entries = self.create_kv_entries(self.result_json.as_ref());
-        self.offset = 0;
-        self.selected = 0;
-    }
-
-    pub fn reduce_scroll(&mut self, delta: isize) {
-        let len = self.current_len();
-        if len == 0 {
-            self.offset = 0;
-            self.selected = 0;
-            return;
-        }
-
-        let new_selected = if delta >= 0 {
-            self.selected.saturating_add(delta as usize).min(len.saturating_sub(1))
-        } else {
-            self.selected.saturating_sub((-delta) as usize)
-        };
-
-        let visible = self.visible_rows.max(1);
-        let mut new_offset = self.offset;
-        if new_selected < self.offset {
-            new_offset = new_selected;
-        } else if new_selected >= self.offset.saturating_add(visible) {
-            new_offset = new_selected.saturating_sub(visible - 1);
-        }
-
-        let max_offset = len.saturating_sub(visible);
-        self.offset = new_offset.min(max_offset);
-        self.selected = new_selected;
-    }
-
-    pub fn reduce_home(&mut self) {
-        self.offset = 0;
-        self.selected = 0;
-    }
-
-    pub fn reduce_end(&mut self) {
-        let len = self.current_len();
-        if len == 0 {
-            self.offset = 0;
-            self.selected = 0;
-            return;
-        }
-
-        self.selected = len.saturating_sub(1);
-        let visible = self.visible_rows.max(1);
-        if len > visible {
-            self.offset = len.saturating_sub(visible);
-        } else {
-            self.offset = 0;
-        }
-    }
-
-    /// Sets the selected row index explicitly, adjusting the scroll offset to keep the row visible.
-    pub fn set_selection(&mut self, index: usize) {
-        let len = self.current_len();
-        if len == 0 {
-            self.selected = 0;
-            self.offset = 0;
-            return;
-        }
-
-        let clamped = index.min(len.saturating_sub(1));
-        self.selected = clamped;
-
-        let visible = self.visible_rows.max(1);
-        if clamped < self.offset {
-            self.offset = clamped;
-        } else if clamped >= self.offset.saturating_add(visible) {
-            self.offset = clamped.saturating_sub(visible - 1);
-        }
     }
 
     fn create_rows(&self, maybe_value: Option<&[Value]>, theme: &dyn UiTheme) -> Option<Vec<Row<'a>>> {
@@ -180,19 +91,21 @@ impl<'a> TableState<'_> {
                 let mut cells: Vec<Cell> = Vec::with_capacity(columns.len());
                 for col in columns.iter() {
                     let key = &col.key;
-                    let val = item.get(key).unwrap_or(&Value::Null);
-                    let txt = render_value(key, val);
-                    let mut style = theme.text_primary_style();
-                    if is_status_like(key)
-                        && let Some(color) = status_color_for_value(&txt, theme)
-                    {
-                        style = Style::default().fg(color);
+                    let value = item.get(key).unwrap_or(&Value::Null);
+                    let rendered_value = render_value(key, value, Some(theme));
+                    let display_text = rendered_value.plain_text().to_owned();
+                    let mut spans = rendered_value.into_spans();
+                    if is_status_like(key) {
+                        if let Some(color) = status_color_for_value(&display_text, theme) {
+                            spans = vec![Span::styled(display_text.clone(), Style::default().fg(color))];
+                        }
                     }
-                    cells.push(Cell::from(txt).style(style));
+                    let cell = Cell::from(Line::from(spans)).style(theme.text_primary_style());
+                    cells.push(cell);
                 }
-                // Alternating row backgrounds using theme helper (no dim modifier).
+                // Alternating row backgrounds using a theme helper.
                 let row_style = table_row_style(theme, idx);
-                rows.push(Row::new(cells).style(row_style));
+                rows.push( Row::new(cells).style(row_style));
             }
             return Some(rows);
         }
@@ -297,7 +210,6 @@ impl<'a> TableState<'_> {
         if let Some(value) = maybe_value {
             let normalized_value = normalize_result_payload(value.clone());
             self.apply_result_json(Some(normalized_value), theme);
-            self.normalize();
         }
     }
 }
@@ -318,7 +230,7 @@ pub fn build_key_value_entries(value: &Value) -> Vec<KeyValueEntry> {
             .take(24)
             .map(|key| {
                 let raw_value = map.get(&key).cloned().unwrap_or(Value::Null);
-                let display_value = render_value(&key, &raw_value);
+                let display_value = render_value(&key, &raw_value, None).into_plain_text();
                 KeyValueEntry {
                     key: key.clone(),
                     display_key: normalize_header(&key),
@@ -332,7 +244,7 @@ pub fn build_key_value_entries(value: &Value) -> Vec<KeyValueEntry> {
     Vec::new()
 }
 
-impl HasFocus for TableState<'_> {
+impl HasFocus for ResultsTableState<'_> {
     fn build(&self, builder: &mut FocusBuilder) {
         let tag = builder.start(self);
         // Single focusable grid area; treat as a leaf.

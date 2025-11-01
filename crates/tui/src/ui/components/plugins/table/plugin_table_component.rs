@@ -379,8 +379,8 @@ impl PluginsTableComponent {
     }
 
     fn hit_test_table(&mut self, app: &mut App, table_area: Rect, mouse_position: Position) -> Vec<Effect> {
-        let offset_y = table_area.y as usize;
-        let idx = (mouse_position.y as usize).saturating_sub(offset_y);
+        let list_offset = app.plugins.table.table_state.offset();
+        let idx = (mouse_position.y.saturating_sub(table_area.y)) as usize + list_offset;
         if app.plugins.table.filtered_indices().get(idx).is_some() {
             app.plugins.table.set_selected_index(Some(idx));
         }

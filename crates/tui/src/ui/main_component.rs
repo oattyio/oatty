@@ -118,14 +118,17 @@ impl MainView {
     pub fn set_open_modal_kind(&mut self, app: &mut App, modal: Option<Modal>) {
         if let Some(modal_kind) = modal.as_ref() {
             let modal_view: ModalView = match modal_kind {
-                Modal::Help => (Box::new(HelpComponent), ModalLayout(Box::new(|rect| centered_rect(80, 70, rect)))),
+                Modal::Help => (
+                    Box::new(HelpComponent::default()),
+                    ModalLayout(Box::new(|rect| centered_rect(80, 70, rect))),
+                ),
                 Modal::Results(exec_outcome) => {
                     let mut table = TableComponent::default();
                     table.handle_message(app, &Msg::ExecCompleted(exec_outcome.clone()));
                     (Box::new(table), ModalLayout(Box::new(|rect| centered_rect(96, 90, rect))))
                 }
                 Modal::LogDetails => (
-                    Box::new(LogDetailsComponent),
+                    Box::new(LogDetailsComponent::default()),
                     ModalLayout(Box::new(|rect| centered_rect(80, 70, rect))),
                 ),
                 Modal::PluginDetails => (
@@ -345,8 +348,8 @@ impl Component for MainView {
                 ]
             } else {
                 [
-                    Constraint::Percentage(80), // Command palette area (+ suggestions)
-                    Constraint::Length(0),      // logs / output content
+                    Constraint::Percentage(100), // Command palette area (+ suggestions)
+                    Constraint::Length(0),       // logs / output content
                 ]
             };
 

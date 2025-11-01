@@ -8,9 +8,10 @@ use crate::ui::{
     components::{PaginationComponent, common::ResultsTableView, component::Component},
     theme::theme_helpers as th,
 };
-use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use heroku_types::{Effect, Msg};
 use rat_focus::HasFocus;
+use ratatui::layout::Position;
 use ratatui::widgets::{Borders, Padding};
 use ratatui::{
     Frame,
@@ -54,12 +55,21 @@ use ratatui::{
 /// table.init()?;
 /// ```
 #[derive(Debug, Default)]
-pub struct TableComponent<'a> {
-    view: ResultsTableView<'a>,
+pub struct TableComponent {
+    view: ResultsTableView,
     pagination: PaginationComponent,
+    table_area: Rect,
 }
 
-impl Component for TableComponent<'_> {
+impl TableComponent {
+    fn hit_test_table(&mut self, table_area: Rect, mouse_position: Position) -> usize {
+        let list_offset = self.view.table_state.offset();
+        let idx = mouse_position.y.saturating_sub(table_area.y + 1) as usize + list_offset; // +1 for header
+        idx
+    }
+}
+
+impl Component for TableComponent {
     fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
         if let Msg::ExecCompleted(exec_outcome) = msg {
             app.table.process_general_execution_result(exec_outcome, &*app.ctx.theme);
@@ -95,32 +105,32 @@ impl Component for TableComponent<'_> {
                 app.focus.next();
             }
             KeyCode::Up => {
-                app.table.reduce_scroll(-1);
+                self.view.table_state.scroll_up_by(1);
             }
             KeyCode::Down => {
-                app.table.reduce_scroll(1);
+                self.view.table_state.scroll_down_by(1);
             }
             KeyCode::PageUp => {
-                let step = app.table.visible_rows().saturating_sub(1);
-                let step = if step == 0 { 10 } else { step } as isize;
-                app.table.reduce_scroll(-step);
+                self.view.table_state.scroll_up_by(10);
             }
             KeyCode::PageDown => {
-                let step = app.table.visible_rows().saturating_sub(1);
-                let step = if step == 0 { 10 } else { step } as isize;
-                app.table.reduce_scroll(step);
+                self.view.table_state.scroll_down_by(10);
             }
             KeyCode::Home => {
-                app.table.reduce_home();
+                self.view.table_state.scroll_up_by(u16::MAX);
             }
             KeyCode::End => {
-                app.table.reduce_end();
+                self.view.table_state.scroll_down_by(u16::MAX);
             }
             KeyCode::Char('c') => {
-                if let Some(value) = app.table.selected_data() {
+                if let Some(idx) = self.view.table_state.selected()
+                    && let Some(value) = app.table.selected_data(idx)
+                {
                     let s = serde_json::to_string(value).ok().unwrap_or_default();
                     effects.push(Effect::CopyToClipboardRequested(s));
-                } else if let Some(entry) = app.table.selected_kv_entry() {
+                } else if let Some(idx) = self.view.list_state.selected()
+                    && let Some(entry) = app.table.selected_kv_entry(idx)
+                {
                     let serialized = serde_json::to_string(&entry.raw_value).unwrap_or_else(|_| entry.raw_value.to_string());
                     let payload = format!("{}: {}", entry.key, serialized);
                     effects.push(Effect::CopyToClipboardRequested(payload));
@@ -134,6 +144,26 @@ impl Component for TableComponent<'_> {
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
         let mut effects: Vec<Effect> = vec![];
         effects.extend(self.pagination.handle_mouse_events(app, mouse));
+        let pos = Position {
+            x: mouse.column,
+            y: mouse.row,
+        };
+        if self.table_area.contains(pos) {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    self.view.table_state.scroll_up_by(1);
+                }
+                MouseEventKind::ScrollDown => {
+                    self.view.table_state.scroll_down_by(1);
+                }
+                MouseEventKind::Moved | MouseEventKind::Up(MouseButton::Left) => {
+                    let idx = self.hit_test_table(self.table_area, pos);
+                    app.table.set_mouse_over_idx(Some(idx));
+                }
+                _ => {}
+            }
+        }
+
         effects
     }
 
@@ -162,10 +192,6 @@ impl Component for TableComponent<'_> {
             .padding(Padding::uniform(1));
         let table_inner = table_block.inner(splits[0]);
         frame.render_widget(table_block, splits[0]);
-
-        let visible_rows = table_inner.height.saturating_sub(1).max(1) as usize;
-        app.table.set_visible_rows(visible_rows);
-
         let rendered_table = self
             .view
             .render_results(frame, table_inner, &app.table, app.table.grid_f.get(), &*app.ctx.theme);
@@ -173,6 +199,8 @@ impl Component for TableComponent<'_> {
         if rendered_table {
             self.pagination.render(frame, splits[1], app);
         }
+
+        self.table_area = table_inner;
     }
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {

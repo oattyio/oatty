@@ -14,7 +14,7 @@ use crate::ui::components::workflows::collector::SelectorStatus;
 use crate::ui::components::workflows::run::RunViewState;
 use crate::ui::{
     components::{
-        browser::BrowserState, help::HelpState, logs::LogsState, palette::PaletteState, plugins::PluginsState, table::TableState,
+        browser::BrowserState, help::HelpState, logs::LogsState, palette::PaletteState, plugins::PluginsState, table::ResultsTableState,
         theme_picker::ThemePickerState, workflows::WorkflowState,
     },
     theme,
@@ -134,7 +134,7 @@ pub struct App<'a> {
     /// Command browser state
     pub browser: BrowserState,
     /// Table modal state
-    pub table: TableState<'a>,
+    pub table: ResultsTableState<'a>,
     /// Help modal state
     pub help: HelpState,
     /// Plugins state (MCP management)
@@ -195,7 +195,7 @@ impl App<'_> {
             help: HelpState::default(),
             plugins: PluginsState::new(),
             workflows: WorkflowState::new(),
-            table: TableState::default(),
+            table: ResultsTableState::default(),
             palette,
             nav_bar: VerticalNavBarState::defaults_for_views(theme_picker_available),
             theme_picker: ThemePickerState::default(),
@@ -331,7 +331,7 @@ impl App<'_> {
     }
 
     pub fn prepare_selector_fetch(&mut self) -> Vec<Effect> {
-        let Some(selector) = self.workflows.selector_state_mut() else {
+        let Some(selector) = self.workflows.collector_state_mut() else {
             return Vec::new();
         };
 
@@ -359,7 +359,7 @@ impl App<'_> {
             effects.extend(self.rebuild_palette_suggestions());
         }
 
-        if let Some(selector) = self.workflows.selector_state_mut() {
+        if let Some(selector) = self.workflows.collector_state_mut() {
             let matches_identifier = selector.provider_id == provider_id;
             let matches_cache_key = selector.pending_cache_key.as_deref().is_none_or(|key| key == cache_key.as_str());
             if matches_identifier && matches_cache_key {

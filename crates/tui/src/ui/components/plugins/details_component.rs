@@ -360,8 +360,11 @@ impl PluginsDetailsComponent {
                 frame.render_widget(List::new(visible_items), body_area);
 
                 // Scrollbar at right of log body
-                if total > visible {
-                    let mut sb_state = ScrollbarState::new(total).position(offset);
+                if total > visible && visible > 0 {
+                    let scrollable_range = total.saturating_sub(visible).saturating_add(1);
+                    let mut sb_state = ScrollbarState::new(scrollable_range)
+                        .position(offset)
+                        .viewport_content_length(visible);
                     let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                         .thumb_style(Style::default().fg(theme.roles().scrollbar_thumb))
                         .track_style(Style::default().fg(theme.roles().scrollbar_track));

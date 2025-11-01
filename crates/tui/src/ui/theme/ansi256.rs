@@ -49,6 +49,8 @@ impl Ansi256Theme {
 
                 scrollbar_track: Color::Indexed(239),
                 scrollbar_thumb: Color::Indexed(61),
+                table_row_even: Color::Indexed(235), // step darker than surface
+                table_row_odd: Color::Indexed(237),  // slight contrast for zebra striping
             },
         }
     }
@@ -102,6 +104,8 @@ impl Ansi256ThemeHighContrast {
 
                 scrollbar_track: Color::Indexed(239),
                 scrollbar_thumb: Color::Indexed(141),
+                table_row_even: Color::Indexed(235),
+                table_row_odd: Color::Indexed(237),
             },
         }
     }

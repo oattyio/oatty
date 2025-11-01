@@ -9,4 +9,4 @@ pub mod state;
 
 pub use manual_entry_component::ManualEntryComponent;
 #[allow(unused_imports)]
-pub use state::{ManualEntryEnumOption, ManualEntryEnumState, ManualEntryFocus, ManualEntryKind, ManualEntryLayoutState, ManualEntryState};
+pub use state::{ManualEntryEnumOption, ManualEntryEnumState, ManualEntryKind, ManualEntryState};

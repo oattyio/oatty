@@ -546,22 +546,33 @@ impl Component for PaletteComponent {
         } else {
             None
         };
-
-        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
-            if input_area.contains(position) {
-                app.focus.focus(&app.palette.f_input);
+        match mouse.kind {
+            MouseEventKind::ScrollDown => {
+                if suggestions_area.contains(position) {
+                    app.palette.list_state.scroll_down_by(1);
+                }
             }
-
-            if hit_test_suggestions {
-                app.palette.list_state.select(idx);
+            MouseEventKind::ScrollUp => {
+                if suggestions_area.contains(position) {
+                    app.palette.list_state.scroll_up_by(1);
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if input_area.contains(position) {
+                    app.focus.focus(&app.palette.f_input);
+                }
+                if hit_test_suggestions {
+                    app.palette.list_state.select(idx);
+                    app.palette.apply_ghost_text();
+                    return self.handle_enter(app);
+                }
+            }
+            MouseEventKind::Moved => {
+                app.palette.update_mouse_over_idx(idx);
                 app.palette.apply_ghost_text();
-                return self.handle_enter(app);
             }
-        }
 
-        if let MouseEventKind::Moved = mouse.kind {
-            app.palette.update_mouse_over_idx(idx);
-            app.palette.apply_ghost_text();
+            _ => {}
         }
 
         Vec::new()

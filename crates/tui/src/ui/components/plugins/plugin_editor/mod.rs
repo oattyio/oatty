@@ -1,5 +1,5 @@
-pub mod plugin_editor_component;
 pub mod key_value_editor;
+pub mod plugin_editor_component;
 pub mod state;
 
 pub use plugin_editor_component::PluginsEditComponent;

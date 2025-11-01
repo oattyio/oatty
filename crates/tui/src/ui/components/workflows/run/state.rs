@@ -6,7 +6,7 @@
 //! while this module encapsulates state transitions that components mutate
 //! in response to engine events or user actions.
 
-use std::{cmp::min, collections::HashMap};
+use std::collections::HashMap;
 
 use chrono::{DateTime, Duration, Utc};
 use heroku_types::workflow::{WorkflowRunControl, WorkflowRunStatus, WorkflowRunStepStatus, WorkflowStepDefinition};
@@ -16,7 +16,7 @@ use serde_json::{Map as JsonMap, Value};
 use tokio::sync::mpsc::UnboundedSender;
 
 use crate::ui::{
-    components::table::state::{KeyValueEntry, TableState, build_key_value_entries},
+    components::table::state::{KeyValueEntry, ResultsTableState, build_key_value_entries},
     theme::Theme,
 };
 
@@ -161,17 +161,11 @@ impl RunViewLayout {
 #[derive(Debug, Clone)]
 pub struct RunDetailState {
     source: RunDetailSource,
-    selection: Option<usize>,
-    offset: usize,
 }
 
 impl RunDetailState {
     fn new(source: RunDetailSource) -> Self {
-        Self {
-            source,
-            selection: None,
-            offset: 0,
-        }
+        Self { source }
     }
 
     /// Returns the current source driving the detail pane.
@@ -179,63 +173,8 @@ impl RunDetailState {
         self.source
     }
 
-    /// Sets the selection within the detail pane.
-    pub fn set_selection(&mut self, selection: Option<usize>, entry_count: usize) {
-        self.selection = selection.map(|index| index.min(entry_count.saturating_sub(1)));
-        if let Some(index) = self.selection {
-            self.offset = min(index, entry_count.saturating_sub(1));
-        } else {
-            self.offset = 0;
-        }
-    }
-
-    /// Adjusts the selection using a signed delta.
-    pub fn adjust_selection(&mut self, entry_count: usize, delta: isize) {
-        if entry_count == 0 {
-            self.selection = None;
-            self.offset = 0;
-            return;
-        }
-        let current = self.selection.unwrap_or(0);
-        let next = if delta.is_positive() {
-            current.saturating_add(delta as usize).min(entry_count.saturating_sub(1))
-        } else {
-            current.saturating_sub(delta.unsigned_abs())
-        };
-        self.selection = Some(next);
-        self.offset = min(next, entry_count.saturating_sub(1));
-    }
-
-    /// Resets scroll offset when entry count shrinks.
-    pub fn clamp_offset(&mut self, entry_count: usize) {
-        if entry_count == 0 {
-            self.offset = 0;
-            self.selection = None;
-            return;
-        }
-        self.offset = self.offset.min(entry_count.saturating_sub(1));
-        if let Some(selection) = self.selection {
-            self.selection = Some(selection.min(entry_count.saturating_sub(1)));
-        }
-    }
-
-    /// Returns the current selection.
-    pub fn selection(&self) -> Option<usize> {
-        self.selection
-    }
-
-    /// Returns the current offset.
-    pub fn offset(&self) -> usize {
-        self.offset
-    }
-
-    /// Updates the source while preserving selection metadata.
     pub fn set_source(&mut self, source: RunDetailSource) {
-        if self.source != source {
-            self.source = source;
-            self.selection = None;
-            self.offset = 0;
-        }
+        self.source = source;
     }
 }
 
@@ -261,8 +200,8 @@ pub struct RunViewState {
     completed_at: Option<DateTime<Utc>>,
     last_update_at: Option<DateTime<Utc>>,
     is_wide_mode: bool,
-    steps_table: TableState<'static>,
-    outputs_table: TableState<'static>,
+    steps_table: ResultsTableState<'static>,
+    outputs_table: ResultsTableState<'static>,
     detail: Option<RunDetailState>,
     container_focus: FocusFlag,
     detail_focus: FocusFlag,
@@ -280,11 +219,11 @@ pub struct RunViewState {
 impl RunViewState {
     /// Creates a new run view state for the provided workflow metadata.
     pub fn new(run_id: String, identifier: String, title: Option<String>) -> Self {
-        let mut steps_table = TableState::default();
+        let mut steps_table = ResultsTableState::default();
         steps_table.container_focus = FocusFlag::named("workflow.run.steps");
         steps_table.grid_f = FocusFlag::named("workflow.run.steps.grid");
 
-        let mut outputs_table = TableState::default();
+        let mut outputs_table = ResultsTableState::default();
         outputs_table.container_focus = FocusFlag::named("workflow.run.outputs");
         outputs_table.grid_f = FocusFlag::named("workflow.run.outputs.grid");
 
@@ -426,7 +365,6 @@ impl RunViewState {
         }
         self.output_rows.push(Value::Object(row));
         self.rebuild_outputs_table(theme);
-        self.outputs_table.normalize();
     }
 
     /// Records that the run has started.
@@ -508,13 +446,11 @@ impl RunViewState {
     fn rebuild_steps_table(&mut self, theme: &dyn Theme) {
         let payload = Value::Array(self.step_rows.clone());
         self.steps_table.apply_result_json(Some(payload), theme);
-        self.steps_table.normalize();
     }
 
     fn rebuild_outputs_table(&mut self, theme: &dyn Theme) {
         let payload = Value::Array(self.output_rows.clone());
         self.outputs_table.apply_result_json(Some(payload), theme);
-        self.outputs_table.normalize();
     }
 
     /// Returns the current execution status.
@@ -559,17 +495,17 @@ impl RunViewState {
 
     #[cfg(test)]
     /// Provides immutable access to the steps table state (tests only).
-    pub fn steps_table(&self) -> &TableState<'static> {
+    pub fn steps_table(&self) -> &ResultsTableState<'static> {
         &self.steps_table
     }
 
     /// Provides mutable access to the steps table state.
-    pub fn steps_table_mut(&mut self) -> &mut TableState<'static> {
+    pub fn steps_table_mut(&mut self) -> &mut ResultsTableState<'static> {
         &mut self.steps_table
     }
 
     /// Provides mutable access to the outputs table state.
-    pub fn outputs_table_mut(&mut self) -> &mut TableState<'static> {
+    pub fn outputs_table_mut(&mut self) -> &mut ResultsTableState<'static> {
         &mut self.outputs_table
     }
 
@@ -593,8 +529,6 @@ impl RunViewState {
             DetailPaneVisibilityChange::BecameHidden
         } else {
             self.show_detail(source);
-            self.set_detail_selection(Some(0));
-            self.clamp_detail_entries();
             DetailPaneVisibilityChange::BecameVisible
         }
     }
@@ -656,45 +590,21 @@ impl RunViewState {
     }
 
     /// Returns the JSON payload backing the current detail pane, if visible.
-    pub fn current_detail_payload(&self) -> Option<&Value> {
+    pub fn current_detail_payload(&self, idx: usize) -> Option<&Value> {
         let detail_state = self.detail.as_ref()?;
         match detail_state.source {
-            RunDetailSource::Steps => self.steps_table.selected_data(),
-            RunDetailSource::Outputs => self.outputs_table.selected_data(),
+            RunDetailSource::Steps => self.steps_table.selected_data(idx),
+            RunDetailSource::Outputs => self.outputs_table.selected_data(idx),
         }
     }
 
     /// Builds key-value entries for the currently selected detail payload.
-    pub fn current_detail_entries(&self) -> Option<Vec<KeyValueEntry>> {
-        self.current_detail_payload().map(build_key_value_entries)
+    pub fn current_detail_entries(&self, idx: usize) -> Option<Vec<KeyValueEntry>> {
+        self.current_detail_payload(idx).map(build_key_value_entries)
     }
 
-    /// Ensures the detail selection and offset remain within bounds after updates.
-    pub fn clamp_detail_entries(&mut self) {
-        let entry_count = self.detail_entry_count();
-        if let Some(detail_state) = self.detail.as_mut() {
-            detail_state.clamp_offset(entry_count);
-        }
-    }
-
-    /// Sets the detail selection explicitly.
-    pub fn set_detail_selection(&mut self, selection: Option<usize>) {
-        let entry_count = self.detail_entry_count();
-        if let Some(detail_state) = self.detail.as_mut() {
-            detail_state.set_selection(selection, entry_count);
-        }
-    }
-
-    /// Adjusts the detail selection with a signed delta.
-    pub fn adjust_detail_selection(&mut self, delta: isize) {
-        let entry_count = self.detail_entry_count();
-        if let Some(detail_state) = self.detail.as_mut() {
-            detail_state.adjust_selection(entry_count, delta);
-        }
-    }
-
-    fn detail_entry_count(&self) -> usize {
-        self.current_detail_entries().map(|entries| entries.len()).unwrap_or(0)
+    fn detail_entry_count(&self, idx: usize) -> usize {
+        self.current_detail_entries(idx).map(|entries| entries.len()).unwrap_or(0)
     }
 }
 
@@ -820,7 +730,7 @@ mod tests {
         let mut state = RunViewState::new("run-1".into(), "workflow".into(), Some("Example".into()));
         state.initialize_steps(&[make_step("alpha", Some("first step"))], &theme);
 
-        let row = state.steps_table.selected_data().cloned().expect("row exists");
+        let row = state.steps_table.selected_data(0).cloned().expect("row exists");
         assert_eq!(row["Step"], Value::String("alpha".into()));
         assert_eq!(row["Status"], Value::String("pending".into()));
         assert_eq!(row["Details"], Value::String("first step".into()));
@@ -844,7 +754,7 @@ mod tests {
             &theme,
         );
 
-        let row = state.steps_table.selected_data().cloned().expect("row exists");
+        let row = state.steps_table.selected_data(0).cloned().expect("row exists");
         assert_eq!(row["Status"], Value::String("succeeded".into()));
         let summary = row["Details"].as_str().expect("summary");
         assert!(summary.contains("succeeded"));
@@ -859,7 +769,7 @@ mod tests {
 
         state.append_output("alpha", json!(42), None, &theme);
 
-        let row = state.outputs_table.selected_data().cloned().expect("row exists");
+        let row = state.outputs_table.selected_data(0).cloned().expect("row exists");
         assert_eq!(row["Key"], Value::String("alpha".into()));
         assert_eq!(row["Value"], Value::String("42".into()));
         assert_eq!(row["RawValue"], json!(42));
@@ -880,15 +790,15 @@ mod tests {
         state.initialize_steps(&[repeating_step], &theme);
 
         state.mark_step_running(0, "alpha", &theme);
-        let row = state.steps_table.selected_data().cloned().expect("row exists");
+        let row = state.steps_table.selected_data(0).cloned().expect("row exists");
         assert_eq!(row["Details"], Value::String("Running. (attempt 1/∞)".into()));
 
         state.update_repeat_attempt("alpha", 3, Some(5), &theme);
-        let row = state.steps_table.selected_data().cloned().expect("row exists");
+        let row = state.steps_table.selected_data(0).cloned().expect("row exists");
         assert_eq!(row["Details"], Value::String("Running. (attempt 3/5)".into()));
 
         state.advance_repeat_animations(&theme);
-        let row = state.steps_table.selected_data().cloned().expect("row exists");
+        let row = state.steps_table.selected_data(0).cloned().expect("row exists");
         assert_eq!(row["Details"], Value::String("Running.. (attempt 3/5)".into()));
     }
 

@@ -49,6 +49,10 @@ pub struct ThemeRoles {
 
     pub scrollbar_track: Color,
     pub scrollbar_thumb: Color,
+    /// Background color used for even-numbered rows in tabular views.
+    pub table_row_even: Color,
+    /// Background color used for odd-numbered rows in tabular views.
+    pub table_row_odd: Color,
 }
 
 /// Theme trait exposes semantic roles and common style builders.
@@ -76,6 +80,16 @@ pub trait Theme: Send + Sync + Debug {
     // Selection
     fn selection_style(&self) -> Style {
         Style::default().bg(self.roles().selection_bg)
+    }
+
+    /// Background style applied to even-numbered rows in tables.
+    fn table_row_even_style(&self) -> Style {
+        Style::default().bg(self.roles().table_row_even)
+    }
+
+    /// Background style applied to odd-numbered rows in tables.
+    fn table_row_odd_style(&self) -> Style {
+        Style::default().bg(self.roles().table_row_odd)
     }
 
     /// Style used for the darkened background that appears behind modal dialogs.

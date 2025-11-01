@@ -22,8 +22,10 @@ use ratatui::{
 };
 use serde_json::Value;
 
-#[derive(Clone, Debug)]
-pub struct LogDetailsComponent;
+#[derive(Debug, Default)]
+pub struct LogDetailsComponent {
+    details_table: ResultsTableView,
+}
 
 impl LogDetailsComponent {
     /// Renders the content of the detail modal for selected log entries.
@@ -43,7 +45,7 @@ impl LogDetailsComponent {
     /// * `f` - The terminal frame to render to
     /// * `area` - The rectangular area allocated for the detail content
     /// * `app` - The application state containing logs and selection
-    fn render_detail_content(&self, frame: &mut Frame, area: Rect, app: &mut App) {
+    fn render_detail_content(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         let (start, end) = app.logs.selection.range();
 
         // Handle single selection
@@ -65,12 +67,12 @@ impl LogDetailsComponent {
                             Some(LogDetailView::Table { offset }) => offset.min(entries.len().saturating_sub(1)),
                             _ => 0,
                         };
-                        let selection = if entries.is_empty() { None } else { Some(offset) };
                         app.logs.detail = Some(LogDetailView::Table { offset });
                         let detail_block = theme_helpers::block(&*app.ctx.theme, Some("Details"), true);
                         let inner_area = detail_block.inner(area);
                         frame.render_widget(detail_block, area);
-                        ResultsTableView::render_kv_or_text(frame, inner_area, &entries, selection, offset, red_ref, &*app.ctx.theme);
+                        self.details_table
+                            .render_kv_or_text(frame, inner_area, &entries, red_ref, &*app.ctx.theme);
                         return;
                     }
                     LogEntry::Api { status, raw, .. } => {
