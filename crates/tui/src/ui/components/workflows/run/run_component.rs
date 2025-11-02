@@ -7,6 +7,7 @@
 
 use chrono::{Duration, Utc};
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use rat_focus::HasFocus;
 use heroku_types::{Effect, Msg, WorkflowRunControl};
 use ratatui::{
     Frame,
@@ -18,7 +19,7 @@ use ratatui::{
 
 use crate::app::App;
 use crate::ui::components::workflows::run::state::{
-    DetailPaneVisibilityChange, RunDetailSource, RunExecutionStatus, RunViewLayout, RunViewMouseTarget, RunViewState,
+    RunDetailSource, RunExecutionStatus, RunViewState,
 };
 use crate::ui::components::{
     common::ResultsTableView,
@@ -30,8 +31,9 @@ use crate::ui::theme::{
 };
 use serde_json::Value;
 
-#[derive(Debug, Clone, Copy)]
-enum FocusRequest {
+/// Captures mouse hit-testing targets for the run view.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunViewMouseTarget {
     StepsTable,
     OutputsTable,
     DetailPane,
@@ -39,19 +41,54 @@ enum FocusRequest {
     PauseButton,
 }
 
+/// Layout metadata captured during the most recent render pass.
+#[derive(Debug, Default, Clone)]
+pub struct RunViewLayout {
+    container_area: Rect,
+    header_area: Rect,
+    steps_area: Rect,
+    outputs_area: Rect,
+    detail_area: Rect,
+    footer_area: Rect,
+    cancel_button_area: Rect,
+    pause_button_area: Rect,
+    footer_block_area: Rect,
+    status_area: Rect,
+    mouse_target_areas: Vec<Rect>,
+    mouse_target_roles: Vec<RunViewMouseTarget>,
+}
+
+impl From<Vec<Rect>> for RunViewLayout {
+    fn from(areas: Vec<Rect>) -> Self {
+        Self {
+            container_area: areas[0],
+            header_area: areas[1],
+            steps_area: areas[2],
+            outputs_area: areas[3],
+            detail_area: areas[4],
+            cancel_button_area: areas[5],
+            pause_button_area: areas[6],
+            footer_block_area: areas[7],
+            status_area: areas[8],
+            footer_area: areas[9],
+            mouse_target_areas: areas[2..7].to_vec(),
+            mouse_target_roles: vec![
+                RunViewMouseTarget::StepsTable,
+                RunViewMouseTarget::OutputsTable,
+                RunViewMouseTarget::DetailPane,
+                RunViewMouseTarget::CancelButton,
+                RunViewMouseTarget::PauseButton,
+            ],
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct RunViewComponent {
     steps_view: ResultsTableView,
     outputs_view: ResultsTableView,
     detail_view: ResultsTableView,
-}
-
-#[derive(Debug, Default)]
-struct RunViewLayoutState {
-    footer_area: Rect,
-    cancel_button_area: Rect,
-    pause_button_area: Rect,
-    mouse_targets: Vec<(Rect, RunViewMouseTarget)>,
+    layout_state: RunViewLayout,
 }
 
 impl Component for RunViewComponent {
@@ -70,53 +107,26 @@ impl Component for RunViewComponent {
             return Vec::new();
         }
 
-        let (focus_request, log_shortcut_requested, effects) = {
             let Some(run_state) = app.workflows.run_view_state_mut() else {
                 return Vec::new();
             };
 
-            let mut focus_request: Option<FocusRequest> = None;
             let mut effects: Vec<Effect> = Vec::new();
-            let mut log_shortcut_requested = false;
 
             let run_id = run_state.run_id().to_string();
-            Self::handle_global_shortcuts(run_state, key.code, &mut focus_request, &mut log_shortcut_requested);
+            Self::handle_global_shortcuts(run_state, key.code);
 
-            let focus_snapshot = run_state.focus_snapshot();
-            if focus_snapshot.steps_table_focused {
-                focus_request = focus_request.or(self.handle_steps_table_keys(run_state, key.code));
-            } else if focus_snapshot.outputs_table_focused {
-                focus_request = focus_request.or(self.handle_outputs_table_keys(run_state, key.code));
-            } else if focus_snapshot.detail_pane_focused {
-                focus_request = focus_request.or(self.handle_detail_keys(run_state, key.code));
-            } else if focus_snapshot.cancel_button_focused {
-                let (request, control_effects) = Self::handle_cancel_button_keys(run_state, &run_id, key.code);
-                focus_request = focus_request.or(request);
-                effects.extend(control_effects);
-            } else if focus_snapshot.pause_button_focused {
-                let (request, control_effects) = Self::handle_pause_button_keys(run_state, &run_id, key.code);
-                focus_request = focus_request.or(request);
-                effects.extend(control_effects);
+            if run_state.steps_table.focus().get() {
+                self.handle_steps_table_keys(run_state, key.code);
+            } else if run_state.outputs_table.focus().get() {
+                self.handle_outputs_table_keys(run_state, key.code);
+            } else if run_state.detail_focus.get() {
+                self.handle_detail_keys(run_state, key.code);
+            } else if run_state.cancel_button_focus.get() {
+                effects.extend(Self::handle_cancel_button_keys(run_state, &run_id, key.code));
+            } else if run_state.pause_button_focus.get() {
+                effects.extend(Self::handle_pause_button_keys(run_state, &run_id, key.code));
             }
-
-            (focus_request, log_shortcut_requested, effects)
-        };
-
-        if log_shortcut_requested {
-            app.append_log_message("Logs shortcut not yet wired for the run view.");
-        }
-
-        if let Some(request) = focus_request
-            && let Some(run_state) = app.workflows.run_view_state()
-        {
-            match request {
-                FocusRequest::StepsTable => app.focus.focus(run_state.steps_focus_flag()),
-                FocusRequest::OutputsTable => app.focus.focus(run_state.outputs_focus_flag()),
-                FocusRequest::DetailPane => app.focus.focus(run_state.detail_focus_flag()),
-                FocusRequest::CancelButton => app.focus.focus(run_state.cancel_button_focus_flag()),
-                FocusRequest::PauseButton => app.focus.focus(run_state.pause_button_focus_flag()),
-            }
-        }
 
         effects
     }
@@ -126,7 +136,7 @@ impl Component for RunViewComponent {
             return Vec::new();
         }
 
-        let Some(target) = Self::hit_test_mouse_target(app, mouse) else {
+        let Some(target) = self.hit_test_mouse_target(mouse) else {
             return Vec::new();
         };
 
@@ -143,34 +153,17 @@ impl Component for RunViewComponent {
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
+        let layout = RunViewLayout::from(self.get_preferred_layout(app, inner));
         let Some(run_state) = app.workflows.run_view_state_mut() else {
             render_empty(frame, inner, theme);
             return;
         };
 
-        let layout_regions = Layout::vertical([
-            Constraint::Length(3), // header
-            Constraint::Min(6),    // body
-            Constraint::Length(3), // footer
-        ])
-        .split(inner);
+        render_header(frame, layout.header_area, theme, run_state);
+        self.render_body(frame, theme, run_state, &layout);
+        render_footer(frame, layout.footer_area, theme, run_state);
 
-        let header_area = layout_regions[0];
-        let body_area = layout_regions[1];
-        let footer_area = layout_regions[2];
-
-        render_header(frame, header_area, theme, run_state);
-
-        let mut layout_state = Self::prepare_layout_state(inner, header_area);
-        let mut mouse_targets: Vec<(Rect, RunViewMouseTarget)> = Vec::new();
-        self.render_body(frame, body_area, theme, run_state, &mut layout_state, &mut mouse_targets);
-
-        let (cancel_area, pause_area) = render_footer(frame, footer_area, theme, run_state, &mut mouse_targets);
-        layout_state.set_footer_area(footer_area);
-        layout_state.set_cancel_button_area(cancel_area);
-        layout_state.set_pause_button_area(pause_area);
-        layout_state.set_mouse_targets(mouse_targets);
-        run_state.set_layout(layout_state);
+        self.layout_state = layout;
     }
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
@@ -179,21 +172,21 @@ impl Component for RunViewComponent {
             return Vec::new();
         };
 
-        if run_state.detail_focus_flag().get() {
+        if run_state.detail_focus.get() {
             return build_hint_spans(
                 theme,
                 &[(" Esc", " Close detail "), (" ↑/↓", " Navigate detail "), (" Tab", " Cycle focus ")],
             );
         }
 
-        if run_state.cancel_button_focus_flag().get() {
+        if run_state.cancel_button_focus.get() {
             return build_hint_spans(
                 theme,
                 &[(" ←/→", " Switch button "), (" Enter", " Cancel run "), (" Tab", " Cycle focus ")],
             );
         }
 
-        if run_state.pause_button_focus_flag().get() {
+        if run_state.pause_button_focus.get() {
             let label = pause_button_label(run_state.status());
             return build_hint_spans(theme, &[(" ←/→", " Switch button "), (" Enter", label), (" Tab", " Cycle focus ")]);
         }
@@ -218,24 +211,67 @@ impl Component for RunViewComponent {
             .map(|state| (state.is_detail_visible(), state.is_wide_mode()))
             .unwrap_or_default();
 
+        let main_regions = Layout::vertical([
+            Constraint::Length(3), // header
+            Constraint::Min(6),    // body
+            Constraint::Length(3), // footer
+        ]).split(area);
+
         let column_spec: Vec<Constraint> = if detail_visible {
             if is_wide_mode {
                 // wide mode - detail visible
-                vec![Constraint::Percentage(45), Constraint::Percentage(35), Constraint::Percentage(20)]
+                vec![
+                    Constraint::Percentage(45), // steps
+                    Constraint::Percentage(35), // outputs
+                    Constraint::Percentage(20), // detail
+                ]
             } else {
                 // compact mode - detail visible
-                vec![Constraint::Percentage(55), Constraint::Percentage(45), Constraint::Length(6)]
+                vec![
+                    Constraint::Percentage(55), // steps
+                    Constraint::Percentage(45), // outputs
+                    Constraint::Length(6)       // detail
+                ]
             }
         } else {
             if is_wide_mode {
                 // wide mode - detail hidden
-                vec![Constraint::Percentage(55), Constraint::Percentage(45)]
+                vec![
+                    Constraint::Percentage(55), // steps
+                    Constraint::Percentage(45), // outputs
+                    Constraint::Length(0)       // detail - empty when not shown
+                ]
             } else {
                 // compact mode - detail hidden
-                vec![Constraint::Percentage(60), Constraint::Percentage(40)]
+                vec![
+                    Constraint::Percentage(60), // steps
+                    Constraint::Percentage(40), // outputs
+                    Constraint::Length(0)       // detail - empty when not shown
+                ]
             }
         };
-        Layout::horizontal(column_spec).split(area).to_vec()
+        let body_area = Layout::horizontal(column_spec).split(main_regions[1]);
+
+        let footer_block = get_footer_block(&*app.ctx.theme);
+        let button_row = Layout::horizontal([
+            Constraint::Length(20),
+            Constraint::Length(20),
+            Constraint::Min(0)]).split(footer_block.inner(main_regions[2]));
+        let cancel_area = button_row[0];
+        let pause_area = button_row[1];
+        let status_area = Rect::new(button_row[2].x + 1, (button_row[2].y.saturating_sub(button_row[2].height)) / 2, button_row[2].width, 1);
+
+        vec![
+            area,
+            main_regions[0], // header
+            body_area[0],    // steps
+            body_area[1],    // outputs
+            body_area[2],    // detail
+            cancel_area,     // cancel button
+            pause_area,      // pause button
+            status_area,     // status area
+            main_regions[2], // footer block
+        ]
     }
 
     fn on_route_exit(&mut self, app: &mut App) -> Vec<Effect> {
@@ -259,39 +295,17 @@ impl RunViewComponent {
         }
     }
 
-    fn handle_global_shortcuts(
-        run_state: &mut RunViewState,
-        code: KeyCode,
-        focus_request: &mut Option<FocusRequest>,
-        log_shortcut_requested: &mut bool,
-    ) {
+    fn handle_global_shortcuts(run_state: &mut RunViewState, code: KeyCode) {
         match code {
             KeyCode::Char('t' | 'T') => run_state.toggle_wide_mode(),
-            KeyCode::Char('l' | 'L') => *log_shortcut_requested = true,
             KeyCode::Esc => {
-                if let Some(request) = Self::close_detail(run_state) {
-                    *focus_request = Some(request);
-                }
+                run_state.hide_detail();
             }
             _ => {}
         }
     }
 
-    fn close_detail(run_state: &mut RunViewState) -> Option<FocusRequest> {
-        if !run_state.is_detail_visible() {
-            return None;
-        }
-        let source = run_state.detail().map(|detail| detail.source());
-        run_state.hide_detail();
-        match source {
-            Some(RunDetailSource::Steps) => Some(FocusRequest::StepsTable),
-            Some(RunDetailSource::Outputs) => Some(FocusRequest::OutputsTable),
-            None => None,
-        }
-    }
-
-    fn handle_steps_table_keys(&mut self, run_state: &mut RunViewState, code: KeyCode) -> Option<FocusRequest> {
-        let mut focus_request = None;
+    fn handle_steps_table_keys(&mut self, run_state: &mut RunViewState, code: KeyCode) {
         match code {
             KeyCode::Up => self.steps_view.table_state.scroll_up_by(1),
             KeyCode::Down => self.steps_view.table_state.scroll_down_by(1),
@@ -300,16 +314,13 @@ impl RunViewComponent {
             KeyCode::Home => self.steps_view.table_state.scroll_up_by(u16::MAX),
             KeyCode::End => self.steps_view.table_state.scroll_down_by(u16::MAX),
             KeyCode::Enter => {
-                let change = run_state.toggle_detail_for(RunDetailSource::Steps);
-                focus_request = Self::handle_detail_toggle_result(RunDetailSource::Steps, change);
+                run_state.toggle_detail_for(RunDetailSource::Steps);
             }
             _ => {}
         }
-        focus_request
     }
 
-    fn handle_outputs_table_keys(&mut self, run_state: &mut RunViewState, code: KeyCode) -> Option<FocusRequest> {
-        let mut focus_request = None;
+    fn handle_outputs_table_keys(&mut self, run_state: &mut RunViewState, code: KeyCode) {
         match code {
             KeyCode::Up => self.outputs_view.table_state.scroll_up_by(1),
             KeyCode::Down => self.outputs_view.table_state.scroll_down_by(1),
@@ -318,15 +329,13 @@ impl RunViewComponent {
             KeyCode::Home => self.outputs_view.table_state.scroll_up_by(u16::MAX),
             KeyCode::End => self.outputs_view.table_state.scroll_down_by(u16::MAX),
             KeyCode::Enter => {
-                let change = run_state.toggle_detail_for(RunDetailSource::Outputs);
-                focus_request = Self::handle_detail_toggle_result(RunDetailSource::Outputs, change);
+                run_state.toggle_detail_for(RunDetailSource::Outputs);
             }
             _ => {}
         }
-        focus_request
     }
 
-    fn handle_detail_keys(&mut self, run_state: &mut RunViewState, code: KeyCode) -> Option<FocusRequest> {
+    fn handle_detail_keys(&mut self, run_state: &mut RunViewState, code: KeyCode) {
         match code {
             KeyCode::Up => self.detail_view.table_state.scroll_up_by(1),
             KeyCode::Down => self.detail_view.table_state.scroll_down_by(1),
@@ -334,202 +343,97 @@ impl RunViewComponent {
             KeyCode::PageDown => self.detail_view.table_state.scroll_down_by(5),
             KeyCode::Home => self.detail_view.table_state.scroll_up_by(u16::MAX),
             KeyCode::End => self.detail_view.table_state.scroll_down_by(u16::MAX),
-            KeyCode::Esc => return Self::close_detail(run_state),
+            KeyCode::Esc => run_state.hide_detail(),
             _ => {}
         }
-        None
     }
 
-    fn handle_cancel_button_keys(run_state: &RunViewState, run_id: &str, code: KeyCode) -> (Option<FocusRequest>, Vec<Effect>) {
+    fn handle_cancel_button_keys(run_state: &RunViewState, run_id: &str, code: KeyCode) -> Vec<Effect> {
+        let mut effects = Vec::new();
         match code {
-            KeyCode::Left | KeyCode::Up => (Some(FocusRequest::PauseButton), Vec::new()),
-            KeyCode::Right | KeyCode::Down => (Some(FocusRequest::StepsTable), Vec::new()),
             KeyCode::Enter | KeyCode::Char(' ') => {
                 if cancel_enabled(run_state.status()) {
-                    (
-                        None,
-                        vec![Effect::WorkflowRunControl {
-                            run_id: run_id.to_string(),
-                            command: WorkflowRunControl::Cancel,
-                        }],
-                    )
-                } else {
-                    (None, Vec::new())
+                    effects.push(Effect::WorkflowRunControl {
+                        run_id: run_id.to_string(),
+                        command: WorkflowRunControl::Cancel,
+                    })
                 }
             }
-            _ => (None, Vec::new()),
+            _ => {},
         }
+        effects
     }
 
-    fn handle_pause_button_keys(run_state: &RunViewState, run_id: &str, code: KeyCode) -> (Option<FocusRequest>, Vec<Effect>) {
+    fn handle_pause_button_keys(run_state: &RunViewState, run_id: &str, code: KeyCode) -> Vec<Effect> {
+        let mut effects = Vec::new();
         match code {
-            KeyCode::Left | KeyCode::Up => (Some(FocusRequest::OutputsTable), Vec::new()),
-            KeyCode::Right | KeyCode::Down => (Some(FocusRequest::CancelButton), Vec::new()),
             KeyCode::Enter | KeyCode::Char(' ') => {
                 if let Some(command) = pause_command_for_status(run_state.status()) {
-                    (
-                        None,
-                        vec![Effect::WorkflowRunControl {
+                        effects.push(Effect::WorkflowRunControl {
                             run_id: run_id.to_string(),
                             command,
-                        }],
-                    )
-                } else {
-                    (None, Vec::new())
+                        })
                 }
             }
-            _ => (None, Vec::new()),
+            _ =>  {},
         }
-    }
-
-    fn handle_detail_toggle_result(source: RunDetailSource, change: DetailPaneVisibilityChange) -> Option<FocusRequest> {
-        match change {
-            DetailPaneVisibilityChange::BecameVisible => Some(FocusRequest::DetailPane),
-            DetailPaneVisibilityChange::BecameHidden => match source {
-                RunDetailSource::Steps => Some(FocusRequest::StepsTable),
-                RunDetailSource::Outputs => Some(FocusRequest::OutputsTable),
-            },
-        }
-    }
-
-    fn hit_test_mouse_target(app: &App, mouse: MouseEvent) -> Option<RunViewMouseTarget> {
-        let layout_snapshot = app.workflows.run_view_state().map(|state| state.layout().clone())?;
-        let container_area = layout_snapshot.last_area()?;
-        let index = find_target_index_by_mouse_position(&container_area, layout_snapshot.mouse_target_areas(), mouse.column, mouse.row)?;
-        layout_snapshot.mouse_target_roles().get(index).copied()
+       effects
     }
 
     fn handle_mouse_target(app: &mut App, target: RunViewMouseTarget) -> Vec<Effect> {
+        let mut effects = Vec::new();
         let Some(run_state) = app.workflows.run_view_state() else {
-            return Vec::new();
+            return effects;
         };
         match target {
             RunViewMouseTarget::StepsTable => {
-                app.focus.focus(run_state.steps_focus_flag());
-                Vec::new()
+                app.focus.focus(&run_state.steps_table.focus());
             }
             RunViewMouseTarget::OutputsTable => {
-                app.focus.focus(run_state.outputs_focus_flag());
-                Vec::new()
+                app.focus.focus(&run_state.outputs_table.focus());
             }
             RunViewMouseTarget::DetailPane => {
-                app.focus.focus(run_state.detail_focus_flag());
-                Vec::new()
+                app.focus.focus(&run_state.detail_focus);
             }
             RunViewMouseTarget::CancelButton => {
-                app.focus.focus(run_state.cancel_button_focus_flag());
+                app.focus.focus(&run_state.cancel_button_focus);
                 if cancel_enabled(run_state.status()) {
-                    vec![Effect::WorkflowRunControl {
+                   effects.push(Effect::WorkflowRunControl {
                         run_id: run_state.run_id().to_string(),
                         command: WorkflowRunControl::Cancel,
-                    }]
-                } else {
-                    Vec::new()
+                    });
                 }
             }
             RunViewMouseTarget::PauseButton => {
-                app.focus.focus(run_state.pause_button_focus_flag());
+                app.focus.focus(&run_state.pause_button_focus);
                 if let Some(command) = pause_command_for_status(run_state.status()) {
-                    vec![Effect::WorkflowRunControl {
+                    effects.push(Effect::WorkflowRunControl {
                         run_id: run_state.run_id().to_string(),
                         command,
-                    }]
-                } else {
-                    Vec::new()
+                    });
                 }
             }
         }
-    }
-
-    fn prepare_layout_state(container_area: Rect, header_area: Rect) -> RunViewLayout {
-        let mut layout_state = RunViewLayout::default();
-        layout_state.set_last_area(container_area);
-        layout_state.set_header_area(header_area);
-        layout_state
+        effects
     }
 
     fn render_body(
         &mut self,
         frame: &mut Frame,
-        area: Rect,
         theme: &dyn Theme,
         run_state: &mut RunViewState,
-        layout_state: &mut RunViewLayout,
-        mouse_targets: &mut Vec<(Rect, RunViewMouseTarget)>,
+        layout_state: &RunViewLayout,
     ) {
         let detail_visible = run_state.is_detail_visible();
-        let column_spec: Vec<Constraint> = if detail_visible {
-            vec![Constraint::Percentage(45), Constraint::Percentage(35), Constraint::Percentage(20)]
-        } else {
-            vec![Constraint::Percentage(55), Constraint::Percentage(45)]
-        };
-        let columns = Layout::horizontal(column_spec).split(area);
-
-        if let Some(steps_area) = columns.first().copied() {
-            render_steps_table(frame, steps_area, theme, run_state, &mut self.steps_view);
-            layout_state.set_steps_area(steps_area);
-            mouse_targets.push((steps_area, RunViewMouseTarget::StepsTable));
-        }
-
-        if let Some(outputs_area) = columns.get(1).copied() {
-            render_outputs_table(frame, outputs_area, theme, run_state, &mut self.outputs_view);
-            layout_state.set_outputs_area(outputs_area);
-            mouse_targets.push((outputs_area, RunViewMouseTarget::OutputsTable));
-        }
-
+        render_steps_table(frame, layout_state.steps_area, theme, run_state, &mut self.steps_view);
+        render_outputs_table(frame, layout_state.outputs_area, theme, run_state, &mut self.outputs_view);
         if detail_visible {
-            if let Some(area) = columns.get(2).copied() {
-                self.render_detail_pane(frame, area, theme, run_state);
-                layout_state.set_detail_area(Some(area));
-                mouse_targets.push((area, RunViewMouseTarget::DetailPane));
-            }
-        } else {
-            layout_state.set_detail_area(None);
-        }
-    }
-
-    fn render_compact_body(
-        &mut self,
-        frame: &mut Frame,
-        area: Rect,
-        theme: &dyn Theme,
-        run_state: &mut RunViewState,
-        layout_state: &mut RunViewLayout,
-        mouse_targets: &mut Vec<(Rect, RunViewMouseTarget)>,
-    ) {
-        let detail_visible = run_state.is_detail_visible();
-        let body_spec = if detail_visible {
-            vec![Constraint::Percentage(55), Constraint::Percentage(45), Constraint::Length(6)]
-        } else {
-            vec![Constraint::Percentage(60), Constraint::Percentage(40)]
-        };
-        let rows = Layout::vertical(body_spec).split(area);
-
-        if let Some(steps_area) = rows.first().copied() {
-            render_steps_table(frame, steps_area, theme, run_state, &mut self.steps_view);
-            layout_state.set_steps_area(steps_area);
-            mouse_targets.push((steps_area, RunViewMouseTarget::StepsTable));
-        }
-
-        if let Some(outputs_area) = rows.get(1).copied() {
-            render_outputs_table(frame, outputs_area, theme, run_state, &mut self.outputs_view);
-            layout_state.set_outputs_area(outputs_area);
-            mouse_targets.push((outputs_area, RunViewMouseTarget::OutputsTable));
-        }
-
-        if detail_visible {
-            if let Some(detail_area) = rows.get(2).copied() {
-                self.render_detail_pane(frame, detail_area, theme, run_state);
-                layout_state.set_detail_area(Some(detail_area));
-                mouse_targets.push((detail_area, RunViewMouseTarget::DetailPane));
-            }
-        } else {
-            layout_state.set_detail_area(None);
+        self.render_detail_pane(frame, layout_state.detail_area, theme, run_state);
         }
     }
 
     fn render_detail_pane(&mut self, frame: &mut Frame, area: Rect, theme: &dyn Theme, run_state: &RunViewState) {
-        let inner_block = th::block(theme, Some("Details"), run_state.detail_focus_flag().get()).borders(Borders::NONE);
+        let inner_block = th::block(theme, Some("Details"), run_state.detail_focus.get()).borders(Borders::NONE);
         let inner_area = inner_block.inner(area);
         frame.render_widget(inner_block, area);
         let idx = self.detail_view.table_state.selected().unwrap_or(0);
@@ -537,6 +441,12 @@ impl RunViewComponent {
         let payload = run_state.current_detail_payload(idx).cloned().unwrap_or(Value::Null);
 
         self.detail_view.render_kv_or_text(frame, inner_area, &entries, &payload, theme);
+    }
+
+    fn hit_test_mouse_target(&self, mouse: MouseEvent) -> Option<RunViewMouseTarget> {
+        let container_area = self.layout_state.footer_area;
+        let index = find_target_index_by_mouse_position(&container_area, &self.layout_state.mouse_target_areas, mouse.column, mouse.row)?;
+        self.layout_state.mouse_target_roles.get(index).copied()
     }
 }
 
@@ -586,7 +496,7 @@ fn render_header(frame: &mut Frame, area: Rect, theme: &dyn Theme, run_state: &R
 }
 
 fn render_steps_table(frame: &mut Frame, area: Rect, theme: &dyn Theme, run_state: &mut RunViewState, view: &mut ResultsTableView) {
-    let steps_focused = run_state.steps_focus_flag().get();
+    let steps_focused = run_state.steps_table.focus().get();
     let inner_block = th::block(theme, Some("Steps"), steps_focused).borders(Borders::NONE);
     let inner_area = inner_block.inner(area);
     frame.render_widget(inner_block, area);
@@ -596,7 +506,7 @@ fn render_steps_table(frame: &mut Frame, area: Rect, theme: &dyn Theme, run_stat
 }
 
 fn render_outputs_table(frame: &mut Frame, area: Rect, theme: &dyn Theme, run_state: &mut RunViewState, view: &mut ResultsTableView) {
-    let outputs_focused = run_state.outputs_focus_flag().get();
+    let outputs_focused = run_state.outputs_table.focus().get();
     let inner_block = th::block(theme, Some("Outputs"), outputs_focused).borders(Borders::NONE);
     let inner_area = inner_block.inner(area);
     frame.render_widget(inner_block, area);
@@ -604,26 +514,29 @@ fn render_outputs_table(frame: &mut Frame, area: Rect, theme: &dyn Theme, run_st
     let table_state = run_state.outputs_table_mut();
     view.render_results(frame, inner_area, table_state, outputs_focused, theme);
 }
+fn get_footer_block(theme: &dyn Theme) -> Block {
+    th::block(theme, None, false).borders(Borders::NONE)
+}
 
 fn render_footer(
     frame: &mut Frame,
     area: Rect,
     theme: &dyn Theme,
     run_state: &RunViewState,
-    targets: &mut Vec<(Rect, RunViewMouseTarget)>,
-) -> (Option<Rect>, Option<Rect>) {
-    let footer_block = th::block(theme, None, false).borders(Borders::NONE);
+) {
+    let footer_block = get_footer_block(theme);
     let inner_area = footer_block.inner(area);
     frame.render_widget(footer_block, area);
 
     let button_row = Layout::horizontal([Constraint::Length(20), Constraint::Length(20), Constraint::Min(0)]).split(inner_area);
     let cancel_area = button_row[0];
     let pause_area = button_row[1];
+    let status_area = button_row[2];
 
     let cancel_enabled = cancel_enabled(run_state.status());
     let cancel_options = ButtonRenderOptions::new(
         cancel_enabled,
-        run_state.cancel_button_focus_flag().get(),
+        run_state.cancel_button_focus.get(),
         false,
         Borders::ALL,
         false,
@@ -632,17 +545,9 @@ fn render_footer(
 
     let pause_enabled = pause_command_for_status(run_state.status()).is_some();
     let pause_label = pause_button_label(run_state.status());
-    let pause_options = ButtonRenderOptions::new(pause_enabled, run_state.pause_button_focus_flag().get(), false, Borders::ALL, true);
+    let pause_options = ButtonRenderOptions::new(pause_enabled, run_state.pause_button_focus.get(), false, Borders::ALL, true);
     th::render_button(frame, pause_area, pause_label, theme, pause_options);
 
-    if cancel_enabled {
-        targets.push((cancel_area, RunViewMouseTarget::CancelButton));
-    }
-    if pause_enabled {
-        targets.push((pause_area, RunViewMouseTarget::PauseButton));
-    }
-
-    let status_area = button_row[2];
     let mut line = vec![Span::styled(
         format!("Status: {}", format_status_label(run_state.status())),
         theme.text_secondary_style(),
@@ -660,8 +565,6 @@ fn render_footer(
 
     let status_paragraph = Paragraph::new(Line::from(line)).wrap(Wrap { trim: true });
     frame.render_widget(status_paragraph, status_area);
-
-    (cancel_enabled.then_some(cancel_area), pause_enabled.then_some(pause_area))
 }
 
 fn format_status_label(status: RunExecutionStatus) -> &'static str {

@@ -14,7 +14,7 @@ use crate::ui::{
 use heroku_types::ExecOutcome;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
-use ratatui::prelude::{Line, Modifier, Span};
+use ratatui::prelude::{Line, Span};
 use ratatui::{
     layout::Constraint,
     style::Style,

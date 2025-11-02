@@ -52,111 +52,6 @@ pub enum RunDetailSource {
     Outputs,
 }
 
-/// Captures mouse hit-testing targets for the run view.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunViewMouseTarget {
-    StepsTable,
-    OutputsTable,
-    DetailPane,
-    CancelButton,
-    PauseButton,
-}
-
-/// Describes how the detail pane visibility changed after a toggle request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DetailPaneVisibilityChange {
-    BecameVisible,
-    BecameHidden,
-}
-
-/// Snapshot of which UI region currently holds focus.
-#[derive(Debug, Clone, Copy)]
-pub struct RunFocusSnapshot {
-    pub steps_table_focused: bool,
-    pub outputs_table_focused: bool,
-    pub detail_pane_focused: bool,
-    pub cancel_button_focused: bool,
-    pub pause_button_focused: bool,
-}
-
-/// Layout metadata captured during the most recent render pass.
-#[derive(Debug, Default, Clone)]
-pub struct RunViewLayout {
-    last_area: Option<Rect>,
-    header_area: Option<Rect>,
-    steps_area: Option<Rect>,
-    outputs_area: Option<Rect>,
-    detail_area: Option<Rect>,
-    footer_area: Option<Rect>,
-    cancel_button_area: Option<Rect>,
-    pause_button_area: Option<Rect>,
-    mouse_target_areas: Vec<Rect>,
-    mouse_target_roles: Vec<RunViewMouseTarget>,
-}
-
-impl RunViewLayout {
-    /// Stores the container area used during the most recent render.
-    pub fn set_last_area(&mut self, area: Rect) {
-        self.last_area = Some(area);
-    }
-
-    /// Records the header region.
-    pub fn set_header_area(&mut self, area: Rect) {
-        self.header_area = Some(area);
-    }
-
-    /// Records the steps table region.
-    pub fn set_steps_area(&mut self, area: Rect) {
-        self.steps_area = Some(area);
-    }
-
-    /// Records the outputs table region.
-    pub fn set_outputs_area(&mut self, area: Rect) {
-        self.outputs_area = Some(area);
-    }
-
-    /// Records the detail pane region.
-    pub fn set_detail_area(&mut self, area: Option<Rect>) {
-        self.detail_area = area;
-    }
-
-    /// Records the footer region.
-    pub fn set_footer_area(&mut self, area: Rect) {
-        self.footer_area = Some(area);
-    }
-
-    /// Records the cancel button region.
-    pub fn set_cancel_button_area(&mut self, area: Option<Rect>) {
-        self.cancel_button_area = area;
-    }
-
-    /// Records the pause button region.
-    pub fn set_pause_button_area(&mut self, area: Option<Rect>) {
-        self.pause_button_area = area;
-    }
-
-    /// Updates mouse hit-testing targets.
-    pub fn set_mouse_targets(&mut self, targets: Vec<(Rect, RunViewMouseTarget)>) {
-        self.mouse_target_areas = targets.iter().map(|(area, _)| *area).collect();
-        self.mouse_target_roles = targets.iter().map(|(_, role)| *role).collect();
-    }
-
-    /// Returns the outer area recorded during the last render pass.
-    pub fn last_area(&self) -> Option<Rect> {
-        self.last_area
-    }
-
-    /// Returns the configured mouse target rectangles.
-    pub fn mouse_target_areas(&self) -> &[Rect] {
-        &self.mouse_target_areas
-    }
-
-    /// Returns the roles associated with the configured mouse targets.
-    pub fn mouse_target_roles(&self) -> &[RunViewMouseTarget] {
-        &self.mouse_target_roles
-    }
-}
-
 /// Detail pane state tracking the active source and selection.
 #[derive(Debug, Clone)]
 pub struct RunDetailState {
@@ -191,6 +86,12 @@ pub struct StepFinishedData {
 /// State container for the workflow run view.
 #[derive(Debug)]
 pub struct RunViewState {
+    pub container_focus: FocusFlag,
+    pub detail_focus: FocusFlag,
+    pub cancel_button_focus: FocusFlag,
+    pub pause_button_focus: FocusFlag,
+    pub steps_table: ResultsTableState<'static>,
+    pub outputs_table: ResultsTableState<'static>,
     run_id: String,
     workflow_identifier: String,
     workflow_title: Option<String>,
@@ -200,14 +101,7 @@ pub struct RunViewState {
     completed_at: Option<DateTime<Utc>>,
     last_update_at: Option<DateTime<Utc>>,
     is_wide_mode: bool,
-    steps_table: ResultsTableState<'static>,
-    outputs_table: ResultsTableState<'static>,
     detail: Option<RunDetailState>,
-    container_focus: FocusFlag,
-    detail_focus: FocusFlag,
-    cancel_button_focus: FocusFlag,
-    pause_button_focus: FocusFlag,
-    layout: RunViewLayout,
     step_rows: Vec<Value>,
     step_indices: HashMap<String, usize>,
     step_descriptions: HashMap<String, Option<String>>,
@@ -244,7 +138,6 @@ impl RunViewState {
             detail_focus: FocusFlag::named("workflow.run.detail"),
             cancel_button_focus: FocusFlag::named("workflow.run.actions.cancel"),
             pause_button_focus: FocusFlag::named("workflow.run.actions.pause"),
-            layout: RunViewLayout::default(),
             step_rows: Vec::new(),
             step_indices: HashMap::new(),
             step_descriptions: HashMap::new(),
@@ -494,17 +387,17 @@ impl RunViewState {
     }
 
     #[cfg(test)]
-    /// Provides immutable access to the steps table state (tests only).
+    /// Provides immutable access to the step table state (tests only).
     pub fn steps_table(&self) -> &ResultsTableState<'static> {
         &self.steps_table
     }
 
-    /// Provides mutable access to the steps table state.
+    /// Provides mutable access to the step table state.
     pub fn steps_table_mut(&mut self) -> &mut ResultsTableState<'static> {
         &mut self.steps_table
     }
 
-    /// Provides mutable access to the outputs table state.
+    /// Provides mutable access to the output table state.
     pub fn outputs_table_mut(&mut self) -> &mut ResultsTableState<'static> {
         &mut self.outputs_table
     }
@@ -523,13 +416,11 @@ impl RunViewState {
     }
 
     /// Toggles the detail pane for the requested source and reports the resulting visibility.
-    pub fn toggle_detail_for(&mut self, source: RunDetailSource) -> DetailPaneVisibilityChange {
+    pub fn toggle_detail_for(&mut self, source: RunDetailSource) {
         if self.is_detail_visible() && self.detail().is_some_and(|detail| detail.source() == source) {
             self.hide_detail();
-            DetailPaneVisibilityChange::BecameHidden
         } else {
             self.show_detail(source);
-            DetailPaneVisibilityChange::BecameVisible
         }
     }
 
@@ -541,52 +432,6 @@ impl RunViewState {
     /// Returns the current detail state, if visible.
     pub fn detail(&self) -> Option<&RunDetailState> {
         self.detail.as_ref()
-    }
-
-    /// Returns the focus flag used for the detail pane.
-    pub fn detail_focus_flag(&self) -> &FocusFlag {
-        &self.detail_focus
-    }
-
-    /// Returns the focus flag used for the cancel button.
-    pub fn cancel_button_focus_flag(&self) -> &FocusFlag {
-        &self.cancel_button_focus
-    }
-
-    /// Returns the focus flag used for the pause button.
-    pub fn pause_button_focus_flag(&self) -> &FocusFlag {
-        &self.pause_button_focus
-    }
-
-    /// Returns the focus flag for the steps table container.
-    pub fn steps_focus_flag(&self) -> &FocusFlag {
-        &self.steps_table.container_focus
-    }
-
-    /// Returns the focus flag for the outputs table container.
-    pub fn outputs_focus_flag(&self) -> &FocusFlag {
-        &self.outputs_table.container_focus
-    }
-
-    /// Captures the current focus ownership across primary regions.
-    pub fn focus_snapshot(&self) -> RunFocusSnapshot {
-        RunFocusSnapshot {
-            steps_table_focused: self.steps_table.container_focus.get(),
-            outputs_table_focused: self.outputs_table.container_focus.get(),
-            detail_pane_focused: self.detail_focus.get(),
-            cancel_button_focused: self.cancel_button_focus.get(),
-            pause_button_focused: self.pause_button_focus.get(),
-        }
-    }
-
-    /// Records the latest render layout information.
-    pub fn set_layout(&mut self, layout: RunViewLayout) {
-        self.layout = layout;
-    }
-
-    /// Returns the most recently captured layout.
-    pub fn layout(&self) -> &RunViewLayout {
-        &self.layout
     }
 
     /// Returns the JSON payload backing the current detail pane, if visible.
@@ -624,7 +469,7 @@ impl HasFocus for RunViewState {
     }
 
     fn area(&self) -> Rect {
-        self.layout.last_area().unwrap_or_default()
+        Rect::default()
     }
 }
 
@@ -800,28 +645,5 @@ mod tests {
         state.advance_repeat_animations(&theme);
         let row = state.steps_table.selected_data(0).cloned().expect("row exists");
         assert_eq!(row["Details"], Value::String("Running.. (attempt 3/5)".into()));
-    }
-
-    #[test]
-    fn toggle_detail_for_cycles_visibility() {
-        let theme = DraculaTheme::new();
-        let mut state = RunViewState::new("run-1".into(), "workflow".into(), None);
-        state.initialize_steps(&[make_step("alpha", None)], &theme);
-
-        let first_toggle = state.toggle_detail_for(RunDetailSource::Steps);
-        assert_eq!(first_toggle, DetailPaneVisibilityChange::BecameVisible);
-        assert!(state.is_detail_visible());
-        assert!(matches!(state.detail().map(|detail| detail.source()), Some(RunDetailSource::Steps)));
-
-        let second_toggle = state.toggle_detail_for(RunDetailSource::Steps);
-        assert_eq!(second_toggle, DetailPaneVisibilityChange::BecameHidden);
-        assert!(!state.is_detail_visible());
-
-        let third_toggle = state.toggle_detail_for(RunDetailSource::Outputs);
-        assert_eq!(third_toggle, DetailPaneVisibilityChange::BecameVisible);
-        assert!(matches!(
-            state.detail().map(|detail| detail.source()),
-            Some(RunDetailSource::Outputs)
-        ));
     }
 }
