@@ -1,3 +1,4 @@
+use crate::ui::components::table::ResultsTableState;
 use crate::{
     app::App,
     ui::{
@@ -71,8 +72,10 @@ impl LogDetailsComponent {
                         let detail_block = theme_helpers::block(&*app.ctx.theme, Some("Details"), true);
                         let inner_area = detail_block.inner(area);
                         frame.render_widget(detail_block, area);
+                        let mut state = ResultsTableState::default();
+                        state.set_kv_entries(entries);
                         self.details_table
-                            .render_kv_or_text(frame, inner_area, &entries, red_ref, &*app.ctx.theme);
+                            .render_kv_or_text(frame, inner_area, &mut state, red_ref, &*app.ctx.theme);
                         return;
                     }
                     LogEntry::Api { status, raw, .. } => {

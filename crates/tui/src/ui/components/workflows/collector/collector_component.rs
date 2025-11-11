@@ -7,18 +7,18 @@ use crate::ui::components::table::state::KeyValueEntry;
 use crate::ui::components::workflows::collector::manual_entry::ManualEntryComponent;
 use crate::ui::components::workflows::collector::{CollectorStagedSelection, CollectorViewState, SelectorStatus};
 use crate::ui::components::workflows::view_utils::{classify_json_value, style_for_role};
+use crate::ui::theme::theme_helpers::{self as th, build_hint_spans, ButtonRenderOptions};
 use crate::ui::theme::Theme;
-use crate::ui::theme::theme_helpers::{self as th, ButtonRenderOptions, build_hint_spans};
 use crate::ui::utils::render_value;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use heroku_engine::provider::ProviderRegistry;
-use heroku_engine::{ProviderValueResolver, resolve::select_path};
+use heroku_engine::{resolve::select_path, ProviderValueResolver};
 use heroku_types::{Effect, WorkflowProviderErrorPolicy};
-use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
+use ratatui::Frame;
 use serde_json::{Value as JsonValue, Value};
 
 /// Retained layout metadata capturing screen regions for pointer hit-testing.
@@ -103,15 +103,26 @@ impl Component for WorkflowCollectorComponent {
         }
         let position = Position::new(mouse.column, mouse.row);
         // Scroll highlighting
+        let table = &mut app.workflows.collector_state_mut().expect("table state").table;
+        let offset = table.table_state.offset();
 
         match mouse.kind {
             MouseEventKind::Moved | MouseEventKind::Up(MouseButton::Left) => {
-                let index = if self.layout.table_area.contains(position) {
-                    Some(self.hit_test_results_table(position))
+                table.mouse_over_idx = if self.layout.table_area.contains(position) {
+                    Some(self.hit_test_results_table(position, offset))
                 } else {
                     None
                 };
-                app.table.set_mouse_over_idx(index);
+            }
+            MouseEventKind::ScrollDown => {
+                if self.layout.table_area.contains(position) {
+                    table.table_state.scroll_down_by(1);
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                if self.layout.table_area.contains(position) {
+                    table.table_state.scroll_up_by(1);
+                }
             }
             _ => {}
         }
@@ -141,8 +152,8 @@ impl Component for WorkflowCollectorComponent {
 
         if self.layout.table_area.contains(position) {
             app.focus.focus(&collector.f_table);
-            let index = self.hit_test_results_table(position);
-            self.results_table_view.table_state.select(Some(index));
+            let index = self.hit_test_results_table(position, offset);
+            collector.table.table_state.select(Some(index));
             collector.sync_stage_with_selection(Some(index));
             let _ = self.stage_current_row(collector);
         }
@@ -240,10 +251,8 @@ impl Component for WorkflowCollectorComponent {
 }
 
 impl WorkflowCollectorComponent {
-    fn hit_test_results_table(&self, mouse_position: Position) -> usize {
-        let offset = self.results_table_view.table_state.offset();
-        let index = mouse_position.y.saturating_sub(1 + self.layout.table_area.y) as usize + offset;
-        index
+    fn hit_test_results_table(&self, mouse_position: Position, offset: usize) -> usize {
+        mouse_position.y.saturating_sub(1 + self.layout.table_area.y) as usize + offset
     }
     fn handle_filter_keys(&self, app: &mut App, key: KeyEvent) {
         let Some(collector) = app.workflows.collector_state_mut() else {
@@ -273,46 +282,49 @@ impl WorkflowCollectorComponent {
     }
 
     fn handle_table_keys(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
+        let collector = app.workflows.collector_state_mut().expect("selector state");
+        let row_len = collector.table.rows().map(|r| r.len()).unwrap_or_default();
+        let selected = collector.table.table_state.selected().unwrap_or_default();
+        let table_state = &mut collector.table.table_state;
+
         match key.code {
             KeyCode::Char('r') | KeyCode::Char('R') => {
-                if let Some(collector) = app.workflows.collector_state_mut() {
-                    collector.status = SelectorStatus::Loading;
-                    return self.refresh_selector_items(
-                        collector,
-                        &*app.ctx.theme,
-                        &app.ctx.provider_registry,
-                        collector.provider_id.clone(),
-                        collector.resolved_args.clone(),
-                    );
-                }
+                collector.status = SelectorStatus::Loading;
+                return self.refresh_selector_items(
+                    collector,
+                    &*app.ctx.theme,
+                    &app.ctx.provider_registry,
+                    collector.provider_id.clone(),
+                    collector.resolved_args.clone(),
+                );
             }
             KeyCode::F(2) => {
                 app.workflows.open_manual_for_active_input();
             }
-            KeyCode::Up => self.results_table_view.table_state.select_previous(),
-            KeyCode::Down => self.results_table_view.table_state.select_next(),
-            KeyCode::PageUp => self.results_table_view.table_state.scroll_up_by(5),
-            KeyCode::PageDown => self.results_table_view.table_state.scroll_down_by(5),
-            KeyCode::Home => self.results_table_view.table_state.scroll_up_by(u16::MAX),
-            KeyCode::End => self.results_table_view.table_state.scroll_down_by(u16::MAX),
+            KeyCode::Up => table_state.select_previous(),
+            KeyCode::Down => {
+                if selected < row_len {
+                    table_state.select_next();
+                }
+            }
+            KeyCode::PageUp => table_state.scroll_up_by(5),
+            KeyCode::PageDown => table_state.scroll_down_by(5),
+            KeyCode::Home => table_state.scroll_up_by(u16::MAX),
+            KeyCode::End => table_state.scroll_down_by(u16::MAX),
             KeyCode::Enter => {
-                if let Some(collector) = app.workflows.collector_state_mut() {
-                    if matches!(collector.status, SelectorStatus::Error)
-                        && matches!(collector.on_error, Some(WorkflowProviderErrorPolicy::Fail))
-                    {
-                        collector.error_message = Some("provider error: cannot apply (policy: fail)".into());
-                    } else if self.current_row_is_staged(collector) {
-                        return self.apply_selection_to_run_state(app);
-                    } else if let Err(message) = self.stage_current_row(collector) {
-                        collector.error_message = Some(message);
-                    }
+                if matches!(collector.status, SelectorStatus::Error)
+                    && matches!(collector.on_error, Some(WorkflowProviderErrorPolicy::Fail))
+                {
+                    collector.error_message = Some("provider error: cannot apply (policy: fail)".into());
+                } else if self.current_row_is_staged(collector) {
+                    return self.apply_selection_to_run_state(app);
+                } else if let Err(message) = self.stage_current_row(collector) {
+                    collector.error_message = Some(message);
                 }
             }
             KeyCode::Char(' ') => {
-                if let Some(collector) = app.workflows.collector_state_mut() {
-                    if let Err(message) = self.stage_current_row(collector) {
-                        collector.error_message = Some(message);
-                    }
+                if let Err(message) = self.stage_current_row(collector) {
+                    collector.error_message = Some(message);
                 }
             }
             _ => {}
@@ -338,15 +350,8 @@ impl WorkflowCollectorComponent {
         if f_cancel {
             effects.push(Effect::CloseModal);
         }
-        let mut maybe_selection: Option<CollectorStagedSelection> = None;
         if f_apply {
-            let collector = app.workflows.collector_state_mut().expect("selector state");
-            if let Some(selection) = collector.take_staged_selection() {
-                collector.error_message = None;
-                maybe_selection = Some(selection);
-            } else {
-                collector.error_message = Some("Select a value before applying".into());
-            }
+            self.apply_selection_to_run_state(app);
         }
         effects
     }
@@ -363,7 +368,7 @@ impl WorkflowCollectorComponent {
             Ok(items_vec) => {
                 let json_value = Value::Array(items_vec.clone());
                 selector.set_items(items_vec);
-                selector.table.apply_result_json(Some(json_value), theme);
+                selector.table.apply_result_json(Some(json_value), theme, false);
                 selector.status = SelectorStatus::Loaded;
                 selector.error_message = None;
                 self.apply_filter(selector, theme);
@@ -380,8 +385,8 @@ impl WorkflowCollectorComponent {
         let (value, source_field) = self
             .extract_selected_value(collector)
             .ok_or_else(|| "value must be a scalar or value_field missing".to_string())?;
-        let idx = self
-            .results_table_view
+        let idx = collector
+            .table
             .table_state
             .selected()
             .ok_or_else(|| "no row selected".to_string())?;
@@ -397,11 +402,11 @@ impl WorkflowCollectorComponent {
         Ok(())
     }
 
-    fn current_row_is_staged(&self, selector: &CollectorViewState<'_>) -> bool {
-        let Some(idx) = self.results_table_view.table_state.selected() else {
+    fn current_row_is_staged(&self, collector: &CollectorViewState<'_>) -> bool {
+        let Some(idx) = collector.table.table_state.selected() else {
             return false;
         };
-        if let (Some(staged), Some(row)) = (selector.staged_selection(), selector.table.selected_data(idx)) {
+        if let (Some(staged), Some(row)) = (collector.staged_selection(), collector.table.selected_data(idx)) {
             staged.row == *row
         } else {
             false
@@ -419,8 +424,9 @@ impl WorkflowCollectorComponent {
         collector.error_message = None;
         let mut effects = Vec::new();
         if let Some(name) = app.workflows.active_input_name() {
-            if let Some(run) = app.workflows.active_run_state_mut() {
-                run.run_context_mut().inputs.insert(name, selection.value);
+            if let Some(run_rc) = app.workflows.active_run_state.clone() {
+                let mut run = run_rc.borrow_mut();
+                run.run_context.inputs.insert(name, selection.value);
                 let _ = run.evaluate_input_providers();
             }
             effects.push(Effect::CloseModal);
@@ -451,19 +457,16 @@ impl WorkflowCollectorComponent {
         let Some(collector) = app.workflows.collector_state_mut() else {
             return effects;
         };
-        match key.code {
-            KeyCode::Esc => {
-                if collector.f_filter.get() && !collector.filter.is_empty() {
-                    collector.filter.set_input("");
-                    collector.filter.set_cursor(0);
-                    self.apply_filter(collector, &*app.ctx.theme);
-                    collector.focus_filter();
-                    return effects;
-                }
-                collector.clear_staged_selection();
-                effects.push(Effect::CloseModal);
+        if key.code == KeyCode::Esc {
+            if collector.f_filter.get() && !collector.filter.is_empty() {
+                collector.filter.set_input("");
+                collector.filter.set_cursor(0);
+                self.apply_filter(collector, &*app.ctx.theme);
+                collector.focus_filter();
+                return effects;
             }
-            _ => {}
+            collector.clear_staged_selection();
+            effects.push(Effect::CloseModal);
         }
 
         effects
@@ -474,7 +477,7 @@ impl WorkflowCollectorComponent {
     }
 
     fn extract_selected_value(&self, collector: &CollectorViewState<'_>) -> Option<(JsonValue, Option<String>)> {
-        let idx = self.results_table_view.table_state.selected()?;
+        let idx = collector.table.table_state.selected()?;
         let row = collector.table.selected_data(idx)?;
         if let Some(path) = collector.value_field.as_deref() {
             let value = select_path(row, Some(path))?;
@@ -526,8 +529,11 @@ impl WorkflowCollectorComponent {
 
         let theme = &*app.ctx.theme;
         let collector = app.workflows.collector_state_mut().expect("selector state");
-        let idx = self.results_table_view.table_state.selected();
-        collector.sync_stage_with_selection(idx);
+        let selected_idx = collector.table.table_state.selected();
+        if selected_idx.is_none() && collector.table.rows().is_some() {
+            collector.table.table_state.select(Some(0));
+        }
+        collector.sync_stage_with_selection(selected_idx);
 
         self.render_filter_panel(frame, layout.filter_panel, collector, theme);
         self.render_status_line(frame, layout.status_area, collector, theme);
@@ -535,18 +541,18 @@ impl WorkflowCollectorComponent {
         let table_focused = collector.f_table.get();
 
         self.results_table_view
-            .render_results(frame, layout.table_area, &collector.table, table_focused, theme);
+            .render_results(frame, layout.table_area, &mut collector.table, table_focused, theme);
+        // Manual selection of a json field value when one is not specified
         if collector.value_field.is_none() {
-            let idx = self.results_table_view.table_state.selected().unwrap_or(0);
+            let idx = collector.table.table_state.selected().unwrap_or(0);
             let row_json = collector.table.selected_data(idx).cloned().unwrap_or(Value::Null);
             let entries = collector.table.kv_entries();
             let (detail_selection, detail_offset) = self.detail_selection(entries, collector);
             let detail_block = th::block(theme, Some("Details"), table_focused);
             let detail_inner = detail_block.inner(layout.detail_area);
             frame.render_widget(detail_block, layout.detail_area);
-
             self.detail_table_view
-                .render_kv_or_text(frame, detail_inner, entries, &row_json, theme);
+                .render_kv_or_text(frame, detail_inner, &mut collector.table, &row_json, theme);
             self.render_detail_metadata(frame, layout.metadata_area, collector, theme);
         }
         let cancel_options = ButtonRenderOptions::new(true, collector.f_cancel.get(), false, Borders::ALL, false);

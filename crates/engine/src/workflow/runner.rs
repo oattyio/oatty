@@ -105,7 +105,6 @@ pub async fn drive_workflow_run(
             let _ = event_tx.send(WorkflowRunEvent::RunOutputAccumulated {
                 key: step_spec.id.clone(),
                 value: result.output.clone(),
-                detail: None,
             });
         }
 

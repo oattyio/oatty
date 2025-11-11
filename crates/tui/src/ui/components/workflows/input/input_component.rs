@@ -1,203 +1,167 @@
-use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use heroku_engine::{ProviderBindingOutcome, WorkflowRunState};
-use heroku_types::{Effect, Modal, Route, WorkflowInputDefinition, WorkflowProviderArgumentValue, WorkflowValueProvider};
-use ratatui::{
-    Frame,
-    layout::{Constraint, Layout, Rect},
-    style::{Modifier, Style},
-    text::{Line, Span},
-    widgets::{Borders, List, ListItem, ListState, Paragraph, Wrap},
-};
+//! Renders the workflow input viewer, handling navigation, validation feedback, and
+//! the transitions into manual or provider-backed collectors.
 
 use crate::app::App;
 use crate::ui::components::component::Component;
-use crate::ui::components::workflows::input::state::WorkflowInputLayout;
-use crate::ui::components::workflows::view_utils::{JsonSyntaxRole, classify_json_value, format_preview, style_for_role};
+use crate::ui::components::workflows::input::state::{InputStatus, WorkflowInputRow};
+use crate::ui::components::workflows::view_utils::style_for_role;
+use crate::ui::components::workflows::WorkflowInputViewState;
 use crate::ui::theme::{
     roles::Theme,
     theme_helpers::{self as th, ButtonRenderOptions},
 };
-use heroku_types::workflow::validate_candidate_value;
+use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use heroku_engine::WorkflowRunState;
+use heroku_types::{Effect, Modal, Route};
+use rat_focus::HasFocus;
+use ratatui::layout::Position;
+use ratatui::widgets::Block;
+use ratatui::{
+    layout::{Constraint, Layout, Rect},
+    style::{Modifier, Style},
+    text::{Line, Span},
+    widgets::{Borders, List, ListItem, Paragraph, Wrap},
+    Frame,
+};
+use std::cell::Ref;
+use unicode_width::UnicodeWidthStr;
 
+/// Captures layout metadata from the most recent render pass for hit detection.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct WorkflowInputLayout {
+    pub header_area: Rect,
+    pub inputs_list_area: Rect,
+    pub details_area: Rect,
+    pub cancel_button_area: Rect,
+    pub run_button_area: Rect,
+    pub status_line_area: Rect,
+}
+impl From<Vec<Rect>> for WorkflowInputLayout {
+    fn from(value: Vec<Rect>) -> Self {
+        Self {
+            header_area: value[0],
+            inputs_list_area: value[1],
+            details_area: value[2],
+            cancel_button_area: value[3],
+            run_button_area: value[4],
+            status_line_area: value[5],
+        }
+    }
+}
+/// Controller for the pre-run workflow input view, coordinating focus, events, and rendering.
 #[derive(Debug, Default)]
-pub struct WorkflowInputsComponent;
+pub struct WorkflowInputsComponent {
+    layout: WorkflowInputLayout,
+}
 
 impl Component for WorkflowInputsComponent {
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
-        let mut effects = Vec::new();
         if app.workflows.input_view_state().is_none() {
-            return effects;
-        };
-
-        match key.code {
-            KeyCode::Tab => {
-                app.focus.next();
-                return effects;
-            }
-            KeyCode::BackTab => {
-                app.focus.prev();
-                return effects;
-            }
-            KeyCode::Esc => {
-                effects.push(Effect::SwitchTo(Route::Workflows));
-                return effects;
-            }
-            _ => {}
+            return Vec::new();
         }
 
-        let list_focused = app.workflows.input_view_state().map(|state| state.f_list.get()).unwrap_or(false);
-        let cancel_focused = app
-            .workflows
-            .input_view_state()
-            .map(|state| state.f_cancel_button.get())
-            .unwrap_or(false);
-        let run_focused = app
-            .workflows
-            .input_view_state()
-            .map(|state| state.f_run_button.get())
-            .unwrap_or(false);
-
-        if list_focused {
-            match key.code {
-                KeyCode::Down => {
-                    if app.workflows.active_run_state().is_some() {
-                        let rows = build_input_rows(app);
-                        if let Some(state) = app.workflows.input_view_state_mut()
-                            && let Some(next) = advance_selection(&rows, state.selected(), Direction::Forward)
-                        {
-                            state.set_selected(next);
-                        }
-                    }
-                }
-                KeyCode::Up => {
-                    if app.workflows.active_run_state().is_some() {
-                        let rows = build_input_rows(app);
-                        if let Some(state) = app.workflows.input_view_state_mut()
-                            && let Some(prev) = advance_selection(&rows, state.selected(), Direction::Backward)
-                        {
-                            state.set_selected(prev);
-                        }
-                    }
-                }
-                KeyCode::Enter => {
-                    if app.workflows.active_run_state().is_some() {
-                        let rows = build_input_rows(app);
-                        if let Some(reason) = current_row_block_reason(app, &rows) {
-                            app.append_log_message(format!("Input blocked: {reason}"));
-                            return effects;
-                        }
-                    }
-                    if let Some(definition) = app.workflows.active_input_definition() {
-                        if definition.provider.is_some() {
-                            app.workflows.open_selector_for_active_input(&app.ctx.command_registry);
-                            effects.extend(app.prepare_selector_fetch());
-                        } else {
-                            app.workflows.open_manual_for_active_input();
-                        }
-                        effects.push(Effect::ShowModal(Modal::WorkflowCollector));
-                    }
-                }
-                KeyCode::F(2) => {
-                    if app.workflows.active_run_state().is_some() {
-                        let rows = build_input_rows(app);
-                        if current_row_block_reason(app, &rows).is_some() {
-                            return effects;
-                        }
-                    }
-                    app.workflows.open_manual_for_active_input();
-                    effects.push(Effect::ShowModal(Modal::WorkflowCollector));
-                }
-                _ => {}
-            }
+        if let Some(effects) = handle_global_key_event(app, key.code) {
             return effects;
         }
 
-        if cancel_focused {
-            match key.code {
-                KeyCode::Left | KeyCode::Up => focus_input_list(app),
-                KeyCode::Right => focus_run_button(app),
-                KeyCode::Enter | KeyCode::Char(' ') => effects.push(Effect::SwitchTo(Route::Workflows)),
-                _ => {}
-            }
-            return effects;
+        let focus_snapshot = determine_input_focus(app);
+
+        if focus_snapshot.list_focused {
+            return handle_list_focused_key(app, key.code);
         }
 
-        if run_focused {
-            match key.code {
-                KeyCode::Left => focus_cancel_button(app),
-                KeyCode::Right | KeyCode::Down => focus_input_list(app),
-                KeyCode::Enter | KeyCode::Char(' ') => effects.extend(app.run_active_workflow()),
-                _ => {}
-            }
-            return effects;
+        if focus_snapshot.cancel_button_focused {
+            return handle_cancel_button_focused_key(app, key.code);
         }
 
-        effects
+        if focus_snapshot.run_button_focused {
+            return handle_run_button_focused_key(app, key.code);
+        }
+
+        Vec::new()
     }
 
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
-        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
-            return Vec::new();
-        }
-
-        let (layout, cancel_flag, run_flag) = if let Some(state) = app.workflows.input_view_state() {
-            (*state.layout(), state.f_cancel_button.clone(), state.f_run_button.clone())
-        } else {
+        let Some(state) = app.workflows.input_view_state_mut() else {
             return Vec::new();
         };
 
-        if let Some(area) = layout.cancel_button_area
-            && rect_contains(area, mouse.column, mouse.row)
-        {
-            app.focus.focus(&cancel_flag);
-            return vec![Effect::SwitchTo(Route::Workflows)];
-        }
+        let pos = Position {
+            x: mouse.column,
+            y: mouse.row,
+        };
 
-        if let Some(area) = layout.run_button_area
-            && rect_contains(area, mouse.column, mouse.row)
-        {
-            app.focus.focus(&run_flag);
-            return app.run_active_workflow();
+        match mouse.kind {
+            MouseEventKind::Moved | MouseEventKind::Up(MouseButton::Left) => {
+                state.mouse_over_idx = if self.layout.inputs_list_area.contains(pos) {
+                    hit_test_list(
+                        pos,
+                        state.input_list_state.offset(),
+                        &self.layout.inputs_list_area,
+                        &state.input_rows,
+                    )
+                } else {
+                    None
+                }
+            }
+            MouseEventKind::Down(MouseButton::Left) => {
+                if self.layout.inputs_list_area.contains(pos) {
+                    app.focus.focus(&state.f_list);
+                    let idx = hit_test_list(
+                        pos,
+                        state.input_list_state.offset(),
+                        &self.layout.inputs_list_area,
+                        &state.input_rows,
+                    );
+                    state.input_list_state.select(idx);
+                    if idx.is_some() {
+                        return handle_list_focused_key(app, KeyCode::Enter);
+                    }
+                }
+
+                if self.layout.cancel_button_area.contains(pos) {
+                    app.focus.focus(&state.f_cancel_button);
+                    return vec![Effect::SwitchTo(Route::Workflows)];
+                }
+
+                if self.layout.run_button_area.contains(pos) {
+                    app.focus.focus(&state.f_run_button);
+                    return app.run_active_workflow();
+                }
+            }
+            _ => {}
         }
 
         Vec::new()
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
-        let block = th::block(&*app.ctx.theme, Some("Pre-run Input Viewer"), true);
+        let block = get_block_container(app);
         let inner = block.inner(area);
 
-        if app.workflows.active_run_state().is_none() {
+        if app.workflows.active_run_state.is_none() || app.workflows.input_view_state().is_none() {
             render_empty(frame, inner, &*app.ctx.theme);
             return;
         };
+        let theme = &*app.ctx.theme;
+        let layout = WorkflowInputLayout::from(self.get_preferred_layout(app, area));
 
-        let rows = build_input_rows(app);
-        let run_enabled = app.workflows.unresolved_item_count() == 0;
-        if let Some(state) = app.workflows.input_view_state_mut() {
-            state.clamp_selection(rows.len());
-            if let Some(selected) = rows.get(state.selected())
-                && selected.is_blocked()
-                && let Some(first) = first_enabled_index(&rows)
-            {
-                state.set_selected(first);
-            }
-        }
+        let input_view_state = app.workflows.input_view_state_mut().unwrap();
+        input_view_state.build_input_rows();
 
-        let splits = Layout::vertical([
-            Constraint::Length(2), // header height
-            Constraint::Min(6),    // content height
-            Constraint::Length(3), // footer height
-        ])
-        .split(inner);
+        let run_state_rc = input_view_state.run_state.clone();
 
-        render_header(frame, splits[0], app, rows.len());
-
-        let content_layout = Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)]).split(splits[1]);
-
-        render_inputs_list(frame, content_layout[0], app, &rows);
-        render_input_details(frame, content_layout[1], app, &rows);
-        render_footer(frame, splits[2], app, run_enabled);
+        render_header(
+            frame,
+            layout.header_area,
+            run_state_rc.borrow(),
+            input_view_state.input_rows.len(),
+            theme,
+        );
+        render_inputs_list(frame, layout.inputs_list_area, input_view_state, theme);
+        render_input_details(frame, layout.details_area, input_view_state, theme);
+        render_footer(frame, layout, app);
+        self.layout = layout;
     }
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
@@ -236,6 +200,159 @@ impl Component for WorkflowInputsComponent {
             ],
         )
     }
+
+    fn get_preferred_layout(&self, app: &App, area: Rect) -> Vec<Rect> {
+        let block = get_block_container(app);
+        let inner = block.inner(area);
+        let main = Layout::vertical([
+            Constraint::Length(2), // header height
+            Constraint::Min(6),    // content height
+            Constraint::Length(3), // footer height
+        ])
+        .split(inner);
+
+        let content_layout = Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)]).split(main[1]);
+        let layout_areas = Layout::horizontal([
+            Constraint::Length(12), // cancel
+            Constraint::Length(12), // run
+            Constraint::Length(2),  // padding
+            Constraint::Min(0),     // status line
+        ])
+        .split(main[2]);
+
+        vec![
+            main[0],           // header
+            content_layout[0], // input list
+            content_layout[1], // input details
+            layout_areas[0],   // cancel button
+            layout_areas[1],   // run button
+            layout_areas[3],   // status line
+        ]
+    }
+
+    fn on_route_exit(&mut self, app: &mut App) -> Vec<Effect> {
+        if let Some(state) = app.workflows.input_view_state_mut() {
+            state.input_list_state.select(None);
+        }
+        Vec::new()
+    }
+}
+
+#[derive(Default)]
+struct InputFocusSnapshot {
+    list_focused: bool,
+    cancel_button_focused: bool,
+    run_button_focused: bool,
+}
+fn get_block_container(app: &App) -> Block<'static> {
+    let is_focused = app.workflows.input_view_state().map(|s| s.f_list.is_focused()).unwrap_or(false);
+    th::block(&*app.ctx.theme, Some("Pre-run Input Viewer"), is_focused)
+}
+fn handle_global_key_event(app: &mut App, key_code: KeyCode) -> Option<Vec<Effect>> {
+    match key_code {
+        KeyCode::Tab => {
+            app.focus.next();
+            Some(Vec::new())
+        }
+        KeyCode::BackTab => {
+            app.focus.prev();
+            Some(Vec::new())
+        }
+        KeyCode::Esc => Some(vec![Effect::SwitchTo(Route::Workflows)]),
+        _ => None,
+    }
+}
+
+fn determine_input_focus(app: &App) -> InputFocusSnapshot {
+    let mut snapshot = InputFocusSnapshot::default();
+    if let Some(state) = app.workflows.input_view_state() {
+        snapshot.list_focused = state.f_list.get();
+        snapshot.cancel_button_focused = state.f_cancel_button.get();
+        snapshot.run_button_focused = state.f_run_button.get();
+    }
+    snapshot
+}
+
+fn handle_list_focused_key(app: &mut App, key_code: KeyCode) -> Vec<Effect> {
+    match key_code {
+        KeyCode::Down | KeyCode::Up => {
+            if app.workflows.active_run_state.is_some() {
+                let direction = if matches!(key_code, KeyCode::Down) {
+                    Direction::Forward
+                } else {
+                    Direction::Backward
+                };
+                if let Some(state) = app.workflows.input_view_state_mut()
+                    && let Some(selected_index) = state.input_list_state.selected()
+                    && let Some(next_index) = advance_selection(&state.input_rows, selected_index, direction)
+                {
+                    state.input_list_state.select(Some(next_index));
+                }
+            }
+            Vec::new()
+        }
+        KeyCode::Enter => {
+            let mut effects = Vec::new();
+            if app.workflows.active_run_state.is_some() {
+                if let Some(reason) = current_row_block_reason(app) {
+                    app.append_log_message(format!("Input blocked: {reason}"));
+                    return effects;
+                }
+            }
+            if let Some(definition) = app.workflows.active_input_definition() {
+                if definition.provider.is_some() {
+                    app.workflows.open_selector_for_active_input(&app.ctx.command_registry);
+                    effects.extend(app.prepare_selector_fetch());
+                } else {
+                    app.workflows.open_manual_for_active_input();
+                }
+                effects.push(Effect::ShowModal(Modal::WorkflowCollector));
+            }
+            effects
+        }
+        KeyCode::F(2) => {
+            let mut effects = Vec::new();
+            if app.workflows.active_run_state.is_some() {
+                if current_row_block_reason(app).is_some() {
+                    return effects;
+                }
+            }
+            app.workflows.open_manual_for_active_input();
+            effects.push(Effect::ShowModal(Modal::WorkflowCollector));
+            effects
+        }
+        _ => Vec::new(),
+    }
+}
+
+fn handle_cancel_button_focused_key(app: &mut App, key_code: KeyCode) -> Vec<Effect> {
+    match key_code {
+        KeyCode::Left | KeyCode::Up => {
+            focus_input_list(app);
+            Vec::new()
+        }
+        KeyCode::Right => {
+            focus_run_button(app);
+            Vec::new()
+        }
+        KeyCode::Enter | KeyCode::Char(' ') => vec![Effect::SwitchTo(Route::Workflows)],
+        _ => Vec::new(),
+    }
+}
+
+fn handle_run_button_focused_key(app: &mut App, key_code: KeyCode) -> Vec<Effect> {
+    match key_code {
+        KeyCode::Left => {
+            focus_cancel_button(app);
+            Vec::new()
+        }
+        KeyCode::Right | KeyCode::Down => {
+            focus_input_list(app);
+            Vec::new()
+        }
+        KeyCode::Enter | KeyCode::Char(' ') => app.run_active_workflow(),
+        _ => Vec::new(),
+    }
 }
 
 fn render_empty(frame: &mut Frame, area: Rect, theme: &dyn Theme) {
@@ -243,22 +360,22 @@ fn render_empty(frame: &mut Frame, area: Rect, theme: &dyn Theme) {
     frame.render_widget(block, area);
 }
 
-fn render_header(frame: &mut Frame, area: Rect, app: &mut App, total_inputs: usize) {
-    let run_state = app.workflows.active_run_state().unwrap();
-    let theme = &*app.ctx.theme;
+fn render_header(frame: &mut Frame, area: Rect, run_state: Ref<WorkflowRunState>, total_inputs: usize, theme: &dyn Theme) {
     let workflow = &run_state.workflow;
+
     let title = workflow
         .title
         .as_deref()
         .filter(|title| !title.is_empty())
         .unwrap_or(&workflow.identifier);
+
     let description = workflow
         .description
         .as_deref()
         .filter(|description| !description.is_empty())
         .unwrap_or(&workflow.identifier);
 
-    let unresolved = app.workflows.unresolved_item_count();
+    let unresolved = run_state.unresolved_item_count();
     let subtitle = if unresolved == 0 {
         format!("{} inputs • {} steps", total_inputs, workflow.steps.len())
     } else {
@@ -282,15 +399,12 @@ fn render_header(frame: &mut Frame, area: Rect, app: &mut App, total_inputs: usi
     frame.render_widget(paragraph, area);
 }
 
-fn render_inputs_list(frame: &mut Frame, area: Rect, app: &App, rows: &[WorkflowInputRow]) {
-    let theme = &*app.ctx.theme;
-    let block = th::block(theme, Some("Inputs"), app.workflows.input_view_state().is_some());
+fn render_inputs_list(frame: &mut Frame, area: Rect, input_view_state: &mut WorkflowInputViewState, theme: &dyn Theme) {
+    let list_focused = input_view_state.f_list.is_focused();
+    let rows = &input_view_state.input_rows;
+    let block = th::block(theme, Some("Inputs"), list_focused);
     let inner = block.inner(area);
     frame.render_widget(block, area);
-
-    let Some(view_state) = app.workflows.input_view_state() else {
-        return;
-    };
 
     if rows.is_empty() {
         let paragraph = Paragraph::new("This workflow has no declared inputs.")
@@ -300,11 +414,16 @@ fn render_inputs_list(frame: &mut Frame, area: Rect, app: &App, rows: &[Workflow
         return;
     }
 
-    let selected = view_state.selected();
-
-    // Build list items without a manual marker; the List widget will handle highlight/marker
     let mut items: Vec<ListItem> = Vec::with_capacity(rows.len());
-    for row in rows.iter() {
+    let max_len = rows
+        .iter()
+        .map(|r| UnicodeWidthStr::width(r.name.as_str()) + 2)
+        .reduce(|a, b| a.max(b))
+        .unwrap_or(20);
+    let should_highlight = input_view_state.mouse_over_idx.is_some();
+    let mouse_over_idx = input_view_state.mouse_over_idx.unwrap_or(0);
+    let highlight_style = theme.selection_style().add_modifier(Modifier::BOLD);
+    for (idx, row) in rows.iter().enumerate() {
         let status_span = match row.status {
             InputStatus::Resolved => Span::styled(format!("{:<15}", "✓ Looks good!"), theme.status_success()),
             InputStatus::Pending => Span::styled(format!("{:<15}", "⚠ No value"), theme.status_warning()),
@@ -317,10 +436,14 @@ fn render_inputs_list(frame: &mut Frame, area: Rect, app: &App, rows: &[Workflow
             name_style = name_style.add_modifier(Modifier::DIM);
         }
 
-        let mut segments = vec![Span::styled(format!("{:<20}", row.name), name_style), status_span];
-        if row.required {
-            segments.push(Span::styled("[required]", theme.syntax_keyword_style()));
-        }
+        let mut segments = vec![Span::styled(format!("{:<max_len$}", row.name), name_style), status_span];
+        let required_status = if row.required { "[required]" } else { "[optional]" };
+        let required_style = if row.required {
+            theme.syntax_keyword_style()
+        } else {
+            theme.text_muted_style()
+        };
+        segments.push(Span::styled(required_status, required_style));
 
         if row.provider_label.is_some() {
             segments.push(Span::styled(format!("{:>3}", "⇄"), theme.text_secondary_style()));
@@ -336,12 +459,7 @@ fn render_inputs_list(frame: &mut Frame, area: Rect, app: &App, rows: &[Workflow
         if let Some(message) = &row.status_message
             && row.blocked_reason.as_ref() != Some(message)
         {
-            let message_style = match row.status {
-                InputStatus::Resolved => theme.text_muted_style(),
-                InputStatus::Pending => theme.text_muted_style(),
-                InputStatus::Error => theme.status_error(),
-                InputStatus::Blocked => theme.status_warning(),
-            };
+            let message_style = get_message_style(&row.status, theme);
             segments.push(Span::styled(message.to_string(), message_style));
         }
 
@@ -349,47 +467,114 @@ fn render_inputs_list(frame: &mut Frame, area: Rect, app: &App, rows: &[Workflow
             segments.push(Span::styled(" [disabled]", theme.text_muted_style().add_modifier(Modifier::DIM)));
         }
 
-        let line = Line::from(segments);
+        let mut line = Line::from(segments);
+        if should_highlight && mouse_over_idx == idx {
+            line = line.style(highlight_style);
+        }
         items.push(ListItem::new(line));
+    }
+    if input_view_state.input_list_state.selected().is_none() {
+        input_view_state.input_list_state.select(first_enabled_index(&rows));
     }
 
     let list = List::new(items)
         .style(theme.text_primary_style())
-        .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
-        .highlight_symbol("▸ ");
+        .highlight_style(highlight_style)
+        .highlight_symbol(if list_focused { "▸ " } else { "" });
 
-    let mut list_state = ListState::default();
-    list_state.select(Some(selected));
-
-    frame.render_stateful_widget(list, inner, &mut list_state);
+    frame.render_stateful_widget(list, inner, &mut input_view_state.input_list_state.clone());
 }
 
-fn render_input_details(frame: &mut Frame, area: Rect, app: &App, rows: &[WorkflowInputRow]) {
-    let theme = &*app.ctx.theme;
+fn hit_test_list(pos: Position, offset: usize, list_area: &Rect, rows: &[WorkflowInputRow]) -> Option<usize> {
+    let idx = pos.y.saturating_sub(list_area.y + 1) as usize + offset; // sub 1 for block border
+    if let Some(row) = rows.get(idx)
+        && !row.is_blocked()
+    {
+        return Some(idx);
+    }
+    None
+}
+
+fn get_message_style(status: &InputStatus, theme: &dyn Theme) -> Style {
+    match status {
+        InputStatus::Resolved => theme.text_muted_style(),
+        InputStatus::Pending => theme.text_muted_style(),
+        InputStatus::Error => theme.status_error(),
+        InputStatus::Blocked => theme.status_warning(),
+    }
+}
+
+fn render_input_details(frame: &mut Frame, area: Rect, input_view_state: &WorkflowInputViewState, theme: &dyn Theme) {
     let block = th::block(theme, Some("Workflow Details"), false);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
-    if app.workflows.active_run_state().is_none() {
-        return;
+    let total_inputs = input_view_state.input_rows.len();
+    let unresolved_inputs = input_view_state.run_state.borrow().unresolved_item_count();
+    let next_action = find_next_action(&input_view_state.input_rows);
+
+    let mut lines = vec![
+        build_ready_line(theme, unresolved_inputs, next_action),
+        build_resolved_count_line(theme, total_inputs, unresolved_inputs),
+        build_next_action_line(theme, unresolved_inputs, next_action),
+        Line::from(""),
+        Line::from(Span::styled("Selected values:", theme.text_secondary_style())),
+    ];
+
+    lines.extend(build_selected_value_lines(theme, &input_view_state.input_rows));
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("Auto-reset note: ", theme.text_secondary_style()),
+        Span::styled("downstream steps reset when a prior step edits.", theme.text_muted_style()),
+    ]));
+
+    lines.push(Line::from(""));
+    let error_notes = collect_error_notes(&input_view_state.input_rows);
+    lines.extend(build_error_section(theme, &error_notes));
+
+    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
+    frame.render_widget(paragraph, inner);
+}
+
+fn find_next_action(rows: &[WorkflowInputRow]) -> Option<&str> {
+    rows.iter()
+        .find(|row| matches!(row.status, InputStatus::Error | InputStatus::Pending | InputStatus::Blocked))
+        .map(|row| row.name.as_str())
+}
+
+fn build_ready_line(theme: &dyn Theme, unresolved_inputs: usize, next_action: Option<&str>) -> Line<'static> {
+    if unresolved_inputs == 0 {
+        Line::from(Span::styled("Ready?: ✓ All inputs resolved", theme.status_success()))
+    } else {
+        let label = next_action.unwrap_or("—");
+        Line::from(Span::styled(format!("Ready?: ⚠ Waiting on {label}"), theme.status_warning()))
     }
+}
 
-    // Aggregate readiness information
-    let total = rows.len();
-    let unresolved = app.workflows.unresolved_item_count();
-    let resolved = total.saturating_sub(unresolved);
+fn build_resolved_count_line(theme: &dyn Theme, total_inputs: usize, unresolved_inputs: usize) -> Line<'static> {
+    let resolved_inputs = total_inputs.saturating_sub(unresolved_inputs);
+    Line::from(vec![
+        Span::styled("Resolved inputs: ", theme.text_secondary_style()),
+        Span::styled(format!("{} / {}", resolved_inputs, total_inputs), theme.text_primary_style()),
+    ])
+}
 
-    // Next action = first unresolved or error entry
-    let mut next_action: Option<&str> = None;
-    for row in rows {
-        if matches!(row.status, InputStatus::Error | InputStatus::Pending | InputStatus::Blocked) {
-            next_action = Some(&row.name);
-            break;
-        }
-    }
+fn build_next_action_line(theme: &dyn Theme, unresolved_inputs: usize, next_action: Option<&str>) -> Line<'static> {
+    let label = next_action.unwrap_or("—").to_owned();
+    let style = if unresolved_inputs == 0 {
+        theme.text_muted_style()
+    } else {
+        theme.text_primary_style()
+    };
+    Line::from(vec![
+        Span::styled("Next action: ", theme.text_secondary_style()),
+        Span::styled(label, style),
+    ])
+}
 
-    // Selected values list
-    let mut selected_lines: Vec<Line> = Vec::new();
+fn build_selected_value_lines(theme: &dyn Theme, rows: &[WorkflowInputRow]) -> Vec<Line<'static>> {
+    let mut lines: Vec<Line> = Vec::new();
     for row in rows {
         let mut line_segments = vec![Span::styled("  • ", theme.text_secondary_style())];
 
@@ -425,103 +610,42 @@ fn render_input_details(frame: &mut Frame, area: Rect, app: &App, rows: &[Workfl
         }
 
         if let Some(message) = &row.status_message
-            && row.blocked_reason.as_ref() != Some(message)
+            && row.blocked_reason.as_deref() != Some(message)
         {
-            let message_style = match row.status {
-                InputStatus::Resolved => theme.text_muted_style(),
-                InputStatus::Pending => theme.text_muted_style(),
-                InputStatus::Error => theme.status_error(),
-                InputStatus::Blocked => theme.status_warning(),
-            };
+            let message_style = get_message_style(&row.status, theme);
             line_segments.push(Span::styled(format!(" {message}"), message_style));
         }
 
-        selected_lines.push(Line::from(line_segments));
+        lines.push(Line::from(line_segments));
     }
+    lines
+}
 
-    // Errors & notes aggregation
-    let mut error_notes: Vec<String> = Vec::new();
-    for row in rows {
-        if let Some(message) = &row.status_message {
-            error_notes.push(message.clone());
-        }
-    }
+fn collect_error_notes(rows: &[WorkflowInputRow]) -> Vec<String> {
+    rows.iter().filter_map(|row| row.status_message.clone()).collect()
+}
 
-    // Build final lines according to spec layout
-    let mut lines: Vec<Line> = Vec::new();
-    // Ready?
-    let ready_label = if unresolved == 0 {
-        Span::styled("Ready?: ✓ All inputs resolved", theme.status_success())
-    } else {
-        Span::styled(
-            format!("Ready?: ⚠ Waiting on {}", next_action.unwrap_or("—")),
-            theme.status_warning(),
-        )
-    };
-    lines.push(Line::from(ready_label));
-
-    // Resolved count
-    lines.push(Line::from(vec![
-        Span::styled("Resolved inputs: ", theme.text_secondary_style()),
-        Span::styled(format!("{} / {}", resolved, total), theme.text_primary_style()),
-    ]));
-
-    // Next action
-    lines.push(Line::from(vec![
-        Span::styled("Next action: ", theme.text_secondary_style()),
-        Span::styled(
-            next_action.unwrap_or("—"),
-            if unresolved == 0 {
-                theme.text_muted_style()
-            } else {
-                theme.text_primary_style()
-            },
-        ),
-    ]));
-
-    // Spacer
-    lines.push(Line::from(""));
-
-    // Selected values header
-    lines.push(Line::from(Span::styled("Selected values:", theme.text_secondary_style())));
-    lines.extend(selected_lines);
-
-    // Spacer and auto-reset note
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled("Auto-reset note: ", theme.text_secondary_style()),
-        Span::styled("downstream steps reset when a prior step edits.", theme.text_muted_style()),
-    ]));
-
-    // Spacer and errors
-    lines.push(Line::from(""));
+fn build_error_section(theme: &dyn Theme, error_notes: &[String]) -> Vec<Line<'static>> {
     if error_notes.is_empty() {
-        lines.push(Line::from(vec![
+        vec![Line::from(vec![
             Span::styled("Errors & notes: ", theme.text_secondary_style()),
             Span::styled("none", theme.text_muted_style()),
-        ]));
+        ])]
     } else {
+        let mut lines = Vec::with_capacity(error_notes.len() + 1);
         lines.push(Line::from(Span::styled("Errors & notes:", theme.text_secondary_style())));
         for note in error_notes {
             lines.push(Line::from(vec![
                 Span::styled("  • ", theme.text_secondary_style()),
-                Span::styled(note, theme.text_primary_style()),
+                Span::styled(note.clone(), theme.text_primary_style()),
             ]));
         }
+        lines
     }
-
-    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
-    frame.render_widget(paragraph, inner);
 }
 
-fn render_footer(frame: &mut Frame, area: Rect, app: &mut App, run_enabled: bool) {
-    if area.height == 0 || area.width == 0 {
-        if let Some(state) = app.workflows.input_view_state_mut() {
-            state.set_layout(WorkflowInputLayout::default());
-        }
-        return;
-    }
-
+fn render_footer(frame: &mut Frame, layout: WorkflowInputLayout, app: &App) {
+    let run_enabled = app.workflows.unresolved_item_count() == 0;
     let theme = &*app.ctx.theme;
     let (cancel_focused, run_focused) = app
         .workflows
@@ -529,19 +653,11 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &mut App, run_enabled: bool
         .map(|state| (state.f_cancel_button.get(), state.f_run_button.get()))
         .unwrap_or((false, false));
 
-    let layout_areas = Layout::horizontal([
-        Constraint::Length(12), // cancel
-        Constraint::Length(12), // run
-        Constraint::Length(2),  // padding
-        Constraint::Min(0),     // status line
-    ])
-    .split(area);
-
     let cancel_options = ButtonRenderOptions::new(true, cancel_focused, cancel_focused, Borders::ALL, false);
-    th::render_button(frame, layout_areas[0], "Cancel", theme, cancel_options);
+    th::render_button(frame, layout.cancel_button_area, "Cancel", theme, cancel_options);
 
     let run_options = ButtonRenderOptions::new(run_enabled, run_focused, run_focused, Borders::ALL, true);
-    th::render_button(frame, layout_areas[1], "Run", theme, run_options);
+    th::render_button(frame, layout.run_button_area, "Run", theme, run_options);
 
     let unresolved = app.workflows.unresolved_item_count();
     let status_line = if run_enabled {
@@ -552,148 +668,9 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &mut App, run_enabled: bool
             theme.status_warning(),
         )
     };
-    let mut status_layout = layout_areas[3];
+    let mut status_layout = layout.status_line_area;
     status_layout.y += 1;
     frame.render_widget(Paragraph::new(Line::from(status_line)).wrap(Wrap { trim: true }), status_layout);
-
-    if let Some(state) = app.workflows.input_view_state_mut() {
-        state.set_layout(WorkflowInputLayout {
-            cancel_button_area: Some(layout_areas[0]),
-            run_button_area: Some(layout_areas[1]),
-        });
-    }
-}
-
-fn build_input_rows(app: &App) -> Vec<WorkflowInputRow> {
-    let mut rows = Vec::new();
-    let run_state = app.workflows.active_run_state().unwrap();
-    for (name, definition) in run_state.workflow.inputs.iter() {
-        rows.push(build_input_row(run_state, name, definition));
-    }
-
-    rows
-}
-
-fn friendly_input_label(run_state: &WorkflowRunState, identifier: &str) -> String {
-    run_state
-        .workflow
-        .inputs
-        .get(identifier)
-        .map(|definition| definition.display_name(identifier).into_owned())
-        .unwrap_or_else(|| identifier.to_string())
-}
-
-fn build_input_row(run_state: &WorkflowRunState, name: &str, definition: &WorkflowInputDefinition) -> WorkflowInputRow {
-    let required = definition.is_required();
-
-    let provider_label = definition.provider.as_ref().map(|provider| match provider {
-        WorkflowValueProvider::Id(id) => id.clone(),
-        WorkflowValueProvider::Detailed(detail) => detail.id.clone(),
-    });
-    let display_name = definition.display_name(name).into_owned();
-
-    let provider_state = run_state.provider_state_for(name);
-    let mut status = InputStatus::Pending;
-    let mut status_message = None;
-
-    if let Some(state) = provider_state {
-        for outcome_state in state.argument_outcomes.values() {
-            match &outcome_state.outcome {
-                ProviderBindingOutcome::Error(error) => {
-                    status = InputStatus::Error;
-                    status_message = Some(error.message.clone());
-                    break;
-                }
-                ProviderBindingOutcome::Prompt(prompt) => {
-                    status = InputStatus::Pending;
-                    status_message = Some(prompt.reason.message.clone());
-                }
-                ProviderBindingOutcome::Skip(skip) => {
-                    status = InputStatus::Pending;
-                    status_message = Some(skip.reason.message.clone());
-                }
-                ProviderBindingOutcome::Resolved(_) => {}
-            }
-        }
-    }
-
-    let raw_value = run_state.run_context.inputs.get(name);
-    let has_value = raw_value.is_some_and(has_meaningful_input_value);
-
-    if matches!(status, InputStatus::Error) {
-        // Preserve error state and explanatory message coming from provider resolution.
-    } else if has_value {
-        if let Some(value) = raw_value {
-            if let Some(validation) = &definition.validate {
-                match validate_candidate_value(value, validation) {
-                    Ok(()) => {
-                        status = InputStatus::Resolved;
-                        status_message = None;
-                    }
-                    Err(message) => {
-                        status = InputStatus::Error;
-                        status_message = Some(message);
-                    }
-                }
-            } else {
-                status = InputStatus::Resolved;
-                status_message = None;
-            }
-        }
-    } else {
-        status = InputStatus::Pending;
-        if !required && status_message.is_none() {
-            status_message = Some("[optional]".to_string());
-        }
-    }
-
-    let blocked_reason = dependency_block_reason(run_state, definition);
-    if blocked_reason.is_some() && !matches!(status, InputStatus::Error) {
-        status = InputStatus::Blocked;
-        if status_message.is_none() || matches!(status_message.as_deref(), Some("[optional]")) {
-            status_message = blocked_reason.clone();
-        }
-    }
-
-    let current_value = raw_value.map(|value| WorkflowValuePreview::new(format_preview(value), classify_json_value(value)));
-    WorkflowInputRow {
-        name: display_name,
-        required,
-        provider_label,
-        status,
-        status_message,
-        current_value,
-        blocked_reason,
-    }
-}
-
-#[derive(Debug, Clone)]
-struct WorkflowValuePreview {
-    text: String,
-    role: JsonSyntaxRole,
-}
-
-impl WorkflowValuePreview {
-    fn new(text: String, role: JsonSyntaxRole) -> Self {
-        Self { text, role }
-    }
-}
-
-#[derive(Debug)]
-struct WorkflowInputRow {
-    name: String,
-    required: bool,
-    provider_label: Option<String>,
-    status: InputStatus,
-    status_message: Option<String>,
-    current_value: Option<WorkflowValuePreview>,
-    blocked_reason: Option<String>,
-}
-
-impl WorkflowInputRow {
-    fn is_blocked(&self) -> bool {
-        self.blocked_reason.is_some()
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -725,113 +702,10 @@ fn first_enabled_index(rows: &[WorkflowInputRow]) -> Option<usize> {
     rows.iter().position(|row| !row.is_blocked())
 }
 
-fn current_row_block_reason(app: &App, rows: &[WorkflowInputRow]) -> Option<String> {
+fn current_row_block_reason(app: &App) -> Option<String> {
     let state = app.workflows.input_view_state()?;
-    rows.get(state.selected())?.blocked_reason.clone()
-}
-
-fn dependency_block_reason(run_state: &WorkflowRunState, definition: &WorkflowInputDefinition) -> Option<String> {
-    if definition.depends_on.is_empty() {
-        return None;
-    }
-
-    for value in definition.depends_on.values() {
-        match value {
-            WorkflowProviderArgumentValue::Binding(binding) => {
-                if let Some(input_name) = binding.from_input.as_deref()
-                    && !run_state.run_context.inputs.get(input_name).is_some_and(has_meaningful_input_value)
-                {
-                    let label = friendly_input_label(run_state, input_name);
-                    return Some(format!("Waiting on input '{label}'"));
-                }
-                if let Some(step_id) = binding.from_step.as_deref()
-                    && !run_state.run_context.steps.get(step_id).is_some_and(has_meaningful_input_value)
-                {
-                    return Some(format!("Waiting on step '{step_id}'"));
-                }
-            }
-            WorkflowProviderArgumentValue::Literal(template) => {
-                for input_name in extract_template_inputs(template) {
-                    if !run_state
-                        .run_context
-                        .inputs
-                        .get(&input_name)
-                        .is_some_and(has_meaningful_input_value)
-                    {
-                        let label = friendly_input_label(run_state, &input_name);
-                        return Some(format!("Waiting on input '{label}'"));
-                    }
-                }
-                for step_id in extract_template_steps(template) {
-                    if !run_state.run_context.steps.get(&step_id).is_some_and(has_meaningful_input_value) {
-                        return Some(format!("Waiting on step '{step_id}'"));
-                    }
-                }
-            }
-        }
-    }
-
-    None
-}
-
-fn extract_template_inputs(template: &str) -> Vec<String> {
-    extract_template_identifiers(template, "inputs.")
-}
-
-fn extract_template_steps(template: &str) -> Vec<String> {
-    extract_template_identifiers(template, "steps.")
-}
-
-fn extract_template_identifiers(template: &str, prefix: &str) -> Vec<String> {
-    let mut results: Vec<String> = Vec::new();
-    let mut remaining = template;
-    while let Some(start) = remaining.find("${{") {
-        let after = &remaining[start + 3..];
-        if let Some(end) = after.find("}}") {
-            let expression = after[..end].trim();
-            if let Some(rest) = expression.strip_prefix(prefix)
-                && let Some(identifier) = parse_identifier(rest)
-                && !results.contains(&identifier)
-            {
-                results.push(identifier.clone());
-            }
-            remaining = &after[end + 2..];
-        } else {
-            break;
-        }
-    }
-    results
-}
-
-fn parse_identifier(fragment: &str) -> Option<String> {
-    let mut identifier = String::new();
-    for ch in fragment.chars() {
-        if ch.is_alphanumeric() || ch == '_' || ch == '-' {
-            identifier.push(ch);
-        } else {
-            break;
-        }
-    }
-    if identifier.is_empty() { None } else { Some(identifier) }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum InputStatus {
-    Resolved,
-    Pending,
-    Error,
-    Blocked,
-}
-
-/// Returns `true` when the input value contains data that should mark the input as resolved.
-fn has_meaningful_input_value(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::Null => false,
-        serde_json::Value::String(text) => !text.trim().is_empty(),
-        serde_json::Value::Array(elements) => !elements.is_empty(),
-        serde_json::Value::Object(properties) => !properties.is_empty(),
-        _ => true,
-    }
+    let selected_index = state.input_list_state.selected()?;
+    state.input_rows.get(selected_index)?.blocked_reason.clone()
 }
 
 fn focus_input_list(app: &mut App) {
@@ -850,8 +724,4 @@ fn focus_run_button(app: &mut App) {
     if let Some(state) = app.workflows.input_view_state() {
         app.focus.focus(&state.f_run_button);
     }
-}
-
-fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
-    column >= area.x && column < area.x + area.width && row >= area.y && row < area.y + area.height
 }

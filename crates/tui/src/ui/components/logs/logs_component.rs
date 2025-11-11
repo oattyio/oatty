@@ -18,18 +18,18 @@ use heroku_types::{Effect, ExecOutcome, Modal, Msg};
 use heroku_util::redact_json;
 use once_cell::sync::Lazy;
 use ratatui::{
-    Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::*,
+    Frame,
 };
 use regex::Regex;
 use serde_json::Value;
 
 use super::{
-    LogDetailsComponent,
     state::{LogDetailView, LogEntry},
+    LogDetailsComponent,
 };
 use crate::app::App;
 use crate::ui::{
@@ -410,7 +410,7 @@ impl Component for LogsComponent {
             .highlight_symbol(if focused { "> " } else { "" });
 
         // Set up the list state for selection highlighting
-        let mut list_state = ListState::default();
+        let mut list_state = app.logs.list_state.clone();
         if focused {
             if let Some(sel) = self.selected_index(app) {
                 list_state.select(Some(sel));

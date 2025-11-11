@@ -5,7 +5,7 @@
 //! scrolling and navigation capabilities.
 use crate::app::App;
 use crate::ui::{
-    components::{PaginationComponent, common::ResultsTableView, component::Component},
+    components::{common::ResultsTableView, component::Component, PaginationComponent},
     theme::theme_helpers as th,
 };
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
@@ -14,9 +14,9 @@ use rat_focus::HasFocus;
 use ratatui::layout::Position;
 use ratatui::widgets::{Borders, Padding};
 use ratatui::{
-    Frame,
     layout::{Constraint, Layout, Rect},
     text::Span,
+    Frame,
 };
 
 /// Results table modal component for displaying JSON data.
@@ -62,8 +62,7 @@ pub struct TableComponent {
 }
 
 impl TableComponent {
-    fn hit_test_table(&mut self, table_area: Rect, mouse_position: Position) -> Option<usize> {
-        let list_offset = self.view.table_state.offset();
+    fn hit_test_table(&mut self, table_area: Rect, mouse_position: Position, list_offset: usize) -> Option<usize> {
         let idx = mouse_position.y.saturating_sub(table_area.y + 1) as usize + list_offset; // +1 for header
         if self.table_area.contains(mouse_position) {
             Some(idx)
@@ -100,7 +99,7 @@ impl Component for TableComponent {
             effects.extend(self.pagination.handle_key_events(app, key));
             return effects;
         }
-
+        let table_state = &mut app.table.table_state;
         match key.code {
             KeyCode::BackTab => {
                 app.focus.prev();
@@ -109,30 +108,30 @@ impl Component for TableComponent {
                 app.focus.next();
             }
             KeyCode::Up => {
-                self.view.table_state.scroll_up_by(1);
+                table_state.scroll_up_by(1);
             }
             KeyCode::Down => {
-                self.view.table_state.scroll_down_by(1);
+                table_state.scroll_down_by(1);
             }
             KeyCode::PageUp => {
-                self.view.table_state.scroll_up_by(10);
+                table_state.scroll_up_by(10);
             }
             KeyCode::PageDown => {
-                self.view.table_state.scroll_down_by(10);
+                table_state.scroll_down_by(10);
             }
             KeyCode::Home => {
-                self.view.table_state.scroll_up_by(u16::MAX);
+                table_state.scroll_up_by(u16::MAX);
             }
             KeyCode::End => {
-                self.view.table_state.scroll_down_by(u16::MAX);
+                table_state.scroll_down_by(u16::MAX);
             }
             KeyCode::Char('c') => {
-                if let Some(idx) = self.view.table_state.selected()
+                if let Some(idx) = table_state.selected()
                     && let Some(value) = app.table.selected_data(idx)
                 {
                     let s = serde_json::to_string(value).ok().unwrap_or_default();
                     effects.push(Effect::CopyToClipboardRequested(s));
-                } else if let Some(idx) = self.view.list_state.selected()
+                } else if let Some(idx) = app.table.list_state.selected()
                     && let Some(entry) = app.table.selected_kv_entry(idx)
                 {
                     let serialized = serde_json::to_string(&entry.raw_value).unwrap_or_else(|_| entry.raw_value.to_string());
@@ -153,20 +152,20 @@ impl Component for TableComponent {
             y: mouse.row,
         };
         if self.table_area.contains(pos) {
+            let table_state = &mut app.table.table_state;
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
-                    self.view.table_state.scroll_up_by(1);
+                    table_state.scroll_up_by(1);
                 }
                 MouseEventKind::ScrollDown => {
-                    self.view.table_state.scroll_down_by(1);
+                    table_state.scroll_down_by(1);
                 }
                 _ => {}
             }
         }
         // Update the mouse over index when the mouse moves or is released
         if mouse.kind == MouseEventKind::Moved || mouse.kind == MouseEventKind::Up(MouseButton::Left) {
-            let idx = self.hit_test_table(self.table_area, pos);
-            app.table.set_mouse_over_idx(idx);
+            app.table.mouse_over_idx = self.hit_test_table(self.table_area, pos, app.table.table_state.offset());
         }
 
         effects
@@ -191,15 +190,15 @@ impl Component for TableComponent {
         let inner = block.inner(rect);
         // Split for content + pagination and footer
         let splits = self.get_preferred_layout(app, inner);
-
-        let table_block = th::block(&*app.ctx.theme, None, app.table.grid_f.get())
+        let is_grid_focused = app.table.grid_f.get();
+        let table_block = th::block(&*app.ctx.theme, None, is_grid_focused)
             .borders(Borders::NONE)
             .padding(Padding::uniform(1));
         let table_inner = table_block.inner(splits[0]);
         frame.render_widget(table_block, splits[0]);
         let rendered_table = self
             .view
-            .render_results(frame, table_inner, &app.table, app.table.grid_f.get(), &*app.ctx.theme);
+            .render_results(frame, table_inner, &mut app.table, is_grid_focused, &*app.ctx.theme);
 
         if rendered_table {
             self.pagination.render(frame, splits[1], app);

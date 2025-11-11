@@ -298,8 +298,16 @@ pub fn normalize_header(key: &str) -> String {
 /// - Applies light formatting (date for date-like keys) before measuring.
 /// - Includes the header label length in the max.
 /// - Samples up to `sample` rows for performance.
-pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize) -> Vec<ColumnWithSize> {
-    let keys = infer_columns(array);
+pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize, rerank_columns: bool) -> Vec<ColumnWithSize> {
+    let keys = if rerank_columns {
+        infer_columns(array)
+    } else {
+        if let Some(Value::Object(map)) = &array.first() {
+            map.keys().cloned().collect()
+        } else {
+            Vec::new()
+        }
+    };
     if keys.is_empty() {
         return Vec::new();
     }
@@ -326,7 +334,7 @@ pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize) -> Vec
                 Some(Value::Bool(b)) => b.to_string(),
                 Some(Value::Null) => "null".to_string(),
                 Some(Value::Object(map)) => {
-                    // Fall back to highest-scoring key as a string
+                    // Fall back to a highest-scoring key as a string
                     if let Some(best) = get_scored_keys(map).first() {
                         map.get(best)
                             .map(|v| v.as_str().unwrap_or(&v.to_string()).to_string())

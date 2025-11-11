@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use heroku_api::HerokuClient;
 use heroku_engine::workflow::document::{build_runtime_catalog, runtime_workflow_from_definition};
@@ -13,20 +13,20 @@ use heroku_engine::{
     ProviderBindingOutcome, ProviderResolutionEvent, ProviderResolutionSource, RegistryCommandRunner, StepResult, StepStatus,
     WorkflowRunState,
 };
-use heroku_mcp::{PluginEngine, config::load_config};
-use heroku_registry::{CommandRegistry, build_clap, feat_gate::feature_workflows, find_by_group_and_cmd};
+use heroku_mcp::{config::load_config, PluginEngine};
+use heroku_registry::{build_clap, feat_gate::feature_workflows, find_by_group_and_cmd, CommandRegistry};
 use heroku_types::{
-    ExecOutcome, RuntimeWorkflow,
-    command::CommandExecution,
-    service::ServiceId,
-    workflow::{WorkflowDefinition, validate_candidate_value},
+    command::CommandExecution, service::ServiceId,
+    workflow::{validate_candidate_value, WorkflowDefinition},
+    ExecOutcome,
+    RuntimeWorkflow,
 };
 use heroku_util::{
-    DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, resolve_path, value_contains_secret,
-    value_is_meaningful, workflow_input_uses_history,
+    has_meaningful_value, resolve_path, value_contains_secret, workflow_input_uses_history, HistoryKey, HistoryStore, InMemoryHistoryStore,
+    JsonHistoryStore, DEFAULT_HISTORY_PROFILE,
 };
 use reqwest::Method;
-use serde_json::{Map, Value, json};
+use serde_json::{json, Map, Value};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::warn;
@@ -326,7 +326,7 @@ fn persist_history_after_cli_run(state: &WorkflowRunState, store: &dyn HistorySt
             continue;
         };
 
-        if !value_is_meaningful(value) || value_contains_secret(value) {
+        if !has_meaningful_value(value) || value_contains_secret(value) {
             continue;
         }
 

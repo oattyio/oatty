@@ -9,6 +9,8 @@ GREEN := \033[0;32m
 YELLOW := \033[1;33m
 NC := \033[0m # No Color
 
+SERVICE ?= core-api
+
 help: ## Show this help message
 	@echo "$(BLUE)Heroku CLI (Rust) - Development Commands$(NC)"
 	@echo ""
@@ -55,7 +57,7 @@ fmt: ## Format all code
 
 fmt-check: ## Check code formatting
 	@echo "$(BLUE)==> Checking code format...$(NC)"
-	@cargo fmt --all --check
+	@cargo fmt --all -- --check
 
 clippy: ## Run clippy lints
 	@echo "$(BLUE)==> Running clippy...$(NC)"
@@ -91,12 +93,12 @@ doc-all: ## Generate documentation including dependencies
 
 manifest-json: ## Generate manifest as JSON
 	@echo "$(BLUE)==> Generating manifest (JSON)...$(NC)"
-	@cargo run -p heroku-registry-gen -- --json schemas/heroku-schema.enhanced.json target/manifest-debug.json
+	@cargo run -p heroku-registry-gen -- --json --service $(SERVICE) schemas/heroku-schema.enhanced.json target/manifest-debug.json
 	@echo "$(GREEN)✓ Generated: target/manifest-debug.json$(NC)"
 
 manifest-bin: ## Generate manifest as bincode
 	@echo "$(BLUE)==> Generating manifest (bincode)...$(NC)"
-	@cargo run -p heroku-registry-gen -- schemas/heroku-schema.enhanced.json target/manifest-debug.bin
+	@cargo run -p heroku-registry-gen -- --service $(SERVICE) schemas/heroku-schema.enhanced.json target/manifest-debug.bin
 	@echo "$(GREEN)✓ Generated: target/manifest-debug.bin$(NC)"
 
 pre-commit: fmt clippy test ## Run all pre-commit checks

@@ -9,17 +9,17 @@
 use std::collections::HashSet;
 
 use crate::{
-    RunContext,
-    executor::{self, CommandRunner, StepResult, StepStatus, runner::NoopRunner},
+    executor::{self, runner::NoopRunner, CommandRunner, StepResult, StepStatus},
     resolve::interpolate_value,
     workflow::{
         bindings::{ProviderArgumentResolver, ProviderBindingOutcome},
         runtime::workflow_spec_from_runtime,
     },
+    RunContext,
 };
 use anyhow::Result;
 use heroku_types::workflow::{RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault};
-use indexmap::{IndexMap, map::Entry as IndexMapEntry};
+use indexmap::{map::Entry as IndexMapEntry, IndexMap};
 use serde_json::Value;
 use std::env;
 
@@ -70,6 +70,23 @@ impl WorkflowRunState {
             locked_arguments: HashSet::new(),
             telemetry: WorkflowTelemetry::default(),
         }
+    }
+
+    /// Counts unresolved required inputs.
+    ///
+    /// An input is considered "resolved" once it has a value present in the
+    /// run context, regardless of provider argument binding states. Optional
+    /// inputs that are not filled do not block readiness and are excluded.
+    pub fn unresolved_item_count(&self) -> usize {
+        let inputs = &self.run_context.inputs;
+        self.workflow
+            .inputs
+            .iter()
+            .filter(|(name, def)| {
+                let required = def.is_required();
+                required && inputs.get(*name).is_none()
+            })
+            .count()
     }
 
     /// Populates the run context with default input values when available.

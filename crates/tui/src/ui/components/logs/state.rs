@@ -2,6 +2,7 @@ use crate::ui::utils::normalize_result_payload;
 use heroku_types::ExecOutcome;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
+use ratatui::widgets::ListState;
 /// The main application state containing all UI data and business logic.
 ///
 /// This struct serves as the central state container for the entire TUI
@@ -60,6 +61,7 @@ pub enum LogDetailView {
 
 #[derive(Debug)]
 pub struct LogsState {
+    pub list_state: ListState,
     pub is_visible: bool,
     /// Structured entries for detail view and rich behavior.
     pub rich_entries: Vec<LogEntry>,
@@ -116,7 +118,7 @@ impl LogsState {
         self.rich_entries.push(LogEntry::Api { status, raw, json });
     }
 
-    /// Appends an MCP log entry with optional structured payload.
+    /// Appends an MCP log entry with an optional structured payload.
     ///
     /// # Arguments
     ///
@@ -164,6 +166,7 @@ impl LogsState {
 impl Default for LogsState {
     fn default() -> Self {
         let mut state = LogsState {
+            list_state: ListState::default(),
             is_visible: false,
             rich_entries: Vec::new(),
             entries: Vec::new(),

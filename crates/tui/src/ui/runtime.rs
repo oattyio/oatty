@@ -320,12 +320,9 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plu
 
     loop {
         // Determine if we need animation ticks and adjust the ticker dynamically.
-        let needs_animation = app.executing || app.palette.is_provider_loading();
-        let target_interval = if needs_animation || !effects.is_empty() {
-            fast_interval
-        } else {
-            idle_interval
-        };
+        // note this is a candidate for optimization; it does not scale well.
+        let needs_animation = app.executing || !effects.is_empty() || app.palette.is_provider_loading() || app.workflows.is_running();
+        let target_interval = if needs_animation { fast_interval } else { idle_interval };
         if target_interval != current_interval {
             current_interval = target_interval;
             ticker = time::interval(current_interval);

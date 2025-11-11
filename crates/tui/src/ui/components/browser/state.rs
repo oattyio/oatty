@@ -4,7 +4,8 @@ use crate::ui::components::common::TextInputState;
 use heroku_types::{CommandSpec, Field};
 use heroku_util::fuzzy_score;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
-use ratatui::{layout::Rect, widgets::ListState};
+use ratatui::layout::Rect;
+use ratatui::widgets::ListState;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CursorDirection {

@@ -2,21 +2,21 @@ use crate::app::App;
 use crate::ui::components::component::Component;
 use crate::ui::theme::theme_helpers as th;
 use crate::ui::theme::theme_helpers::create_spans_with_match;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use heroku_engine::WorkflowRunState;
 use heroku_types::workflow::RuntimeWorkflow;
-use heroku_types::{Effect, Route, validate_candidate_value};
-use heroku_util::{HistoryKey, value_contains_secret, workflow_input_uses_history};
+use heroku_types::{validate_candidate_value, Effect, Route};
+use heroku_util::{value_contains_secret, workflow_input_uses_history, HistoryKey};
 use rat_focus::HasFocus;
 use ratatui::layout::Position;
 use ratatui::widgets::ListItem;
 use ratatui::{
-    Frame,
     layout::{Constraint, Layout, Rect},
     style::Modifier,
     text::{Line, Span},
     widgets::{List, Paragraph, Wrap},
+    Frame,
 };
 use tracing::warn;
 
@@ -342,7 +342,7 @@ impl Component for WorkflowsComponent {
             }
         }
 
-        if let MouseEventKind::Moved = mouse.kind {
+        if mouse.kind == MouseEventKind::Moved || mouse.kind == MouseEventKind::Up(MouseButton::Left) {
             self.mouse_over_idx = self.hit_test_list(app, position);
         }
 

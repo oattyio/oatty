@@ -501,12 +501,10 @@ pub enum WorkflowRunEvent {
     /// Streamed output to be surfaced in the aggregate outputs table.
     RunOutputAccumulated {
         /// Key describing the output item.
+        #[serde(default)]
         key: String,
         /// Value surfaced to the user.
         value: JsonValue,
-        /// Optional supplemental detail payload.
-        #[serde(default)]
-        detail: Option<JsonValue>,
     },
     /// Announces that execution has reached a terminal state.
     RunCompleted {

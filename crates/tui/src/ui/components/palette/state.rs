@@ -26,11 +26,11 @@ use super::suggestion_engine::{parse_user_flags_args, required_flags_remaining};
 use crate::ui::components::common::TextInputState;
 use crate::ui::theme::theme_helpers::{create_spans_with_match, highlight_segments};
 use heroku_engine::provider::{PendingProviderFetch, ValueProvider};
-use heroku_registry::{CommandRegistry, find_by_group_and_cmd};
+use heroku_registry::{find_by_group_and_cmd, CommandRegistry};
 use heroku_types::{CommandSpec, Effect, ExecOutcome, ItemKind, Modal, SuggestionItem};
 use heroku_util::{
-    HistoryKey, HistoryScope, HistoryScopeKind, HistoryStore, StoredHistoryValue, lex_shell_like, lex_shell_like_ranged,
-    truncate_with_ellipsis, value_contains_secret, value_is_meaningful,
+    has_meaningful_value, lex_shell_like, lex_shell_like_ranged, truncate_with_ellipsis, value_contains_secret, HistoryKey, HistoryScope,
+    HistoryScopeKind, HistoryStore, StoredHistoryValue,
 };
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::widgets::{ListItem, ListState};
@@ -978,7 +978,7 @@ impl PaletteState {
         }
 
         let value = Value::String(trimmed.to_string());
-        if !value_is_meaningful(&value) || value_contains_secret(&value) {
+        if !has_meaningful_value(&value) || value_contains_secret(&value) {
             return;
         }
 
@@ -1428,7 +1428,7 @@ fn infer_value_style(theme: &dyn Theme, value: &str) -> Style {
 mod tests {
     use super::*;
     use crate::ui::theme::dracula::DraculaTheme;
-    use heroku_util::{DEFAULT_HISTORY_PROFILE, InMemoryHistoryStore};
+    use heroku_util::{InMemoryHistoryStore, DEFAULT_HISTORY_PROFILE};
 
     fn palette_state_with_registry(registry: Arc<Mutex<CommandRegistry>>) -> PaletteState {
         let history_store: Arc<dyn HistoryStore> = Arc::new(InMemoryHistoryStore::new());

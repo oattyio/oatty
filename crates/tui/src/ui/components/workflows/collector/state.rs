@@ -119,7 +119,7 @@ impl<'a> CollectorViewState<'a> {
         let query = self.filter.input().trim().to_lowercase();
 
         if query.is_empty() {
-            self.table.apply_result_json(Some(Value::Array(items.clone())), theme);
+            self.table.apply_result_json(Some(Value::Array(items.clone())), theme, true);
             return;
         }
         let mut scores: Vec<(i64, usize)> = items
@@ -142,7 +142,7 @@ impl<'a> CollectorViewState<'a> {
         let dataset = scores.into_iter().map(|(_, index)| items[index].clone()).collect();
 
         let json = Value::Array(dataset);
-        self.table.apply_result_json(Some(json), theme);
+        self.table.apply_result_json(Some(json), theme, true);
     }
 
     /// Clears any staged selection currently pending confirmation.
@@ -194,9 +194,8 @@ impl<'a> CollectorViewState<'a> {
 impl HasFocus for CollectorViewState<'_> {
     fn build(&self, builder: &mut FocusBuilder) {
         let start = builder.start(self);
-        builder.leaf_widget(&self.container_focus);
-        builder.leaf_widget(&self.f_table);
         builder.leaf_widget(&self.f_filter);
+        builder.leaf_widget(&self.f_table);
         builder.leaf_widget(&self.f_apply);
         builder.leaf_widget(&self.f_cancel);
 

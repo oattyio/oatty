@@ -508,7 +508,7 @@ fn render_action_buttons(frame: &mut Frame, area: Rect, theme: &dyn Theme, add_s
     let button_columns = Layout::horizontal([
         Constraint::Length(12), // Validate button
         Constraint::Length(2),  // Spacer
-        Constraint::Length(10), // Save button
+        Constraint::Length(12), // Save button
         Constraint::Length(2),  // Spacer
         Constraint::Length(12), // Cancel button
     ])

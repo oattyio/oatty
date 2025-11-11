@@ -5,7 +5,7 @@
 //! user interactions, and coordinates between different UI components.
 
 use std::{
-    sync::{Arc, Mutex, atomic::AtomicUsize},
+    sync::{atomic::AtomicUsize, Arc, Mutex},
     time::Duration,
 };
 
@@ -19,14 +19,14 @@ use crate::ui::{
     },
     theme,
 };
-use heroku_engine::ValueProvider;
 use heroku_engine::provider::{CacheLookupOutcome, PendingProviderFetch, ProviderRegistry};
+use heroku_engine::ValueProvider;
 use heroku_mcp::PluginEngine;
 use heroku_registry::CommandRegistry;
-use heroku_types::{Effect, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus, validate_candidate_value};
+use heroku_types::{validate_candidate_value, Effect, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
 use heroku_util::{
-    DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, UserPreferences, value_contains_secret,
-    value_is_meaningful, workflow_input_uses_history,
+    has_meaningful_value, value_contains_secret, workflow_input_uses_history, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore,
+    UserPreferences, DEFAULT_HISTORY_PROFILE,
 };
 use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
@@ -452,9 +452,10 @@ impl App<'_> {
     }
 
     fn persist_successful_workflow_run_history(&mut self) {
-        let Some(run_state) = self.workflows.active_run_state() else {
+        let Some(run_state_rc) = &self.workflows.active_run_state else {
             return;
         };
+        let run_state = run_state_rc.borrow();
 
         for (input_name, definition) in &run_state.workflow.inputs {
             if !workflow_input_uses_history(definition) {
@@ -465,7 +466,7 @@ impl App<'_> {
                 continue;
             };
 
-            if !value_is_meaningful(value) || value_contains_secret(value) {
+            if !has_meaningful_value(value) || value_contains_secret(value) {
                 continue;
             }
 
@@ -505,11 +506,13 @@ impl App<'_> {
             self.append_log_message("Cannot run workflow yet: resolve remaining inputs before running.");
             return Vec::new();
         }
-
-        let Some(run_state) = self.workflows.active_run_state().cloned() else {
+        if self.workflows.active_run_state.is_none() {
             self.append_log_message("No active workflow run is available.");
             return Vec::new();
-        };
+        }
+
+        let run_state_rc = self.workflows.active_run_state.clone().unwrap();
+        let run_state = run_state_rc.borrow();
 
         let display_name = run_state
             .workflow
@@ -519,7 +522,7 @@ impl App<'_> {
             .unwrap_or(&run_state.workflow.identifier)
             .to_string();
 
-        let run_id = self.next_run_identifier(&run_state.workflow.identifier);
+        let run_id = self.next_run_identifier(run_state.workflow.identifier.clone().as_str());
         let request = WorkflowRunRequest {
             run_id: run_id.clone(),
             workflow: run_state.workflow.clone(),
@@ -536,7 +539,7 @@ impl App<'_> {
         run_view.initialize_steps(&run_state.workflow.steps, &*self.ctx.theme);
 
         self.workflows.close_input_view();
-        self.workflows.begin_run_session(run_id.clone(), run_state, run_view);
+        self.workflows.begin_run_session(run_id.clone(), run_state.clone(), run_view);
 
         self.append_log_message(format!("Workflow '{}' run started.", display_name));
 

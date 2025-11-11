@@ -1,65 +1,255 @@
+use crate::ui::components::workflows::{classify_json_value, format_preview, JsonSyntaxRole};
+use heroku_engine::{ProviderBindingOutcome, WorkflowRunState};
+use heroku_types::{validate_candidate_value, WorkflowInputDefinition, WorkflowProviderArgumentValue, WorkflowValueProvider};
+use heroku_util::has_meaningful_value;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
+use ratatui::widgets::ListState;
+use std::cell::{Ref, RefCell};
+use std::rc::Rc;
 
-/// Captures layout metadata from the most recent render pass for hit detection.
-#[derive(Debug, Default, Clone, Copy)]
-pub struct WorkflowInputLayout {
-    /// Screen area occupied by the cancel button, if rendered.
-    pub cancel_button_area: Option<Rect>,
-    /// Screen area occupied by the run button, if rendered.
-    pub run_button_area: Option<Rect>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputStatus {
+    Resolved,
+    Pending,
+    Error,
+    Blocked,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkflowValuePreview {
+    pub text: String,
+    pub role: JsonSyntaxRole,
+}
+
+impl WorkflowValuePreview {
+    fn new(text: String, role: JsonSyntaxRole) -> Self {
+        Self { text, role }
+    }
 }
 
 #[derive(Debug)]
+pub struct WorkflowInputRow {
+    pub name: String,
+    pub required: bool,
+    pub provider_label: Option<String>,
+    pub status: InputStatus,
+    pub status_message: Option<String>,
+    pub current_value: Option<WorkflowValuePreview>,
+    pub blocked_reason: Option<String>,
+}
+
+impl WorkflowInputRow {
+    pub fn is_blocked(&self) -> bool {
+        self.blocked_reason.is_some()
+    }
+}
+#[derive(Debug)]
 pub struct WorkflowInputViewState {
-    selected: usize,
     container_focus: FocusFlag,
+    pub mouse_over_idx: Option<usize>,
+    pub run_state: Rc<RefCell<WorkflowRunState>>,
+    pub input_rows: Vec<WorkflowInputRow>,
+    /// list state for the inputs list
+    pub input_list_state: ListState,
     /// Focus flag tracking list navigation state.
     pub f_list: FocusFlag,
     /// Focus flag used for the cancel action button.
     pub f_cancel_button: FocusFlag,
     /// Focus flag used for the run action button.
     pub f_run_button: FocusFlag,
-    layout: WorkflowInputLayout,
 }
 
 impl WorkflowInputViewState {
-    pub fn new() -> Self {
+    pub fn new(run_state: Rc<RefCell<WorkflowRunState>>) -> Self {
         Self {
-            selected: 0,
+            mouse_over_idx: None,
+            run_state,
+            input_rows: Vec::new(),
+            input_list_state: ListState::default(),
             container_focus: FocusFlag::named("workflow.inputs"),
             f_list: FocusFlag::named("workflow.inputs.list"),
             f_cancel_button: FocusFlag::named("workflow.inputs.actions.cancel"),
             f_run_button: FocusFlag::named("workflow.inputs.actions.run"),
-            layout: WorkflowInputLayout::default(),
         }
     }
 
-    pub fn selected(&self) -> usize {
-        self.selected
-    }
-
-    pub fn set_selected(&mut self, index: usize) {
-        self.selected = index;
-    }
-
-    pub fn clamp_selection(&mut self, total: usize) {
-        if total == 0 {
-            self.selected = 0;
-        } else if self.selected >= total {
-            self.selected = total - 1;
+    pub fn build_input_rows(&mut self) {
+        self.input_rows.clear();
+        let run_state = self.run_state.as_ref().borrow();
+        for (name, definition) in run_state.workflow.inputs.iter() {
+            self.input_rows.push(self.build_input_row(&run_state, name, definition));
         }
     }
 
-    /// Stores the latest button layout to make mouse hit-testing possible.
-    pub fn set_layout(&mut self, layout: WorkflowInputLayout) {
-        self.layout = layout;
+    fn build_input_row(&self, run_state: &Ref<WorkflowRunState>, name: &str, definition: &WorkflowInputDefinition) -> WorkflowInputRow {
+        let required = definition.is_required();
+
+        let provider_label = definition.provider.as_ref().map(|provider| match provider {
+            WorkflowValueProvider::Id(id) => id.clone(),
+            WorkflowValueProvider::Detailed(detail) => detail.id.clone(),
+        });
+        let display_name = definition.display_name(name).into_owned();
+
+        let provider_state = run_state.provider_state_for(name);
+        let mut status = InputStatus::Pending;
+        let mut status_message = None;
+
+        if let Some(state) = provider_state {
+            for outcome_state in state.argument_outcomes.values() {
+                match &outcome_state.outcome {
+                    ProviderBindingOutcome::Error(error) => {
+                        status = InputStatus::Error;
+                        status_message = Some(error.message.clone());
+                        break;
+                    }
+                    ProviderBindingOutcome::Prompt(prompt) => {
+                        status = InputStatus::Pending;
+                        status_message = Some(prompt.reason.message.clone());
+                    }
+                    ProviderBindingOutcome::Skip(skip) => {
+                        status = InputStatus::Pending;
+                        status_message = Some(skip.reason.message.clone());
+                    }
+                    ProviderBindingOutcome::Resolved(_) => {}
+                }
+            }
+        }
+
+        let raw_value = run_state.run_context.inputs.get(name);
+        let has_value = raw_value.is_some_and(has_meaningful_value);
+
+        if matches!(status, InputStatus::Error) {
+            // Preserve error state and explanatory message coming from provider resolution.
+        } else if has_value {
+            if let Some(value) = raw_value {
+                if let Some(validation) = &definition.validate {
+                    match validate_candidate_value(value, validation) {
+                        Ok(()) => {
+                            status = InputStatus::Resolved;
+                            status_message = None;
+                        }
+                        Err(message) => {
+                            status = InputStatus::Error;
+                            status_message = Some(message);
+                        }
+                    }
+                } else {
+                    status = InputStatus::Resolved;
+                    status_message = None;
+                }
+            }
+        } else {
+            status = InputStatus::Pending;
+        }
+
+        let blocked_reason = dependency_block_reason(run_state, definition);
+        if blocked_reason.is_some() && !matches!(status, InputStatus::Error) {
+            status = InputStatus::Blocked;
+            if status_message.is_none() {
+                status_message = blocked_reason.clone();
+            }
+        }
+
+        let current_value = raw_value.map(|value| WorkflowValuePreview::new(format_preview(value), classify_json_value(value)));
+        WorkflowInputRow {
+            name: display_name,
+            required,
+            provider_label,
+            status,
+            status_message,
+            current_value,
+            blocked_reason,
+        }
+    }
+}
+
+fn dependency_block_reason(run_state: &WorkflowRunState, definition: &WorkflowInputDefinition) -> Option<String> {
+    if definition.depends_on.is_empty() {
+        return None;
     }
 
-    /// Returns the most recently captured layout information.
-    pub fn layout(&self) -> &WorkflowInputLayout {
-        &self.layout
+    for value in definition.depends_on.values() {
+        match value {
+            WorkflowProviderArgumentValue::Binding(binding) => {
+                if let Some(input_name) = binding.from_input.as_deref()
+                    && !run_state.run_context.inputs.get(input_name).is_some_and(has_meaningful_value)
+                {
+                    let label = friendly_input_label(run_state, input_name);
+                    return Some(format!("Waiting on input '{label}'"));
+                }
+                if let Some(step_id) = binding.from_step.as_deref()
+                    && !run_state.run_context.steps.get(step_id).is_some_and(has_meaningful_value)
+                {
+                    return Some(format!("Waiting on step '{step_id}'"));
+                }
+            }
+            WorkflowProviderArgumentValue::Literal(template) => {
+                for input_name in extract_template_inputs(template) {
+                    if !run_state.run_context.inputs.get(&input_name).is_some_and(has_meaningful_value) {
+                        let label = friendly_input_label(run_state, &input_name);
+                        return Some(format!("Waiting on input '{label}'"));
+                    }
+                }
+                for step_id in extract_template_steps(template) {
+                    if !run_state.run_context.steps.get(&step_id).is_some_and(has_meaningful_value) {
+                        return Some(format!("Waiting on step '{step_id}'"));
+                    }
+                }
+            }
+        }
     }
+
+    None
+}
+fn friendly_input_label(run_state: &WorkflowRunState, identifier: &str) -> String {
+    run_state
+        .workflow
+        .inputs
+        .get(identifier)
+        .map(|definition| definition.display_name(identifier).into_owned())
+        .unwrap_or_else(|| identifier.to_string())
+}
+
+fn extract_template_inputs(template: &str) -> Vec<String> {
+    extract_template_identifiers(template, "inputs.")
+}
+
+fn extract_template_steps(template: &str) -> Vec<String> {
+    extract_template_identifiers(template, "steps.")
+}
+
+fn extract_template_identifiers(template: &str, prefix: &str) -> Vec<String> {
+    let mut results: Vec<String> = Vec::new();
+    let mut remaining = template;
+    while let Some(start) = remaining.find("${{") {
+        let after = &remaining[start + 3..];
+        if let Some(end) = after.find("}}") {
+            let expression = after[..end].trim();
+            if let Some(rest) = expression.strip_prefix(prefix)
+                && let Some(identifier) = parse_identifier(rest)
+                && !results.contains(&identifier)
+            {
+                results.push(identifier.clone());
+            }
+            remaining = &after[end + 2..];
+        } else {
+            break;
+        }
+    }
+    results
+}
+
+fn parse_identifier(fragment: &str) -> Option<String> {
+    let mut identifier = String::new();
+    for ch in fragment.chars() {
+        if ch.is_alphanumeric() || ch == '_' || ch == '-' {
+            identifier.push(ch);
+        } else {
+            break;
+        }
+    }
+    if identifier.is_empty() { None } else { Some(identifier) }
 }
 
 impl HasFocus for WorkflowInputViewState {

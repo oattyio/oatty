@@ -1,16 +1,16 @@
 use crate::app::App;
-use crate::ui::components::Component;
 use crate::ui::components::common::TextInputState;
 use crate::ui::components::workflows::collector::manual_entry::state::{ManualEntryEnumState, ManualEntryKind, ManualEntryState};
+use crate::ui::components::Component;
+use crate::ui::theme::theme_helpers::{self as th, build_hint_spans, ButtonRenderOptions};
 use crate::ui::theme::Theme;
-use crate::ui::theme::theme_helpers::{self as th, ButtonRenderOptions, build_hint_spans};
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::Effect;
 use heroku_types::workflow::validate_candidate_value;
-use ratatui::Frame;
+use heroku_types::Effect;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, Paragraph, Wrap};
+use ratatui::Frame;
 use serde_json::{Number, Value};
 use unicode_width::UnicodeWidthChar;
 
@@ -79,9 +79,10 @@ impl ManualEntryComponent {
         }
 
         let input_name = app.workflows.active_input_name();
-        if let Some(run_state) = app.workflows.active_run_state_mut()
+        if let Some(run_state_rc) = app.workflows.active_run_state.clone()
             && let Some(name) = input_name
         {
+            let mut run_state = run_state_rc.borrow_mut();
             run_state.run_context_mut().inputs.insert(name, candidate);
             let _ = run_state.evaluate_input_providers();
         }

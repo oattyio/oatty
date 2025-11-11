@@ -7,14 +7,15 @@ use crate::ui::{
         theme_helpers::{table_header_style, table_row_style},
     },
     utils::{
-        ColumnWithSize, get_scored_keys, infer_columns_with_sizes_from_json, is_status_like, normalize_header, render_value,
-        status_color_for_value,
+        get_scored_keys, infer_columns_with_sizes_from_json, is_status_like, normalize_header, render_value, status_color_for_value,
+        ColumnWithSize,
     },
 };
 use heroku_types::ExecOutcome;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use ratatui::prelude::{Line, Span};
+use ratatui::widgets::{ListState, TableState};
 use ratatui::{
     layout::Constraint,
     style::Style,
@@ -30,6 +31,10 @@ pub struct ResultsTableState<'a> {
     column_constraints: Option<Vec<Constraint>>,
     headers: Option<Vec<Cell<'a>>>,
     kv_entries: Vec<KeyValueEntry>,
+    // table and list states are supplied here
+    // for use by the caller to render the table
+    pub table_state: TableState,
+    pub list_state: ListState,
     pub pagination_state: PaginationState,
     pub container_focus: FocusFlag,
     pub grid_f: FocusFlag,
@@ -37,9 +42,6 @@ pub struct ResultsTableState<'a> {
 }
 
 impl<'a> ResultsTableState<'_> {
-    pub fn set_mouse_over_idx(&mut self, idx: Option<usize>) {
-        self.mouse_over_idx = idx;
-    }
     pub fn selected_result_json(&self) -> Option<&Value> {
         self.result_json.as_ref()
     }
@@ -62,6 +64,9 @@ impl<'a> ResultsTableState<'_> {
     pub fn kv_entries(&self) -> &[KeyValueEntry] {
         &self.kv_entries
     }
+    pub fn set_kv_entries(&mut self, entries: Vec<KeyValueEntry>) {
+        self.kv_entries = entries;
+    }
 
     pub fn selected_kv_entry(&self, idx: usize) -> Option<&KeyValueEntry> {
         if self.kv_entries.is_empty() {
@@ -71,10 +76,10 @@ impl<'a> ResultsTableState<'_> {
         self.kv_entries.get(index)
     }
 
-    pub fn apply_result_json(&mut self, value: Option<Value>, theme: &dyn UiTheme) {
+    pub fn apply_result_json(&mut self, value: Option<Value>, theme: &dyn UiTheme, rerank_columns: bool) {
         self.result_json = value;
         let json_array = Self::array_from_json(self.result_json.as_ref());
-        self.columns = self.create_columns(json_array);
+        self.columns = self.create_columns(json_array, rerank_columns);
         self.rows = self.create_rows(json_array, theme);
         self.headers = self.create_headers(theme);
         self.column_constraints = self.create_constraints();
@@ -95,10 +100,10 @@ impl<'a> ResultsTableState<'_> {
                     let rendered_value = render_value(key, value, Some(theme));
                     let display_text = rendered_value.plain_text().to_owned();
                     let mut spans = rendered_value.into_spans();
-                    if is_status_like(key) {
-                        if let Some(color) = status_color_for_value(&display_text, theme) {
-                            spans = vec![Span::styled(display_text.clone(), Style::default().fg(color))];
-                        }
+                    if is_status_like(key)
+                        && let Some(color) = status_color_for_value(&display_text, theme)
+                    {
+                        spans = vec![Span::styled(display_text.clone(), Style::default().fg(color))];
                     }
                     let cell = Cell::from(Line::from(spans)).style(theme.text_primary_style());
                     cells.push(cell);
@@ -112,9 +117,9 @@ impl<'a> ResultsTableState<'_> {
         None
     }
 
-    fn create_columns(&self, value: Option<&[Value]>) -> Option<Vec<ColumnWithSize>> {
+    fn create_columns(&self, value: Option<&[Value]>, rerank_columns: bool) -> Option<Vec<ColumnWithSize>> {
         if let Some(json) = value {
-            return Some(infer_columns_with_sizes_from_json(json, 200));
+            return Some(infer_columns_with_sizes_from_json(json, 200, rerank_columns));
         }
         None
     }
@@ -174,16 +179,9 @@ impl<'a> ResultsTableState<'_> {
         None
     }
 
-    fn current_len(&self) -> usize {
-        if let Some(rows) = self.rows.as_ref() {
-            return rows.len();
-        }
-        self.kv_entries.len()
-    }
-
     /// Processes general command execution results (non-plugin specific).
     ///
-    /// This method handles the standard processing of command results including
+    /// This method handles the standard processing of command results, including
     /// logging, table updates, and pagination information.
     ///
     /// # Arguments
@@ -209,7 +207,7 @@ impl<'a> ResultsTableState<'_> {
 
         if let Some(value) = maybe_value {
             let normalized_value = normalize_result_payload(value.clone());
-            self.apply_result_json(Some(normalized_value), theme);
+            self.apply_result_json(Some(normalized_value), theme, true);
         }
     }
 }

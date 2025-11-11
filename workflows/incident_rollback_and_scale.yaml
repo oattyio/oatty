@@ -9,7 +9,7 @@ inputs:
   release:
     name: "Release"
     description: "Target release version to roll back to (e.g., v123)"
-    provider: apps releases list
+    provider: apps releases:list
     select: { value_field: version, display_field: version }
     depends_on:
       app: ${{ inputs.app }}

@@ -11,17 +11,17 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use heroku_types::{Effect, ExecOutcome, ItemKind, Modal, Msg};
 use rat_focus::HasFocus;
 use ratatui::{
-    Frame,
     layout::{Constraint, Layout, Rect},
     prelude::*,
     text::{Line, Span},
     widgets::*,
+    Frame,
 };
 
 use crate::app::App;
 use crate::ui::{
     components::component::Component,
-    theme::{Theme, theme_helpers as th},
+    theme::{theme_helpers as th, Theme},
 };
 
 static FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -567,7 +567,7 @@ impl Component for PaletteComponent {
                     return self.handle_enter(app);
                 }
             }
-            MouseEventKind::Moved => {
+            MouseEventKind::Moved | MouseEventKind::Up(MouseButton::Left) => {
                 app.palette.update_mouse_over_idx(idx);
                 app.palette.apply_ghost_text();
             }

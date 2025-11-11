@@ -3,6 +3,7 @@
 //! This module provides utilities for text processing, including sensitive data redaction
 //! and fuzzy string matching with sophisticated scoring algorithms.
 
+use chrono::Duration;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::Value;
@@ -43,7 +44,7 @@ pub fn redact_sensitive(input: &str) -> String {
     redact_sensitive_with(input, "[REDACTED]")
 }
 
-/// Redacts sensitive-looking values, using a custom replacement token.
+/// Redacts sensitive-looking values using a custom replacement token.
 pub fn redact_sensitive_with(input: &str, replacement: &str) -> String {
     let mut redacted = input.to_string();
 
@@ -143,7 +144,7 @@ fn build_redact_patterns() -> Vec<Regex> {
 /// Captures authorization headers and inline bearer/basic credentials.
 fn build_authorization_patterns() -> Vec<Regex> {
     vec![
-        Regex::new(r"(?i)(authorization:\s+)([^\s]+(?:\s+[^\s]+)*)").unwrap(),
+        Regex::new(r"(?i)(authorization:\s+)(\S+(?:\s+\S+)*)").unwrap(),
         Regex::new(r"(?i)((?:^|\b)Bearer\s+)([A-Za-z0-9\-._~+/]+=*)").unwrap(),
         Regex::new(r"(?i)((?:^|\b)Basic\s+)([A-Za-z0-9+/]+=*)").unwrap(),
     ]
@@ -238,7 +239,7 @@ fn build_sensitive_env_patterns() -> Vec<Regex> {
 fn build_structured_secret_patterns() -> Vec<Regex> {
     vec![
         Regex::new(r"(?i)((?:api[\s_-]?key|auth[\s_-]?token|token|secret|password)\s*[:=]\s*)([^\s,;]+)").unwrap(),
-        Regex::new(r"(?i)(DATABASE_URL=)([^\s]+)").unwrap(),
+        Regex::new(r"(?i)(DATABASE_URL=)(\S+)").unwrap(),
         Regex::new(r"(eyJ[A-Za-z0-9\-._~+/]+=*)").unwrap(),
         Regex::new(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\b").unwrap(),
         Regex::new(r"\b\d{4}[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b").unwrap(),
@@ -265,7 +266,7 @@ fn build_value_only_patterns() -> Vec<Regex> {
         Regex::new(r"(?i)(EAAA[A-Za-z0-9+=-]{60})").unwrap(),
         Regex::new(r"(?i)(AccountKey=[A-Za-z0-9+/=]{88})").unwrap(),
         Regex::new(r"(?i)(npm_[A-Za-z0-9]{36})").unwrap(),
-        Regex::new(r"(?i)(//[^\s]+/:_authToken=[A-Za-z0-9_-]+)").unwrap(),
+        Regex::new(r"(?i)(//\S+/:_authToken=[A-Za-z0-9_-]+)").unwrap(),
         Regex::new(r"(?i)(xox[aboprs]-(?:\d+-)+[\da-z]+)").unwrap(),
         Regex::new(r"(?i)(https://hooks\.slack\.com/services/T[A-Za-z0-9_]+/B[A-Za-z0-9_]+/[A-Za-z0-9_]+)").unwrap(),
         Regex::new(r"(?i)(SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43})").unwrap(),
@@ -276,10 +277,10 @@ fn build_value_only_patterns() -> Vec<Regex> {
         Regex::new(r"(?i)(AIzaSy[A-Za-z0-9_-]{33})").unwrap(),
         Regex::new(r"(?i)(shp(?:at|ca|ea|mp|pc|se)_[0-9a-f]{32})").unwrap(),
         Regex::new(r"(?i)(heroku_[0-9a-f]{32,})").unwrap(),
-        Regex::new(r"(?i)(postgres(?:ql)?://[^\s]+)").unwrap(),
-        Regex::new(r"(?i)(mysql://[^\s]+)").unwrap(),
-        Regex::new(r"(?i)(rediss?://[^\s]+)").unwrap(),
-        Regex::new(r"(?i)(amqps?://[^\s]+)").unwrap(),
+        Regex::new(r"(?i)(postgres(?:ql)?://\S+)").unwrap(),
+        Regex::new(r"(?i)(mysql://\S+)").unwrap(),
+        Regex::new(r"(?i)(rediss?://\S+)").unwrap(),
+        Regex::new(r"(?i)(amqps?://\S+)").unwrap(),
         Regex::new(r"(PuTTY-User-Key-File-2)").unwrap(),
         Regex::new(r"(AGE-SECRET-KEY-1[0-9A-Z]{58})").unwrap(),
         Regex::new(r"(?s)(-{5}BEGIN (?:DSA|EC|OPENSSH|PGP PRIVATE|PRIVATE|RSA|SSH2 ENCRYPTED) KEY-{5}(?:$|[^-]{63,}-{5}END))").unwrap(),
@@ -716,6 +717,17 @@ pub fn redact_json(v: &Value) -> Value {
     }
 }
 
+/// Returns `true` when the input value contains data that should mark the input as resolved.
+pub fn has_meaningful_value(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::String(text) => !text.trim().is_empty(),
+        Value::Array(elements) => !elements.is_empty(),
+        Value::Object(properties) => !properties.is_empty(),
+        _ => true,
+    }
+}
+
 /// Truncates a string with an ellipsis if it exceeds the maximum length.
 ///
 /// # Arguments
@@ -742,9 +754,84 @@ pub fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
     }
 }
 
+/// Formats a duration into a human-readable string
+/// # Arguments
+/// * `duration` - The duration to format
+///
+/// # Returns
+/// A formatted string representing the duration in the format `HH:MM:SS`
+///
+/// # Example
+/// ```
+/// use heroku_util::text_processing::format_duration;
+/// use chrono::Duration;
+///
+/// let formatted = format_duration(Duration::seconds(123));
+/// assert_eq!(formatted, "00:02:03");
+/// ```
+pub fn format_duration(duration: Duration) -> String {
+    let total_seconds = duration.num_seconds().max(0);
+    let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+    format!("{hours:02}:{minutes:02}:{seconds:02}")
+}
+
+/// Formats a duration into a short huma readable string
+/// # Arguments
+/// `duration` - The duration to format
+///
+/// # Returns
+/// A formatted string representing the duration in the format `Hh Mm Ss MSms`
+///
+/// # Example
+/// ```
+/// use heroku_util::text_processing::format_duration_short;
+/// use chrono::Duration;
+///
+/// let formatted = format_duration_short(Duration::seconds(123));
+/// assert_eq!(formatted, "02m 03s");
+/// ```
+pub fn format_duration_short(duration: Duration) -> String {
+    let thresholds = vec![
+        1000,     // milliseconds
+        60000,    // seconds
+        3600000,  // minutes
+        86400000, // hours
+    ];
+    let labels = vec!["ms", "s", "m", "h"];
+    let mut formatted = String::new();
+    let mut val = duration.num_milliseconds();
+    let mut unit_idx = thresholds.iter().position(|t| val <= *t).unwrap_or(3);
+    while unit_idx > 0 {
+        let threshold = thresholds[unit_idx - 1];
+        let remainder = val % threshold;
+        let value = (val - remainder) / threshold;
+
+        formatted.push_str(format!("{value:02}{} ", labels[unit_idx]).as_str());
+
+        val = remainder;
+        unit_idx -= 1;
+    }
+
+    formatted.trim().to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_format_duration() {
+        let duration = Duration::seconds(123);
+        assert_eq!(format_duration(duration), "00:02:03");
+    }
+
+    #[test]
+    fn test_format_duration_short() {
+        let duration = Duration::seconds(123);
+        assert_eq!(format_duration_short(duration), "00h 02m 03s");
+    }
 
     #[test]
     fn truncates_string_with_ellipsis() {

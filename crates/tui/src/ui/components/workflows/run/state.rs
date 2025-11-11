@@ -6,19 +6,16 @@
 //! while this module encapsulates state transitions that components mutate
 //! in response to engine events or user actions.
 
-use std::collections::HashMap;
-
+use crate::ui::{components::table::state::ResultsTableState, theme::Theme};
 use chrono::{DateTime, Duration, Utc};
 use heroku_types::workflow::{WorkflowRunControl, WorkflowRunStatus, WorkflowRunStepStatus, WorkflowStepDefinition};
+use heroku_util::format_duration_short;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use serde_json::{Map as JsonMap, Value};
+use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
-
-use crate::ui::{
-    components::table::state::{KeyValueEntry, ResultsTableState, build_key_value_entries},
-    theme::Theme,
-};
+use tokio::time::Instant;
 
 /// High-level execution status for a workflow run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,34 +42,6 @@ impl RunExecutionStatus {
     }
 }
 
-/// Identifies the source backing the detail pane.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum RunDetailSource {
-    Steps,
-    Outputs,
-}
-
-/// Detail pane state tracking the active source and selection.
-#[derive(Debug, Clone)]
-pub struct RunDetailState {
-    source: RunDetailSource,
-}
-
-impl RunDetailState {
-    fn new(source: RunDetailSource) -> Self {
-        Self { source }
-    }
-
-    /// Returns the current source driving the detail pane.
-    pub fn source(&self) -> RunDetailSource {
-        self.source
-    }
-
-    pub fn set_source(&mut self, source: RunDetailSource) {
-        self.source = source;
-    }
-}
-
 /// Aggregates metadata captured when a workflow step finishes.
 #[derive(Debug)]
 pub struct StepFinishedData {
@@ -87,11 +56,11 @@ pub struct StepFinishedData {
 #[derive(Debug)]
 pub struct RunViewState {
     pub container_focus: FocusFlag,
-    pub detail_focus: FocusFlag,
     pub cancel_button_focus: FocusFlag,
     pub pause_button_focus: FocusFlag,
+    pub view_details_button_focus: FocusFlag,
+    pub done_button_focus: FocusFlag,
     pub steps_table: ResultsTableState<'static>,
-    pub outputs_table: ResultsTableState<'static>,
     run_id: String,
     workflow_identifier: String,
     workflow_title: Option<String>,
@@ -100,14 +69,12 @@ pub struct RunViewState {
     started_at: Option<DateTime<Utc>>,
     completed_at: Option<DateTime<Utc>>,
     last_update_at: Option<DateTime<Utc>>,
-    is_wide_mode: bool,
-    detail: Option<RunDetailState>,
     step_rows: Vec<Value>,
+    outputs: HashMap<String, Value>,
     step_indices: HashMap<String, usize>,
     step_descriptions: HashMap<String, Option<String>>,
     step_repeat_limits: HashMap<String, Option<u32>>,
     running_repeat_steps: HashMap<String, RepeatAnimationState>,
-    output_rows: Vec<Value>,
 }
 
 impl RunViewState {
@@ -116,10 +83,6 @@ impl RunViewState {
         let mut steps_table = ResultsTableState::default();
         steps_table.container_focus = FocusFlag::named("workflow.run.steps");
         steps_table.grid_f = FocusFlag::named("workflow.run.steps.grid");
-
-        let mut outputs_table = ResultsTableState::default();
-        outputs_table.container_focus = FocusFlag::named("workflow.run.outputs");
-        outputs_table.grid_f = FocusFlag::named("workflow.run.outputs.grid");
 
         Self {
             run_id,
@@ -130,21 +93,35 @@ impl RunViewState {
             started_at: None,
             completed_at: None,
             last_update_at: None,
-            is_wide_mode: false,
             steps_table,
-            outputs_table,
-            detail: None,
             container_focus: FocusFlag::named("workflow.run"),
-            detail_focus: FocusFlag::named("workflow.run.detail"),
             cancel_button_focus: FocusFlag::named("workflow.run.actions.cancel"),
             pause_button_focus: FocusFlag::named("workflow.run.actions.pause"),
+            view_details_button_focus: FocusFlag::named("workflow.run.actions.view_details"),
+            done_button_focus: FocusFlag::named("workflow.run.actions.done"),
             step_rows: Vec::new(),
+            outputs: HashMap::new(),
             step_indices: HashMap::new(),
             step_descriptions: HashMap::new(),
             step_repeat_limits: HashMap::new(),
             running_repeat_steps: HashMap::new(),
-            output_rows: Vec::new(),
         }
+    }
+
+    pub fn step_by_index(&self, index: usize) -> Option<&Value> {
+        self.step_rows.get(index)
+    }
+
+    pub fn append_output(&mut self, key: &String, value: Value) {
+        self.outputs.insert(key.clone(), value);
+    }
+
+    pub fn output_by_index(&self, index: usize) -> Option<Value> {
+        let Some(row) = self.step_rows.get(index) else {
+            return None;
+        };
+        let step_id = row.get("Step").and_then(Value::as_str).unwrap_or_default().to_string();
+        self.outputs.get(&step_id).cloned()
     }
 
     /// Computes a display name favoring the title over the identifier.
@@ -189,8 +166,6 @@ impl RunViewState {
         }
 
         self.rebuild_steps_table(theme);
-        self.output_rows.clear();
-        self.rebuild_outputs_table(theme);
     }
 
     /// Marks a step as running using its index within the workflow definition order.
@@ -237,7 +212,10 @@ impl RunViewState {
         );
         row.insert("Description".into(), Value::String(description));
         row.insert("Attempts".into(), Value::Number(serde_json::Number::from(data.attempts)));
-        row.insert("DurationMs".into(), Value::Number(serde_json::Number::from(data.duration_ms)));
+        row.insert(
+            "Duration".into(),
+            Value::String(format_duration_short(Duration::milliseconds(data.duration_ms as i64))),
+        );
         row.insert("Logs".into(), Value::Array(data.logs.into_iter().map(Value::String).collect()));
         row.insert("Output".into(), data.output);
 
@@ -245,19 +223,6 @@ impl RunViewState {
         self.running_repeat_steps.remove(step_id);
         self.set_last_update_at(Utc::now());
         self.rebuild_steps_table(theme);
-    }
-
-    /// Appends a new output row for display.
-    pub fn append_output(&mut self, key: &str, value: Value, detail: Option<Value>, theme: &dyn Theme) {
-        let mut row = JsonMap::new();
-        row.insert("Key".into(), Value::String(key.to_string()));
-        row.insert("Value".into(), Value::String(summarize_value(&value)));
-        row.insert("RawValue".into(), value);
-        if let Some(detail_value) = detail {
-            row.insert("Detail".into(), detail_value);
-        }
-        self.output_rows.push(Value::Object(row));
-        self.rebuild_outputs_table(theme);
     }
 
     /// Records that the run has started.
@@ -338,12 +303,7 @@ impl RunViewState {
 
     fn rebuild_steps_table(&mut self, theme: &dyn Theme) {
         let payload = Value::Array(self.step_rows.clone());
-        self.steps_table.apply_result_json(Some(payload), theme);
-    }
-
-    fn rebuild_outputs_table(&mut self, theme: &dyn Theme) {
-        let payload = Value::Array(self.output_rows.clone());
-        self.outputs_table.apply_result_json(Some(payload), theme);
+        self.steps_table.apply_result_json(Some(payload), theme, false);
     }
 
     /// Returns the current execution status.
@@ -376,17 +336,6 @@ impl RunViewState {
         self.started_at.map(|start| now - start)
     }
 
-    /// Returns whether wide mode is currently enabled.
-    pub fn is_wide_mode(&self) -> bool {
-        self.is_wide_mode
-    }
-
-    /// Toggles the wide mode flag.
-    pub fn toggle_wide_mode(&mut self) {
-        self.is_wide_mode = !self.is_wide_mode;
-    }
-
-    #[cfg(test)]
     /// Provides immutable access to the step table state (tests only).
     pub fn steps_table(&self) -> &ResultsTableState<'static> {
         &self.steps_table
@@ -396,71 +345,23 @@ impl RunViewState {
     pub fn steps_table_mut(&mut self) -> &mut ResultsTableState<'static> {
         &mut self.steps_table
     }
-
-    /// Provides mutable access to the output table state.
-    pub fn outputs_table_mut(&mut self) -> &mut ResultsTableState<'static> {
-        &mut self.outputs_table
-    }
-
-    /// Returns `true` when the detail pane is visible.
-    pub fn is_detail_visible(&self) -> bool {
-        self.detail.is_some()
-    }
-
-    /// Sets the detail pane to display the provided source.
-    pub fn show_detail(&mut self, source: RunDetailSource) {
-        match &mut self.detail {
-            Some(state) => state.set_source(source),
-            None => self.detail = Some(RunDetailState::new(source)),
-        }
-    }
-
-    /// Toggles the detail pane for the requested source and reports the resulting visibility.
-    pub fn toggle_detail_for(&mut self, source: RunDetailSource) {
-        if self.is_detail_visible() && self.detail().is_some_and(|detail| detail.source() == source) {
-            self.hide_detail();
-        } else {
-            self.show_detail(source);
-        }
-    }
-
-    /// Hides the detail pane and resets selection metadata.
-    pub fn hide_detail(&mut self) {
-        self.detail = None;
-    }
-
-    /// Returns the current detail state, if visible.
-    pub fn detail(&self) -> Option<&RunDetailState> {
-        self.detail.as_ref()
-    }
-
-    /// Returns the JSON payload backing the current detail pane, if visible.
-    pub fn current_detail_payload(&self, idx: usize) -> Option<&Value> {
-        let detail_state = self.detail.as_ref()?;
-        match detail_state.source {
-            RunDetailSource::Steps => self.steps_table.selected_data(idx),
-            RunDetailSource::Outputs => self.outputs_table.selected_data(idx),
-        }
-    }
-
-    /// Builds key-value entries for the currently selected detail payload.
-    pub fn current_detail_entries(&self, idx: usize) -> Option<Vec<KeyValueEntry>> {
-        self.current_detail_payload(idx).map(build_key_value_entries)
-    }
-
-    fn detail_entry_count(&self, idx: usize) -> usize {
-        self.current_detail_entries(idx).map(|entries| entries.len()).unwrap_or(0)
-    }
 }
 
 impl HasFocus for RunViewState {
     fn build(&self, builder: &mut FocusBuilder) {
         let tag = builder.start(self);
         builder.widget(&self.steps_table);
-        builder.widget(&self.outputs_table);
-        builder.leaf_widget(&self.detail_focus);
-        builder.leaf_widget(&self.pause_button_focus);
+        if matches!(self.status, RunExecutionStatus::Running | RunExecutionStatus::Paused) {
+            builder.leaf_widget(&self.pause_button_focus);
+        }
         builder.leaf_widget(&self.cancel_button_focus);
+        if self.steps_table.table_state.selected().is_some() {
+            builder.leaf_widget(&self.view_details_button_focus);
+        }
+        if matches!(self.status, RunExecutionStatus::Succeeded | RunExecutionStatus::Failed) {
+            builder.leaf_widget(&self.done_button_focus);
+        }
+
         builder.end(tag);
     }
 
@@ -511,6 +412,7 @@ const RUNNING_SPINNER_FRAMES: [&str; 3] = [".", "..", "..."];
 struct RepeatAnimationState {
     attempt: u32,
     spinner_index: usize,
+    last_tick: Instant,
 }
 
 impl RepeatAnimationState {
@@ -518,11 +420,18 @@ impl RepeatAnimationState {
         Self {
             attempt: 1,
             spinner_index: 0,
+            last_tick: Instant::now(),
         }
     }
 
     fn advance(&mut self) {
-        self.spinner_index = (self.spinner_index + 1) % RUNNING_SPINNER_FRAMES.len();
+        let now = Instant::now();
+        let elapsed = now - self.last_tick;
+
+        if elapsed.as_millis() > 1000 {
+            self.spinner_index = (self.spinner_index + 1) % RUNNING_SPINNER_FRAMES.len();
+            self.last_tick = now;
+        }
     }
 
     fn set_attempt(&mut self, attempt: u32) {
@@ -533,7 +442,7 @@ impl RepeatAnimationState {
     fn describe(&self, limit: Option<u32>) -> String {
         let frame = RUNNING_SPINNER_FRAMES[self.spinner_index];
         let limit_label = limit.map(|value| value.to_string()).unwrap_or_else(|| "∞".to_string());
-        format!("Running{} (attempt {}/{})", frame, self.attempt, limit_label)
+        format!("Running{:<3} (attempt {}/{})", frame, self.attempt, limit_label)
     }
 }
 
@@ -604,20 +513,6 @@ mod tests {
         let summary = row["Details"].as_str().expect("summary");
         assert!(summary.contains("succeeded"));
         assert_eq!(row["Output"], json!({"result": "ok"}));
-    }
-
-    #[test]
-    fn append_output_records_rows() {
-        let theme = DraculaTheme::new();
-        let mut state = RunViewState::new("run-1".into(), "workflow".into(), None);
-        state.initialize_steps(&[make_step("alpha", None)], &theme);
-
-        state.append_output("alpha", json!(42), None, &theme);
-
-        let row = state.outputs_table.selected_data(0).cloned().expect("row exists");
-        assert_eq!(row["Key"], Value::String("alpha".into()));
-        assert_eq!(row["Value"], Value::String("42".into()));
-        assert_eq!(row["RawValue"], json!(42));
     }
 
     #[test]

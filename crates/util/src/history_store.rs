@@ -357,20 +357,10 @@ pub fn workflow_input_uses_history(definition: &WorkflowInputDefinition) -> bool
     )
 }
 
-/// Returns `true` when the provided JSON value represents a meaningful user input.
-pub fn value_is_meaningful(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::String(text) => !text.trim().is_empty(),
-        Value::Array(items) => !items.is_empty(),
-        Value::Object(map) => !map.is_empty(),
-        _ => true,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::has_meaningful_value;
     use serde_json::json;
     use std::sync::Arc;
     use std::thread;
@@ -487,15 +477,15 @@ mod tests {
 
     #[test]
     fn meaningful_value_detection() {
-        assert!(!value_is_meaningful(&Value::Null));
-        assert!(!value_is_meaningful(&Value::String("   ".into())));
-        assert!(value_is_meaningful(&Value::String("data".into())));
-        assert!(!value_is_meaningful(&Value::Array(Vec::new())));
-        assert!(value_is_meaningful(&Value::Array(vec![Value::Bool(true)])));
-        assert!(!value_is_meaningful(&Value::Object(serde_json::Map::new())));
+        assert!(!has_meaningful_value(&Value::Null));
+        assert!(!has_meaningful_value(&Value::String("   ".into())));
+        assert!(has_meaningful_value(&Value::String("data".into())));
+        assert!(!has_meaningful_value(&Value::Array(Vec::new())));
+        assert!(has_meaningful_value(&Value::Array(vec![Value::Bool(true)])));
+        assert!(!has_meaningful_value(&Value::Object(serde_json::Map::new())));
         let mut object = serde_json::Map::new();
         object.insert("key".into(), Value::from(1));
-        assert!(value_is_meaningful(&Value::Object(object)));
+        assert!(has_meaningful_value(&Value::Object(object)));
     }
 
     #[test]

@@ -78,3 +78,12 @@ steps:
       app: ${{ inputs.app_name }}
     body:
       plan: ${{ inputs.addon_plan }}
+  - id: wait_for_addon
+    run: apps addons:info
+    with:
+      app: ${{ inputs.app_name }}
+      add_on: ${{ steps.provision_addon.output.id }}
+    repeat:
+      until: ${{ steps.wait_for_addon.output.state != "provisioning" }}
+      every: 10s
+      max_attempts: 50

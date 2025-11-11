@@ -26,7 +26,3 @@ progress = { when = "auto" }
 git-fetch-with-cli = true
 # Reasonable retry policy for flaky networks.
 retry = 3
-
-[registries.crates-io]
-# Ensure the modern, faster protocol is used (default on recent Cargo, set explicitly here).
-protocol = "sparse"

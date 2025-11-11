@@ -18,8 +18,8 @@
 //! exact command names or syntax.
 
 use crate::app::App;
-use crate::ui::components::HelpComponent;
 use crate::ui::components::browser::state::CursorDirection;
+use crate::ui::components::HelpComponent;
 use crate::ui::theme::theme_helpers::highlight_segments;
 use crate::ui::{components::component::Component, theme::theme_helpers as th};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -27,10 +27,10 @@ use heroku_types::{Effect, Route};
 use ratatui::layout::Position;
 use ratatui::style::Modifier;
 use ratatui::{
-    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     text::{Line, Span},
     widgets::*,
+    Frame,
 };
 
 /// A modal component for browsing and selecting Heroku commands interactively.
@@ -96,7 +96,7 @@ impl Component for BrowserComponent {
         };
 
         match mouse.kind {
-            MouseEventKind::Up(MouseButton::Left) => {
+            MouseEventKind::Down(MouseButton::Left) => {
                 if self.search_area.contains(pos) {
                     app.focus.focus(&app.browser.f_search);
                 }
@@ -108,7 +108,13 @@ impl Component for BrowserComponent {
                     }
                 }
             }
-            MouseEventKind::Moved => self.mouse_over_idx = self.hit_test_list(app, &pos),
+            MouseEventKind::Moved | MouseEventKind::Up(MouseButton::Left) => {
+                self.mouse_over_idx = if self.list_area.contains(pos) {
+                    self.hit_test_list(app, &pos)
+                } else {
+                    None
+                };
+            }
 
             MouseEventKind::ScrollDown => {
                 if self.list_area.contains(pos) {
@@ -347,7 +353,7 @@ impl BrowserComponent {
 
     fn hit_test_list(&mut self, app: &mut App, pos: &Position) -> Option<usize> {
         let list_offset = app.browser.list_state.offset();
-        let idx = (pos.y - self.list_area.y) as usize + list_offset;
+        let idx = pos.y.saturating_sub(self.list_area.y) as usize + list_offset;
         if idx >= app.browser.filtered().len() {
             return None;
         }

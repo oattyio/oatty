@@ -101,7 +101,7 @@ impl MainView {
             Route::Browser => (Box::new(BrowserComponent::default()), Box::new(&app.browser)),
             Route::Palette => (Box::new(PaletteComponent::new()), Box::new(&app.palette)),
             Route::Plugins => (Box::new(PluginsComponent::default()), Box::new(&app.plugins)),
-            Route::WorkflowInputs => (Box::new(WorkflowInputsComponent), Box::new(&app.workflows)),
+            Route::WorkflowInputs => (Box::new(WorkflowInputsComponent::default()), Box::new(&app.workflows)),
             Route::Workflows => (Box::new(WorkflowsComponent::default()), Box::new(&app.workflows)),
             Route::WorkflowRun => (Box::new(RunViewComponent::default()), Box::new(&app.workflows)),
         };
