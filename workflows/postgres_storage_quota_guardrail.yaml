@@ -1,0 +1,54 @@
+workflow: postgres_storage_quota_guardrail
+title: "Postgres storage quota guardrail"
+description: "Inspect current storage usage for a Heroku Postgres addon and optionally tighten quota thresholds."
+inputs:
+  app:
+    name: "App"
+    provider: apps list
+    select: { value_field: name, display_field: name }
+  addon:
+    name: "Addon"
+    description: "Heroku Postgres addon name or ID to manage."
+    provider: apps addons:list
+    depends_on:
+      app: ${{ inputs.app }}
+    select: { value_field: name, display_field: name }
+  warning_gb:
+    name: "Warning GB"
+    description: "New warning threshold in GB (leave blank to keep current)."
+    type: integer
+    optional: true
+  critical_gb:
+    name: "Critical GB"
+    description: "New critical threshold in GB (leave blank to keep current)."
+    type: integer
+    optional: true
+  enforcement_action:
+    name: "Enforcement Action"
+    description: "Action when quota is exceeded (restrict, notify, or none)."
+    type: string
+    enum: [restrict, notify, none]
+    optional: true
+steps:
+  - id: current_quota
+    description: "Show current storage limits, usage, and enforcement status."
+    run: data postgres:quotas:storage:list
+    with:
+      addon: ${{ inputs.addon }}
+
+  - id: update_quota
+    when: ${{ !!inputs.warning_gb || !!inputs.critical_gb || !!inputs.enforcement_action }}
+    run: data postgres:quotas:storage:update
+    with:
+      addon: ${{ inputs.addon }}
+    body:
+      warning_gb: ${{ inputs.warning_gb }}
+      critical_gb: ${{ inputs.critical_gb }}
+      enforcement_action: ${{ inputs.enforcement_action }}
+
+  - id: verify_quota
+    when: ${{ !!inputs.warning_gb || !!inputs.critical_gb || !!inputs.enforcement_action }}
+    description: "Confirm the quota settings now reflect the requested changes."
+    run: data postgres:quotas:storage:list
+    with:
+      addon: ${{ inputs.addon }}

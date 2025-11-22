@@ -5,9 +5,29 @@
 //! `specs/WORKFLOW_VALUE_PROVIDERS_UX.md`. They intentionally preserve authoring order (via
 //! `IndexMap`) so the guided experience can render inputs and steps in a predictable sequence.
 
+use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
-use serde_json::Value as JsonValue;
+use serde_json::{Map as JsonMap, Value as JsonValue};
+use std::{borrow::Cow, collections::HashMap};
+
+pub mod validation;
+pub use validation::validate_candidate_value;
+
+/// Fully resolved workflow ready for runtime consumption.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct RuntimeWorkflow {
+    /// Canonical identifier used for lookups and telemetry.
+    pub identifier: String,
+    /// Optional title exposed in selection UI.
+    pub title: Option<String>,
+    /// Optional descriptive copy shown in detail panes.
+    pub description: Option<String>,
+    /// Declarative inputs keyed by authoring order.
+    pub inputs: IndexMap<String, WorkflowInputDefinition>,
+    /// Ordered execution steps.
+    pub steps: Vec<WorkflowStepDefinition>,
+}
 
 /// Describes a fully authored workflow, including metadata, inputs, and sequential steps.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -30,11 +50,14 @@ pub struct WorkflowDefinition {
 }
 
 /// Defines metadata for a single workflow input, including provider bindings and validation.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct WorkflowInputDefinition {
     /// Descriptive text explaining the purpose of the input.
     #[serde(default)]
     pub description: Option<String>,
+    /// Optional human-friendly label rendered in UIs.
+    #[serde(default)]
+    pub name: Option<String>,
     /// Declares the primitive type (string, number, array, etc.).
     #[serde(default)]
     pub r#type: Option<String>,
@@ -59,9 +82,18 @@ pub struct WorkflowInputDefinition {
     /// Provider argument bindings, keyed by argument name.
     #[serde(default = "default_provider_argument_map")]
     pub provider_args: IndexMap<String, WorkflowProviderArgumentValue>,
+    /// Declarative provider dependencies that map argument names to other inputs or step outputs.
+    ///
+    /// Entries use the same syntax as `provider_args`, and are merged in at runtime so providers can
+    /// automatically inherit values from earlier selections.
+    #[serde(default = "default_provider_argument_map")]
+    pub depends_on: IndexMap<String, WorkflowProviderArgumentValue>,
     /// Join configuration applied when `mode` is multiple and results must be concatenated.
     #[serde(default)]
     pub join: Option<WorkflowJoinConfiguration>,
+    /// When true, this input does not block readiness. All inputs are required by default unless `optional: true`.
+    #[serde(default)]
+    pub optional: bool,
     /// Declarative validation metadata (required flags, enumerations, patterns).
     #[serde(default)]
     pub validate: Option<WorkflowInputValidation>,
@@ -78,6 +110,7 @@ impl Default for WorkflowInputDefinition {
     fn default() -> Self {
         Self {
             description: None,
+            name: None,
             r#type: None,
             provider: None,
             select: None,
@@ -86,7 +119,9 @@ impl Default for WorkflowInputDefinition {
             on_error: None,
             default: None,
             provider_args: default_provider_argument_map(),
+            depends_on: default_provider_argument_map(),
             join: None,
+            optional: false,
             validate: None,
             placeholder: None,
             enumerated_values: Vec::new(),
@@ -109,19 +144,14 @@ pub struct WorkflowProviderSelect {
 }
 
 /// Lists selection modes for provider-backed inputs.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowInputMode {
     /// A single value must be selected.
+    #[default]
     Single,
     /// Multiple values may be selected.
     Multiple,
-}
-
-impl Default for WorkflowInputMode {
-    fn default() -> Self {
-        Self::Single
-    }
 }
 
 /// Error handling policy applied when provider fetching fails.
@@ -137,7 +167,7 @@ pub enum WorkflowProviderErrorPolicy {
 }
 
 /// Defines a provider configuration either by identifier or by an embedded object.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(untagged)]
 pub enum WorkflowValueProvider {
     /// Shorthand string identifier (for example, `apps:list`).
@@ -147,7 +177,7 @@ pub enum WorkflowValueProvider {
 }
 
 /// Structured provider configuration matching the richer syntax in the specs.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct WorkflowValueProviderDetailed {
     /// Identifier of the provider (for example, `apps:list` or `workflow`).
     pub id: String,
@@ -157,7 +187,7 @@ pub struct WorkflowValueProviderDetailed {
 }
 
 /// Declares how default values are derived for a workflow input.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct WorkflowInputDefault {
     /// Source describing where the default originates.
     pub from: WorkflowDefaultSource,
@@ -167,7 +197,7 @@ pub struct WorkflowInputDefault {
 }
 
 /// Enumerates supported default value sources.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowDefaultSource {
     /// Use command history for the user.
@@ -181,7 +211,7 @@ pub enum WorkflowDefaultSource {
 }
 
 /// Describes how multiple selected items should be concatenated into a single value.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct WorkflowJoinConfiguration {
     /// Separator inserted between values.
     pub separator: String,
@@ -191,7 +221,7 @@ pub struct WorkflowJoinConfiguration {
 }
 
 /// Declarative validation settings attached to an input.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct WorkflowInputValidation {
     /// Whether a value must be provided.
     #[serde(default)]
@@ -212,7 +242,7 @@ pub struct WorkflowInputValidation {
 }
 
 /// Value assigned to a provider argument, either as a literal or as a structured binding.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(untagged)]
 pub enum WorkflowProviderArgumentValue {
     /// Literal string or templated expression.
@@ -222,7 +252,7 @@ pub enum WorkflowProviderArgumentValue {
 }
 
 /// Structured provider argument binding following the dependent provider spec.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct WorkflowProviderArgumentBinding {
     /// Step identifier referenced by the binding.
     #[serde(default)]
@@ -254,7 +284,7 @@ pub enum WorkflowMissingBehavior {
 }
 
 /// Describes a single step within a workflow.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct WorkflowStepDefinition {
     /// Unique step identifier referenced by later bindings.
     pub id: String,
@@ -272,6 +302,9 @@ pub struct WorkflowStepDefinition {
     /// Request body payload, when applicable.
     #[serde(default = "default_json_null")]
     pub body: JsonValue,
+    /// Conditional expression that must evaluate truthy for the step to execute.
+    #[serde(default, rename = "if", alias = "when")]
+    pub r#if: Option<String>,
     /// Optional repeat configuration for polling or retry loops.
     #[serde(default)]
     pub repeat: Option<WorkflowRepeat>,
@@ -281,7 +314,7 @@ pub struct WorkflowStepDefinition {
 }
 
 /// Repeat configuration enabling polling until a condition is met.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct WorkflowRepeat {
     /// Exit condition expressed as a templated expression.
     #[serde(default)]
@@ -298,7 +331,7 @@ pub struct WorkflowRepeat {
 }
 
 /// Output contract advertised by a workflow step for downstream consumers.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct WorkflowOutputContract {
     /// Structured field descriptors annotated with semantic tags.
     #[serde(default)]
@@ -306,7 +339,7 @@ pub struct WorkflowOutputContract {
 }
 
 /// Describes a single field made available by a workflow step output.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct WorkflowOutputField {
     /// Field name exposed from the output payload.
     pub name: String,
@@ -319,6 +352,170 @@ pub struct WorkflowOutputField {
     /// Optional JSON type hint (object, array<uuid>, etc.).
     #[serde(default)]
     pub r#type: Option<String>,
+}
+
+/// Request payload describing a workflow run the engine should execute.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct WorkflowRunRequest {
+    /// Unique identifier associated with the run instance.
+    pub run_id: String,
+    /// Fully resolved workflow the engine should execute.
+    pub workflow: RuntimeWorkflow,
+    /// Inputs resolved during the collection experience.
+    #[serde(default)]
+    pub inputs: JsonMap<String, JsonValue>,
+    /// Environment variables provided to the run context.
+    #[serde(default)]
+    pub environment: HashMap<String, String>,
+    /// Pre-populated step outputs seeded before execution begins.
+    #[serde(default)]
+    pub step_outputs: HashMap<String, JsonValue>,
+}
+
+/// Control commands issued from the UI to the workflow runner.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowRunControl {
+    /// Pause after the active step completes.
+    Pause,
+    /// Resume execution after a pause.
+    Resume,
+    /// Cancel execution as soon as practical.
+    Cancel,
+}
+
+/// High-level lifecycle status reported for a workflow run.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowRunStatus {
+    /// The run has not started yet.
+    Pending,
+    /// Steps are currently executing.
+    Running,
+    /// Execution is paused; no new steps will start.
+    Paused,
+    /// Cancellation has been requested and will occur once safe.
+    CancelRequested,
+    /// The run completed successfully.
+    Succeeded,
+    /// The run completed with a failure.
+    Failed,
+    /// The run stopped due to cancellation.
+    Canceled,
+}
+
+impl WorkflowRunStatus {
+    /// Returns true when the status represents a terminal outcome.
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Succeeded | Self::Failed | Self::Canceled)
+    }
+}
+
+/// Fine-grained status for individual workflow steps.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowRunStepStatus {
+    /// The step has not started yet.
+    Pending,
+    /// The step is actively running.
+    Running,
+    /// The step completed successfully.
+    Succeeded,
+    /// The step completed with an error.
+    Failed,
+    /// The step was skipped due to dependencies or conditional logic.
+    Skipped,
+}
+
+impl WorkflowRunStepStatus {
+    /// Returns true when the status represents a terminal outcome.
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Succeeded | Self::Failed | Self::Skipped)
+    }
+}
+
+/// Event emitted by the workflow runner describing lifecycle changes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum WorkflowRunEvent {
+    /// Indicates the run has begun executing steps.
+    RunStarted {
+        /// Timestamp when execution began.
+        at: DateTime<Utc>,
+    },
+    /// Updates the overall run status, optionally including operator messaging.
+    RunStatusChanged {
+        /// Current lifecycle status.
+        status: WorkflowRunStatus,
+        /// Optional descriptive message (for example, "aborting…").
+        #[serde(default)]
+        message: Option<String>,
+    },
+    /// Notifies the UI that a step is about to execute.
+    StepStarted {
+        /// Zero-based index of the step within the workflow definition.
+        index: usize,
+        /// Identifier of the step.
+        step_id: String,
+        /// Optional friendly label or description.
+        #[serde(default)]
+        label: Option<String>,
+        /// Timestamp when the step began.
+        started_at: DateTime<Utc>,
+    },
+    /// Emits an intermediate output produced while a step is running.
+    StepOutputProduced {
+        /// Identifier of the step that produced the output.
+        step_id: String,
+        /// Semantic key for the produced value.
+        key: String,
+        /// JSON payload emitted by the step.
+        value: JsonValue,
+    },
+    /// Notifies listeners that a repeating step has begun a new attempt.
+    StepAttempt {
+        /// Identifier of the step running another attempt.
+        step_id: String,
+        /// 1-based attempt counter.
+        attempt: u32,
+        /// Optional maximum attempts limit when known.
+        #[serde(default)]
+        max_attempts: Option<u32>,
+    },
+    /// Signals completion of a step along with result metadata.
+    StepFinished {
+        /// Identifier of the step that just completed.
+        step_id: String,
+        /// Final status reported by the runner.
+        status: WorkflowRunStepStatus,
+        /// JSON output payload captured for downstream bindings.
+        output: JsonValue,
+        /// Log lines gathered while executing the step.
+        #[serde(default)]
+        logs: Vec<String>,
+        /// How many attempts were made (repeat/until loops).
+        attempts: u32,
+        /// Duration of the step in milliseconds.
+        duration_ms: u64,
+    },
+    /// Streamed output to be surfaced in the aggregate outputs table.
+    RunOutputAccumulated {
+        /// Key describing the output item.
+        #[serde(default)]
+        key: String,
+        /// Value surfaced to the user.
+        value: JsonValue,
+    },
+    /// Announces that execution has reached a terminal state.
+    RunCompleted {
+        /// Final lifecycle status.
+        status: WorkflowRunStatus,
+        /// Timestamp when the run finished.
+        finished_at: DateTime<Utc>,
+        /// Optional error description captured on failure.
+        #[serde(default)]
+        error: Option<String>,
+    },
 }
 
 const fn default_json_null() -> JsonValue {
@@ -335,6 +532,35 @@ fn default_provider_argument_map() -> IndexMap<String, WorkflowProviderArgumentV
 
 fn default_value_map() -> IndexMap<String, JsonValue> {
     IndexMap::new()
+}
+
+impl WorkflowInputDefinition {
+    /// Returns true when this input should not block readiness.
+    ///
+    /// New authoring semantics: inputs are required by default unless `optional: true` is set.
+    /// Legacy `validate.required` is ignored for readiness; it may still be used by
+    /// future per-field validation, but does not affect required/optional at the
+    /// workflow level.
+    pub fn is_optional(&self) -> bool {
+        self.optional
+    }
+
+    /// Returns true when a value must be supplied before running the workflow.
+    pub fn is_required(&self) -> bool {
+        !self.optional
+    }
+
+    /// Returns the preferred human-readable label for this input.
+    ///
+    /// When the author supplied an explicit `name`, that value is returned after trimming. If the
+    /// field is missing or blank, the raw identifier is surfaced instead so callers never receive
+    /// an empty label.
+    pub fn display_name<'a>(&'a self, fallback: &'a str) -> Cow<'a, str> {
+        match self.name.as_ref().map(|value| value.trim()).filter(|value| !value.is_empty()) {
+            Some(label) => Cow::Owned(label.to_string()),
+            None => Cow::Borrowed(fallback),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -372,5 +598,52 @@ steps:
         assert_eq!(definition.workflow, "app_with_db");
         assert!(definition.inputs.contains_key("app_name"));
         assert_eq!(definition.steps.len(), 3);
+    }
+
+    #[test]
+    fn deserializes_step_when_condition() {
+        let yaml = r#"
+workflow: example
+steps:
+  - id: step_a
+    run: apps:list
+    when: ${{ inputs.flag }}
+"#;
+
+        let definition: WorkflowDefinition = serde_yaml::from_str(yaml).expect("parse workflow");
+        assert_eq!(definition.steps.len(), 1);
+        assert_eq!(definition.steps[0].r#if.as_deref(), Some("${{ inputs.flag }}"));
+    }
+
+    #[test]
+    fn deserializes_step_if_alias() {
+        let yaml = r#"
+workflow: example
+steps:
+  - id: step_a
+    run: apps:list
+    if: ${{ inputs.flag }}
+"#;
+
+        let definition: WorkflowDefinition = serde_yaml::from_str(yaml).expect("parse workflow");
+        assert_eq!(definition.steps[0].r#if.as_deref(), Some("${{ inputs.flag }}"));
+    }
+
+    #[test]
+    fn display_name_prefers_explicit_label() {
+        let mut definition = WorkflowInputDefinition::default();
+        definition.name = Some("Chosen Label".into());
+
+        let label = definition.display_name("fallback");
+        assert_eq!(label.as_ref(), "Chosen Label");
+    }
+
+    #[test]
+    fn display_name_falls_back_to_identifier_when_blank() {
+        let mut definition = WorkflowInputDefinition::default();
+        definition.name = Some("   ".into());
+
+        let label = definition.display_name("input_key");
+        assert_eq!(label.as_ref(), "input_key");
     }
 }

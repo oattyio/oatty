@@ -6,12 +6,13 @@
 
 pub mod suggestion {
     //! Suggestion metadata used by palette and autocompletion UIs.
-
     /// Identifies the kind of suggestion item presented to the user.
     #[derive(Clone, Debug, PartialEq)]
     pub enum ItemKind {
-        /// A command name (for example, "apps:list").
+        /// A canonical command ID (for example, "apps:list").
         Command,
+        /// A Canonical MCP Tool ID (for example, "brave web:search").
+        MCP,
         /// A flag or option (for example, "--app" or "--region").
         Flag,
         /// A value for a flag or positional argument.
@@ -55,7 +56,7 @@ pub mod provider {
         Command { command_id: String, binds: Vec<Bind> },
     }
 
-    /// Declares a mapping from a provider's required input to a consumer field name.
+    /// Declares a mapping from a provider's required to be input to a consumer field name.
     #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
     pub struct Bind {
         /// The provider's input key (for example, a path placeholder like `app`).
@@ -157,7 +158,7 @@ pub mod service {
     use serde::{Deserialize, Serialize};
 
     /// Default accept header shared across Heroku APIs.
-    const HEROKU_JSON_ACCEPT_HEADER: &str = "application/vnd.heroku+json; version=3";
+    const HEROKU_JSON_ACCEPT_HEADER: &str = "application/vnd.heroku+json; version=3.sdk";
 
     /// Identifies the backend service targeted by a generated request.
     #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Default, Serialize, Deserialize, Encode, Decode)]
@@ -237,13 +238,16 @@ pub mod service {
 pub mod command {
     //! Command metadata describing CLI commands and their inputs.
 
-    use std::collections::HashMap;
-
+    use crate::{provider::ValueProvider, service::ServiceId};
+    use anyhow::Result;
+    use anyhow::anyhow;
     use bincode::{Decode, Encode};
     use serde::{Deserialize, Serialize};
+    use std::collections::HashMap;
 
-    use crate::{provider::ValueProvider, service::ServiceId};
-
+    pub type FlagValueMap = HashMap<String, Option<String>>;
+    pub type ArgValueMap = HashMap<String, String>;
+    pub type ParsedCommandArgs = (FlagValueMap, ArgValueMap);
     /// Represents a command-line flag or option for a Heroku CLI command.
     #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
     pub struct CommandFlag {
@@ -424,6 +428,11 @@ pub mod command {
             }
         }
 
+        /// Returns the canonical ID for this command.
+        pub fn canonical_id(&self) -> String {
+            format!("{} {}", self.group, self.name)
+        }
+
         /// Construct a new HTTP-backed command specification.
         pub fn new_http(
             group: String,
@@ -460,6 +469,137 @@ pub mod command {
                 flags,
                 execution: CommandExecution::Mcp(mcp),
             }
+        }
+
+        /// Parses command arguments and flags from input tokens.
+        ///
+        /// This function processes the command line tokens after the group and subcommand,
+        /// separating positional arguments from flags and validating flag syntax.
+        ///
+        /// # Arguments
+        ///
+        /// * `argument_tokens` - The tokens after the group and subcommand
+        /// * `command_spec` - The command specification for validation
+        ///
+        /// # Returns
+        ///
+        /// Returns `Ok((flags, args))` where flags is a map of flag names to values
+        /// and args is a vector of positional arguments, or an error if parsing fails.
+        ///
+        /// # Flag Parsing Rules
+        ///
+        /// - `--flag=value` format is supported
+        /// - Boolean flags don't require values
+        /// - Non-boolean flags require values (next token or after =)
+        /// - Unknown flags are rejected
+        pub fn parse_arguments(&self, argument_tokens: &[String]) -> Result<ParsedCommandArgs> {
+            let mut user_flags: FlagValueMap = HashMap::new();
+            let mut user_args: Vec<String> = Vec::new();
+            let mut index = 0;
+
+            while index < argument_tokens.len() {
+                let token = &argument_tokens[index];
+
+                if token.starts_with("--") {
+                    let flag_name = token.trim_start_matches('-');
+
+                    // Handle --flag=value format
+                    if let Some(equals_pos) = flag_name.find('=') {
+                        let name = &flag_name[..equals_pos];
+                        let value = &flag_name[equals_pos + 1..];
+                        user_flags.insert(name.to_string(), Some(value.to_string()));
+                    } else {
+                        // Handle --flag or --flag value format
+                        if let Some(flag_spec) = self.flags.iter().find(|f| f.name == flag_name) {
+                            if flag_spec.r#type == "boolean" {
+                                user_flags.insert(flag_name.to_string(), None);
+                            } else {
+                                // Non-boolean flag requires a value
+                                if index + 1 < argument_tokens.len() && !argument_tokens[index + 1].starts_with('-') {
+                                    user_flags.insert(flag_name.to_string(), Some(argument_tokens[index + 1].to_string()));
+                                    index += 1; // Skip the value token
+                                } else {
+                                    return Err(anyhow!("Flag '--{}' requires a value", flag_name));
+                                }
+                            }
+                        } else {
+                            return Err(anyhow!("Unknown flag '--{}'", flag_name));
+                        }
+                    }
+                } else {
+                    // Positional argument
+                    user_args.push(token.to_string());
+                }
+
+                index += 1;
+            }
+            self.validate_arguments(&user_flags, &user_args)?;
+
+            let user_args_map = self
+                .positional_args
+                .iter()
+                .zip(user_args.iter())
+                .map(|(arg, value)| (arg.name.to_string(), value.to_string()))
+                .collect();
+            Ok((user_flags, user_args_map))
+        }
+
+        /// Validates command arguments and flags against the command specification.
+        ///
+        /// This function ensures that all required positional arguments and flags are
+        /// provided with appropriate values.
+        ///
+        /// # Arguments
+        ///
+        /// * `positional_arguments` - The provided positional arguments
+        /// * `user_flags` - The provided flags and their values
+        /// * `command_spec` - The command specification to validate against
+        ///
+        /// # Returns
+        ///
+        /// Returns `Ok(())` if validation passes, or an error message if validation fails.
+        ///
+        /// # Validation Rules
+        ///
+        /// - All required positional arguments must be provided
+        /// - All required flags must be present
+        /// - Non-boolean required flags must have non-empty values
+        pub fn validate_arguments(&self, user_flags: &HashMap<String, Option<String>>, positional_arguments: &[String]) -> Result<()> {
+            // Validate required positional arguments
+            if positional_arguments.len() > self.positional_args.len() {
+                return Err(anyhow!(
+                    "Too many arguments provided: expected {}, got {}",
+                    self.positional_args.len(),
+                    positional_arguments.len()
+                ));
+            }
+            if positional_arguments.len() < self.positional_args.len() {
+                let missing_arguments: Vec<String> = self.positional_args[positional_arguments.len()..]
+                    .iter()
+                    .map(|arg| arg.name.to_string())
+                    .collect();
+                return Err(anyhow!("Missing required argument(s): {}", missing_arguments.join(", ")));
+            }
+
+            // Validate required flags
+            for flag_spec in &self.flags {
+                if flag_spec.required {
+                    if flag_spec.r#type == "boolean" {
+                        if !user_flags.contains_key(&flag_spec.name) {
+                            return Err(anyhow!("Missing required flag: --{}", flag_spec.name));
+                        }
+                    } else {
+                        match user_flags.get(&flag_spec.name) {
+                            Some(Some(value)) if !value.is_empty() => {}
+                            _ => {
+                                return Err(anyhow!("Missing required flag value: --{} <value>", flag_spec.name));
+                            }
+                        }
+                    }
+                }
+            }
+
+            Ok(())
         }
     }
 
@@ -571,12 +711,15 @@ pub mod execution {
     /// state changes that should occur.
     #[derive(Debug, Clone, Serialize, Deserialize, Default)]
     pub enum ExecOutcome {
-        /// Payload from an http call. Includes the deserialized value,
-        /// an optional pagination object, and a boolean used to
-        /// determine if the results should be displayed in a table modal.
-        Http(String, Value, Option<Pagination>, bool),
-        /// Result from executing an MCP tool, containing a log summary and structured payload.
-        Mcp(String, Value),
+        /// Result from executing an HTTP command containing a structured payload.
+        /// (status_code, log_entry, json_result, maybe_pagination, request_id)
+        Http(u16, String, Value, Option<Pagination>, u64),
+        /// Result from executing an MCP tool containing a structured payload.
+        /// (log_entry, json_result, request_id)
+        Mcp(String, Value, u64),
+        /// Result from fetching provider-backed values for suggestions or selectors.
+        /// (provider_id, cache_key, values, optional request identifier)
+        ProviderValues(String, String, Vec<Value>, Option<u64>),
         /// Result from performing an action on a plugin
         /// Contains a log message and the new plugin detail object
         PluginDetail(String, Option<PluginDetail>),
@@ -594,13 +737,15 @@ pub mod execution {
         PluginValidationOk(String),
         /// Simple log entry
         Log(String),
+        /// Command validation error
+        ValidationErr(String),
         /// Indicates successful completion but with no payload
         #[default]
         None,
     }
 
     /// Pagination metadata parsed from API response headers.
-    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+    #[derive(Debug, Clone, Serialize, Deserialize, Default, Hash, PartialEq, Eq)]
     pub struct Pagination {
         /// The start value of the returned range.
         pub range_start: String,
@@ -610,20 +755,29 @@ pub mod execution {
         pub field: String,
         /// The server page size limit used for this response (defaults to 200).
         pub max: usize,
+        /// The shell command needed to fetch the next/previous page of results.
+        pub hydrated_shell_command: Option<String>,
         /// The sort order for the range ("asc" or "desc") if known.
         #[serde(default)]
         pub order: Option<String>,
         /// Raw value of the Next-Range header for requesting the next page.
         #[serde(default)]
         pub next_range: Option<String>,
+        /// Raw value of the Prev-Range header for requesting the previous page.
+        #[serde(default)]
+        pub this_range: Option<String>,
     }
 }
 
 pub mod messaging {
     //! Application-level messages and side effects.
 
-    use crate::{command::CommandSpec, execution::ExecOutcome};
-
+    use crate::{
+        command::CommandSpec,
+        execution::ExecOutcome,
+        workflow::{WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest},
+    };
+    use serde_json::{Map as JsonMap, Value as JsonValue};
     /// Navigation targets within the TUI.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Route {
@@ -633,42 +787,51 @@ pub mod messaging {
         Browser,
         /// Plugins view for managing MCP plugins.
         Plugins,
+        /// Workflows view for browsing workflow catalog.
+        Workflows,
+        /// Workflow input resolution view.
+        WorkflowInputs,
+        /// Workflow run view displaying live execution status.
+        WorkflowRun,
     }
 
     /// Modal overlays that can be displayed on top of the main UI.
-    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[derive(Debug, Clone)]
     pub enum Modal {
         /// Help modal displaying shortcuts and usage tips.
         Help,
         /// Results modal showing API responses in a table.
-        Results,
+        Results(Box<ExecOutcome>),
         /// Log details modal revealing the full log entry.
         LogDetails,
+        /// Guided Input Collector for resolving workflow inputs.
+        WorkflowCollector,
         /// Plugin details modal presenting plugin metadata.
         PluginDetails,
+        /// Theme picker modal allowing runtime palette switching.
+        ThemePicker,
     }
 
     /// Side effects that can be triggered by state changes.
     ///
     /// This enum defines actions that should be performed as a result of state changes, such as
     /// copying to clipboard or showing notifications.
-    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[derive(Debug, Clone)]
     #[allow(clippy::enum_variant_names)]
     pub enum Effect {
-        /// Request to run the current command in the palette.
-        Run,
-        /// Request to copy the current command to clipboard.
+        /// Log a message
+        Log(String),
+        /// Request to run the current command in the palette
+        /// with the hydrated command string and u64 hash of the request.
+        Run {
+            hydrated_command: String,
+            range_override: Option<String>,
+            request_hash: u64,
+        },
+        /// Request to copy the current command to the clipboard.
         CopyToClipboardRequested(String),
         /// Request to copy the current logs selection (already rendered/redacted).
         CopyLogsRequested(String),
-        /// Request the next page using the `Next-Range` header.
-        NextPageRequested(String),
-        /// Request the previous page using the prior `Range` header, if any.
-        PrevPageRequested,
-        /// Request the first page using the initial `Range` header (or none).
-        FirstPageRequested,
-        /// Request navigation to the last available page.
-        LastPageRequested,
         /// Load MCP plugins from config into `PluginsState`.
         PluginsLoadRequested,
         /// Refresh plugin statuses and health.
@@ -681,12 +844,10 @@ pub mod messaging {
         PluginsRestart(String),
         /// Export logs for a plugin to a default location (redacted).
         PluginsExportLogsDefault(String),
-        /// Open add plugin view.
-        PluginsOpenAdd,
-        /// Validate fields in the add plugin view.
+        /// Validate fields in the added plugin view.
         PluginsValidateAdd,
-        /// Apply add plugin patch.
-        PluginsApplyAdd,
+        /// Apply to add a plugin patch.
+        PluginsSave,
         /// Load detailed information for a plugin when opening the details modal.
         PluginsLoadDetail(String),
         /// Change the main view.
@@ -696,7 +857,28 @@ pub mod messaging {
         /// Hide any open modals.
         CloseModal,
         /// Send the command spec to the palette.
-        SendToPalette(CommandSpec),
+        SendToPalette(Box<CommandSpec>),
+        /// Request fetching values for a provider-backed suggestion or selector.
+        ProviderFetchRequested {
+            /// Canonical provider identifier (`group name`).
+            provider_id: String,
+            /// Cache key associated with the provider arguments.
+            cache_key: String,
+            /// Arguments that should be supplied to the provider request.
+            args: JsonMap<String, JsonValue>,
+        },
+        /// Request execution of a workflow run.
+        WorkflowRunRequested {
+            /// Run configuration describing the workflow and context.
+            request: Box<WorkflowRunRequest>,
+        },
+        /// Send a control command to an in-flight workflow run.
+        WorkflowRunControl {
+            /// Identifier of the run to target.
+            run_id: String,
+            /// Control command (pause, resume, cancel).
+            command: WorkflowRunControl,
+        },
     }
 
     /// Messages that can be sent to update the application state.
@@ -729,6 +911,20 @@ pub mod messaging {
         LogsCopy,
         /// Toggle pretty/raw for a single API response.
         LogsTogglePretty,
+        /// Provider-backed values finished loading and are ready for consumption.
+        ProviderValuesReady {
+            /// Canonical provider identifier (`group name`).
+            provider_id: String,
+            /// Cache key whose contents are now available from the registry cache.
+            cache_key: String,
+        },
+        /// Workflow runner emitted an event for the active run.
+        WorkflowRunEvent {
+            /// Identifier of the run associated with the event.
+            run_id: String,
+            /// Event payload describing the lifecycle change.
+            event: WorkflowRunEvent,
+        },
     }
 }
 
@@ -1302,15 +1498,14 @@ pub mod plugin {
     }
 }
 
-pub use command::{CommandExecution, CommandFlag, CommandSpec, Field, HttpCommandSpec, McpCommandSpec, PositionalArgument};
-pub use execution::{ExecOutcome, Pagination};
-pub use messaging::{Effect, Modal, Msg, Route};
-pub use plugin::{
-    AuthStatus, EnvSource, EnvVar, HealthStatus, LogLevel, LogSource, McpLogEntry, PluginDetail, PluginStatus, TransportStatus,
-};
-pub use provider::{Bind, ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract, ValueProvider};
-pub use service::{ParseServiceIdError, ServiceId, ToServiceIdInfo};
-pub use suggestion::{ItemKind, SuggestionItem};
+pub use command::*;
+pub use execution::*;
+pub use messaging::*;
+pub use plugin::*;
+pub use provider::*;
+pub use service::*;
+pub use suggestion::*;
+pub use workflow::*;
 
 #[cfg(test)]
 mod tests {

@@ -211,7 +211,7 @@ fn create_commands_from_input(inputs: Vec<ManifestInput>) -> Result<Vec<CommandS
 ///   structs, as well as the `build_argument_contracts` and `build_return_contract` functions.
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// let commands = vec![
 ///     CommandSpec { group: "group1", name: "command1" },
 ///     CommandSpec { group: "group2", name: "command2" }
@@ -224,6 +224,7 @@ fn build_provider_contracts(commands: &[CommandSpec]) -> Vec<ProviderContractEnt
     let mut contracts = IndexMap::new();
 
     for command in commands {
+        // Use canonical colon-separated identifier ("group:name") for provider contracts
         let command_id = format!("{}:{}", command.group, command.name);
 
         let mut contract = ProviderContract::default();
@@ -252,10 +253,10 @@ fn build_provider_contracts(commands: &[CommandSpec]) -> Vec<ProviderContractEnt
 /// # Arguments
 ///
 /// * `command` - A reference to a `CommandSpec` instance that contains information about the
-///    command's HTTP path and flags (including their requirements).
+///   command's HTTP path and flags (including their requirements).
 ///
 /// * `contract` - A mutable reference to a `ProviderContract` where the generated argument
-///    contracts will be stored.
+///   contracts will be stored.
 ///
 /// # Details
 ///
@@ -275,7 +276,7 @@ fn build_provider_contracts(commands: &[CommandSpec]) -> Vec<ProviderContractEnt
 ///
 /// # Example
 ///
-/// ```rust
+/// ```rust,ignore
 /// let command_spec = CommandSpec::from_config(...);
 /// let mut provider_contract = ProviderContract::default();
 ///
@@ -372,7 +373,10 @@ fn accepts_with_preference(tags: &[&str], preferred: Option<&str>) -> (Vec<Strin
 
 fn normalize_argument_key(argument_name: &str) -> String {
     let without_indices = argument_name.replace("[]", "");
-    let segment = without_indices.split('.').last().unwrap_or(&without_indices);
+    let segment = without_indices
+        .rsplit_once('.')
+        .map(|(_, trailing)| trailing)
+        .unwrap_or(&without_indices);
     segment.replace('-', "_").to_ascii_lowercase()
 }
 /// Builds and assigns a return contract for a given provider contract based on the HTTP output schema specified in the command.
@@ -397,7 +401,7 @@ fn normalize_argument_key(argument_name: &str) -> String {
 /// - If the return contract is empty (no fields), the `contract` remains unchanged.
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// let command = CommandSpec::new(); // Assume CommandSpec is defined elsewhere
 /// let mut contract = ProviderContract::new(); // Assume ProviderContract is defined elsewhere
 /// build_return_contract(&command, &mut contract);
@@ -449,7 +453,7 @@ fn build_return_contract(command: &CommandSpec, contract: &mut ProviderContract)
 ///   default `ProviderReturnContract` is returned.
 ///
 /// # Example
-/// ```rust
+/// ```rust,ignore
 /// let schema = Some(&SchemaProperty {
 ///     r#type: "object".to_string(),
 ///     properties: Some(vec![
@@ -530,7 +534,7 @@ fn convert_schema_to_return_contract(schema: Option<&SchemaProperty>) -> Provide
 ///
 /// # Examples
 ///
-/// ```
+/// ```ignore
 /// let path = "/users/{user_id}/posts/{post_id}";
 /// let placeholders = extract_path_placeholders(path);
 /// assert_eq!(placeholders, vec!["user_id", "post_id"]);
@@ -585,7 +589,7 @@ fn extract_path_placeholders(path: &str) -> Vec<String> {
 /// # Returns
 ///
 /// * `true` if the file path has an extension of "yaml" or "yml".
-/// * `false` if the file path does not have an extension, or if the extension is not "yaml" or "yml".
+/// * `false` if the file path does not have an extension or if the extension is not "yaml" or "yml".
 ///
 /// # Examples
 ///
@@ -609,7 +613,7 @@ fn is_yaml(path: &Path) -> bool {
 }
 /// Determines if a given string appears to represent an OpenAPI or Swagger JSON document.
 ///
-/// This function performs a lightweight detection by checking if the input string contains
+/// This function performs lightweight detection by checking if the input string contains
 /// either the `"openapi"` or `"swagger"` keywords. It does not fully parse the JSON structure
 /// and is intended as a quick heuristic for identifying potential OpenAPI/Swagger content.
 ///
@@ -883,5 +887,114 @@ fn should_ingest_workflow(path: &Path) -> bool {
     match path.extension().and_then(|s| s.to_str()) {
         Some(ext) => matches!(ext, "yaml" | "yml" | "json"),
         None => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn should_ingest_workflow_recognizes_supported_extensions() {
+        assert!(should_ingest_workflow(Path::new("a.yaml")));
+        assert!(should_ingest_workflow(Path::new("a.yml")));
+        assert!(should_ingest_workflow(Path::new("a.json")));
+        assert!(!should_ingest_workflow(Path::new("a.txt")));
+        assert!(!should_ingest_workflow(Path::new("README")));
+    }
+
+    #[test]
+    fn is_yaml_detects_yaml_and_yml() {
+        assert!(is_yaml(Path::new("workflow.yaml")));
+        assert!(is_yaml(Path::new("workflow.yml")));
+        assert!(!is_yaml(Path::new("workflow.json")));
+        assert!(!is_yaml(Path::new("workflow")));
+    }
+
+    #[test]
+    fn extract_path_placeholders_happy_and_edge_cases() {
+        let path = "/apps/{app_id}/addons/{addon_id}";
+        let placeholders = extract_path_placeholders(path);
+        assert_eq!(placeholders, vec!["app_id", "addon_id"]);
+
+        let path_no_ph = "/apps/list";
+        assert!(extract_path_placeholders(path_no_ph).is_empty());
+
+        let path_with_empty = "/apps/{ }/addons/{}";
+        assert!(extract_path_placeholders(path_with_empty).is_empty());
+    }
+
+    #[test]
+    fn looks_like_openapi_json_detects_keywords() {
+        assert!(looks_like_openapi_json("{\"openapi\": \"3.0.0\"}"));
+        assert!(looks_like_openapi_json("{\"swagger\": \"2.0\"}"));
+        assert!(!looks_like_openapi_json("{\"title\": \"nope\"}"));
+    }
+
+    fn make_temp_dir() -> PathBuf {
+        let mut dir = std::env::temp_dir();
+        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
+        dir.push(format!("io_rs_tests_{}", nanos));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn load_workflows_reads_yaml_and_json_recursively_and_sorts() -> Result<()> {
+        let root = make_temp_dir();
+
+        // Create nested directories
+        let nested = root.join("nested");
+        fs::create_dir_all(&nested)?;
+
+        // YAML workflow
+        let yaml_path = root.join("a_workflow.yaml");
+        let mut yaml_file = fs::File::create(&yaml_path)?;
+        writeln!(yaml_file, "workflow: app_with_db\ntitle: App with DB\n")?;
+
+        // JSON workflow
+        let json_path = nested.join("b_workflow.json");
+        let mut json_file = fs::File::create(&json_path)?;
+        write!(
+            json_file,
+            "{}",
+            serde_json::json!({
+                "workflow": "backup_db",
+                "steps": []
+            })
+        )?;
+
+        let mut workflows = load_workflows(Some(&root))?;
+        // Expect two workflows, sorted by `workflow` field
+        assert_eq!(workflows.len(), 2);
+        workflows.sort_by(|a, b| a.workflow.cmp(&b.workflow));
+        assert_eq!(workflows[0].workflow, "app_with_db");
+        assert_eq!(workflows[1].workflow, "backup_db");
+        Ok(())
+    }
+
+    #[test]
+    fn write_manifest_json_writes_file_with_workflows_only() -> Result<()> {
+        // Set up temp output and workflows; skip schema generation by providing an empty inputs vec
+        let dir = make_temp_dir();
+        let out_path = dir.join("manifest.json");
+
+        // Create a simple workflow dir
+        let wf_dir = dir.join("workflows");
+        fs::create_dir_all(&wf_dir)?;
+        fs::write(wf_dir.join("x.yaml"), "workflow: test\ndescription: test workflow\n")?;
+
+        write_manifest_json(vec![], Some(wf_dir.clone()), out_path.clone())?;
+
+        // Verify the file exists and is non-empty
+        let bytes = fs::read(&out_path)?;
+        assert!(!bytes.is_empty());
+
+        // Verify JSON structure has a workflows array
+        let v: serde_json::Value = serde_json::from_slice(&bytes)?;
+        assert!(v.get("workflows").and_then(|w| w.as_array()).is_some());
+        Ok(())
     }
 }

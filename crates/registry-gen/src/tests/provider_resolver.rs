@@ -39,7 +39,7 @@ mod tests {
         let info_after = commands.iter().find(|c| c.group == "apps" && c.name == "info").unwrap();
         assert!(matches!(
             info_after.positional_args[0].provider,
-            Some(ValueProvider::Command { ref command_id, binds: _ }) if command_id == "apps:list"
+            Some(ValueProvider::Command { ref command_id, binds: _ }) if command_id == "apps list"
         ));
     }
 
@@ -78,7 +78,7 @@ mod tests {
         // Assert: flag provider is set on the flag
         let update_after = commands.iter().find(|c| c.group == "addons" && c.name == "config:update").unwrap();
         let flag = update_after.flags.iter().find(|f| f.name == "addon").unwrap();
-        assert!(matches!(flag.provider, Some(ValueProvider::Command { ref command_id, binds: _ }) if command_id == "addons:list"));
+        assert!(matches!(flag.provider, Some(ValueProvider::Command { ref command_id, binds: _ }) if command_id == "addons list"));
     }
 
     #[test]
@@ -121,7 +121,7 @@ mod tests {
         let addon_pos = &info_after.positional_args[1];
         match &addon_pos.provider {
             Some(ValueProvider::Command { command_id, binds }) => {
-                assert_eq!(command_id, "addons:list");
+                assert_eq!(command_id, "addons list");
                 assert_eq!(binds.len(), 1);
                 assert_eq!(binds[0].provider_key, "app");
                 assert_eq!(binds[0].from, "app");

@@ -1,11 +1,16 @@
 workflow: app_with_db
+title: "Create app with DB"
 description: "Create an app, provision Postgres, and seed config."
 inputs:
   app_name:
+    name: "App Name"
     description: "Name for the application"
     type: string
+    validate:
+      pattern: "^[a-z](?:[a-z0-9-]{1,28}[a-z0-9])$"
   region:
-    provider: regions:list
+    name: "Region"
+    provider: regions list
     select:
       value_field: name
       display_field: name
@@ -13,28 +18,33 @@ inputs:
       from: literal
       value: "us"
   addon_plan:
+    name: "Postgres plan"
     description: "Heroku Postgres plan"
-    provider: addons:services:list
+    provider:
+      id: addon-services plans:list
+    provider_args: { add_on_service: heroku-postgresql }
     select:
       value_field: name
       display_field: name
 steps:
   - id: create_app
-    run: apps:create
+    run: apps create
     body:
       name: ${{ inputs.app_name }}
       region: ${{ inputs.region }}
 
   - id: add_pg
-    run: apps:addons:create
+    run: apps addons:create
     with:
       app: ${{ inputs.app_name }}
     body:
       plan: ${{ inputs.addon_plan }}
-
-  - id: set_config
-    run: apps:config-vars:update
+  - id: wait_for_pg
+    run: apps addons:info
     with:
       app: ${{ inputs.app_name }}
-    body:
-      RUST_LOG: info
+      add_on: ${{ steps.add_pg.output.id }}
+    repeat:
+      until: ${{ steps.wait_for_pg.output.state != "provisioning" }}
+      every: 10s
+      max_attempts: 50

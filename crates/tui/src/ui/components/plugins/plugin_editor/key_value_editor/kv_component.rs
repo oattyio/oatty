@@ -15,11 +15,13 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use heroku_types::Effect;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
+    style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
 };
 
+use crate::ui::theme::theme_helpers::build_syntax_highlighted_line;
 use crate::{
     app::App,
     ui::{
@@ -40,6 +42,37 @@ use crate::{
 /// concerns and easier testing.
 #[derive(Debug, Default)]
 pub struct KeyValueEditorComponent;
+
+/// Presentation metadata for rendering an inline key/value field.
+///
+/// Bundles styling inputs so helper functions avoid long parameter lists while
+/// keeping rendering logic cohesive.
+#[derive(Debug)]
+struct InlineFieldDisplay<'a> {
+    /// Label displayed before the field's value (for example, `Key`).
+    label: &'a str,
+    /// Current contents of the field.
+    value: &'a str,
+    /// Placeholder text shown when the field is empty.
+    placeholder: &'a str,
+    /// Indicates whether this field currently has focus.
+    focused: bool,
+}
+
+/// Aggregated cursor metadata for positioning the inline editor caret.
+#[derive(Debug)]
+struct InlineFieldCursorState<'a> {
+    /// Indicates whether the key field is currently focused.
+    key_field_active: bool,
+    /// Text buffer for the key field.
+    key_buffer: &'a str,
+    /// Text buffer for the value field.
+    value_buffer: &'a str,
+    /// Cursor position relative to the key buffer.
+    key_cursor: usize,
+    /// Cursor position relative to the value buffer.
+    value_cursor: usize,
+}
 
 impl KeyValueEditorComponent {
     /// Handle keyboard input when the editor is in editing mode.
@@ -78,6 +111,12 @@ impl KeyValueEditorComponent {
             }
             KeyCode::Backspace => {
                 editor.kv_editor.pop_character();
+            }
+            KeyCode::Left => {
+                editor.kv_editor.move_cursor_left();
+            }
+            KeyCode::Right => {
+                editor.kv_editor.move_cursor_right();
             }
             KeyCode::Tab | KeyCode::BackTab => {
                 editor.kv_editor.toggle_field();
@@ -238,10 +277,7 @@ impl KeyValueEditorComponent {
             constraints.push(Constraint::Length(4));
         }
 
-        let sections = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(constraints)
-            .split(area);
+        let sections = Layout::vertical(constraints).split(area);
 
         let table_area = sections[0];
         self.render_table(frame, table_area, theme, add_state);
@@ -386,14 +422,15 @@ impl KeyValueEditorComponent {
 
                 let (display_key, display_value) = self.build_row_display_values(row, is_edit_row, editing_buffers);
                 let arrow = if is_selected { "›" } else { " " };
-                let key_cell = format!("{} {}", arrow, display_key);
+                let key_cell = build_table_key_cell(&display_key, arrow, theme);
+                let value_cell = build_table_value_cell(&display_value, row.is_secret && !is_edit_row, theme);
                 let row_style = if is_selected {
                     theme_helpers::table_selected_style(theme)
                 } else {
                     theme_helpers::table_row_style(theme, index)
                 };
 
-                Row::new(vec![key_cell, display_value]).style(row_style)
+                Row::new(vec![key_cell, value_cell]).style(row_style)
             })
             .collect()
     }
@@ -471,10 +508,41 @@ impl KeyValueEditorComponent {
         let key_field_active = editor.is_key_field_focused();
         let value_field_active = editor.is_value_field_focused();
 
-        self.render_inline_field(frame, fields[0], theme, "Key", key_buffer, "(required)", key_field_active);
-        self.render_inline_field(frame, fields[1], theme, "Value", value_buffer, "(optional)", value_field_active);
+        self.render_inline_field(
+            frame,
+            fields[0],
+            theme,
+            InlineFieldDisplay {
+                label: "Key",
+                value: key_buffer,
+                placeholder: "(required)",
+                focused: key_field_active,
+            },
+        );
+        self.render_inline_field(
+            frame,
+            fields[1],
+            theme,
+            InlineFieldDisplay {
+                label: "Value",
+                value: value_buffer,
+                placeholder: "(optional)",
+                focused: value_field_active,
+            },
+        );
 
-        self.position_cursor_for_inline_field(frame, &fields, key_field_active, key_buffer, value_buffer);
+        let (key_cursor, value_cursor) = editor.editing_cursors().unwrap_or((key_buffer.len(), value_buffer.len()));
+        self.position_cursor_for_inline_field(
+            frame,
+            &fields,
+            InlineFieldCursorState {
+                key_field_active,
+                key_buffer,
+                value_buffer,
+                key_cursor,
+                value_cursor,
+            },
+        );
     }
 
     /// Render a single inline field (key or value) with appropriate styling.
@@ -488,36 +556,15 @@ impl KeyValueEditorComponent {
     /// * `frame` - The Ratatui frame for rendering
     /// * `area` - The available rendering area for the field
     /// * `theme` - The theme for styling
-    /// * `label` - The field label (e.g., "Key", "Value")
-    /// * `value` - The current field value
-    /// * `placeholder` - The placeholder text to show when value is empty
-    /// * `focused` - Whether this field currently has focus
-    fn render_inline_field(
-        &self,
-        frame: &mut Frame,
-        area: Rect,
-        theme: &dyn Theme,
-        label: &str,
-        value: &str,
-        placeholder: &str,
-        focused: bool,
-    ) {
-        let mut spans = Vec::new();
-        spans.push(Span::styled(if focused { "› " } else { "  " }, theme.text_secondary_style()));
-        spans.push(Span::styled(format!("{}: ", label), theme.text_primary_style()));
-        if value.is_empty() {
-            spans.push(Span::styled(placeholder.to_string(), theme.text_muted_style()));
-        } else {
-            spans.push(Span::styled(value.to_string(), theme.text_primary_style()));
-        }
-
-        let style = if focused {
+    /// * `display` - Presentation metadata for the inline field
+    fn render_inline_field(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, display: InlineFieldDisplay<'_>) {
+        let line = build_syntax_highlighted_line(display.label, display.value, display.placeholder, display.focused, theme);
+        let paragraph_style = if display.focused {
             theme.selection_style()
         } else {
-            theme.text_primary_style()
+            Style::default()
         };
-        let paragraph = Paragraph::new(Line::from(spans)).style(style);
-        frame.render_widget(paragraph, area);
+        frame.render_widget(Paragraph::new(line).style(paragraph_style), area);
     }
 
     /// Position the cursor for the currently active inline field.
@@ -530,24 +577,24 @@ impl KeyValueEditorComponent {
     ///
     /// * `frame` - The Ratatui frame for cursor positioning
     /// * `fields` - The layout areas for the key and value fields
-    /// * `key_field_active` - Whether the key field is currently active
-    /// * `key_buffer` - The current key field content
-    /// * `value_buffer` - The current value field content
-    fn position_cursor_for_inline_field(
-        &self,
-        frame: &mut Frame,
-        fields: &[Rect],
-        key_field_active: bool,
-        key_buffer: &str,
-        value_buffer: &str,
-    ) {
+    /// * `cursor_state` - Aggregated cursor metadata for the editor
+    fn position_cursor_for_inline_field(&self, frame: &mut Frame, fields: &[Rect], cursor_state: InlineFieldCursorState<'_>) {
         if fields.len() < 2 {
             return;
         }
+        let InlineFieldCursorState {
+            key_field_active,
+            key_buffer,
+            value_buffer,
+            key_cursor,
+            value_cursor,
+        } = cursor_state;
         let (target_area, field_label, content_length) = if key_field_active {
-            (fields[0], "Key", key_buffer.chars().count())
+            let prefix = &key_buffer[..key_cursor.min(key_buffer.len())];
+            (fields[0], "Key", prefix.chars().count())
         } else {
-            (fields[1], "Value", value_buffer.chars().count())
+            let prefix = &value_buffer[..value_cursor.min(value_buffer.len())];
+            (fields[1], "Value", prefix.chars().count())
         };
         let label_prefix = format!("{}: ", field_label);
         let offset = 2 + label_prefix.chars().count();
@@ -555,6 +602,25 @@ impl KeyValueEditorComponent {
         let cursor_y = target_area.y;
         frame.set_cursor_position((cursor_x, cursor_y));
     }
+}
+
+/// Build the table cell for the key column, mixing the selection arrow and syntax colors.
+fn build_table_key_cell<'a>(display_key: &str, arrow: &str, theme: &dyn Theme) -> Cell<'a> {
+    let spans = vec![
+        Span::styled(format!("{arrow} "), theme.text_secondary_style()),
+        Span::styled(display_key.to_string(), theme.syntax_type_style()),
+    ];
+    Cell::from(Line::from(spans))
+}
+
+/// Build the table cell for the value column, dimming masked secrets for clarity.
+fn build_table_value_cell<'a>(display_value: &str, masked: bool, theme: &dyn Theme) -> Cell<'a> {
+    let value_style = if masked {
+        theme.text_muted_style()
+    } else {
+        theme.syntax_string_style()
+    };
+    Cell::from(Span::styled(display_value.to_string(), value_style))
 }
 
 impl Component for KeyValueEditorComponent {
@@ -573,7 +639,7 @@ impl Component for KeyValueEditorComponent {
     ///
     /// A vector of effects that should be processed by the application runtime.
     fn handle_key_events(&mut self, app: &mut App, key_event: KeyEvent) -> Vec<Effect> {
-        let editing = app.plugins.add.as_ref().and_then(|e| Some(e.kv_editor.is_editing()));
+        let editing = app.plugins.add.as_ref().map(|editor| editor.kv_editor.is_editing());
         if editing.unwrap_or(false) {
             self.handle_editing_mode_input(app, key_event);
         } else {
@@ -616,14 +682,10 @@ impl Component for KeyValueEditorComponent {
     /// # Returns
     ///
     /// A vector of styled spans representing the available keyboard shortcuts.
-    fn get_hint_spans(&self, app: &App, is_root: bool) -> Vec<Span<'_>> {
+    fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let add_state = app.plugins.add.as_ref().expect("add state should be something");
         let theme = &app.ctx.theme;
         let mut spans = vec![];
-
-        if is_root {
-            spans.push(Span::styled("Hints: ", theme.text_muted_style()));
-        }
 
         let is_editing = add_state.kv_editor.is_editing();
 
@@ -653,10 +715,8 @@ impl KeyValueEditorComponent {
     /// * `theme` - The theme for styling
     /// * `is_editing` - Whether the editor is currently in editing mode
     fn add_common_hints(&self, spans: &mut Vec<Span<'_>>, theme: &dyn Theme, is_editing: bool) {
-        spans.extend([
-            Span::styled("↑/↓", theme.accent_emphasis_style()),
-            Span::styled(if is_editing { " Focus  " } else { " Navigate  " }, theme.text_muted_style()),
-        ]);
+        let description = if is_editing { " Focus  " } else { " Navigate  " };
+        spans.extend(theme_helpers::build_hint_spans(theme, &[("↑/↓", description)]));
     }
 
     /// Add hints specific to editing mode.
@@ -669,12 +729,10 @@ impl KeyValueEditorComponent {
     /// * `spans` - The vector of spans to add hints to
     /// * `theme` - The theme for styling
     fn add_editing_mode_hints(&self, spans: &mut Vec<Span<'_>>, theme: &dyn Theme) {
-        spans.extend([
-            Span::styled("Enter/Ctrl+E", theme.accent_emphasis_style()),
-            Span::styled(" Apply  ", theme.text_muted_style()),
-            Span::styled("Esc", theme.accent_emphasis_style()),
-            Span::styled(" Cancel  ", theme.text_muted_style()),
-        ]);
+        spans.extend(theme_helpers::build_hint_spans(
+            theme,
+            &[("Enter/Ctrl+E", " Apply  "), ("Esc", " Cancel  ")],
+        ));
     }
 
     /// Add hints specific to navigation mode.
@@ -687,16 +745,15 @@ impl KeyValueEditorComponent {
     /// * `spans` - The vector of spans to add hints to
     /// * `theme` - The theme for styling
     fn add_navigation_mode_hints(&self, spans: &mut Vec<Span<'_>>, theme: &dyn Theme) {
-        spans.extend([
-            Span::styled("Home/End", theme.accent_emphasis_style()),
-            Span::styled(" First/Last  ", theme.text_muted_style()),
-            Span::styled("Enter/Ctrl+E", theme.accent_emphasis_style()),
-            Span::styled(" Edit  ", theme.text_muted_style()),
-            Span::styled("Ctrl+N", theme.accent_emphasis_style()),
-            Span::styled(" New  ", theme.text_muted_style()),
-            Span::styled("Delete/Ctrl+D", theme.accent_emphasis_style()),
-            Span::styled(" Delete ", theme.text_muted_style()),
-        ]);
+        spans.extend(theme_helpers::build_hint_spans(
+            theme,
+            &[
+                ("Home/End", " First/Last  "),
+                ("Enter/Ctrl+E", " Edit  "),
+                ("Ctrl+N", " New  "),
+                ("Delete/Ctrl+D", " Delete "),
+            ],
+        ));
     }
 }
 

@@ -1,0 +1,253 @@
+workflow: postgres_cluster_pool_configuration
+title: "Postgres cluster pool configuration"
+description: >
+  Configure leader and follower compute pools for a Next-Gen Heroku Postgres cluster:
+  set the leader level, toggle high-availability by adjusting instance count, and optionally
+  create or update up to two follower pools.
+inputs:
+  app:
+    name: "App"
+    provider: apps list
+    select: { value_field: name, display_field: name }
+  addon:
+    name: "Addon"
+    description: "Heroku Postgres addon name or ID (Performance-tier Next-Gen)."
+    provider: apps addons:list
+    depends_on:
+      app: ${{ inputs.app }}
+    select: { value_field: name, display_field: name }
+  leader_pool_uuid:
+    name: "Leader Pool UUID"
+    description: "UUID of the leader compute pool (see the initial cluster snapshot output)."
+    type: string
+    provider:
+      id: data postgres:info:list
+      field: pools
+    provider_args:
+      addon: ${{ inputs.addon }}
+    depends_on:
+      addon: ${{ inputs.addon }}
+    select: { value_field: uuid, display_field: name, id_field: uuid }
+  leader_level:
+    name: "Leader Level"
+    description: "Performance level for the leader pool (e.g., 32G-Performance)."
+    provider:
+      id: data postgres:levels:info
+      field: levels
+    provider_args: { tier: performance }
+    select: { value_field: name, display_field: name }
+  leader_instance_count:
+    name: "Leader Instance Count"
+    description: "Number of leader instances (1 disables HA standby, 2 enables it)."
+    type: integer
+    enum: [1, 2]
+  leader_pool_name:
+    name: "Leader Pool Name"
+    description: "Optional rename for the leader pool."
+    type: string
+    optional: true
+
+  configure_follower:
+    name: "Configure Follower"
+    description: "Set to true to create or update a follower pool."
+    type: boolean
+    optional: true
+  follower_operation:
+    name: "Follower Operation"
+    description: "When configuring a follower, choose 'create' for new or 'update' for existing."
+    type: string
+    enum: ["create", "update"]
+    optional: true
+  follower_pool_uuid:
+    name: "Follower Pool UUID"
+    description: "UUID of the follower pool to update (required when follower_operation is 'update')."
+    type: string
+    optional: true
+    provider:
+      id: data postgres:info:list
+      field: pools
+    provider_args:
+      addon: ${{ inputs.addon }}
+    depends_on:
+      addon: ${{ inputs.addon }}
+    select: { value_field: uuid, display_field: name, id_field: uuid }
+  follower_level:
+    name: "Follower Level"
+    description: "Performance level for the follower pool."
+    provider:
+      id: data postgres:levels:info
+      field: levels
+    provider_args: { tier: performance }
+    select: { value_field: name, display_field: name }
+    optional: true
+  follower_instance_count:
+    name: "Follower Instance Count"
+    description: "Number of instances for the follower pool."
+    type: integer
+    enum: [1, 2, 3]
+    optional: true
+  follower_pool_name:
+    name: "Follower Pool Name"
+    description: "Optional name when creating or renaming the follower pool."
+    type: string
+    optional: true
+
+  configure_second_follower:
+    name: "Configure Second Follower"
+    description: "Set to true to run a second follower configuration pass."
+    type: boolean
+    optional: true
+  second_follower_operation:
+    name: "Second Follower Operation"
+    description: "For the second follower pass, choose 'create' or 'update'."
+    type: string
+    enum: ["create", "update"]
+    optional: true
+  second_follower_pool_uuid:
+    name: "Second Follower Pool UUID"
+    description: "UUID of the second follower pool to update (required when operation is 'update')."
+    type: string
+    optional: true
+    provider:
+      id: data postgres:info:list
+      field: pools
+    provider_args:
+      addon: ${{ inputs.addon }}
+    depends_on:
+      addon: ${{ inputs.addon }}
+    select: { value_field: uuid, display_field: name, id_field: uuid }
+  second_follower_level:
+    name: "Second Follower Level"
+    description: "Performance level for the second follower pool."
+    provider:
+      id: data postgres:levels:info
+      field: levels
+    provider_args: { tier: performance }
+    select: { value_field: name, display_field: name }
+    optional: true
+  second_follower_instance_count:
+    name: "Second Follower Instance Count"
+    description: "Number of instances for the second follower pool."
+    type: integer
+    enum: [1, 2, 3]
+    optional: true
+  second_follower_pool_name:
+    name: "Second Follower Pool Name"
+    description: "Optional name when creating or renaming the second follower pool."
+    type: string
+    optional: true
+
+steps:
+  - id: snapshot_before
+    description: "Review current pools, instances, and quotas before making changes."
+    run: data postgres:info:list
+    with:
+      addon: ${{ inputs.addon }}
+
+  - id: configure_leader
+    description: "Apply leader level and instance count (1 disables standby, 2 enables HA standby)."
+    run: data postgres:pools:update
+    with:
+      addon: ${{ inputs.addon }}
+      uuid: ${{ inputs.leader_pool_uuid }}
+    body:
+      level: ${{ inputs.leader_level }}
+      count: ${{ inputs.leader_instance_count }}
+
+  - id: rename_leader
+    when: ${{ !!inputs.leader_pool_name }}
+    description: "Optionally rename the leader pool."
+    run: data postgres:pools:update
+    with:
+      addon: ${{ inputs.addon }}
+      uuid: ${{ inputs.leader_pool_uuid }}
+    body:
+      name: ${{ inputs.leader_pool_name }}
+
+  - id: follower_create
+    when: ${{ !!inputs.configure_follower && inputs.follower_operation == "create" && !!inputs.follower_pool_name && !!inputs.follower_level && inputs.follower_instance_count != null }}
+    description: "Create a new follower pool with the desired level and instance count."
+    run: data postgres:pools:create
+    with:
+      addon: ${{ inputs.addon }}
+    body:
+      name: ${{ inputs.follower_pool_name }}
+      level: ${{ inputs.follower_level }}
+      count: ${{ inputs.follower_instance_count }}
+
+  - id: follower_update_level
+    when: ${{ !!inputs.configure_follower && inputs.follower_operation == "update" && !!inputs.follower_level }}
+    description: "Update follower performance level."
+    run: data postgres:pools:update
+    with:
+      addon: ${{ inputs.addon }}
+      uuid: ${{ inputs.follower_pool_uuid }}
+    body:
+      level: ${{ inputs.follower_level }}
+
+  - id: follower_update_count
+    when: ${{ !!inputs.configure_follower && inputs.follower_operation == "update" && inputs.follower_instance_count != null }}
+    description: "Update follower instance count."
+    run: data postgres:pools:update
+    with:
+      addon: ${{ inputs.addon }}
+      uuid: ${{ inputs.follower_pool_uuid }}
+    body:
+      count: ${{ inputs.follower_instance_count }}
+
+  - id: follower_rename
+    when: ${{ !!inputs.configure_follower && inputs.follower_operation == "update" && !!inputs.follower_pool_name }}
+    description: "Rename the follower pool."
+    run: data postgres:pools:update
+    with:
+      addon: ${{ inputs.addon }}
+      uuid: ${{ inputs.follower_pool_uuid }}
+    body:
+      name: ${{ inputs.follower_pool_name }}
+
+  - id: second_follower_create
+    when: ${{ !!inputs.configure_second_follower && inputs.second_follower_operation == "create" && !!inputs.second_follower_pool_name && !!inputs.second_follower_level && inputs.second_follower_instance_count != null }}
+    description: "Create an additional follower pool."
+    run: data postgres:pools:create
+    with:
+      addon: ${{ inputs.addon }}
+    body:
+      name: ${{ inputs.second_follower_pool_name }}
+      level: ${{ inputs.second_follower_level }}
+      count: ${{ inputs.second_follower_instance_count }}
+
+  - id: second_follower_update_level
+    when: ${{ !!inputs.configure_second_follower && inputs.second_follower_operation == "update" && !!inputs.second_follower_level }}
+    description: "Update the additional follower's performance level."
+    run: data postgres:pools:update
+    with:
+      addon: ${{ inputs.addon }}
+      uuid: ${{ inputs.second_follower_pool_uuid }}
+    body:
+      level: ${{ inputs.second_follower_level }}
+
+  - id: second_follower_update_count
+    when: ${{ !!inputs.configure_second_follower && inputs.second_follower_operation == "update" && inputs.second_follower_instance_count != null }}
+    description: "Update the additional follower's instance count."
+    run: data postgres:pools:update
+    with:
+      addon: ${{ inputs.addon }}
+      uuid: ${{ inputs.second_follower_pool_uuid }}
+    body:
+      count: ${{ inputs.second_follower_instance_count }}
+
+  - id: second_follower_rename
+    when: ${{ !!inputs.configure_second_follower && inputs.second_follower_operation == "update" && !!inputs.second_follower_pool_name }}
+    description: "Rename the additional follower pool."
+    run: data postgres:pools:update
+    with:
+      addon: ${{ inputs.addon }}
+      uuid: ${{ inputs.second_follower_pool_uuid }}
+    body:
+      name: ${{ inputs.second_follower_pool_name }}
+
+  - id: snapshot_after
+    description: "Confirm final topology, pool names, and instance counts."
+    run: data postgres:info:list
+    with:
+      addon: ${{ inputs.addon }}

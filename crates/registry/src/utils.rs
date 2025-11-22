@@ -3,7 +3,7 @@ use heroku_types::CommandSpec;
 
 /// Finds a specific command by its group and command name.
 ///
-/// This method searches for a command using the format "group:command"
+/// This method searches for a command using the format "group command"
 /// where group is the resource type (e.g., "apps", "dynos") and command
 /// is the action (e.g., "list", "create").
 ///
@@ -20,9 +20,9 @@ use heroku_types::CommandSpec;
 /// # Examples
 ///
 /// ```rust
-/// use heroku_registry::{Registry, utils::find_by_group_and_cmd};
+/// use heroku_registry::{CommandRegistry, utils::find_by_group_and_cmd};
 ///
-/// let registry = Registry::from_embedded_schema().expect("load registry from schema");
+/// let registry = CommandRegistry::from_embedded_schema().expect("load registry from schema");
 /// let apps_list = find_by_group_and_cmd(&registry.commands, "apps", "list").expect("find by group and command");
 /// println!("Found command: {}", apps_list.name);
 /// ```
@@ -31,5 +31,5 @@ pub fn find_by_group_and_cmd(commands: &[CommandSpec], group: &str, cmd: &str) -
         .iter()
         .find(|c| c.group == group && c.name == cmd)
         .cloned()
-        .ok_or(anyhow!("{}:{} command not found", group, cmd))
+        .ok_or(anyhow!("{} {} command not found", group, cmd))
 }

@@ -1,0 +1,89 @@
+workflow: app_bootstrap
+title: "App Bootstrap"
+description: "Create a new Heroku app, configure basics, provision an addon, and optionally add a buildpack."
+inputs:
+  app_name:
+    name: "App Name"
+    description: "Name for the new app"
+    type: string
+    validate:
+      pattern: "^[a-z](?:[a-z0-9-]{1,28}[a-z0-9])$"
+  region:
+    name: "Region"
+    description: "Region to create the app in"
+    provider: regions list
+    select: { value_field: name, display_field: name }
+    default:
+      from: literal
+      value: "us"
+  stack:
+    name: "Stack"
+    description: "Stack to use (e.g., heroku-22)"
+    type: string
+    provider: stacks list
+    select: { value_field: name, display_field: name }
+    default:
+      from: literal
+      value: "heroku-22"
+  choose_addon:
+    name: "Choose Addon"
+    description: "Addon to provision (e.g., heroku-postgresql)"
+    provider: addon-services list
+    select: { value_field: name, display_field: name }
+  addon_plan:
+    name: "Addon Plan"
+    description: "The plan of the chosen addon (e.g., heroku-postgresql:hobby-dev)"
+    provider: addon-services plans:list
+    select: { value_field: name, display_field: name }
+    provider_args:
+      add_on_service: ${{ inputs.choose_addon }}
+    depends_on:
+      choose_addon: ${{ inputs.choose_addon }}
+  config_vars:
+    name: "Config Vars"
+    description: "Config vars to set on the app"
+    type: object
+    optional: true
+  buildpack:
+    name: "Buildpack"
+    description: "Optional buildpack to add"
+    type: string
+    optional: true
+steps:
+  - id: create_app
+    run: apps create
+    body:
+      name: ${{ inputs.app_name }}
+      region: ${{ inputs.region }}
+      stack: ${{ inputs.stack }}
+
+  - id: add_buildpack
+    when: ${{ !!inputs.buildpack }}
+    run: apps buildpacks-installation:update
+    with:
+      app: ${{ inputs.app_name }}
+    body:
+      updates: ${{ inputs.buildpack }}
+
+  - id: set_config
+    when: ${{ !!inputs.config_vars }}
+    run: apps config:set
+    with:
+      app: ${{ inputs.app_name }}
+    body: ${{ inputs.config_vars }}
+
+  - id: provision_addon
+    run: apps addons:create
+    with:
+      app: ${{ inputs.app_name }}
+    body:
+      plan: ${{ inputs.addon_plan }}
+  - id: wait_for_addon
+    run: apps addons:info
+    with:
+      app: ${{ inputs.app_name }}
+      add_on: ${{ steps.provision_addon.output.id }}
+    repeat:
+      until: ${{ steps.wait_for_addon.output.state != "provisioning" }}
+      every: 10s
+      max_attempts: 50

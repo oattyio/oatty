@@ -28,7 +28,7 @@ A schema-driven Heroku CLI with both non-interactive and interactive TUI modes. 
   - Copy command to clipboard: Ctrl+Y.
 
 ## Architecture
-- Registry (manifest → commands): at build time, the schema is converted into a compact JSON manifest; at runtime, the registry deserializes this manifest to expose commands (e.g., `apps:list`, `users:apps:list`).
+- Registry (manifest → commands): at build time, the schema is converted into a compact JSON manifest; at runtime, the registry deserializes this manifest to expose commands (e.g., `apps list`, `users apps:list`).
 - CLI: loads registry and builds Clap tree; parses inputs; builds and sends requests (or ``).
 - TUI: Ratatui + Crossterm; state (app.rs), rendering (ui.rs), CLI preview (preview.rs), theme (ui/theme).
 - API: minimal reqwest client with headers, timeouts, and auth precedence.

@@ -12,18 +12,21 @@ pub struct PluginEditViewState {
     pub visible: bool,
     /// Selected transport for the plugin: Local (stdio) or Remote (http/sse)
     pub transport: PluginTransport,
-    /// Index of the currently focused control (legacy; not used by add.rs)
-    pub selected: usize,
     pub name: String,
+    /// Remembers the original plugin name when editing an existing entry.
+    pub original_name: Option<String>,
+    pub name_cursor: usize,
     pub command: String,
+    pub command_cursor: usize,
     pub args: String,
+    pub args_cursor: usize,
     pub base_url: String,
+    pub base_url_cursor: usize,
     /// Editor state for environment variables on local transports.
     pub kv_editor: KeyValueEditorState,
     pub validation: Result<String, String>,
-    pub preview: Option<String>,
     // Focus flags for focusable controls
-    pub focus: FocusFlag,
+    pub container_focus: FocusFlag,
     pub f_transport: FocusFlag,
     pub f_name: FocusFlag,
     pub f_command: FocusFlag,
@@ -32,6 +35,9 @@ pub struct PluginEditViewState {
     pub f_btn_validate: FocusFlag,
     pub f_btn_save: FocusFlag,
     pub f_btn_cancel: FocusFlag,
+    // Focus ring areas for rendering
+    pub last_area: Rect,
+    pub per_item_area: Vec<Rect>,
 }
 
 impl PluginEditViewState {
@@ -40,15 +46,18 @@ impl PluginEditViewState {
         let instance = Self {
             visible: true,
             transport: PluginTransport::Local,
-            selected: 1,
             name: String::new(),
+            original_name: None,
+            name_cursor: 0,
             command: String::new(),
+            command_cursor: 0,
             args: String::new(),
+            args_cursor: 0,
             base_url: String::new(),
+            base_url_cursor: 0,
             kv_editor,
             validation: Ok(String::new()),
-            preview: None,
-            focus: FocusFlag::named("plugins.add"),
+            container_focus: FocusFlag::named("plugins.add"),
             f_transport: FocusFlag::named("plugins.add.transport"),
             f_name: FocusFlag::named("plugins.add.name"),
             f_command: FocusFlag::named("plugins.add.command"),
@@ -57,6 +66,8 @@ impl PluginEditViewState {
             f_btn_validate: FocusFlag::named("plugins.add.btn.validate"),
             f_btn_save: FocusFlag::named("plugins.add.btn.save"),
             f_btn_cancel: FocusFlag::named("plugins.add.btn.cancel"),
+            last_area: Rect::default(),
+            per_item_area: Vec::new(),
         };
         // Set initial focus to transport selector instead of name field
         instance.f_transport.set(true);
@@ -66,9 +77,12 @@ impl PluginEditViewState {
     pub fn from_detail(client: PluginDetail) -> Self {
         let mut instance = Self::new();
         instance.transport = PluginTransport::from(client.transport_type.as_str());
-        instance.name = client.name;
+        instance.original_name = Some(client.name.clone());
+        instance.name = client.name.clone();
+        instance.name_cursor = instance.name.len();
 
         instance.args = client.args.unwrap_or_default();
+        instance.args_cursor = instance.args.len();
         instance.kv_editor.rows = client
             .env
             .iter()
@@ -80,19 +94,13 @@ impl PluginEditViewState {
             .collect();
         if instance.transport == PluginTransport::Local {
             instance.command = client.command_or_url;
+            instance.command_cursor = instance.command.len();
         } else {
             instance.base_url = client.command_or_url;
+            instance.base_url_cursor = instance.base_url.len();
         }
         instance
     }
-
-    ///
-    /// This component now relies directly on `FocusFlag` booleans exposed on
-    /// `PluginAddViewState` to route keyboard input and rendering focus. This
-    /// avoids building a `FocusRing` repeatedly and eliminates the `AddControl`
-    /// enum indirection that previously mapped focus flags to a variant.
-    /// All event handling and rendering paths read `f_*` flags directly.
-    // Removed `AddControl` enum in favor of direct focus-flag checks.
 
     /// Computes the enablement state of the Validate and Save buttons.
     ///
@@ -141,16 +149,6 @@ impl PluginEditViewState {
             PluginTransport::Local => "Env Vars",
             PluginTransport::Remote => "Headers",
         }
-    }
-
-    /// Collects key/value pairs for the active transport, excluding empty keys.
-    pub fn collected_key_value_pairs(&self) -> Vec<(String, String)> {
-        self.kv_editor
-            .rows
-            .iter()
-            .filter(|row| !row.key.trim().is_empty())
-            .map(|row| (row.key.trim().to_string(), row.value.clone()))
-            .collect()
     }
 }
 
@@ -203,7 +201,7 @@ impl HasFocus for PluginEditViewState {
     }
 
     fn focus(&self) -> FocusFlag {
-        self.focus.clone()
+        self.container_focus.clone()
     }
 
     fn area(&self) -> Rect {

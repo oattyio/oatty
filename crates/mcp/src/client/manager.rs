@@ -8,7 +8,7 @@ use std::{
 use anyhow::Result;
 use serde_json::Map as JsonMap;
 use tokio::{
-    sync::{Mutex, broadcast},
+    sync::{Mutex, RwLock, broadcast},
     task::JoinHandle,
 };
 
@@ -31,8 +31,8 @@ pub struct McpClientManager {
     stopping: Arc<Mutex<HashSet<String>>>,
     /// Join handles for autostart tasks that are still executing.
     autostart_tasks: Arc<Mutex<Vec<JoinHandle<()>>>>,
-    /// Parsed MCP configuration.
-    config: McpConfig,
+    /// Parsed MCP configuration guarded for runtime updates.
+    config: Arc<RwLock<McpConfig>>,
     /// Centralized logging manager (shared with engine/TUI).
     log_manager: Arc<LogManager>,
     /// Broadcast channel for lifecycle events emitted to interested listeners.
@@ -49,7 +49,7 @@ impl McpClientManager {
             starting: Arc::new(Mutex::new(HashSet::new())),
             stopping: Arc::new(Mutex::new(HashSet::new())),
             autostart_tasks: Arc::new(Mutex::new(Vec::new())),
-            config,
+            config: Arc::new(RwLock::new(config)),
             log_manager: Arc::new(LogManager::new()?),
             event_tx,
         })
@@ -61,7 +61,8 @@ impl McpClientManager {
     /// not block on potentially slow handshake operations. Errors are logged
     /// but do not stop initialization.
     pub async fn start(&self) -> Result<(), ClientManagerError> {
-        for (name, server) in &self.config.mcp_servers {
+        let config_snapshot = self.config.read().await.clone();
+        for (name, server) in &config_snapshot.mcp_servers {
             if !server.is_disabled() {
                 let manager = self.clone();
                 let plugin_name = name.clone();
@@ -127,19 +128,21 @@ impl McpClientManager {
 
     /// Start a plugin by name using its configuration.
     pub async fn start_plugin(&self, name: &str) -> Result<(), ClientManagerError> {
-        let server = self
-            .config
-            .mcp_servers
-            .get(name)
-            .cloned()
-            .ok_or_else(|| ClientManagerError::ClientNotFound { name: name.into() })?;
+        let server = {
+            let config = self.config.read().await;
+            config
+                .mcp_servers
+                .get(name)
+                .cloned()
+                .ok_or_else(|| ClientManagerError::ClientNotFound { name: name.into() })?
+        };
 
         if server.is_disabled() {
             return Err(ClientManagerError::PluginDisabled { name: name.into() });
         }
         // Prevent duplicates: if already running or in progress, bail
         let plugin_name = name.to_string();
-        let (mut active_guard, mut starting_guard) = tokio::join!(self.active_clients.lock(), self.starting.lock());
+        let (active_guard, mut starting_guard) = tokio::join!(self.active_clients.lock(), self.starting.lock());
 
         if active_guard.contains_key(name) {
             return Err(ClientManagerError::ClientAlreadyExists { name: plugin_name.clone() });
@@ -254,7 +257,8 @@ impl McpClientManager {
     /// When the plugin exists but is not running, `PluginStatus::Stopped` is
     /// returned.
     pub async fn get_plugin_status(&self, name: &str) -> Result<PluginStatus, ClientManagerError> {
-        if !self.config.mcp_servers.contains_key(name) {
+        let config = self.config.read().await;
+        if !config.mcp_servers.contains_key(name) {
             return Ok(PluginStatus::Unknown);
         }
 
@@ -308,8 +312,10 @@ impl McpClientManager {
         map.keys().cloned().collect()
     }
 
-    /// Update configuration. For now this is a no-op; callers control restarts.
-    pub async fn update_config(&self, _config: McpConfig) -> Result<(), ClientManagerError> {
+    /// Update configuration reference for future lifecycle operations.
+    pub async fn update_config(&self, config: McpConfig) -> Result<(), ClientManagerError> {
+        let mut guard = self.config.write().await;
+        *guard = config;
         Ok(())
     }
 

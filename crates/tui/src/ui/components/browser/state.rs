@@ -1,13 +1,22 @@
 use std::sync::{Arc, Mutex};
 
+use crate::ui::components::common::TextInputState;
 use heroku_types::{CommandSpec, Field};
 use heroku_util::fuzzy_score;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
-use ratatui::{layout::Rect, widgets::ListState};
+use ratatui::layout::Rect;
+use ratatui::widgets::ListState;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CursorDirection {
+    Up,
+    Down,
+    None,
+}
 #[derive(Debug, Clone)]
 pub struct BrowserState {
-    pub registry: Arc<Mutex<heroku_registry::Registry>>,
+    pub registry: Arc<Mutex<heroku_registry::CommandRegistry>>,
+    pub list_state: ListState,
     selected_command: Option<CommandSpec>,
     input_fields: Vec<Field>,
     current_field_idx: usize,
@@ -15,16 +24,15 @@ pub struct BrowserState {
     container_focus: FocusFlag,
     pub f_search: FocusFlag,
     pub f_commands: FocusFlag,
+    pub f_help: FocusFlag,
 
-    search_input: String,
+    search_input: TextInputState,
     filtered: Vec<usize>,
-    selected: usize,
-    list_state: ListState,
     viewport_rows: usize,
 }
 
 impl BrowserState {
-    pub fn new(registry: Arc<Mutex<heroku_registry::Registry>>) -> Self {
+    pub fn new(registry: Arc<Mutex<heroku_registry::CommandRegistry>>) -> Self {
         Self {
             registry,
             selected_command: None,
@@ -33,9 +41,9 @@ impl BrowserState {
             container_focus: FocusFlag::named("browser"),
             f_search: FocusFlag::named("browser.search"),
             f_commands: FocusFlag::named("browser.commands"),
-            search_input: String::new(),
+            f_help: FocusFlag::named("browser.help"),
+            search_input: TextInputState::new(),
             filtered: vec![],
-            selected: 0,
             list_state: ListState::default(),
             viewport_rows: 0,
         }
@@ -46,35 +54,48 @@ impl BrowserState {
     // ========================
     // Search & Filtered List
     // ========================
-    pub fn search_input(&self) -> &String {
-        &self.search_input
+    pub fn search_query(&self) -> &str {
+        self.search_input.input()
     }
-    pub fn search_input_push(&mut self, ch: char) {
-        self.search_input.push(ch);
+
+    pub fn search_cursor(&self) -> usize {
+        self.search_input.cursor()
+    }
+
+    pub fn move_search_cursor_left(&mut self) {
+        self.search_input.move_left();
+    }
+
+    pub fn move_search_cursor_right(&mut self) {
+        self.search_input.move_right();
+    }
+
+    pub fn append_search_character(&mut self, character: char) {
+        self.search_input.insert_char(character);
         self.update_browser_filtered();
     }
-    pub fn search_input_pop(&mut self) {
-        self.search_input.pop();
+
+    pub fn remove_search_character(&mut self) {
+        self.search_input.backspace();
         self.update_browser_filtered();
     }
-    pub fn search_input_clear(&mut self) {
-        self.search_input.clear();
+
+    pub fn clear_search_query(&mut self) {
+        if self.search_input.input().is_empty() && self.search_input.cursor() == 0 {
+            return;
+        }
+        self.search_input.set_input("");
+        self.search_input.set_cursor(0);
         self.update_browser_filtered();
     }
 
     pub fn filtered(&self) -> &Vec<usize> {
         &self.filtered
     }
-    pub fn list_state(&mut self) -> &mut ListState {
-        &mut self.list_state
-    }
 
     pub fn set_viewport_rows(&mut self, rows: usize) {
         let normalized = rows.max(1);
-        if self.viewport_rows != normalized {
-            self.viewport_rows = normalized;
-            self.ensure_selection_visible();
-        }
+        self.viewport_rows = normalized;
     }
 
     /// Updates the filtered command list based on the current search query.
@@ -85,19 +106,16 @@ impl BrowserState {
                 return;
             };
             let all_commands = &registry_lock.commands;
-            if self.search_input.is_empty() {
+            let query = self.search_input.input();
+            if query.trim().is_empty() {
                 self.filtered = (0..all_commands.len()).collect();
             } else {
                 let mut scored: Vec<(i64, usize)> = all_commands
                     .iter()
                     .enumerate()
                     .filter_map(|(idx, command)| {
-                        let exec = if command.name.is_empty() {
-                            format!("{} {}", command.group, command.summary)
-                        } else {
-                            format!("{} {} {}", command.group, command.name, command.summary)
-                        };
-                        fuzzy_score(&exec, &self.search_input).map(|score| (score, idx))
+                        let exec = format!("{} {}", command.canonical_id(), command.summary);
+                        fuzzy_score(&exec, query).map(|score| (score, idx))
                     })
                     .collect();
 
@@ -106,25 +124,28 @@ impl BrowserState {
             }
         }
 
-        self.selected = 0;
-        self.move_selection(0);
+        self.move_selection(CursorDirection::None);
     }
 
-    pub fn move_selection(&mut self, delta: isize) {
+    pub fn move_selection(&mut self, direction: CursorDirection) {
         if self.filtered.is_empty() {
             return;
         }
-        let mut selected = self.selected;
-        let new_selected = if delta > 0 {
-            selected.saturating_add(delta as usize)
-        } else {
-            selected.saturating_sub((-delta) as usize)
-        };
-        selected = new_selected.min(self.filtered.len().saturating_sub(1));
-        self.selected = selected;
-        self.ensure_selection_visible();
+        match direction {
+            CursorDirection::Up => {
+                self.list_state.select_previous();
+            }
+            CursorDirection::Down => {
+                self.list_state.select_next();
+            }
+            CursorDirection::None => {}
+        }
+        self.commit_selection();
+    }
 
-        let idx = self.filtered[self.selected];
+    pub fn commit_selection(&mut self) {
+        let selected_idx = self.list_state.selected().unwrap_or(0);
+        let idx = *self.filtered.get(selected_idx).unwrap_or(&0usize);
         let maybe_command = {
             let Some(registry_lock) = self.registry.lock().ok() else {
                 return;
@@ -142,33 +163,6 @@ impl BrowserState {
     // ======================
     pub fn selected_command(&self) -> Option<&CommandSpec> {
         self.selected_command.as_ref()
-    }
-    pub fn input_fields(&self) -> &[Field] {
-        &self.input_fields
-    }
-    pub fn current_field_idx(&self) -> usize {
-        self.current_field_idx
-    }
-    pub fn count_fields(&self) -> usize {
-        self.input_fields.len()
-    }
-    pub fn missing_required_fields(&self) -> Vec<String> {
-        self.input_fields
-            .iter()
-            .filter(|f| f.required && f.value.is_empty())
-            .map(|f| f.name.clone())
-            .collect()
-    }
-    pub fn has_selected_command(&self) -> bool {
-        self.selected_command.is_some()
-    }
-
-    /// Gets the available range fields for the selected command
-    pub fn available_ranges(&self) -> Vec<String> {
-        self.selected_command
-            .as_ref()
-            .and_then(|cmd| cmd.http().map(|http| http.ranges.clone()))
-            .unwrap_or_default()
     }
 
     // Internal helpers for managing field/selection state
@@ -211,31 +205,6 @@ impl BrowserState {
     fn apply_field_idx(&mut self, idx: usize) {
         self.current_field_idx = idx;
     }
-
-    fn ensure_selection_visible(&mut self) {
-        if self.filtered.is_empty() {
-            self.selected = 0;
-            self.list_state.select(None);
-            *self.list_state.offset_mut() = 0;
-            return;
-        }
-
-        let clamped = self.selected.min(self.filtered.len().saturating_sub(1));
-        self.selected = clamped;
-        self.list_state.select(Some(clamped));
-
-        let viewport = self.viewport_rows.max(1);
-        let offset_ref = self.list_state.offset_mut();
-        let offset = *offset_ref;
-
-        if clamped < offset {
-            *offset_ref = clamped;
-        } else if clamped >= offset + viewport {
-            *offset_ref = clamped + 1 - viewport;
-        } else if self.filtered.len() < offset + viewport {
-            *offset_ref = self.filtered.len().saturating_sub(viewport);
-        }
-    }
 }
 
 impl HasFocus for BrowserState {
@@ -243,6 +212,7 @@ impl HasFocus for BrowserState {
         let tag = builder.start(self);
         builder.leaf_widget(&self.f_search);
         builder.leaf_widget(&self.f_commands);
+        builder.leaf_widget(&self.f_help);
         builder.end(tag);
     }
 
@@ -252,5 +222,41 @@ impl HasFocus for BrowserState {
 
     fn area(&self) -> Rect {
         Rect::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use heroku_registry::CommandRegistry;
+    use std::sync::{Arc, Mutex};
+
+    fn build_state() -> BrowserState {
+        let registry = Arc::new(Mutex::new(CommandRegistry::default()));
+        BrowserState::new(registry)
+    }
+
+    #[test]
+    fn insert_characters_respects_cursor_position() {
+        let mut state = build_state();
+        state.append_search_character('a');
+        state.append_search_character('b');
+        state.move_search_cursor_left();
+        state.append_search_character('c');
+
+        assert_eq!(state.search_query(), "acb");
+        assert_eq!(state.search_cursor(), 2);
+    }
+
+    #[test]
+    fn clear_search_query_resets_buffer_and_cursor() {
+        let mut state = build_state();
+        state.append_search_character('a');
+        state.append_search_character('b');
+        state.move_search_cursor_left();
+        state.clear_search_query();
+
+        assert_eq!(state.search_query(), "");
+        assert_eq!(state.search_cursor(), 0);
     }
 }

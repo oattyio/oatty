@@ -1,19 +1,35 @@
 use std::{
     collections::HashMap,
+    fs,
+    path::Path,
     sync::{Arc, Mutex},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 use clap::ArgMatches;
 use heroku_api::HerokuClient;
-use heroku_mcp::{PluginEngine, config::load_config};
-use heroku_registry::{Registry, build_clap, find_by_group_and_cmd};
-use heroku_types::{ExecOutcome, command::CommandExecution};
-use heroku_util::resolve_path;
+use heroku_engine::workflow::document::{build_runtime_catalog, runtime_workflow_from_definition};
+use heroku_engine::{
+    ProviderBindingOutcome, ProviderResolutionEvent, ProviderResolutionSource, RegistryCommandRunner, StepResult, StepStatus,
+    WorkflowRunState,
+};
+use heroku_mcp::{config::load_config, PluginEngine};
+use heroku_registry::{build_clap, feat_gate::feature_workflows, find_by_group_and_cmd, CommandRegistry};
+use heroku_types::{
+    command::CommandExecution, service::ServiceId,
+    workflow::{validate_candidate_value, WorkflowDefinition},
+    ExecOutcome,
+    RuntimeWorkflow,
+};
+use heroku_util::{
+    has_meaningful_value, resolve_path, value_contains_secret, workflow_input_uses_history, HistoryKey, HistoryStore, InMemoryHistoryStore,
+    JsonHistoryStore, DEFAULT_HISTORY_PROFILE,
+};
 use reqwest::Method;
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
+use tracing::warn;
 use tracing_subscriber::fmt;
 
 static TUI_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -68,25 +84,25 @@ impl Write for GatedStderr {
 async fn main() -> Result<()> {
     init_tracing();
     let cfg = load_config()?;
-    let registry = Arc::new(Mutex::new(Registry::from_embedded_schema()?));
-    let plugin_engine = Arc::new(PluginEngine::new(cfg, Arc::clone(&registry))?);
+    let command_registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema()?));
+    let plugin_engine = Arc::new(PluginEngine::new(cfg, Arc::clone(&command_registry))?);
     plugin_engine.prepare_registry().await?;
     plugin_engine.start().await?;
 
-    let cli = build_clap(Arc::clone(&registry));
+    let cli = build_clap(Arc::clone(&command_registry));
     let matches = cli.get_matches();
 
     // No subcommands => TUI
     if matches.subcommand_name().is_none() {
         // Silence tracing output to stderr while the TUI is active to avoid overlay
         TUI_ACTIVE.store(true, Ordering::Relaxed);
-        let tui_result = heroku_tui::run(Arc::clone(&registry), Arc::clone(&plugin_engine)).await;
+        let tui_result = heroku_tui::run(Arc::clone(&command_registry), Arc::clone(&plugin_engine)).await;
         TUI_ACTIVE.store(false, Ordering::Relaxed);
         plugin_engine.stop().await?;
         return tui_result;
     }
 
-    let result = run_command(Arc::clone(&registry), &matches, Arc::clone(&plugin_engine)).await;
+    let result = run_command(Arc::clone(&command_registry), &matches, Arc::clone(&plugin_engine)).await;
     plugin_engine.stop().await?;
     result
 }
@@ -124,6 +140,252 @@ fn init_tracing() {
     // Example: HEROKU_LOG=debug will now allow `tracing::debug!` to emit.
     let filter = std::env::var("HEROKU_LOG").unwrap_or_else(|_| "info".into());
     let _ = fmt().with_env_filter(filter).with_writer(|| GatedStderr).try_init();
+}
+
+fn resolve_runtime_workflow(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches) -> Result<RuntimeWorkflow> {
+    if let Some(file) = matches.get_one::<String>("file") {
+        return load_runtime_workflow_from_file(Path::new(file));
+    }
+
+    let workflow_id = matches
+        .get_one::<String>("id")
+        .context("a workflow identifier must be supplied via --id or --file")?;
+
+    let definitions = {
+        let guard = registry.lock().expect("could not obtain lock on registry");
+        guard.workflows.clone()
+    };
+
+    let catalog = build_runtime_catalog(&definitions)?;
+    catalog
+        .get(workflow_id)
+        .cloned()
+        .with_context(|| format!("unknown workflow id: {workflow_id}"))
+}
+
+fn load_runtime_workflow_from_file(path: &Path) -> Result<RuntimeWorkflow> {
+    let content = fs::read_to_string(path).with_context(|| format!("read workflow {}", path.display()))?;
+    let definition: WorkflowDefinition = if matches!(path.extension().and_then(|ext| ext.to_str()), Some(ext) if ext.eq_ignore_ascii_case("json"))
+    {
+        serde_json::from_str(&content).with_context(|| format!("parse workflow json {}", path.display()))?
+    } else {
+        serde_yaml::from_str(&content).with_context(|| format!("parse workflow yaml {}", path.display()))?
+    };
+
+    runtime_workflow_from_definition(&definition)
+}
+
+fn output_workflow_json(state: &WorkflowRunState, results: &[StepResult]) -> Result<()> {
+    let provider_events: Vec<_> = state
+        .telemetry()
+        .provider_resolution_events()
+        .iter()
+        .map(provider_resolution_event_to_json)
+        .collect();
+    let step_events: Vec<_> = state
+        .telemetry()
+        .step_events()
+        .iter()
+        .map(|event| {
+            json!({
+                "step_id": event.step_id,
+                "status": format!("{:?}", event.status),
+            })
+        })
+        .collect();
+
+    let payload = json!({
+        "workflow_id": state.workflow.identifier,
+        "title": state.workflow.title,
+        "description": state.workflow.description,
+        "results": results,
+        "telemetry": {
+            "provider_resolutions": provider_events,
+            "step_events": step_events,
+        }
+    });
+
+    println!("{}", serde_json::to_string_pretty(&payload)?);
+    Ok(())
+}
+
+fn output_workflow_human(state: &WorkflowRunState, results: &[StepResult]) {
+    println!("Workflow '{}'", state.workflow.identifier);
+    for result in results {
+        println!("  • {:<20} {}", result.id, format_step_status(result.status));
+    }
+
+    let provider_events = state.telemetry().provider_resolution_events();
+    if !provider_events.is_empty() {
+        println!("\nProvider resolutions:");
+        for event in provider_events {
+            println!(
+                "  - {}.{} [{}] {}",
+                event.input,
+                event.argument,
+                match event.source {
+                    ProviderResolutionSource::Automatic => "auto",
+                    ProviderResolutionSource::Manual => "manual",
+                },
+                describe_provider_outcome(&event.outcome)
+            );
+        }
+    }
+}
+
+fn provider_resolution_event_to_json(event: &ProviderResolutionEvent) -> Value {
+    json!({
+        "input": event.input,
+        "argument": event.argument,
+        "source": match event.source {
+            ProviderResolutionSource::Automatic => "automatic",
+            ProviderResolutionSource::Manual => "manual",
+        },
+        "outcome": provider_outcome_to_json(&event.outcome),
+    })
+}
+
+fn provider_outcome_to_json(outcome: &ProviderBindingOutcome) -> Value {
+    match outcome {
+        ProviderBindingOutcome::Resolved(value) => json!({
+            "status": "resolved",
+            "value": value.clone(),
+        }),
+        ProviderBindingOutcome::Prompt(prompt) => json!({
+            "status": "prompt",
+            "required": prompt.required,
+            "reason": prompt.reason.message,
+            "path": prompt.reason.path,
+            "source": describe_binding_source(&prompt.source),
+        }),
+        ProviderBindingOutcome::Skip(decision) => json!({
+            "status": "skip",
+            "reason": decision.reason.message,
+            "path": decision.reason.path,
+            "source": describe_binding_source(&decision.source),
+        }),
+        ProviderBindingOutcome::Error(error) => json!({
+            "status": "error",
+            "message": error.message,
+            "source": error
+                .source
+                .as_ref()
+                .map(describe_binding_source),
+        }),
+    }
+}
+
+fn seed_history_defaults_for_cli(state: &mut WorkflowRunState, store: &dyn HistoryStore) {
+    let user_id = DEFAULT_HISTORY_PROFILE.to_string();
+
+    for (input_name, definition) in &state.workflow.inputs {
+        if !workflow_input_uses_history(definition) {
+            continue;
+        }
+
+        let key = HistoryKey::workflow_input(user_id.clone(), state.workflow.identifier.clone(), input_name.clone());
+
+        match store.get_latest_value(&key) {
+            Ok(Some(stored)) => {
+                if stored.value.is_null() || value_contains_secret(&stored.value) {
+                    continue;
+                }
+                if let Some(validation) = &definition.validate
+                    && let Err(error) = validate_candidate_value(&stored.value, validation)
+                {
+                    warn!(
+                        input = %input_name,
+                        workflow = %state.workflow.identifier,
+                        error = %error,
+                        "discarded history default that failed validation"
+                    );
+                    continue;
+                }
+                state.run_context.inputs.insert(input_name.clone(), stored.value);
+            }
+            Ok(None) => {}
+            Err(error) => warn!(
+                input = %input_name,
+                workflow = %state.workflow.identifier,
+                error = %error,
+                "failed to load history default"
+            ),
+        }
+    }
+}
+
+fn persist_history_after_cli_run(state: &WorkflowRunState, store: &dyn HistoryStore) {
+    let user_id = DEFAULT_HISTORY_PROFILE.to_string();
+
+    for (input_name, definition) in &state.workflow.inputs {
+        if !workflow_input_uses_history(definition) {
+            continue;
+        }
+
+        let Some(value) = state.run_context.inputs.get(input_name) else {
+            continue;
+        };
+
+        if !has_meaningful_value(value) || value_contains_secret(value) {
+            continue;
+        }
+
+        if let Some(validation) = &definition.validate
+            && let Err(error) = validate_candidate_value(value, validation)
+        {
+            warn!(
+                input = %input_name,
+                workflow = %state.workflow.identifier,
+                error = %error,
+                "skipping history persistence for invalid value"
+            );
+            continue;
+        }
+
+        let key = HistoryKey::workflow_input(user_id.clone(), state.workflow.identifier.clone(), input_name.clone());
+
+        if let Err(error) = store.insert_value(key, value.clone()) {
+            warn!(
+                input = %input_name,
+                workflow = %state.workflow.identifier,
+                error = %error,
+                "failed to persist history value"
+            );
+        }
+    }
+}
+
+fn describe_provider_outcome(outcome: &ProviderBindingOutcome) -> String {
+    match outcome {
+        ProviderBindingOutcome::Resolved(value) => {
+            if let Some(s) = value.as_str() {
+                format!("resolved to '{s}'")
+            } else {
+                format!("resolved to {}", value)
+            }
+        }
+        ProviderBindingOutcome::Prompt(prompt) => format!("prompted (required: {}, reason: {})", prompt.required, prompt.reason.message),
+        ProviderBindingOutcome::Skip(decision) => format!("skipped ({})", decision.reason.message),
+        ProviderBindingOutcome::Error(error) => format!("error: {}", error.message),
+    }
+}
+
+fn describe_binding_source(source: &heroku_engine::BindingSource) -> String {
+    match source {
+        heroku_engine::BindingSource::Step { step_id } => format!("step:{step_id}"),
+        heroku_engine::BindingSource::Input { input_name } => format!("input:{input_name}"),
+        heroku_engine::BindingSource::Multiple { step_id, input_name } => {
+            format!("step:{step_id}, input:{input_name}")
+        }
+    }
+}
+
+fn format_step_status(status: StepStatus) -> &'static str {
+    match status {
+        StepStatus::Succeeded => "succeeded",
+        StepStatus::Failed => "failed",
+        StepStatus::Skipped => "skipped",
+    }
 }
 
 /// Executes a Heroku API command in CLI mode.
@@ -165,15 +427,14 @@ fn init_tracing() {
 /// # Set config var
 /// heroku-cli config config:set KEY=value
 /// ```
-async fn run_command(registry: Arc<Mutex<Registry>>, matches: &ArgMatches, plugin_engine: Arc<PluginEngine>) -> Result<()> {
+async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches, plugin_engine: Arc<PluginEngine>) -> Result<()> {
     // format is <group> <qualified subcommand> e.g. apps app:create
     let (group, sub) = matches.subcommand().context("expected a resource group subcommand")?;
 
     let (cmd_name, cmd_matches) = sub.subcommand().context("expected a command under the group")?;
 
-    // Route workflow commands via the registry so they are available in the TUI.
     if group == "workflow" {
-        return Ok(()); // unimplemented
+        return handle_workflow_command(Arc::clone(&registry), matches, cmd_name, cmd_matches);
     }
 
     let cmd_spec = {
@@ -227,13 +488,158 @@ async fn run_command(registry: Arc<Mutex<Registry>>, matches: &ArgMatches, plugi
                 }
             }
 
-            let outcome = plugin_engine.execute_tool(&cmd_spec, &arguments).await?;
+            let outcome = plugin_engine.execute_tool(&cmd_spec, &arguments, 0).await?;
             match outcome {
-                ExecOutcome::Mcp(log, _) => println!("{}", log),
+                ExecOutcome::Mcp(log, ..) => println!("{}", log),
                 ExecOutcome::Log(log) => println!("{}", log),
                 other => println!("{:?}", other),
             }
             Ok(())
         }
     }
+}
+
+fn handle_workflow_command(
+    registry: Arc<Mutex<CommandRegistry>>,
+    root_matches: &ArgMatches,
+    subcommand: &str,
+    sub_matches: &ArgMatches,
+) -> Result<()> {
+    if !feature_workflows() {
+        bail!("Workflows feature is disabled. Set FEATURE_WORKFLOWS=1 to enable.");
+    }
+
+    let json_output = root_matches.get_flag("json");
+
+    match subcommand {
+        "list" => list_workflows(registry, json_output),
+        "preview" => preview_workflow(registry, json_output, sub_matches),
+        "run" => run_workflow(registry, json_output, sub_matches),
+        other => bail!("Unsupported workflow subcommand: {other}"),
+    }
+}
+
+fn list_workflows(registry: Arc<Mutex<CommandRegistry>>, json_output: bool) -> Result<()> {
+    let definitions = {
+        let guard = registry.lock().expect("could not obtain lock on registry");
+        guard.workflows.clone()
+    };
+
+    if definitions.is_empty() {
+        if json_output {
+            println!("[]");
+        } else {
+            println!("No workflows available.");
+        }
+        return Ok(());
+    }
+
+    let catalog = build_runtime_catalog(&definitions)?;
+    if json_output {
+        let payload: Vec<_> = catalog
+            .values()
+            .map(|wf| {
+                json!({
+                    "id": wf.identifier,
+                    "title": wf.title,
+                    "description": wf.description,
+                    "inputs": wf.inputs.len(),
+                    "steps": wf.steps.len(),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&payload)?);
+    } else {
+        println!("Available workflows:");
+        for workflow in catalog.values() {
+            let step_count = workflow.steps.len();
+            let input_count = workflow.inputs.len();
+            match workflow.title.as_deref() {
+                Some(title) if !title.is_empty() => {
+                    println!(
+                        "- {} — {} ({} steps, {} inputs)",
+                        workflow.identifier, title, step_count, input_count
+                    );
+                }
+                _ => {
+                    println!("- {} ({} steps, {} inputs)", workflow.identifier, step_count, input_count);
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn preview_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, matches: &ArgMatches) -> Result<()> {
+    let runtime = resolve_runtime_workflow(registry, matches)?;
+    let format = matches.get_one::<String>("format").map(|s| s.as_str()).unwrap_or("yaml");
+
+    if json_output || format == "json" {
+        println!("{}", serde_json::to_string_pretty(&runtime)?);
+    } else {
+        println!("{}", serde_yaml::to_string(&runtime)?);
+    }
+
+    Ok(())
+}
+
+fn run_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, matches: &ArgMatches) -> Result<()> {
+    let mut state = WorkflowRunState::new(resolve_runtime_workflow(Arc::clone(&registry), matches)?);
+
+    let history_store: Box<dyn HistoryStore> = match JsonHistoryStore::with_defaults() {
+        Ok(store) => Box::new(store),
+        Err(error) => {
+            warn!(error = %error, "failed to initialize history store; using in-memory history");
+            Box::new(InMemoryHistoryStore::new())
+        }
+    };
+
+    seed_history_defaults_for_cli(&mut state, history_store.as_ref());
+
+    if let Some(overrides) = matches.get_many::<String>("input") {
+        for raw in overrides {
+            let (key, value) = raw.split_once('=').context("workflow input overrides must use KEY=VALUE syntax")?;
+            state.set_input_value(key.trim(), Value::String(value.trim().to_string()));
+        }
+    }
+
+    state.apply_input_defaults();
+    state.evaluate_input_providers()?;
+
+    if let Some(blocked) = state
+        .telemetry()
+        .provider_resolution_events()
+        .iter()
+        .find(|event| matches!(event.outcome, ProviderBindingOutcome::Prompt(_) | ProviderBindingOutcome::Error(_)))
+    {
+        bail!(
+            "provider argument {}.{} requires attention: {}",
+            blocked.input,
+            blocked.argument,
+            describe_provider_outcome(&blocked.outcome)
+        );
+    }
+
+    let registry_snapshot = {
+        let guard = registry.lock().expect("could not obtain lock on registry");
+        guard.clone()
+    };
+
+    let client = HerokuClient::new_from_service_id(ServiceId::CoreApi)?;
+    let runner = RegistryCommandRunner::new(registry_snapshot, client);
+    let results = state.execute_with_runner(&runner)?;
+    let run_succeeded = results.iter().all(|result| result.status != StepStatus::Failed);
+
+    if run_succeeded {
+        persist_history_after_cli_run(&state, history_store.as_ref());
+    }
+
+    if json_output {
+        output_workflow_json(&state, &results)?;
+    } else {
+        output_workflow_human(&state, &results);
+    }
+
+    Ok(())
 }

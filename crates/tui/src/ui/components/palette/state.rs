@@ -13,21 +13,35 @@
 //! - For non-boolean flags whose value is pending, only values are suggested
 //!   (enums and provider values) until the value is complete.
 //! - Suggestions never render an empty popup.
-use std::sync::Mutex;
-use std::{fmt::Debug, sync::Arc};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use crate::ui::components::palette::suggestion_engine::SuggestionEngine;
 use crate::ui::theme::Theme;
+use chrono::Utc;
 
 use super::suggestion_engine::{parse_user_flags_args, required_flags_remaining};
-use heroku_registry::{Registry, find_by_group_and_cmd};
-use heroku_types::{CommandSpec, ItemKind, SuggestionItem};
-use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
+use crate::ui::components::common::TextInputState;
+use crate::ui::theme::theme_helpers::{create_spans_with_match, highlight_segments};
+use heroku_engine::provider::{PendingProviderFetch, ValueProvider};
+use heroku_registry::{find_by_group_and_cmd, CommandRegistry};
+use heroku_types::{CommandSpec, Effect, ExecOutcome, ItemKind, Modal, SuggestionItem};
+use heroku_util::{
+    has_meaningful_value, lex_shell_like, lex_shell_like_ranged, truncate_with_ellipsis, value_contains_secret, HistoryKey, HistoryScope,
+    HistoryScopeKind, HistoryStore, StoredHistoryValue,
+};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
-use ratatui::layout::Rect;
-use ratatui::style::Modifier;
-use ratatui::text::{Line, Span};
-use ratatui::widgets::ListItem;
+use ratatui::widgets::{ListItem, ListState};
+use ratatui::{
+    layout::Rect,
+    style::{Modifier, Style},
+    text::{Line, Span},
+};
+use serde_json::Value;
+use tracing::warn;
+use unicode_width::UnicodeWidthStr;
 
 /// Locate the index of the token under the cursor.
 ///
@@ -53,60 +67,84 @@ fn token_index_at_cursor(input: &str, cursor: usize) -> Option<usize> {
 ///
 /// This struct manages the current state of the command palette including
 /// input text, cursor position, suggestions, and error states.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct PaletteState {
-    registry: Arc<Mutex<Registry>>,
-    /// Focus flag for self
-    focus: FocusFlag,
     /// Focus flag for the input field
-    f_input: FocusFlag,
+    pub f_input: FocusFlag,
+    /// list state for the suggestion list
+    pub list_state: ListState,
+    registry: Arc<Mutex<CommandRegistry>>,
+    /// Focus flag for self
+    container_focus: FocusFlag,
     /// The current input text
     input: String,
     /// Current cursor position (byte index)
     cursor_position: usize,
-    /// Optional ghost text to show as placeholder
+    /// Optional ghost text to show as a placeholder
     ghost_text: Option<String>,
     /// Whether the suggestions popup is currently open
     is_suggestions_open: bool,
-    /// Index of the currently selected suggestion
-    suggestion_index: usize,
+    /// The index of the current mouse hovered suggestion, if any
+    mouse_over_idx: Option<usize>,
     /// List of current suggestions
     suggestions: Vec<SuggestionItem>,
     /// Pre-rendered suggestion list items for efficient display
-    rendered_suggestions: Vec<ratatui::widgets::ListItem<'static>>,
+    rendered_suggestions: Vec<ListItem<'static>>,
+    /// Cached width of the suggestions list area, used for truncation calculations.
+    suggestions_view_width: Option<u16>,
     /// Optional error message to display
     error_message: Option<String>,
-
     /// Whether provider-backed suggestions are actively loading
     provider_loading: bool,
-
     /// History of executed palette inputs (most recent last)
     history: Vec<String>,
     /// Current index into history when browsing (0..history.len()-1), None when not browsing
     history_index: Option<usize>,
     /// Draft input captured when entering history browse mode, restored when exiting
     draft_input: Option<String>,
+    /// The hash of the command being waited on by the palette
+    cmd_exec_hash: Option<u64>,
+    /// Persistent history store used for palette executions.
+    history_store: Arc<dyn HistoryStore>,
+    /// Identifier representing the active history profile.
+    history_profile_id: String,
+    /// Cached persisted commands keyed by canonical command identifier.
+    stored_commands: HashMap<String, StoredHistoryValue>,
+    /// Pending command identifier awaiting execution completion.
+    pending_command_id: Option<String>,
+    /// Pending command input captured at dispatch time.
+    pending_command_input: Option<String>,
 }
 
 impl PaletteState {
-    pub fn new(registry: Arc<Mutex<Registry>>) -> Self {
-        Self {
+    pub fn new(registry: Arc<Mutex<CommandRegistry>>, history_store: Arc<dyn HistoryStore>, history_profile_id: String) -> Self {
+        let mut state = Self {
             registry,
-            focus: FocusFlag::named("heroku.palette"),
+            history_store,
+            history_profile_id,
+            container_focus: FocusFlag::named("heroku.palette"),
             f_input: FocusFlag::named("heroku.palette.input"),
             input: String::new(),
             cursor_position: 0,
             ghost_text: None,
             is_suggestions_open: false,
-            suggestion_index: 0,
+            mouse_over_idx: None,
+            list_state: ListState::default(),
             suggestions: Vec::new(),
             rendered_suggestions: Vec::new(),
+            suggestions_view_width: None,
             error_message: None,
             provider_loading: false,
             history: Vec::new(),
             history_index: None,
             draft_input: None,
-        }
+            cmd_exec_hash: None,
+            stored_commands: HashMap::new(),
+            pending_command_id: None,
+            pending_command_input: None,
+        };
+        state.load_persisted_history();
+        state
     }
 }
 
@@ -118,7 +156,7 @@ impl HasFocus for PaletteState {
     }
 
     fn focus(&self) -> FocusFlag {
-        self.focus.clone()
+        self.container_focus.clone()
     }
 
     fn area(&self) -> Rect {
@@ -139,11 +177,6 @@ impl PaletteState {
         self.suggestions.len()
     }
 
-    /// Get the currently selected suggestion index
-    pub fn suggestion_index(&self) -> usize {
-        self.suggestion_index
-    }
-
     /// Derive the command spec from the current input tokens ("group sub").
     fn selected_command_from_input(&self, commands: &[CommandSpec]) -> Option<CommandSpec> {
         let tokens: Vec<String> = lex_shell_like(&self.input);
@@ -158,7 +191,7 @@ impl PaletteState {
     /// Derive the command spec from the currently selected suggestion when it
     /// is a command.
     fn selected_command_from_suggestion(&self, commands: &[CommandSpec]) -> Option<CommandSpec> {
-        let item = self.suggestions.get(self.suggestion_index)?;
+        let item = self.suggestions.get(self.list_state.selected()?)?;
         if !matches!(item.kind, ItemKind::Command) {
             return None;
         }
@@ -171,9 +204,7 @@ impl PaletteState {
     /// Selected command for help: prefer highlighted suggestion if open, else
     /// parse input.
     pub fn selected_command(&self) -> Option<CommandSpec> {
-        let Some(lock) = self.registry.lock().ok() else {
-            return None;
-        };
+        let lock = self.registry.lock().ok()?;
         let commands = &lock.commands;
         let selected_command = self.selected_command_from_suggestion(commands);
         if self.is_suggestions_open && selected_command.is_some() {
@@ -218,8 +249,16 @@ impl PaletteState {
     }
 
     /// Get the current rendered suggestions list
-    pub fn rendered_suggestions(&self) -> &[ratatui::widgets::ListItem<'static>] {
+    pub fn rendered_suggestions(&self) -> &[ListItem<'static>] {
         &self.rendered_suggestions
+    }
+
+    /// Updates the cached width of the suggestions popup for truncation logic.
+    pub fn update_suggestions_view_width(&mut self, width: u16, theme: &dyn Theme) {
+        self.suggestions_view_width = Some(width);
+        if !self.suggestions.is_empty() {
+            self.refresh_rendered_suggestions(theme);
+        }
     }
 
     // ===== REDUCERS =====
@@ -233,10 +272,11 @@ impl PaletteState {
         self.is_suggestions_open = false;
         self.error_message = None;
         self.ghost_text = None;
-        self.suggestion_index = 0;
-        // Preserve history; exit browsing mode
         self.history_index = None;
         self.draft_input = None;
+        self.cmd_exec_hash = None;
+        self.pending_command_id = None;
+        self.pending_command_input = None;
     }
 
     /// Apply an error message to the palette
@@ -253,7 +293,6 @@ impl PaletteState {
     pub fn apply_suggestions(&mut self, suggestions: Vec<SuggestionItem>) {
         self.suggestions = suggestions;
         self.rendered_suggestions.clear();
-        self.suggestion_index = self.suggestion_index.min(self.suggestions.len().saturating_sub(1));
         self.is_suggestions_open = !self.suggestions.is_empty();
         self.apply_ghost_text();
     }
@@ -263,16 +302,29 @@ impl PaletteState {
         self.suggestions.clear();
         self.rendered_suggestions.clear();
         self.is_suggestions_open = false;
-        self.suggestion_index = 0;
         self.ghost_text = None;
         self.provider_loading = false;
     }
 
     // ===== PRIVATE SETTERS =====
 
+    /// Adapter to delegate text/cursor editing to common::TextInputState
+    fn with_text_input<F: FnOnce(&mut TextInputState)>(&mut self, f: F) {
+        let mut ti = TextInputState::new();
+        ti.set_input(self.input.clone());
+        ti.set_cursor(self.cursor_position);
+        f(&mut ti);
+        self.input = ti.input().to_string();
+        self.cursor_position = ti.cursor();
+    }
+
     /// Set the input text
     pub(crate) fn set_input(&mut self, input: String) {
         self.input = input;
+    }
+
+    pub(crate) fn set_cmd_exec_hash(&mut self, hash: u64) {
+        self.cmd_exec_hash = Some(hash)
     }
 
     /// Set the cursor position
@@ -285,10 +337,9 @@ impl PaletteState {
         self.is_suggestions_open = open;
     }
 
-    /// Set the selected suggestion index
-    pub(crate) fn set_selected(&mut self, selected: usize) {
-        self.suggestion_index = selected;
-        self.apply_ghost_text();
+    /// set the mouse over index
+    pub(crate) fn update_mouse_over_idx(&mut self, idx: Option<usize>) {
+        self.mouse_over_idx = idx;
     }
 
     /// Insert text at the end of the input with a separating space and advance
@@ -320,11 +371,7 @@ impl PaletteState {
     ///
     /// Returns: nothing; updates `self.cursor` in place.
     pub fn reduce_move_cursor_left(&mut self) {
-        if self.cursor_position == 0 {
-            return;
-        }
-        let prev_len = self.input[..self.cursor_position].chars().last().map(|c| c.len_utf8()).unwrap_or(1);
-        self.cursor_position = self.cursor_position.saturating_sub(prev_len);
+        self.with_text_input(|ti| ti.move_left());
     }
 
     /// Move the cursor one character to the right.
@@ -337,14 +384,7 @@ impl PaletteState {
     ///
     /// Returns: nothing; updates `self.cursor` in place.
     pub fn reduce_move_cursor_right(&mut self) {
-        if self.cursor_position >= self.input.len() {
-            return;
-        }
-        // Advance by one Unicode scalar starting at current byte offset
-        let mut iter = self.input[self.cursor_position..].chars();
-        if let Some(next) = iter.next() {
-            self.cursor_position = self.cursor_position.saturating_add(next.len_utf8());
-        }
+        self.with_text_input(|ti| ti.move_right());
     }
 
     /// Insert a character at the cursor and advance.
@@ -363,8 +403,7 @@ impl PaletteState {
             self.history_index = None;
             self.draft_input = None;
         }
-        self.input.insert(self.cursor_position, c);
-        self.cursor_position += c.len_utf8();
+        self.with_text_input(|ti| ti.insert_char(c));
     }
 
     /// Remove the character immediately before the cursor.
@@ -383,74 +422,73 @@ impl PaletteState {
             self.history_index = None;
             self.draft_input = None;
         }
-        if self.cursor_position == 0 {
-            return;
-        }
-        let prev = self.input[..self.cursor_position].chars().last().map(|c| c.len_utf8()).unwrap_or(1);
-        let start = self.cursor_position - prev;
-        self.input.drain(start..self.cursor_position);
-        self.cursor_position = start;
+        self.with_text_input(|ti| ti.backspace());
     }
 
-    /// Finalize suggestion list for the UI: rank, truncate, ghost text, and
+    /// Finalize the suggestions list for the UI: rank, truncate, ghost text, and
     /// state flags.
-    fn finalize_suggestions(&mut self, items: &mut Vec<SuggestionItem>, theme: &dyn crate::ui::theme::Theme) {
+    fn finalize_suggestions(&mut self, items: &mut [SuggestionItem], theme: &dyn Theme) {
         items.sort_by(|a, b| b.score.cmp(&a.score));
 
-        self.suggestion_index = self.suggestion_index.min(items.len().saturating_sub(1));
-        self.suggestions = items.clone();
+        self.suggestions = items.to_vec();
         self.is_suggestions_open = !self.suggestions.is_empty();
+        if self.is_suggestions_open {
+            let preferred_index = self
+                .suggestions
+                .iter()
+                .enumerate()
+                .find(|(_, item)| !matches!(item.meta.as_deref(), Some("history") | Some("loading")))
+                .map(|(idx, _)| idx)
+                .unwrap_or(0);
+            self.list_state.select(Some(preferred_index));
+        } else {
+            self.list_state.select(None);
+        }
 
+        self.refresh_rendered_suggestions(theme);
+        self.apply_ghost_text();
+    }
+
+    /// Rebuild the rendered suggestions to reflect the latest suggestion data.
+    ///
+    /// This helper recreates the rendered list items so that highlighting stays in sync
+    /// with the current input token and the active theme.
+    fn refresh_rendered_suggestions(&mut self, theme: &dyn Theme) {
         let current_token = get_current_token(&self.input, self.cursor_position);
         let needle = current_token.trim();
 
+        let width_hint = self.suggestions_view_width;
         self.rendered_suggestions = self
             .suggestions
             .iter()
-            .map(|s| {
-                let display = s.display.clone();
-                if needle.is_empty() {
-                    return ListItem::new(Line::from(Span::styled(display, theme.text_primary_style())));
+            .enumerate()
+            .map(|(idx, suggestion_item)| {
+                let spans = match suggestion_item.kind {
+                    ItemKind::Command | ItemKind::MCP => build_command_spans(suggestion_item, needle, theme, width_hint),
+                    ItemKind::Flag => build_flag_spans(suggestion_item, needle, theme, width_hint),
+                    ItemKind::Value => build_value_spans(suggestion_item, needle, theme, width_hint),
+                    ItemKind::Positional => build_positional_spans(suggestion_item, needle, theme, width_hint),
+                };
+
+                let spans = if spans.is_empty() {
+                    create_spans_with_match(
+                        needle.to_string(),
+                        suggestion_item.display.clone(),
+                        theme.text_primary_style(),
+                        theme.search_highlight_style(),
+                    )
+                } else {
+                    spans
+                };
+
+                let mut list_item = ListItem::from(Line::from(spans));
+                if self.mouse_over_idx.is_some_and(|hover| hover == idx) {
+                    list_item = list_item.style(theme.selection_style().add_modifier(Modifier::BOLD));
                 }
 
-                let mut spans: Vec<Span> = Vec::new();
-                let hay = display.as_str();
-                let mut i = 0usize;
-                let needle_lower = needle.to_ascii_lowercase();
-                let hay_lower = hay.to_ascii_lowercase();
-
-                // Find and highlight all matches
-                while let Some(pos) = hay_lower[i..].find(&needle_lower) {
-                    let start = i + pos;
-
-                    // Add text before the match
-                    if start > i {
-                        spans.push(Span::styled(hay[i..start].to_string(), theme.text_primary_style()));
-                    }
-
-                    // Add highlighted match
-                    let end = start + needle.len();
-                    spans.push(Span::styled(
-                        hay[start..end].to_string(),
-                        theme.accent_emphasis_style().add_modifier(Modifier::BOLD),
-                    ));
-
-                    i = end;
-                    if i >= hay.len() {
-                        break;
-                    }
-                }
-
-                // Add remaining text after last match
-                if i < hay.len() {
-                    spans.push(Span::styled(hay[i..].to_string(), theme.text_primary_style()));
-                }
-
-                ListItem::new(Line::from(spans))
+                list_item
             })
             .collect();
-
-        self.apply_ghost_text();
     }
 
     pub fn apply_ghost_text(&mut self) {
@@ -460,14 +498,14 @@ impl PaletteState {
         }
         self.ghost_text = self
             .suggestions
-            .get(self.suggestion_index)
+            .get(self.list_state.selected().unwrap_or(0))
             .map(|top| ghost_remainder(&self.input, self.cursor_position, &top.insert_text));
     }
 
     // ===== HISTORY =====
     /// Append the given input to history, trimming and deduping adjacent entries.
-    pub fn push_history_if_needed(&mut self, s: &str) {
-        let value = s.trim();
+    pub fn push_history_if_needed(&mut self, entry: &str) {
+        let value = entry.trim();
         if value.is_empty() {
             return;
         }
@@ -617,13 +655,6 @@ impl PaletteState {
         self.input.clear();
         self.insert_with_space(exec);
     }
-
-    // Renders the palette UI components.
-    //
-    // This function used to render the complete command palette including the input
-    // line, optional ghost text, error messages, and the suggestions popup.
-    // Rendering responsibility has been migrated to PaletteComponent::render(),
-    // and this comment remains for historical context for future refactors.
 
     /// Accept a non-command suggestion (flag/value) without clobbering the
     /// resolved command (group sub).
@@ -775,17 +806,21 @@ impl PaletteState {
     /// st.set_input("apps info --app ".into());
     /// st.apply_build_suggestions(&Registry::from_embedded_schema().unwrap(), &[]);
     /// ```
-    pub fn apply_build_suggestions(&mut self, providers: &[Box<dyn ValueProvider>], theme: &dyn Theme) {
+    pub fn apply_build_suggestions(&mut self, providers: &[Arc<dyn ValueProvider>], theme: &dyn Theme) -> Vec<PendingProviderFetch> {
+        self.reduce_clear_error();
+        let tokens: Vec<String> = lex_shell_like(&self.input);
+        let mut pending_fetches = Vec::new();
         let mut items = {
             let Some(lock) = self.registry.lock().ok() else {
-                return;
+                return pending_fetches;
             };
             let commands = &lock.commands;
 
             let result = SuggestionEngine::build(commands, providers, &self.input);
 
             let mut items = result.items;
-            self.provider_loading = result.provider_loading;
+            pending_fetches = result.pending_fetches;
+            self.provider_loading = result.provider_loading || !pending_fetches.is_empty();
 
             // When provider-backed suggestions are still loading and we have nothing to show yet,
             // present a lightweight placeholder so the popup can open immediately.
@@ -800,55 +835,90 @@ impl PaletteState {
             }
 
             // Offer end-of-line flag hint if still empty
-            if items.is_empty() {
-                let tokens: Vec<String> = lex_shell_like(&self.input);
-                if tokens.len() >= 2 {
-                    let group = tokens[0].clone();
-                    let name = tokens[1].clone();
-                    if let Some(spec) = find_by_group_and_cmd(commands, group.as_str(), name.as_str()).ok() {
-                        let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
-                        let (user_flags, user_args, _flag_values) = parse_user_flags_args(&spec, parts);
-                        if let Some(hint) = self.eol_flag_hint(&spec, &user_flags) {
-                            items.push(hint);
-                        } else {
-                            // If command is complete (all positionals filled, no required flags), show run hint
-                            let positionals_complete = user_args.len() >= spec.positional_args.len();
-                            let required_remaining = required_flags_remaining(&spec, &user_flags);
-                            if positionals_complete && !required_remaining {
-                                self.ghost_text = Some(" press Enter to run".to_string());
-                            }
-                        };
+            if items.is_empty() && tokens.len() >= 2 {
+                let group = tokens[0].as_str();
+                let name = tokens[1].as_str();
+                if let Ok(spec) = find_by_group_and_cmd(commands, group, name) {
+                    let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
+                    let (user_flags, user_args, _flag_values) = parse_user_flags_args(&spec, parts);
+                    if let Some(hint) = self.eol_flag_hint(&spec, &user_flags) {
+                        items.push(hint);
+                    } else {
+                        // If command is complete (all positionals filled, no required flags), show run hint
+                        let positionals_complete = user_args.len() >= spec.positional_args.len();
+                        let required_remaining = required_flags_remaining(&spec, &user_flags);
+                        if positionals_complete && !required_remaining {
+                            self.ghost_text = Some(" press Enter to run".to_string());
+                        }
                     };
-                }
+                };
             }
             items
         };
 
-        self.finalize_suggestions(&mut items, theme);
+        self.finalize_suggestions(items.as_mut_slice(), theme);
         // Preserve run hint ghost when suggestions are empty
-        if self.suggestions.is_empty() && self.ghost_text.is_none() {
-            let tokens: Vec<String> = lex_shell_like(&self.input);
-            if tokens.len() >= 2 {
-                let group = tokens[0].clone();
-                let name = tokens[1].clone();
-                let Some(spec) = self
-                    .registry
-                    .lock()
-                    .ok()
-                    .and_then(|lock| find_by_group_and_cmd(&lock.commands, group.as_str(), name.as_str()).ok())
-                else {
-                    return;
-                };
+        if self.suggestions.is_empty() && self.ghost_text.is_none() && tokens.len() >= 2 {
+            let group = tokens[0].clone();
+            let name = tokens[1].clone();
+            let Some(spec) = self
+                .registry
+                .lock()
+                .ok()
+                .and_then(|lock| find_by_group_and_cmd(&lock.commands, group.as_str(), name.as_str()).ok())
+            else {
+                return pending_fetches;
+            };
 
-                let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
-                let (user_flags, user_args, _flag_values) = parse_user_flags_args(&spec, parts);
-                let positionals_complete = user_args.len() >= spec.positional_args.len();
-                let required_remaining = required_flags_remaining(&spec, &user_flags);
-                if positionals_complete && !required_remaining {
-                    self.ghost_text = Some(" press Enter to run".to_string());
-                }
+            let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
+            let (user_flags, user_args, _flag_values) = parse_user_flags_args(&spec, parts);
+            let positionals_complete = user_args.len() >= spec.positional_args.len();
+            let required_remaining = required_flags_remaining(&spec, &user_flags);
+            if positionals_complete && !required_remaining {
+                self.ghost_text = Some(" press Enter to run".to_string());
             }
         }
+        pending_fetches
+    }
+
+    /// Handle provider fetch failures by clearing loading state and surfacing an error.
+    ///
+    /// This method removes any transient "loading more…" placeholder, stops the spinner, and
+    /// records an error message so the palette communicates that suggestions failed to load.
+    ///
+    /// # Arguments
+    ///
+    /// * `log_message` - Text describing the provider fetch failure, forwarded from the logs.
+    /// * `theme` - Active theme used to rebuild rendered suggestions after removing placeholders.
+    pub(crate) fn handle_provider_fetch_failure(&mut self, log_message: &str, theme: &dyn Theme) {
+        let has_loading_placeholder = self.suggestions.iter().any(|item| item.meta.as_deref() == Some("loading"));
+        if !self.provider_loading && !has_loading_placeholder {
+            return;
+        }
+
+        self.provider_loading = false;
+
+        let previous_length = self.suggestions.len();
+        self.suggestions.retain(|item| item.meta.as_deref() != Some("loading"));
+        let loading_removed = previous_length != self.suggestions.len();
+
+        self.list_state.select_previous();
+        if self.suggestions.is_empty() {
+            self.rendered_suggestions.clear();
+            self.is_suggestions_open = false;
+            self.ghost_text = None;
+        } else if loading_removed {
+            self.refresh_rendered_suggestions(theme);
+            self.apply_ghost_text();
+        }
+
+        let friendly_message = log_message
+            .strip_prefix("Provider fetch failed:")
+            .map(str::trim)
+            .filter(|text| !text.is_empty())
+            .map(|detail| format!("Provider suggestions failed: {detail}"))
+            .unwrap_or_else(|| "Provider suggestions failed.".to_string());
+        self.error_message = Some(friendly_message);
     }
 
     /// Suggest an end-of-line hint for starting flags when any remain.
@@ -867,178 +937,153 @@ impl PaletteState {
         }
         None
     }
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+    fn load_persisted_history(&mut self) {
+        let records = match self.history_store.entries_for_scope(HistoryScopeKind::PaletteCommand) {
+            Ok(records) => records,
+            Err(error) => {
+                warn!(error = %error, "failed to load palette history");
+                return;
+            }
+        };
 
-    #[test]
-    fn replace_partial_positional_on_accept() {
-        let mut st = PaletteState::new(Arc::new(Mutex::new(Registry::from_embedded_schema().unwrap())));
-        st.set_input("apps info hero".into());
-        st.set_cursor(st.input().len());
-        st.apply_accept_positional_suggestion("heroku-prod");
-        assert_eq!(st.input(), "apps info heroku-prod ");
+        let mut filtered: Vec<_> = records
+            .into_iter()
+            .filter(|record| record.key.user_id == self.history_profile_id)
+            .filter(|record| matches!(record.key.scope, HistoryScope::PaletteCommand { .. }))
+            .collect();
+
+        filtered.sort_by(|a, b| a.value.updated_at.cmp(&b.value.updated_at));
+
+        for record in filtered {
+            if let HistoryScope::PaletteCommand { command_id } = record.key.scope
+                && let Some(input) = record.value.value.as_str()
+                && !input.trim().is_empty()
+            {
+                self.push_history_if_needed(input);
+                self.stored_commands.insert(command_id.clone(), record.value);
+            }
+        }
     }
 
-    #[test]
-    fn replace_placeholder_positional_on_accept_value() {
-        let mut st = PaletteState::new(Arc::new(Mutex::new(Registry::from_embedded_schema().unwrap())));
-        // Placeholder for positional arg
-        st.set_input("apps info <app> ".into());
-        st.set_cursor(st.input().len());
-        // Selecting a provider value (non-flag) should replace placeholder
-        st.apply_accept_non_command_suggestion("heroku-prod");
-        assert_eq!(st.input(), "apps info heroku-prod ");
+    pub(crate) fn record_pending_execution(&mut self, command_id: String, input: String) {
+        self.pending_command_id = Some(command_id);
+        self.pending_command_input = Some(input.trim().to_string());
     }
-}
 
-/// Trait for providing dynamic values for command suggestions.
-///
-/// This trait allows external systems to provide dynamic values
-/// for command parameters, such as app names, region names, etc.
-pub trait ValueProvider: Send + Sync + Debug {
-    /// Suggests values for the given command and field combination.
+    fn persist_command_history(&mut self, command_id: &str, input: &str) {
+        let trimmed = input.trim();
+        if trimmed.is_empty() {
+            return;
+        }
+
+        let value = Value::String(trimmed.to_string());
+        if !has_meaningful_value(&value) || value_contains_secret(&value) {
+            return;
+        }
+
+        let stored = StoredHistoryValue {
+            value: value.clone(),
+            updated_at: Utc::now(),
+        };
+        let key = HistoryKey::palette_command(self.history_profile_id.clone(), command_id.to_string());
+
+        if let Err(error) = self.history_store.insert_value(key, value) {
+            warn!(command = %command_id, error = %error, "failed to persist palette history entry");
+        }
+
+        self.stored_commands.insert(command_id.to_string(), stored);
+    }
+
+    /// Processes general command execution results (non-plugin specific).
+    ///
+    /// This method handles the standard processing of command results including
+    /// logging, table updates, and pagination information.
     ///
     /// # Arguments
     ///
-    /// * `command_key` - The command key (e.g., "apps:info")
-    /// * `field` - The field name (e.g., "app")
-    /// * `partial` - The partial input to match against
-    ///
-    /// # Returns
-    ///
-    /// Vector of suggestion items that match the partial input.
-    fn suggest(
-        &self,
-        commands: &[CommandSpec],
-        command_key: &str,
-        field: &str,
-        partial: &str,
-        inputs: &std::collections::HashMap<String, String>,
-    ) -> Vec<SuggestionItem>;
-}
+    /// * `execution_outcome` - The result of the command execution
+    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &ExecOutcome) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        let (status, log, value, request_id) = match execution_outcome {
+            ExecOutcome::Http(status_code, log, value, _, request_id) => (status_code, log, value.clone(), request_id),
+            ExecOutcome::Mcp(log, value, request_id) => (&200, log, value.clone(), request_id),
+            _ => return effects,
+        };
 
-/// A simple value provider that returns static values.
-///
-/// This provider returns a predefined list of values for specific
-/// command and field combinations.
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct StaticValuesProvider {
-    /// The command key this provider matches
-    pub command_key: String,
-    /// The field name this provider provides values for
-    pub field: String,
-    /// The static values to suggest
-    pub values: Vec<String>,
-}
+        // nothing to do
+        if self.cmd_exec_hash.is_none_or(|h| h != *request_id) {
+            return effects;
+        }
 
-impl ValueProvider for StaticValuesProvider {
-    /// Suggest values that fuzzy-match `partial` for the configured (command,
-    /// field).
-    fn suggest(
-        &self,
-        _commands: &[CommandSpec],
-        command_key: &str,
-        field: &str,
-        partial: &str,
-        _inputs: &std::collections::HashMap<String, String>,
-    ) -> Vec<SuggestionItem> {
-        if command_key != self.command_key || field != self.field {
-            return vec![];
+        if *status > 399 {
+            self.error_message = Some(format!("Command failed error: status {} - {}", status, log));
+            return effects;
         }
-        let mut out = Vec::new();
-        for v in &self.values {
-            if let Some(score) = fuzzy_score(v, partial) {
-                out.push(SuggestionItem {
-                    display: v.clone(),
-                    insert_text: v.clone(),
-                    kind: ItemKind::Value,
-                    meta: Some("provider".into()),
-                    score,
-                });
-            }
+
+        if value.is_null() {
+            self.error_message = Some("Command completed successfully but no value was returned".to_string());
+            self.reduce_clear_all();
+            return effects;
         }
-        out
+
+        let history_entry = self.pending_command_input.clone().unwrap_or_else(|| self.input.trim().to_string());
+        self.push_history_if_needed(history_entry.as_str());
+
+        if let Some(command_id) = self.pending_command_id.take() {
+            let input_to_store = self.pending_command_input.take().unwrap_or(history_entry.clone());
+            self.persist_command_history(&command_id, &input_to_store);
+        } else {
+            self.pending_command_input = None;
+        }
+
+        self.reduce_clear_all();
+        effects.push(Effect::ShowModal(Modal::Results(Box::new(execution_outcome.clone()))));
+
+        effects
     }
 }
 
-// Determine if the first two tokens resolve to a known command.
-//
-// A command is considered resolved when at least two tokens exist and they
-// match a `(group, name)` pair in the registry.
-// is_command_resolved is implemented in suggest.rs
-
-// Compute the prefix used to rank command suggestions.
-//
-// When two or more tokens exist, uses "group sub"; otherwise uses the first
-// token or empty string.
-// compute_command_prefix is implemented in suggest.rs
-
-// Build command suggestions in execution form ("group sub").
-//
-// Uses `fuzzy_score` against the computed prefix to rank candidates and embeds
-// the command summary in the display text.
-// suggest_commands is implemented in suggest.rs
-
-// Parse user-provided flags and positional arguments from the portion of
-// tokens after the resolved (group, sub) command.
-//
-// long flags are collected without the leading dashes; values immediately
-// following non-boolean flags are consumed. Returns `(user_flags, user_args)`.
-// parse_user_flags_args is implemented in suggest.rs
-
-// Find the last pending non-boolean flag that expects a value.
-//
-// Scans tokens from the end to find the most recent flag and checks whether
-// its value has been supplied. If a value is already complete (per
-// `is_flag_value_complete`), returns `None`.
-// find_pending_flag is implemented in suggest.rs
-
-// Derive the value fragment currently being typed for the last flag.
-//
-// If the last token is a flag containing an equals sign (e.g., `--app=pa`),
-// returns the suffix after `=`; otherwise returns the last token itself (or an
-// empty string when no tokens exist in `parts`).
-// flag_value_partial is implemented in suggest.rs
-
-// Suggest values for a specific non-boolean flag, combining enum values with
-// provider-derived suggestions.
-// suggest_values_for_flag is implemented in suggest.rs
-
-// Suggest positional values for the next expected positional parameter using
-// providers; when no provider values are available, suggest a placeholder
-// formatted as `<name>`.
-// suggest_positionals is implemented in suggest.rs
-
-// Whether any required flags are not yet supplied by the user.
-// required_flags_remaining is implemented in suggest.rs
-
-// Determine whether the last flag's value is complete according to REPL rules.
-//
-// Rules:
-// - If the last token is `-` or `--`, it is not complete.
-// - If no flag token is found when scanning backward, it is complete.
-// - If the last token is the flag itself (no value yet), it is not complete.
-// - If the last token is the value immediately after the flag, it is complete
-//   only if the input ends in whitespace (typing may continue otherwise).
-//
-// Arguments:
-// - `input`: The full input line.
-//
-// Returns: `true` if the last flag value is considered complete.
-//
-// Example:
-//
-// ```rust,ignore
-// use heroku_tui::ui::components::palette::state::is_flag_value_complete;
-//
-// assert!(!is_flag_value_complete("--app"));
-// assert!(!is_flag_value_complete("--app my"));
-// assert!(is_flag_value_complete("--app my "));
-// ```
+/// Retrieves the current token at or near a specific cursor position in the input string.
+///
+/// This function processes the input string using a lexer function `lex_shell_like_ranged`
+/// to tokenize it into a series of tokens. It then identifies the token that contains
+/// the given cursor position (if any). If no such token is found, it defaults to
+/// returning the last token in the list. If the list of tokens is empty, it returns an
+/// empty string.
+///
+/// # Arguments
+///
+/// * `input` - A reference to the input string which will be tokenized.
+/// * `cursor_position` - A `usize` representing the cursor's position in the input string.
+///
+/// # Returns
+///
+/// A `String` representation of the current token at the cursor's position. If no token
+/// can be identified at the cursor's position, the function returns an empty string.
+///
+/// # Example
+///
+/// ```rust
+/// let input = "echo hello world";
+/// let cursor_position = 6;
+/// let token = get_current_token(input, cursor_position);
+/// assert_eq!(token, "hello");
+/// ```
+///
+/// # Notes
+///
+/// The function relies on `lex_shell_like_ranged`, which is assumed to return a list of
+/// tokens where each token is a structure or object that includes the fields:
+/// - `start`: The starting index of the token in the input string.
+/// - `end`: The ending index of the token in the input string.
+/// - `text`: The actual text of the token.
+///
+/// The range `[start, end]` is inclusive, meaning the token at `cursor_position` is
+/// determined if the position satisfies `start <= cursor_position <= end`.
+///
+/// If the cursor does not match any token but there are tokens available, the final
+/// token in the list will be returned.
 fn get_current_token(input: &str, cursor_position: usize) -> String {
     let tokens = lex_shell_like_ranged(input);
     let token = tokens
@@ -1049,44 +1094,57 @@ fn get_current_token(input: &str, cursor_position: usize) -> String {
     token.map(|t| t.text.to_string()).unwrap_or_default()
 }
 
-// is_flag_value_complete is implemented in suggest.rs and re-exported above
-
-// Collect candidate flag suggestions for a command specification.
-//
-// Generates suggestions for either required or optional flags that have not
-// yet been provided by the user. When `current` starts with a dash, only flags
-// whose long form starts with `current` are included (prefix filtering).
-//
-// Arguments:
-// - `spec`: The command specification whose flags are considered.
-// - `user_flags`: Long flag names already present in the input (without `--`).
-// - `current`: The current token text (used for prefix filtering when typing a
-//   flag).
-// - `required_only`: When `true`, include only required flags; when `false`,
-//   only optional flags.
-// collect_flag_candidates is implemented in suggest.rs
-
-// Compute the remainder of the current token toward a target insert text toward end.
-//
-// If the token under the cursor is a prefix of `insert`, returns the suffix
-// that would be inserted to complete it. Used to render subtle ghost text to
-// the right of the cursor previewing acceptance of the top suggestion.
-//
-// Arguments:
-// - `input`: Full input line.
-// - `cursor`: Cursor position (byte index) into `input`.
-// - `insert`: The prospective full text to insert for the current token.
-//
-// Returns: The suffix of `insert` beyond the current token, or empty string.
-//
-// Example:
-//
-// ```rust,ignore
-// use heroku_tui::ui::components::palette::state::ghost_remainder;
-//
-// assert_eq!(ghost_remainder("ap", 2, "apps"), "ps");
-// assert_eq!(ghost_remainder("foo", 3, "bar"), "");
-// ```
+/// Computes the remaining portion of the `insert` string after stripping the prefix
+/// that matches the token containing the cursor position within the `input` string,
+/// or the last token if no token contains the cursor.
+///
+/// # Arguments
+///
+/// * `input` - A string slice representing the input text to be tokenized.
+/// * `cursor` - A `usize` representing the position of the cursor within the `input`.
+/// * `insert` - A string slice representing the text to be analyzed for the remainder.
+///
+/// # Returns
+///
+/// Returns a `String` containing the portion of `insert` after removing the
+/// token-matching prefix. If no matching token is found, or the prefix does not match,
+/// it returns an empty `String`.
+///
+/// # Behavior
+///
+/// The function works as follows:
+/// 1. Tokenizes the input string into shell-like tokens using `lex_shell_like_ranged`.
+/// 2. Determines the token that contains the cursor position, or defaults to the last token.
+/// 3. Extracts the matching text of the identified token.
+/// 4. Checks whether `insert` starts with the token text. If so, it strips the token text
+///    from `insert` and returns the remainder. Otherwise, it returns an empty string.
+///
+/// # Example
+///
+/// ```
+/// let input = "echo hello world";
+/// let cursor = 5; // Cursor is within "hello".
+/// let insert = "hello world";
+/// let result = ghost_remainder(input, cursor, insert);
+/// assert_eq!(result, " world");
+/// ```
+///
+/// If the `insert` does not start with the token text:
+///
+/// ```
+/// let input = "echo hello";
+/// let cursor = 0; // Cursor is outside of any token (matches "echo").
+/// let insert = "world";
+/// let result = ghost_remainder(input, cursor, insert);
+/// assert_eq!(result, ""); // No match, so empty string is returned.
+/// ```
+///
+/// # Note
+///
+/// The function depends on the `lex_shell_like_ranged` external function for tokenizing
+/// the `input` string, which must return a collection of tokens, each with fields
+/// `start`, `end`, and `text`. The behavior of this function heavily depends
+/// on the implementation of the tokenizer.
 pub fn ghost_remainder(input: &str, cursor: usize, insert: &str) -> String {
     let tokens = lex_shell_like_ranged(input);
     // Find the token that contains the cursor, otherwise take the last token
@@ -1102,5 +1160,503 @@ pub fn ghost_remainder(input: &str, cursor: usize, insert: &str) -> String {
         rest.to_string()
     } else {
         String::new()
+    }
+}
+
+const LIST_HIGHLIGHT_SYMBOL_WIDTH: u16 = 2;
+const DEFAULT_COMMAND_SUMMARY_WIDTH: u16 = 72;
+const DEFAULT_FLAG_DESCRIPTION_WIDTH: u16 = 80;
+const DEFAULT_VALUE_META_WIDTH: u16 = 60;
+const DEFAULT_POSITIONAL_HELP_WIDTH: u16 = 80;
+const MIN_TRUNCATION_WIDTH: u16 = 4;
+
+#[derive(Default)]
+struct SpanCollector {
+    spans: Vec<Span<'static>>,
+    width: u16,
+}
+
+impl SpanCollector {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            spans: Vec::with_capacity(capacity),
+            width: 0,
+        }
+    }
+
+    fn push(&mut self, span: Span<'static>) {
+        self.width = self.width.saturating_add(span_display_width(&span));
+        self.spans.push(span);
+    }
+
+    fn extend(&mut self, spans: Vec<Span<'static>>) {
+        for span in spans {
+            self.push(span);
+        }
+    }
+
+    fn remaining_with_fallback(&self, width_hint: Option<u16>, fallback: u16) -> u16 {
+        width_hint.unwrap_or(fallback).saturating_sub(self.width)
+    }
+
+    fn into_vec(self) -> Vec<Span<'static>> {
+        self.spans
+    }
+}
+
+fn span_display_width(span: &Span<'_>) -> u16 {
+    UnicodeWidthStr::width(span.content.as_ref()) as u16
+}
+
+fn truncate_to_width(text: &str, available: u16) -> String {
+    if available == 0 {
+        return String::new();
+    }
+    let character_count = text.chars().count() as u16;
+    if character_count <= available {
+        return text.to_string();
+    }
+    if available == 1 {
+        return "…".to_string();
+    }
+    let max_columns = available.saturating_sub(1) as usize;
+    truncate_with_ellipsis(text, max_columns)
+}
+
+fn normalized_width_hint(width_hint: Option<u16>) -> Option<u16> {
+    width_hint
+        .and_then(|hint| hint.checked_sub(LIST_HIGHLIGHT_SYMBOL_WIDTH))
+        .filter(|width| *width > 0)
+}
+
+fn build_command_spans(item: &SuggestionItem, needle: &str, theme: &dyn Theme, width_hint: Option<u16>) -> Vec<Span<'static>> {
+    let canonical = item.insert_text.trim();
+    if canonical.is_empty() {
+        return Vec::new();
+    }
+
+    let width_hint = normalized_width_hint(width_hint);
+    let highlight = theme.search_highlight_style();
+    let exec_type = match item.kind {
+        ItemKind::Command => "CMD",
+        ItemKind::MCP => "MCP",
+        _ => "",
+    };
+
+    let mut collector = SpanCollector::with_capacity(8);
+    collector.push(badge_span(theme, exec_type));
+    collector.push(Span::raw(" "));
+
+    let (group, command) = canonical.split_once(' ').unwrap_or(("", canonical));
+    if !group.is_empty() {
+        collector.extend(highlight_segments(needle, group, theme.syntax_type_style(), highlight));
+        if !command.is_empty() {
+            collector.push(Span::raw(" "));
+        }
+    }
+    if !command.is_empty() {
+        collector.extend(highlight_segments(needle, command, theme.syntax_function_style(), highlight));
+    }
+
+    match item.meta.as_deref() {
+        Some("history") => {
+            collector.push(Span::raw("  "));
+            collector.push(Span::styled("(history)", theme.text_muted_style()));
+        }
+        Some("loading") => {}
+        Some(summary) if !summary.trim().is_empty() => {
+            collector.push(Span::raw("  "));
+            let available = collector.remaining_with_fallback(width_hint, DEFAULT_COMMAND_SUMMARY_WIDTH);
+            if available >= MIN_TRUNCATION_WIDTH {
+                let truncated = truncate_to_width(summary.trim(), available);
+                collector.extend(highlight_segments(
+                    needle,
+                    truncated.as_str(),
+                    theme.text_secondary_style(),
+                    highlight,
+                ));
+            }
+        }
+        _ => {}
+    }
+
+    collector.into_vec()
+}
+
+fn build_flag_spans(item: &SuggestionItem, needle: &str, theme: &dyn Theme, width_hint: Option<u16>) -> Vec<Span<'static>> {
+    if item.meta.as_deref() == Some("loading") {
+        return vec![Span::styled(item.display.clone(), theme.text_muted_style())];
+    }
+
+    let highlight = theme.search_highlight_style();
+    let width_hint = normalized_width_hint(width_hint);
+    let mut collector = SpanCollector::with_capacity(8);
+    collector.push(badge_span(theme, "FLAG"));
+    collector.push(Span::raw(" "));
+
+    let flag_label = item.insert_text.trim();
+    if !flag_label.is_empty() {
+        collector.extend(highlight_segments(needle, flag_label, theme.syntax_keyword_style(), highlight));
+    }
+
+    if item.display.contains("[required]") {
+        collector.push(Span::raw(" "));
+        collector.push(Span::styled(
+            "(required)",
+            theme.syntax_keyword_style().add_modifier(Modifier::BOLD),
+        ));
+    }
+
+    if let Some(description) = item.meta.as_deref()
+        && description != "loading"
+        && !description.trim().is_empty()
+    {
+        let trimmed = description.trim();
+        collector.push(Span::raw("  "));
+        let available = collector.remaining_with_fallback(width_hint, DEFAULT_FLAG_DESCRIPTION_WIDTH);
+        if available >= MIN_TRUNCATION_WIDTH {
+            let truncated = truncate_to_width(trimmed, available);
+            collector.extend(highlight_segments(
+                needle,
+                truncated.as_str(),
+                theme.text_secondary_style(),
+                highlight,
+            ));
+        }
+    }
+
+    collector.into_vec()
+}
+
+fn build_value_spans(item: &SuggestionItem, needle: &str, theme: &dyn Theme, width_hint: Option<u16>) -> Vec<Span<'static>> {
+    if item.meta.as_deref() == Some("loading") {
+        return vec![Span::styled(item.display.clone(), theme.text_muted_style())];
+    }
+
+    let highlight = theme.search_highlight_style();
+    let width_hint = normalized_width_hint(width_hint);
+    let badge_label = match item.meta.as_deref() {
+        Some("enum") => "ENUM",
+        _ => "VAL",
+    };
+
+    let mut collector = SpanCollector::with_capacity(8);
+    collector.push(badge_span(theme, badge_label));
+    collector.push(Span::raw(" "));
+
+    let value_text = if !item.display.trim().is_empty() {
+        item.display.trim().to_string()
+    } else {
+        item.insert_text.trim().to_string()
+    };
+
+    collector.extend(highlight_segments(
+        needle,
+        value_text.as_str(),
+        infer_value_style(theme, value_text.as_str()),
+        highlight,
+    ));
+
+    if let Some(meta) = item.meta.as_deref()
+        && !meta.is_empty()
+        && meta != "enum"
+        && meta != "loading"
+        && !meta.trim().is_empty()
+    {
+        let trimmed = meta.trim();
+        collector.push(Span::raw("  "));
+        let available = collector.remaining_with_fallback(width_hint, DEFAULT_VALUE_META_WIDTH);
+        if available >= MIN_TRUNCATION_WIDTH {
+            let truncated = truncate_to_width(trimmed, available);
+            collector.push(Span::styled(truncated, theme.text_muted_style()));
+        }
+    }
+
+    collector.into_vec()
+}
+
+fn build_positional_spans(item: &SuggestionItem, needle: &str, theme: &dyn Theme, width_hint: Option<u16>) -> Vec<Span<'static>> {
+    let highlight = theme.search_highlight_style();
+    let width_hint = normalized_width_hint(width_hint);
+    let mut collector = SpanCollector::with_capacity(8);
+    collector.push(badge_span(theme, "ARG"));
+    collector.push(Span::raw(" "));
+
+    let label = item.insert_text.trim();
+    if !label.is_empty() {
+        collector.extend(highlight_segments(needle, label, theme.syntax_type_style(), highlight));
+    }
+
+    if let Some(help) = item.meta.as_deref()
+        && !help.trim().is_empty()
+    {
+        collector.push(Span::raw("  "));
+        let available = collector.remaining_with_fallback(width_hint, DEFAULT_POSITIONAL_HELP_WIDTH);
+        if available >= MIN_TRUNCATION_WIDTH {
+            let truncated = truncate_to_width(help.trim(), available);
+            collector.extend(highlight_segments(
+                needle,
+                truncated.as_str(),
+                theme.text_secondary_style(),
+                highlight,
+            ));
+        }
+    }
+
+    collector.into_vec()
+}
+
+fn badge_span(theme: &dyn Theme, label: &str) -> Span<'static> {
+    let roles = theme.roles();
+    Span::styled(
+        format!("[{}]", label),
+        Style::default().fg(roles.accent_secondary).add_modifier(Modifier::BOLD),
+    )
+}
+
+fn infer_value_style(theme: &dyn Theme, value: &str) -> Style {
+    if value.eq_ignore_ascii_case("true") || value.eq_ignore_ascii_case("false") || value.eq_ignore_ascii_case("null") {
+        theme.syntax_keyword_style()
+    } else if value.parse::<f64>().is_ok() {
+        theme.syntax_number_style()
+    } else {
+        theme.syntax_string_style()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::theme::dracula::DraculaTheme;
+    use heroku_util::{InMemoryHistoryStore, DEFAULT_HISTORY_PROFILE};
+
+    fn palette_state_with_registry(registry: Arc<Mutex<CommandRegistry>>) -> PaletteState {
+        let history_store: Arc<dyn HistoryStore> = Arc::new(InMemoryHistoryStore::new());
+        PaletteState::new(registry, history_store, DEFAULT_HISTORY_PROFILE.to_string())
+    }
+
+    fn make_palette_state() -> PaletteState {
+        let registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap()));
+        palette_state_with_registry(registry)
+    }
+
+    #[test]
+    fn persists_command_history_on_success() {
+        use serde_json::json;
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
+
+        let registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap()));
+        let store: Arc<InMemoryHistoryStore> = Arc::new(InMemoryHistoryStore::new());
+        let mut palette = PaletteState::new(
+            Arc::clone(&registry),
+            store.clone() as Arc<dyn HistoryStore>,
+            DEFAULT_HISTORY_PROFILE.to_string(),
+        );
+
+        let command_input = "apps info --app demo";
+        palette.set_input(command_input.to_string());
+        palette.set_cursor(command_input.len());
+
+        let mut hasher = DefaultHasher::new();
+        hasher.write(command_input.as_bytes());
+        let request_hash = hasher.finish();
+
+        let command_id = format!("{}:{}", "apps", "info");
+        palette.record_pending_execution(command_id.clone(), command_input.to_string());
+        palette.set_cmd_exec_hash(request_hash);
+
+        let outcome = ExecOutcome::Http(200, "ok".into(), json!({"ok": true}), None, request_hash);
+        palette.process_general_execution_result(&Box::new(outcome));
+
+        assert_eq!(palette.history.last().map(|s| s.as_str()), Some(command_input));
+        let stored_value = palette.stored_commands.get(&command_id).and_then(|record| record.value.as_str());
+        assert_eq!(stored_value, Some(command_input));
+
+        let stored_records = store.entries_for_scope(HistoryScopeKind::PaletteCommand).unwrap();
+        assert!(stored_records.iter().any(|record| {
+            if let HistoryScope::PaletteCommand { command_id: stored_id } = &record.key.scope {
+                stored_id == &command_id && record.value.value.as_str() == Some(command_input)
+            } else {
+                false
+            }
+        }));
+    }
+
+    #[test]
+    fn replace_partial_positional_on_accept() {
+        let mut st = make_palette_state();
+        st.set_input("apps info hero".into());
+        st.set_cursor(st.input().len());
+        st.apply_accept_positional_suggestion("heroku-prod");
+        assert_eq!(st.input(), "apps info heroku-prod ");
+    }
+
+    #[test]
+    fn replace_placeholder_positional_on_accept_value() {
+        let mut st = make_palette_state();
+        // Placeholder for positional arg
+        st.set_input("apps info <app> ".into());
+        st.set_cursor(st.input().len());
+        // Selecting a provider value (non-flag) should replace placeholder
+        st.apply_accept_non_command_suggestion("heroku-prod");
+        assert_eq!(st.input(), "apps info heroku-prod ");
+    }
+
+    #[test]
+    fn handle_provider_fetch_failure_clears_loading_placeholder_and_sets_error() {
+        let registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().expect("embedded registry")));
+        let mut state = palette_state_with_registry(registry);
+        state.set_input("apps info --app ".to_string());
+        state.provider_loading = true;
+        state.is_suggestions_open = true;
+        state.list_state.select(Some(1));
+        state.suggestions = vec![
+            SuggestionItem {
+                display: "loading more…".to_string(),
+                insert_text: String::new(),
+                kind: ItemKind::Value,
+                meta: Some("loading".to_string()),
+                score: i64::MIN,
+            },
+            SuggestionItem {
+                display: "demo".to_string(),
+                insert_text: "demo".to_string(),
+                kind: ItemKind::Value,
+                meta: None,
+                score: 10,
+            },
+        ];
+        let theme = DraculaTheme::new();
+
+        state.handle_provider_fetch_failure("Provider fetch failed: timeout", &theme);
+
+        assert!(!state.provider_loading);
+        assert!(state.suggestions.iter().all(|item| item.meta.as_deref() != Some("loading")));
+        assert_eq!(state.error_message(), Some(&"Provider suggestions failed: timeout".to_string()));
+        assert!(state.is_suggestions_open());
+        assert_eq!(state.suggestions_len(), 1);
+        assert_eq!(state.rendered_suggestions().len(), 1);
+    }
+
+    #[test]
+    fn command_spans_respect_available_width_hint() {
+        let theme = DraculaTheme::new();
+        let suggestion = SuggestionItem {
+            display: "apps info".to_string(),
+            insert_text: "apps info".to_string(),
+            kind: ItemKind::Command,
+            meta: Some("This description is intentionally verbose to validate width-based truncation logic.".to_string()),
+            score: 100,
+        };
+
+        let width_hint = 24;
+        let spans = build_command_spans(&suggestion, "", &theme, Some(width_hint));
+        let rendered_width: u16 = spans.iter().map(span_display_width).sum();
+        let max_width = width_hint.saturating_sub(LIST_HIGHLIGHT_SYMBOL_WIDTH);
+        assert!(
+            rendered_width <= max_width,
+            "rendered width {rendered_width} exceeds available {max_width}"
+        );
+    }
+
+    // --- Parity tests with common::TextInputState to quantify integration risk ---
+    use crate::ui::components::common::TextInputState;
+
+    #[derive(Clone, Copy, Debug)]
+    enum Op {
+        Left,
+        Right,
+        Ins(char),
+        Back,
+    }
+
+    fn run_palette(input: &str, cursor: usize, ops: &[Op]) -> (String, usize) {
+        let reg = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap()));
+        let mut st = palette_state_with_registry(reg);
+        st.set_input(input.to_string());
+        st.set_cursor(cursor);
+        for op in ops {
+            match *op {
+                Op::Left => st.reduce_move_cursor_left(),
+                Op::Right => st.reduce_move_cursor_right(),
+                Op::Ins(c) => st.apply_insert_char(c),
+                Op::Back => st.reduce_backspace(),
+            }
+        }
+        (st.input().to_string(), st.selected_cursor_position())
+    }
+
+    fn run_text_input(input: &str, cursor: usize, ops: &[Op]) -> (String, usize) {
+        let mut st = TextInputState::new();
+        st.set_input(input);
+        st.set_cursor(cursor);
+        for op in ops {
+            match *op {
+                Op::Left => st.move_left(),
+                Op::Right => st.move_right(),
+                Op::Ins(c) => st.insert_char(c),
+                Op::Back => st.backspace(),
+            }
+        }
+        (st.input().to_string(), st.cursor())
+    }
+
+    fn assert_parity(input: &str, cursor: usize, ops: &[Op]) {
+        let a = run_palette(input, cursor, ops);
+        let b = run_text_input(input, cursor, ops);
+        assert_eq!(a, b, "Parity mismatch for input='{input}', cursor={cursor}, ops={ops:?}");
+    }
+
+    #[test]
+    fn palette_text_input_parity_ascii() {
+        let ops = [
+            Op::Ins('h'),
+            Op::Ins('e'),
+            Op::Ins('l'),
+            Op::Ins('l'),
+            Op::Ins('o'),
+            Op::Left,
+            Op::Back,
+            Op::Ins('y'),
+        ];
+        assert_parity("", 0, &ops);
+    }
+
+    #[test]
+    fn palette_text_input_parity_utf8_emoji() {
+        // Start with multi-byte character in the middle
+        let input = "h🙂llo"; // emoji is 4 bytes
+        // place cursor after 'h'
+        let cursor = 1;
+        let ops = [Op::Ins('e'), Op::Right, Op::Back, Op::Left, Op::Back];
+        assert_parity(input, cursor, &ops);
+    }
+
+    #[test]
+    fn palette_text_input_parity_boundaries() {
+        // Deleting at start is a no-op; moving past end is a no-op
+        let input = "abc";
+        let cursor = 0;
+        let ops = [Op::Back, Op::Left, Op::Ins('x'), Op::Left, Op::Left, Op::Left, Op::Left, Op::Back];
+        assert_parity(input, cursor, &ops);
+    }
+
+    #[test]
+    fn palette_text_input_parity_mixed_sequence() {
+        let input = "héllo"; // accented e is 2 bytes
+        // put cursor between h and é
+        let cursor = 1;
+        let ops = [
+            Op::Right, // over é correctly (2 bytes)
+            Op::Ins('-'),
+            Op::Left,
+            Op::Back,
+            Op::Ins('X'),
+            Op::Right,
+            Op::Right,
+            Op::Ins('!'),
+        ];
+        assert_parity(input, cursor, &ops);
     }
 }

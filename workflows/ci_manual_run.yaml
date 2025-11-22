@@ -1,0 +1,30 @@
+workflow: ci_manual_run
+title: "CI Manual Run"
+description: "Trigger a Heroku CI test run for a given pipeline and branch."
+inputs:
+  pipeline:
+    name: "Pipeline"
+    provider: pipelines list
+    select: { value_field: id, display_field: name }
+  branch:
+    name: "Branch"
+    description: "Git branch to test"
+    type: string
+  commit_sha:
+    name: "Commit SHA"
+    description: "Optional commit SHA to test"
+    type: string
+    optional: true
+steps:
+  - id: run_ci
+    run: ci run
+    body:
+      pipeline: ${{ inputs.pipeline }}
+      branch: ${{ inputs.branch }}
+      commit: ${{ inputs.commit_sha }}
+
+  - id: get_result
+    run: ci runs:info
+    body:
+      pipeline: ${{ inputs.pipeline }}
+      run: ${{ steps.run_ci.output.id }}

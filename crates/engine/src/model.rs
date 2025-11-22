@@ -21,10 +21,12 @@
 //!
 //! let workflow_spec = WorkflowSpec {
 //!     workflow: Some("deploy-app".to_string()),
+//!     name: Some("Deploy App".to_string()),
 //!     inputs: HashMap::new(),
 //!     steps: vec![
 //!         StepSpec {
 //!             id: "deploy".to_string(),
+//!             depends_on: vec![],
 //!             run: "apps:deploy".to_string(),
 //!             with: None,
 //!             body: None,
@@ -66,6 +68,13 @@ pub struct WorkflowSpec {
     /// field is typically derived from the key in the workflows map.
     #[serde(default)]
     pub workflow: Option<String>,
+    /// Optional human-friendly display name for the workflow.
+    ///
+    /// When present, user interfaces prefer this value instead of the identifier when
+    /// presenting the workflow to an operator. Consumers should gracefully fall back to
+    /// `workflow` should this value be missing or blank.
+    #[serde(default)]
+    pub name: Option<String>,
 
     /// Declarative input definitions for the workflow
     ///
@@ -98,6 +107,12 @@ pub struct InputSpec {
     /// and any constraints or requirements.
     #[serde(default)]
     pub description: Option<String>,
+    /// Optional human-friendly label for the input.
+    ///
+    /// Workflows can supply this value to present nicer labels than the raw identifier.
+    /// Consumers must fall back to the identifier when this field is absent or blank.
+    #[serde(default)]
+    pub name: Option<String>,
 
     /// Data type of the input parameter
     ///
@@ -201,6 +216,10 @@ pub struct StepSpec {
     /// be descriptive and unique within the workflow.
     pub id: String,
 
+    /// List of step identifiers that must complete successfully before this step runs.
+    #[serde(default)]
+    pub depends_on: Vec<String>,
+
     /// Command or action to execute
     ///
     /// The run field specifies what action to perform. This can be:
@@ -274,6 +293,16 @@ pub struct StepRepeat {
     /// string like "10s", "1m", or "5m30s". The exact parsing
     /// is handled by the workflow executor.
     pub every: String,
+
+    /// Optional timeout after which the repeating step aborts.
+    ///
+    /// Uses the same duration syntax as `every`.
+    #[serde(default)]
+    pub timeout: Option<String>,
+
+    /// Optional maximum number of attempts before aborting.
+    #[serde(default)]
+    pub max_attempts: Option<u32>,
 }
 
 /// Definition of a step's output structure and metadata.
@@ -335,6 +364,7 @@ mod tests {
         let mut bundle = WorkflowBundle::default();
         let workflow_spec = WorkflowSpec {
             workflow: Some("test-workflow".to_string()),
+            name: Some("Test workflow".to_string()),
             inputs: HashMap::new(),
             steps: vec![],
         };
@@ -349,6 +379,7 @@ mod tests {
     fn test_step_spec_with_conditional() {
         let step = StepSpec {
             id: "conditional-step".to_string(),
+            depends_on: vec![],
             run: "test:command".to_string(),
             with: None,
             body: None,
@@ -366,6 +397,7 @@ mod tests {
     fn test_input_spec_with_provider() {
         let input = InputSpec {
             description: Some("Select an application".to_string()),
+            name: Some("Application".to_string()),
             r#type: Some("string".to_string()),
             provider: Some("apps:list".to_string()),
             provider_args: Some(
@@ -405,6 +437,7 @@ mod tests {
         let repeat = StepRepeat {
             until: "output.status == \"completed\"".to_string(),
             every: "30s".to_string(),
+            ..Default::default()
         };
 
         assert_eq!(repeat.until, "output.status == \"completed\"");

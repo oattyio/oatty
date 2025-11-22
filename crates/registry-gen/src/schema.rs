@@ -143,7 +143,7 @@ fn classify_command(href: &str, method: &str) -> Option<(String, String)> {
         "GET" if is_resource => "info",
         "GET" if ends_with_collection => "list",
         "POST" => "create",
-        "PATCH" => "update",
+        "PATCH" | "PUT" => "update",
         "DELETE" => "delete",
         _ => return None,
     };
@@ -391,7 +391,7 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
 
                 CommandFlag {
                     name: name.clone(),
-                    short_name: name.chars().next().filter(|c| c.is_alphabetic()).map(|c| c.to_string()),
+                    short_name: None,
                     required,
                     r#type: ty,
                     enum_values,
@@ -411,6 +411,7 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
         .collect::<Vec<_>>();
 
     flags.extend(range_flags);
+    assign_unique_short_names(&mut flags);
     flags.sort_by(|a, b| {
         if a.required && b.required {
             return a.name.cmp(&b.name);
@@ -424,6 +425,100 @@ fn extract_flags_resolved(link: &Value, root: &Value) -> (Vec<CommandFlag>, Vec<
         Ordering::Equal
     });
     (flags, required_names)
+}
+
+fn assign_unique_short_names(flags: &mut [CommandFlag]) {
+    let mut used = HashSet::new();
+
+    for flag in flags.iter_mut() {
+        if let Some(existing) = flag.short_name.take() {
+            let normalized = existing.to_ascii_lowercase();
+            if is_valid_short_name(&normalized) && used.insert(normalized.clone()) {
+                flag.short_name = Some(normalized);
+            }
+        }
+    }
+
+    for flag in flags.iter_mut() {
+        if flag.short_name.is_some() {
+            continue;
+        }
+
+        for candidate in generate_short_name_candidates(&flag.name) {
+            if used.insert(candidate.clone()) {
+                flag.short_name = Some(candidate);
+                break;
+            }
+        }
+    }
+}
+
+fn generate_short_name_candidates(name: &str) -> Vec<String> {
+    let sanitized = sanitize_flag_name(name);
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+
+    if !sanitized.is_empty() {
+        for len in 1..=sanitized.len().min(3) {
+            let candidate = sanitized[..len].to_string();
+            push_candidate(&mut candidates, &mut seen, candidate);
+        }
+    }
+
+    let segments: Vec<&str> = name.split(|c: char| ['-', '_', '.'].contains(&c)).collect();
+    if segments.len() > 1 {
+        let mut initials = String::new();
+        for segment in segments {
+            if let Some(ch) = segment.chars().find(|c| c.is_ascii_alphabetic()) {
+                initials.push(ch.to_ascii_lowercase());
+                if initials.len() == 3 {
+                    break;
+                }
+            }
+        }
+        if !initials.is_empty() {
+            for len in 1..=initials.len() {
+                let candidate = initials[..len].to_string();
+                push_candidate(&mut candidates, &mut seen, candidate);
+            }
+        }
+    }
+
+    if let Some(first) = sanitized.chars().next() {
+        for suffix in 1..=9 {
+            let candidate = format!("{}{}", first, suffix);
+            push_candidate(&mut candidates, &mut seen, candidate);
+        }
+    }
+
+    candidates
+}
+
+fn sanitize_flag_name(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+fn push_candidate(candidates: &mut Vec<String>, seen: &mut HashSet<String>, candidate: String) {
+    if candidate.is_empty() {
+        return;
+    }
+    if candidate.chars().count() > 3 {
+        return;
+    }
+    if !candidate.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return;
+    }
+    if seen.insert(candidate.clone()) {
+        candidates.push(candidate);
+    }
+}
+
+fn is_valid_short_name(candidate: &str) -> bool {
+    let length = candidate.chars().count();
+    (1..=3).contains(&length) && candidate.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 /// Resolves schema properties by merging `$ref` target properties into the schema.
@@ -518,7 +613,7 @@ fn add_range_flags(ranges: &[String]) -> Vec<CommandFlag> {
     vec![
         CommandFlag {
             name: "range-field".to_string(),
-            short_name: Some("r".to_string()),
+            short_name: None,
             required: false,
             r#type: "string".to_string(),
             enum_values: ranges.to_vec(),
@@ -528,7 +623,7 @@ fn add_range_flags(ranges: &[String]) -> Vec<CommandFlag> {
         },
         CommandFlag {
             name: "range-start".to_string(),
-            short_name: Some("s".to_string()),
+            short_name: None,
             required: false,
             r#type: "string".to_string(),
             enum_values: vec![],
@@ -538,7 +633,7 @@ fn add_range_flags(ranges: &[String]) -> Vec<CommandFlag> {
         },
         CommandFlag {
             name: "range-end".to_string(),
-            short_name: Some("e".to_string()),
+            short_name: None,
             required: false,
             r#type: "string".to_string(),
             enum_values: vec![],
@@ -548,7 +643,7 @@ fn add_range_flags(ranges: &[String]) -> Vec<CommandFlag> {
         },
         CommandFlag {
             name: "max".to_string(),
-            short_name: Some("m".to_string()),
+            short_name: None,
             required: false,
             r#type: "number".to_string(),
             enum_values: vec![],
@@ -558,7 +653,7 @@ fn add_range_flags(ranges: &[String]) -> Vec<CommandFlag> {
         },
         CommandFlag {
             name: "order".to_string(),
-            short_name: Some("o".to_string()),
+            short_name: None,
             required: false,
             r#type: "enum".to_string(),
             enum_values: vec!["asc".to_string(), "desc".to_string()],
@@ -660,7 +755,7 @@ mod tests {
         let pos = spec.positional_args.iter().find(|a| a.name == "addon").unwrap();
         match &pos.provider {
             Some(heroku_types::ValueProvider::Command { command_id, binds: _ }) => {
-                assert_eq!(command_id, "addons:list")
+                assert_eq!(command_id, "addons list")
             }
             _ => panic!("positional provider for addon missing"),
         }
@@ -683,7 +778,7 @@ mod tests {
             .expect("GET /config command exists");
         let flag = spec.flags.iter().find(|f| f.name == "app").unwrap();
         match &flag.provider {
-            Some(heroku_types::ValueProvider::Command { command_id, binds: _ }) => assert_eq!(command_id, "apps:list"),
+            Some(heroku_types::ValueProvider::Command { command_id, binds: _ }) => assert_eq!(command_id, "apps list"),
             _ => panic!("flag provider for app missing"),
         }
     }
@@ -776,5 +871,41 @@ mod tests {
         // Positional should use the ref name
         let arg_names: Vec<_> = spec.positional_args.iter().map(|a| a.name.as_str()).collect();
         assert_eq!(arg_names, vec!["team"]);
+    }
+
+    #[test]
+    fn derive_commands_handles_put_updates_on_shared_paths() {
+        let json = r#"{
+            "links": [
+                {
+                    "href": "/apps/{app}/buildpack-installations",
+                    "method": "PUT",
+                    "title": "Update buildpack installations"
+                },
+                {
+                    "href": "/apps/{app}/buildpack-installations",
+                    "method": "GET",
+                    "title": "List buildpack installations"
+                }
+            ]
+        }"#;
+        let value: Value = serde_json::from_str(json).unwrap();
+        let commands = derive_commands_from_schema(&value, ServiceId::CoreApi).unwrap();
+        let mut seen = commands
+            .iter()
+            .filter_map(|spec| spec.http().map(|http| (http.method.clone(), http.path.clone(), spec.name.clone())))
+            .collect::<Vec<_>>();
+        seen.sort_by(|a, b| a.0.cmp(&b.0));
+
+        assert!(
+            seen.iter()
+                .any(|(method, path, _)| method == "PUT" && path == "/apps/{app}/buildpack-installations"),
+            "expected PUT update command for shared path"
+        );
+        assert!(
+            seen.iter()
+                .any(|(method, path, name)| method == "GET" && path == "/apps/{app}/buildpack-installations" && name.contains("list")),
+            "expected GET list command for shared path"
+        );
     }
 }

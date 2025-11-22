@@ -5,7 +5,6 @@
 [build]
 # Keep symbol info lightweight but useful for backtraces and profilers.
 rustflags = [
-    "-C", "debuginfo=1",
     # Increase parallel codegen units for faster compile times in larger crates.
     # This does not affect runtime performance much without also tweaking opt-level.
     "-C", "codegen-units=16",
@@ -27,7 +26,3 @@ progress = { when = "auto" }
 git-fetch-with-cli = true
 # Reasonable retry policy for flaky networks.
 retry = 3
-
-[registries.crates-io]
-# Ensure the modern, faster protocol is used (default on recent Cargo, set explicitly here).
-protocol = "sparse"

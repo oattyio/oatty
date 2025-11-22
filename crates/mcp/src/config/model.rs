@@ -341,8 +341,10 @@ mod tests {
     #[test]
     fn serialize_uses_camel_case_keys() {
         let mut cfg = McpConfig::default();
-        let mut server = McpServer::default();
-        server.base_url = Some(Url::parse("https://api.example").unwrap());
+        let server = McpServer {
+            base_url: Some(Url::parse("https://api.example").unwrap()),
+            ..Default::default()
+        };
         cfg.mcp_servers.insert("svc".to_string(), server);
 
         let json = serde_json::to_string(&cfg).expect("serialize");

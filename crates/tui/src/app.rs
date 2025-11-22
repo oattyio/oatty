@@ -5,74 +5,128 @@
 //! user interactions, and coordinates between different UI components.
 
 use std::{
-    sync::{
-        Arc, Mutex,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{atomic::AtomicUsize, Arc, Mutex},
     time::Duration,
 };
 
-use heroku_mcp::{PluginDetail, PluginEngine};
-use heroku_registry::Registry;
-use heroku_types::{Effect, ExecOutcome, Modal, Msg, Route};
-use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
-use ratatui::layout::Rect;
-use serde_json::{Map as JsonMap, Value as JsonValue};
-
-use crate::ui::components::{
-    BrowserComponent, HelpComponent, PluginsComponent, TableComponent, logs::LogDetailsComponent, nav_bar::VerticalNavBarState,
-    plugins::PluginsDetailsComponent,
-};
+use crate::ui::components::nav_bar::VerticalNavBarState;
+use crate::ui::components::workflows::collector::SelectorStatus;
+use crate::ui::components::workflows::run::RunViewState;
 use crate::ui::{
     components::{
-        browser::BrowserState,
-        component::Component,
-        help::HelpState,
-        logs::{LogsState, state::LogEntry},
-        palette::{PaletteComponent, PaletteState, providers::RegistryBackedProvider, state::ValueProvider},
-        plugins::PluginsState,
-        table::TableState,
+        browser::BrowserState, help::HelpState, logs::LogsState, palette::PaletteState, plugins::PluginsState, table::ResultsTableState,
+        theme_picker::ThemePickerState, workflows::WorkflowState,
     },
     theme,
 };
+use heroku_engine::provider::{CacheLookupOutcome, PendingProviderFetch, ProviderRegistry};
+use heroku_engine::ValueProvider;
+use heroku_mcp::PluginEngine;
+use heroku_registry::CommandRegistry;
+use heroku_types::{validate_candidate_value, Effect, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
+use heroku_util::{
+    has_meaningful_value, value_contains_secret, workflow_input_uses_history, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore,
+    UserPreferences, DEFAULT_HISTORY_PROFILE,
+};
+use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
+use ratatui::layout::Rect;
+use tokio::sync::mpsc::UnboundedReceiver;
+use tracing::warn;
 
 /// Cross-cutting shared context owned by the App.
 ///
 /// Holds runtime-wide objects like the command registry and configuration
 /// flags. This avoids threading multiple references through components and
 /// helps reduce borrow complexity.
-#[derive(Debug)]
 pub struct SharedCtx {
     /// Global Heroku command registry
-    pub registry: Arc<Mutex<Registry>>,
-    /// Global debug flag (from env)
-    pub debug_enabled: bool,
+    pub command_registry: Arc<Mutex<CommandRegistry>>,
     /// Value providers for suggestions
-    pub providers: Vec<Box<dyn ValueProvider>>,
+    pub providers: Vec<Arc<dyn ValueProvider>>,
+    /// Typed ProviderRegistry for provider-backed workflow selectors
+    pub provider_registry: Arc<ProviderRegistry>,
     /// Active UI theme (Dracula by default) loaded from env
     pub theme: Box<dyn theme::Theme>,
-    /// MCP plugin engine (None until initialized in main.rs)
+    /// MCP plugin engine (None until initialized in main_component)
     pub plugin_engine: Arc<PluginEngine>,
+    /// On-disk history store for workflow inputs and palette commands.
+    pub history_store: Arc<dyn HistoryStore>,
+    /// Identifier representing the active history profile.
+    pub history_profile_id: String,
+    /// Persisted user preferences (theme picker, appearance decisions, etc.).
+    pub preferences: Arc<UserPreferences>,
+    /// Canonical identifier for the currently loaded theme.
+    pub active_theme_id: String,
+    /// Whether the runtime can show the theme picker (truecolor terminals only).
+    pub theme_picker_available: bool,
 }
 
 impl SharedCtx {
-    pub fn new(registry: Arc<Mutex<Registry>>, plugin_engine: Arc<PluginEngine>) -> Self {
-        let debug_enabled = std::env::var("DEBUG")
-            .map(|v| !v.is_empty() && v != "0" && v.to_lowercase() != "false")
-            .unwrap_or(false);
-        // Add a registry-backed provider with a small TTL cache
-        let providers: Vec<Box<dyn ValueProvider>> = vec![Box::new(RegistryBackedProvider::new(Duration::from_secs(45)))];
+    pub fn new(command_registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Self {
+        let provider_registry = Arc::new(
+            ProviderRegistry::with_default_http(Arc::clone(&command_registry), Duration::from_secs(30)).expect("provider registry"),
+        );
+        let providers: Vec<Arc<dyn ValueProvider>> = vec![provider_registry.clone()];
+        let history_store: Arc<dyn HistoryStore> = match JsonHistoryStore::with_defaults() {
+            Ok(store) => Arc::new(store),
+            Err(error) => {
+                warn!(
+                    error = %error,
+                    "Failed to initialize history store at default path; falling back to in-memory history."
+                );
+                Arc::new(InMemoryHistoryStore::new())
+            }
+        };
+        let preferences = Arc::new(UserPreferences::with_defaults().unwrap_or_else(|error| {
+            warn!(
+                error = %error,
+                "Failed to load preferences from disk; falling back to ephemeral in-memory store."
+            );
+            UserPreferences::ephemeral()
+        }));
+        let preferred_theme = preferences.preferred_theme();
+        let loaded_theme = theme::load(preferred_theme.as_deref());
+        let theme_picker_available = theme::supports_theme_picker();
+
         Self {
-            registry,
-            debug_enabled,
+            command_registry,
             providers,
-            theme: theme::load_from_env(),
+            provider_registry: provider_registry.clone(),
+            theme: loaded_theme.theme,
             plugin_engine,
+            history_store,
+            history_profile_id: DEFAULT_HISTORY_PROFILE.to_string(),
+            preferences,
+            active_theme_id: loaded_theme.definition.id.to_string(),
+            theme_picker_available,
         }
     }
 }
 
+/// Wraps the event receiver for an in-flight workflow run.
+#[derive(Debug)]
+pub struct WorkflowRunEventReceiver {
+    /// Active workflow run identifier associated with these events.
+    pub run_id: String,
+    /// Stream of workflow events emitted by the background runner.
+    pub receiver: UnboundedReceiver<WorkflowRunEvent>,
+}
+
+impl WorkflowRunEventReceiver {
+    pub fn new(run_id: String, receiver: UnboundedReceiver<WorkflowRunEvent>) -> Self {
+        Self { run_id, receiver }
+    }
+}
+
 pub struct App<'a> {
+    /// Container focus flag for the top-level app focus scope
+    app_container_focus: FocusFlag,
+    /// Currently open modal kind (when Some, modal owns focus)
+    pub open_modal_kind: Option<Modal>,
+    /// Pending workflow run event receiver awaiting runtime registration.
+    workflow_event_rx: Option<WorkflowRunEventReceiver>,
+    /// Sequence counter for generating unique workflow run identifiers.
+    workflow_run_sequence: u64,
     /// Shared, cross-cutting context (registry, config)
     pub ctx: SharedCtx,
     /// State for the command palette input
@@ -80,16 +134,19 @@ pub struct App<'a> {
     /// Command browser state
     pub browser: BrowserState,
     /// Table modal state
-    pub table: TableState<'a>,
+    pub table: ResultsTableState<'a>,
     /// Help modal state
     pub help: HelpState,
     /// Plugins state (MCP management)
     pub plugins: PluginsState,
+    /// Workflow UI and execution state
+    pub workflows: WorkflowState,
     /// Application logs and status messages
     pub logs: LogsState,
     /// Vertical navigation bar state (left rail)
     pub nav_bar: VerticalNavBarState,
-    // moved to ctx: dry_run, debug_enabled, providers
+    /// Theme picker / appearance state
+    pub theme_picker: ThemePickerState,
     /// Whether a command is currently executing
     pub executing: bool,
     /// Animation frame for the execution throbber
@@ -97,32 +154,10 @@ pub struct App<'a> {
     /// Active execution count used by the event pump to decide whether to
     /// animate
     pub active_exec_count: Arc<AtomicUsize>,
-    /// Last pagination info returned by an execution (if any)
-    pub last_pagination: Option<heroku_types::Pagination>,
-    /// Ranges supported by the last executed command (for pagination UI)
-    pub last_command_ranges: Option<Vec<String>>,
-    /// Last executed CommandSpec (for pagination replays)
-    pub last_spec: Option<heroku_registry::CommandSpec>,
-    /// Last request body used for the executed command
-    pub last_body: Option<JsonMap<String, JsonValue>>,
-    /// History of Range headers used per page request (None means no Range header)
-    pub pagination_history: Vec<Option<String>>,
-    /// Initial Range header used (if any)
-    pub initial_range: Option<String>,
-    /// Current main view component
-    pub main_view: Option<Box<dyn Component>>,
-    /// Currently open modal component
-    pub open_modal: Option<Box<dyn Component>>,
     /// Global focus tree for keyboard/mouse traversal
     pub focus: Focus,
-    // the widget_id of the focus just before a modal is opened
-    transient_focus_id: Option<usize>,
-    /// Container focus flag for the top-level app focus scope
-    app_container_focus: FocusFlag,
     /// Currently active main route for dynamic focus ring building
-    current_route: Route,
-    /// Currently open modal kind (when Some, modal owns focus)
-    open_modal_kind: Option<Modal>,
+    pub current_route: Route,
 }
 
 impl App<'_> {
@@ -145,40 +180,73 @@ impl App<'_> {
     /// ```rust,ignore
     /// // Requires constructing a full Registry and App; ignored in doctests.
     /// ```
-    pub fn new(registry: Arc<Mutex<Registry>>, engine: Arc<PluginEngine>) -> Self {
+    pub fn new(registry: Arc<Mutex<CommandRegistry>>, engine: Arc<PluginEngine>) -> Self {
+        let ctx = SharedCtx::new(Arc::clone(&registry), engine);
+        let palette = PaletteState::new(
+            Arc::clone(&registry),
+            Arc::clone(&ctx.history_store),
+            ctx.history_profile_id.clone(),
+        );
+        let theme_picker_available = ctx.theme_picker_available;
         let mut app = Self {
-            ctx: SharedCtx::new(Arc::clone(&registry), engine),
+            ctx,
             browser: BrowserState::new(Arc::clone(&registry)),
             logs: LogsState::default(),
             help: HelpState::default(),
             plugins: PluginsState::new(),
-            table: TableState::default(),
-            palette: PaletteState::new(Arc::clone(&registry)),
-            nav_bar: VerticalNavBarState::defaults_for_views(),
+            workflows: WorkflowState::new(),
+            table: ResultsTableState::default(),
+            palette,
+            nav_bar: VerticalNavBarState::defaults_for_views(theme_picker_available),
+            theme_picker: ThemePickerState::default(),
             executing: false,
             throbber_idx: 0,
             active_exec_count: Arc::new(AtomicUsize::new(0)),
-            last_pagination: None,
-            last_command_ranges: None,
-            last_spec: None,
-            last_body: None,
-            pagination_history: Vec::new(),
-            initial_range: None,
-            main_view: Some(Box::new(PaletteComponent::default())),
-            open_modal: None,
             focus: Focus::default(),
-            transient_focus_id: None,
             app_container_focus: FocusFlag::named("app.container"),
             current_route: Route::Palette,
             open_modal_kind: None,
+            workflow_event_rx: None,
+            workflow_run_sequence: 0,
         };
         app.browser.update_browser_filtered();
 
         // Initialize rat-focus and set a sensible starting focus inside the palette
         app.focus = FocusBuilder::build_for(&app);
         app.focus.focus(&app.palette);
+        app.theme_picker.set_active_theme(&app.ctx.active_theme_id);
 
         app
+    }
+
+    fn next_run_identifier(&mut self, workflow_identifier: &str) -> String {
+        self.workflow_run_sequence = self.workflow_run_sequence.wrapping_add(1);
+        format!("{}-{}", workflow_identifier, self.workflow_run_sequence)
+    }
+
+    /// Applies the theme selected inside the picker, rebuilds UI focus state, and persists the choice.
+    pub fn apply_theme_selection(&mut self, theme_id: &str) {
+        let Some(definition) = theme::catalog::find_by_id(theme_id) else {
+            warn!(theme_id, "Unknown theme id requested; ignoring.");
+            return;
+        };
+
+        self.ctx.theme = definition.build();
+        self.ctx.active_theme_id = definition.id.to_string();
+        self.theme_picker.set_active_theme(definition.id);
+        if let Err(error) = self.ctx.preferences.set_preferred_theme(Some(definition.id.to_string())) {
+            warn!(%error, "Failed to persist preferred theme selection");
+        }
+    }
+
+    /// Registers a new workflow run event stream. Replaces any pending receiver.
+    pub fn register_workflow_run_stream(&mut self, run_id: String, receiver: UnboundedReceiver<WorkflowRunEvent>) {
+        self.workflow_event_rx = Some(WorkflowRunEventReceiver::new(run_id, receiver));
+    }
+
+    /// Extracts a pending workflow run event receiver for runtime registration.
+    pub fn take_pending_workflow_events(&mut self) -> Option<WorkflowRunEventReceiver> {
+        self.workflow_event_rx.take()
     }
 
     /// Updates the application state based on a message.
@@ -201,15 +269,16 @@ impl App<'_> {
     /// ```rust,ignore
     /// // Example requires real App/Msg types; ignored to avoid compile in doctests.
     /// ```
-    pub fn update(&mut self, message: Msg) -> Vec<Effect> {
+    pub fn update(&mut self, message: &Msg) -> Vec<Effect> {
         match message {
             Msg::Tick => self.handle_tick_message(),
             Msg::Resize(..) => vec![],
-            Msg::CopyToClipboard(text) => vec![Effect::CopyToClipboardRequested(text)],
-            Msg::ExecCompleted(execution_outcome) => self.handle_execution_completion(execution_outcome),
-            // Placeholder handlers for upcoming logs features
-            Msg::LogsUp | Msg::LogsDown | Msg::LogsExtendUp | Msg::LogsExtendDown => vec![],
-            Msg::LogsOpenDetail | Msg::LogsCloseDetail | Msg::LogsCopy | Msg::LogsTogglePretty => vec![],
+            Msg::CopyToClipboard(text) => vec![Effect::CopyToClipboardRequested(text.clone())],
+            Msg::ProviderValuesReady { provider_id, cache_key } => {
+                self.handle_provider_values_ready(provider_id.clone(), cache_key.clone())
+            }
+            Msg::WorkflowRunEvent { run_id, event } => self.process_workflow_run_event(run_id, event),
+            _ => Vec::new(),
         }
     }
 
@@ -238,206 +307,80 @@ impl App<'_> {
         // rebuild suggestions to pick up newly cached results without requiring
         // another keypress
         if self.palette.is_suggestions_open() && self.palette.is_provider_loading() {
-            let SharedCtx { providers, .. } = &self.ctx;
-            self.palette.apply_build_suggestions(providers, &*self.ctx.theme);
+            return self.rebuild_palette_suggestions();
         }
+
         vec![]
     }
 
-    /// Handles execution completion messages and processes the results.
-    ///
-    /// This method processes the results of command execution, including
-    /// plugin-specific responses, logs updates, and general command results.
-    /// It handles special plugin responses and falls back to general result
-    /// processing for regular commands.
-    ///
-    /// # Arguments
-    ///
-    /// * `execution_outcome` - The result of the command execution
-    ///
-    /// # Returns
-    ///
-    /// Returns `true` if the execution was handled as a special case (plugin response)
-    /// and the caller should return early, `false` if normal processing should continue.
-    fn handle_execution_completion(&mut self, execution_outcome: Box<ExecOutcome>) -> Vec<Effect> {
-        let execution_outcome = *execution_outcome;
-        // Keep executing=true if other executions are still active
-        let still_executing = self.active_exec_count.load(Ordering::Relaxed) > 0;
-        self.executing = still_executing;
-        match execution_outcome {
-            ExecOutcome::Http(..) => self.process_general_execution_result(execution_outcome),
-            ExecOutcome::Mcp(log, value) => self.process_mcp_execution_result(log, value),
-            ExecOutcome::PluginDetailLoad(name, result) => self.handle_plugin_detail_load(name, result),
-            ExecOutcome::PluginDetail(log, maybe_detail) => self.handle_plugin_detail(log, maybe_detail),
-            ExecOutcome::PluginsRefresh(log, maybe_plugins) => self.handle_plugin_refresh_response(log, maybe_plugins),
-            ExecOutcome::Log(log) => {
-                self.logs.entries.push(log);
-                vec![]
-            }
-            _ => vec![],
-        }
+    fn effects_for_pending_fetches(&self, fetches: Vec<PendingProviderFetch>) -> Vec<Effect> {
+        fetches
+            .into_iter()
+            .filter(|pending| pending.should_dispatch)
+            .map(|pending| Effect::ProviderFetchRequested {
+                provider_id: pending.plan.provider_id.clone(),
+                cache_key: pending.plan.cache_key.clone(),
+                args: pending.plan.args.clone(),
+            })
+            .collect()
     }
 
-    /// Handles plugin details responses from command execution.
-    ///
-    /// # Arguments
-    ///
-    /// * `log` - The raw log output for redaction
-    /// * `maybe_detail` - The plugin detail to apply
-    ///
-    /// # Returns
-    ///
-    /// Returns `Vec<Effect>` if follow up effects are needed
-    fn handle_plugin_detail(&mut self, log: String, maybe_detail: Option<PluginDetail>) -> Vec<Effect> {
-        self.logs.entries.push(log);
-        let Some(detail) = maybe_detail else { return vec![] };
-        if let Some(state) = self.plugins.details.as_mut()
-            && state.selected_plugin().is_some_and(|selected| selected == detail.name)
+    pub fn rebuild_palette_suggestions(&mut self) -> Vec<Effect> {
+        let fetches = self.palette.apply_build_suggestions(&self.ctx.providers, &*self.ctx.theme);
+        self.effects_for_pending_fetches(fetches)
+    }
+
+    pub fn prepare_selector_fetch(&mut self) -> Vec<Effect> {
+        let Some(selector) = self.workflows.collector_state_mut() else {
+            return Vec::new();
+        };
+
+        match self
+            .ctx
+            .provider_registry
+            .cached_values_or_plan(&selector.provider_id, selector.resolved_args.clone())
         {
-            state.apply_detail(detail.clone());
-        }
-
-        self.plugins.table.update_item(detail);
-
-        vec![]
-    }
-
-    fn handle_plugin_detail_load(&mut self, name: String, result: Result<PluginDetail, String>) -> Vec<Effect> {
-        match result {
-            Ok(detail) => {
-                self.logs.entries.push(format!("Plugins: loaded details for '{name}'"));
-                if let Some(state) = self.plugins.details.as_mut()
-                    && state.selected_plugin().is_some_and(|selected| selected == name)
-                {
-                    state.apply_detail(detail.clone());
-                }
-                self.plugins.table.update_item(detail);
+            CacheLookupOutcome::Hit(items) => {
+                selector.set_items(items);
+                selector.refresh_table(&*self.ctx.theme);
+                Vec::new()
             }
-            Err(error) => {
-                self.logs
-                    .entries
-                    .push(format!("Plugins: failed to load details for '{name}': {error}"));
-                if let Some(state) = self.plugins.details.as_mut()
-                    && state.selected_plugin().is_some_and(|selected| selected == name)
-                {
-                    state.mark_error(error);
-                }
+            CacheLookupOutcome::Pending(pending) => {
+                selector.pending_cache_key = Some(pending.plan.cache_key.clone());
+                selector.status = SelectorStatus::Loading;
+                self.effects_for_pending_fetches(vec![pending])
             }
         }
-
-        vec![]
     }
 
-    /// Handles plugin refresh responses from command execution.
-    ///
-    /// # Arguments
-    ///
-    /// * `log` - The raw log output for redaction
-    /// * `plugin_updates` - The updates to apply
-    ///
-    /// # Returns
-    ///
-    /// Returns `Vec<Effect>` if follow up effects are needed
-    fn handle_plugin_refresh_response(&mut self, log: String, plugin_updates: Option<Vec<PluginDetail>>) -> Vec<Effect> {
-        self.logs.entries.push(log);
-        let Some(updated_plugins) = plugin_updates else {
-            return vec![];
-        };
-        self.plugins.table.replace_items(updated_plugins);
-        vec![]
-    }
-
-    /// Processes general command execution results (non-plugin specific).
-    ///
-    /// This method handles the standard processing of command results including
-    /// logging, table updates, and pagination information.
-    ///
-    /// # Arguments
-    ///
-    /// * `execution_outcome` - The result of the command execution
-    fn process_general_execution_result(&mut self, execution_outcome: ExecOutcome) -> Vec<Effect> {
-        let ExecOutcome::Http(log, value, maybe_pagination, open_table) = execution_outcome else {
-            return vec![];
-        };
-
-        // nothing to do
-        if !open_table || (log.is_empty() && value.is_null()) {
-            return vec![];
-        }
-        let (summary, status_code) = summarize_execution_outcome(self.last_spec.as_ref(), &log);
-
-        let normalized_value = Self::normalize_result_payload(value);
-
-        self.logs.entries.push(summary);
-        self.logs.rich_entries.push(LogEntry::Api {
-            status: status_code.unwrap_or(0),
-            raw: log,
-            json: Some(normalized_value.clone()),
-        });
-
-        self.trim_logs_if_needed();
-
-        if open_table {
-            self.table.apply_result_json(Some(normalized_value), &*self.ctx.theme);
-            self.table.normalize();
-            self.last_pagination = maybe_pagination;
-            self.palette.reduce_clear_all();
-
-            return vec![Effect::ShowModal(Modal::Results)];
+    fn handle_provider_values_ready(&mut self, provider_id: String, cache_key: String) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        if self.palette.is_provider_loading() {
+            effects.extend(self.rebuild_palette_suggestions());
         }
 
-        vec![]
-    }
-
-    fn process_mcp_execution_result(&mut self, log: String, value: JsonValue) -> Vec<Effect> {
-        let label = command_label(self.last_spec.as_ref());
-        let success = if log.contains("failed") { "failed" } else { "succeeded" };
-        let summary = format!("{} - {}", label, success);
-
-        let normalized_value = Self::normalize_result_payload(value);
-        let raw_payload = Self::stringify_result_payload(&normalized_value);
-
-        self.logs.entries.push(summary);
-        self.logs.rich_entries.push(LogEntry::MCP {
-            raw: raw_payload,
-            json: Some(normalized_value.clone()),
-        });
-        self.trim_logs_if_needed();
-
-        if normalized_value.is_object() || normalized_value.is_array() {
-            self.table.apply_result_json(Some(normalized_value), &*self.ctx.theme);
-            self.table.normalize();
-            self.palette.reduce_clear_all();
-            return vec![Effect::ShowModal(Modal::Results)];
-        }
-
-        vec![]
-    }
-
-    /// Normalize execution payloads to ensure single-key collections render in the results table.
-    ///
-    /// Some APIs return objects shaped as `{ "items": [ ... ] }`. The table expects an array at
-    /// the root level, so this helper unwraps objects that meet this pattern. All other payloads
-    /// are returned unchanged.
-    fn normalize_result_payload(value: JsonValue) -> JsonValue {
-        if let JsonValue::Object(map) = &value {
-            if map.len() == 1 {
-                if let Some(inner_value) = map.values().next() {
-                    if inner_value.is_array() {
-                        return inner_value.clone();
+        if let Some(selector) = self.workflows.collector_state_mut() {
+            let matches_identifier = selector.provider_id == provider_id;
+            let matches_cache_key = selector.pending_cache_key.as_deref().is_none_or(|key| key == cache_key.as_str());
+            if matches_identifier && matches_cache_key {
+                match self
+                    .ctx
+                    .provider_registry
+                    .cached_values_or_plan(&selector.provider_id, selector.resolved_args.clone())
+                {
+                    CacheLookupOutcome::Hit(items) => {
+                        selector.set_items(items);
+                        selector.refresh_table(&*self.ctx.theme);
+                    }
+                    CacheLookupOutcome::Pending(pending) => {
+                        selector.pending_cache_key = Some(pending.plan.cache_key.clone());
+                        effects.extend(self.effects_for_pending_fetches(vec![pending]));
                     }
                 }
             }
         }
-        value
-    }
 
-    /// Produce a human-readable string representation of a JSON payload for logging.
-    fn stringify_result_payload(value: &JsonValue) -> String {
-        match value {
-            JsonValue::String(text) => text.clone(),
-            _ => value.to_string(),
-        }
+        effects
     }
 
     /// Trims log entries if they exceed the maximum allowed size.
@@ -458,166 +401,154 @@ impl App<'_> {
         }
     }
 
-    /// Update the current main route for focus building.
-    pub fn set_current_route(&mut self, route: Route) {
-        let (view, state): (Box<dyn Component>, Box<&dyn HasFocus>) = match route {
-            Route::Browser => (Box::new(BrowserComponent::default()), Box::new(&self.browser)),
-            Route::Palette => (Box::new(PaletteComponent::default()), Box::new(&self.palette)),
-            Route::Plugins => (Box::new(PluginsComponent::default()), Box::new(&self.plugins)),
+    /// Appends a plain-text message to the logs collections.
+    ///
+    /// This helper ensures both the flat string list and the rich log entries
+    /// remain in sync so detail views can resolve JSON payloads accurately. It
+    /// also enforces the maximum log retention window.
+    ///
+    /// # Arguments
+    ///
+    /// * `message` - The human-readable message to append to the logs.
+    pub fn append_log_message(&mut self, message: impl Into<String>) {
+        self.append_log_message_with_level(None, message);
+    }
+
+    /// Appends a plain-text message with an optional severity level.
+    ///
+    /// This variant is useful when callers want to preserve the originating log
+    /// level for detail presentation.
+    ///
+    /// # Arguments
+    ///
+    /// * `level` - Optional severity level (for example, `"warn"`).
+    /// * `message` - The human-readable message to append to the logs.
+    pub fn append_log_message_with_level(&mut self, level: Option<String>, message: impl Into<String>) {
+        let text = message.into();
+        self.logs.append_text_entry_with_level(level, text);
+        self.trim_logs_if_needed();
+    }
+
+    fn process_workflow_run_event(&mut self, run_id: &str, event: &WorkflowRunEvent) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        let persist_history = matches!(
+            event,
+            WorkflowRunEvent::RunCompleted {
+                status: WorkflowRunStatus::Succeeded,
+                ..
+            }
+        );
+
+        let log_messages = self.workflows.apply_run_event(run_id, event.clone(), &*self.ctx.theme);
+        for message in log_messages {
+            effects.push(Effect::Log(message));
+        }
+
+        if persist_history {
+            self.persist_successful_workflow_run_history();
+        }
+
+        effects
+    }
+
+    fn persist_successful_workflow_run_history(&mut self) {
+        let Some(run_state_rc) = &self.workflows.active_run_state else {
+            return;
+        };
+        let run_state = run_state_rc.borrow();
+
+        for (input_name, definition) in &run_state.workflow.inputs {
+            if !workflow_input_uses_history(definition) {
+                continue;
+            }
+
+            let Some(value) = run_state.run_context.inputs.get(input_name) else {
+                continue;
+            };
+
+            if !has_meaningful_value(value) || value_contains_secret(value) {
+                continue;
+            }
+
+            if let Some(validation) = &definition.validate
+                && let Err(error) = validate_candidate_value(value, validation)
+            {
+                warn!(
+                    input = %input_name,
+                    workflow = %run_state.workflow.identifier,
+                    error = %error,
+                    "skipping history persistence for value failing validation"
+                );
+                continue;
+            }
+
+            let key = HistoryKey::workflow_input(
+                self.ctx.history_profile_id.clone(),
+                run_state.workflow.identifier.clone(),
+                input_name.clone(),
+            );
+
+            if let Err(error) = self.ctx.history_store.insert_value(key, value.clone()) {
+                warn!(
+                    input = %input_name,
+                    workflow = %run_state.workflow.identifier,
+                    error = %error,
+                    "failed to persist workflow history value"
+                );
+            }
+        }
+    }
+
+    /// Requests execution of the currently active workflow run.
+    ///
+    pub fn run_active_workflow(&mut self) -> Vec<Effect> {
+        if self.workflows.unresolved_item_count() > 0 {
+            self.append_log_message("Cannot run workflow yet: resolve remaining inputs before running.");
+            return Vec::new();
+        }
+        if self.workflows.active_run_state.is_none() {
+            self.append_log_message("No active workflow run is available.");
+            return Vec::new();
+        }
+
+        let run_state_rc = self.workflows.active_run_state.clone().unwrap();
+        let run_state = run_state_rc.borrow();
+
+        let display_name = run_state
+            .workflow
+            .title
+            .as_deref()
+            .filter(|title| !title.is_empty())
+            .unwrap_or(&run_state.workflow.identifier)
+            .to_string();
+
+        let run_id = self.next_run_identifier(run_state.workflow.identifier.clone().as_str());
+        let request = WorkflowRunRequest {
+            run_id: run_id.clone(),
+            workflow: run_state.workflow.clone(),
+            inputs: run_state.run_context.inputs.clone(),
+            environment: run_state.run_context.environment_variables.clone(),
+            step_outputs: run_state.run_context.steps.clone(),
         };
 
-        self.current_route = self.nav_bar.set_route(route);
-        self.main_view = Some(view);
-        self.focus = FocusBuilder::build_for(self);
-        self.focus.focus(*state);
-    }
+        let mut run_view = RunViewState::new(
+            run_id.clone(),
+            run_state.workflow.identifier.clone(),
+            run_state.workflow.title.clone(),
+        );
+        run_view.initialize_steps(&run_state.workflow.steps, &*self.ctx.theme);
 
-    /// Update the open modal kind (use None to clear).
-    pub fn set_open_modal_kind(&mut self, modal: Option<Modal>) {
-        let previous = self.open_modal_kind.clone();
-        if let Some(modal_kind) = modal.clone() {
-            let modal_view: Box<dyn Component> = match modal_kind {
-                Modal::Help => Box::new(HelpComponent::default()),
-                Modal::Results => Box::new(TableComponent::default()),
-                Modal::LogDetails => Box::new(LogDetailsComponent::default()),
-                Modal::PluginDetails => Box::new(PluginsDetailsComponent::default()),
-            };
-            self.open_modal = Some(modal_view);
-            // save the current focus to restore when the modal is closed
-            self.transient_focus_id = self.focus.focused().and_then(|f| Some(f.widget_id()));
-        } else {
-            self.open_modal = None;
-        }
-        self.open_modal_kind = modal;
+        self.workflows.close_input_view();
+        self.workflows.begin_run_session(run_id.clone(), run_state.clone(), run_view);
 
-        if matches!(self.open_modal_kind, Some(Modal::PluginDetails)) {
-            self.plugins.ensure_details_state();
-        }
+        self.append_log_message(format!("Workflow '{}' run started.", display_name));
 
-        if matches!(previous, Some(Modal::PluginDetails)) && !matches!(self.open_modal_kind, Some(Modal::PluginDetails)) {
-            self.plugins.clear_details_state();
-        }
-    }
-
-    pub fn restore_focus(&mut self) {
-        if let Some(id) = self.transient_focus_id
-            && self.open_modal.is_none()
-        {
-            self.focus.by_widget_id(id);
-            self.transient_focus_id = None;
-        } else {
-            self.focus.first();
-        }
-    }
-}
-
-const EXECUTION_SUMMARY_LIMIT: usize = 160;
-
-fn summarize_execution_outcome(command_spec: Option<&heroku_registry::CommandSpec>, raw_log: &str) -> (String, Option<u16>) {
-    let label = command_label(command_spec);
-    let trimmed_log = raw_log.trim();
-
-    if trimmed_log.starts_with("Plugins:") {
-        let sanitized = heroku_util::redact_sensitive(trimmed_log);
-        return (sanitized, None);
-    }
-
-    if let Some(error_message) = trimmed_log.strip_prefix("Error:") {
-        let redacted = heroku_util::redact_sensitive(error_message.trim());
-        let truncated = truncate_for_summary(&redacted, EXECUTION_SUMMARY_LIMIT);
-        let summary = format!("{} - failed: {}", label, truncated);
-        return (summary, None);
-    }
-
-    let status_line = trimmed_log.lines().next().unwrap_or_default().trim();
-    let status_code = status_line.split_whitespace().next().and_then(|code| code.parse::<u16>().ok());
-
-    let success = if status_code.is_some_and(|c| c.clamp(200, 399) == c) {
-        "success"
-    } else {
-        "failed"
-    };
-    let summary = if status_line.is_empty() {
-        format!("{} - {}", label, success)
-    } else {
-        let sanitized_status = heroku_util::redact_sensitive(status_line);
-        format!("{} - {} ({})", label, success, sanitized_status)
-    };
-
-    (summary, status_code)
-}
-
-fn command_label(command_spec: Option<&heroku_registry::CommandSpec>) -> String {
-    match command_spec {
-        Some(spec) if spec.name.is_empty() => spec.group.clone(),
-        Some(spec) => format!("{} {}", spec.group, spec.name),
-        None => "Command".to_string(),
-    }
-}
-
-fn truncate_for_summary(text: &str, max_len: usize) -> String {
-    let trimmed = text.trim();
-    if trimmed.chars().count() <= max_len {
-        return trimmed.to_string();
-    }
-
-    // Reserve space for the trailing ellipsis ("...").
-    let target_len = max_len.saturating_sub(3);
-    let mut truncated = String::new();
-    for (idx, ch) in trimmed.chars().enumerate() {
-        if idx >= target_len {
-            break;
-        }
-        truncated.push(ch);
-    }
-    let trimmed_truncated = truncated.trim_end();
-    format!("{}...", trimmed_truncated)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use heroku_registry::CommandSpec;
-    use heroku_types::{ServiceId, command::HttpCommandSpec};
-
-    fn sample_spec() -> CommandSpec {
-        CommandSpec::new_http(
-            "apps".to_string(),
-            "info".to_string(),
-            String::new(),
-            Vec::new(),
-            Vec::new(),
-            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new(), None),
-        )
-    }
-
-    #[test]
-    fn summarize_success_includes_status_code() {
-        let spec = sample_spec();
-        let (summary, status) = summarize_execution_outcome(Some(&spec), "200 OK\n{\"foo\":\"bar\"}");
-
-        assert_eq!(summary, "apps info - success (200 OK)");
-        assert_eq!(status, Some(200));
-    }
-
-    #[test]
-    fn summarize_error_marks_failure_and_truncates() {
-        let spec = sample_spec();
-        let long_error = format!("Error: {}", "SensitiveToken123".repeat((EXECUTION_SUMMARY_LIMIT / 5) + 10));
-
-        let (summary, status) = summarize_execution_outcome(Some(&spec), &long_error);
-
-        assert!(summary.starts_with("apps info - failed: "));
-        assert!(summary.ends_with("..."));
-        assert_eq!(status, None);
-    }
-
-    #[test]
-    fn summarize_without_spec_uses_generic_label() {
-        let (summary, status) = summarize_execution_outcome(None, "200 OK\n{}");
-
-        assert_eq!(summary, "Command - success (200 OK)");
-        assert_eq!(status, Some(200));
+        vec![
+            Effect::WorkflowRunRequested {
+                request: Box::new(request.clone()),
+            },
+            Effect::SwitchTo(Route::WorkflowRun),
+        ]
     }
 }
 
@@ -630,14 +561,21 @@ impl HasFocus for App<'_> {
         // If a modal is open, it is the sole focus scope.
         if let Some(kind) = &self.open_modal_kind {
             match kind {
-                Modal::Results => {
+                Modal::Results(_) => {
                     builder.widget(&self.table);
                 }
                 Modal::LogDetails => {
                     builder.widget(&self.logs);
                 }
-                Modal::PluginDetails | Modal::Help => {
-                    // no focusable fields; leave ring empty
+                Modal::WorkflowCollector => {
+                    if let Some(state) = self.workflows.collector.as_ref() {
+                        builder.widget(state);
+                    } else if let Some(state) = self.workflows.manual_entry.as_ref() {
+                        builder.widget(state);
+                    }
+                }
+                Modal::PluginDetails | Modal::Help | Modal::ThemePicker => {
+                    // focusable fields TBD; leave the ring empty
                 }
             }
             builder.end(tag);
@@ -650,7 +588,6 @@ impl HasFocus for App<'_> {
         match self.current_route {
             Route::Palette => {
                 builder.widget(&self.palette);
-                builder.widget(&self.logs);
             }
             Route::Browser => {
                 builder.widget(&self.browser);
@@ -658,6 +595,12 @@ impl HasFocus for App<'_> {
             Route::Plugins => {
                 builder.widget(&self.plugins);
             }
+            Route::Workflows | Route::WorkflowInputs | Route::WorkflowRun => {
+                builder.widget(&self.workflows);
+            }
+        }
+        if self.logs.is_visible {
+            builder.widget(&self.logs);
         }
 
         builder.end(tag);

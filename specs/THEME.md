@@ -299,13 +299,26 @@ State chips: Aurora colors
 
 ## 9) Theme Switching (Contributors)
 
-The TUI selects a theme via the `TUI_THEME` environment variable. Default is `dracula` when unset.
+The TUI derives its palette at startup. If `TUI_THEME` is unset, the loader inspects terminal capabilities:
+- Truecolor terminals (e.g., iTerm2, Kitty) receive the standard Dracula palette.
+- 8-bit/ANSI terminals fall back to the curated `ansi256` theme for consistent contrast.
 
-Supported values
-- `dracula` (default)
+Contributors can override both the palette and the color mode via environment variables.
+
+Supported `TUI_THEME` values
+- `dracula` (default for truecolor terminals)
 - `dracula_hc`, `dracula-high-contrast`, `dracula-hc`, `draculahc`
 - `nord`
 - `nord_hc`, `nord-high-contrast`, `nord-hc`, `nordhc`
+- `cyberpunk`
+- `cyberpunk_hc`, `cyberpunk-high-contrast`, `cyberpunk-hc`, `cyberpunkhc`
+- `ansi256`
+- `ansi256_hc`, `ansi256-high-contrast`, `ansi256-hc`, `ansi256hc`
+
+Optional color-mode override (`TUI_COLOR_MODE`)
+- `truecolor` / `24bit` — force RGB output even if the terminal misreports.
+- `ansi256` / `256` / `8bit` — force the fallback palette for testing.
+- `TUI_FORCE_TRUECOLOR=1` is also recognized as a legacy alias.
 
 Examples
 ```bash
@@ -323,12 +336,34 @@ TUI_THEME=nord cargo run -p heroku-cli
 
 # Nord High Contrast
 TUI_THEME=nord_hc cargo run -p heroku-cli
+
+# Cyberpunk fallback test
+TUI_THEME=cyberpunk cargo run -p heroku-cli
+
+# Force ANSI palette regardless of terminal
+TUI_COLOR_MODE=ansi256 cargo run -p heroku-cli
+
+# Force truecolor palette when a terminal fakes 256-color support
+TUI_COLOR_MODE=truecolor cargo run -p heroku-cli
 ```
 
 Implementation notes
-- Loader: `crates/tui/src/ui/theme/mod.rs::load_from_env()` maps env to theme types.
+- Loader: `crates/tui/src/ui/theme/mod.rs::load()` resolves env overrides, persisted preferences, and capability fallbacks (Dracula for truecolor, ANSI for 8-bit).
+- ANSI-only terminals always load the fallback palette and ignore both `TUI_THEME` and persisted preferences to avoid misrendered colors.
+- Capability detection: `crates/tui/src/ui/theme/mod.rs::detect_color_capability()` inspects `COLORTERM`, `TERM`, and overrides before selecting the default definition.
 - Theme role usage: prefer semantic roles in `ThemeRoles` over hard-coded colors.
-- Hot-switching at runtime is not supported; change `TUI_THEME` and restart.
+- Runtime hot-switching is supported via the theme picker modal; env overrides still win on startup.
+- Manual QA: validate both truecolor (iTerm2) and ANSI terminals (macOS Terminal) after palette changes.
+
+### Theme Picker Modal (Option 3)
+
+- `Ctrl+T` opens a centered modal (`ThemePickerComponent`) showing every palette as a button with **three swatch chips** (background, primary accent, selection).
+- Each row displays the human-readable label (prefixed with `> ` when selected), `[HC]` or `[ANSI]` badges when applicable, inline swatch chips (background, primary accent, selection), and an “● Active” tag on the currently applied palette; descriptions are omitted to keep the list compact.
+- The vertical nav bar exposes a `[Set] Settings` entry that opens the same modal for mouse-first workflows; the entry behaves like other nav items but triggers the modal instead of changing routes.
+- The picker is only available when the terminal advertises truecolor support; ANSI256-only terminals fall back to the default palette and hide both the `[Set]` nav item and the `Ctrl+T` shortcut.
+- Navigation is vertical (`↑/↓`, `j/k`), `Enter` applies immediately (no restart), and, or `Ctrl+C` closes the overlay.
+- Color decisions remain purely informational—the modal itself uses the *current* theme for borders, badges, and typography to keep focus styling consistent.
+- The chosen palette persists to `~/.config/heroku/preferences.json` (see `crates/util/src/preferences.rs`). On startup the loader prefers `TUI_THEME`, then the persisted preference, then the capability-based default.
 
 ## 10) Non-Goals (avoid)
 

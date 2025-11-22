@@ -3,9 +3,7 @@ use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
 pub fn resolve_output_schema(maybe_schema: Option<&Value>, root: &Value) -> Option<SchemaProperty> {
-    let Some(schema) = maybe_schema else {
-        return None;
-    };
+    let schema = maybe_schema?;
 
     let schema_type = get_type(schema, root);
     let description = get_description(schema, root).unwrap_or_default();

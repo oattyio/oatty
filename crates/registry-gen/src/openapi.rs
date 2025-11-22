@@ -36,31 +36,23 @@ fn resolve_local_ref(root: &Value, r: &str) -> Option<Value> {
 // Parameter Collection and Merging
 // ============================================================================
 
-/// Collects and resolves parameters defined at both the path and operation levels from a given
-/// OpenAPI document. It ensures no duplicate parameters (based on both name and location) are
-/// included in the output, with operation-level parameters overriding path-level ones when conflicting.
+/// Collects and resolves parameters declared at both the path and operation levels within an
+/// OpenAPI document. Operation-level parameters override path-level definitions that share the
+/// same name and location.
 ///
 /// # Arguments
 ///
-/// * `root` - A reference to the root [`Value`] object of the OpenAPI document where `$ref` resolutions
-///            can be performed.
-/// * `path_item` - A [`Value`] representing the specific path object, which may contain `parameters`
-///                 defined at the path level.
-/// * `op` - A [`Value`] representing the specific operation object, which may contain `parameters`
-///          defined at the operation level.
+/// * `root` - Root [`Value`] used to resolve any local `$ref` pointers.
+/// * `path_item` - Path-level object that may contribute shared parameters.
+/// * `op` - Operation-level object whose parameters override path-level entries.
 ///
 /// # Returns
 ///
-/// A `Vec<Value>` containing the resolved and deduplicated parameters.
-///
-/// - Parameters defined at the operation level take precedence over those defined at the path level
-///   if they share the same name and location.
-/// - Each parameter is resolved by dereferencing `$ref` if necessary, using the `resolve_local_ref`
-///   function to locate the referenced definitions in the `root` document.
+/// Resolved and deduplicated parameters with any `$ref` indirections expanded.
 ///
 /// # Example
 ///
-/// ```rust
+/// ```ignore
 /// use serde_json::json;
 /// use serde_json::Value;
 ///
@@ -98,15 +90,7 @@ fn resolve_local_ref(root: &Value, r: &str) -> Option<Value> {
 ///
 /// # Notes
 ///
-/// - The function relies on the `resolve_local_ref` function to resolve `$ref` values within the
-///   OpenAPI document. If unresolved, the parameter is included as-is.
-/// - The `root`, `path_item`, and `op` arguments are assumed to be well-structured JSON values
-///   following OpenAPI specifications.
-///
-/// # Dependencies
-///
-/// This function is designed to be used with the `serde_json` crate and operates on `serde_json::Value`
-/// for handling JSON objects.
+/// Unresolvable `$ref` pointers are returned as-is to preserve the input structure.
 fn collect_parameters(root: &Value, path_item: &Value, op: &Value) -> Vec<Value> {
     let mut out: Vec<Value> = Vec::new();
     let mut seen: Vec<(String, String)> = Vec::new();
@@ -210,14 +194,14 @@ fn build_link_schema_from_oas3(root: &Value, path_item: &Value, op: &Value) -> O
                 && let Some(desc) = p.get("description").cloned()
                 && let Some(obj) = schema.as_object_mut()
             {
-                obj.insert("description".into(), desc);
+                obj.insert("description".into(), desc.clone());
             }
 
             if schema.get("default").is_none()
                 && let Some(def) = p.get("default").cloned()
                 && let Some(obj) = schema.as_object_mut()
             {
-                obj.insert("default".into(), def);
+                obj.insert("default".into(), def.clone());
             }
 
             props.insert(name, schema);
@@ -284,49 +268,51 @@ const PTR_ENCODE_SET: &AsciiSet = &CONTROLS
     .add(b'}')
     .add(b'/');
 
-/// Rewrites the `href` by replacing placeholders in the provided `path` with encoded JSON Pointer references
-/// and collects schema definitions for parameters in `definitions`.
-///
-/// This function processes `params` to identify parameters with `"in": "path"`. For each of these parameters,
-/// it builds or updates a corresponding entry in the `definitions` map. Specifically, it creates a definition
-/// object under the `definitions.identity` path, containing the parameter's `type` and optional `description`.
-/// Simultaneously, placeholders in the `path` matching parameter names (e.g., `{name}`) are replaced with
-/// encoded references that point to the `definitions.identity` of the parameter.
+/// Rewrites the `href` by replacing path parameters with encoded references to their schema
+/// definitions, while simultaneously collecting and enriching parameter definitions.
 ///
 /// # Parameters
-/// - `path`: A string slice representing the original URI template containing parameter placeholders (e.g., `{name}`).
-/// - `params`: A slice of `Value` (from the `serde_json` crate), where each element represents a parameter with
-///    associated metadata (e.g., `name`, `in`, `type`, and `description`).
-/// - `definitions`: A mutable reference to a `Map<String, Value>` that stores the schema definitions. This is
-///    updated with new or modified parameter definitions as the function processes `params`.
+/// - `path`: A string slice representing the path in which placeholders like `{name}` need
+///   to be replaced with encoded definitions.
+/// - `params`: A slice of JSON values, where each element represents a parameter definition
+///   that might include metadata such as `name`, `in`, `schema`, and `description`.
+/// - `definitions`: A mutable map that will be updated with parameter definitions under their
+///   respective names. Each definition includes details within `"definitions.identity"`.
 ///
 /// # Returns
-/// A `String` containing the updated `href`, where parameter placeholders in the original `path` are replaced
-/// with encoded JSON Pointer references to the corresponding parameter definitions.
+/// Returns a new `String` where path parameters, such as `{name}`, have been replaced with
+/// encoded references pointing to their respective schema definitions (e.g.,
+/// `{(%23%2Fdefinitions%2Fname%2Fdefinitions%2Fidentity)}`).
+///
+/// # Behavior
+/// - Only processes parameters where the `"in"` field is `"path"`.
+/// - If a parameter definition has a name (`"name"` field), a corresponding entry in the
+///   `definitions` map is created or updated:
+///     - Adds a `"definitions.identity"` object with:
+///         - A `"type"` field, defaulting to `"string"` if unspecified in the parameter schema.
+///         - A `"description"` field, if present in the parameter.
+/// - Modifies the `href` to replace `{param_name}` with an encoded reference to
+///   `#/definitions/{param_name}/definitions/identity`.
 ///
 /// # Example
-/// ```
+/// ```ignore
 /// use serde_json::{Value, json, Map};
-/// use serde_json::value::to_value;
 ///
 /// let path = "/users/{userId}";
 /// let params = vec![
 ///     json!({
-///         "name": "userId",
 ///         "in": "path",
-///         "schema": { "type": "string" },
-///         "description": "The ID of the user"
+///         "name": "userId",
+///         "description": "The ID of the user",
+///         "schema": { "type": "string" }
 ///     })
 /// ];
 /// let mut definitions = Map::new();
 ///
-/// let updated_href = rewrite_href_and_collect_definitions(path, &params, &mut definitions);
+/// let new_path = rewrite_href_and_collect_definitions(&path, &params, &mut definitions);
 ///
-/// assert_eq!(
-///     updated_href,
-///     "/users/{(%23%2Fdefinitions%2FuserId%2Fdefinitions%2Fidentity)}"
-/// );
-///
+/// assert_eq!(new_path, "/users/{(%23%2Fdefinitions%2FuserId%2Fdefinitions%2Fidentity)}");
+/// assert!(definitions.contains_key("userId"));
 /// assert_eq!(
 ///     definitions.get("userId").unwrap(),
 ///     &json!({
@@ -341,16 +327,11 @@ const PTR_ENCODE_SET: &AsciiSet = &CONTROLS
 /// ```
 ///
 /// # Notes
-/// - The placeholders in the `path` should align with the `name` fields in `params`. If no match is found,
-///   the placeholder is left unchanged.
-/// - The function assumes that parameter objects in `params` conform to the OpenAPI-style schema, potentially
-///   including `name`, `in`, `schema`, and `description` fields.
-/// - The encoding of the JSON Pointer reference follows the `%` encoding rules specified for JSON Pointers
-///   used in URIs (e.g., `#` becomes `%23`).
-///
-/// # Errors
-/// This function does not return errors explicitly but may panic if invariants are violated, such as if a
-/// parameter's `schema` field is malformed or if `definitions` cannot be updated due to type mismatches.
+/// - Parameters without a `"name"` or where `"in"` is not `"path"` are ignored.
+/// - Existing fields in `definitions.<name>.definitions.identity` are preserved unless explicitly
+///   specified by the current parameter.
+/// - Encoding of references ensures they work properly in JSON Pointer contexts by escaping special
+///   characters like `/`.
 fn rewrite_href_and_collect_definitions(path: &str, params: &[Value], definitions: &mut Map<String, Value>) -> String {
     let mut href = path.to_string();
 
@@ -829,13 +810,13 @@ fn build_swagger2_link_schema(root: &Value, params: &[Value]) -> Option<Value> {
                             && let Some(desc) = param.get("description").cloned()
                             && let Some(obj) = s_owned.as_object_mut()
                         {
-                            obj.insert("description".into(), desc);
+                            obj.insert("description".into(), desc.clone());
                         }
                         if s_owned.get("default").is_none()
                             && let Some(def) = param.get("default").cloned()
                             && let Some(obj) = s_owned.as_object_mut()
                         {
-                            obj.insert("default".into(), def);
+                            obj.insert("default".into(), def.clone());
                         }
                         s_owned
                     } else {

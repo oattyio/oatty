@@ -61,15 +61,16 @@ impl Default for FieldSelection {
 ///
 /// Examples
 /// ```rust
-/// use heroku_engine::provider::{ProviderReturns, ReturnField};
-/// use heroku_engine::provider::{infer_selection};
+/// use heroku_engine::provider::{ProviderContract, ProviderReturns, ReturnField, infer_selection};
 ///
-/// let contract = heroku_engine::provider::ProviderContract {
-///     args: serde_json::Map::new(),
-///     returns: ProviderReturns { fields: vec![
-///         ReturnField { name: "uuid".into(), r#type: Some("string".into()), tags: vec!["identifier".into()] },
-///         ReturnField { name: "display".into(), r#type: Some("string".into()), tags: vec!["display".into()] },
-///     ]}
+/// let contract = ProviderContract {
+///     arguments: Vec::new(),
+///     returns: ProviderReturns {
+///         fields: vec![
+///             ReturnField { name: "uuid".into(), r#type: Some("string".into()), tags: vec!["identifier".into()] },
+///             ReturnField { name: "display".into(), r#type: Some("string".into()), tags: vec!["display".into()] },
+///         ],
+///     },
 /// };
 /// let sel = infer_selection(None, Some(&contract));
 /// assert_eq!(sel.value_field, "uuid");
@@ -146,7 +147,52 @@ pub fn infer_selection(explicit: Option<crate::model::SelectSpec>, contract: Opt
     selection.source = SelectionSource::RequiresChoice;
     selection
 }
-
+/// Scans a `ProviderContract` to identify potential candidates for specific fields such as
+/// an identifier (`id`) and a display field (`name` or `display`), based on field tags and names.
+///
+/// # Arguments
+///
+/// * `contract` - A reference to a `ProviderContract` that contains a list of fields
+///   within its `returns` section. Each field may have some associated tags and a name.
+///
+/// # Returns
+///
+/// A tuple containing the following elements:
+///
+/// 1. `id_candidate` (`Option<String>`): The name of the field that is chosen as the identifier.
+///     - This is determined by checking for tags like `"id"` or `"identifier"` in the field.
+///     - If no such tags exist, any field explicitly named `"id"` will be chosen as a fallback.
+///     - Returns `None` if no identifier is found.
+///
+/// 2. `id_from_tags` (`bool`): Indicates whether the `id_candidate` was determined by tag-based matching.
+///
+/// 3. `display_candidate` (`Option<String>`): The name of the field that is chosen as the display field.
+///     - This is determined by checking for the `"display"` tag in the field.
+///     - If no such tag exists, any field explicitly named `"name"` will be chosen as a fallback.
+///     - Returns `None` if no display candidate is found.
+///
+/// 4. `display_from_tags` (`bool`): Indicates whether the `display_candidate` was determined by tag-based matching.
+///
+/// # Implementation Details
+///
+/// The function iterates through the fields in the `contract.returns.fields`.
+/// It checks the `tags` vector of each field for the presence of specific tags associated with `id` or `display`.
+/// If no tag-based match is found, it attempts to use explicit naming conventions as a fallback (`id` for identifiers, `name` for display).
+///
+/// # Example
+/// ```rust,ignore
+/// let contract = ProviderContract {
+///     returns: Returns {
+///         fields: vec![
+///             Field { name: "id", tags: vec!["identifier".to_string()] },
+///             Field { name: "name", tags: vec!["display".to_string()] },
+///         ]
+///     }
+/// };
+///
+/// let result = scan_contract_for_candidates(&contract);
+/// assert_eq!(result, (Some("id".to_string()), true, Some("name".to_string()), true));
+/// ```
 fn scan_contract_for_candidates(contract: &ProviderContract) -> (Option<String>, bool, Option<String>, bool) {
     let mut id_candidate: Option<String> = None;
     let mut id_from_tags = false;
@@ -170,7 +216,56 @@ fn scan_contract_for_candidates(contract: &ProviderContract) -> (Option<String>,
     }
     (id_candidate, id_from_tags, display_candidate, display_from_tags)
 }
-
+/// Coerces a JSON [`Value`] into the desired target type after optionally extracting a field from
+/// an object.
+///
+/// # Arguments
+///
+/// * `value` - Input value to coerce. Objects can be combined with `selection`; other kinds are
+///   converted directly.
+/// * `target_type` - Optional coercion target (`"string"`, `"number"`, or `"boolean"`). When
+///   `None`, the function preserves the original type unless a selection produces `Null`, which
+///   defaults to an empty string.
+/// * `selection` - Optional field selector that extracts a nested field from object values before
+///   coercion. When the field is missing, the function behaves as if `Value::Null` was supplied.
+///
+/// # Returns
+///
+/// A coerced [`Value`] consistent with workflow binding expectations. Unsupported target types
+/// leave the original value unchanged.
+/// ```rust,ignore
+/// use serde_json::Value;
+///
+/// // Example 1: Coerce a string to a number
+/// let value = Value::String("123".to_string());
+/// assert_eq!(
+///     coerce_value(&value, Some("number"), None),
+///     Value::Number(serde_json::Number::from(123))
+/// );
+///
+/// // Example 2: Extract a field from an object
+/// let obj = Value::Object(serde_json::map::Map::from_iter([
+///     ("key".to_string(), Value::String("value".to_string()))
+/// ]));
+/// let selection = Some(FieldSelection { value_field: "key".to_string() });
+/// assert_eq!(
+///     coerce_value(&obj, None, selection.as_ref()),
+///     Value::String("value".to_string())
+/// );
+///
+/// // Example 3: Coerce a boolean to a string
+/// let value = Value::Bool(true);
+/// assert_eq!(
+///     coerce_value(&value, Some("string"), None),
+///     Value::String("true".to_string())
+/// );
+///
+/// // Example 4: Handle unrecognized target type
+/// assert_eq!(
+///     coerce_value(&value, Some("unknown_type"), None),
+///     Value::Bool(true)
+/// );
+/// ```
 pub fn coerce_value(value: &Value, target_type: Option<&str>, selection: Option<&FieldSelection>) -> Value {
     let base = match (value, selection) {
         (Value::Object(map), Some(sel)) => map.get(&sel.value_field).cloned().unwrap_or(Value::Null),

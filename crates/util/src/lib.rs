@@ -28,9 +28,11 @@
 // Internal modules
 pub mod command_vec_utils;
 pub mod date_handling;
+pub mod history_store;
 pub mod http;
 pub mod http_exec;
 pub mod http_path_resolution;
+pub mod preferences;
 pub mod schema;
 pub mod shell_lexing;
 pub mod text_processing;
@@ -38,9 +40,11 @@ pub mod text_processing;
 // Re-export commonly used items for convenience
 pub use command_vec_utils::*;
 pub use date_handling::*;
+pub use history_store::*;
 pub use http::*;
 pub use http_exec::*;
 pub use http_path_resolution::*;
+pub use preferences::*;
 pub use schema::*;
 pub use shell_lexing::*;
 pub use text_processing::*;

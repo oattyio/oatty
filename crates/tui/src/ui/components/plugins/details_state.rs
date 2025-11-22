@@ -8,7 +8,7 @@ use heroku_mcp::{EnvVar, McpLogEntry, PluginDetail, PluginToolSummary};
 pub enum PluginDetailsLoadState {
     Idle,
     Loading,
-    Loaded(PluginDetailsData),
+    Loaded(Box<PluginDetailsData>),
     Error(String),
 }
 
@@ -98,14 +98,7 @@ impl PluginDetailsModalState {
 
     /// Store the successfully fetched plugin detail payload.
     pub fn apply_detail(&mut self, detail: PluginDetail) {
-        self.load_state = PluginDetailsLoadState::Loaded(PluginDetailsData::new(detail));
-    }
-
-    /// Reset modal state back to the idle baseline.
-    pub fn reset(&mut self) {
-        self.selected_plugin = None;
-        self.load_state = PluginDetailsLoadState::Idle;
-        self.logs_scroll = 0;
+        self.load_state = PluginDetailsLoadState::Loaded(Box::new(PluginDetailsData::new(detail)));
     }
 
     pub fn logs_scroll(&self) -> usize {

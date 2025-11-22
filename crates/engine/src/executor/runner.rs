@@ -2,14 +2,15 @@ use anyhow::{Result, anyhow};
 use reqwest::Method;
 use serde_json::Value;
 use std::str::FromStr;
+use tokio::{runtime::Handle, task};
 
 use crate::resolve::RunContext;
 
 use heroku_api::HerokuClient;
-use heroku_registry::{CommandSpec, Registry, find_by_group_and_cmd};
+use heroku_registry::{CommandRegistry, CommandSpec, find_by_group_and_cmd};
 use heroku_util::{
     build_path,
-    http::{build_range_header_from_body, strip_range_body_fields},
+    http::{build_range_header_from_body, parse_response_json_strict, strip_range_body_fields},
 };
 
 /// Execute a single command.
@@ -44,20 +45,20 @@ impl CommandRunner for NoopRunner {
 /// Registry-backed command runner that resolves `run` identifiers via the
 /// command registry and executes HTTP requests with the Heroku API client.
 pub struct RegistryCommandRunner {
-    registry: Registry,
+    registry: CommandRegistry,
     client: HerokuClient,
 }
 
 impl RegistryCommandRunner {
     /// Create a new registry-backed runner from explicit dependencies.
-    pub fn new(registry: Registry, client: HerokuClient) -> Self {
+    pub fn new(registry: CommandRegistry, client: HerokuClient) -> Self {
         Self { registry, client }
     }
 
     /// Create a new registry-backed runner by loading the embedded schema and
     /// constructing a `HerokuClient` from environment variables.
     pub fn from_spec(spec: &CommandSpec) -> Result<Self> {
-        let registry = Registry::from_embedded_schema()?;
+        let registry = CommandRegistry::from_embedded_schema()?;
         let http = spec.http().ok_or_else(|| anyhow!("command '{}' is not HTTP-backed", spec.name))?;
         let client = HerokuClient::new_from_service_id(http.service_id)?;
         Ok(Self { registry, client })
@@ -66,11 +67,12 @@ impl RegistryCommandRunner {
 
 impl CommandRunner for RegistryCommandRunner {
     fn run(&self, run: &str, with: Option<&Value>, body: Option<&Value>, _ctx: &RunContext) -> Result<Value> {
-        // Parse run into group + name (name may contain additional colons)
+        // Parse run into group + name using the canonical whitespace-separated form ("group name").
         let (group, name) = run
-            .split_once(':')
-            .map(|(g, rest)| (g.to_string(), rest.to_string()))
-            .ok_or_else(|| anyhow::anyhow!("invalid run identifier: {}", run))?;
+            .split_once(char::is_whitespace)
+            .map(|(g, n)| (g.trim().to_string(), n.trim().to_string()))
+            .filter(|(g, n)| !g.is_empty() && !n.is_empty())
+            .ok_or_else(|| anyhow!("invalid run identifier: {run}"))?;
 
         let spec = find_by_group_and_cmd(&self.registry.commands, &group, &name)?;
 
@@ -136,26 +138,31 @@ impl CommandRunner for RegistryCommandRunner {
             }
         }
 
-        // Execute request synchronously using a lightweight runtime
-        let res = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt.block_on(async move {
-                let resp = req.send().await.map_err(|e| anyhow::anyhow!(e))?;
-                let status = resp.status();
-                let headers = resp.headers().clone();
-                let val = resp.json::<Value>().await.unwrap_or(Value::Null);
-                let mut obj = serde_json::Map::new();
-                obj.insert("status_code".into(), Value::Number(serde_json::Number::from(status.as_u16())));
-                if let Some(v) = headers
-                    .get("Content-Range")
-                    .and_then(|h| h.to_str().ok())
-                    .map(|s| Value::String(s.to_string()))
-                {
-                    obj.insert("content_range".into(), v);
-                }
-                obj.insert("data".into(), val);
-                Ok::<Value, anyhow::Error>(Value::Object(obj))
-            }),
-            Err(e) => Err(anyhow::anyhow!(e)),
+        let fut = async move {
+            let response = req.send().await.map_err(|error| anyhow::anyhow!(error))?;
+            let response = response.error_for_status().map_err(|error| anyhow::anyhow!(error))?;
+            let status = response.status();
+            let body_text = response.text().await.map_err(|error| anyhow::anyhow!(error))?;
+
+            if body_text.trim().is_empty() {
+                return Ok::<Value, anyhow::Error>(Value::Null);
+            }
+
+            let parsed = parse_response_json_strict(&body_text, Some(status)).map_err(|error| anyhow::anyhow!(error))?;
+            // Return the raw JSON payload so downstream bindings can access fields directly
+            // via `steps.<id>.output.*` without an extra nesting layer.
+            Ok::<Value, anyhow::Error>(parsed)
+        };
+
+        // Execute request synchronously, reusing the current runtime when available.
+        let res = if let Ok(handle) = Handle::try_current() {
+            task::block_in_place(|| handle.block_on(fut))
+        } else {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .map_err(|e| anyhow::anyhow!(e))?
+                .block_on(fut)
         }?;
 
         Ok(res)

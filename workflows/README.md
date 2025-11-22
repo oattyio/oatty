@@ -9,19 +9,21 @@ inputs:
   app_name:
     description: "Name for new app"
     type: string
+    validate:
+      pattern: "^[a-z](?:[a-z0-9-]{1,28}[a-z0-9])$"
   region:
-    provider: regions:list
+    provider: regions list
     select:
       value_field: name
       display_field: name
 steps:
   - id: create_app
-    run: apps:create
+    run: apps create
     body:
       name: ${{ inputs.app_name }}
       region: ${{ inputs.region }}
   - id: confirm
-    run: apps:info
+    run: apps info
     with:
       app: ${{ inputs.app_name }}
 ```

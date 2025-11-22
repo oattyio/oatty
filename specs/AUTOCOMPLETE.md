@@ -14,7 +14,7 @@ A single-line **command palette** that supports:
 
 - **Fuzzy autocomplete** for commands / subcommands / flags / values  
 - **Inline ghost-text** and a **popup suggestion list**  
-- **History & reverse-search** (Ctrl-R) à la *rustyline*  
+- **History (persisted between sessions) & reverse-search** (Ctrl-R) à la *rustyline*  
 - **Emacs/Vi keybindings**, word/char editing, kill/yank, transpose, etc.  
 - **Schema-aware** (Hyper-Schema + MCP tools) + per-command **value providers**  
 - **Low-latency** on thousands of entries inside a TUI frame
@@ -52,8 +52,9 @@ A single-line **command palette** that supports:
   - `Ctrl-Space`: open/close popup without insert  
   - `→`: accept ghost text by word  
 - **History**:  
-  - `↑/↓`: session history  
+  - `↑/↓`: browse recently executed commands (including persisted history when available)  
   - `Ctrl-R`: fuzzy reverse search overlay  
+  - Entries are sanitized, stored per user, and reused across sessions.  
 - **Mode**: `F1` to full guided UI; state preserved.
 
 ---
@@ -80,7 +81,7 @@ No shell expansion or globbing—just robust tokenization for CLI grammar.
    - **Static** enums/defaults from schema  
    - **Dynamic** providers (e.g., list apps, addons) with caching  
    - **MCP autocomplete** (`autocomplete(tool, field, partial)`) if the plugin supports it  
-4. **History** for previously used values per flag/command.
+4. **History** for previously used values per flag/command. Entries persist per user (capped at 500), are filtered by the redaction heuristics, and surface as high-priority suggestions once the command is resolved.
 
 All sources feed a **fuzzy scorer**; we merge, re-rank, and present.
 
@@ -422,7 +423,7 @@ impl<R: Registry + Send + Sync> CompletionSource for FlagSource<R> {
 // sources/values.rs (uses dynamic providers + enums + history)
 pub struct ValueSource<R: Registry> {
     pub reg: R,
-    pub providers: Vec<Box<dyn ValueProvider>>,
+    pub providers: Vec<Arc<dyn ValueProvider>>,
 }
 
 #[async_trait]
@@ -645,14 +646,24 @@ impl ValueProvider for AppsProvider {
 
 ---
 
-## 8) Security
+
+## 8) Persistence & storage
+
+- Command palette and workflow history entries are stored in `~/.config/heroku/history.json`.  
+- Entries are scoped by profile (`default_profile` until authentication is wired) and capped
+  at **500**; oldest records are pruned automatically.  
+- Commands only persist after a successful execution. Cancelled or failed runs leave the previous
+  history intact.  
+- Every value goes through the shared redaction heuristics before being written to disk.  
+
+## 9) Security
 
 - **Never** store or suggest values that look like secrets (`*_TOKEN`, `*_KEY`, URLs with creds).  
 - Redact such tokens from history; replace with `•••••`.
 
 ---
 
-## 9) Done definition
+## 10) Done definition
 
 - Commands, flags, and enum values completed with fuzzy;  
 - Async providers with cache + timeouts;  

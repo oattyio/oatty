@@ -15,14 +15,15 @@
 //! # Usage
 //!
 //! ```ignore
+//! use heroku_types::Route;
 //! use heroku_tui::ui::components::nav_bar::{
-//!     VerticalNavBarComponent, VerticalNavBarState, NavItem
+//!     NavItem, NavItemAction, VerticalNavBarComponent, VerticalNavBarState,
 //! };
 //!
 //! let state = VerticalNavBarState::new(vec![
-//!     NavItem::new("$", "Command"),
-//!     NavItem::new("⌕", "Browser"),
-//!     NavItem::new("{}", "Plugins"),
+//!     NavItem::new("$", "Command", NavItemAction::Route(Route::Palette)),
+//!     NavItem::new("⌕", "Browser", NavItemAction::Route(Route::Browser)),
+//!     NavItem::new("{}", "Plugins", NavItemAction::Route(Route::Plugins)),
 //! ]);
 //! let mut component = VerticalNavBarComponent::new(state);
 //! // In your event loop, route key events to component.handle_key_events(...)
@@ -33,4 +34,4 @@ mod nav_bar_component;
 mod state;
 
 pub use nav_bar_component::VerticalNavBarComponent;
-pub use state::VerticalNavBarState;
+pub use state::{NavItemAction, VerticalNavBarState};

@@ -1,4 +1,4 @@
-use heroku_types::Route;
+use heroku_types::{Modal, Route};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 
@@ -6,14 +6,23 @@ use ratatui::layout::Rect;
 ///
 /// Each item consists of a display icon (typically a short symbol) and a
 /// descriptive label used in tooltips, accessibility, and testing.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
+pub enum NavItemAction {
+    /// Switches the main content view to the target route.
+    Route(Route),
+    /// Opens a modal overlay instead of navigating to a view.
+    Modal(Modal),
+}
+
+/// Declarative description of a navigation item and its action.
+#[derive(Debug, Clone)]
 pub struct NavItem {
     /// Icon to display for the item (e.g., "$", "⌕", "{}").
     pub icon: String,
     /// Human-friendly description of the item (e.g., "Command").
     pub label: String,
-    /// Route associated with this item
-    pub route: Route,
+    /// Action that should run when the item is activated.
+    pub action: NavItemAction,
 }
 
 impl NavItem {
@@ -23,12 +32,23 @@ impl NavItem {
     /// - `icon`: The icon text to render. Prefer non-emoji symbols for
     ///   consistent terminal rendering.
     /// - `label`: A short descriptive label for the item.
-    pub fn new(icon: impl Into<String>, label: impl Into<String>, route: Route) -> Self {
+    /// - `action`: Whether the item navigates to a route or opens a modal.
+    pub fn new(icon: impl Into<String>, label: impl Into<String>, action: NavItemAction) -> Self {
         Self {
             icon: icon.into(),
             label: label.into(),
-            route,
+            action,
         }
+    }
+
+    /// Convenience constructor for items that switch the active route.
+    pub fn for_route(icon: impl Into<String>, label: impl Into<String>, route: Route) -> Self {
+        Self::new(icon, label, NavItemAction::Route(route))
+    }
+
+    /// Convenience constructor for items that open a modal.
+    pub fn for_modal(icon: impl Into<String>, label: impl Into<String>, modal: Modal) -> Self {
+        Self::new(icon, label, NavItemAction::Modal(modal))
     }
 }
 
@@ -80,15 +100,20 @@ impl VerticalNavBarState {
 
     /// Creates a nav bar pre-populated with typical application views.
     ///
-    /// - Command: "$" (shell prompt)
-    /// - Browser: "⌕" (search lens)
-    /// - Plugins: "{}" (configuration/plugins)
-    pub fn defaults_for_views() -> Self {
-        Self::new(vec![
-            NavItem::new("[Cmd]", "Command", Route::Palette),
-            NavItem::new("[Brw]", "Browser", Route::Browser),
-            NavItem::new("[Ext]", "Extensions", Route::Plugins),
-        ])
+    /// `include_settings_item` controls whether the settings/theme picker shortcut is shown.
+    pub fn defaults_for_views(include_settings_item: bool) -> Self {
+        let mut items = vec![
+            NavItem::for_route("[Cmd]", "Command", Route::Palette),
+            NavItem::for_route("[Brs]", "Browser", Route::Browser),
+            NavItem::for_route("[Ext]", "Extensions", Route::Plugins),
+            NavItem::for_route("[Flw]", "Workflows", Route::Workflows),
+        ];
+
+        if include_settings_item {
+            items.push(NavItem::for_modal("[Set]", "Settings", Modal::ThemePicker));
+        }
+
+        Self::new(items)
     }
 
     /// Updates the collection of item focus flags to match `items` length.
@@ -107,8 +132,8 @@ impl VerticalNavBarState {
     }
 
     pub fn get_focused_list_item(&self) -> Option<(NavItem, usize)> {
-        if let Some(idx) = self.item_focus_flags.iter().position(|l| l.get()) {
-            return self.items.get(idx).and_then(|f| Some((f.clone(), idx)));
+        if let Some(idx) = self.item_focus_flags.iter().position(|flag| flag.get()) {
+            return self.items.get(idx).map(|item| (item.clone(), idx));
         }
         None
     }
@@ -127,7 +152,11 @@ impl VerticalNavBarState {
     }
 
     pub fn set_route(&mut self, route: Route) -> Route {
-        if let Some(idx) = self.items.iter().position(|r| r.route == route) {
+        if let Some(idx) = self
+            .items
+            .iter()
+            .position(|item| matches!(&item.action, NavItemAction::Route(route_candidate) if *route_candidate == route))
+        {
             self.selected_index = idx;
             self.apply_selection_focus();
         }

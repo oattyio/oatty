@@ -51,15 +51,23 @@ pub mod executor;
 pub mod model;
 pub mod provider;
 pub mod resolve;
+pub mod workflow;
 
 // Re-export commonly used types for convenience
 pub use executor::{
-    CommandRunner, Plan, PreparedStep, RegistryCommandRunner, StepResult, StepStatus, execute_workflow, execute_workflow_with_runner,
-    prepare_plan, run_step,
+    CommandRunner, PreparedStep, RegistryCommandRunner, StepResult, StepStatus, execute_workflow, execute_workflow_with_runner,
 };
 pub use model::{InputSpec, StepSpec, WorkflowBundle, WorkflowSpec};
-pub use provider::{ProviderContract, ProviderRegistry};
+pub use provider::{ProviderContract, ProviderValueResolver, ValueProvider};
 pub use resolve::RunContext;
+pub use workflow::bindings::{
+    ArgumentPrompt, BindingFailure, BindingSource, MissingReason, ProviderArgumentResolver, ProviderBindingOutcome, SkipDecision,
+};
+pub use workflow::runner::drive_workflow_run;
+pub use workflow::state::{
+    InputProviderState, ProviderOutcomeState, ProviderResolutionEvent, ProviderResolutionSource, StepTelemetryEvent, WorkflowRunState,
+    WorkflowTelemetry,
+};
 
 /// Loads a workflow file from the filesystem with automatic format detection.
 ///
@@ -155,7 +163,7 @@ steps:
     run: "apps:deploy"
 "#;
 
-        std::fs::write(&workflow_path, workflow_content).unwrap();
+        fs::write(&workflow_path, workflow_content).unwrap();
 
         let result = parse_workflow_file(&workflow_path);
         assert!(result.is_ok());
@@ -180,7 +188,7 @@ workflows:
     steps: []
 "#;
 
-        std::fs::write(&workflow_path, workflow_content).unwrap();
+        fs::write(&workflow_path, workflow_content).unwrap();
 
         let bundle = parse_workflow_file(&workflow_path).expect("parse multi-workflow bundle");
         assert_eq!(bundle.workflows.len(), 2);

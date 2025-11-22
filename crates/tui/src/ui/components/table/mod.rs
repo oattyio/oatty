@@ -1,5 +1,5 @@
+pub mod results_table_component;
 pub mod state;
-pub mod table;
 
-pub use state::{TableState, build_key_value_entries};
-pub use table::TableComponent;
+pub use results_table_component::TableComponent;
+pub use state::{ResultsTableState, build_key_value_entries};

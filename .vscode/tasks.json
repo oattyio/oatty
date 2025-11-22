@@ -1,0 +1,280 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "cargo: Build Workspace",
+            "type": "cargo",
+            "command": "build",
+            "args": [
+                "--workspace"
+            ],
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "cargo: Build CLI (Release)",
+            "type": "cargo",
+            "command": "build",
+            "args": [
+                "--package=heroku-cli",
+                "--release"
+            ],
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "cargo: Run TUI",
+            "type": "cargo",
+            "command": "run",
+            "args": [
+                "--package=heroku-cli"
+            ],
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": "none",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated",
+                "clear": true
+            },
+            "options": {
+                "env": {
+                    "HEROKU_LOG": "debug",
+                    "TUI_THEME": "dracula"
+                }
+            }
+        },
+        {
+            "label": "cargo: Run CLI - Apps List",
+            "type": "shell",
+            "command": "cargo",
+            "args": [
+                "run",
+                "-p",
+                "heroku-cli",
+                "--",
+                "apps",
+                "list"
+            ],
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": "none",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "options": {
+                "env": {
+                    "HEROKU_LOG": "debug"
+                }
+            }
+        },
+        {
+            "label": "cargo: Test Workspace",
+            "type": "cargo",
+            "command": "test",
+            "args": [
+                "--workspace"
+            ],
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": {
+                "kind": "test",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "cargo: Test Package",
+            "type": "cargo",
+            "command": "test",
+            "args": [
+                "--package=${input:packageName}"
+            ],
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": "test",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "cargo: Clippy (All)",
+            "type": "cargo",
+            "command": "clippy",
+            "args": [
+                "--workspace",
+                "--",
+                "-D",
+                "warnings"
+            ],
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": "none",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "cargo: Format Check",
+            "type": "shell",
+            "command": "cargo",
+            "args": [
+                "fmt",
+                "--all",
+                "--check"
+            ],
+            "problemMatcher": [],
+            "group": "none",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "cargo: Format",
+            "type": "shell",
+            "command": "cargo",
+            "args": [
+                "fmt",
+                "--all"
+            ],
+            "problemMatcher": [],
+            "group": "none",
+            "presentation": {
+                "reveal": "silent",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "cargo: Clean",
+            "type": "cargo",
+            "command": "clean",
+            "args": [],
+            "problemMatcher": [],
+            "group": "none",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "cargo: Check",
+            "type": "cargo",
+            "command": "check",
+            "args": [
+                "--workspace"
+            ],
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": "none",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "registry-gen: Generate Manifest (JSON)",
+            "type": "shell",
+            "command": "cargo",
+            "args": [
+                "run",
+                "-p",
+                "heroku-registry-gen",
+                "--",
+                "--json",
+                "schemas/heroku-schema.enhanced.json",
+                "target/manifest-debug.json"
+            ],
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": "none",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "registry-gen: Generate Manifest (Bincode)",
+            "type": "shell",
+            "command": "cargo",
+            "args": [
+                "run",
+                "-p",
+                "heroku-registry-gen",
+                "--",
+                "schemas/heroku-schema.enhanced.json",
+                "target/manifest-debug.bin"
+            ],
+            "problemMatcher": [
+                "$rustc"
+            ],
+            "group": "none",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Pre-commit Check",
+            "dependsOn": [
+                "cargo: Format",
+                "cargo: Clippy (All)",
+                "cargo: Test Workspace"
+            ],
+            "dependsOrder": "sequence",
+            "problemMatcher": [],
+            "group": "none",
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared"
+            }
+        }
+    ],
+    "inputs": [
+        {
+            "id": "packageName",
+            "type": "pickString",
+            "description": "Select the package",
+            "options": [
+                "heroku-cli",
+                "heroku-tui",
+                "heroku-registry",
+                "heroku-registry-gen",
+                "heroku-engine",
+                "heroku-api",
+                "heroku-util",
+                "heroku-types",
+                "heroku-mcp"
+            ],
+            "default": "heroku-cli"
+        }
+    ]
+}

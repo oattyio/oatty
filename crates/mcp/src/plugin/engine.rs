@@ -5,7 +5,7 @@ use crate::config::McpConfig;
 use crate::logging::{AuditEntry, AuditResult, LogManager};
 use crate::plugin::{LifecycleManager, PluginRegistry, RegistryError};
 use crate::types::{AuthStatus, McpToolMetadata, PluginDetail, PluginStatus, PluginToolSummary};
-use heroku_registry::{CommandSpec, Registry as CommandRegistry};
+use heroku_registry::{CommandRegistry, CommandSpec};
 use heroku_types::{CommandFlag, ExecOutcome, McpCommandSpec, PositionalArgument};
 use heroku_util::resolve_output_schema;
 use serde_json::Value;
@@ -14,7 +14,10 @@ use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
 };
-use tokio::{sync::Mutex as TokioMutex, task::JoinHandle};
+use tokio::{
+    sync::{Mutex as TokioMutex, RwLock},
+    task::JoinHandle,
+};
 
 /// Plugin engine that orchestrates all MCP plugin operations.
 #[derive(Debug)]
@@ -38,8 +41,8 @@ pub struct PluginEngine {
     /// Lifecycle manager for plugin lifecycle.
     lifecycle_manager: LifecycleManager,
 
-    /// Configuration.
-    config: McpConfig,
+    /// Configuration guarded for concurrent updates.
+    config: RwLock<McpConfig>,
 
     /// Shared vec containing all commands
     command_registry: Arc<Mutex<CommandRegistry>>,
@@ -62,7 +65,7 @@ impl PluginEngine {
             tool_cache: Arc::new(TokioMutex::new(HashMap::new())),
             synthetic_specs: Arc::new(TokioMutex::new(HashMap::new())),
             lifecycle_manager,
-            config,
+            config: RwLock::new(config),
             command_registry,
             status_listener: TokioMutex::new(None),
         })
@@ -76,7 +79,9 @@ impl PluginEngine {
 
         let registry = PluginRegistry::new();
 
-        for (name, server) in &self.config.mcp_servers {
+        let config_snapshot = self.config.read().await.clone();
+
+        for (name, server) in &config_snapshot.mcp_servers {
             let mut plugin_detail = PluginDetail::new(
                 name.clone(),
                 if server.is_stdio() {
@@ -192,10 +197,11 @@ impl PluginEngine {
     pub async fn stop(&self) -> Result<(), PluginEngineError> {
         if let Some(handle) = self.status_listener.lock().await.take() {
             handle.abort();
-            if let Err(join_error) = handle.await {
-                if !join_error.is_cancelled() {
+            match handle.await {
+                Err(join_error) if !join_error.is_cancelled() => {
                     tracing::warn!("Status listener task ended with error: {}", join_error);
                 }
+                _ => {}
             }
         }
 
@@ -415,8 +421,17 @@ impl PluginEngine {
                 reason: "registry unavailable".into(),
             }));
         };
-        // Stop all existing plugins
+        // Capture which plugins should be restarted after reload.
+        let mut restart_candidates = Vec::new();
         for name in registry.get_plugin_names().await {
+            let was_running = registry
+                .get_plugin_status(&name)
+                .await
+                .map(|status| status == PluginStatus::Running)
+                .unwrap_or(false);
+            if was_running {
+                restart_candidates.push(name.clone());
+            }
             if let Err(e) = self.stop_plugin(&name).await {
                 tracing::warn!("Failed to stop plugin {} during config update: {}", name, e);
             }
@@ -437,6 +452,11 @@ impl PluginEngine {
             .update_config(config.clone())
             .await
             .map_err(|e| PluginEngineError::ClientManagerError(e.to_string()))?;
+
+        {
+            let mut guard = self.config.write().await;
+            *guard = config.clone();
+        }
 
         // Clear and rebuild registry
         registry.clear().await?;
@@ -459,6 +479,19 @@ impl PluginEngine {
             self.lifecycle_manager.register_plugin(name.clone()).await;
         }
 
+        // Restart plugins that were previously running and still exist + enabled.
+        for name in restart_candidates {
+            let Some(entry) = config.mcp_servers.get(&name) else {
+                continue;
+            };
+            if entry.is_disabled() {
+                continue;
+            }
+            if let Err(error) = self.start_plugin(&name).await {
+                tracing::warn!("Failed to restart plugin {} after config update: {}", name, error);
+            }
+        }
+
         tracing::info!("Plugin engine configuration updated");
         Ok(())
     }
@@ -474,6 +507,7 @@ impl PluginEngine {
         &self,
         spec: &CommandSpec,
         arguments: &serde_json::Map<String, Value>,
+        request_id: u64,
     ) -> Result<ExecOutcome, PluginEngineError> {
         let mcp = spec.mcp().ok_or_else(|| PluginEngineError::ConfigurationError {
             message: format!("command '{}' is not MCP-backed", spec.name),
@@ -514,7 +548,7 @@ impl PluginEngine {
             log.push_str(&pretty);
         }
 
-        Ok(ExecOutcome::Mcp(log, payload))
+        Ok(ExecOutcome::Mcp(log, payload, request_id))
     }
 
     /// Convert MCP tool metadata into synthetic CLI command specifications.
@@ -840,6 +874,7 @@ pub enum PluginEngineError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::McpServer;
     use crate::config::McpConfig;
     use serde_json::{Value, json};
     use url::Url;
@@ -1197,10 +1232,12 @@ mod tests {
     #[tokio::test]
     async fn test_engine_registers_tags_from_config() {
         let mut cfg = McpConfig::default();
-        let mut server = crate::config::McpServer::default();
-        server.base_url = Some(Url::parse("https://example.com").unwrap());
-        server.tags = Some(vec!["alpha".into(), "beta".into()]);
-        server.disabled = Some(true);
+        let server = McpServer {
+            base_url: Some(Url::parse("https://example.com").unwrap()),
+            tags: Some(vec!["alpha".into(), "beta".into()]),
+            disabled: Some(true),
+            ..Default::default()
+        };
         cfg.mcp_servers.insert("svc".into(), server);
 
         let registry = Arc::new(Mutex::new(CommandRegistry {

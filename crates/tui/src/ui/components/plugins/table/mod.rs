@@ -1,7 +1,7 @@
 //! Plugins table module: state and component wiring.
 
+mod plugin_table_component;
 mod state;
-mod table;
 
+pub use plugin_table_component::PluginsTableComponent;
 pub use state::PluginsTableState;
-pub use table::PluginsTableComponent;

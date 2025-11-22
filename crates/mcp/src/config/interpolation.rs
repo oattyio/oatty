@@ -140,8 +140,8 @@ pub fn determine_env_source(value: &str) -> EnvSource {
     if is_secret(value) {
         return EnvSource::Secret;
     }
-    if let Some(splits) = value.trim_start_matches(&['{', ' ']).split_once(":") {
-        return match splits.0 {
+    if let Some((prefix, _remainder)) = value.trim_start_matches(['{', ' ']).split_once(':') {
+        return match prefix {
             "env" => EnvSource::Env,
             "secret" => EnvSource::Secret,
             "file" => EnvSource::File,
@@ -168,6 +168,7 @@ pub fn store_secret(name: &str, value: &str) -> Result<(), InterpolationError> {
 }
 
 /// Remove a secret from the OS keychain.
+#[allow(dead_code)]
 pub fn remove_secret(name: &str) -> Result<(), InterpolationError> {
     let keyring = keyring::Entry::new(SERVICE, name).map_err(|e| InterpolationError::KeyringError {
         name: name.to_string(),

@@ -1,154 +1,44 @@
 **Focus Management**
-- **Goal:** Let a parent container hand focus to a child; the child cycles its own focus items on Tab/BackTab. When reaching the end (or beginning) of its ring, focus returns to the parent and continues.
+- The TUI coordinates keyboard and mouse focus with the [`rat_focus`](https://crates.io/crates/rat-focus) crate. Every focusable state implements `HasFocus`, and the application owns a single [`Focus`](https://docs.rs/rat-focus/latest/rat_focus/struct.Focus.html) ring that is rebuilt just before rendering.
 
-**Library**
-- **crate:** `rat_focus`
-- **Core types:** `Focus`, `FocusBuilder`, `FocusFlag`, `HasFocus`, `Navigation`
-- **Helpers:** `impl_has_focus!`, `on_gained!`, `on_lost!`, `match_focus!`, `event::FocusTraversal(&Focus)`
+**Core Building Blocks**
+- `Focus` lives on `App` (`crates/tui/src/app.rs:130`) and is rebuilt on each frame via `FocusBuilder::rebuild_for` (`crates/tui/src/ui/runtime.rs:111`).
+- `FocusFlag::named` gives each container or leaf a stable identifier; focus flags are stored alongside component state (for example `PaletteState::new` in `crates/tui/src/ui/components/palette/state.rs:92`).
+- `HasFocus::build` composes the traversal order. Use `builder.start(self)` / `builder.end(tag)` for containers, `builder.widget(child_state)` for nested containers, and `builder.leaf_widget(flag)` for direct leaf flags.
 
-**Top-Level Pattern**
-- **Single ring:** Maintain one `Focus` instance for the whole app. Rebuild it whenever widget structure changes or at least once per frame.
-- **Storage:** Add `focus: rat_focus::Focus` on `app::App` (or a runtime-local variable). Use `FocusBuilder::rebuild_for(&app_state, Some(old_focus))` so removed widgets get their flags cleared and allocations are reused.
-- **Build order:** Parent containers call `builder.widget(&child_state)` during `HasFocus::build` to nest children; the ring flattens but retains container ranges for handoff.
+**Application-Level Lifecycle**
+- When routes or modals change, `App` rebuilds the ring with `FocusBuilder::build_for(self)` and focuses the relevant widget (`crates/tui/src/app.rs:656`).
+- Opening a modal stores the currently focused widget identifier so it can be restored when the modal closes (`crates/tui/src/app.rs:676`). `App::restore_focus` re-applies that identifier or falls back to `focus.first()` after each render (`crates/tui/src/app.rs:698`).
+- During rendering the runtime performs:
+  ```rust
+  let old_focus = std::mem::take(&mut application.focus);
+  application.focus = FocusBuilder::rebuild_for(application, Some(old_focus));
+  if application.focus.focused().is_none() {
+      application.restore_focus();
+  }
+  ```
+  (`crates/tui/src/ui/runtime.rs:111`).
 
-**Child-Manages-Itself Pattern**
-- The child owns a container `FocusFlag` and leaf flags for its internal focusables.
-- The parent includes the child in its `HasFocus::build` so focus can enter the child.
-- While focus is inside the child’s range, `focus.next()`/`focus.prev()` step within the child. When the child reaches its last/first item, the next step naturally lands on the parent’s next/previous item.
-- For custom exits (Enter/Esc/etc.), call `focus.expel_focus(&child_container_flag)` to hand focus to the parent’s next item after the child range.
+**Implementing `HasFocus`**
+- **Top-level containers:** `App<'_>` checks modal state and only exposes the active subtree (`crates/tui/src/app.rs:845`). When no modal is open it adds the navigation bar plus the current main view and logs to the ring in the order users should traverse them.
+- **Simple leaf containers:** Components with a single focusable element register one `FocusFlag`. `PaletteState` builds a container and registers the input flag with `builder.leaf_widget(&self.f_input)` (`crates/tui/src/ui/components/palette/state.rs:113`). `BrowserState` registers both the search input and the command list in order (`crates/tui/src/ui/components/browser/state.rs:214`).
+- **Collections of focus flags:** `VerticalNavBarState` maintains a vector of item flags and loops through them inside `HasFocus::build` (`crates/tui/src/ui/components/nav_bar/state.rs:152`). This pattern keeps traversal in sync with the rendered items and enables programmatic selection to toggle the active flag.
+- **Nested components:** Parent states call `builder.widget(&child_state)` for nested containers, allowing the builder to flatten the tree while preserving container ranges. For example `TableState` nests the pagination component after the main grid (`crates/tui/src/ui/components/table/state.rs:281`).
+- **Visibility gating:** Components can opt out of the ring by returning early. The pagination controls do nothing when they are hidden so Tab skips them (`crates/tui/src/ui/components/pagination/state.rs:137`).
+- **Dynamic delegation:** `WorkflowState` delegates `HasFocus` to either the list view or the active input view, mirroring what is currently rendered (`crates/tui/src/ui/components/workflows/state.rs:596`). This keeps focus aligned with mode changes without rebuilding intermediate flags manually.
 
-**Palette Example (concrete)**
+**Driving Focus in Event Handlers**
+- Keyboard handlers advance the ring with `app.focus.next()` and `app.focus.prev()`. Examples include the browser (`crates/tui/src/ui/components/browser/browser_component.rs:64`), palette (`crates/tui/src/ui/components/palette/palette_component.rs:487`), and logs (`crates/tui/src/ui/components/logs/logs_component.rs:336`).
+- Components typically inspect their own flags (`FocusFlag::get()`) to decide how to interpret the current key event before advancing the global ring (see the browser search handling in `crates/tui/src/ui/components/browser/browser_component.rs:52`).
+- When a component changes visibility or replaces its internal layout it should call `app.focus.focus(&state)` or `app.focus.first_in(&state)` to ensure the new subtree has an active leaf (for example palette initialization in `crates/tui/src/app.rs:193`).
 
-- `crates/tui/src/ui/components/palette/state.rs:1`
-```
-use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
-use ratatui::layout::Rect;
+**Mouse and Layout Integration**
+- `HasFocus::area` returns the last rendered rectangle for hit-testing. Most states expose `Rect::default()` because they do not support mouse focus yet, but widgets such as the navigation bar capture their last layout (`crates/tui/src/ui/components/nav_bar/state.rs:169`) so mouse clicks can move focus correctly.
+- Components that support mouse focus should update their stored `Rect` during rendering so `Focus::focus_at(x, y)` can succeed.
 
-pub struct PaletteState {
-    // Container focus for the palette as a whole
-    container_focus: FocusFlag,
-    // Internal items managed by the palette
-    input_focus: FocusFlag,
-    suggestions_focus: FocusFlag,
-    // ... existing fields (input, suggestions, etc.)
-}
-
-impl Default for PaletteState {
-    fn default() -> Self {
-        Self {
-            container_focus: FocusFlag::named("palette"),
-            input_focus: FocusFlag::named("palette.input"),
-            suggestions_focus: FocusFlag::named("palette.suggestions"),
-            // ...
-        }
-    }
-}
-
-impl HasFocus for PaletteState {
-    fn build(&self, builder: &mut FocusBuilder) {
-        let tag = builder.start(self);
-        // Input is navigable normally
-        builder.widget_with_navigation(&self.input_focus, Rect::default(), 0, Default::default());
-        // Suggestions list can be marked as Leave so Tab can leave forward while open
-        // or use Regular and let parent decide.
-        builder.widget_with_navigation(&self.suggestions_focus, Rect::default(), 0, rat_focus::Navigation::Leave);
-        builder.end(tag);
-    }
-
-    fn focus(&self) -> FocusFlag { self.container_focus.clone() }
-    fn area(&self) -> Rect { Rect::default() }
-}
-```
-
-- Parent container (e.g., top-level view) includes the palette as a child:
-```
-impl HasFocus for App {
-    fn build(&self, builder: &mut FocusBuilder) {
-        let tag = builder.start(self);
-        builder.widget(&self.palette);     // child container
-        builder.widget(&self.logs);        // sibling after palette
-        // ... other siblings
-        builder.end(tag);
-    }
-
-    fn focus(&self) -> FocusFlag { /* container flag for App */ }
-    fn area(&self) -> Rect { Rect::default() }
-}
-```
-
-**Event Routing**
-- Provide components a way to drive focus travel:
-  - Store `app.focus: Focus` (or pass via `event::FocusTraversal<'_>(&Focus)` wrapper from `rat_focus::event`).
-  - Rebuild per frame or on structural changes:
-```
-// at render time (or after layout/state changes)
-app.focus = FocusBuilder::rebuild_for(&app, Some(std::mem::take(&mut app.focus)));
-
-// ensure a valid starting focus once
-if app.focus.focused().is_none() { app.focus.first(); }
-```
-
-**Child Key Handling (Palette)**
-- Inside `PaletteComponent::handle_key_events`, drive local cycling first; when hitting ends, hand off to parent.
-```
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use rat_focus::{event::FocusTraversal, on_gained, match_focus, Navigation};
-
-fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
-    let mut effects = Vec::new();
-
-    // Ensure child initializes its internal focus when it gains focus
-    on_gained!( app.palette => { app.focus.first_in(&app.palette); } );
-
-    match key.code {
-        KeyCode::Tab if key.modifiers.is_empty() => {
-            // If suggestions are open and focused, `next()` cycles to input or exits to parent
-            app.focus.next();
-        }
-        KeyCode::BackTab => {
-            app.focus.prev();
-        }
-        KeyCode::Enter => {
-            // Optional explicit handoff: leave child to parent’s next sibling
-            // when Enter is pressed while child has focus.
-            if app.palette_is_done() {
-                app.focus.expel_focus(&app.palette.container_focus);
-            }
-        }
-        _ => {
-            // Normal editing
-        }
-    }
-
-    effects
-}
-```
-
-Notes
-- `on_gained!` runs when the palette container gains focus and ensures a valid initial child focus.
-- `Focus::next()`/`prev()` respect `Navigation` values; set `Navigation::Leave` on the last child to allow forward exit while keeping backward cycling inside, or use `ReachLeaveFront/Back` for stricter control.
-- `Focus::expel_focus(&child_container_flag)` forcibly moves focus to the next item after the child container; if none exists it clears focus.
-
-**Navigation Strategies**
-- Regular child cycling: mark all children `Navigation::Regular` and let `next/prev` naturally fall through to siblings after the last/first child.
-- One-way leave:
-  - First child: `ReachLeaveFront` (can be reached; backward leaves)
-  - Last child: `ReachLeaveBack` (can be reached; forward leaves)
-- Lock focus temporarily: `Navigation::Lock` prevents `next/prev` transitions until unlocked. Use sparingly (e.g., modal text areas).
-
-**Mouse Focus**
-- Provide accurate areas in `HasFocus::area()` (and z-index via `area_z()`) for mouse clicks to move focus via `focus_at(x, y)`.
-
-**Integration Checklist**
-- Add `focus: Focus` to `App` and rebuild it each render.
-- Implement `HasFocus` for top-level `App` and each focus-owning state.
-- Ensure each focusable has a `FocusFlag` and stable debug name.
-- On container focus gain, call `focus.first_in(&child)` to initialize child focus.
-- In key handlers, call `focus.next()`/`prev()`; use `expel_focus()` for explicit exits.
-- Keep build order deterministic to ensure expected traversal.
-
-**Troubleshooting**
-- Focus “stuck” in child: check `Navigation` for `Lock` or `Reach` on leaves.
-- Focus doesn’t return to parent: ensure the child is a container (used with `builder.start(self)`/`end(tag)`) and parent includes a sibling after the child.
-- Unexpected wrap-around: verify the target child’s last item `Navigation` and the parent’s ring order.
-
+**Practical Checklist**
+- Create container and leaf `FocusFlag`s with descriptive names.
+- Implement `HasFocus` on every state that owns focusable elements; compose children with `builder.widget` and `builder.leaf_widget`.
+- Rebuild the focus ring whenever layout changes (`FocusBuilder::rebuild_for`) and restore a valid starting leaf (`App::restore_focus`).
+- Use `app.focus.next()` / `app.focus.prev()` for Tab and BackTab. Only use advanced APIs such as `expel_focus` when a component needs to break out of its container explicitly (not currently required in the implemented components).
+- Keep traversal order consistent with the rendered layout so assistive tooling and keyboard users experience predictable navigation.

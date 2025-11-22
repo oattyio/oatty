@@ -14,10 +14,13 @@ ratatui = { workspace = true }
 crossterm = { workspace = true }
 tracing = { workspace = true }
 reqwest = { workspace = true }
+notify = "8.2.0"
 heroku-registry = { path = "../registry" }
 heroku-util = { path = "../util" }
 heroku-types = { path = "../types" }
 heroku-mcp = { path = "../mcp" }
+heroku-engine = { path = "../engine" }
+heroku-api = { path = "../api" }
 arboard = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
@@ -28,6 +31,8 @@ once_cell = { workspace = true }
 rat-focus = { workspace = true }
 serde_json = { workspace = true }
 textwrap = { workspace = true }
+indexmap = { workspace = true }
+unicode-width = { workspace = true }
 
 [lib]
 doctest = false

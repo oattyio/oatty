@@ -44,25 +44,75 @@ use crate::{
 /// // Creates a rectangle that's 80% wide and 70% tall, centered in parent
 /// ```
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(r);
-    let area = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(popup_layout[1]);
+    let popup_layout = Layout::vertical([
+        Constraint::Percentage((100 - percent_y) / 2),
+        Constraint::Percentage(percent_y),
+        Constraint::Percentage((100 - percent_y) / 2),
+    ])
+    .split(r);
+    let area = Layout::horizontal([
+        Constraint::Percentage((100 - percent_x) / 2),
+        Constraint::Percentage(percent_x),
+        Constraint::Percentage((100 - percent_x) / 2),
+    ])
+    .split(popup_layout[1]);
     area[1]
 }
-
+/// Infer a set of column names from a list of JSON-like values.
+///
+/// This function analyzes the provided array of JSON-like objects (`arr`) to infer which
+/// keys (columns) are most relevant based on scoring logic and frequency of occurrence.
+/// It ensures that at least four column names are returned, prioritizing higher-scoring
+/// keys while falling back on frequently appearing keys if necessary.
+///
+/// # Scoring Logic:
+/// - Each key in an object is assigned a score based on its characteristics:
+///   - A base score is determined per key by the `base_key_score` function.
+///   - A boost is added for the key's property frequency using the `property_frequency_boost` function.
+///   - A penalty is applied for nested arrays, objects, or long strings:
+///     - Nested arrays: Score is reduced by a value derived from the array length.
+///     - Nested objects: Score is reduced by a fixed amount.
+///     - Long strings (greater than 80 characters): Score is reduced by a fixed amount.
+/// - Scores are aggregated across a sample of at most 50 items.
+///
+/// # Column Selection:
+/// - The keys are sorted by descending score, and the top-scoring keys are selected.
+/// - At most, 6 keys are selected based on the scoring logic.
+/// - If fewer than 4 keys are selected, additional keys are chosen based on their frequency
+///   of occurrence in the data. Frequencies are determined from a sample of up to 100 items.
+///
+/// # Parameters:
+/// - `arr: &[Value]`:
+///   A slice of JSON-like objects, where each object is represented as a `Value` (typically from
+///   the `serde_json` crate). The function expects elements to be of type `Value::Object`.
+///
+/// # Returns:
+/// - `Vec<String>`:
+///   A vector containing the inferred column names, sorted by their relevance according to
+///   the scoring logic and frequency of occurrence. At least 4 column names will be included,
+///   with a maximum of 6.
+///
+/// # Examples:
+/// ```
+/// use serde_json::Value;
+/// use your_crate::infer_columns;
+///
+/// let data = vec![
+///     Value::Object(serde_json::json!({"name": "Alice", "age": 30}).as_object().unwrap().clone()),
+///     Value::Object(serde_json::json!({"name": "Bob", "age": 25, "location": "USA"}).as_object().unwrap().clone()),
+///     Value::Object(serde_json::json!({"name": "Charlie", "status": "active"}).as_object().unwrap().clone())
+/// ];
+///
+/// let columns = infer_columns(&data);
+/// assert!(columns.len() >= 4);
+/// println!("{:?}", columns);
+/// ```
+///
+/// # Notes:
+/// - The function assumes that the input slice contains values of type `Value::Object`.
+///   Other types (e.g., `Value::Array` or `Value::String`) are ignored during processing.
+/// - Scoring logic and penalties may require adjustment based on specific use cases or
+///   domain-specific importance of certain keys.
 pub fn infer_columns(arr: &[Value]) -> Vec<String> {
     let mut score: HashMap<String, i32> = HashMap::new();
     let mut seen: BTreeSet<String> = BTreeSet::new();
@@ -116,7 +166,7 @@ pub fn is_status_like(key: &str) -> bool {
     matches!(key.to_ascii_lowercase().as_str(), "status" | "state")
 }
 
-pub fn status_color_for_value(value: &str, theme: &dyn UiTheme) -> Option<ratatui::style::Color> {
+pub fn status_color_for_value(value: &str, theme: &dyn UiTheme) -> Option<Color> {
     let v = value.to_ascii_lowercase();
     if matches!(v.as_str(), "ok" | "succeeded" | "success" | "passed") {
         Some(theme.roles().success)
@@ -131,14 +181,49 @@ pub fn status_color_for_value(value: &str, theme: &dyn UiTheme) -> Option<ratatu
 
 pub fn base_key_score(key: &str) -> i32 {
     match key {
+        "human_name" => 120,
         "name" | "description" | "app" | "dyno" | "addon" | "config_var" => 100,
         "status" | "state" | "type" | "region" | "stack" => 80,
         "owner" | "user" | "email" => 60,
-        "created_at" | "updated_at" | "released_at" => 40,
         "id" => -100,
         _ => 20,
     }
 }
+/// Generates a sorted vector of keys from a given map, arranged in descending order of their computed scores.
+///
+/// This function calculates the combined score for each key using two components:
+/// 1. `base_key_score`: A base score derived from the key itself.
+/// 2. `property_frequency_boost`: A frequency adjustment or weighting added to the base score.
+///
+/// The sorting process orders the keys based on their scores in descending order (i.e., higher scores appear first).
+///
+/// # Parameters
+/// - `map`: A reference to a `Map` containing string keys and associated values of type `Value`.
+///
+/// # Returns
+/// A `Vec<String>` containing all the keys in the input map, sorted by their scores in descending order.
+///
+/// # Example
+/// ```
+/// use your_crate::get_scored_keys;
+/// use serde_json::Map;
+/// use serde_json::Value;
+///
+/// let mut map = Map::new();
+/// map.insert("apple".to_string(), Value::Null);
+/// map.insert("banana".to_string(), Value::Null);
+///
+/// let sorted_keys = get_scored_keys(&map);
+/// println!("{:?}", sorted_keys); // Example output: ["banana", "apple"], depending on scoring logic
+/// ```
+///
+/// # Notes
+/// - This function relies on the implementations of `base_key_score` and `property_frequency_boost`
+///   to compute individual scores.
+/// - The behavior and order of the returned keys depend on the scoring logic defined in those functions.
+///
+/// # Panics
+/// This function does not explicitly handle panics unless the underlying operations (e.g., `key()` or scoring functions) panic.
 pub fn get_scored_keys(map: &Map<String, Value>) -> Vec<String> {
     let mut keys: Vec<String> = map.keys().cloned().collect();
     keys.sort_by(|a, b| {
@@ -213,8 +298,16 @@ pub fn normalize_header(key: &str) -> String {
 /// - Applies light formatting (date for date-like keys) before measuring.
 /// - Includes the header label length in the max.
 /// - Samples up to `sample` rows for performance.
-pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize) -> Vec<ColumnWithSize> {
-    let keys = infer_columns(array);
+pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize, rerank_columns: bool) -> Vec<ColumnWithSize> {
+    let keys = if rerank_columns {
+        infer_columns(array)
+    } else {
+        if let Some(Value::Object(map)) = &array.first() {
+            map.keys().cloned().collect()
+        } else {
+            Vec::new()
+        }
+    };
     if keys.is_empty() {
         return Vec::new();
     }
@@ -241,7 +334,7 @@ pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize) -> Vec
                 Some(Value::Bool(b)) => b.to_string(),
                 Some(Value::Null) => "null".to_string(),
                 Some(Value::Object(map)) => {
-                    // Fall back to highest-scoring key as a string
+                    // Fall back to a highest-scoring key as a string
                     if let Some(best) = get_scored_keys(map).first() {
                         map.get(best)
                             .map(|v| v.as_str().unwrap_or(&v.to_string()).to_string())
@@ -266,42 +359,154 @@ pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize) -> Vec
     }
     out
 }
+/// Represents the rendered form of a JSON value, combining the plain textual
+/// output with styled spans that can be used directly by Ratatui widgets.
+#[derive(Debug, Clone)]
+pub struct RenderedValue {
+    plain_text: String,
+    spans: Vec<Span<'static>>,
+}
 
-pub fn render_value(key: &str, value: &Value) -> String {
+impl RenderedValue {
+    /// Returns the rendered text without any styling information.
+    pub fn plain_text(&self) -> &str {
+        &self.plain_text
+    }
+
+    /// Consumes the rendered value and returns the unstyled text.
+    pub fn into_plain_text(self) -> String {
+        self.plain_text
+    }
+
+    /// Consumes the rendered value and returns the styled spans for direct use in Ratatui widgets.
+    pub fn into_spans(self) -> Vec<Span<'static>> {
+        self.spans
+    }
+}
+
+/// Maximum recursion depth when rendering nested objects to prevent infinite descent into deeply nested maps.
+const MAX_RENDER_VALUE_DEPTH: usize = 3;
+
+/// Renders a given `Value` into both a string representation and styled spans, applying
+/// specific formatting or obfuscation rules based on the provided key and value type.
+///
+/// The function preserves the previous string rendering logic (masking secrets, formatting
+/// date-like values, etc.) while also producing a syntax-highlighted sequence of spans that
+/// consumers can hand directly to Ratatui widgets. When no theme is provided the spans are
+/// rendered with default styling.
+///
+/// # Parameters
+/// - `key`: Key associated with the value. Used to drive masking and date formatting heuristics.
+/// - `value`: The JSON value to render.
+/// - `theme`: Optional theme used to pick syntax highlight colors.
+///
+/// # Returns
+/// A [`RenderedValue`] containing the plain text and styled spans for the provided JSON value.
+pub fn render_value(key: &str, value: &Value, theme: Option<&dyn UiTheme>) -> RenderedValue {
+    render_value_impl(key, value, theme, 0)
+}
+
+fn render_value_impl(key: &str, value: &Value, theme: Option<&dyn UiTheme>, depth: usize) -> RenderedValue {
     match value {
-        Value::String(s) => {
-            if is_sensitive_key(key) {
-                ellipsize_middle_if_sha_like(s, 12)
+        Value::String(text) => {
+            let rendered = if is_sensitive_key(key) {
+                ellipsize_middle_if_sha_like(text, 12)
             } else if is_date_like_key(key) {
-                format_date_mmddyyyy(s).unwrap_or_else(|| s.clone())
+                format_date_mmddyyyy(text).unwrap_or_else(|| text.clone())
             } else {
-                s.clone()
-            }
+                text.clone()
+            };
+            build_rendered_value(rendered, theme.map(|t| t.syntax_string_style()).unwrap_or_default())
         }
-        Value::Number(n) => n.to_string(),
-        Value::Bool(b) => b.to_string(),
-        Value::Null => "null".to_string(),
-        // Take the highest scoring key from the object as a string
+        Value::Number(number) => build_rendered_value(number.to_string(), theme.map(|t| t.syntax_number_style()).unwrap_or_default()),
+        Value::Bool(flag) => build_rendered_value(flag.to_string(), theme.map(|t| t.syntax_keyword_style()).unwrap_or_default()),
+        Value::Null => build_rendered_value("null".to_string(), theme.map(|t| t.text_muted_style()).unwrap_or_default()),
         Value::Object(map) => {
-            if let Some(key) = get_scored_keys(map).first() {
-                let value = map.get(key).unwrap();
-                if let Some(s) = value.as_str() {
-                    s.to_string()
+            if depth < MAX_RENDER_VALUE_DEPTH {
+                if let Some(best_key) = get_scored_keys(map).first()
+                    && let Some(nested_value) = map.get(best_key)
+                {
+                    return render_value_impl(best_key, nested_value, theme, depth + 1);
+                }
+            }
+            build_rendered_value(value.to_string(), theme.map(|t| t.syntax_type_style()).unwrap_or_default())
+        }
+        Value::Array(array) => {
+            if array.is_empty() {
+                build_rendered_value("[]".to_string(), theme.map(|t| t.syntax_type_style()).unwrap_or_default())
+            } else if depth < MAX_RENDER_VALUE_DEPTH {
+                // Attempt to render the first scalar element for readability; fallback to a full array otherwise.
+                let mut rendered_element = None;
+                for entry in array {
+                    match entry {
+                        Value::Object(_) | Value::Array(_) => continue,
+                        _ => {
+                            rendered_element = Some(render_value_impl("", entry, theme, depth + 1));
+                            break;
+                        }
+                    }
+                }
+                if let Some(rendered) = rendered_element {
+                    rendered
                 } else {
-                    value.to_string()
+                    build_rendered_value(value.to_string(), theme.map(|t| t.syntax_type_style()).unwrap_or_default())
                 }
             } else {
-                value.to_string()
+                build_rendered_value(value.to_string(), theme.map(|t| t.syntax_type_style()).unwrap_or_default())
             }
         }
-        _ => value.to_string(),
+    }
+}
+
+fn build_rendered_value(plain_text: String, style: Style) -> RenderedValue {
+    let span = Span::styled(plain_text.clone(), style);
+    RenderedValue {
+        plain_text,
+        spans: vec![span],
     }
 }
 
 pub fn is_sensitive_key(key: &str) -> bool {
     matches!(key, "token" | "key" | "secret" | "password" | "api_key" | "auth_token")
 }
-
+/// Truncates a potentially SHA-like hexadecimal string in the middle if it meets certain conditions.
+///
+/// This function takes a string `s` and a `keep_total` parameter (indicating the total number of
+/// characters to retain). If the string appears to be hex-like (a heuristic based on length and
+/// content) and is longer than the `keep_total`, it truncates the string by keeping the first `keep_total / 2`
+/// characters and the last `keep_total - (keep_total / 2)` characters, replacing the middle portion with an
+/// ellipsis (`…`). If the string does not meet the hex-like heuristic or is short enough, it returns the
+/// input string unmodified.
+///
+/// # Arguments
+///
+/// * `s` - The input string to be potentially truncated.
+/// * `keep_total` - The desired total length for the truncated string, including the ellipsis (`…`).
+///
+/// # Returns
+///
+/// A new `String`:
+/// - If the input string is recognized as SHA-like and its length exceeds `keep_total`, the string is truncated
+///   in the middle with its center replaced by `…`.
+/// - Otherwise, the function simply returns a copy of the input string.
+///
+/// # Heuristic for SHA-like determination
+///
+/// - The string must have a length of at least 16 characters.
+/// - The string must consist entirely of ASCII hexadecimal digits (`[0-9a-fA-F]`).
+///
+/// # Examples
+///
+/// ```
+/// let s = "1234567890abcdef1234567890abcdef";
+/// assert_eq!(ellipsize_middle_if_sha_like(s, 10), "12345…bcdef");
+///
+/// let s = "not-a-sha-string";
+/// assert_eq!(ellipsize_middle_if_sha_like(s, 10), "not-a-sha-string");
+///
+/// let s = "12345";
+/// assert_eq!(ellipsize_middle_if_sha_like(s, 10), "12345");
+/// ```
 fn ellipsize_middle_if_sha_like(s: &str, keep_total: usize) -> String {
     // Heuristic: hex-looking and long → compress
     let is_hexish = s.len() >= 16 && s.chars().all(|c| c.is_ascii_hexdigit());
@@ -316,7 +521,7 @@ fn ellipsize_middle_if_sha_like(s: &str, keep_total: usize) -> String {
 // Copy and Text Processing Methods
 // ============================================================================
 
-/// Builds the text content to be copied to clipboard based on current
+/// Builds the text content to be copied to clipboard based on the current
 /// selection.
 ///
 /// This method handles different copy scenarios:
@@ -344,7 +549,7 @@ pub fn build_copy_text(app: &app::App) -> String {
         return String::new();
     }
 
-    // Handle single selection with special JSON formatting
+    // Handle a single selection with special JSON formatting
     if start == end
         && let Some(LogEntry::Api { json, raw, .. }) = app.logs.rich_entries.get(start)
     {
@@ -367,4 +572,20 @@ pub fn build_copy_text(app: &app::App) -> String {
         buf.push_str(&line);
     }
     redact_sensitive(&buf)
+}
+
+/// Normalize execution payloads to ensure single-key collections render in the results table.
+///
+/// Some APIs return objects shaped as `{ "items": [ ... ] }`. The table expects an array at
+/// the root level, so this helper unwraps objects that meet this pattern. All other payloads
+/// are returned unchanged.
+pub fn normalize_result_payload(value: Value) -> Value {
+    if let Value::Object(map) = &value
+        && map.len() == 1
+        && let Some(inner_value) = map.values().next()
+        && inner_value.is_array()
+    {
+        return inner_value.clone();
+    }
+    value
 }

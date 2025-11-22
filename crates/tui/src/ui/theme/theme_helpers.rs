@@ -1,3 +1,6 @@
+use super::roles::Theme;
+use crate::ui::theme::roles::ThemeRoles;
+use ratatui::text::Line;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -6,11 +9,8 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Padding, Paragraph, Tabs},
 };
 
-use super::roles::Theme;
-use crate::ui::theme::roles::ThemeRoles;
-
 /// Build a standard Block with theme surfaces and borders.
-pub fn block<'a, T: Theme + ?Sized>(theme: &'a T, title: Option<&'a str>, focused: bool) -> Block<'a> {
+pub fn block<'a>(theme: &dyn Theme, title: Option<&'a str>, focused: bool) -> Block<'a> {
     let mut block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
@@ -23,25 +23,25 @@ pub fn block<'a, T: Theme + ?Sized>(theme: &'a T, title: Option<&'a str>, focuse
 }
 
 /// Style for panel-like containers (set background on widget using `.style`).
-pub fn panel_style<T: Theme + ?Sized>(theme: &T) -> Style {
+pub fn panel_style(theme: &dyn Theme) -> Style {
     let ThemeRoles { surface, text, .. } = *theme.roles();
     Style::default().bg(surface).fg(text)
 }
 
 /// Style for table headers: bold snow text with subtle surface background.
-pub fn table_header_style<T: Theme + ?Sized>(theme: &T) -> Style {
+pub fn table_header_style(theme: &dyn Theme) -> Style {
     // Header text: secondary + bold
     theme.text_secondary_style().add_modifier(Modifier::BOLD)
 }
 
 /// Background style for the entire header row to avoid gaps between columns.
-pub fn table_header_row_style<T: Theme + ?Sized>(theme: &T) -> Style {
+pub fn table_header_row_style(theme: &dyn Theme) -> Style {
     Style::default().bg(theme.roles().surface_muted).fg(theme.roles().text_secondary)
 }
 
 /// Darken an RGB color by a multiplicative factor (0.0..=1.0).
 /// If the color is not RGB, returns it unchanged.
-fn darken_rgb(color: Color, factor: f32) -> Color {
+pub(crate) fn darken_rgb(color: Color, factor: f32) -> Color {
     match color {
         Color::Rgb(r, g, b) => {
             let f = factor.clamp(0.0, 1.0);
@@ -54,40 +54,46 @@ fn darken_rgb(color: Color, factor: f32) -> Color {
     }
 }
 
+/// Lighten an RGB color by blending it toward white according to `factor` (0.0..=1.0).
+/// Returns the original color unchanged when the color is not RGB.
+pub(crate) fn lighten_rgb(color: Color, factor: f32) -> Color {
+    match color {
+        Color::Rgb(r, g, b) => {
+            let f = factor.clamp(0.0, 1.0);
+            let lr = (r as f32 + (255.0 - r as f32) * f).round().clamp(0.0, 255.0) as u8;
+            let lg = (g as f32 + (255.0 - g as f32) * f).round().clamp(0.0, 255.0) as u8;
+            let lb = (b as f32 + (255.0 - b as f32) * f).round().clamp(0.0, 255.0) as u8;
+            Color::Rgb(lr, lg, lb)
+        }
+        other => other,
+    }
+}
+
 /// Returns alternating row styles for zebra striping (even/odd),
 /// using slightly darker variants of the background/surface.
-pub fn table_row_styles<T: Theme + ?Sized>(theme: &T) -> (Style, Style) {
-    let ThemeRoles {
-        surface,
-        surface_muted,
-        text,
-        ..
-    } = *theme.roles();
-    // Subtly darken both surface tones for zebra striping without modifiers.
-    // Keep contrast high while making alternate rows feel slightly recessed.
-    let even_bg = darken_rgb(surface, 0.60);
-    let odd_bg = darken_rgb(surface_muted, 0.60);
-    let even = Style::default().bg(even_bg).fg(text);
-    let odd = Style::default().bg(odd_bg).fg(text);
+pub fn table_row_styles(theme: &dyn Theme) -> (Style, Style) {
+    let text = theme.roles().text;
+    let even = theme.table_row_even_style().fg(text);
+    let odd = theme.table_row_odd_style().fg(text);
     (even, odd)
 }
 
 /// Row style for a given row index, alternating between darker
 /// background/surface. This avoids using dim/other modifiers to ensure text
 /// brightness is unaffected.
-pub fn table_row_style<T: Theme + ?Sized>(theme: &T, row_index: usize) -> Style {
+pub fn table_row_style(theme: &dyn Theme, row_index: usize) -> Style {
     let (even, odd) = table_row_styles(theme);
-    if row_index % 2 == 0 { even } else { odd }
+    if row_index.is_multiple_of(2) { even } else { odd }
 }
 
 /// Style for a selected row.
-pub fn table_selected_style<T: Theme + ?Sized>(theme: &T) -> Style {
+pub fn table_selected_style(theme: &dyn Theme) -> Style {
     theme.selection_style().add_modifier(Modifier::BOLD)
 }
 
 /// Build tabs with active/inactive styles.
 #[allow(dead_code)]
-pub fn tabs<'a, T: Theme + ?Sized>(theme: &T, titles: Vec<Span<'a>>, index: usize) -> Tabs<'a> {
+pub fn tabs<'a>(theme: &dyn Theme, titles: Vec<Span<'a>>, index: usize) -> Tabs<'a> {
     Tabs::new(titles)
         .select(index)
         .highlight_style(
@@ -99,36 +105,19 @@ pub fn tabs<'a, T: Theme + ?Sized>(theme: &T, titles: Vec<Span<'a>>, index: usiz
         .style(theme.text_secondary_style())
 }
 
-/// Style for input fields; caller sets the block border based on focus.
-#[allow(dead_code)]
-pub fn input_style<T: Theme + ?Sized>(theme: &T, valid: bool, focused: bool) -> Style {
-    let ThemeRoles { surface, text, error, .. } = *theme.roles();
-    let mut style = Style::default().bg(surface).fg(text);
-    if !valid {
-        style = style.fg(error);
-    }
-    if focused {
-        style = style.add_modifier(Modifier::BOLD);
-    }
-    style
-}
-
 /// Primary button style (filled accent background).
-#[allow(dead_code)]
-pub fn button_primary_style<T: Theme + ?Sized>(theme: &T, enabled: bool) -> Style {
+pub fn button_primary_style(theme: &dyn Theme, enabled: bool, selected: bool) -> Style {
     if enabled {
         let ThemeRoles { accent_primary, text, .. } = *theme.roles();
-        Style::default().bg(accent_primary).fg(text).add_modifier(Modifier::BOLD)
+        let style = Style::default().fg(text).add_modifier(Modifier::BOLD);
+        if selected { style.bg(accent_primary) } else { style }
     } else {
-        let ThemeRoles {
-            surface_muted, text_muted, ..
-        } = *theme.roles();
-        Style::default().bg(surface_muted).fg(text_muted)
+        theme.text_muted_style()
     }
 }
 
 /// Secondary button style (outline-like, rely on border color in Block).
-pub fn button_secondary_style<T: Theme + ?Sized>(theme: &T, enabled: bool, selected: bool) -> Style {
+pub fn button_secondary_style(theme: &dyn Theme, enabled: bool, selected: bool) -> Style {
     if enabled {
         let ThemeRoles {
             accent_secondary,
@@ -136,10 +125,7 @@ pub fn button_secondary_style<T: Theme + ?Sized>(theme: &T, enabled: bool, selec
             ..
         } = theme.roles().clone();
         let style = Style::default().fg(accent_secondary);
-        if selected {
-            return style.bg(selection_bg);
-        }
-        return style;
+        if selected { style.bg(selection_bg) } else { style }
     } else {
         theme.text_muted_style()
     }
@@ -147,42 +133,91 @@ pub fn button_secondary_style<T: Theme + ?Sized>(theme: &T, enabled: bool, selec
 
 /// Badge/tag style (filled accent, readable text).
 #[allow(dead_code)]
-pub fn badge_style<T: Theme + ?Sized>(theme: &T) -> Style {
-    let ThemeRoles { accent_secondary, .. } = theme.roles().clone();
-    Style::default().bg(accent_secondary).fg(Color::Black)
+pub fn badge_style(theme: &dyn Theme) -> Style {
+    // Delegate to Theme’s default badge style so all themes are consistent
+    theme.badge_style()
 }
 
-/// Build a standard paragraph styled with primary text.
-#[allow(dead_code)]
-pub fn paragraph<'a, T: Theme + ?Sized>(theme: &T, text: impl Into<Span<'a>>) -> Paragraph<'a> {
-    Paragraph::new(text.into()).style(theme.text_primary_style())
+/// Immutable configuration specifying how a button should be rendered.
+#[derive(Default, Debug, Clone, Copy)]
+pub struct ButtonRenderOptions {
+    /// Whether the button is interactable and should display active styling.
+    pub enabled: bool,
+    /// Indicates whether the button currently owns focus.
+    pub focused: bool,
+    /// Highlights the button as the selected option.
+    pub selected: bool,
+    /// Border configuration to apply when drawing the button.
+    pub borders: Borders,
+    /// Whether the button is the primary action.
+    pub is_primary: bool,
 }
 
-/// Renders a standard button
-pub fn render_button<T: Theme + ?Sized>(
-    frame: &mut Frame,
-    area: Rect,
-    label: &str,
-    is_enabled: bool,
-    is_focused: bool,
-    is_selected: bool,
-    theme: &T,
-    borders: Borders,
-) {
-    let border_style = if is_enabled {
-        theme.border_style(is_focused)
+impl ButtonRenderOptions {
+    /// Construct a new `ButtonRenderOptions` using positional arguments.
+    pub const fn new(enabled: bool, focused: bool, selected: bool, borders: Borders, is_primary: bool) -> Self {
+        Self {
+            enabled,
+            focused,
+            selected,
+            borders,
+            is_primary,
+        }
+    }
+}
+
+/// Renders a button widget within a given area on the terminal frame.
+///
+/// # Parameters
+/// - `frame`: A mutable reference to the terminal `Frame` where the button will be rendered.
+/// - `area`: A `Rect` specifying the area of the terminal where the button will be drawn.
+/// - `label`: A string slice (`&str`) that represents the label or text to be displayed on the button.
+/// - `theme`: A reference to an object implementing the `Theme` trait, used to retrieve styles for borders, text, and other visual elements based on button states.
+/// - `options`: Aggregated button state describing enabled, focused, selected, and border configuration.
+///
+/// # Behavior
+/// This function renders a button with the following visual traits and rules:
+/// - The border style is determined by whether the button is enabled and focused.
+/// - The button's main style (e.g., text color and background) is defined based on its enabled state and selection state.
+/// - Padding within the button is added only if no borders are present, ensuring consistent dimensions regardless of whether borders are drawn.
+/// - The label is centrally aligned and displayed inside the button's area.
+///
+/// # Styling
+/// - Disabled buttons use a muted style provided by the `theme`.
+/// - Enabled buttons rely on secondary styling, optionally accented when marked as selected.
+///
+/// # Examples
+/// ```
+/// use tui::widgets::Borders;
+///
+/// // Assuming `frame`, `theme`, and `area` are already available:
+/// render_button(
+///     &mut frame,
+///     area,
+///     "Click Me",
+///     &theme,
+///     ButtonRenderOptions::new(true, true, false, Borders::ALL),
+/// );
+/// ```
+pub fn render_button(frame: &mut Frame, area: Rect, label: &str, theme: &dyn Theme, options: ButtonRenderOptions) {
+    let border_style = if options.enabled {
+        theme.border_style(options.focused)
     } else {
         theme.text_muted_style()
     };
 
-    let button_style = if is_enabled {
-        button_secondary_style(theme, true, is_selected)
+    let button_style = if options.enabled {
+        if options.is_primary {
+            button_primary_style(theme, true, options.selected)
+        } else {
+            button_secondary_style(theme, true, options.selected)
+        }
     } else {
         theme.text_muted_style()
     };
 
-    let padding = if borders.is_empty() {
-        Padding::uniform(1) // Add padding when no borders to match bordered button size
+    let padding = if options.borders.is_empty() {
+        Padding::uniform(1) // Add padding when no borders to match the bordered button size
     } else {
         Padding::uniform(0) // No padding when borders are present
     };
@@ -190,8 +225,175 @@ pub fn render_button<T: Theme + ?Sized>(
     frame.render_widget(
         Paragraph::new(label)
             .centered()
-            .block(Block::bordered().borders(borders).border_style(border_style).padding(padding))
+            .block(
+                Block::bordered()
+                    .borders(options.borders)
+                    .border_style(border_style)
+                    .padding(padding),
+            )
             .style(button_style),
         area,
     );
+}
+
+/// Generates a styled radio button text representation.
+///
+/// This function creates a radio button-like structure in a textual format.
+/// It displays a label along with a selection indicator (`[✓]` for selected,
+/// `[ ]` for unselected), with styles applied based on the selection and focus states,
+/// as well as the provided theme.
+///
+/// # Parameters
+///
+/// - `label`: A string slice that represents the label of the radio button.
+/// - `is_selected`: A boolean that determines whether the radio button is selected.
+///   - `true`: The radio button appears selected (`[✓]`).
+///   - `false`: The radio button appears unselected (`[ ]`).
+/// - `is_focused`: A boolean that indicates if the radio button is currently focused.
+///   - If `true`, the focus-specific style from the theme is applied to the line.
+///   - If `false`, the normal style from the theme is used.
+/// - `theme`: A reference to an object implementing the `Theme` trait. The theme
+///   provides styling options for the radio button, including text color
+///   and selection styles.
+///
+/// # Returns
+///
+/// - A `Line` object, which is a styled line of text representing the radio button.
+///   It includes the selection marker, spacing, and the styled label, with appropriate
+///   styles applied based on the inputs.
+///
+/// # Example
+///
+/// ```rust
+/// let theme = MyCustomTheme::new();
+/// let radio_button = create_radio_button("Option 1", true, false, &theme);
+/// println!("{:?}", radio_button);
+/// ```
+///
+/// In this example, calling `create_radio_button` with `"Option 1"` as the label, `true`
+/// for `is_selected`, and `false` for `is_focused` will generate a styled `[✓] Option 1`
+/// text representation based on the styling provided by `MyCustomTheme`.
+///
+/// # Notes
+///
+/// - The `Theme` trait must provide implementations for the following methods:
+///   - `status_success()`: Returns the style for a selected state.
+///   - `text_primary_style()`: Returns the default text style.
+///   - `selection_style()`: Returns the style for a focused state.
+///
+/// - Ensure the lifetime of the returned `Line` (`'static`) is compatible with
+///   the downstream usage.
+pub fn create_radio_button(label: &str, is_selected: bool, is_focused: bool, theme: &dyn Theme) -> Line<'static> {
+    let mut radio_spans = Vec::new();
+    radio_spans.push(Span::styled(
+        if is_selected { "[✓]" } else { "[ ]" },
+        if is_selected {
+            theme.status_success()
+        } else {
+            theme.text_primary_style()
+        },
+    ));
+    radio_spans.push(Span::raw(" "));
+    radio_spans.push(Span::styled(label.to_string(), theme.text_primary_style()));
+
+    if is_focused {
+        Line::from(radio_spans).style(theme.selection_style())
+    } else {
+        Line::from(radio_spans).style(theme.text_primary_style())
+    }
+}
+
+pub fn highlight_segments(needle: &str, text: &str, base: Style, highlight: Style) -> Vec<Span<'static>> {
+    if text.is_empty() {
+        return Vec::new();
+    }
+    if needle.is_empty() {
+        vec![Span::styled(text.to_string(), base)]
+    } else {
+        create_spans_with_match(needle.to_string(), text.to_string(), base, highlight)
+    }
+}
+pub fn create_spans_with_match(needle: String, display: String, default_style: Style, emphasis_style: Style) -> Vec<Span<'static>> {
+    if needle.is_empty() {
+        return vec![Span::styled(display, default_style)];
+    }
+
+    let mut spans: Vec<Span> = Vec::new();
+    let hay = display.as_str();
+    let mut i = 0usize;
+    let needle_lower = needle.to_ascii_lowercase();
+    let hay_lower = hay.to_ascii_lowercase();
+
+    // Find and highlight all matches
+    while let Some(pos) = hay_lower[i..].find(&needle_lower) {
+        let start = i + pos;
+
+        // Add text before the match
+        if start > i {
+            spans.push(Span::styled(hay[i..start].to_string(), default_style));
+        }
+
+        // Add highlighted match
+        let end = start + needle.len();
+        spans.push(Span::styled(hay[start..end].to_string(), emphasis_style));
+
+        i = end;
+        if i >= hay.len() {
+            break;
+        }
+    }
+
+    // Add remaining text after the last match
+    if i < hay.len() {
+        spans.push(Span::styled(hay[i..].to_string(), default_style));
+    }
+
+    spans
+}
+
+pub fn build_hint_spans(theme: &dyn Theme, hints: &[(&str, &str)]) -> Vec<Span<'static>> {
+    let accent = theme.accent_emphasis_style();
+    let muted = theme.text_muted_style();
+    let mut spans = Vec::with_capacity(hints.len() * 2);
+    for (key, description) in hints {
+        spans.push(Span::styled((*key).to_string(), accent));
+        spans.push(Span::styled((*description).to_string(), muted));
+    }
+    spans
+}
+/// Build a [`Line`] showing a focus indicator, label, and string value using syntax colors.
+pub(crate) fn build_syntax_highlighted_line(
+    label: &str,
+    value: &str,
+    placeholder: &str,
+    focused: bool,
+    theme: &dyn Theme,
+) -> Line<'static> {
+    let spans: Vec<Span> = vec![
+        build_focus_indicator_span(focused, theme),
+        build_label_span(label, theme),
+        build_value_span(value, placeholder, theme),
+    ];
+    Line::from(spans)
+}
+
+/// Build the arrow focus indicator used ahead of inline fields.
+pub(crate) fn build_focus_indicator_span(focused: bool, theme: &dyn Theme) -> Span<'static> {
+    let indicator = if focused { "› " } else { "  " };
+    Span::styled(indicator.to_string(), theme.text_secondary_style())
+}
+
+/// Build the field label span using the syntax keyword foreground color.
+pub(crate) fn build_label_span(label: &str, theme: &dyn Theme) -> Span<'static> {
+    Span::styled(format!("{label}: "), theme.syntax_keyword_style())
+}
+
+/// Build the field value span, falling back to a placeholder if empty.
+pub(crate) fn build_value_span(value: &str, placeholder: &str, theme: &dyn Theme) -> Span<'static> {
+    if value.is_empty() {
+        let placeholder_style = theme.syntax_string_style().patch(theme.text_muted_style());
+        Span::styled(placeholder.to_string(), placeholder_style)
+    } else {
+        Span::styled(value.to_string(), theme.syntax_string_style())
+    }
 }

@@ -1,10 +1,11 @@
 //! Table state for the MCP plugins view, covering filtering, focus, and selection.
 
+use crate::ui::components::plugins::PluginDetail;
+use heroku_types::PluginStatus;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
+use ratatui::widgets::TableState;
 use std::time::{Duration, Instant};
-
-use crate::ui::components::plugins::PluginDetail;
 
 /// State container for the MCP plugins table including filtering logic and
 /// selection metadata.
@@ -12,22 +13,26 @@ use crate::ui::components::plugins::PluginDetail;
 /// The table owns the quick-search filter, the filtered selection index, and
 /// the timing information that determines when the UI should poll for fresh
 /// plugin status updates.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PluginsTableState {
+    pub table_state: TableState,
     /// Root focus scope for the plugins table cluster.
-    pub focus: FocusFlag,
-    /// Focus flag representing the quick-search input field above the table.
-    pub search_flag: FocusFlag,
-    /// Focus flag representing the selectable grid of plugin rows.
-    pub grid_flag: FocusFlag,
+    pub container_focus: FocusFlag,
+    /// Focus scopes for each of the table's sub-components.
+    pub f_search: FocusFlag,
+    pub f_grid: FocusFlag,
+    pub f_add: FocusFlag,
+    pub f_start: FocusFlag,
+    pub f_stop: FocusFlag,
+    pub f_delete: FocusFlag,
+    pub f_edit: FocusFlag,
     /// Case-insensitive filter string entered by the user.
     pub filter: String,
     /// Flat list of plugin rows sourced from configuration or runtime updates.
     pub items: Vec<PluginDetail>,
-    /// Current selection within the filtered view (index into `filtered_indices`).
-    pub selected: Option<usize>,
-    // the position of the cursor in the search input
+    /// the position of the cursor in the search input
     pub cursor_position: usize,
+    // the last time the table was refreshed, used to determine when to poll for updates
     last_refresh: Option<Instant>,
 }
 
@@ -35,12 +40,17 @@ impl PluginsTableState {
     /// Create a new table state with empty data and default focus flags.
     pub fn new() -> Self {
         Self {
-            focus: FocusFlag::named("plugins.table"),
-            search_flag: FocusFlag::named("plugins.search"),
-            grid_flag: FocusFlag::named("plugins.grid"),
+            table_state: TableState::default(),
+            container_focus: FocusFlag::named("plugins.table"),
+            f_search: FocusFlag::named("plugins.search"),
+            f_grid: FocusFlag::named("plugins.grid"),
+            f_add: FocusFlag::named("plugins.add"),
+            f_start: FocusFlag::named("plugins.start_or_restart"),
+            f_stop: FocusFlag::named("plugins.stop"),
+            f_delete: FocusFlag::named("plugins.delete"),
+            f_edit: FocusFlag::named("plugins.edit"),
             filter: String::new(),
             items: Vec::new(),
-            selected: None,
             last_refresh: None,
             cursor_position: 0,
         }
@@ -49,7 +59,7 @@ impl PluginsTableState {
     /// Replace the table rows and normalize the current selection accordingly.
     pub fn replace_items(&mut self, rows: Vec<PluginDetail>) {
         self.items = rows;
-        self.selected = if self.items.is_empty() { None } else { Some(0) };
+        self.normalize_selection();
     }
 
     pub fn update_item(&mut self, item: PluginDetail) {
@@ -68,18 +78,20 @@ impl PluginsTableState {
         self.items
             .iter()
             .enumerate()
-            .filter(|(_, item)| {
-                item.name.to_lowercase().contains(&query)
-                    || item.command_or_url.to_lowercase().contains(&query)
-                    || item.tags.iter().any(|tag| tag.to_lowercase().contains(&query))
-            })
+            .filter(|(_, item)| self.matches_filter(item, &query))
             .map(|(index, _)| index)
             .collect()
     }
 
+    fn matches_filter(&self, item: &PluginDetail, query: &str) -> bool {
+        item.name.to_lowercase().contains(query)
+            || item.command_or_url.to_lowercase().contains(query)
+            || item.tags.iter().any(|tag| tag.to_lowercase().contains(query))
+    }
+
     /// Determine whether enough time has elapsed to trigger a refresh of plugin status.
     pub fn should_refresh(&mut self) -> bool {
-        if !self.focus.get() {
+        if !self.container_focus.get() {
             return false;
         }
         const INTERVAL: Duration = Duration::from_millis(1000);
@@ -141,9 +153,13 @@ impl PluginsTableState {
     /// Retrieve the currently selected item with respect to the filtered view.
     pub fn selected_item(&self) -> Option<&PluginDetail> {
         let filtered = self.filtered_indices();
-        let position = self.selected?;
+        let position = self.table_state.selected()?;
         let index = *filtered.get(position)?;
         self.items.get(index)
+    }
+
+    pub fn set_selected_index(&mut self, index: Option<usize>) {
+        self.table_state.select(index);
     }
 
     /// Remove the trailing character from the filter and reset the selection.
@@ -152,45 +168,86 @@ impl PluginsTableState {
             self.reduce_move_cursor_left();
             self.filter.remove(self.cursor_position);
         }
-        self.selected = Some(0);
+        self.select_first_filtered_row();
     }
 
     /// Append a character to the filter and reset the selection to the top.
     pub fn push_filter_character(&mut self, value: char) {
         self.filter.insert(self.cursor_position, value);
         self.cursor_position += value.len_utf8();
-        self.selected = Some(0);
+        self.select_first_filtered_row();
     }
 
     /// Clear the filter entirely, preserving existing rows but normalizing selection.
     pub fn clear_filter(&mut self) {
         self.filter.clear();
         self.cursor_position = 0;
-        self.selected = Some(0);
+        self.select_first_filtered_row();
     }
 
     /// Expose the current filter text for read-only scenarios.
     pub fn filter_text(&self) -> &str {
         &self.filter
     }
-}
 
-impl Default for PluginsTableState {
-    fn default() -> Self {
-        Self::new()
+    /// Returns true when the current selection maps to a valid filtered item.
+    pub fn has_selection(&self) -> bool {
+        let Some(selected_index) = self.table_state.selected() else {
+            return false;
+        };
+        self.filtered_indices().get(selected_index).is_some()
+    }
+
+    fn select_first_filtered_row(&mut self) {
+        if self.filtered_indices().is_empty() {
+            self.table_state.select(None);
+        } else {
+            self.table_state.select(Some(0));
+        }
+    }
+
+    /// Ensures the currently selected row refers to a valid filtered entry.
+    ///
+    /// The selection is cleared when no filtered rows remain, clamped to the last available
+    /// row when it falls out of range, and defaulted to the first row when unset.
+    pub fn normalize_selection(&mut self) {
+        let filtered = self.filtered_indices();
+        if filtered.is_empty() {
+            self.table_state.select(None);
+            return;
+        }
+
+        match self.table_state.selected() {
+            Some(index) if index < filtered.len() => {}
+            Some(_) => self.table_state.select(Some(filtered.len().saturating_sub(1))),
+            None => self.table_state.select(Some(0)),
+        }
     }
 }
-
 impl HasFocus for PluginsTableState {
     fn build(&self, builder: &mut FocusBuilder) {
         let tag = builder.start(self);
-        builder.leaf_widget(&self.search_flag);
-        builder.leaf_widget(&self.grid_flag);
+        builder.leaf_widget(&self.f_search);
+        builder.leaf_widget(&self.f_grid);
+        builder.leaf_widget(&self.f_add);
+        if self.has_selection() {
+            let is_running = self
+                .selected_item()
+                .map(|item| item.status == PluginStatus::Running)
+                .unwrap_or(false);
+            if !is_running {
+                builder.leaf_widget(&self.f_start);
+            } else {
+                builder.leaf_widget(&self.f_stop);
+            }
+            builder.leaf_widget(&self.f_edit);
+            builder.leaf_widget(&self.f_delete);
+        }
         builder.end(tag);
     }
 
     fn focus(&self) -> FocusFlag {
-        self.focus.clone()
+        self.container_focus.clone()
     }
 
     fn area(&self) -> Rect {

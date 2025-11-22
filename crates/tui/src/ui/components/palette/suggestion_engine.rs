@@ -1,7 +1,8 @@
 use heroku_types::{CommandExecution, CommandSpec, ItemKind, SuggestionItem};
 use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
+use std::sync::Arc;
 
-use super::state::ValueProvider;
+use heroku_engine::provider::{PendingProviderFetch, ProviderSuggestionSet, ValueProvider};
 
 // ===== Types =====
 
@@ -15,6 +16,75 @@ pub(crate) struct SuggestionResult {
     pub items: Vec<SuggestionItem>,
     /// Whether value providers are currently loading data for suggestions
     pub provider_loading: bool,
+    /// Pending provider fetches that should be dispatched by the caller.
+    pub pending_fetches: Vec<PendingProviderFetch>,
+}
+
+#[derive(Default)]
+struct ProviderSuggestionAggregate {
+    items: Vec<SuggestionItem>,
+    pending_fetches: Vec<PendingProviderFetch>,
+    provider_loading: bool,
+}
+
+impl ProviderSuggestionAggregate {
+    fn extend(&mut self, mut result: ProviderSuggestionSet) {
+        if let Some(fetch) = result.pending_fetch.take() {
+            self.provider_loading = true;
+            self.pending_fetches.push(fetch);
+        }
+        if !result.items.is_empty() {
+            self.items.extend(result.items);
+        }
+    }
+
+    fn into_parts(self) -> (Vec<SuggestionItem>, Vec<PendingProviderFetch>, bool) {
+        (self.items, self.pending_fetches, self.provider_loading)
+    }
+}
+
+struct PositionalSuggestionContext<'a> {
+    commands: &'a [CommandSpec],
+    spec: &'a CommandSpec,
+    remaining_parts: &'a [String],
+    current_input: &'a str,
+    ends_with_space: bool,
+    current_is_flag: bool,
+    providers: &'a [Arc<dyn ValueProvider>],
+    user_args_len: usize,
+}
+
+fn build_positional_suggestions(context: PositionalSuggestionContext<'_>) -> (Vec<SuggestionItem>, Vec<PendingProviderFetch>, bool) {
+    let PositionalSuggestionContext {
+        commands,
+        spec,
+        remaining_parts,
+        current_input,
+        ends_with_space,
+        current_is_flag,
+        providers,
+        user_args_len,
+    } = context;
+
+    let first_flag_idx = remaining_parts
+        .iter()
+        .position(|t| t.starts_with("--"))
+        .unwrap_or(remaining_parts.len());
+    let editing_positional = !current_is_flag
+        && !remaining_parts.is_empty()
+        && (remaining_parts.len() - 1) < first_flag_idx
+        && !spec.positional_args.is_empty()
+        && !ends_with_space;
+
+    if editing_positional {
+        let arg_index = (remaining_parts.len() - 1).min(spec.positional_args.len().saturating_sub(1));
+        return SuggestionEngine::build_for_index(commands, spec, arg_index, current_input, providers, remaining_parts);
+    }
+    if user_args_len < spec.positional_args.len() && !current_is_flag {
+        return SuggestionEngine::build_for_index(commands, spec, user_args_len, "", providers, remaining_parts);
+    }
+
+    (Vec::new(), Vec::new(), false)
 }
 
 /// Engine responsible for building command suggestions based on user input and available commands.
@@ -32,6 +102,7 @@ impl SuggestionEngine {
             return Some(SuggestionResult {
                 items,
                 provider_loading: false,
+                pending_fetches: Vec::new(),
             });
         }
         None
@@ -50,24 +121,18 @@ impl SuggestionEngine {
         spec: &CommandSpec,
         remaining_parts: &[String],
         input: &str,
-        providers: &[Box<dyn ValueProvider>],
+        providers: &[Arc<dyn ValueProvider>],
     ) -> Option<SuggestionResult> {
         let pending_flag = find_pending_flag(spec, remaining_parts, input);
         if let Some(flag_name) = pending_flag {
             let value_partial = flag_value_partial(remaining_parts);
-            let items = suggest_values_for_flag(commands, spec, &flag_name, &value_partial, providers, remaining_parts);
-            // Signal loading when a provider is declared for this flag but no non-enum values yet
-            let has_binding = spec
-                .flags
-                .iter()
-                .find(|f| f.name == flag_name)
-                .and_then(|f| f.provider.as_ref())
-                .is_some();
-            let provider_found = items
-                .iter()
-                .any(|it| matches!(it.kind, ItemKind::Value) && it.meta.as_deref() != Some("enum"));
-            let provider_loading = has_binding && !provider_found;
-            return Some(SuggestionResult { items, provider_loading });
+            let (items, pending_fetches, provider_loading) =
+                suggest_values_for_flag(commands, spec, &flag_name, &value_partial, providers, remaining_parts);
+            return Some(SuggestionResult {
+                items,
+                provider_loading,
+                pending_fetches,
+            });
         }
         None
     }
@@ -76,59 +141,11 @@ impl SuggestionEngine {
         spec: &CommandSpec,
         index: usize,
         current: &str,
-        providers: &[Box<dyn ValueProvider>],
+        providers: &[Arc<dyn ValueProvider>],
         remaining_parts: &[String],
-    ) -> (Vec<SuggestionItem>, bool) {
-        let mut values = suggest_positionals(commands, spec, index, current, providers, remaining_parts);
-        let mut loading = false;
-        if let Some(positional_arg) = spec.positional_args.get(index) {
-            // Keep provider suggestions only different from the current echo
-            if !current.is_empty() {
-                values.retain(|item| item.insert_text != current);
-            }
-            let has_binding = positional_arg.provider.is_some();
-            let provider_found = values
-                .iter()
-                .any(|item| matches!(item.kind, ItemKind::Value) && item.meta.as_deref() != Some("enum"));
-            if has_binding && !provider_found {
-                loading = true;
-            }
-        }
-        (values, loading)
+    ) -> (Vec<SuggestionItem>, Vec<PendingProviderFetch>, bool) {
+        suggest_positionals(commands, spec, index, current, providers, remaining_parts)
     }
-    // Breakout: build positional suggestions and compute provider loading
-    fn build_positional_suggestions(
-        commands: &[CommandSpec],
-        spec: &CommandSpec,
-        remaining_parts: &[String],
-        current_input: &str,
-        ends_with_space: bool,
-        current_is_flag: bool,
-        providers: &[Box<dyn ValueProvider>],
-        user_args_len: usize,
-    ) -> (Vec<SuggestionItem>, bool) {
-        // Helper: build values for a specific positional index and determine loading
-
-        let first_flag_idx = remaining_parts
-            .iter()
-            .position(|t| t.starts_with("--"))
-            .unwrap_or(remaining_parts.len());
-        let editing_positional = !current_is_flag
-            && !remaining_parts.is_empty()
-            && (remaining_parts.len() - 1) < first_flag_idx
-            && !spec.positional_args.is_empty()
-            && !ends_with_space;
-
-        if editing_positional {
-            let arg_index = (remaining_parts.len() - 1).min(spec.positional_args.len().saturating_sub(1));
-            return Self::build_for_index(commands, spec, arg_index, current_input, providers, remaining_parts);
-        }
-        if user_args_len < spec.positional_args.len() && !current_is_flag {
-            return Self::build_for_index(commands, spec, user_args_len, "", providers, remaining_parts);
-        }
-        (Vec::new(), false)
-    }
-
     // Breakout: extend with required/optional flags depending on context
     fn extend_flag_suggestions(
         spec: &CommandSpec,
@@ -169,7 +186,7 @@ impl SuggestionEngine {
     /// ```
     /// let result = SuggestionEngine::build(&registry, &providers, "apps info --app ");
     /// ```
-    pub fn build(commands: &[CommandSpec], providers: &[Box<dyn ValueProvider>], input: &str) -> SuggestionResult {
+    pub fn build(commands: &[CommandSpec], providers: &[Arc<dyn ValueProvider>], input: &str) -> SuggestionResult {
         let input_tokens: Vec<String> = lex_shell_like(input);
 
         if let Some(out) = Self::suggest_when_unresolved(commands, &input_tokens) {
@@ -180,6 +197,7 @@ impl SuggestionEngine {
             return SuggestionResult {
                 items: vec![],
                 provider_loading: false,
+                pending_fetches: Vec::new(),
             };
         };
 
@@ -202,7 +220,7 @@ impl SuggestionEngine {
         // - If the user is currently typing a positional token (no trailing space),
         //   suggest values for that positional index.
         // - Otherwise, suggest for the next positional if any remain.
-        let (mut items, provider_loading) = Self::build_positional_suggestions(
+        let context = PositionalSuggestionContext {
             commands,
             spec,
             remaining_parts,
@@ -210,13 +228,22 @@ impl SuggestionEngine {
             ends_with_space,
             current_is_flag,
             providers,
-            user_args.len(),
-        );
+            user_args_len: user_args.len(),
+        };
+        let (mut items, pending_fetches, mut provider_loading) = build_positional_suggestions(context);
 
         // Suggest required flags if needed (or if user is typing a flag)
         Self::extend_flag_suggestions(spec, &user_flags, current_input, current_is_flag, &mut items);
 
-        SuggestionResult { items, provider_loading }
+        if !pending_fetches.is_empty() {
+            provider_loading = true;
+        }
+
+        SuggestionResult {
+            items,
+            provider_loading,
+            pending_fetches,
+        }
     }
 }
 
@@ -282,28 +309,23 @@ fn suggest_commands(commands: &[CommandSpec], prefix: &str) -> Vec<SuggestionIte
     }
 
     for command in commands {
-        let CommandSpec {
-            group, name, execution, ..
-        } = command;
-        let executable = if name.is_empty() {
-            group.to_string()
-        } else {
-            format!("{} {}", group, name)
+        let executable = command.canonical_id();
+        let Some(score) = fuzzy_score(&executable, prefix) else {
+            continue;
         };
-
-        if let Some(score) = fuzzy_score(&executable, prefix) {
-            let exec_type = match execution {
-                CommandExecution::Http { .. } => "[CMD]",
-                CommandExecution::Mcp(..) => "[MCP]",
-            };
-            items.push(SuggestionItem {
-                display: format!("{:<32} {} {:<98}", executable, exec_type, command.summary),
-                insert_text: executable,
-                kind: ItemKind::Command,
-                meta: None,
-                score,
-            });
-        }
+        let (exec_type, kind) = match command.execution {
+            CommandExecution::Http { .. } => ("[CMD]", ItemKind::Command),
+            CommandExecution::Mcp(..) => ("[MCP]", ItemKind::MCP),
+        };
+        let summary = command.summary.trim();
+        let meta = if summary.is_empty() { None } else { Some(summary.to_string()) };
+        items.push(SuggestionItem {
+            display: format!("{} {} {}", exec_type, executable.as_str(), command.summary),
+            insert_text: executable,
+            kind,
+            meta,
+            score,
+        });
     }
     items
 }
@@ -445,9 +467,9 @@ fn suggest_values_for_flag(
     spec: &CommandSpec,
     flag_name: &str,
     partial: &str,
-    providers: &[Box<dyn ValueProvider>],
+    providers: &[Arc<dyn ValueProvider>],
     remaining_parts: &[String],
-) -> Vec<SuggestionItem> {
+) -> (Vec<SuggestionItem>, Vec<PendingProviderFetch>, bool) {
     let mut items: Vec<SuggestionItem> = Vec::new();
 
     // Add enum values from flag definition
@@ -466,14 +488,18 @@ fn suggest_values_for_flag(
     }
 
     // Add dynamic values from providers
-    let command_key = format!("{}:{}", spec.group, spec.name);
+    let command_key = format!("{} {}", spec.group, spec.name);
     let inputs_map = build_inputs_map_for_flag(spec, remaining_parts, flag_name);
+    let mut aggregate = ProviderSuggestionAggregate::default();
     for provider in providers {
-        let mut values = provider.suggest(commands, &command_key, flag_name, partial, &inputs_map);
-        items.append(&mut values);
+        let result = provider.suggest(commands, &command_key, flag_name, partial, &inputs_map);
+        aggregate.extend(result);
     }
+    let (provider_items, pending_fetches, provider_loading_flag) = aggregate.into_parts();
+    let provider_loading = provider_loading_flag || !pending_fetches.is_empty();
 
-    items
+    items.extend(provider_items);
+    (items, pending_fetches, provider_loading)
 }
 
 /// Generates suggestions for positional arguments.
@@ -496,23 +522,35 @@ fn suggest_positionals(
     spec: &CommandSpec,
     arg_count: usize,
     current: &str,
-    providers: &[Box<dyn ValueProvider>],
+    providers: &[Arc<dyn ValueProvider>],
     remaining_parts: &[String],
-) -> Vec<SuggestionItem> {
+) -> (Vec<SuggestionItem>, Vec<PendingProviderFetch>, bool) {
     let mut items: Vec<SuggestionItem> = Vec::new();
+    let mut pending_fetches: Vec<PendingProviderFetch> = Vec::new();
+    let mut provider_loading = false;
 
     if let Some(positional_arg) = spec.positional_args.get(arg_count) {
-        let command_key = format!("{}:{}", spec.group, spec.name);
+        let command_key = format!("{} {}", spec.group, spec.name);
 
         // Query providers for dynamic suggestions
         let inputs_map = build_inputs_map_for_positional(spec, arg_count, remaining_parts);
+        let mut aggregate = ProviderSuggestionAggregate::default();
         for provider in providers {
-            let mut values = provider.suggest(commands, &command_key, &positional_arg.name, current, &inputs_map);
-            items.append(&mut values);
+            let result = provider.suggest(commands, &command_key, &positional_arg.name, current, &inputs_map);
+            aggregate.extend(result);
+        }
+        let (mut provider_items, fetches, loading_flag) = aggregate.into_parts();
+        pending_fetches = fetches;
+        provider_loading = loading_flag || !pending_fetches.is_empty();
+
+        if !current.is_empty() {
+            provider_items.retain(|item| item.insert_text != current);
         }
 
+        items.extend(provider_items);
+
         // Fall back to generic placeholder if no provider suggestions
-        if items.is_empty() {
+        if items.is_empty() && current.trim().is_empty() {
             items.push(SuggestionItem {
                 display: format!(
                     "<{}> [ARG] {}",
@@ -527,7 +565,7 @@ fn suggest_positionals(
         }
     }
 
-    items
+    (items, pending_fetches, provider_loading)
 }
 
 fn build_inputs_map_for_positional(
@@ -704,7 +742,8 @@ pub(crate) fn is_flag_value_complete(input: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use heroku_registry::Registry;
+    use heroku_engine::provider::{PendingProviderFetch, ProviderFetchPlan};
+    use heroku_registry::CommandRegistry;
     use heroku_types::{CommandExecution, CommandFlag, HttpCommandSpec, PositionalArgument, ServiceId};
 
     #[derive(Debug)]
@@ -720,25 +759,43 @@ mod tests {
             field: &str,
             _partial: &str,
             _inputs: &std::collections::HashMap<String, String>,
-        ) -> Vec<SuggestionItem> {
-            let mut out = Vec::new();
+        ) -> ProviderSuggestionSet {
+            let mut items = Vec::new();
             if let Some(values) = self.map.get(&(command_key.to_string(), field.to_string())) {
-                for v in values {
-                    out.push(SuggestionItem {
-                        display: v.clone(),
-                        insert_text: v.clone(),
+                for value in values {
+                    items.push(SuggestionItem {
+                        display: value.clone(),
+                        insert_text: value.clone(),
                         kind: ItemKind::Value,
                         meta: Some("test-provider".into()),
                         score: 1,
                     });
                 }
             }
-            out
+            ProviderSuggestionSet::ready(items)
         }
     }
 
-    fn registry_with(commands: Vec<CommandSpec>) -> Registry {
-        heroku_registry::Registry {
+    #[derive(Debug)]
+    struct PendingProvider;
+
+    impl ValueProvider for PendingProvider {
+        fn suggest(
+            &self,
+            _commands: &[CommandSpec],
+            _command_key: &str,
+            _field: &str,
+            _partial: &str,
+            _inputs: &std::collections::HashMap<String, String>,
+        ) -> ProviderSuggestionSet {
+            let plan = ProviderFetchPlan::new("apps list".into(), "apps list::pending".into(), serde_json::Map::new());
+            let pending = PendingProviderFetch::new(plan, true);
+            ProviderSuggestionSet::with_pending(Vec::new(), pending)
+        }
+    }
+
+    fn registry_with(commands: Vec<CommandSpec>) -> CommandRegistry {
+        CommandRegistry {
             commands,
             workflows: vec![],
             provider_contracts: Default::default(),
@@ -785,7 +842,7 @@ mod tests {
 
     #[test]
     fn suggests_flag_values_enum_and_provider() {
-        // apps:info with --region enum and --app provider
+        // apps info with --region enum and --app provider
         let spec = CommandSpec {
             execution: CommandExecution::Http(HttpCommandSpec {
                 method: "GET".into(),
@@ -844,8 +901,8 @@ mod tests {
         ]);
         // Provider embedded on flag in the spec
         let mut map = std::collections::HashMap::new();
-        map.insert(("apps:info".into(), "app".into()), vec!["demo".into(), "prod".into()]);
-        let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
+        map.insert(("apps info".into(), "app".into()), vec!["demo".into(), "prod".into()]);
+        let provider: Arc<dyn ValueProvider> = Arc::new(TestProvider { map });
         let result = SuggestionEngine::build(&reg.commands, &[provider], "apps info --app ");
         let values: Vec<_> = result.items.iter().filter(|item| matches!(item.kind, ItemKind::Value)).collect();
         assert!(!values.is_empty());
@@ -896,8 +953,8 @@ mod tests {
         ]);
         // Provider embedded on positional in the spec
         let mut map = std::collections::HashMap::new();
-        map.insert(("addons:config:update".into(), "addon".into()), vec!["redis-123".into()]);
-        let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
+        map.insert(("addons config:update".into(), "addon".into()), vec!["redis-123".into()]);
+        let provider: Arc<dyn ValueProvider> = Arc::new(TestProvider { map });
         let result = SuggestionEngine::build(&reg.commands, &[provider], "addons config:update ");
         assert!(result.items.iter().any(|item| item.display == "redis-123"));
         assert!(!result.provider_loading);
@@ -949,9 +1006,60 @@ mod tests {
             spec,
         ]);
         // provider already embedded on flag
-        let empty_provider: Box<dyn ValueProvider> = Box::new(TestProvider { map: Default::default() });
+        let empty_provider: Arc<dyn ValueProvider> = Arc::new(TestProvider { map: Default::default() });
         let result = SuggestionEngine::build(&reg.commands, &[empty_provider], "apps info --app ");
+        assert!(!result.provider_loading);
+    }
+
+    #[test]
+    fn provider_loading_true_when_pending_fetch_requested() {
+        let spec = CommandSpec {
+            group: "apps".into(),
+            name: "info".into(),
+            summary: "info".into(),
+            positional_args: vec![],
+            flags: vec![CommandFlag {
+                name: "app".into(),
+                short_name: None,
+                required: false,
+                r#type: "string".into(),
+                enum_values: vec![],
+                default_value: None,
+                description: None,
+                provider: Some(heroku_types::ValueProvider::Command {
+                    command_id: "apps:list".into(),
+                    binds: vec![],
+                }),
+            }],
+            execution: CommandExecution::Http(HttpCommandSpec {
+                method: "GET".into(),
+                path: "/apps/{app}".into(),
+                ranges: vec![],
+                service_id: ServiceId::CoreApi,
+                output_schema: None,
+            }),
+        };
+        let reg = registry_with(vec![
+            CommandSpec {
+                group: "apps".into(),
+                name: "list".into(),
+                summary: "list".into(),
+                positional_args: vec![],
+                flags: vec![],
+                execution: CommandExecution::Http(HttpCommandSpec {
+                    method: "GET".into(),
+                    path: "/apps".into(),
+                    ranges: vec![],
+                    service_id: ServiceId::CoreApi,
+                    output_schema: None,
+                }),
+            },
+            spec,
+        ]);
+        let provider: Arc<dyn ValueProvider> = Arc::new(PendingProvider);
+        let result = SuggestionEngine::build(&reg.commands, &[provider], "apps info --app ");
         assert!(result.provider_loading);
+        assert!(!result.pending_fetches.is_empty());
     }
 
     #[test]
@@ -997,8 +1105,8 @@ mod tests {
             spec,
         ]);
         let mut map = std::collections::HashMap::new();
-        map.insert(("apps:info".into(), "app".into()), vec!["heroku-prod".into()]);
-        let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
+        map.insert(("apps info".into(), "app".into()), vec!["heroku-prod".into()]);
+        let provider: Arc<dyn ValueProvider> = Arc::new(TestProvider { map });
         let result = SuggestionEngine::build(&reg.commands, &[provider], "apps info heroku-prod");
         assert!(result.items.is_empty(), "should not echo current value as sole suggestion");
     }
@@ -1070,9 +1178,9 @@ mod tests {
             spec,
         ]);
         let mut map = std::collections::HashMap::new();
-        map.insert(("pipelines:ci:run".into(), "pipeline".into()), vec!["api".into(), "web".into()]);
-        map.insert(("pipelines:ci:run".into(), "branch".into()), vec!["main".into(), "develop".into()]);
-        let provider: Box<dyn ValueProvider> = Box::new(TestProvider { map });
+        map.insert(("pipelines ci:run".into(), "pipeline".into()), vec!["api".into(), "web".into()]);
+        map.insert(("pipelines ci:run".into(), "branch".into()), vec!["main".into(), "develop".into()]);
+        let provider: Arc<dyn ValueProvider> = Arc::new(TestProvider { map });
         // With first positional filled and trailing space, suggest second positional list
         let result = SuggestionEngine::build(&reg.commands, &[provider], "pipelines ci:run api ");
         let vals: Vec<_> = result

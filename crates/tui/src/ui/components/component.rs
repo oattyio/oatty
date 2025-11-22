@@ -4,13 +4,14 @@
 //! modular UI development. Components are self-contained UI elements that
 //! handle their own state, events, and rendering while integrating with the
 //! main application through a consistent interface.
+
 use std::fmt::Debug;
 
+use crate::app::App;
 use crossterm::event::{KeyEvent, MouseEvent};
 use heroku_types::{Effect, Msg};
+use ratatui::layout::Position;
 use ratatui::{Frame, layout::Rect, text::Span};
-
-use crate::app::App;
 
 /// A trait representing a UI component with its own state and behavior.
 ///
@@ -90,9 +91,7 @@ pub trait Component: Debug {
     /// * `msg` - The application message to handle
     ///
     /// # Returns
-    ///
-    /// Vector of effects that the application should process
-    fn handle_events(&mut self, _app: &mut crate::app::App, _msg: &Msg) -> Vec<Effect> {
+    fn handle_message(&mut self, _app: &mut App, _msg: &Msg) -> Vec<Effect> {
         Vec::new()
     }
 
@@ -124,8 +123,7 @@ pub trait Component: Debug {
     ///     }
     /// }
     /// ```
-    #[allow(dead_code)]
-    fn handle_key_events(&mut self, _app: &mut crate::app::App, _key: KeyEvent) -> Vec<Effect> {
+    fn handle_key_events(&mut self, _app: &mut App, _key: KeyEvent) -> Vec<Effect> {
         Vec::new()
     }
 
@@ -157,42 +155,7 @@ pub trait Component: Debug {
     ///     }
     /// }
     /// ```
-    #[allow(dead_code)]
-    fn handle_mouse_events(&mut self, _app: &mut crate::app::App, _mouse: MouseEvent) -> Vec<Effect> {
-        Vec::new()
-    }
-
-    /// Update internal state based on an application message.
-    ///
-    /// This method allows components to update their internal state in response
-    /// to application messages. Unlike `handle_events`, this method is called
-    /// for all messages and is intended for state synchronization rather than
-    /// event handling.
-    ///
-    /// # Arguments
-    ///
-    /// * `app` - The application state
-    /// * `msg` - The application message to process
-    ///
-    /// # Returns
-    ///
-    /// Vector of effects that the application should process
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// fn update(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-    ///     match msg {
-    ///         Msg::DataChanged => {
-    ///             self.refresh_data(app);
-    ///             vec![]
-    ///         }
-    ///         _ => vec![]
-    ///     }
-    /// }
-    /// ```
-    #[allow(dead_code)]
-    fn update(&mut self, _app: &mut crate::app::App, _msg: &Msg) -> Vec<Effect> {
+    fn handle_mouse_events(&mut self, _app: &mut App, _mouse: MouseEvent) -> Vec<Effect> {
         Vec::new()
     }
 
@@ -214,14 +177,14 @@ pub trait Component: Debug {
     /// ```rust,ignore
     /// fn render(&mut self, frame: &mut Frame, rect: Rect, app: &App) {
     ///     use ratatui::widgets::{Block, Borders, Paragraph};
-    ///     
+    ///
     ///     let block = Block::default()
     ///         .title("My Component")
     ///         .borders(Borders::ALL);
-    ///     
+    ///
     ///     let widget = Paragraph::new(&self.content)
     ///         .block(block);
-    ///     
+    ///
     ///     frame.render_widget(widget, rect);
     /// }
     /// ```
@@ -253,7 +216,79 @@ pub trait Component: Debug {
     /// fn render_hints_bar(&mut self, frame: &mut Frame, rect: Rect, app: &App) {
     /// }
     /// ```
-    fn get_hint_spans(&self, _app: &App, _is_root: bool) -> Vec<Span<'_>> {
-        vec![]
+    fn get_hint_spans(&self, _app: &App) -> Vec<Span<'_>> {
+        Vec::new()
     }
+
+    /// Determines and returns the preferred layout for a given area within the application.
+    ///
+    /// # Arguments
+    /// - `&self`: A reference to the current instance of the object.
+    /// - `_app`: A reference to the application (`App`) that this method relates to.
+    /// - `area`: A `Rect` structure defining the spatial area within which the layout is to be determined.
+    ///
+    /// # Returns
+    /// - `Self::NamedRegions`: The defined layout regions associated with `Self`, if implemented.
+    ///
+    /// # Panics
+    /// This method currently invokes the `unimplemented!()` macro, meaning it has not been implemented yet.
+    /// Any attempt to call this method will result in a runtime panic.
+    ///
+    /// # Notes
+    /// - Ensure this method is implemented before usage to provide the desired functionality.
+    /// - This is likely to be a placeholder stub for future layout logic in a UI or rendering system.
+    fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
+        vec![area]
+    }
+
+    /// Notifies the view that the route is about to exit
+    /// and this view will be dereferenced.
+    fn on_route_exit(&mut self, _app: &mut App) -> Vec<Effect> {
+        Vec::new()
+    }
+}
+/// Finds the index of the button from a list of rectangular target areas that contains the given mouse coordinates.
+///
+/// This function checks if the mouse's x and y coordinates are within the bounds of any rectangular `target`
+/// in the `targets` vector. If there is a match, it returns the index of the first matching rectangle. If no
+/// target contains the mouse coordinates or if the input `rect` has zero width or height, the function returns `None`.
+///
+/// # Parameters
+/// - `rect`: A reference to a `Rect` object. This serves as a validation check to ensure it has a positive width and height.
+/// - `targets`: A slice of `Rect` objects representing the clickable target areas that can be checked against the mouse coordinates.
+/// - `mouse_x`: The x-coordinate of the mouse cursor.
+/// - `mouse_y`: The y-coordinate of the mouse cursor.
+///
+/// # Returns
+/// - `Option<usize>`: The index of the first rectangle in `targets` that contains the mouse coordinates, or `None` if no rectangle matches.
+///
+/// # Examples
+/// ```
+/// // Assuming `Rect` is defined with fields `x`, `y`, `width`, and `height`.
+/// let rect = Rect { x: 0, y: 0, width: 50, height: 50 };
+/// let targets = vec![
+///     Rect { x: 10, y: 10, width: 30, height: 30 },
+///     Rect { x: 50, y: 50, width: 20, height: 20 },
+/// ];
+/// let mouse_x = 15;
+/// let mouse_y = 15;
+///
+/// let index = find_target_index_by_mouse_position(&rect, &targets, mouse_x, mouse_y);
+/// assert_eq!(index, Some(0)); // The mouse is within the first target rectangle.
+/// ```
+///
+/// # Note
+/// - If the input `rect` has a width or height of zero, the function immediately returns `None` without performing any checks.
+/// - The function uses inclusive bounds for `mouse_x` and `mouse_y` when checking the rectangle edges. This means that
+///   if the mouse is exactly on the left or top edges of a rectangle, it will still match.
+pub fn find_target_index_by_mouse_position(rect: &Rect, targets: &[Rect], mouse_x: u16, mouse_y: u16) -> Option<usize> {
+    let pos = Position::new(mouse_x, mouse_y);
+    if !rect.contains(pos) {
+        return None;
+    }
+    targets
+        .iter()
+        .enumerate()
+        .find(|(_, target)| target.contains(pos))
+        .map(|(idx, _)| idx)
 }
