@@ -19,27 +19,27 @@
 //! This design follows a **functional core, imperative shell** pattern:
 //! state updates are pure, but commands handle side effects.
 
-use anyhow::Result;
 use anyhow::anyhow;
+use anyhow::Result;
 use chrono::Utc;
 use heroku_api::HerokuClient;
-use heroku_engine::{RegistryCommandRunner, drive_workflow_run, provider::ProviderFetchPlan};
+use heroku_engine::{drive_workflow_run, provider::ProviderFetchPlan, RegistryCommandRunner};
 use heroku_mcp::config::{
-    McpServer, default_config_path, determine_env_source, load_config_from_path, save_config_to_path, validate_config, validate_server_name,
+    default_config_path, determine_env_source, load_config_from_path, save_config_to_path, validate_config, validate_server_name, McpServer,
 };
 use heroku_mcp::{McpConfig, PluginEngine};
 use heroku_registry::find_by_group_and_cmd;
 use heroku_registry::{CommandRegistry, CommandSpec};
 use heroku_types::service::ServiceId;
+use heroku_types::{command::CommandExecution, ExecOutcome};
 use heroku_types::{Effect, EnvVar, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
-use heroku_types::{ExecOutcome, command::CommandExecution};
 use heroku_util::build_request_body;
 use heroku_util::exec_remote_from_shell_command;
 use heroku_util::lex_shell_like;
 use reqwest::Url;
+use serde_json::from_str;
 use serde_json::Map;
 use serde_json::Value;
-use serde_json::from_str;
 use std::collections::VecDeque;
 use std::fs::read_to_string;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -753,16 +753,16 @@ fn validate_command(app: &mut App, hydrated_command: &str, command_registry: Arc
         let commands = &lock.commands;
         find_by_group_and_cmd(commands, tokens[0].as_str(), tokens[1].as_str())?
     };
-
+    command_spec.parse_arguments(&tokens[2..])?;
     persist_execution_context(app, &command_spec, &input);
 
     Ok((command_spec, input))
 }
 
 fn persist_execution_context(app: &mut App, command_spec: &CommandSpec, input: &str) {
-    let command_id = format!("{}:{}", command_spec.group, command_spec.name);
     let trimmed_input = input.trim();
-    app.palette.record_pending_execution(command_id, trimmed_input.to_string());
+    app.palette
+        .record_pending_execution(command_spec.canonical_id(), trimmed_input.to_string());
     app.palette.push_history_if_needed(trimmed_input);
 }
 

@@ -3,9 +3,9 @@
 
 use crate::app::App;
 use crate::ui::components::component::Component;
+use crate::ui::components::workflows::WorkflowInputViewState;
 use crate::ui::components::workflows::input::state::{InputStatus, WorkflowInputRow};
 use crate::ui::components::workflows::view_utils::style_for_role;
-use crate::ui::components::workflows::WorkflowInputViewState;
 use crate::ui::theme::{
     roles::Theme,
     theme_helpers::{self as th, ButtonRenderOptions},
@@ -17,11 +17,11 @@ use rat_focus::HasFocus;
 use ratatui::layout::Position;
 use ratatui::widgets::Block;
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Borders, List, ListItem, Paragraph, Wrap},
-    Frame,
 };
 use std::cell::Ref;
 use unicode_width::UnicodeWidthStr;

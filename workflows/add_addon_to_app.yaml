@@ -1,36 +1,19 @@
-workflow: app_bootstrap
-title: "App Bootstrap"
-description: "Create a new Heroku app, configure basics, provision an addon, and optionally add a buildpack."
+workflow: provision_addon
+title: "Provision Addon"
+description: "Provision an addon for an app, optionally setting config vars"
 inputs:
   app_name:
     name: "App Name"
     description: "Name for the new app"
     type: string
-    validate:
-      pattern: "^[a-z](?:[a-z0-9-]{1,28}[a-z0-9])$"
-  region:
-    name: "Region"
-    description: "Region to create the app in"
-    provider: regions list
+    provider: apps list
     select: { value_field: name, display_field: name }
-    default:
-      from: literal
-      value: "us"
-  stack:
-    name: "Stack"
-    description: "Stack to use (e.g., heroku-22)"
-    type: string
-    provider: stacks list
-    select: { value_field: name, display_field: name }
-    default:
-      from: literal
-      value: "heroku-22"
   choose_addon:
     name: "Choose Addon"
     description: "Addon to provision (e.g., heroku-postgresql)"
     provider: addon-services list
     select: { value_field: name, display_field: name }
-  addon_plan:
+  choose_plan:
     name: "Addon Plan"
     description: "The plan of the chosen addon (e.g., heroku-postgresql:hobby-dev)"
     provider: addon-services plans:list
@@ -46,26 +29,13 @@ inputs:
     optional: true
     validate:
       pattern: "^[a-zA-Z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$"
-  buildpack:
-    name: "Buildpack"
-    description: "Optional buildpack to add"
-    type: string
-    optional: true
 steps:
-  - id: create_app
-    run: apps create
-    body:
-      name: ${{ inputs.app_name }}
-      region: ${{ inputs.region }}
-      stack: ${{ inputs.stack }}
-
-  - id: add_buildpack
-    when: ${{ !!inputs.buildpack }}
-    run: apps buildpack-installation:update
+  - id: provision_addon
+    run: apps addons:create
     with:
       app: ${{ inputs.app_name }}
-    body:
-      updates: ${{ inputs.buildpack }}
+      addon: ${{ inputs.choose_addon }}
+      plan: ${{ inputs.addon_plan }}
 
   - id: set_config
     when: ${{ !!inputs.config_vars }}
@@ -73,13 +43,7 @@ steps:
     with:
       app: ${{ inputs.app_name }}
     body: ${{ inputs.config_vars }}
-
-  - id: provision_addon
-    run: apps addons:create
-    with:
-      app: ${{ inputs.app_name }}
-    body:
-      plan: ${{ inputs.addon_plan }}
+    
   - id: wait_for_addon
     run: apps addons:info
     with:

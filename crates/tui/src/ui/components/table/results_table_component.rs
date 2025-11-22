@@ -5,7 +5,7 @@
 //! scrolling and navigation capabilities.
 use crate::app::App;
 use crate::ui::{
-    components::{common::ResultsTableView, component::Component, PaginationComponent},
+    components::{PaginationComponent, common::ResultsTableView, component::Component},
     theme::theme_helpers as th,
 };
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
@@ -14,9 +14,9 @@ use rat_focus::HasFocus;
 use ratatui::layout::Position;
 use ratatui::widgets::{Borders, Padding};
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout, Rect},
     text::Span,
-    Frame,
 };
 
 /// Results table modal component for displaying JSON data.

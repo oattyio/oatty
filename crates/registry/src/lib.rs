@@ -34,10 +34,10 @@ mod tests {
         assert!(!registry.commands.is_empty(), "registry commands should not be empty");
         let mut seen = HashSet::new();
         let mut duplicates: Vec<String> = vec![];
-        for c in &*registry.commands {
-            let group_name = format!("{} {}", &c.group, &c.name);
+        for spec in &*registry.commands {
+            let group_name = spec.canonical_id();
             if seen.contains(&group_name) {
-                duplicates.push(format!("{} {}", group_name.clone(), c.summary));
+                duplicates.push(format!("{} {}", group_name.clone(), spec.summary));
             }
             seen.insert(group_name);
         }

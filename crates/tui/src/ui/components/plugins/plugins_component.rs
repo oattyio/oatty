@@ -16,7 +16,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use heroku_types::{Effect, Msg};
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     text::Span,
 };
 
@@ -280,10 +280,7 @@ impl PluginsComponent {
 
         if add_plugin_open && body_area.width >= 120 {
             // Side-by-side layout when there's sufficient width
-            let columns = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-                .split(body_area);
+            let columns = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(body_area);
             self.edit_component.render(frame, columns[0], app);
             self.table_component.render(frame, columns[1], app);
         } else if add_plugin_open {

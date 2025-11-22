@@ -1,21 +1,17 @@
-//! HTTP/SSE helpers for rmcp-backed MCP clients.
+//! HTTP helpers for rmcp-backed MCP clients using Streamable HTTP transport.
 
 use crate::config::McpServer;
 use anyhow::Result;
 use heroku_types::EnvVar;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
-use url::Url;
 
-/// Build the SSE URL using `baseUrl` and optional `ssePath` (defaults to "sse").
-pub(crate) fn build_sse_url(server: &McpServer) -> Result<Url> {
-    let base = server
+/// Resolve the fully-qualified endpoint used for Streamable HTTP transport.
+pub(crate) fn resolve_streamable_endpoint(server: &McpServer) -> Result<String> {
+    server
         .base_url
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("base_url required for http"))?;
-    let segment = server.sse_path.as_deref().unwrap_or("sse");
-    let path = segment.strip_prefix('/').unwrap_or(segment);
-    base.join(path)
-        .map_err(|error| anyhow::anyhow!("failed to join path '{}': {}", path, error))
+        .as_ref()
+        .map(|url| url.as_str().to_string())
+        .ok_or_else(|| anyhow::anyhow!("base_url required for HTTP transport"))
 }
 
 /// Build a reqwest client injecting configured headers and OAuth bearer if available.
@@ -60,5 +56,29 @@ async fn load_oauth_token_from_keyring(server: &McpServer) -> Result<Option<Stri
             tracing::warn!("keyring error: {}", e);
             Ok(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use url::Url;
+
+    #[test]
+    fn resolve_endpoint_returns_string() {
+        let url = Url::parse("https://example.com/mcp").unwrap();
+        let server = McpServer {
+            base_url: Some(url),
+            ..Default::default()
+        };
+        let endpoint = resolve_streamable_endpoint(&server).expect("endpoint resolves");
+        assert_eq!(endpoint, "https://example.com/mcp");
+    }
+
+    #[test]
+    fn resolve_endpoint_errors_without_url() {
+        let server = McpServer::default();
+        let err = resolve_streamable_endpoint(&server).expect_err("missing endpoint");
+        assert!(err.to_string().contains("base_url"));
     }
 }

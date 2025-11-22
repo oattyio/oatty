@@ -8,7 +8,7 @@ use crate::ui::components::workflows::run::{RunViewState, StepFinishedData, Work
 use crate::ui::theme::Theme;
 use anyhow::Result;
 use heroku_engine::{ProviderBindingOutcome, WorkflowRunState};
-use heroku_registry::{utils::find_by_group_and_cmd, CommandRegistry};
+use heroku_registry::{CommandRegistry, utils::find_by_group_and_cmd};
 use heroku_types::{
     command::SchemaProperty,
     workflow::{
@@ -53,8 +53,8 @@ impl WorkflowState {
             run_view: None,
             manual_entry: None,
             collector: None,
-            container_focus: FocusFlag::named("workflow.container"),
-            f_search: FocusFlag::named("workflow.search"),
+            container_focus: FocusFlag::new().with_name("workflow.container"),
+            f_search: FocusFlag::new().with_name("workflow.search"),
             active_run_id: None,
             run_control: None,
         }
@@ -595,15 +595,15 @@ fn sanitize_schema_type(value: &str) -> Option<String> {
 #[cfg(test)]
 mod workflow_run_tests {
     use super::*;
-    use crate::ui::components::workflows::run::state::RunExecutionStatus;
     use crate::ui::components::workflows::run::RunViewState;
+    use crate::ui::components::workflows::run::state::RunExecutionStatus;
     use crate::ui::theme::dracula::DraculaTheme;
     use chrono::Utc;
     use heroku_types::workflow::{
         RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault, WorkflowInputDefinition, WorkflowStepDefinition,
     };
     use indexmap::IndexMap;
-    use serde_json::{json, Value};
+    use serde_json::{Value, json};
 
     fn sample_workflow() -> RuntimeWorkflow {
         RuntimeWorkflow {

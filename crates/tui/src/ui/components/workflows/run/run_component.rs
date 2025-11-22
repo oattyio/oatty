@@ -9,11 +9,11 @@ use crate::app::App;
 use crate::ui::components::workflows::run::state::{RunExecutionStatus, RunViewState};
 use crate::ui::components::{
     common::ResultsTableView,
-    component::{find_target_index_by_mouse_position, Component},
+    component::{Component, find_target_index_by_mouse_position},
 };
 use crate::ui::theme::{
-    theme_helpers::{self as th, build_hint_spans, ButtonRenderOptions},
     Theme,
+    theme_helpers::{self as th, ButtonRenderOptions, build_hint_spans},
 };
 use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
@@ -22,11 +22,11 @@ use heroku_util::format_duration;
 use rat_focus::HasFocus;
 use ratatui::layout::Position;
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout, Rect},
     style::Modifier,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
-    Frame,
 };
 
 /// Captures mouse hit-testing and focus targets for the run view.

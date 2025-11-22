@@ -38,7 +38,7 @@ pub fn tokenize_config(config: &mut McpConfig) -> Result<(), InterpolationError>
 
 fn tokenize_env(envs: &mut Vec<EnvVar>, name: &String) -> Result<(), InterpolationError> {
     for EnvVar { source, key, value, .. } in envs {
-        if *source == EnvSource::Secret {
+        if *source == EnvSource::Secret && is_secret(value) {
             let service = format!("{}-{}", name, key);
             store_secret(service.as_str(), value.as_str())?;
             *value = format!("${{secret:{}}}", service);

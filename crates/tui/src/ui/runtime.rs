@@ -44,7 +44,6 @@ use std::{
     time::Duration,
 };
 use tokio::runtime::Handle;
-use tokio::sync::mpsc::error::TryRecvError;
 use tokio::task::JoinHandle;
 use tokio::{
     signal,
@@ -287,6 +286,9 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plu
     let mut input_receiver = spawn_input_thread().await;
     let mut pending_execs: FuturesUnordered<JoinHandle<ExecOutcome>> = FuturesUnordered::new();
     let mut effects: Vec<Effect> = Vec::with_capacity(5);
+    // Defer plugin loading until the main loop runs so secret interpolation
+    // prompts cannot stall startup before the event loop is active.
+    effects.push(Effect::PluginsLoadRequested);
     let mut workflow_events: Option<WorkflowRunEventReceiver> = None;
 
     // Ticking strategy: fast while animating, very slow when idle.
@@ -297,15 +299,6 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plu
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
     render(&mut terminal, &mut app, &mut main_view)?;
-    // run initialization effects
-    process_effects(
-        &mut app,
-        &mut main_view,
-        vec![Effect::PluginsLoadRequested],
-        &mut pending_execs,
-        &mut effects,
-    )
-    .await;
 
     let (_config_watch_handle, mut config_watch_effects) = match spawn_mcp_config_watcher(app.ctx.plugin_engine.clone()) {
         Ok((handle, rx)) => (Some(handle), Some(rx)),
@@ -394,24 +387,26 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plu
                 }
             }
 
-            // Handle Ctrl+C
-            _ = signal::ctrl_c() => { break; }
-        }
-
-        if let Some(rx) = config_watch_effects.as_mut() {
-            loop {
-                match rx.try_recv() {
-                    Ok(effect) => {
+            maybe_config_effect = async {
+                if let Some(receiver) = config_watch_effects.as_mut() {
+                    receiver.recv().await
+                } else {
+                    None
+                }
+            }, if config_watch_effects.is_some() => {
+                match maybe_config_effect {
+                    Some(effect) => {
                         effects.push(effect);
                         needs_render = true;
                     }
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => {
+                    None => {
                         config_watch_effects = None;
-                        break;
                     }
                 }
             }
+
+            // Handle Ctrl+C
+            _ = signal::ctrl_c() => { break; }
         }
 
         if let Some(new_receiver) = app.take_pending_workflow_events() {

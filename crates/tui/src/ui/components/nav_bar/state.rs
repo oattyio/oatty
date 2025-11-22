@@ -85,7 +85,7 @@ impl VerticalNavBarState {
             visible: true,
             selected_index: 0,
             item_focus_flags: Vec::new(),
-            container_focus: FocusFlag::named("nav.vertical"),
+            container_focus: FocusFlag::new().with_name("nav.vertical"),
             items,
             last_area: Rect::default(),
             per_item_areas: Vec::new(),
@@ -122,7 +122,9 @@ impl VerticalNavBarState {
     /// `selected_index` into range and focuses that item.
     pub fn rebuild_item_focus_flags(&mut self) {
         let length = self.items.len();
-        self.item_focus_flags = (0..length).map(|i| FocusFlag::named(&format!("nav.vertical.item.{i}"))).collect();
+        self.item_focus_flags = (0..length)
+            .map(|i| FocusFlag::new().with_name(&format!("nav.vertical.item.{i}")))
+            .collect();
         if length == 0 {
             self.selected_index = 0;
         } else if self.selected_index >= length {

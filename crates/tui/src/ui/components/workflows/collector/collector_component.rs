@@ -7,18 +7,18 @@ use crate::ui::components::table::state::KeyValueEntry;
 use crate::ui::components::workflows::collector::manual_entry::ManualEntryComponent;
 use crate::ui::components::workflows::collector::{CollectorStagedSelection, CollectorViewState, SelectorStatus};
 use crate::ui::components::workflows::view_utils::{classify_json_value, style_for_role};
-use crate::ui::theme::theme_helpers::{self as th, build_hint_spans, ButtonRenderOptions};
 use crate::ui::theme::Theme;
+use crate::ui::theme::theme_helpers::{self as th, ButtonRenderOptions, build_hint_spans};
 use crate::ui::utils::render_value;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use heroku_engine::provider::ProviderRegistry;
-use heroku_engine::{resolve::select_path, ProviderValueResolver};
+use heroku_engine::{ProviderValueResolver, resolve::select_path};
 use heroku_types::{Effect, WorkflowProviderErrorPolicy};
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
-use ratatui::Frame;
 use serde_json::{Value as JsonValue, Value};
 
 /// Retained layout metadata capturing screen regions for pointer hit-testing.

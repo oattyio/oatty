@@ -11,17 +11,17 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use heroku_types::{Effect, ExecOutcome, ItemKind, Modal, Msg};
 use rat_focus::HasFocus;
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout, Rect},
     prelude::*,
     text::{Line, Span},
     widgets::*,
-    Frame,
 };
 
 use crate::app::App;
 use crate::ui::{
     components::component::Component,
-    theme::{theme_helpers as th, Theme},
+    theme::{Theme, theme_helpers as th},
 };
 
 static FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -362,7 +362,7 @@ impl PaletteComponent {
             }];
         } else if let Some(item) = app.palette.suggestions().get(selected_index).cloned() {
             match item.kind {
-                ItemKind::Command => {
+                ItemKind::Command | ItemKind::MCP => {
                     // Replace input with command exec
                     app.palette.apply_accept_command_suggestion(&item.insert_text);
                     app.palette.set_is_suggestions_open(false);

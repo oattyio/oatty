@@ -19,7 +19,7 @@ pub struct PluginsState {
 impl PluginsState {
     pub fn new() -> Self {
         Self {
-            container_focus: FocusFlag::named("plugins"),
+            container_focus: FocusFlag::new().with_name("plugins"),
             table: PluginsTableState::new(),
             add: None,
             details: None,

@@ -81,8 +81,8 @@ impl RunViewState {
     /// Creates a new run view state for the provided workflow metadata.
     pub fn new(run_id: String, identifier: String, title: Option<String>) -> Self {
         let mut steps_table = ResultsTableState::default();
-        steps_table.container_focus = FocusFlag::named("workflow.run.steps");
-        steps_table.grid_f = FocusFlag::named("workflow.run.steps.grid");
+        steps_table.container_focus = FocusFlag::new().with_name("workflow.run.steps");
+        steps_table.grid_f = FocusFlag::new().with_name("workflow.run.steps.grid");
 
         Self {
             run_id,
@@ -94,11 +94,11 @@ impl RunViewState {
             completed_at: None,
             last_update_at: None,
             steps_table,
-            container_focus: FocusFlag::named("workflow.run"),
-            cancel_button_focus: FocusFlag::named("workflow.run.actions.cancel"),
-            pause_button_focus: FocusFlag::named("workflow.run.actions.pause"),
-            view_details_button_focus: FocusFlag::named("workflow.run.actions.view_details"),
-            done_button_focus: FocusFlag::named("workflow.run.actions.done"),
+            container_focus: FocusFlag::new().with_name("workflow.run"),
+            cancel_button_focus: FocusFlag::new().with_name("workflow.run.actions.cancel"),
+            pause_button_focus: FocusFlag::new().with_name("workflow.run.actions.pause"),
+            view_details_button_focus: FocusFlag::new().with_name("workflow.run.actions.view_details"),
+            done_button_focus: FocusFlag::new().with_name("workflow.run.actions.done"),
             step_rows: Vec::new(),
             outputs: HashMap::new(),
             step_indices: HashMap::new(),

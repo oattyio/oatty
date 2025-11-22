@@ -175,7 +175,7 @@ impl Default for LogsState {
             pretty_json: true,
             cached_detail_index: None,
             cached_redacted_json: None,
-            container_focus: FocusFlag::named("root.logs"),
+            container_focus: FocusFlag::new().with_name("root.logs"),
         };
         state.append_text_entry("Welcome to Heroku TUI".to_string());
         state

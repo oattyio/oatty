@@ -7,7 +7,7 @@ use rmcp::{
     RoleClient,
     model::CallToolRequestParam,
     service::{RunningService, ServiceExt as _},
-    transport::{SseClientTransport, TokioChildProcess, sse_client::SseClientConfig},
+    transport::{StreamableHttpClientTransport, TokioChildProcess, streamable_http_client::StreamableHttpClientTransportConfig},
 };
 use tokio::time::timeout;
 
@@ -19,7 +19,7 @@ use crate::{
 
 use super::{
     health::HealthCheckResult,
-    http::{build_http_client_with_auth, build_sse_url},
+    http::{build_http_client_with_auth, resolve_streamable_endpoint},
     stdio::{build_stdio_command, spawn_stderr_logger},
 };
 
@@ -128,17 +128,12 @@ impl McpClient {
         Ok(().serve(transport).await?)
     }
 
-    /// Connect via HTTP/SSE using rmcp's reqwest transport.
+    /// Connect via Streamable HTTP using rmcp's reqwest transport.
     async fn connect_http(&self) -> Result<RunningService<RoleClient, ()>> {
-        let sse_url = build_sse_url(&self.server)?;
+        let endpoint = resolve_streamable_endpoint(&self.server)?;
         let http_client = build_http_client_with_auth(&self.server).await?;
-        let cfg = SseClientConfig {
-            sse_endpoint: sse_url.as_str().into(),
-            ..Default::default()
-        };
-        let transport = SseClientTransport::start_with_client(http_client, cfg)
-            .await
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?;
+        let config = StreamableHttpClientTransportConfig::with_uri(endpoint);
+        let transport = StreamableHttpClientTransport::with_client(http_client, config);
         Ok(().serve(transport).await?)
     }
 

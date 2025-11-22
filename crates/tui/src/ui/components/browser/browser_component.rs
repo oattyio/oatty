@@ -18,8 +18,8 @@
 //! exact command names or syntax.
 
 use crate::app::App;
-use crate::ui::components::browser::state::CursorDirection;
 use crate::ui::components::HelpComponent;
+use crate::ui::components::browser::state::CursorDirection;
 use crate::ui::theme::theme_helpers::highlight_segments;
 use crate::ui::{components::component::Component, theme::theme_helpers as th};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -27,10 +27,10 @@ use heroku_types::{Effect, Route};
 use ratatui::layout::Position;
 use ratatui::style::Modifier;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     text::{Line, Span},
     widgets::*,
-    Frame,
 };
 
 /// A modal component for browsing and selecting Heroku commands interactively.

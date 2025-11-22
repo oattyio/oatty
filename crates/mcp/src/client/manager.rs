@@ -142,12 +142,13 @@ impl McpClientManager {
         }
         // Prevent duplicates: if already running or in progress, bail
         let plugin_name = name.to_string();
-        let (active_guard, mut starting_guard) = tokio::join!(self.active_clients.lock(), self.starting.lock());
+        let active_guard = self.active_clients.lock().await;
 
         if active_guard.contains_key(name) {
             return Err(ClientManagerError::ClientAlreadyExists { name: plugin_name.clone() });
         }
 
+        let mut starting_guard = self.starting.lock().await;
         if !starting_guard.insert(plugin_name.clone()) {
             return Err(ClientManagerError::ClientAlreadyExists { name: plugin_name.clone() });
         }
@@ -287,9 +288,11 @@ impl McpClientManager {
         }
     }
 
-    /// Return current health snapshot for a plugin if known.
+    /// Return the current health snapshot for a plugin if known.
     pub async fn get_plugin_health(&self, name: &str) -> Option<HealthStatus> {
-        let map = self.active_clients.lock().await;
+        let Ok(map) = self.active_clients.try_lock() else {
+            return None;
+        };
         let maybe_handle = map.get(name).cloned();
         drop(map);
         if let Some(handle) = maybe_handle {
