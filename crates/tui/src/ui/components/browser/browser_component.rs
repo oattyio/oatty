@@ -297,7 +297,7 @@ impl BrowserComponent {
     fn render_search_panel(&self, frame: &mut Frame, app: &mut App, area: Rect) {
         let search_title = self.create_search_title(app);
         let is_focused = app.browser.f_search.get();
-        let mut search_block = th::block(&*app.ctx.theme, None, is_focused);
+        let mut search_block = th::block::<String>(&*app.ctx.theme, None, is_focused);
         search_block = search_block.title(search_title);
         let inner_area = search_block.inner(area);
         let theme = &*app.ctx.theme;

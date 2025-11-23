@@ -301,12 +301,10 @@ pub fn normalize_header(key: &str) -> String {
 pub fn infer_columns_with_sizes_from_json(array: &[Value], sample: usize, rerank_columns: bool) -> Vec<ColumnWithSize> {
     let keys = if rerank_columns {
         infer_columns(array)
+    } else if let Some(Value::Object(map)) = &array.first() {
+        map.keys().cloned().collect()
     } else {
-        if let Some(Value::Object(map)) = &array.first() {
-            map.keys().cloned().collect()
-        } else {
-            Vec::new()
-        }
+        Vec::new()
     };
     if keys.is_empty() {
         return Vec::new();
@@ -422,12 +420,11 @@ fn render_value_impl(key: &str, value: &Value, theme: Option<&dyn UiTheme>, dept
         Value::Bool(flag) => build_rendered_value(flag.to_string(), theme.map(|t| t.syntax_keyword_style()).unwrap_or_default()),
         Value::Null => build_rendered_value("null".to_string(), theme.map(|t| t.text_muted_style()).unwrap_or_default()),
         Value::Object(map) => {
-            if depth < MAX_RENDER_VALUE_DEPTH {
-                if let Some(best_key) = get_scored_keys(map).first()
-                    && let Some(nested_value) = map.get(best_key)
-                {
-                    return render_value_impl(best_key, nested_value, theme, depth + 1);
-                }
+            if depth < MAX_RENDER_VALUE_DEPTH
+                && let Some(best_key) = get_scored_keys(map).first()
+                && let Some(nested_value) = map.get(best_key)
+            {
+                return render_value_impl(best_key, nested_value, theme, depth + 1);
             }
             build_rendered_value(value.to_string(), theme.map(|t| t.syntax_type_style()).unwrap_or_default())
         }

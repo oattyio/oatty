@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
 use heroku_api::HerokuClient;
 use heroku_engine::workflow::document::{build_runtime_catalog, runtime_workflow_from_definition};
@@ -13,20 +13,20 @@ use heroku_engine::{
     ProviderBindingOutcome, ProviderResolutionEvent, ProviderResolutionSource, RegistryCommandRunner, StepResult, StepStatus,
     WorkflowRunState,
 };
-use heroku_mcp::{config::load_config, PluginEngine};
-use heroku_registry::{build_clap, feat_gate::feature_workflows, find_by_group_and_cmd, CommandRegistry};
+use heroku_mcp::{PluginEngine, config::load_config};
+use heroku_registry::{CommandRegistry, build_clap, feat_gate::feature_workflows, find_by_group_and_cmd};
 use heroku_types::{
-    command::CommandExecution, service::ServiceId,
-    workflow::{validate_candidate_value, WorkflowDefinition},
-    ExecOutcome,
-    RuntimeWorkflow,
+    ExecOutcome, RuntimeWorkflow,
+    command::CommandExecution,
+    service::ServiceId,
+    workflow::{WorkflowDefinition, validate_candidate_value},
 };
 use heroku_util::{
-    has_meaningful_value, resolve_path, value_contains_secret, workflow_input_uses_history, HistoryKey, HistoryStore, InMemoryHistoryStore,
-    JsonHistoryStore, DEFAULT_HISTORY_PROFILE,
+    DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, has_meaningful_value, resolve_path,
+    value_contains_secret, workflow_input_uses_history,
 };
 use reqwest::Method;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::warn;
@@ -642,4 +642,134 @@ fn run_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, matche
     }
 
     Ok(())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use heroku_engine::{
+        ArgumentPrompt, BindingFailure, BindingSource, MissingReason, ProviderResolutionEvent, ProviderResolutionSource, SkipDecision,
+    };
+    use serde_json::json;
+
+    fn missing_reason(message: &str, path: Option<&str>) -> MissingReason {
+        MissingReason {
+            message: message.to_string(),
+            path: path.map(ToString::to_string),
+        }
+    }
+
+    #[test]
+    fn describe_binding_source_formats_variants() {
+        let step = BindingSource::Step { step_id: "deploy".into() };
+        assert_eq!(describe_binding_source(&step), "step:deploy");
+
+        let input = BindingSource::Input { input_name: "app".into() };
+        assert_eq!(describe_binding_source(&input), "input:app");
+
+        let combined = BindingSource::Multiple {
+            step_id: "build".into(),
+            input_name: "pipeline".into(),
+        };
+        assert_eq!(describe_binding_source(&combined), "step:build, input:pipeline");
+    }
+
+    #[test]
+    fn describe_provider_outcome_handles_all_variants() {
+        let resolved = ProviderBindingOutcome::Resolved(Value::String("demo".into()));
+        assert_eq!(describe_provider_outcome(&resolved), "resolved to 'demo'");
+
+        let prompt = ProviderBindingOutcome::Prompt(ArgumentPrompt {
+            argument: "app".into(),
+            source: BindingSource::Input { input_name: "app".into() },
+            required: true,
+            reason: missing_reason("needs user confirmation", Some("$.inputs.app")),
+        });
+        assert_eq!(
+            describe_provider_outcome(&prompt),
+            "prompted (required: true, reason: needs user confirmation)"
+        );
+
+        let skip = ProviderBindingOutcome::Skip(SkipDecision {
+            argument: "region".into(),
+            source: BindingSource::Step {
+                step_id: "select-region".into(),
+            },
+            reason: missing_reason("not provided", None),
+        });
+        assert_eq!(describe_provider_outcome(&skip), "skipped (not provided)");
+
+        let error = ProviderBindingOutcome::Error(BindingFailure {
+            argument: "pipeline".into(),
+            source: None,
+            message: "api failure".into(),
+        });
+        assert_eq!(describe_provider_outcome(&error), "error: api failure");
+    }
+
+    #[test]
+    fn provider_outcome_to_json_serializes_prompt_and_skip() {
+        let prompt = ProviderBindingOutcome::Prompt(ArgumentPrompt {
+            argument: "app".into(),
+            source: BindingSource::Input { input_name: "app".into() },
+            required: false,
+            reason: missing_reason("needs value", Some("$.inputs.app")),
+        });
+        let prompt_json = provider_outcome_to_json(&prompt);
+        assert_eq!(
+            prompt_json,
+            json!({
+                "status": "prompt",
+                "required": false,
+                "reason": "needs value",
+                "path": "$.inputs.app",
+                "source": "input:app",
+            })
+        );
+
+        let skip = ProviderBindingOutcome::Skip(SkipDecision {
+            argument: "region".into(),
+            source: BindingSource::Step { step_id: "select".into() },
+            reason: missing_reason("missing", Some("$.steps[0]")),
+        });
+        let skip_json = provider_outcome_to_json(&skip);
+        assert_eq!(
+            skip_json,
+            json!({
+                "status": "skip",
+                "reason": "missing",
+                "path": "$.steps[0]",
+                "source": "step:select",
+            })
+        );
+    }
+
+    #[test]
+    fn provider_resolution_event_to_json_captures_source() {
+        let event = ProviderResolutionEvent {
+            input: "environment".into(),
+            argument: "region".into(),
+            outcome: ProviderBindingOutcome::Resolved(json!("us")),
+            source: ProviderResolutionSource::Automatic,
+        };
+        let serialized = provider_resolution_event_to_json(&event);
+        assert_eq!(
+            serialized,
+            json!({
+                "input": "environment",
+                "argument": "region",
+                "source": "automatic",
+                "outcome": {
+                    "status": "resolved",
+                    "value": "us"
+                }
+            })
+        );
+    }
+
+    #[test]
+    fn format_step_status_maps_enum_variants() {
+        assert_eq!(format_step_status(StepStatus::Succeeded), "succeeded");
+        assert_eq!(format_step_status(StepStatus::Failed), "failed");
+        assert_eq!(format_step_status(StepStatus::Skipped), "skipped");
+    }
 }

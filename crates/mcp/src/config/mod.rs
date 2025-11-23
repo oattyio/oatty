@@ -6,9 +6,9 @@ mod interpolation;
 mod model;
 mod validation;
 
-pub use interpolation::{determine_env_source, interpolate_config, InterpolationError};
+pub use interpolation::{InterpolationError, determine_env_source, interpolate_config};
 pub use model::{ConfigError, McpAuthConfig, McpConfig, McpServer};
-pub use validation::{validate_config, validate_server_name, ValidationError};
+pub use validation::{ValidationError, validate_config, validate_server_name};
 
 use crate::config::interpolation::tokenize_config;
 use dirs_next::config_dir;

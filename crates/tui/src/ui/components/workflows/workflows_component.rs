@@ -89,7 +89,7 @@ impl WorkflowsComponent {
             "Search Workflows",
             theme.text_secondary_style().add_modifier(Modifier::BOLD),
         ));
-        let mut search_block = th::block(theme, None, is_focused);
+        let mut search_block = th::block::<String>(theme, None, is_focused);
         search_block = search_block.title(search_title);
         let inner_area = search_block.inner(area);
 

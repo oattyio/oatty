@@ -785,10 +785,10 @@ impl PluginEngine {
                 value.iter().map(Self::derive_tool_result).collect()
             }
             Value::Object(value) => {
-                if let Some(Value::String(text)) = value.get("text") {
-                    if let Ok(val) = serde_json::from_str::<Value>(text) {
-                        return val;
-                    }
+                if let Some(Value::String(text)) = value.get("text")
+                    && let Ok(val) = serde_json::from_str::<Value>(text)
+                {
+                    return val;
                 }
                 Value::Object(value.clone())
             }

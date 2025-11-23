@@ -1,4 +1,12 @@
+use super::components::logs::LogDetailsComponent;
+use super::components::nav_bar::VerticalNavBarComponent;
+use super::components::plugins::PluginsDetailsComponent;
+use super::components::workflows::WorkflowCollectorComponent;
+use super::components::{Component, HelpComponent, LogsComponent, TableComponent};
+use super::theme::theme_helpers as th;
+use super::utils::centered_rect;
 use crate::app::App;
+use crate::ui::components::common::ConfirmationModal;
 use crate::ui::components::palette::PaletteComponent;
 use crate::ui::components::theme_picker::ThemePickerComponent;
 use crate::ui::components::workflows::{RunViewComponent, WorkflowInputsComponent};
@@ -12,14 +20,6 @@ use ratatui::{
     style::Style,
     widgets::{Block, Paragraph},
 };
-
-use super::components::logs::LogDetailsComponent;
-use super::components::nav_bar::VerticalNavBarComponent;
-use super::components::plugins::PluginsDetailsComponent;
-use super::components::workflows::WorkflowCollectorComponent;
-use super::components::{Component, HelpComponent, LogsComponent, TableComponent};
-use super::theme::theme_helpers as th;
-use super::utils::centered_rect;
 
 pub struct ModalLayout(Box<dyn Fn(Rect) -> Rect>);
 
@@ -154,6 +154,10 @@ impl MainView {
                     };
                     (component, layout)
                 }
+                Modal::Confirmation => (
+                    Box::new(ConfirmationModal::default()),
+                    ModalLayout(Box::new(|rect| centered_rect(45, 35, rect))),
+                ),
             };
             self.modal_view = Some(modal_view);
             // save the current focus to restore when the modal is closed

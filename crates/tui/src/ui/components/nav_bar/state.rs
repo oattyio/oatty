@@ -20,6 +20,7 @@ pub struct NavItem {
     /// Icon to display for the item (e.g., "$", "⌕", "{}").
     pub icon: String,
     /// Human-friendly description of the item (e.g., "Command").
+    #[allow(dead_code)]
     pub label: String,
     /// Action that should run when the item is activated.
     pub action: NavItemAction,

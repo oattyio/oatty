@@ -8,8 +8,8 @@ use std::hash::{DefaultHasher, Hasher};
 use std::vec;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::{Effect, ExecOutcome, ItemKind, Modal, Msg};
-use rat_focus::HasFocus;
+use heroku_types::{Effect, ExecOutcome, ItemKind, Modal, Msg, Severity};
+use rat_focus::{FocusFlag, HasFocus};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -68,6 +68,9 @@ struct PaletteLayout {
 #[derive(Debug, Default)]
 pub struct PaletteComponent {
     palette_layout: PaletteLayout,
+    /// Focus flag for confirming a destructive command
+    /// used in the confirmation modal
+    confirm_button: FocusFlag,
 }
 
 impl PaletteComponent {
@@ -103,7 +106,7 @@ impl PaletteComponent {
 
         let input_title = self.create_input_title(theme);
         let is_focused = app.palette.f_input.get();
-        let mut input_block = th::block(theme, None, is_focused);
+        let mut input_block = th::block::<String>(theme, None, is_focused);
         input_block = input_block.title(input_title);
 
         Paragraph::new(Line::from(spans))
@@ -192,7 +195,7 @@ impl PaletteComponent {
             // Create the same block structure to get the inner area
             let input_title = self.create_input_title(theme);
             let is_focused = app.palette.is_focused();
-            let mut input_block = th::block(theme, None, is_focused);
+            let mut input_block = th::block::<String>(theme, None, is_focused);
             input_block = input_block.title(input_title);
             let inner_area = input_block.inner(input_area);
 
@@ -328,60 +331,41 @@ impl PaletteComponent {
     }
 
     /// Handles the Enter keypress.
-    fn handle_enter(&self, app: &mut App) -> Vec<Effect> {
-        let cmd = app.palette.input().to_string();
-        let selected_index = app.palette.list_state.selected().unwrap_or(0);
-        if app.palette.is_suggestions_open()
-            && let Some(item) = app.palette.suggestions().get(selected_index)
-            && item.kind == ItemKind::Command
-            && item.meta.as_deref() == Some("history")
-            && item.insert_text.trim() != cmd.trim()
-        {
-            let mut hasher = DefaultHasher::new();
-            hasher.write(cmd.as_bytes());
-            let hash = hasher.finish();
-            app.palette.set_cmd_exec_hash(hash);
-            app.palette.reduce_clear_suggestions();
-            return vec![Effect::Run {
-                hydrated_command: cmd,
-                range_override: None,
-                request_hash: hash,
-            }];
+    fn handle_enter(&mut self, app: &mut App) -> Vec<Effect> {
+        if let Some(cmd) = self.execute_command(app) {
+            if app.palette.is_destructive_command() {
+                return self.confirm_destructive_command(app);
+            }
+            return cmd;
         }
 
-        // Execute the command
-        if !app.palette.is_suggestions_open() {
-            let mut hasher = DefaultHasher::new();
-            hasher.write(cmd.as_bytes());
-            let hash = hasher.finish();
-            app.palette.set_cmd_exec_hash(hash);
-            return vec![Effect::Run {
-                hydrated_command: cmd,
-                range_override: None,
-                request_hash: hash,
-            }];
-        } else if let Some(item) = app.palette.suggestions().get(selected_index).cloned() {
-            match item.kind {
-                ItemKind::Command | ItemKind::MCP => {
-                    // Replace input with command exec
-                    app.palette.apply_accept_command_suggestion(&item.insert_text);
-                    app.palette.set_is_suggestions_open(false);
-                    app.palette.reduce_clear_suggestions();
-                }
-                ItemKind::Positional => {
-                    // Accept positional suggestion
-                    app.palette.apply_accept_positional_suggestion(&item.insert_text);
-                }
-                _ => {
-                    // Accept flag or value suggestion
-                    app.palette.apply_accept_non_command_suggestion(&item.insert_text);
-                }
+        let selected_index = app.palette.list_state.selected().unwrap_or(0);
+        let Some(item) = app.palette.suggestions().get(selected_index) else {
+            return Vec::new();
+        };
+        let insert_text = item.insert_text.trim().to_string();
+
+        match item.kind {
+            ItemKind::Command | ItemKind::MCP => {
+                // Replace input with command exec
+                app.palette.apply_accept_command_suggestion(&insert_text);
+                app.palette.set_is_suggestions_open(false);
+                app.palette.reduce_clear_suggestions();
             }
-            app.palette.list_state.select(None);
-            app.palette.apply_ghost_text();
-            app.palette.set_is_suggestions_open(false);
+            ItemKind::Positional => {
+                // Accept positional suggestion
+                app.palette.apply_accept_positional_suggestion(&insert_text);
+            }
+            _ => {
+                // Accept flag or value suggestion
+                app.palette.apply_accept_non_command_suggestion(&insert_text);
+            }
         }
-        vec![]
+        app.palette.list_state.select(None);
+        app.palette.apply_ghost_text();
+        app.palette.set_is_suggestions_open(false);
+
+        Vec::new()
     }
 
     /// Handles the Escape key to clear input and close suggestions.
@@ -410,6 +394,41 @@ impl PaletteComponent {
             suggestions_area: rects[2],
         }
     }
+
+    fn confirm_destructive_command(&mut self, app: &mut App) -> Vec<Effect> {
+        let buttons = vec![
+            ("Cancel".to_string(), FocusFlag::new()),
+            ("Confirm".to_string(), self.confirm_button.clone()),
+        ];
+        let command = app.palette.input().to_string();
+        let message = format!(
+            "You are about to run a destructive action that cannot be undone.\nAre you sure you want to run `{}`?",
+            command
+        );
+        app.confirmation_modal_state.set_buttons(buttons);
+        app.confirmation_modal_state.set_message(Some(message));
+        app.confirmation_modal_state.set_severity(Some(Severity::Warning));
+        app.confirmation_modal_state
+            .set_title(Some("Confirm Destructive Action".to_string()));
+
+        vec![Effect::ShowModal(Modal::Confirmation)]
+    }
+
+    fn execute_command(&mut self, app: &mut App) -> Option<Vec<Effect>> {
+        let cmd = app.palette.input().to_string();
+        if !app.palette.is_suggestions_open() {
+            let mut hasher = DefaultHasher::new();
+            hasher.write(cmd.as_bytes());
+            let hash = hasher.finish();
+            app.palette.set_cmd_exec_hash(hash);
+            return Some(vec![Effect::Run {
+                hydrated_command: cmd,
+                range_override: None,
+                request_hash: hash,
+            }]);
+        }
+        None
+    }
 }
 
 impl Component for PaletteComponent {
@@ -428,6 +447,9 @@ impl Component for PaletteComponent {
                 }
                 _ => app.palette.process_general_execution_result(outcome),
             },
+            Msg::ConfirmationModalButtonClicked(id) if *id == self.confirm_button.widget_id() => {
+                self.execute_command(app).unwrap_or_default()
+            }
             _ => Vec::new(),
         }
     }

@@ -56,8 +56,8 @@ steps:
     run: apps create
     body:
       name: ${{ inputs.app_name }}
-      region: ${{ inputs.region }}
-      stack: ${{ inputs.stack }}
+      region: ${{ inputs.region.name }}
+      stack: ${{ inputs.stack.name }}
 
   - id: add_buildpack
     when: ${{ !!inputs.buildpack }}

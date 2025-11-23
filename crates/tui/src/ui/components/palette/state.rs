@@ -27,7 +27,7 @@ use crate::ui::components::common::TextInputState;
 use crate::ui::theme::theme_helpers::{create_spans_with_match, highlight_segments};
 use heroku_engine::provider::{PendingProviderFetch, ValueProvider};
 use heroku_registry::{CommandRegistry, find_by_group_and_cmd};
-use heroku_types::{CommandSpec, Effect, ExecOutcome, ItemKind, Modal, SuggestionItem};
+use heroku_types::{CommandExecution, CommandSpec, Effect, ExecOutcome, ItemKind, Modal, SuggestionItem};
 use heroku_util::{
     HistoryKey, HistoryScope, HistoryScopeKind, HistoryStore, StoredHistoryValue, has_meaningful_value, lex_shell_like,
     lex_shell_like_ranged, truncate_with_ellipsis, value_contains_secret,
@@ -84,6 +84,8 @@ pub struct PaletteState {
     ghost_text: Option<String>,
     /// Whether the suggestions popup is currently open
     is_suggestions_open: bool,
+    /// Whether the current command is destructive (requires confirmation)
+    is_destructive: bool,
     /// The index of the current mouse hovered suggestion, if any
     mouse_over_idx: Option<usize>,
     /// List of current suggestions
@@ -128,6 +130,7 @@ impl PaletteState {
             cursor_position: 0,
             ghost_text: None,
             is_suggestions_open: false,
+            is_destructive: false,
             mouse_over_idx: None,
             list_state: ListState::default(),
             suggestions: Vec::new(),
@@ -316,11 +319,13 @@ impl PaletteState {
         f(&mut ti);
         self.input = ti.input().to_string();
         self.cursor_position = ti.cursor();
+        self.update_is_destructive();
     }
 
     /// Set the input text
     pub(crate) fn set_input(&mut self, input: String) {
         self.input = input;
+        self.update_is_destructive();
     }
 
     pub(crate) fn set_cmd_exec_hash(&mut self, hash: u64) {
@@ -342,6 +347,25 @@ impl PaletteState {
         self.mouse_over_idx = idx;
     }
 
+    pub(crate) fn is_destructive_command(&self) -> bool {
+        self.is_destructive
+    }
+    fn update_is_destructive(&mut self) {
+        if let [group, name, ..] = &lex_shell_like(&self.input)[..] {
+            let Ok(lock) = self.registry.try_lock() else { return };
+            let Ok(CommandSpec {
+                execution: CommandExecution::Http(execution),
+                ..
+            }) = find_by_group_and_cmd(&lock.commands, group, name)
+            else {
+                return;
+            };
+            self.is_destructive = execution.method == "DELETE";
+        } else {
+            self.is_destructive = false;
+        }
+    }
+
     /// Insert text at the end of the input with a separating space and advance
     /// the cursor.
     ///
@@ -359,6 +383,7 @@ impl PaletteState {
         self.input.push_str(text);
         self.input.push(' ');
         self.cursor_position = self.input.len();
+        self.update_is_destructive();
     }
 
     /// Move the cursor one character to the left.
@@ -536,6 +561,7 @@ impl PaletteState {
                 self.input = self.history[idx].clone();
                 self.cursor_position = self.input.len();
                 self.is_suggestions_open = false;
+                self.update_is_destructive();
                 true
             }
             Some(0) => false,
@@ -545,6 +571,7 @@ impl PaletteState {
                 self.input = self.history[ni].clone();
                 self.cursor_position = self.input.len();
                 self.is_suggestions_open = false;
+                self.update_is_destructive();
                 true
             }
         }
@@ -564,10 +591,12 @@ impl PaletteState {
                     self.input = self.history[ni].clone();
                     self.cursor_position = self.input.len();
                     self.is_suggestions_open = false;
+                    self.update_is_destructive();
                     true
                 } else {
                     if let Some(draft) = self.draft_input.take() {
                         self.input = draft;
+                        self.update_is_destructive();
                         self.cursor_position = self.input.len();
                     }
                     self.history_index = None;
@@ -614,6 +643,7 @@ impl PaletteState {
                 new_cursor += 1;
             }
             self.cursor_position = new_cursor;
+            self.update_is_destructive();
             return;
         }
         // Otherwise, append as the next positional value before any flags
@@ -639,6 +669,7 @@ impl PaletteState {
         }
         self.input = out.join(" ") + " ";
         self.cursor_position = self.input.len();
+        self.update_is_destructive();
     }
 
     /// Accept a command suggestion by replacing the input with the execution
@@ -715,6 +746,7 @@ impl PaletteState {
                     new_cursor += 1;
                 }
                 self.cursor_position = new_cursor;
+                self.update_is_destructive();
                 return;
             }
 

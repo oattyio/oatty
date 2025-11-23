@@ -123,7 +123,7 @@ impl<'a> CollectorViewState<'a> {
             return;
         }
         let mut scores: Vec<(i64, usize)> = items
-            .into_iter()
+            .iter()
             .enumerate()
             .map(|(index, item)| match item {
                 Value::Object(map) => (

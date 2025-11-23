@@ -204,7 +204,7 @@ pub fn build_request_body(spec: &CommandSpec, user_flags: HashMap<String, Option
     request_body
 }
 
-fn summarize_execution_outcome(canonical_id: &String, raw_log: &str, status_code: StatusCode) -> String {
+fn summarize_execution_outcome(canonical_id: &str, raw_log: &str, status_code: StatusCode) -> String {
     let trimmed_log = raw_log.trim();
 
     if let Some(error_message) = trimmed_log.strip_prefix("Error:") {
@@ -334,4 +334,122 @@ fn get_range_header_value(body: &JsonMap<String, Value>) -> Option<String> {
         return Some(range_header);
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use heroku_types::CommandFlag;
+    use heroku_types::service::ServiceId;
+    use serde_json::json;
+    use std::collections::HashMap;
+
+    fn build_test_spec(flags: Vec<CommandFlag>) -> CommandSpec {
+        CommandSpec::new_http(
+            "apps".to_string(),
+            "list".to_string(),
+            "List apps".to_string(),
+            Vec::new(),
+            flags,
+            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new(), None),
+        )
+    }
+
+    fn flag(name: &str, flag_type: &str) -> CommandFlag {
+        CommandFlag {
+            name: name.to_string(),
+            short_name: None,
+            required: false,
+            r#type: flag_type.to_string(),
+            enum_values: Vec::new(),
+            default_value: None,
+            description: None,
+            provider: None,
+        }
+    }
+
+    #[test]
+    fn build_request_body_converts_supported_flag_types() {
+        let spec = build_test_spec(vec![flag("async", "boolean"), flag("count", "number"), flag("label", "string")]);
+        let mut user_flags = HashMap::new();
+        user_flags.insert("async".to_string(), None);
+        user_flags.insert("count".to_string(), Some("42".to_string()));
+        user_flags.insert("label".to_string(), Some("europa".to_string()));
+        user_flags.insert("ignored".to_string(), Some("value".to_string()));
+
+        let body = build_request_body(&spec, user_flags);
+
+        assert_eq!(body.get("async"), Some(&Value::Bool(true)));
+        assert_eq!(body.get("count"), Some(&json!(42)));
+        assert_eq!(body.get("label"), Some(&json!("europa")));
+        assert!(body.get("ignored").is_none(), "unknown flags should be dropped");
+    }
+
+    #[test]
+    fn build_request_body_skips_invalid_numbers() {
+        let spec = build_test_spec(vec![flag("count", "number")]);
+        let mut user_flags = HashMap::new();
+        user_flags.insert("count".to_string(), Some("not-a-number".to_string()));
+
+        let body = build_request_body(&spec, user_flags);
+
+        assert!(body.is_empty(), "failed parses must not insert a value");
+    }
+
+    #[test]
+    fn summarize_execution_outcome_reports_status() {
+        let success = summarize_execution_outcome("apps list", "HTTP 200\n{}", StatusCode::OK);
+        assert_eq!(success, "apps list • success");
+
+        let failure = summarize_execution_outcome("apps list", "HTTP 500\n{}", StatusCode::INTERNAL_SERVER_ERROR);
+        assert_eq!(failure, "apps list • failed");
+    }
+
+    #[test]
+    fn summarize_execution_outcome_includes_error_summary() {
+        let long_error = "Error: something bad happened and kept talking about the detail that should be truncated \
+                          because the message is intentionally verbose to exceed the truncation threshold by a wide margin.";
+        let summary = summarize_execution_outcome("apps list", long_error, StatusCode::BAD_REQUEST);
+        assert!(
+            summary.starts_with("apps list • failed:"),
+            "error summaries should be prefixed with command id"
+        );
+        assert!(summary.ends_with("..."), "long messages should be truncated with ellipsis");
+    }
+
+    #[test]
+    fn truncate_for_summary_trims_and_truncates() {
+        let short = truncate_for_summary(" short message ", 20);
+        assert_eq!(short, "short message");
+
+        let long = truncate_for_summary("abcdefghij", 5);
+        assert_eq!(long, "ab...");
+    }
+
+    #[test]
+    fn get_range_header_value_prefers_raw_next_range() {
+        let mut body = Map::new();
+        body.insert("next-range".to_string(), json!("id abc..def; order=asc;"));
+        body.insert("range-field".to_string(), json!("id"));
+        body.insert("range-start".to_string(), json!("abc"));
+        body.insert("range-end".to_string(), json!("def"));
+
+        let header = get_range_header_value(&body);
+
+        assert_eq!(header, Some("id abc..def; order=asc;".to_string()));
+    }
+
+    #[test]
+    fn get_range_header_value_builds_header_from_components() {
+        let mut body = Map::new();
+        body.insert("range-field".to_string(), json!("name"));
+        body.insert("range-start".to_string(), json!("a"));
+        body.insert("range-end".to_string(), json!("z"));
+        body.insert("order".to_string(), json!("desc"));
+        body.insert("max".to_string(), json!(100));
+
+        let header = get_range_header_value(&body);
+
+        assert_eq!(header, Some("name a..z; order=desc, max=100;".to_string()));
+    }
 }

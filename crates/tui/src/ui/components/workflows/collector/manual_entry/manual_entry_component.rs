@@ -143,7 +143,7 @@ impl Component for ManualEntryComponent {
             return Vec::new();
         }
 
-        let Some((kind, state)) = app.workflows.manual_entry_state_mut().map(|s| (s.kind.clone(), s)) else {
+        let Some((kind, state)) = app.workflows.manual_entry_state_mut().map(|s| (s.kind, s)) else {
             return Vec::new();
         };
         let pos = Position {

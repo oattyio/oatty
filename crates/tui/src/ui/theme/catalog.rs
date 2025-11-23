@@ -13,6 +13,7 @@ pub struct ThemeDefinition {
     /// Human-friendly display name.
     pub label: &'static str,
     /// Short description rendered in the picker.
+    #[allow(dead_code)]
     pub description: &'static str,
     /// Hex-style color chips shown inside the picker.
     pub swatch: ThemeSwatch,

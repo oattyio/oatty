@@ -108,18 +108,12 @@ impl RunViewState {
         }
     }
 
-    pub fn step_by_index(&self, index: usize) -> Option<&Value> {
-        self.step_rows.get(index)
-    }
-
-    pub fn append_output(&mut self, key: &String, value: Value) {
-        self.outputs.insert(key.clone(), value);
+    pub fn append_output(&mut self, key: &str, value: Value) {
+        self.outputs.insert(key.to_string(), value);
     }
 
     pub fn output_by_index(&self, index: usize) -> Option<Value> {
-        let Some(row) = self.step_rows.get(index) else {
-            return None;
-        };
+        let row = self.step_rows.get(index)?;
         let step_id = row.get("Step").and_then(Value::as_str).unwrap_or_default().to_string();
         self.outputs.get(&step_id).cloned()
     }
@@ -336,11 +330,6 @@ impl RunViewState {
         self.started_at.map(|start| now - start)
     }
 
-    /// Provides immutable access to the step table state (tests only).
-    pub fn steps_table(&self) -> &ResultsTableState<'static> {
-        &self.steps_table
-    }
-
     /// Provides mutable access to the step table state.
     pub fn steps_table_mut(&mut self) -> &mut ResultsTableState<'static> {
         &mut self.steps_table
@@ -425,13 +414,10 @@ impl RepeatAnimationState {
     }
 
     fn advance(&mut self) {
-        let now = Instant::now();
-        let elapsed = now - self.last_tick;
-
-        if elapsed.as_millis() > 1000 {
-            self.spinner_index = (self.spinner_index + 1) % RUNNING_SPINNER_FRAMES.len();
-            self.last_tick = now;
-        }
+        // Advance one frame per call; the UI drive controls cadence.
+        // This makes animation deterministic in tests without relying on wall time.
+        self.spinner_index = (self.spinner_index + 1) % RUNNING_SPINNER_FRAMES.len();
+        self.last_tick = Instant::now();
     }
 
     fn set_attempt(&mut self, attempt: u32) {
@@ -442,17 +428,8 @@ impl RepeatAnimationState {
     fn describe(&self, limit: Option<u32>) -> String {
         let frame = RUNNING_SPINNER_FRAMES[self.spinner_index];
         let limit_label = limit.map(|value| value.to_string()).unwrap_or_else(|| "∞".to_string());
-        format!("Running{:<3} (attempt {}/{})", frame, self.attempt, limit_label)
-    }
-}
-
-fn summarize_value(value: &Value) -> String {
-    match value {
-        Value::Null => "null".to_string(),
-        Value::Bool(flag) => flag.to_string(),
-        Value::Number(number) => number.to_string(),
-        Value::String(text) => text.clone(),
-        Value::Array(_) | Value::Object(_) => value.to_string(),
+        // No fixed padding to avoid trailing spaces in tests/UI
+        format!("Running{} (attempt {}/{})", frame, self.attempt, limit_label)
     }
 }
 

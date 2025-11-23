@@ -58,7 +58,7 @@ use crate::ui::components::palette::PaletteComponent;
 use crate::ui::main_component::MainView;
 use rat_focus::FocusBuilder;
 
-/// Handle for the MCP config watcher thread, ensuring proper shutdown on drop.
+/// Handle for the MCP config watcher thread, ensuring proper shutdown on a drop.
 struct McpConfigWatchHandle {
     shutdown_tx: Option<std::sync::mpsc::Sender<()>>,
     join_handle: Option<thread::JoinHandle<()>>,
@@ -99,14 +99,16 @@ impl Drop for McpConfigWatchHandle {
 async fn spawn_input_thread() -> mpsc::Receiver<Event> {
     let (sender, receiver) = mpsc::channel(500);
     let mut las_mouse_event: Option<Instant> = Some(Instant::now());
+
     tokio::spawn(async move {
+        let sixteen_ms = Duration::from_millis(16);
         loop {
-            if event::poll(Duration::from_millis(16)).is_ok() {
+            if event::poll(sixteen_ms).is_ok() {
                 match event::read() {
                     Ok(event) => {
-                        // Throttle mouse move events to once per 16ms.
+                        // Throttle mouse moves events to once per 16 ms.
                         let is_mouse_move = event.as_mouse_event().is_some_and(|e| e.kind == MouseEventKind::Moved);
-                        let should_send = !is_mouse_move || las_mouse_event.is_some_and(|last| last.elapsed() > Duration::from_millis(16));
+                        let should_send = !is_mouse_move || las_mouse_event.is_some_and(|last| last.elapsed() >= sixteen_ms);
                         if is_mouse_move && should_send {
                             las_mouse_event = Some(Instant::now());
                         }
@@ -286,7 +288,7 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plu
     let mut input_receiver = spawn_input_thread().await;
     let mut pending_execs: FuturesUnordered<JoinHandle<ExecOutcome>> = FuturesUnordered::new();
     let mut effects: Vec<Effect> = Vec::with_capacity(5);
-    // Defer plugin loading until the main loop runs so secret interpolation
+    // Defer plugin loading until the main loop runs, so secret interpolation
     // prompts cannot stall startup before the event loop is active.
     effects.push(Effect::PluginsLoadRequested);
     let mut workflow_events: Option<WorkflowRunEventReceiver> = None;
@@ -486,6 +488,9 @@ async fn process_effects(
         match outcome {
             ExecOutcome::ProviderValues(provider_id, cache_key, _, _) => {
                 effects_out.extend(main_view.handle_message(app, &Msg::ProviderValuesReady { provider_id, cache_key }));
+            }
+            ExecOutcome::Message(msg) => {
+                effects_out.extend(main_view.handle_message(app, &msg));
             }
             other => {
                 effects_out.extend(main_view.handle_message(app, &Msg::ExecCompleted(Box::new(other))));

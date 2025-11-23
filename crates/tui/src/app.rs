@@ -9,6 +9,7 @@ use std::{
     time::Duration,
 };
 
+use crate::ui::components::common::ConfirmationModalState;
 use crate::ui::components::nav_bar::VerticalNavBarState;
 use crate::ui::components::workflows::collector::SelectorStatus;
 use crate::ui::components::workflows::run::RunViewState;
@@ -158,6 +159,8 @@ pub struct App<'a> {
     pub focus: Focus,
     /// Currently active main route for dynamic focus ring building
     pub current_route: Route,
+    /// the confirmation modal state
+    pub confirmation_modal_state: ConfirmationModalState,
 }
 
 impl App<'_> {
@@ -191,6 +194,7 @@ impl App<'_> {
         let mut app = Self {
             ctx,
             browser: BrowserState::new(Arc::clone(&registry)),
+            confirmation_modal_state: ConfirmationModalState::default(),
             logs: LogsState::default(),
             help: HelpState::default(),
             plugins: PluginsState::new(),
@@ -573,6 +577,9 @@ impl HasFocus for App<'_> {
                     } else if let Some(state) = self.workflows.manual_entry.as_ref() {
                         builder.widget(state);
                     }
+                }
+                Modal::Confirmation => {
+                    builder.widget(&self.confirmation_modal_state);
                 }
                 Modal::PluginDetails | Modal::Help | Modal::ThemePicker => {
                     // focusable fields TBD; leave the ring empty

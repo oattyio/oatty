@@ -19,27 +19,27 @@
 //! This design follows a **functional core, imperative shell** pattern:
 //! state updates are pure, but commands handle side effects.
 
-use anyhow::anyhow;
 use anyhow::Result;
+use anyhow::anyhow;
 use chrono::Utc;
 use heroku_api::HerokuClient;
-use heroku_engine::{drive_workflow_run, provider::ProviderFetchPlan, RegistryCommandRunner};
+use heroku_engine::{RegistryCommandRunner, drive_workflow_run, provider::ProviderFetchPlan};
 use heroku_mcp::config::{
-    default_config_path, determine_env_source, load_config_from_path, save_config_to_path, validate_config, validate_server_name, McpServer,
+    McpServer, default_config_path, determine_env_source, load_config_from_path, save_config_to_path, validate_config, validate_server_name,
 };
 use heroku_mcp::{McpConfig, PluginEngine};
 use heroku_registry::find_by_group_and_cmd;
 use heroku_registry::{CommandRegistry, CommandSpec};
 use heroku_types::service::ServiceId;
-use heroku_types::{command::CommandExecution, ExecOutcome};
-use heroku_types::{Effect, EnvVar, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
+use heroku_types::{Effect, EnvVar, Msg, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
+use heroku_types::{ExecOutcome, command::CommandExecution};
 use heroku_util::build_request_body;
 use heroku_util::exec_remote_from_shell_command;
 use heroku_util::lex_shell_like;
 use reqwest::Url;
-use serde_json::from_str;
 use serde_json::Map;
 use serde_json::Value;
+use serde_json::from_str;
 use std::collections::VecDeque;
 use std::fs::read_to_string;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -126,6 +126,7 @@ pub enum Cmd {
     PluginsExportLogsDefault(String),
     PluginsValidate,
     PluginsSave,
+    SendMsg(Msg),
 }
 
 /// Collection of immediate and background work generated while handling effects.
@@ -192,6 +193,7 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
                 handle_workflow_run_control(app, &run_id, command);
                 None
             }
+            Effect::SendMsg(nsg) => Some(vec![Cmd::SendMsg(nsg)]),
             _ => None,
         };
         if let Some(cmds) = effect_commands {
@@ -270,6 +272,10 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
             Cmd::PluginsExportLogsDefault(name) => execute_plugins_export_default(app, name).await,
             Cmd::PluginsValidate => execute_plugins_validate(app),
             Cmd::PluginsSave => execute_plugins_save(app).await,
+            Cmd::SendMsg(msg) => {
+                batch.immediate.push(ExecOutcome::Message(msg));
+                continue;
+            }
         };
         batch.immediate.push(outcome);
     }

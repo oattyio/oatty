@@ -1,5 +1,6 @@
 use super::roles::Theme;
 use crate::ui::theme::roles::ThemeRoles;
+use heroku_types::Severity;
 use ratatui::text::Line;
 use ratatui::{
     Frame,
@@ -8,9 +9,13 @@ use ratatui::{
     text::Span,
     widgets::{Block, BorderType, Borders, Padding, Paragraph, Tabs},
 };
+use std::borrow::Cow;
 
 /// Build a standard Block with theme surfaces and borders.
-pub fn block<'a>(theme: &dyn Theme, title: Option<&'a str>, focused: bool) -> Block<'a> {
+pub fn block<'a, T>(theme: &dyn Theme, title: Option<T>, focused: bool) -> Block<'a>
+where
+    T: Into<Cow<'a, str>>,
+{
     let mut block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
@@ -22,13 +27,28 @@ pub fn block<'a>(theme: &dyn Theme, title: Option<&'a str>, focused: bool) -> Bl
     block
 }
 
+pub fn block_with_severity<'a>(theme: &dyn Theme, severity: Severity, focused: bool) -> Block<'a> {
+    let style = match severity {
+        Severity::Info => theme.status_info(),
+        Severity::Warning => theme.status_warning(),
+        Severity::Error => theme.status_error(),
+    };
+    let title = format!(" {} ", severity);
+    Block::default()
+        .borders(Borders::ALL)
+        .border_type(BorderType::Plain)
+        .border_style(theme.border_style(focused))
+        .style(panel_style(theme))
+        .title(Span::styled(title, style.add_modifier(Modifier::BOLD)))
+}
+
 /// Style for panel-like containers (set background on widget using `.style`).
 pub fn panel_style(theme: &dyn Theme) -> Style {
     let ThemeRoles { surface, text, .. } = *theme.roles();
     Style::default().bg(surface).fg(text)
 }
 
-/// Style for table headers: bold snow text with subtle surface background.
+/// Style for table headers: bold snow text with a subtle surface background.
 pub fn table_header_style(theme: &dyn Theme) -> Style {
     // Header text: secondary + bold
     theme.text_secondary_style().add_modifier(Modifier::BOLD)

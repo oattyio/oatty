@@ -86,12 +86,12 @@ impl WorkflowState {
         self.list.search_cursor()
     }
 
-    /// Move search cursor one character to the left (UTF‑8 safe).
+    /// Move the search cursor one character to the left (UTF‑8 safe).
     pub fn move_search_left(&mut self) {
         self.list.move_search_left();
     }
 
-    /// Move search cursor one character to the right (UTF‑8 safe).
+    /// Move the search cursor one character to the right (UTF‑8 safe).
     pub fn move_search_right(&mut self) {
         self.list.move_search_right();
     }
@@ -160,7 +160,7 @@ impl WorkflowState {
         self.run_control.is_some()
     }
 
-    /// Begins an inputs session by storing the prepared run state and initializing view state.
+    /// Begins an input session by storing the prepared run state and initializing view state.
     pub fn begin_inputs_session(&mut self, run_state: WorkflowRunState) {
         let run_state_arc = Rc::new(RefCell::new(run_state));
         self.input_view = Some(WorkflowInputViewState::new(run_state_arc.clone()));
@@ -465,16 +465,13 @@ impl WorkflowState {
         let idx = view.input_list_state.selected()?;
         let (name, def) = run_state.workflow.inputs.get_index(idx)?;
 
-        let provider_id = match provider_identifier(def) {
-            Some(id) => id,
-            None => return None,
-        };
+        let provider_id = provider_identifier(def)?;
         let field_metadata = resolve_selector_field_metadata(registry, &provider_id);
 
         // Collect resolved provider args from the binding outcomes.
         let mut args = serde_json::Map::new();
-        if let Some(pstate) = run_state.provider_state_for(name) {
-            for (arg, outcome) in &pstate.argument_outcomes {
+        if let Some(provider_state) = run_state.provider_state_for(name) {
+            for (arg, outcome) in &provider_state.argument_outcomes {
                 if let ProviderBindingOutcome::Resolved(value) = &outcome.outcome {
                     args.insert(arg.clone(), value.clone());
                 }
@@ -711,13 +708,7 @@ mod workflow_run_tests {
             &theme,
         );
         assert!(logs.iter().any(|entry| entry.contains("Step 'first'")));
-        let row = state
-            .run_view_state()
-            .unwrap()
-            .steps_table()
-            .selected_data(0)
-            .cloned()
-            .expect("row");
+        let row = state.run_view_state().unwrap().steps_table.selected_data(0).cloned().expect("row");
         assert_eq!(row["Status"], Value::String("succeeded".into()));
     }
 }

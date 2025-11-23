@@ -547,7 +547,7 @@ impl WorkflowCollectorComponent {
             let idx = collector.table.table_state.selected().unwrap_or(0);
             let row_json = collector.table.selected_data(idx).cloned().unwrap_or(Value::Null);
             let entries = collector.table.kv_entries();
-            let (detail_selection, detail_offset) = self.detail_selection(entries, collector);
+            let (_detail_selection, _detail_offset) = self.detail_selection(entries, collector);
             let detail_block = th::block(theme, Some("Details"), table_focused);
             let detail_inner = detail_block.inner(layout.detail_area);
             frame.render_widget(detail_block, layout.detail_area);
@@ -570,7 +570,7 @@ impl WorkflowCollectorComponent {
             theme.text_secondary_style().add_modifier(Modifier::BOLD),
         ));
         let is_focused = collector.f_filter.get();
-        let mut block = th::block(theme, None, is_focused);
+        let mut block = th::block::<String>(theme, None, is_focused);
         block = block.title(filter_block_title);
         let inner_area = block.inner(area);
         let filter_text = collector.filter.input();

@@ -191,7 +191,7 @@ impl Component for TableComponent {
         // Split for content + pagination and footer
         let splits = self.get_preferred_layout(app, inner);
         let is_grid_focused = app.table.grid_f.get();
-        let table_block = th::block(&*app.ctx.theme, None, is_grid_focused)
+        let table_block = th::block::<String>(&*app.ctx.theme, None, is_grid_focused)
             .borders(Borders::NONE)
             .padding(Padding::uniform(1));
         let table_inner = table_block.inner(splits[0]);

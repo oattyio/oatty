@@ -24,6 +24,7 @@ pub const F0: Color = Color::Rgb(0x8F, 0xBC, 0xBB); // #8FBCBB
 pub const F1: Color = Color::Rgb(0x88, 0xC0, 0xD0); // #88C0D0
 pub const F2: Color = Color::Rgb(0x81, 0xA1, 0xC1); // #81A1C1
 pub const F3: Color = Color::Rgb(0x5E, 0x81, 0xAC); // #5E81AC
+#[allow(dead_code)]
 pub const F4: Color = Color::Rgb(0xB4, 0x8E, 0xAD); // #B48EAD
 
 // Aurora (semantic status)

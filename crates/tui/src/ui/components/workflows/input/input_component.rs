@@ -293,11 +293,11 @@ fn handle_list_focused_key(app: &mut App, key_code: KeyCode) -> Vec<Effect> {
         }
         KeyCode::Enter => {
             let mut effects = Vec::new();
-            if app.workflows.active_run_state.is_some() {
-                if let Some(reason) = current_row_block_reason(app) {
-                    app.append_log_message(format!("Input blocked: {reason}"));
-                    return effects;
-                }
+            if app.workflows.active_run_state.is_some()
+                && let Some(reason) = current_row_block_reason(app)
+            {
+                app.append_log_message(format!("Input blocked: {reason}"));
+                return effects;
             }
             if let Some(definition) = app.workflows.active_input_definition() {
                 if definition.provider.is_some() {
@@ -312,10 +312,8 @@ fn handle_list_focused_key(app: &mut App, key_code: KeyCode) -> Vec<Effect> {
         }
         KeyCode::F(2) => {
             let mut effects = Vec::new();
-            if app.workflows.active_run_state.is_some() {
-                if current_row_block_reason(app).is_some() {
-                    return effects;
-                }
+            if app.workflows.active_run_state.is_some() && current_row_block_reason(app).is_some() {
+                return effects;
             }
             app.workflows.open_manual_for_active_input();
             effects.push(Effect::ShowModal(Modal::WorkflowCollector));
@@ -474,7 +472,7 @@ fn render_inputs_list(frame: &mut Frame, area: Rect, input_view_state: &mut Work
         items.push(ListItem::new(line));
     }
     if input_view_state.input_list_state.selected().is_none() {
-        input_view_state.input_list_state.select(first_enabled_index(&rows));
+        input_view_state.input_list_state.select(first_enabled_index(rows));
     }
 
     let list = List::new(items)
