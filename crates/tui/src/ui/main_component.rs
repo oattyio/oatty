@@ -1,4 +1,12 @@
+use super::components::logs::LogDetailsComponent;
+use super::components::nav_bar::VerticalNavBarComponent;
+use super::components::plugins::PluginsDetailsComponent;
+use super::components::workflows::WorkflowCollectorComponent;
+use super::components::{Component, HelpComponent, LogsComponent, TableComponent};
+use super::theme::theme_helpers as th;
+use super::utils::centered_rect;
 use crate::app::App;
+use crate::ui::components::common::ConfirmationModal;
 use crate::ui::components::palette::PaletteComponent;
 use crate::ui::components::theme_picker::ThemePickerComponent;
 use crate::ui::components::workflows::{RunViewComponent, WorkflowInputsComponent};
@@ -12,14 +20,6 @@ use ratatui::{
     style::Style,
     widgets::{Block, Paragraph},
 };
-
-use super::components::logs::LogDetailsComponent;
-use super::components::nav_bar::VerticalNavBarComponent;
-use super::components::plugins::PluginsDetailsComponent;
-use super::components::workflows::WorkflowCollectorComponent;
-use super::components::{Component, HelpComponent, LogsComponent, TableComponent};
-use super::theme::theme_helpers as th;
-use super::utils::centered_rect;
 
 pub struct ModalLayout(Box<dyn Fn(Rect) -> Rect>);
 
@@ -65,7 +65,7 @@ impl MainView {
     /// # Behavior
     /// 1. Based on the provided `Route`, determines the corresponding components and their states.
     /// 2. For specific routes:
-    ///     * **`Route::WorkflowInputs`**: Attempts to open workflow inputs and logs any errors encountered.
+    ///     * **`Route::WorkflowInputs`**: Attempts to open workflow inputs and log any errors encountered.
     ///     * **`Route::WorkflowRun`**: Validates run view state is available; falls back to the workflow list if missing.
     ///     * **`Route::Workflows`**: Ensures workflows are loaded via the registry and logs any errors encountered.
     /// 3. Updates the navigation bar to reflect the new route.
@@ -154,6 +154,10 @@ impl MainView {
                     };
                     (component, layout)
                 }
+                Modal::Confirmation => (
+                    Box::new(ConfirmationModal::default()),
+                    ModalLayout(Box::new(|rect| centered_rect(45, 35, rect))),
+                ),
             };
             self.modal_view = Some(modal_view);
             // save the current focus to restore when the modal is closed
@@ -183,6 +187,10 @@ impl Component for MainView {
         effects.extend(self.nav_bar_view.handle_message(app, msg));
         effects.extend(self.content_view.as_mut().map(|c| c.handle_message(app, msg)).unwrap_or_default());
         effects.extend(self.logs_view.handle_message(app, msg));
+
+        if let Some(target) = self.modal_view.as_mut() {
+            return target.0.handle_message(app, msg);
+        }
 
         effects
     }

@@ -2,21 +2,21 @@ use crate::app::App;
 use crate::ui::components::component::Component;
 use crate::ui::theme::theme_helpers as th;
 use crate::ui::theme::theme_helpers::create_spans_with_match;
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use heroku_engine::WorkflowRunState;
 use heroku_types::workflow::RuntimeWorkflow;
-use heroku_types::{validate_candidate_value, Effect, Route};
-use heroku_util::{value_contains_secret, workflow_input_uses_history, HistoryKey};
+use heroku_types::{Effect, Route, validate_candidate_value};
+use heroku_util::{HistoryKey, value_contains_secret, workflow_input_uses_history};
 use rat_focus::HasFocus;
 use ratatui::layout::Position;
 use ratatui::widgets::ListItem;
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout, Rect},
     style::Modifier,
     text::{Line, Span},
     widgets::{List, Paragraph, Wrap},
-    Frame,
 };
 use tracing::warn;
 
@@ -89,7 +89,7 @@ impl WorkflowsComponent {
             "Search Workflows",
             theme.text_secondary_style().add_modifier(Modifier::BOLD),
         ));
-        let mut search_block = th::block(theme, None, is_focused);
+        let mut search_block = th::block::<String>(theme, None, is_focused);
         search_block = search_block.title(search_title);
         let inner_area = search_block.inner(area);
 

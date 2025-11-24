@@ -16,6 +16,7 @@ const GREY5: Color = Color::Rgb(0x27, 0x27, 0x27); // #272727
 const GREY6: Color = Color::Rgb(0x2E, 0x2E, 0x2E); // #2E2E2E
 const GREY8: Color = Color::Rgb(0x3B, 0x3B, 0x3B); // #3B3B3B
 const GREY9: Color = Color::Rgb(0x42, 0x42, 0x42); // #424242
+#[allow(dead_code)]
 const GREY10: Color = Color::Rgb(0x4A, 0x4A, 0x4A); // #4A4A4A
 
 // Typography colors.

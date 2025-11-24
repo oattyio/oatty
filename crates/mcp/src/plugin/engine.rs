@@ -77,7 +77,7 @@ impl PluginEngine {
             return Ok(maybe_registry.clone().unwrap());
         }
 
-        let registry = PluginRegistry::new();
+        let mut registry = PluginRegistry::new();
 
         let config_snapshot = self.config.read().await.clone();
 
@@ -94,9 +94,13 @@ impl PluginEngine {
             plugin_detail.transport_type = server.transport_type().to_string();
             plugin_detail.tags = server.tags.clone().unwrap_or_default();
             plugin_detail.enabled = !server.is_disabled();
-            plugin_detail.env = server.env.clone().unwrap_or_default();
+            plugin_detail.env = if server.is_stdio() {
+                server.env.clone().unwrap_or_default()
+            } else {
+                server.headers.clone().unwrap_or_default()
+            };
 
-            registry.register_plugin(plugin_detail).await?;
+            registry.register_plugin(plugin_detail)?;
             self.lifecycle_manager.register_plugin(name.clone()).await;
         }
 
@@ -119,7 +123,7 @@ impl PluginEngine {
 
     /// Ensure the background status listener task is running so plugin status
     /// updates from the client manager are reflected in the registry.
-    async fn ensure_status_listener(&self, registry: PluginRegistry) {
+    async fn ensure_status_listener(&self, mut registry: PluginRegistry) {
         let mut guard = self.status_listener.lock().await;
         if guard.is_some() {
             return;
@@ -134,7 +138,7 @@ impl PluginEngine {
             loop {
                 match receiver.recv().await {
                     Ok(ClientManagerEvent::ToolsUpdated { name, tools }) => {
-                        if let Err(update_err) = registry.set_plugin_tool_count(&name, tools.len()).await {
+                        if let Err(update_err) = registry.set_plugin_tool_count(&name, tools.len()) {
                             tracing::warn!(plugin = %name, error = %update_err, "Failed to update tool count");
                         }
 
@@ -149,7 +153,6 @@ impl PluginEngine {
 
                         let auth_message = registry
                             .get_plugin(&name)
-                            .await
                             .and_then(|detail| PluginEngine::format_auth_summary(detail.auth_status));
 
                         let synthesized = PluginEngine::synthesize_mcp_specs(&name, tools.as_ref(), auth_message.as_deref());
@@ -178,7 +181,7 @@ impl PluginEngine {
                             ClientManagerEvent::Stopped { name } => (name, PluginStatus::Stopped),
                             ClientManagerEvent::ToolsUpdated { .. } => unreachable!("tools updates handled above"),
                         };
-                        if let Err(update_err) = registry.set_plugin_status(&name, status).await {
+                        if let Err(update_err) = registry.set_plugin_status(&name, status) {
                             tracing::warn!(plugin = %name, error = %update_err, "Failed to update registry status");
                         }
                     }
@@ -216,13 +219,13 @@ impl PluginEngine {
 
     /// Start a plugin.
     pub async fn start_plugin(&self, name: &str) -> Result<(), PluginEngineError> {
-        let Ok(registry) = self.prepare_registry().await else {
+        let Ok(mut registry) = self.prepare_registry().await else {
             return Err(PluginEngineError::RegistryError(RegistryError::OperationFailed {
                 reason: "registry unavailable".into(),
             }));
         };
         // Check if plugin is registered
-        if !registry.is_registered(name).await {
+        if !registry.is_registered(name) {
             return Err(PluginEngineError::PluginNotFound { name: name.to_string() });
         }
 
@@ -241,7 +244,7 @@ impl PluginEngine {
         self.lifecycle_manager.start_plugin(name, start_fn).await?;
 
         // Update registry
-        registry.set_plugin_status(name, PluginStatus::Running).await?;
+        registry.set_plugin_status(name, PluginStatus::Running)?;
 
         tracing::info!("Started plugin: {}", name);
         Ok(())
@@ -249,13 +252,13 @@ impl PluginEngine {
 
     /// Stop a plugin.
     pub async fn stop_plugin(&self, name: &str) -> Result<(), PluginEngineError> {
-        let Ok(registry) = self.prepare_registry().await else {
+        let Ok(mut registry) = self.prepare_registry().await else {
             return Err(PluginEngineError::RegistryError(RegistryError::OperationFailed {
                 reason: "registry unavailable".into(),
             }));
         };
         // Check if plugin is registered
-        if !registry.is_registered(name).await {
+        if !registry.is_registered(name) {
             return Err(PluginEngineError::PluginNotFound { name: name.to_string() });
         }
 
@@ -274,7 +277,7 @@ impl PluginEngine {
         self.lifecycle_manager.stop_plugin(name, stop_fn).await?;
 
         // Update registry
-        registry.set_plugin_status(name, PluginStatus::Stopped).await?;
+        registry.set_plugin_status(name, PluginStatus::Stopped)?;
 
         tracing::info!("Stopped plugin: {}", name);
         Ok(())
@@ -282,13 +285,13 @@ impl PluginEngine {
 
     /// Restart a plugin.
     pub async fn restart_plugin(&self, name: &str) -> Result<(), PluginEngineError> {
-        let Ok(registry) = self.prepare_registry().await else {
+        let Ok(mut registry) = self.prepare_registry().await else {
             return Err(PluginEngineError::RegistryError(RegistryError::OperationFailed {
                 reason: "registry unavailable".into(),
             }));
         };
         // Check if plugin is registered
-        if !registry.is_registered(name).await {
+        if !registry.is_registered(name) {
             return Err(PluginEngineError::PluginNotFound { name: name.to_string() });
         }
 
@@ -323,7 +326,7 @@ impl PluginEngine {
         self.lifecycle_manager.restart_plugin(name, stop_fn, start_fn).await?;
 
         // Update registry
-        registry.set_plugin_status(name, PluginStatus::Running).await?;
+        registry.set_plugin_status(name, PluginStatus::Running)?;
 
         tracing::info!("Restarted plugin: {}", name);
         Ok(())
@@ -338,10 +341,9 @@ impl PluginEngine {
         };
         let mut plugin_detail = registry
             .get_plugin(name)
-            .await
             .ok_or_else(|| PluginEngineError::PluginNotFound { name: name.to_string() })?;
 
-        let status = registry.get_plugin_status(name).await.unwrap_or(PluginStatus::Stopped);
+        let status = registry.get_plugin_status(name).unwrap_or(PluginStatus::Stopped);
         let health = self.client_manager.get_plugin_health(name).await.unwrap_or_default();
         let logs = self.log_manager.get_recent_logs(name, 100).await;
         let tool_summaries = {
@@ -367,7 +369,8 @@ impl PluginEngine {
         };
         let mut plugins = Vec::new();
 
-        for name in registry.get_plugin_names().await {
+        let names = registry.get_plugin_names();
+        for name in names {
             if let Ok(detail) = self.get_plugin_detail(&name).await {
                 plugins.push(detail);
             }
@@ -385,7 +388,6 @@ impl PluginEngine {
         };
         registry
             .get_plugin_status(name)
-            .await
             .ok_or_else(|| PluginEngineError::PluginNotFound { name: name.to_string() })
     }
 
@@ -416,17 +418,16 @@ impl PluginEngine {
 
     /// Update configuration.
     pub async fn update_config(&self, config: McpConfig) -> Result<(), PluginEngineError> {
-        let Ok(registry) = self.prepare_registry().await else {
+        let Ok(mut registry) = self.prepare_registry().await else {
             return Err(PluginEngineError::RegistryError(RegistryError::OperationFailed {
                 reason: "registry unavailable".into(),
             }));
         };
         // Capture which plugins should be restarted after reload.
         let mut restart_candidates = Vec::new();
-        for name in registry.get_plugin_names().await {
+        for name in registry.get_plugin_names() {
             let was_running = registry
                 .get_plugin_status(&name)
-                .await
                 .map(|status| status == PluginStatus::Running)
                 .unwrap_or(false);
             if was_running {
@@ -459,7 +460,7 @@ impl PluginEngine {
         }
 
         // Clear and rebuild registry
-        registry.clear().await?;
+        registry.clear()?;
 
         for (name, server) in &config.mcp_servers {
             let mut plugin_detail = PluginDetail::new(
@@ -475,7 +476,7 @@ impl PluginEngine {
             plugin_detail.tags = server.tags.clone().unwrap_or_default();
             plugin_detail.enabled = !server.is_disabled();
 
-            registry.register_plugin(plugin_detail).await?;
+            registry.register_plugin(plugin_detail)?;
             self.lifecycle_manager.register_plugin(name.clone()).await;
         }
 
@@ -765,8 +766,32 @@ impl PluginEngine {
         }
 
         match serde_json::to_value(&result.content) {
-            Ok(value) => (is_error, value),
+            Ok(value) => (is_error, Self::derive_tool_result(&value)),
             Err(_) => (is_error, Value::Null),
+        }
+    }
+
+    fn derive_tool_result(value: &Value) -> Value {
+        match value {
+            Value::Null => Value::Null,
+            Value::Bool(value) => Value::Bool(*value),
+            Value::Number(value) => Value::Number(value.clone()),
+            Value::String(value) => Value::String(value.clone()),
+            Value::Array(value) => {
+                // Special case: if the array contains a single object with a "text" field, return that field's value.
+                if value.len() == 1 {
+                    return Self::derive_tool_result(value.first().unwrap_or(&Value::Null));
+                }
+                value.iter().map(Self::derive_tool_result).collect()
+            }
+            Value::Object(value) => {
+                if let Some(Value::String(text)) = value.get("text")
+                    && let Ok(val) = serde_json::from_str::<Value>(text)
+                {
+                    return val;
+                }
+                Value::Object(value.clone())
+            }
         }
     }
 }
@@ -1249,7 +1274,9 @@ mod tests {
         engine.start().await.unwrap();
 
         let registry = engine.prepare_registry().await.unwrap();
-        let info = registry.get_plugin("svc").await.unwrap();
+        let names = registry.get_plugin_names();
+        assert_eq!(names, vec!["svc".to_string()]);
+        let info = registry.get_plugin("svc").unwrap();
         assert_eq!(info.tags, vec!["alpha", "beta"]);
         assert!(!info.enabled);
 

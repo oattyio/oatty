@@ -34,8 +34,8 @@ impl WorkflowListState {
             search_input: TextInputState::new(),
             selected: 0,
             list_state: ListState::default(),
-            container_focus: FocusFlag::named("root.workflows"),
-            f_list: FocusFlag::named("root.workflows.list"),
+            container_focus: FocusFlag::new().with_name("root.workflows"),
+            f_list: FocusFlag::new().with_name("root.workflows.list"),
         }
     }
 

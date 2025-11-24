@@ -7,11 +7,11 @@
 
 use heroku_util::format_date_mmddyyyy;
 use ratatui::{
+    Frame,
     layout::{Constraint, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Cell, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarState, Table, Wrap},
-    Frame,
 };
 use serde_json::Value;
 

@@ -7,8 +7,8 @@ use crate::ui::{
         theme_helpers::{table_header_style, table_row_style},
     },
     utils::{
-        get_scored_keys, infer_columns_with_sizes_from_json, is_status_like, normalize_header, render_value, status_color_for_value,
-        ColumnWithSize,
+        ColumnWithSize, get_scored_keys, infer_columns_with_sizes_from_json, is_status_like, normalize_header, render_value,
+        status_color_for_value,
     },
 };
 use heroku_types::ExecOutcome;

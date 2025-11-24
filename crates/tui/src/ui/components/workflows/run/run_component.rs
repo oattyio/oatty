@@ -9,11 +9,11 @@ use crate::app::App;
 use crate::ui::components::workflows::run::state::{RunExecutionStatus, RunViewState};
 use crate::ui::components::{
     common::ResultsTableView,
-    component::{find_target_index_by_mouse_position, Component},
+    component::{Component, find_target_index_by_mouse_position},
 };
 use crate::ui::theme::{
-    theme_helpers::{self as th, build_hint_spans, ButtonRenderOptions},
     Theme,
+    theme_helpers::{self as th, ButtonRenderOptions, build_hint_spans},
 };
 use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
@@ -22,11 +22,11 @@ use heroku_util::format_duration;
 use rat_focus::HasFocus;
 use ratatui::layout::Position;
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout, Rect},
     style::Modifier,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
-    Frame,
 };
 
 /// Captures mouse hit-testing and focus targets for the run view.
@@ -115,7 +115,7 @@ impl Component for RunViewComponent {
         } else if run_state.pause_button_focus.get() {
             effects.extend(Self::handle_pause_button_keys(run_state, &run_id, key.code));
         } else if run_state.view_details_button_focus.get() {
-            effects.extend(self.show_step_output(&run_state));
+            effects.extend(self.show_step_output(run_state));
         } else if run_state.done_button_focus.get() {
             effects.push(Effect::SwitchTo(Route::Workflows));
         }
@@ -125,15 +125,11 @@ impl Component for RunViewComponent {
 
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
         let mut effects = Vec::new();
-        match mouse.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(target) = self.hit_test_mouse_target(mouse) {
-                    let pos = Position::new(mouse.column, mouse.row);
-                    effects.extend(self.handle_mouse_target(app, target, pos))
-                }
-            }
-
-            _ => {}
+        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind
+            && let Some(target) = self.hit_test_mouse_target(mouse)
+        {
+            let pos = Position::new(mouse.column, mouse.row);
+            effects.extend(self.handle_mouse_target(app, target, pos))
         }
         effects
     }
@@ -334,7 +330,7 @@ impl RunViewComponent {
                 }
             }
             ActionRole::ViewDetailsButton => {
-                effects.extend(self.show_step_output(&run_state));
+                effects.extend(self.show_step_output(run_state));
             }
             ActionRole::DoneButton => {
                 effects.push(Effect::SwitchTo(Route::Workflows));
@@ -458,7 +454,7 @@ fn render_steps_table(frame: &mut Frame, area: Rect, theme: &dyn Theme, run_stat
 }
 
 fn get_footer_block(theme: &dyn Theme) -> Block<'_> {
-    th::block(theme, None, false).borders(Borders::NONE)
+    th::block::<String>(theme, None, false).borders(Borders::NONE)
 }
 
 fn format_status_label(status: RunExecutionStatus) -> &'static str {

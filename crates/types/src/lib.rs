@@ -703,17 +703,21 @@ pub mod execution {
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
 
-    use crate::PluginDetail;
+    use crate::{Msg, PluginDetail};
 
     /// Result of an asynchronous command execution.
     ///
     /// This struct contains the outcome of a command execution including logs, results, and any UI
     /// state changes that should occur.
-    #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+    #[derive(Debug, Clone, Default)]
     pub enum ExecOutcome {
         /// Result from executing an HTTP command containing a structured payload.
         /// (status_code, log_entry, json_result, maybe_pagination, request_id)
         Http(u16, String, Value, Option<Pagination>, u64),
+        /// Simple log entry
+        Log(String),
+        /// Simple message
+        Message(Msg),
         /// Result from executing an MCP tool containing a structured payload.
         /// (log_entry, json_result, request_id)
         Mcp(String, Value, u64),
@@ -735,8 +739,6 @@ pub mod execution {
         /// Validation plugin ok result
         /// Contains the success message
         PluginValidationOk(String),
-        /// Simple log entry
-        Log(String),
         /// Command validation error
         ValidationErr(String),
         /// Indicates successful completion but with no payload
@@ -778,6 +780,7 @@ pub mod messaging {
         workflow::{WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest},
     };
     use serde_json::{Map as JsonMap, Value as JsonValue};
+    use std::fmt::Display;
     /// Navigation targets within the TUI.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Route {
@@ -810,6 +813,26 @@ pub mod messaging {
         PluginDetails,
         /// Theme picker modal allowing runtime palette switching.
         ThemePicker,
+        /// Confirmation modal prompting the user to confirm an action.
+        Confirmation,
+    }
+
+    #[derive(Default, Debug, Clone, PartialEq, Eq)]
+    pub enum Severity {
+        #[default]
+        Info,
+        Warning,
+        Error,
+    }
+
+    impl Display for Severity {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            match self {
+                Severity::Info => write!(f, "ⓘ Info"),
+                Severity::Warning => write!(f, "⚠ Warning"),
+                Severity::Error => write!(f, "X Error"),
+            }
+        }
     }
 
     /// Side effects that can be triggered by state changes.
@@ -817,7 +840,6 @@ pub mod messaging {
     /// This enum defines actions that should be performed as a result of state changes, such as
     /// copying to clipboard or showing notifications.
     #[derive(Debug, Clone)]
-    #[allow(clippy::enum_variant_names)]
     pub enum Effect {
         /// Log a message
         Log(String),
@@ -879,6 +901,7 @@ pub mod messaging {
             /// Control command (pause, resume, cancel).
             command: WorkflowRunControl,
         },
+        SendMsg(Msg),
     }
 
     /// Messages that can be sent to update the application state.
@@ -887,17 +910,22 @@ pub mod messaging {
     /// changes in the application.
     #[derive(Debug, Clone)]
     pub enum Msg {
-        /// Copy the current command to clipboard.
+        /// The user has clicked a button from the confirmation modal
+        /// The usize is the corresponding widget id of the button clicked
+        ConfirmationModalButtonClicked(usize),
+        /// The user has dismissed the confirmation modal
+        ConfirmationModalClosed,
+        /// Copy the current command to the clipboard.
         CopyToClipboard(String),
         /// Periodic UI tick (for example, throbbers).
         Tick,
         /// Terminal resized.
         Resize(u16, u16),
-        /// Background execution completed with outcome.
+        /// Background execution completed with an outcome.
         ExecCompleted(Box<ExecOutcome>),
-        /// Move log selection cursor up.
+        /// Move the log selection cursor up.
         LogsUp,
-        /// Move log selection cursor down.
+        /// Move the log selection cursor down.
         LogsDown,
         /// Extend selection upwards (Shift+Up).
         LogsExtendUp,
@@ -905,9 +933,9 @@ pub mod messaging {
         LogsExtendDown,
         /// Open details for the current selection.
         LogsOpenDetail,
-        /// Close details view and return to list.
+        /// Close the details view and return to list.
         LogsCloseDetail,
-        /// Copy current selection (redacted).
+        /// Copy the current selection (redacted).
         LogsCopy,
         /// Toggle pretty/raw for a single API response.
         LogsTogglePretty,

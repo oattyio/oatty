@@ -78,7 +78,7 @@ impl CommandRunner for RegistryCommandRunner {
 
         if let Some(mcp) = spec.mcp() {
             return Err(anyhow!(
-                "command '{}' delegates to MCP tool '{}:{}'; workflows currently support HTTP commands only",
+                "command '{}' delegates to MCP tool '{}:{}'; commands currently support HTTP only",
                 spec.name,
                 mcp.plugin_name,
                 mcp.tool_name

@@ -5529,23 +5529,27 @@
           "method": "PATCH",
           "rel": "update",
           "schema": {
-            "additionalProperties": false,
-            "description": "hash of config changes – update values or delete by seting it to `null`.",
-            "example": {
-              "FOO": "bar",
-              "BAZ": "qux"
-            },
-            "patternProperties": {
-              "^\\w+$": {
+            "properties": {
+              "config_vars": {
+                "additionalProperties": false,
+                "description": "hash of config changes – update values or delete by setting it to `null`.",
+                "example": {
+                  "FOO": "bar",
+                  "BAZ": "qux"
+                },
+                "patternProperties": {
+                  "^\\w+$": {
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
                 "type": [
-                  "string",
-                  "null"
+                  "object"
                 ]
               }
-            },
-            "type": [
-              "object"
-            ]
+            }
           },
           "targetSchema": {
             "$ref": "#/definitions/config-var/definitions/config_vars"

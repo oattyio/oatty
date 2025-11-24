@@ -631,8 +631,10 @@ steps:
 
     #[test]
     fn display_name_prefers_explicit_label() {
-        let mut definition = WorkflowInputDefinition::default();
-        definition.name = Some("Chosen Label".into());
+        let definition = WorkflowInputDefinition {
+            name: Some("Chosen Label".into()),
+            ..Default::default()
+        };
 
         let label = definition.display_name("fallback");
         assert_eq!(label.as_ref(), "Chosen Label");
@@ -640,8 +642,10 @@ steps:
 
     #[test]
     fn display_name_falls_back_to_identifier_when_blank() {
-        let mut definition = WorkflowInputDefinition::default();
-        definition.name = Some("   ".into());
+        let definition = WorkflowInputDefinition {
+            name: Some("   ".into()),
+            ..Default::default()
+        };
 
         let label = definition.display_name("input_key");
         assert_eq!(label.as_ref(), "input_key");

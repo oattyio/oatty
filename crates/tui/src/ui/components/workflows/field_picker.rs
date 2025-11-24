@@ -26,7 +26,7 @@ fn render_filter(frame: &mut Frame, area: Rect, theme: &dyn Theme, filter: &str,
         "Filter Fields",
         theme.text_secondary_style().add_modifier(Modifier::BOLD),
     ));
-    let mut block = th::block(theme, None, active);
+    let mut block = th::block::<String>(theme, None, active);
     block = block.title(title);
 
     let highlight = theme.search_highlight_style();

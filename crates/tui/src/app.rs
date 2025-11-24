@@ -5,10 +5,11 @@
 //! user interactions, and coordinates between different UI components.
 
 use std::{
-    sync::{atomic::AtomicUsize, Arc, Mutex},
+    sync::{Arc, Mutex, atomic::AtomicUsize},
     time::Duration,
 };
 
+use crate::ui::components::common::ConfirmationModalState;
 use crate::ui::components::nav_bar::VerticalNavBarState;
 use crate::ui::components::workflows::collector::SelectorStatus;
 use crate::ui::components::workflows::run::RunViewState;
@@ -19,14 +20,14 @@ use crate::ui::{
     },
     theme,
 };
-use heroku_engine::provider::{CacheLookupOutcome, PendingProviderFetch, ProviderRegistry};
 use heroku_engine::ValueProvider;
+use heroku_engine::provider::{CacheLookupOutcome, PendingProviderFetch, ProviderRegistry};
 use heroku_mcp::PluginEngine;
 use heroku_registry::CommandRegistry;
-use heroku_types::{validate_candidate_value, Effect, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
+use heroku_types::{Effect, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus, validate_candidate_value};
 use heroku_util::{
-    has_meaningful_value, value_contains_secret, workflow_input_uses_history, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore,
-    UserPreferences, DEFAULT_HISTORY_PROFILE,
+    DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, UserPreferences, has_meaningful_value,
+    value_contains_secret, workflow_input_uses_history,
 };
 use rat_focus::{Focus, FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
@@ -158,6 +159,8 @@ pub struct App<'a> {
     pub focus: Focus,
     /// Currently active main route for dynamic focus ring building
     pub current_route: Route,
+    /// the confirmation modal state
+    pub confirmation_modal_state: ConfirmationModalState,
 }
 
 impl App<'_> {
@@ -191,6 +194,7 @@ impl App<'_> {
         let mut app = Self {
             ctx,
             browser: BrowserState::new(Arc::clone(&registry)),
+            confirmation_modal_state: ConfirmationModalState::default(),
             logs: LogsState::default(),
             help: HelpState::default(),
             plugins: PluginsState::new(),
@@ -203,7 +207,7 @@ impl App<'_> {
             throbber_idx: 0,
             active_exec_count: Arc::new(AtomicUsize::new(0)),
             focus: Focus::default(),
-            app_container_focus: FocusFlag::named("app.container"),
+            app_container_focus: FocusFlag::new().with_name("app.container"),
             current_route: Route::Palette,
             open_modal_kind: None,
             workflow_event_rx: None,
@@ -573,6 +577,9 @@ impl HasFocus for App<'_> {
                     } else if let Some(state) = self.workflows.manual_entry.as_ref() {
                         builder.widget(state);
                     }
+                }
+                Modal::Confirmation => {
+                    builder.widget(&self.confirmation_modal_state);
                 }
                 Modal::PluginDetails | Modal::Help | Modal::ThemePicker => {
                     // focusable fields TBD; leave the ring empty

@@ -18,8 +18,8 @@
 //! exact command names or syntax.
 
 use crate::app::App;
-use crate::ui::components::browser::state::CursorDirection;
 use crate::ui::components::HelpComponent;
+use crate::ui::components::browser::state::CursorDirection;
 use crate::ui::theme::theme_helpers::highlight_segments;
 use crate::ui::{components::component::Component, theme::theme_helpers as th};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -27,10 +27,10 @@ use heroku_types::{Effect, Route};
 use ratatui::layout::Position;
 use ratatui::style::Modifier;
 use ratatui::{
+    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     text::{Line, Span},
     widgets::*,
-    Frame,
 };
 
 /// A modal component for browsing and selecting Heroku commands interactively.
@@ -297,7 +297,7 @@ impl BrowserComponent {
     fn render_search_panel(&self, frame: &mut Frame, app: &mut App, area: Rect) {
         let search_title = self.create_search_title(app);
         let is_focused = app.browser.f_search.get();
-        let mut search_block = th::block(&*app.ctx.theme, None, is_focused);
+        let mut search_block = th::block::<String>(&*app.ctx.theme, None, is_focused);
         search_block = search_block.title(search_title);
         let inner_area = search_block.inner(area);
         let theme = &*app.ctx.theme;

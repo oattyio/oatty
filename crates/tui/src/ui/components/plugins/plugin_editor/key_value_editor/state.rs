@@ -39,10 +39,10 @@ impl KeyValueEditorState {
     /// container, table, key field, and value field focus flags. Callers should
     /// pass a stable namespace to avoid rebuilding focus structures unnecessarily.
     pub fn new(namespace: &str) -> Self {
-        let focus = FocusFlag::named(&format!("{namespace}.container"));
-        let table_focus = FocusFlag::named(&format!("{namespace}.table"));
-        let key_field_focus = FocusFlag::named(&format!("{namespace}.field.key"));
-        let value_field_focus = FocusFlag::named(&format!("{namespace}.field.value"));
+        let focus = FocusFlag::new().with_name(&format!("{namespace}.container"));
+        let table_focus = FocusFlag::new().with_name(&format!("{namespace}.table"));
+        let key_field_focus = FocusFlag::new().with_name(&format!("{namespace}.field.key"));
+        let value_field_focus = FocusFlag::new().with_name(&format!("{namespace}.field.value"));
         let mut state = Self {
             rows: Vec::new(),
             selected_row_index: None,

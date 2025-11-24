@@ -31,7 +31,7 @@ use heroku_mcp::{McpConfig, PluginEngine};
 use heroku_registry::find_by_group_and_cmd;
 use heroku_registry::{CommandRegistry, CommandSpec};
 use heroku_types::service::ServiceId;
-use heroku_types::{Effect, EnvVar, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
+use heroku_types::{Effect, EnvVar, Msg, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
 use heroku_types::{ExecOutcome, command::CommandExecution};
 use heroku_util::build_request_body;
 use heroku_util::exec_remote_from_shell_command;
@@ -126,6 +126,7 @@ pub enum Cmd {
     PluginsExportLogsDefault(String),
     PluginsValidate,
     PluginsSave,
+    SendMsg(Msg),
 }
 
 /// Collection of immediate and background work generated while handling effects.
@@ -192,6 +193,7 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
                 handle_workflow_run_control(app, &run_id, command);
                 None
             }
+            Effect::SendMsg(nsg) => Some(vec![Cmd::SendMsg(nsg)]),
             _ => None,
         };
         if let Some(cmds) = effect_commands {
@@ -270,6 +272,10 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
             Cmd::PluginsExportLogsDefault(name) => execute_plugins_export_default(app, name).await,
             Cmd::PluginsValidate => execute_plugins_validate(app),
             Cmd::PluginsSave => execute_plugins_save(app).await,
+            Cmd::SendMsg(msg) => {
+                batch.immediate.push(ExecOutcome::Message(msg));
+                continue;
+            }
         };
         batch.immediate.push(outcome);
     }
@@ -753,16 +759,16 @@ fn validate_command(app: &mut App, hydrated_command: &str, command_registry: Arc
         let commands = &lock.commands;
         find_by_group_and_cmd(commands, tokens[0].as_str(), tokens[1].as_str())?
     };
-
+    command_spec.parse_arguments(&tokens[2..])?;
     persist_execution_context(app, &command_spec, &input);
 
     Ok((command_spec, input))
 }
 
 fn persist_execution_context(app: &mut App, command_spec: &CommandSpec, input: &str) {
-    let command_id = format!("{}:{}", command_spec.group, command_spec.name);
     let trimmed_input = input.trim();
-    app.palette.record_pending_execution(command_id, trimmed_input.to_string());
+    app.palette
+        .record_pending_execution(command_spec.canonical_id(), trimmed_input.to_string());
     app.palette.push_history_if_needed(trimmed_input);
 }
 

@@ -7,18 +7,18 @@ use crate::ui::components::table::state::KeyValueEntry;
 use crate::ui::components::workflows::collector::manual_entry::ManualEntryComponent;
 use crate::ui::components::workflows::collector::{CollectorStagedSelection, CollectorViewState, SelectorStatus};
 use crate::ui::components::workflows::view_utils::{classify_json_value, style_for_role};
-use crate::ui::theme::theme_helpers::{self as th, build_hint_spans, ButtonRenderOptions};
 use crate::ui::theme::Theme;
+use crate::ui::theme::theme_helpers::{self as th, ButtonRenderOptions, build_hint_spans};
 use crate::ui::utils::render_value;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use heroku_engine::provider::ProviderRegistry;
-use heroku_engine::{resolve::select_path, ProviderValueResolver};
+use heroku_engine::{ProviderValueResolver, resolve::select_path};
 use heroku_types::{Effect, WorkflowProviderErrorPolicy};
+use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::Modifier;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
-use ratatui::Frame;
 use serde_json::{Value as JsonValue, Value};
 
 /// Retained layout metadata capturing screen regions for pointer hit-testing.
@@ -547,7 +547,7 @@ impl WorkflowCollectorComponent {
             let idx = collector.table.table_state.selected().unwrap_or(0);
             let row_json = collector.table.selected_data(idx).cloned().unwrap_or(Value::Null);
             let entries = collector.table.kv_entries();
-            let (detail_selection, detail_offset) = self.detail_selection(entries, collector);
+            let (_detail_selection, _detail_offset) = self.detail_selection(entries, collector);
             let detail_block = th::block(theme, Some("Details"), table_focused);
             let detail_inner = detail_block.inner(layout.detail_area);
             frame.render_widget(detail_block, layout.detail_area);
@@ -570,7 +570,7 @@ impl WorkflowCollectorComponent {
             theme.text_secondary_style().add_modifier(Modifier::BOLD),
         ));
         let is_focused = collector.f_filter.get();
-        let mut block = th::block(theme, None, is_focused);
+        let mut block = th::block::<String>(theme, None, is_focused);
         block = block.title(filter_block_title);
         let inner_area = block.inner(area);
         let filter_text = collector.filter.input();

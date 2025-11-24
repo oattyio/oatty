@@ -13,6 +13,7 @@ pub use validation::{ValidationError, validate_config, validate_server_name};
 use crate::config::interpolation::tokenize_config;
 use dirs_next::config_dir;
 use dirs_next::home_dir;
+use serde_json::Value;
 use std::env;
 use std::fs;
 use std::fs::create_dir_all;
@@ -43,7 +44,8 @@ pub fn load_config_from_path(path: &std::path::Path) -> anyhow::Result<McpConfig
     }
 
     let content = fs::read_to_string(path)?;
-    let mut config: McpConfig = serde_json::from_str(&content)?;
+    let raw_config: Value = serde_json::from_str(&content)?;
+    let mut config: McpConfig = serde_json::from_value(raw_config)?;
 
     // Interpolate environment variables and secrets
     interpolate_config(&mut config)?;
@@ -52,12 +54,6 @@ pub fn load_config_from_path(path: &std::path::Path) -> anyhow::Result<McpConfig
     validate_config(&config)?;
 
     Ok(config)
-}
-
-/// Save the MCP configuration to the default location.
-pub async fn save_config(config: &mut McpConfig) -> anyhow::Result<()> {
-    let path = default_config_path();
-    save_config_to_path(config, &path)
 }
 
 /// Save the MCP configuration to a specific path.

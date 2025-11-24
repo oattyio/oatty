@@ -1,6 +1,6 @@
-use crate::ui::components::workflows::{classify_json_value, format_preview, JsonSyntaxRole};
+use crate::ui::components::workflows::{JsonSyntaxRole, classify_json_value, format_preview};
 use heroku_engine::{ProviderBindingOutcome, WorkflowRunState};
-use heroku_types::{validate_candidate_value, WorkflowInputDefinition, WorkflowProviderArgumentValue, WorkflowValueProvider};
+use heroku_types::{WorkflowInputDefinition, WorkflowProviderArgumentValue, WorkflowValueProvider, validate_candidate_value};
 use heroku_util::has_meaningful_value;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
@@ -67,10 +67,10 @@ impl WorkflowInputViewState {
             run_state,
             input_rows: Vec::new(),
             input_list_state: ListState::default(),
-            container_focus: FocusFlag::named("workflow.inputs"),
-            f_list: FocusFlag::named("workflow.inputs.list"),
-            f_cancel_button: FocusFlag::named("workflow.inputs.actions.cancel"),
-            f_run_button: FocusFlag::named("workflow.inputs.actions.run"),
+            container_focus: FocusFlag::new().with_name("workflow.inputs"),
+            f_list: FocusFlag::new().with_name("workflow.inputs.list"),
+            f_cancel_button: FocusFlag::new().with_name("workflow.inputs.actions.cancel"),
+            f_run_button: FocusFlag::new().with_name("workflow.inputs.actions.run"),
         }
     }
 

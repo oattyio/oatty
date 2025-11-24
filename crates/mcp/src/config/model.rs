@@ -37,12 +37,8 @@ pub struct McpServer {
     /// Working directory for the process.
     pub cwd: Option<PathBuf>,
 
-    /// Base URL for HTTP/SSE transport (required for http/sse).
+    /// Base URL for HTTP transport (required for remote servers).
     pub base_url: Option<Url>,
-
-    /// Optional SSE path segment for HTTP transport (defaults to "sse").
-    /// Example: "/events" or "mcp/sse". Leading slash is optional.
-    pub sse_path: Option<String>,
 
     /// HTTP headers to include in requests.
     #[serde(
@@ -192,7 +188,6 @@ impl Default for McpServer {
             env: None,
             cwd: None,
             base_url: None,
-            sse_path: None,
             headers: None,
             auth: None,
             disabled: Some(false),
@@ -208,7 +203,7 @@ impl McpServer {
         self.command.is_some()
     }
 
-    /// Check if this server is configured for HTTP/SSE transport.
+    /// Check if this server is configured for HTTP transport.
     pub fn is_http(&self) -> bool {
         self.base_url.is_some()
     }

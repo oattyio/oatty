@@ -18,18 +18,18 @@ use heroku_types::{Effect, ExecOutcome, Modal, Msg};
 use heroku_util::redact_json;
 use once_cell::sync::Lazy;
 use ratatui::{
+    Frame,
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::*,
-    Frame,
 };
 use regex::Regex;
 use serde_json::Value;
 
 use super::{
-    state::{LogDetailView, LogEntry},
     LogDetailsComponent,
+    state::{LogDetailView, LogEntry},
 };
 use crate::app::App;
 use crate::ui::{

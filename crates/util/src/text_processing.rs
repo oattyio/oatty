@@ -793,13 +793,13 @@ pub fn format_duration(duration: Duration) -> String {
 /// assert_eq!(formatted, "02m 03s");
 /// ```
 pub fn format_duration_short(duration: Duration) -> String {
-    let thresholds = vec![
+    let thresholds = [
         1000,     // milliseconds
         60000,    // seconds
         3600000,  // minutes
         86400000, // hours
     ];
-    let labels = vec!["ms", "s", "m", "h"];
+    let labels = ["ms", "s", "m", "h"];
     let mut formatted = String::new();
     let mut val = duration.num_milliseconds();
     let mut unit_idx = thresholds.iter().position(|t| val <= *t).unwrap_or(3);
@@ -830,7 +830,7 @@ mod tests {
     #[test]
     fn test_format_duration_short() {
         let duration = Duration::seconds(123);
-        assert_eq!(format_duration_short(duration), "00h 02m 03s");
+        assert_eq!(format_duration_short(duration), "02m 03s");
     }
 
     #[test]

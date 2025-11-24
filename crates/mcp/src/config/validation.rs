@@ -45,7 +45,7 @@ pub fn validate_server(server: &McpServer) -> Result<(), ValidationError> {
         TransportType::Stdio => validate_stdio_server(server),
         TransportType::Http => validate_http_server(server),
         TransportType::Unknown => Err(ValidationError::InvalidTransport {
-            reason: "Server must have either 'command' (stdio) or 'baseUrl' (http/sse)".to_string(),
+            reason: "Server must have either 'command' (stdio) or 'baseUrl' (http)".to_string(),
         }),
     }
 }
@@ -70,13 +70,13 @@ fn validate_stdio_server(server: &McpServer) -> Result<(), ValidationError> {
     Ok(())
 }
 
-/// Validate an HTTP/SSE server configuration.
+/// Validate an HTTP server configuration.
 fn validate_http_server(server: &McpServer) -> Result<(), ValidationError> {
-    // Base URL is required for HTTP/SSE
+    // Base URL is required for HTTP
     if server.base_url.is_none() {
         return Err(ValidationError::MissingRequiredField {
             field: "baseUrl".to_string(),
-            transport: "http/sse".to_string(),
+            transport: "http".to_string(),
         });
     }
 

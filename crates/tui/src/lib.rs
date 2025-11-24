@@ -1,4 +1,3 @@
-#![feature(associated_type_defaults)]
 //! # Heroku CLI TUI Library
 //!
 //! This library provides a terminal user interface (TUI) for the Heroku CLI.

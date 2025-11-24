@@ -9,17 +9,17 @@
 use std::collections::HashSet;
 
 use crate::{
-    executor::{self, runner::NoopRunner, CommandRunner, StepResult, StepStatus},
+    RunContext,
+    executor::{self, CommandRunner, StepResult, StepStatus, runner::NoopRunner},
     resolve::interpolate_value,
     workflow::{
         bindings::{ProviderArgumentResolver, ProviderBindingOutcome},
         runtime::workflow_spec_from_runtime,
     },
-    RunContext,
 };
 use anyhow::Result;
 use heroku_types::workflow::{RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault};
-use indexmap::{map::Entry as IndexMapEntry, IndexMap};
+use indexmap::{IndexMap, map::Entry as IndexMapEntry};
 use serde_json::Value;
 use std::env;
 
