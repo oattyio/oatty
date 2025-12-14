@@ -1,8 +1,8 @@
 use crate::ProviderValueResolver;
 use anyhow::{Result, anyhow};
-use heroku_registry::{CommandRegistry, CommandSpec, find_by_group_and_cmd};
-use heroku_types::{Bind, ExecOutcome, ItemKind, SuggestionItem, ValueProvider as ProviderBinding};
-use heroku_util::{exec_remote_for_provider, fuzzy_score};
+use oatty_registry::{CommandRegistry, CommandSpec, find_by_group_and_cmd};
+use oatty_types::{Bind, ExecOutcome, ItemKind, SuggestionItem, ValueProvider as ProviderBinding};
+use oatty_util::{exec_remote_for_provider, fuzzy_score};
 use serde_json::{Map as JsonMap, Value};
 use std::hash::DefaultHasher;
 use std::{
@@ -378,7 +378,7 @@ impl ProviderValueResolver for ProviderRegistry {
     /// 3. **HTTP Command Execution**:
     ///    - If the provider is backed by an HTTP command (checked using the `spec_ref` object):
     ///        - Resolves HTTP path placeholders with the provided arguments.
-    ///        - Executes the HTTP command using `heroku_util::http_exec::exec_remote`.
+    ///        - Executes the HTTP command using `oatty_util::http_exec::exec_remote`.
     ///        - If successful, caches the result and returns the obtained list of values.
     ///
     /// 4. **Fallback to Fetcher**:

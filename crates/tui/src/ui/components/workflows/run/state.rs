@@ -8,8 +8,8 @@
 
 use crate::ui::{components::table::state::ResultsTableState, theme::Theme};
 use chrono::{DateTime, Duration, Utc};
-use heroku_types::workflow::{WorkflowRunControl, WorkflowRunStatus, WorkflowRunStepStatus, WorkflowStepDefinition};
-use heroku_util::format_duration_short;
+use oatty_types::workflow::{WorkflowRunControl, WorkflowRunStatus, WorkflowRunStepStatus, WorkflowStepDefinition};
+use oatty_util::format_duration_short;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use serde_json::{Map as JsonMap, Value};
@@ -437,7 +437,7 @@ impl RepeatAnimationState {
 mod tests {
     use super::*;
     use crate::ui::theme::dracula::DraculaTheme;
-    use heroku_types::workflow::{WorkflowRepeat, WorkflowStepDefinition};
+    use oatty_types::workflow::{WorkflowRepeat, WorkflowStepDefinition};
     use indexmap::IndexMap;
     use serde_json::{Value, json};
 

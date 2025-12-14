@@ -13,12 +13,12 @@
 
 ## Build, Test, and Development Commands
 - Build all: `cargo build --workspace` — compiles every crate.
-- Run CLI: `cargo run -p heroku-cli -- <group> <command> [flags]`.
-- TUI mode: `cargo run -p heroku-cli` — launches Ratatui UI.
+- Run CLI: `cargo run -p oatty-cli -- <group> <command> [flags]`.
+- TUI mode: `cargo run -p oatty-cli` — launches Ratatui UI, or run installed binary `oatty`.
 - Tests: `cargo test --workspace` — run unit/integration tests.
 - Lint: `cargo clippy --workspace -- -D warnings` — fail on warnings.
 - Format: `cargo fmt --all` — apply repo `rustfmt` settings.
-- Helpful env: `HEROKU_LOG=debug` (stderr logs are silenced during TUI), `HEROKU_API_KEY=…`, `FEATURE_WORKFLOWS=1`, `DEBUG=1`, `MCP_CONFIG_PATH=~/.config/heroku/mcp.json`.
+- Helpful env: `OATTY_LOG=debug` (stderr logs are silenced during TUI), `HEROKU_API_KEY=…`, `FEATURE_WORKFLOWS=1`, `DEBUG=1`, `MCP_CONFIG_PATH=~/.config/oatty/mcp.json`.
 
 ## Coding Style & Naming Conventions
 - Edition: Rust 2024; indent 4 spaces; max width 100 (see `rustfmt.toml`).
@@ -38,11 +38,11 @@
 - Checklist: `cargo fmt` + `clippy` clean; no stray `dbg!`/`println!`.
 
 ## Security & Configuration Tips
-- Never commit secrets; prefer `HEROKU_API_KEY` to `~/.netrc`.
+- Never commit secrets; prefer `HEROKU_API_KEY` via environment for authentication.
 - Redaction utilities mask sensitive values in logs; still avoid pasting tokens.
-- Network via `reqwest` + TLS; set `HEROKU_LOG=error|warn|info|debug|trace` for diagnostics (stderr logs are silenced during TUI).
+- Network via `reqwest` + TLS; set `OATTY_LOG=error|warn|info|debug|trace` for diagnostics (stderr logs are silenced during TUI).
 - MCP plugins: Use `${secret:NAME}` interpolation for sensitive values; secrets stored in OS keychain via `keyring-rs`.
-- MCP config: Located at `~/.config/heroku/mcp.json`; supports stdio and HTTP/SSE transports.
+- MCP config: Located at `~/.config/oatty/mcp.json`; supports stdio and HTTP/SSE transports.
 
 ## Architecture Overview
 See [ARCHITECTURE.md](ARCHITECTURE.md) for a full overview of crates, command/registry design, ValueProviders, execution flow, TUI UX, and security/caching.
@@ -88,11 +88,11 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a full overview of crates, command/re
 - **Local-first updates:** UI interactions update `app.<feature>` state directly; reserve `Msg` + `Effect` for cross-feature actions (open/close modals, run, copy, pagination fetch).
 - **Focus-normalization:** Provide a `normalize_focus()` on state to ensure a valid initial focus when made visible (see `BrowserState::normalize_focus`).
 - **Performance:** Precompute expensive view models in state reducers (`apply_result_json` builds table rows/columns once), then keep `render()` side-effect free except drawing.
-- **Security:** Redact sensitive values before display/copy (`heroku_util::redact_sensitive`). This is enforced in logs and detail views; reuse that pattern for new components.
+- **Security:** Redact sensitive values before display/copy (`oatty_util::redact_sensitive`). This is enforced in logs and detail views; reuse that pattern for new components.
 
 ## Testing Tips
 - **Unit tests:** Co-locate simple reducers/selectors under `#[cfg(test)]` in `state.rs` or the component module. Favor pure functions for parsing/formatting.
-- **Manual checks:** Run `cargo run -p heroku-cli` and verify focus, key handling, and styling in a small terminal. Use `HEROKU_LOG=debug` and `DEBUG=1` to surface useful info.
+- **Manual checks:** Run `cargo run -p oatty-cli` (or `oatty` if installed) and verify focus, key handling, and styling in a small terminal. Use `OATTY_LOG=debug` and `DEBUG=1` to surface useful info.
 - **CI hygiene:** `cargo fmt --all`, `cargo clippy --workspace -- -D warnings`, and `cargo test --workspace` must be clean.
 
 ## General Use Instructions for AI Assistants

@@ -1,7 +1,7 @@
-heroku-tui — Terminal UI
+oatty-tui — Terminal UI
 
 Overview
-- Fast, schema-aware TUI for the Heroku CLI.
+- Fast, schema-aware TUI for the Oatty CLI.
 - Two primary modes:
   1) Default palette: a single-line command input with fuzzy autocomplete and inline help/errors.
   2) Command Browser modal: guided UI with searchable command list and inline help.
@@ -24,7 +24,7 @@ Key Features
 - Safety: secret-like fields masked in tables; Authorization redacted in logs (via util).
 
 Execution
-- Live requests: via `heroku-api` with auth precedence `HEROKU_API_KEY` > `~/.netrc`.
+- Live requests: via `oatty-api` with auth using `HEROKU_API_KEY`.
 - Errors: show inline with hints (auth/network/permissions), and also log.
 
 Keybindings
@@ -58,14 +58,14 @@ Dev Notes
 
 Usage
 ```bash
-cargo run -p heroku-cli              # opens TUI
-DEBUG=1 cargo run -p heroku-cli      # enables extra debug
-HEROKU_API_KEY=... cargo run -p heroku-cli
+cargo run -p oatty-cli              # opens TUI
+DEBUG=1 cargo run -p oatty-cli      # enables extra debug
+HEROKU_API_KEY=... cargo run -p oatty-cli
 ```
 
 Troubleshooting
 - “Unknown command …” — Use the `group sub` form (e.g., `apps info`); use Ctrl+H to see help.
-- 401 Unauthorized — Set `HEROKU_API_KEY` or configure `~/.netrc` for `api.heroku.com`.
+- 401 Unauthorized — Set `HEROKU_API_KEY`.
 - 403 Forbidden — Check team/app access and role membership.
 - Network error — Check connectivity/proxy; `RUST_LOG=info` for more details.
 ### Provider-backed Suggestions

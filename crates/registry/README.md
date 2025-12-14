@@ -1,11 +1,11 @@
-# Heroku CLI Registry
+# Oatty CLI Registry
 
-This crate provides the core functionality for managing Heroku CLI command definitions. It loads, organizes, and generates command-line interface (CLI) commands from Heroku API schemas, enabling the creation of a structured command tree using the `clap` library.
+This crate provides the core functionality for managing Oatty CLI command definitions. It loads, organizes, and generates command-line interface (CLI) commands from Oatty API schemas, enabling the creation of a structured command tree using the `clap` library.
 
 ## Overview
 
 The `heroku-cli-registry` crate is designed to:
-- Load command definitions from an embedded Heroku API manifest.
+- Load command definitions from an embedded Oatty API manifest.
 - Organize commands by resource groups (e.g., `apps`, `dynos`).
 - Generate a `clap`-based command tree for argument parsing and help generation.
 - Support feature flags, such as workflows, controlled via environment variables.
@@ -131,11 +131,11 @@ The crate is organized into several modules:
 - **`clap_builder.rs`**: Implements functions to build a `clap` command tree from the registry.
 - **`feat_gate.rs`**: Provides feature-gating functionality via environment variables.
 - **`lib.rs`**: Exports core functionality and includes tests for the registry.
-- **`build.rs`**: Handles the build process, generating the `heroku-manifest.json` from the Heroku API schema.
+- **`build.rs`**: Handles the build process, generating the `heroku-manifest.json` from the Oatty API schema.
 
 ## Build Process
 
-The crate uses a custom build script (`build.rs`) to process the Heroku API schema (`schemas/heroku-schema.json`) and generate a JSON manifest (`heroku-manifest.json`). This manifest is embedded in the compiled binary and loaded at runtime by the `Registry::from_embedded_schema` method.
+The crate uses a custom build script (`build.rs`) to process the Oatty API schema (`schemas/heroku-schema.json`) and generate a JSON manifest (`heroku-manifest.json`). This manifest is embedded in the compiled binary and loaded at runtime by the `Registry::from_embedded_schema` method.
 
 To rebuild the manifest when the schema changes, the build script monitors the schema file:
 
@@ -183,4 +183,4 @@ This project is licensed under the MIT License. See the [LICENSE](LICENSE) file 
 
 ## Contact
 
-For questions or support, please contact the Heroku CLI team or open an issue on the repository.
+For questions or support, please contact the Oatty CLI team or open an issue on the repository.

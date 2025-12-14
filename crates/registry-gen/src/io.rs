@@ -7,7 +7,7 @@ use crate::openapi::transform_openapi_to_links;
 use crate::schema::{derive_commands_from_schema, generate_commands};
 use anyhow::{Context, Result};
 use bincode::config;
-use heroku_types::{
+use oatty_types::{
     CommandSpec, ServiceId,
     command::SchemaProperty,
     manifest::{ProviderContractEntry, RegistryManifest},

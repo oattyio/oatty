@@ -1,6 +1,6 @@
 //! Data models for MCP configuration.
 
-use heroku_types::{EnvSource, EnvVar};
+use oatty_types::{EnvSource, EnvVar};
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

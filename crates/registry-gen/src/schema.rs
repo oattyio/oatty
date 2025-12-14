@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use heck::ToKebabCase;
-use heroku_types::{CommandFlag, CommandSpec, HttpCommandSpec, PositionalArgument, ServiceId};
-use heroku_util::{get_description, get_type, resolve_output_schema, sort_and_dedup_commands};
+use oatty_types::{CommandFlag, CommandSpec, HttpCommandSpec, PositionalArgument, ServiceId};
+use oatty_util::{get_description, get_type, resolve_output_schema, sort_and_dedup_commands};
 use percent_encoding::percent_decode_str;
 use serde_json::Value;
 use std::{
@@ -754,7 +754,7 @@ mod tests {
             .expect("config:update command exists");
         let pos = spec.positional_args.iter().find(|a| a.name == "addon").unwrap();
         match &pos.provider {
-            Some(heroku_types::ValueProvider::Command { command_id, binds: _ }) => {
+            Some(oatty_types::ValueProvider::Command { command_id, binds: _ }) => {
                 assert_eq!(command_id, "addons list")
             }
             _ => panic!("positional provider for addon missing"),
@@ -778,7 +778,7 @@ mod tests {
             .expect("GET /config command exists");
         let flag = spec.flags.iter().find(|f| f.name == "app").unwrap();
         match &flag.provider {
-            Some(heroku_types::ValueProvider::Command { command_id, binds: _ }) => assert_eq!(command_id, "apps list"),
+            Some(oatty_types::ValueProvider::Command { command_id, binds: _ }) => assert_eq!(command_id, "apps list"),
             _ => panic!("flag provider for app missing"),
         }
     }

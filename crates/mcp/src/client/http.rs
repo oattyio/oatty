@@ -2,7 +2,7 @@
 
 use crate::config::McpServer;
 use anyhow::Result;
-use heroku_types::EnvVar;
+use oatty_types::EnvVar;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 
 /// Resolve the fully-qualified endpoint used for Streamable HTTP transport.

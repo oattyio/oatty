@@ -1,7 +1,7 @@
-//! Registry crate for managing Heroku CLI command definitions.
+//! Registry crate for managing Oatty CLI command definitions.
 //!
 //! This crate provides the core data structures and functionality for loading,
-//! organizing, and generating CLI commands from Heroku API schemas.
+//! organizing, and generating CLI commands from Oatty API schemas.
 
 pub mod clap_builder;
 pub mod feat_gate;
@@ -9,7 +9,7 @@ pub mod models;
 pub mod utils;
 
 pub use clap_builder::build_clap;
-pub use heroku_types::{
+pub use oatty_types::{
     CommandFlag, CommandSpec, ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract,
 };
 pub use models::CommandRegistry;

@@ -1,6 +1,6 @@
-# Heroku CLI Command Registry (Generator)
+# Oatty CLI Command Registry (Generator)
 
-This crate parses the Heroku JSON Hyper‑Schema and generates a compact command registry used by the CLI/TUI. It outputs a binary manifest via `bincode` (and optionally JSON) so frontends can load commands quickly, render help, autocomplete flags/args, and now infer ValueProviders for dynamic value completion.
+This crate parses the Oatty JSON Hyper‑Schema and generates a compact command registry used by the CLI/TUI. It outputs a binary manifest via `bincode` (and optionally JSON) so frontends can load commands quickly, render help, autocomplete flags/args, and now infer ValueProviders for dynamic value completion.
 
 ## Features
 
@@ -40,7 +40,7 @@ The CLI will create parent directories for the output path if needed.
 The primary function, `write_manifest`, reads a JSON hyper-schema file, generates command specifications, and writes them to a binary manifest file.
 
 ```rust
-use heroku_registry_gen::write_manifest;
+use oatty_registry_gen::write_manifest;
 use std::path::PathBuf;
 
 fn main() -> anyhow::Result<()> {

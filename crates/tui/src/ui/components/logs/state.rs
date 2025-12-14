@@ -1,5 +1,5 @@
 use crate::ui::utils::normalize_result_payload;
-use heroku_types::ExecOutcome;
+use oatty_types::ExecOutcome;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
@@ -177,7 +177,7 @@ impl Default for LogsState {
             cached_redacted_json: None,
             container_focus: FocusFlag::new().with_name("root.logs"),
         };
-        state.append_text_entry("Welcome to Heroku TUI".to_string());
+        state.append_text_entry("Welcome to Oatty TUI".to_string());
         state
     }
 }

@@ -1,7 +1,7 @@
 //! Reusable help content builder used by HelpComponent and the Command Browser.
 
 use crate::ui::theme::Theme;
-use heroku_types::{CommandSpec, command::CommandExecution};
+use oatty_types::{CommandSpec, command::CommandExecution};
 use ratatui::{
     style::Modifier,
     text::{Line, Span, Text},

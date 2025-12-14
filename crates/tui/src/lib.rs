@@ -1,6 +1,6 @@
-//! # Heroku CLI TUI Library
+//! # Oatty CLI TUI Library
 //!
-//! This library provides a terminal user interface (TUI) for the Heroku CLI.
+//! This library provides a terminal user interface (TUI) for the Oatty CLI.
 //! It implements a modern, interactive command-line interface using the Ratatui
 //! framework with support for command execution, real-time logs, and interactive
 //! command building.
@@ -25,7 +25,7 @@ mod cmd;
 mod ui;
 
 use anyhow::Result;
-use heroku_mcp::PluginEngine;
+use oatty_mcp::PluginEngine;
 use std::sync::{Arc, Mutex};
 // Runtime moved to ui::runtime
 
@@ -37,7 +37,7 @@ use std::sync::{Arc, Mutex};
 ///
 /// # Arguments
 ///
-/// * `registry` - The Heroku command registry containing all available commands
+/// * `registry` - The Oatty command registry containing all available commands
 ///
 /// # Returns
 ///
@@ -54,7 +54,7 @@ use std::sync::{Arc, Mutex};
 /// # Example
 ///
 /// ```no_run
-/// use heroku_registry::Registry;
+/// use oatty_registry::Registry;
 /// use heroku_tui::run;
 ///
 /// #[tokio::main]
@@ -63,6 +63,6 @@ use std::sync::{Arc, Mutex};
 ///     run(registry).await
 /// }
 /// ```
-pub async fn run(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
+pub async fn run(registry: Arc<Mutex<oatty_registry::CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
     ui::runtime::run_app(registry, plugin_engine).await
 }

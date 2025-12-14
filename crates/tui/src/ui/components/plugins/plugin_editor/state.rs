@@ -1,4 +1,4 @@
-use heroku_mcp::PluginDetail;
+use oatty_mcp::PluginDetail;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 

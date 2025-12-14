@@ -4,11 +4,11 @@
 //! Implementation is split across submodules for clarity and maintainability.
 
 mod core;
+mod gateway;
 mod health;
 mod http;
-mod manager;
 mod stdio;
 
 pub use core::McpClient;
+pub use gateway::{ClientGatewayError, ClientGatewayEvent, McpClientGateway};
 pub use health::HealthCheckResult;
-pub use manager::{ClientManagerError, ClientManagerEvent, McpClientManager};

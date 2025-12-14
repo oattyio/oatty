@@ -540,7 +540,7 @@ ghost: :config:set --app demo-app
 ghost: :config:set --app
 
 ▸ Suggestions
-> --app                    (required)  The Heroku app
+> --app                    (required)  The Oatty app
   --json                                Emit JSON (no table)
   --region                              App region
   -a                                    Short for --app
@@ -649,7 +649,7 @@ impl ValueProvider for AppsProvider {
 
 ## 8) Persistence & storage
 
-- Command palette and workflow history entries are stored in `~/.config/heroku/history.json`.  
+- Command palette and workflow history entries are stored in `~/.config/oatty/history.json`.  
 - Entries are scoped by profile (`default_profile` until authentication is wired) and capped
   at **500**; oldest records are pruned automatically.  
 - Commands only persist after a successful execution. Cancelled or failed runs leave the previous

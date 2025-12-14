@@ -1,6 +1,6 @@
 # Message, Effect, and Command Architecture
 
-This document explains how the Heroku TUI routes user input, state changes, and
+This document explains how the Oatty TUI routes user input, state changes, and
 side effects. The application is **TEA-inspired**: it keeps a single `App`
 model, distinguishes between incoming messages and outgoing effects, and runs
 side effects through a command runner. At the same time, it makes a few

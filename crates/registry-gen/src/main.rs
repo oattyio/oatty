@@ -2,19 +2,19 @@ use std::{path::PathBuf, str::FromStr};
 
 use anyhow::Result;
 use clap::Parser;
-use heroku_registry_gen::{io::ManifestInput, write_manifest, write_manifest_json};
-use heroku_types::ServiceId;
+use oatty_registry_gen::{io::ManifestInput, write_manifest, write_manifest_json};
+use oatty_types::ServiceId;
 
 /// Command-line arguments structure for `heroku-registry-gen` application.
 ///
 /// This struct is used to parse and validate the command-line arguments provided
 /// to the `heroku-registry-gen` tool. The tool is used for generating a manifest
-/// from a Heroku JSON Hyper-Schema, with optional customizations such as the output
+/// from a Oatty JSON Hyper-Schema, with optional customizations such as the output
 /// format and workflow definitions.
 ///
 /// # Fields
 ///
-/// * `input` - A required path to the Heroku JSON Hyper-Schema file which will
+/// * `input` - A required path to the Oatty JSON Hyper-Schema file which will
 ///   serve as the input for the manifest generation process.
 ///
 /// * `output` - A required path where the generated manifest will be written
@@ -52,7 +52,7 @@ use heroku_types::ServiceId;
 #[derive(Parser, Debug)]
 #[command(name = "heroku-registry-gen", version, about)]
 struct Args {
-    /// Input path to the Heroku JSON Hyper-Schema
+    /// Input path to the Oatty JSON Hyper-Schema
     input: PathBuf,
 
     /// Output path for the generated manifest

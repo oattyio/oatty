@@ -10,7 +10,7 @@ use std::{collections::HashMap, sync::Arc, time::Instant};
 
 use anyhow::{Result, anyhow};
 use chrono::Utc;
-use heroku_types::workflow::{WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus, WorkflowRunStepStatus};
+use oatty_types::workflow::{WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus, WorkflowRunStepStatus};
 use serde_json::Value;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, error::TryRecvError};
 
@@ -302,7 +302,7 @@ impl ControlState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use heroku_types::workflow::{
+    use oatty_types::workflow::{
         RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault, WorkflowInputDefinition, WorkflowStepDefinition,
     };
     use indexmap::{IndexMap, indexmap};

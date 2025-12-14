@@ -1,6 +1,6 @@
-//! # Heroku Utility Library
+//! # Oatty Utility Library
 //!
-//! This crate provides utility functions for the Heroku CLI, including HTTP utilities,
+//! This crate provides utility functions for the Oatty CLI, including HTTP utilities,
 //! text processing, fuzzy matching, shell-like lexing, and date handling.
 //!
 //! ## Modules
@@ -13,7 +13,7 @@
 //! ## Usage
 //!
 //! ```rust
-//! use heroku_util::{redact_sensitive, fuzzy_score, lex_shell_like};
+//! use oatty_util::{redact_sensitive, fuzzy_score, lex_shell_like};
 //!
 //! // Redact sensitive information
 //! let redacted = redact_sensitive("API_KEY=abc123");
@@ -36,6 +36,7 @@ pub mod preferences;
 pub mod schema;
 pub mod shell_lexing;
 pub mod text_processing;
+pub mod path_processing;
 
 // Re-export commonly used items for convenience
 pub use command_vec_utils::*;
@@ -48,6 +49,7 @@ pub use preferences::*;
 pub use schema::*;
 pub use shell_lexing::*;
 pub use text_processing::*;
+pub use path_processing::*;
 
 // Generated date fields from build-time schema processing
 pub mod generated_date_fields {

@@ -12,7 +12,7 @@ use indexmap::IndexMap;
 use serde_json::Value;
 
 use crate::resolve::{RunContext, interpolate_value};
-use heroku_types::workflow::{WorkflowMissingBehavior, WorkflowProviderArgumentBinding, WorkflowProviderArgumentValue};
+use oatty_types::workflow::{WorkflowMissingBehavior, WorkflowProviderArgumentBinding, WorkflowProviderArgumentValue};
 
 /// Resolves provider arguments declared on a workflow input into concrete values or follow-up
 /// actions for the caller.
@@ -357,7 +357,7 @@ either a prior step output, a workflow input, or an invalid combination of both
 # Examples
 
 ```rust
-use heroku_engine::BindingSource;
+use oatty_engine::BindingSource;
 
 let step_binding = BindingSource::Step { step_id: "step_1".to_string() };
 let input_binding = BindingSource::Input { input_name: "file_path".to_string() };
@@ -506,7 +506,7 @@ fn select_path(value: &Value, path: Option<&str>) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use heroku_types::workflow::{WorkflowMissingBehavior, WorkflowProviderArgumentBinding, WorkflowProviderArgumentValue};
+    use oatty_types::workflow::{WorkflowMissingBehavior, WorkflowProviderArgumentBinding, WorkflowProviderArgumentValue};
     use indexmap::indexmap;
     use serde_json::json;
 

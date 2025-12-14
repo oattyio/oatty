@@ -1,7 +1,7 @@
 # Commands Architecture
 
 ## Purpose
-The command system powers both the keyboard-driven palette and automation features that run Heroku API or MCP-backed operations. This document captures the behavior as implemented across the registry, TUI palette, and execution pipeline, and serves as the canonical reference for identifier syntax, argument semantics, and execution behavior.
+The command system powers both the keyboard-driven palette and automation features that run Oatty API or MCP-backed operations. This document captures the behavior as implemented across the registry, TUI palette, and execution pipeline, and serves as the canonical reference for identifier syntax, argument semantics, and execution behavior.
 
 ## Identifier Syntax
 
@@ -15,7 +15,7 @@ Implementation notes:
 
 ## Command Definitions
 
-- **Source of truth:** `heroku_registry::Registry` loads command metadata from the embedded `heroku-manifest.json` (see `crates/registry/src/models.rs`). Synthetic MCP tools are merged through `Registry::insert_synthetic`, then deduplicated.
+- **Source of truth:** `oatty_registry::Registry` loads command metadata from the embedded `heroku-manifest.json` (see `crates/registry/src/models.rs`). Synthetic MCP tools are merged through `Registry::insert_synthetic`, then deduplicated.
 - **CommandSpec:** (`crates/types/src/lib.rs:364`) captures the user-facing command surfaces.
   - `group`: primary resource bucket (e.g., `"apps"`).
   - `name`: subcommand token paired with the group in palette input (e.g., `"list"`, `"addons:list"`). The CLI always references commands as `<group> <name>`.
@@ -35,7 +35,7 @@ Implementation notes:
 - `SchemaProperty` (`crates/types/src/lib.rs:303`) summarizes output schemas for downstream rendering.
 
 ### Naming Derivation (registry-gen)
-- `heroku_registry_gen::schema::derive_command_group_and_name` produces the `(group, name)` pair. The first concrete path segment becomes the group, while remaining segments join with `:` and append the HTTP-derived action (`list`, `info`, `create`, `update`, `delete`).
+- `oatty_registry_gen::schema::derive_command_group_and_name` produces the `(group, name)` pair. The first concrete path segment becomes the group, while remaining segments join with `:` and append the HTTP-derived action (`list`, `info`, `create`, `update`, `delete`).
 - Examples:
   - `/apps` + `GET` → group `apps`, name `list`.
   - `/apps/{app}/addons` + `GET` → group `apps`, name `addons:list`.
@@ -67,7 +67,7 @@ Implementation notes:
   5. Coerce flag values into a JSON body (`build_request_body`), respecting declared types and enum constraints.
   6. Persist execution context (`persist_execution_context`) storing last spec/body, initial range header, pagination history, and command history entry.
 - **Dispatch (`execute_command`):**
-  - **HTTP:** Resolve templated path segments with positional arguments (`heroku_util::resolve_path`), then enqueue `Cmd::ExecuteHttp`. Pagination headers are derived from request body via `build_range_header_from_body`.
+  - **HTTP:** Resolve templated path segments with positional arguments (`oatty_util::resolve_path`), then enqueue `Cmd::ExecuteHttp`. Pagination headers are derived from request body via `build_range_header_from_body`.
   - **MCP:** Inject positional arguments into the body map and enqueue `Cmd::ExecuteMcp`.
 - **Command dispatcher (`run_cmds`):**
   - Converts `Cmd` variants into side effects, spawning asynchronous tasks for network/MCP execution (`spawn_execute_http` / `spawn_execute_mcp`) and returning `ExecOutcome`s once tasks complete.
@@ -112,7 +112,7 @@ Implementation notes:
 
 - HTTP (default)
   - Uses `HttpCommandSpec { method, path, service_id, pagination, output_schema }`.
-  - Path placeholders are resolved, query/body are shaped as above, request is executed via `HerokuClient`.
+  - Path placeholders are resolved, query/body are shaped as above, request is executed via `OattyClient`.
   - Results are packaged into an HTTP `ExecOutcome` including status code, optional `Content-Range`, and parsed JSON payload.
 - MCP
   - Uses `McpCommandSpec { plugin_name, tool_name, auth_summary, output_schema, render_hint }`.

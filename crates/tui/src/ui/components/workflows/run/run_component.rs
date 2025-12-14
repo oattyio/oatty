@@ -17,8 +17,8 @@ use crate::ui::theme::{
 };
 use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::{Effect, ExecOutcome, Modal, Msg, Route, WorkflowRunControl};
-use heroku_util::format_duration;
+use oatty_types::{Effect, ExecOutcome, Modal, Msg, Route, WorkflowRunControl};
+use oatty_util::format_duration;
 use rat_focus::HasFocus;
 use ratatui::layout::Position;
 use ratatui::{
@@ -97,29 +97,36 @@ impl Component for RunViewComponent {
     }
 
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
+        // Early exit for global focus-cycling keys (Tab, etc.)
         if Self::handle_focus_cycle_keys(app, key.code) {
             return Vec::new();
         }
-
+    
         let Some(run_state) = app.workflows.run_view_state_mut() else {
             return Vec::new();
         };
-
-        let mut effects: Vec<Effect> = Vec::new();
+        
         let run_id = run_state.run_id().to_string();
-
-        if run_state.steps_table.focus().get() {
-            effects.extend(self.handle_steps_table_keys(run_state, key.code));
-        } else if run_state.cancel_button_focus.get() {
-            effects.extend(Self::handle_cancel_button_keys(run_state, &run_id, key.code));
-        } else if run_state.pause_button_focus.get() {
-            effects.extend(Self::handle_pause_button_keys(run_state, &run_id, key.code));
-        } else if run_state.view_details_button_focus.get() {
-            effects.extend(self.show_step_output(run_state));
-        } else if run_state.done_button_focus.get() {
-            effects.push(Effect::SwitchTo(Route::Workflows));
-        }
-
+        
+        let effects = match () {
+            _ if run_state.steps_table.focus().get() => {
+                self.handle_steps_table_keys(run_state, key.code)
+            }
+            _ if run_state.cancel_button_focus.get() => {
+                Self::handle_cancel_button_keys(run_state, &run_id, key.code)
+            }
+            _ if run_state.pause_button_focus.get() => {
+                Self::handle_pause_button_keys(run_state, &run_id, key.code)
+            }
+            _ if run_state.view_details_button_focus.get() => {
+                self.show_step_output(run_state)
+            }
+            _ if run_state.done_button_focus.get() && key.code == KeyCode::Enter => {
+                vec![Effect::SwitchTo(Route::Workflows)]
+            }
+            () => Vec::new(),
+        };
+    
         effects
     }
 
@@ -330,9 +337,11 @@ impl RunViewComponent {
                 }
             }
             ActionRole::ViewDetailsButton => {
+                app.focus.focus(&run_state.view_details_button_focus);
                 effects.extend(self.show_step_output(run_state));
             }
             ActionRole::DoneButton => {
+                app.focus.focus(&run_state.done_button_focus);
                 effects.push(Effect::SwitchTo(Route::Workflows));
             }
         }

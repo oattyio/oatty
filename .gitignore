@@ -2,7 +2,7 @@
 **/*.rs.bk
 .DS_Store
 .idea/
-
+.zed/
 # VS Code workspace-specific files (not the config directory)
 .vscode/*.code-workspace
 .vscode/settings.local.json

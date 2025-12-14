@@ -1,4 +1,4 @@
-//! Core type definitions shared across the Heroku CLI workspace.
+//! Core type definitions shared across the Oatty CLI workspace.
 //!
 //! The `heroku-types` crate centralizes serde-friendly data structures that describe CLI commands,
 //! palette suggestions, execution outcomes, and the message/effect system shared by the engine and
@@ -157,18 +157,18 @@ pub mod service {
     use bincode::{Decode, Encode};
     use serde::{Deserialize, Serialize};
 
-    /// Default accept header shared across Heroku APIs.
+    /// Default accept header shared across Oatty APIs.
     const HEROKU_JSON_ACCEPT_HEADER: &str = "application/vnd.heroku+json; version=3.sdk";
 
     /// Identifies the backend service targeted by a generated request.
     #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Default, Serialize, Deserialize, Encode, Decode)]
     pub enum ServiceId {
-        /// Core Heroku Platform API (`https://api.heroku.com`).
+        /// Core Oatty Platform API (`https://api.heroku.com`).
         #[default]
         CoreApi,
-        /// Heroku Data API (`https://api.data.heroku.com`).
+        /// Oatty Data API (`https://api.data.heroku.com`).
         DataApi,
-        /// Heroku Data API staging environment (`https://heroku-data-api-staging.herokuapp.com`).
+        /// Oatty Data API staging environment (`https://heroku-data-api-staging.herokuapp.com`).
         DataApiStaging,
     }
 
@@ -248,7 +248,7 @@ pub mod command {
     pub type FlagValueMap = HashMap<String, Option<String>>;
     pub type ArgValueMap = HashMap<String, String>;
     pub type ParsedCommandArgs = (FlagValueMap, ArgValueMap);
-    /// Represents a command-line flag or option for a Heroku CLI command.
+    /// Represents a command-line flag or option for a Oatty CLI command.
     #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
     pub struct CommandFlag {
         /// The name of the flag (for example, "app", "region", or "stack").
@@ -320,7 +320,7 @@ pub mod command {
         pub tags: Vec<String>,
     }
 
-    /// Represents a complete Heroku CLI command specification.
+    /// Represents a complete Oatty CLI command specification.
     ///
     /// A `CommandSpec` now distinguishes between multiple execution backends via the
     /// [`CommandExecution`] enum. HTTP-based commands remain the default, while MCP-backed
@@ -330,7 +330,7 @@ pub mod command {
     ///
     /// Creating an HTTP-backed command:
     /// ```rust
-    /// use heroku_types::{CommandExecution, CommandSpec, HttpCommandSpec, ServiceId};
+    /// use oatty_types::{CommandExecution, CommandSpec, HttpCommandSpec, ServiceId};
     ///
     /// let http = HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new(), None);
     /// let spec = CommandSpec::new_http(
@@ -346,7 +346,7 @@ pub mod command {
     ///
     /// Creating an MCP-backed command:
     /// ```rust
-    /// use heroku_types::{CommandExecution, CommandSpec, McpCommandSpec};
+    /// use oatty_types::{CommandExecution, CommandSpec, McpCommandSpec};
     ///
     /// let mcp = McpCommandSpec {
     ///     plugin_name: "demo-plugin".into(),

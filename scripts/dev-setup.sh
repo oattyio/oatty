@@ -2,9 +2,9 @@
 set -e
 
 # Development Environment Setup Script
-# This script helps set up the development environment for the Heroku CLI
+# This script helps set up the development environment for the Oatty CLI
 
-echo "🦀 Heroku CLI (Rust) - Development Setup"
+echo "🦀 Oatty CLI (Rust) - Development Setup"
 echo "========================================"
 echo ""
 
@@ -95,7 +95,7 @@ else
 fi
 
 # Create MCP config directory
-MCP_CONFIG_DIR="$HOME/.config/heroku"
+MCP_CONFIG_DIR="$HOME/.config/oatty"
 if [ ! -d "$MCP_CONFIG_DIR" ]; then
     print_status "Creating MCP config directory..."
     mkdir -p "$MCP_CONFIG_DIR"
@@ -106,27 +106,27 @@ fi
 
 # Build the project
 print_status "Building the project (this may take a few minutes)..."
-if cargo build --workspace 2>&1 | tee /tmp/heroku-build.log; then
+if cargo build --workspace 2>&1 | tee /tmp/oatty-build.log; then
     print_success "Project built successfully"
 else
-    print_error "Build failed. Check /tmp/heroku-build.log for details"
+    print_error "Build failed. Check /tmp/oatty-build.log for details"
     exit 1
 fi
 
 # Run tests
 print_status "Running tests..."
-if cargo test --workspace --quiet 2>&1 | tee /tmp/heroku-test.log; then
+if cargo test --workspace --quiet 2>&1 | tee /tmp/oatty-test.log; then
     print_success "All tests passed"
 else
-    print_warning "Some tests failed. Check /tmp/heroku-test.log for details"
+    print_warning "Some tests failed. Check /tmp/oatty-test.log for details"
 fi
 
 # Run clippy
 print_status "Running clippy..."
-if cargo clippy --workspace -- -D warnings 2>&1 | tee /tmp/heroku-clippy.log; then
+if cargo clippy --workspace -- -D warnings 2>&1 | tee /tmp/oatty-clippy.log; then
     print_success "No clippy warnings"
 else
-    print_warning "Clippy found issues. Check /tmp/heroku-clippy.log for details"
+    print_warning "Clippy found issues. Check /tmp/oatty-clippy.log for details"
 fi
 
 echo ""
@@ -135,9 +135,9 @@ echo -e "${GREEN}Setup Complete!${NC}"
 echo "=========================================="
 echo ""
 echo "Next steps:"
-echo "  1. Edit .env with your Heroku API key"
-echo "  2. Run the TUI: cargo run -p heroku-cli"
-echo "  3. Or run CLI commands: cargo run -p heroku-cli -- apps list"
+echo "  1. Edit .env with your Oatty API key"
+echo "  2. Run the TUI: cargo run -p oatty-cli"
+echo "  3. Or run CLI commands: cargo run -p oatty-cli -- apps list"
 echo ""
 echo "Development commands:"
 echo "  - Build: cargo build --workspace"

@@ -1,6 +1,6 @@
 //! Command browser component for interactive command discovery and selection.
 //!
-//! This module provides a modal interface for browsing and selecting Heroku commands.
+//! This module provides a modal interface for browsing and selecting Oatty commands.
 //! The browser features:
 //! - A search bar for filtering commands by name or group
 //! - A scrollable list of filtered commands with keyboard navigation
@@ -23,7 +23,7 @@ use crate::ui::components::browser::state::CursorDirection;
 use crate::ui::theme::theme_helpers::highlight_segments;
 use crate::ui::{components::component::Component, theme::theme_helpers as th};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::{Effect, Route};
+use oatty_types::{Effect, Route};
 use ratatui::layout::Position;
 use ratatui::style::Modifier;
 use ratatui::{
@@ -33,7 +33,7 @@ use ratatui::{
     widgets::*,
 };
 
-/// A modal component for browsing and selecting Heroku commands interactively.
+/// A modal component for browsing and selecting Oatty commands interactively.
 ///
 /// The `BrowserComponent` provides a comprehensive command discovery interface that
 /// allows users to search, browse, and select commands through a modal overlay.

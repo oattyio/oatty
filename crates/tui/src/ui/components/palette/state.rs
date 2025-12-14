@@ -25,10 +25,10 @@ use chrono::Utc;
 use super::suggestion_engine::{parse_user_flags_args, required_flags_remaining};
 use crate::ui::components::common::TextInputState;
 use crate::ui::theme::theme_helpers::{create_spans_with_match, highlight_segments};
-use heroku_engine::provider::{PendingProviderFetch, ValueProvider};
-use heroku_registry::{CommandRegistry, find_by_group_and_cmd};
-use heroku_types::{CommandExecution, CommandSpec, Effect, ExecOutcome, ItemKind, Modal, SuggestionItem};
-use heroku_util::{
+use oatty_engine::provider::{PendingProviderFetch, ValueProvider};
+use oatty_registry::{CommandRegistry, find_by_group_and_cmd};
+use oatty_types::{CommandExecution, CommandSpec, Effect, ExecOutcome, ItemKind, Modal, SuggestionItem};
+use oatty_util::{
     HistoryKey, HistoryScope, HistoryScopeKind, HistoryStore, StoredHistoryValue, has_meaningful_value, lex_shell_like,
     lex_shell_like_ranged, truncate_with_ellipsis, value_contains_secret,
 };
@@ -1460,7 +1460,7 @@ fn infer_value_style(theme: &dyn Theme, value: &str) -> Style {
 mod tests {
     use super::*;
     use crate::ui::theme::dracula::DraculaTheme;
-    use heroku_util::{DEFAULT_HISTORY_PROFILE, InMemoryHistoryStore};
+    use oatty_util::{DEFAULT_HISTORY_PROFILE, InMemoryHistoryStore};
 
     fn palette_state_with_registry(registry: Arc<Mutex<CommandRegistry>>) -> PaletteState {
         let history_store: Arc<dyn HistoryStore> = Arc::new(InMemoryHistoryStore::new());

@@ -12,7 +12,7 @@
 /// # Examples
 ///
 /// ```rust
-/// use heroku_registry::feat_gate::feature_workflows;
+/// use oatty_registry::feat_gate::feature_workflows;
 ///
 /// if feature_workflows() {
 ///     println!("Workflows are enabled");

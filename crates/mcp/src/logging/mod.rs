@@ -10,7 +10,7 @@ pub use ring_buffer::LogRingBuffer;
 
 use crate::types::{LogError, McpLogEntry};
 use dirs_next::config_dir;
-use heroku_util::redact_sensitive_with;
+use oatty_util::redact_sensitive_with;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;

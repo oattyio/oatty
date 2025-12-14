@@ -1,18 +1,18 @@
 //! Configuration management for MCP plugins.
 //! This module handles parsing, validation, and interpolation of the
-//! ~/.config/heroku/mcp.json configuration file.
+//! ~/.config/oatty/mcp.json configuration file.
 
 mod interpolation;
 mod model;
 mod validation;
 
+use oatty_util::expand_tilde;
 pub use interpolation::{InterpolationError, determine_env_source, interpolate_config};
 pub use model::{ConfigError, McpAuthConfig, McpConfig, McpServer};
 pub use validation::{ValidationError, validate_config, validate_server_name};
 
 use crate::config::interpolation::tokenize_config;
 use dirs_next::config_dir;
-use dirs_next::home_dir;
 use serde_json::Value;
 use std::env;
 use std::fs;
@@ -28,7 +28,7 @@ pub fn default_config_path() -> PathBuf {
         return expand_tilde(&path);
     }
 
-    config_dir().unwrap_or_else(|| PathBuf::from(".")).join("heroku").join("mcp.json")
+    config_dir().unwrap_or_else(|| PathBuf::from(".")).join("oatty").join("mcp.json")
 }
 
 /// Load and parse the MCP configuration from the default location.
@@ -67,21 +67,6 @@ pub fn save_config_to_path(config: &mut McpConfig, path: &std::path::Path) -> an
     write(path, content)?;
 
     Ok(())
-}
-
-fn expand_tilde(path: &str) -> PathBuf {
-    let p = path.trim();
-    if p == "~" {
-        return home_dir().unwrap_or_else(|| PathBuf::from("~"));
-    }
-    if let Some(rest) = p.strip_prefix("~/") {
-        return home_dir().unwrap_or_else(|| PathBuf::from("~")).join(rest);
-    }
-    if let Some(rest) = p.strip_prefix("~\\") {
-        // Windows-style
-        return home_dir().unwrap_or_else(|| PathBuf::from("~")).join(rest);
-    }
-    PathBuf::from(p)
 }
 
 #[cfg(test)]

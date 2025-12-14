@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use heroku_types::CommandSpec;
+use oatty_types::CommandSpec;
 
 /// Finds a specific command by its group and command name.
 ///
@@ -20,7 +20,7 @@ use heroku_types::CommandSpec;
 /// # Examples
 ///
 /// ```rust
-/// use heroku_registry::{CommandRegistry, utils::find_by_group_and_cmd};
+/// use oatty_registry::{CommandRegistry, utils::find_by_group_and_cmd};
 ///
 /// let registry = CommandRegistry::from_embedded_schema().expect("load registry from schema");
 /// let apps_list = find_by_group_and_cmd(&registry.commands, "apps", "list").expect("find by group and command");

@@ -6,7 +6,7 @@
 
 use std::{collections::HashMap, fmt::Debug};
 
-use heroku_types::{CommandSpec, SuggestionItem};
+use oatty_types::{CommandSpec, SuggestionItem};
 use serde_json::{Map as JsonMap, Value};
 
 /// Specification describing a provider fetch that must be performed before

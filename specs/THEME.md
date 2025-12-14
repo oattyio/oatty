@@ -1,6 +1,6 @@
 # THEME.md
 
-You are implementing the Heroku TUI using opinionated themes. The default is **Dracula**, with optional **Nord** and **Cyberpunk** palettes. Follow these rules exactly to ensure a cohesive, accessible, and professional look across themes.
+You are implementing the Oatty TUI using opinionated themes. The default is **Dracula**, with optional **Nord** and **Cyberpunk** palettes. Follow these rules exactly to ensure a cohesive, accessible, and professional look across themes.
 
 ---
 
@@ -323,28 +323,28 @@ Optional color-mode override (`TUI_COLOR_MODE`)
 Examples
 ```bash
 # Run TUI (no args) with Dracula (default)
-cargo run -p heroku-cli
+cargo run -p oatty-cli
 
 # Explicit Dracula
-TUI_THEME=dracula cargo run -p heroku-cli
+TUI_THEME=dracula cargo run -p oatty-cli
 
 # Dracula High Contrast
-TUI_THEME=dracula_hc cargo run -p heroku-cli
+TUI_THEME=dracula_hc cargo run -p oatty-cli
 
 # Nord
-TUI_THEME=nord cargo run -p heroku-cli
+TUI_THEME=nord cargo run -p oatty-cli
 
 # Nord High Contrast
-TUI_THEME=nord_hc cargo run -p heroku-cli
+TUI_THEME=nord_hc cargo run -p oatty-cli
 
 # Cyberpunk fallback test
-TUI_THEME=cyberpunk cargo run -p heroku-cli
+TUI_THEME=cyberpunk cargo run -p oatty-cli
 
 # Force ANSI palette regardless of terminal
-TUI_COLOR_MODE=ansi256 cargo run -p heroku-cli
+TUI_COLOR_MODE=ansi256 cargo run -p oatty-cli
 
 # Force truecolor palette when a terminal fakes 256-color support
-TUI_COLOR_MODE=truecolor cargo run -p heroku-cli
+TUI_COLOR_MODE=truecolor cargo run -p oatty-cli
 ```
 
 Implementation notes

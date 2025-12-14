@@ -1,4 +1,4 @@
-# Workflow ValueProviders & TUI UX Spec (Heroku CLI TUI)
+# Workflow ValueProviders & TUI UX Spec (Oatty CLI TUI)
 
 **Purpose**
 Define how ValueProviders are declared and consumed in `WORKFLOWS.yaml`, and how the TUI should present provider-backed inputs using the existing Table and Key/Value viewer widgets (extended for selection).

@@ -1,8 +1,8 @@
 //! Configuration interpolation for environment variables and secrets.
 
 use crate::config::{McpAuthConfig, McpConfig, McpServer};
-use heroku_types::{EnvSource, EnvVar};
-use heroku_util::is_secret;
+use oatty_types::{EnvSource, EnvVar};
+use oatty_util::is_secret;
 use regex::Regex;
 use thiserror::Error;
 use tracing::debug;

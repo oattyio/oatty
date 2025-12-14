@@ -27,7 +27,7 @@
 - **Value Providers:** Pluggable sources for dynamic suggestions:
   - **core:** API-backed (apps, addons, permissions, users).
   - **workflow:** read prior step outputs (e.g., `workflow:from(task, jsonpath)`).
-  - **plugins (MCP):** external providers via Model Context Protocol. MCP plugins are configured in `~/.config/heroku/mcp.json` and provide tools that can be used as value providers. The `crates/mcp` infrastructure manages plugin lifecycle, health monitoring, and bridges MCP tools to the provider system. Providers declare inputs (e.g., `partial`, `argOrFlag`), outputs (`label`, `value`, `meta`), TTL, and auth needs. See `specs/PLUGINS.md` and `plans/VALUE_PROVIDERS.md`.
+  - **plugins (MCP):** external providers via Model Context Protocol. MCP plugins are configured in `~/.config/oatty/mcp.json` and provide tools that can be used as value providers. The `crates/mcp` infrastructure manages plugin lifecycle, health monitoring, and bridges MCP tools to the provider system. Providers declare inputs (e.g., `partial`, `argOrFlag`), outputs (`label`, `value`, `meta`), TTL, and auth needs. See `specs/PLUGINS.md` and `plans/VALUE_PROVIDERS.md`.
 
 - Execution Flow: CLI/TUI loads manifest; suggestion building queries providers asynchronously with caching. Command execution uses `exec_remote` (util) with proper Range header handling and logs/pagination parsing. The workflow engine supports templating and multi-step runs.
 
@@ -48,7 +48,7 @@
 - To prevent out-of-band terminal output from overlaying the TUI while using the alternate screen, the CLI configures tracing to write through a gated stderr writer.
 - Implementation: `crates/cli/src/main.rs` defines a static `TUI_ACTIVE: AtomicBool` and a `GatedStderr` writer. While `TUI_ACTIVE` is true (set just before launching the TUI), all tracing output to stderr is dropped; it is restored immediately after TUI exits.
 - MCP plugin logs are collected by the `LogManager` into in-memory ring buffers and shown inside the TUI; they are not forwarded to the global tracing subscriber during TUI to avoid overlays.
-- In CLI mode (when running commands non-interactively), tracing logs follow the `HEROKU_LOG` level and are emitted to stderr normally.
+- In CLI mode (when running commands non-interactively), tracing logs follow the `OATTY_LOG` level and are emitted to stderr normally.
 
 ## Focus Management
 
@@ -75,7 +75,7 @@ The MCP (Model Context Protocol) plugin system extends the CLI with external too
   - **StdioTransport**: Spawns child processes and communicates via stdin/stdout using the `rmcp` crate's `TokioChildProcess` transport.
   - **HttpTransport**: Provides HTTP/SSE connectivity via reqwest-backed clients, optional auth headers/keyring lookups, and SSE event handling for remote MCP servers (`SseClientTransport`).
 
-- **Configuration** (`src/config/`): Loads and validates `~/.config/heroku/mcp.json` with support for environment variable interpolation (`${env:NAME}`) and secret resolution (`${secret:NAME}` via OS keychain).
+- **Configuration** (`src/config/`): Loads and validates `~/.config/oatty/mcp.json` with support for environment variable interpolation (`${env:NAME}`) and secret resolution (`${secret:NAME}` via OS keychain).
 
 - **Logging** (`src/logging/`): Centralized logging system with redaction for sensitive values, audit trails, and ring buffer storage for TUI display.
 

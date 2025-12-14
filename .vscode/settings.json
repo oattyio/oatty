@@ -62,11 +62,11 @@
     // Terminal Settings
     "terminal.integrated.env.osx": {
         "RUST_BACKTRACE": "1",
-        "HEROKU_LOG": "info"
+        "OATTY_LOG": "info"
     },
     "terminal.integrated.env.linux": {
         "RUST_BACKTRACE": "1",
-        "HEROKU_LOG": "info"
+        "OATTY_LOG": "info"
     },
 
     // Testing

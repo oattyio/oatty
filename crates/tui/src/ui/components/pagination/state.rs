@@ -1,4 +1,4 @@
-use heroku_types::{Effect, Pagination};
+use oatty_types::{Effect, Pagination};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use std::hash::{DefaultHasher, Hash, Hasher};

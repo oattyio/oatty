@@ -1,7 +1,7 @@
 # Workflows Authoring Specification
 
 This document is the canonical source for writing workflow manifests that power the
-Heroku CLI TUI. It captures every supported field in the YAML schema, explains how the engine
+Oatty CLI TUI. It captures every supported field in the YAML schema, explains how the engine
 interprets those fields, and cross-links the companion UX specifications:
 
 - `specs/WORKFLOW_TUI.md` — input collection, manual entry behaviours, run view UI

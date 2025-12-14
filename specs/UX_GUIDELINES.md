@@ -1,7 +1,7 @@
-# Heroku CLI — UX Guidelines
+# Oatty CLI — UX Guidelines
 
 ## Overview
-This document defines **usability and discoverability principles** for the new Heroku CLI TUI.  
+This document defines **usability and discoverability principles** for the new Oatty CLI TUI.  
 It is a design contract for contributors, ensuring that **new features remain consistent, intuitive, and accessible** to both first-time users and experienced power users.
 
 ---

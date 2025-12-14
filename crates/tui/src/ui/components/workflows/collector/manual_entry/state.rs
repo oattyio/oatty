@@ -8,7 +8,7 @@ use serde_json::Value as JsonValue;
 
 use crate::ui::components::common::TextInputState;
 use crate::ui::utils::render_value;
-use heroku_types::workflow::{WorkflowInputDefinition, WorkflowInputValidation};
+use oatty_types::workflow::{WorkflowInputDefinition, WorkflowInputValidation};
 
 /// Identifies the editing mode used by the manual entry modal.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

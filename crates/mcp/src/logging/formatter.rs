@@ -1,7 +1,7 @@
 //! Log formatting and redaction utilities.
 
 use crate::types::McpLogEntry;
-use heroku_util::redact_sensitive_with;
+use oatty_util::redact_sensitive_with;
 use regex::{Captures, Regex};
 
 /// Formatter for log entries with redaction capabilities.

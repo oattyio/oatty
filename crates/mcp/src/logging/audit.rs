@@ -1,7 +1,7 @@
 //! Audit logging for MCP plugin lifecycle events.
 
 use chrono::{DateTime, Utc};
-use heroku_util::redact_sensitive_with;
+use oatty_util::redact_sensitive_with;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use thiserror::Error;
@@ -265,7 +265,6 @@ fn redact_json_value(v: serde_json::Value) -> serde_json::Value {
 
 /// Errors that can occur during audit logging.
 #[derive(Debug, Error)]
-#[allow(clippy::enum_variant_names)]
 pub enum AuditError {
     #[error("IO error: {0}")]
     IoError(std::io::Error),

@@ -4,12 +4,12 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use heroku_registry_gen::{io::ManifestInput, write_manifest_json};
-use heroku_types::ServiceId;
+use oatty_registry_gen::{io::ManifestInput, write_manifest_json};
+use oatty_types::ServiceId;
 /// The entry point of the program.
 ///
 /// The `main` function performs the following tasks:
-/// 1. Retrieves the output directory path and constructs the path for the Heroku manifest file.
+/// 1. Retrieves the output directory path and constructs the path for the Oatty manifest file.
 /// 2. Defines paths for required schema files (`heroku-schema.enhanced.json` and `data-schema.yaml`) and ensures they are watched for changes.
 /// 3. Registers a directory of workflows to trigger rebuilds upon changes.
 /// 4. Creates the output directory if it does not already exist.

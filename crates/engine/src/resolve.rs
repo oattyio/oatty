@@ -23,7 +23,7 @@
 //! ## Usage
 //!
 //! ```rust
-//! use heroku_engine::resolve::{RunContext, interpolate_value, eval_condition};
+//! use oatty_engine::resolve::{RunContext, interpolate_value, eval_condition};
 //! use serde_json::json;
 //!
 //! let mut context = RunContext::default();
@@ -90,7 +90,7 @@ pub struct RunContext {
 /// # Examples
 ///
 /// ```rust
-/// use heroku_engine::resolve::{RunContext, interpolate_value};
+/// use oatty_engine::resolve::{RunContext, interpolate_value};
 /// use serde_json::json;
 ///
 /// let mut context = RunContext::default();
@@ -152,7 +152,7 @@ pub fn interpolate_value(value: &Value, context: &RunContext) -> Value {
 /// # Examples
 ///
 /// ```rust
-/// use heroku_engine::resolve::{RunContext, eval_condition};
+/// use oatty_engine::resolve::{RunContext, eval_condition};
 /// use serde_json::json;
 ///
 /// let mut context = RunContext::default();

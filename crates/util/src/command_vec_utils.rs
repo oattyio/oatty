@@ -1,4 +1,4 @@
-use heroku_types::CommandSpec;
+use oatty_types::CommandSpec;
 
 pub fn sort_and_dedup_commands(commands: &mut Vec<CommandSpec>) {
     // multi-sort: group then name

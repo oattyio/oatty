@@ -12,7 +12,7 @@
 //! the user interaction experience.
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use heroku_types::Effect;
+use oatty_types::Effect;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},

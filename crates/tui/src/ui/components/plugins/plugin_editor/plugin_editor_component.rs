@@ -6,7 +6,7 @@
 //! and rendering of the "edit plugin" interface.
 
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::Effect;
+use oatty_types::Effect;
 // Focus management uses FocusFlag booleans on state; no ring needed here
 use ratatui::{
     Frame,

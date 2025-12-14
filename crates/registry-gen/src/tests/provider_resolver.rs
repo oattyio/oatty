@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use heroku_registry_gen::provider_resolver::resolve_and_infer_providers;
-    use heroku_types::{CommandFlag, CommandSpec, PositionalArgument, ServiceId, ValueProvider};
+    use oatty_registry_gen::provider_resolver::resolve_and_infer_providers;
+    use oatty_types::{CommandFlag, CommandSpec, PositionalArgument, ServiceId, ValueProvider};
 
     #[test]
     fn resolves_positional_provider_from_path_with_verification() {

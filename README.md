@@ -1,22 +1,22 @@
-# Heroku CLI (Rust, Experimental)
+# Oatty CLI (Rust, Experimental)
 
-A schema-driven Heroku CLI with both non-interactive and interactive TUI modes. Commands, arguments, and flags are derived from a pre-built manifest generated at build time from the Heroku JSON Hyper-Schema.
+A schema-driven Oatty CLI with both non-interactive and interactive TUI modes. Commands, arguments, and flags are derived from a pre-built manifest generated at build time from the Oatty JSON Hyper-Schema.
 
 ## Features
 - Dynamic command registry from a generated manifest (no static command tables at runtime).
 - CLI and TUI supported:
   - TUI: modern dark theme, search + auto-scrolling command list, inputs with validation, enum cycling, boolean toggles, live Command preview, logs.
-- Auth precedence: `HEROKU_API_KEY` > `~/.netrc` (basic parser).
+- Auth: `HEROKU_API_KEY` environment variable.
 - Redaction: Authorization and secret-like values are masked in output.
 
 ## Usage
-- Build: `cd heroku && cargo build --workspace`
-- Run TUI (no args): `cd heroku && cargo run -p heroku-cli`
+- Build: `cargo build --workspace`
+- Run TUI (no args): `cargo run -p oatty-cli` (or the installed binary `oatty`)
 - CLI examples:
-  - `cargo run -p heroku-cli -- apps list `
-  - `cargo run -p heroku-cli -- apps info my-app `
-  - `cargo run -p heroku-cli -- apps create --name demo `
-  - `cargo run -p heroku-cli -- releases list my-app `
+  - `cargo run -p oatty-cli -- apps list`
+  - `cargo run -p oatty-cli -- apps info my-app`
+  - `cargo run -p oatty-cli -- apps create --name demo`
+  - `cargo run -p oatty-cli -- releases list my-app`
 
 ### TUI Controls
 - Search: type to filter (Esc clears); cursor indicates where typing goes.
@@ -35,12 +35,12 @@ A schema-driven Heroku CLI with both non-interactive and interactive TUI modes. 
 - Util: redaction helpers.
 
 ## Environment
-- `HEROKU_API_KEY`: Bearer token for Heroku API (preferred over `~/.netrc`).
-- `HEROKU_LOG`: set log level for tracing output (`error`, `warn`, `info` [default], `debug`, `trace`).
+- `HEROKU_API_KEY`: Bearer token for Oatty API.
+- `OATTY_LOG`: set log level for tracing output (`error`, `warn`, `info` [default], `debug`, `trace`).
 
 ### Logging behavior
 - When running the TUI (no subcommands), tracing output to stderr is silenced while the TUI is active to prevent overlaying the UI. Logs from MCP plugins and internal components are routed to in-app log panes instead.
-- When running in CLI mode (with subcommands), logs follow `HEROKU_LOG` and are written to stderr as usual.
+- When running in CLI mode (with subcommands), logs follow `OATTY_LOG` and are written to stderr as usual.
 
 ## Development
 - Workspace: `cli`, `tui`, `registry`, `engine`, `api`, `util`, `registry-gen`.
@@ -55,7 +55,7 @@ A schema-driven Heroku CLI with both non-interactive and interactive TUI modes. 
 
 ## Registry Generator (Library + CLI)
 
-The registry is derived from the Heroku JSON Hyper-Schema using the `registry-gen` crate. You can use it both as a standalone CLI and as a Rust library.
+The registry is derived from the Oatty JSON Hyper-Schema using the `registry-gen` crate. You can use it both as a standalone CLI and as a Rust library.
 
 ### CLI Usage
 
@@ -81,15 +81,15 @@ Add a dependency on the generator crate from within the workspace:
 
 ```toml
 [dependencies]
-heroku-registry-gen = { path = "crates/registry-gen" }
+oatty-registry-gen = { path = "crates/registry-gen" }
 ```
 
 Generate a manifest file (bincode):
 
 ```rust
 use std::path::PathBuf;
-use heroku_registry_gen::{io::ManifestInput, write_manifest};
-use heroku_types::ServiceId;
+use oatty_registry_gen::{io::ManifestInput, write_manifest};
+use oatty_types::ServiceId;
 
 fn main() -> anyhow::Result<()> {
     let schema = PathBuf::from("schemas/heroku-schema.json");
@@ -111,8 +111,8 @@ Generate a manifest file (JSON):
 
 ```rust
 use std::path::PathBuf;
-use heroku_registry_gen::{io::ManifestInput, write_manifest_json};
-use heroku_types::ServiceId;
+use oatty_registry_gen::{io::ManifestInput, write_manifest_json};
+use oatty_types::ServiceId;
 
 fn main() -> anyhow::Result<()> {
     let schema = PathBuf::from("schemas/heroku-schema.json");
@@ -133,9 +133,9 @@ fn main() -> anyhow::Result<()> {
 Derive commands in-memory from a schema string:
 
 ```rust
-use heroku_registry_gen::generate_commands;
+use oatty_registry_gen::generate_commands;
 
-fn load_commands(schema_json: &str) -> anyhow::Result<Vec<heroku_types::CommandSpec>> {
+fn load_commands(schema_json: &str) -> anyhow::Result<Vec<oatty_types::CommandSpec>> {
     let cmds = generate_commands(schema_json)?;
     Ok(cmds)
 }
@@ -147,8 +147,8 @@ fn load_commands(schema_json: &str) -> anyhow::Result<Vec<heroku_types::CommandS
 ```mermaid
 flowchart LR
   subgraph Runtime
-    A[heroku no args] -->|Launch| TUI[TUI]
-    A2[heroku group cmd] -->|Parse| CLI[CLI Router]
+    A[oatty no args] -->|Launch| TUI[TUI]
+    A2[oatty group cmd] -->|Parse| CLI[CLI Router]
   end
 
   subgraph Registry
@@ -164,7 +164,7 @@ flowchart LR
   RUN --> REQ
 
   REQ -->| or DEBUG| OUT1[Print structured request]
-  REQ -->|execute| HTTP[Heroku API]
+  REQ -->|execute| HTTP[Oatty API]
   HTTP --> OUT2[Status + Body]
 
   subgraph Policy
@@ -188,7 +188,7 @@ flowchart LR
 - Select theme via env var `TUI_THEME`:
   - `dracula` (default), `dracula_hc`
   - `nord`, `nord_hc`
-  - Example: `TUI_THEME=dracula cargo run -p heroku-cli`
+  - Example: `TUI_THEME=dracula cargo run -p oatty-cli`
 
 ## Code Signing (macOS)
 To avoid repeated Keychain prompts (the CLI uses the macOS Keychain via `keyring`), sign the binary with a stable identity. You can use a self-signed certificate for local development or a Developer ID for distribution.
@@ -198,12 +198,12 @@ To avoid repeated Keychain prompts (the CLI uses the macOS Keychain via `keyring
   - The script imports both the certificate and private key, updates the keychain partition list when `KEYCHAIN_PASSWORD` is provided, and prints the codesign identity string.
 
 - Build and sign the binary:
-  - `cargo build -p heroku-cli`
-  - `NEXTGEN_CODESIGN_ID="<identity name>" NEXTGEN_CODESIGN_BIN=target/debug/heroku-cli scripts/macos/sign.sh`
+  - `cargo build -p oatty-cli`
+  - `NEXTGEN_CODESIGN_ID="<identity name>" NEXTGEN_CODESIGN_BIN=target/debug/oatty scripts/macos/sign.sh`
     - Optional variables: `NEXTGEN_ENTITLEMENTS` to override the entitlements path, `NEXTGEN_CODESIGN_TIMESTAMP=true|false` to force timestamping, `NEXTGEN_CODESIGN_HARDENED=false` (or comment the option) if you need to skip hardened runtime temporarily.
 
 - After the first secrets access prompt, adjust Keychain Access Control to avoid future prompts:
-  - Open Keychain Access → search for the item (service usually `heroku`).
+  - Open Keychain Access → search for the item (service usually `oatty`).
   - Double-click → Access Control tab → either allow all apps signed by your certificate or add the binary path explicitly.
 
 ### Debugging signed binaries

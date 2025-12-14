@@ -55,7 +55,7 @@
             },
             "options": {
                 "env": {
-                    "HEROKU_LOG": "debug",
+                    "OATTY_LOG": "debug",
                     "TUI_THEME": "dracula"
                 }
             }
@@ -82,7 +82,7 @@
             },
             "options": {
                 "env": {
-                    "HEROKU_LOG": "debug"
+                    "OATTY_LOG": "debug"
                 }
             }
         },

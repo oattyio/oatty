@@ -13,7 +13,7 @@ use crate::{
     ui::{components::component::Component, theme::theme_helpers::build_hint_spans},
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
-use heroku_types::{Effect, Msg};
+use oatty_types::{Effect, Msg};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},

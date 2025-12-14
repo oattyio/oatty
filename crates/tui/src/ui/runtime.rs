@@ -26,11 +26,11 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures_util::{StreamExt, stream::FuturesUnordered};
-use heroku_mcp::{
+use oatty_mcp::{
     PluginEngine,
     config::{default_config_path, load_config_from_path},
 };
-use heroku_types::{Effect, ExecOutcome, Msg};
+use oatty_types::{Effect, ExecOutcome, Msg};
 use notify::{Config as NotifyConfig, Event as NotifyEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{Terminal, prelude::*};
 use std::time::Instant;
@@ -279,7 +279,7 @@ fn handle_input_event(app: &mut App<'_>, main_view: &mut MainView, input_event: 
 
 /// Entry point for the TUI runtime: sets up the terminal, spawns the event
 /// producer, runs the async event loop, and performs cleanup on exit.
-pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
+pub async fn run_app(registry: Arc<Mutex<oatty_registry::CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
     let mut app = App::new(registry, plugin_engine);
     let mut main_view = MainView::new(Some(Box::new(PaletteComponent::default())));
     let mut terminal = setup_terminal()?;
@@ -302,7 +302,7 @@ pub async fn run_app(registry: Arc<Mutex<heroku_registry::CommandRegistry>>, plu
 
     render(&mut terminal, &mut app, &mut main_view)?;
 
-    let (_config_watch_handle, mut config_watch_effects) = match spawn_mcp_config_watcher(app.ctx.plugin_engine.clone()) {
+    let (_, mut config_watch_effects) = match spawn_mcp_config_watcher(app.ctx.plugin_engine.clone()) {
         Ok((handle, rx)) => (Some(handle), Some(rx)),
         Err(error) => {
             tracing::warn!(%error, "Failed to start MCP config watcher");

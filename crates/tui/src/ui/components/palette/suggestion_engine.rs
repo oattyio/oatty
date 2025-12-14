@@ -1,8 +1,8 @@
-use heroku_types::{CommandExecution, CommandSpec, ItemKind, SuggestionItem};
-use heroku_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
+use oatty_types::{CommandExecution, CommandSpec, ItemKind, SuggestionItem};
+use oatty_util::{fuzzy_score, lex_shell_like, lex_shell_like_ranged};
 use std::sync::Arc;
 
-use heroku_engine::provider::{PendingProviderFetch, ProviderSuggestionSet, ValueProvider};
+use oatty_engine::provider::{PendingProviderFetch, ProviderSuggestionSet, ValueProvider};
 
 // ===== Types =====
 
@@ -742,9 +742,9 @@ pub(crate) fn is_flag_value_complete(input: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use heroku_engine::provider::{PendingProviderFetch, ProviderFetchPlan};
-    use heroku_registry::CommandRegistry;
-    use heroku_types::{CommandExecution, CommandFlag, HttpCommandSpec, PositionalArgument, ServiceId};
+    use oatty_engine::provider::{PendingProviderFetch, ProviderFetchPlan};
+    use oatty_registry::CommandRegistry;
+    use oatty_types::{CommandExecution, CommandFlag, HttpCommandSpec, PositionalArgument, ServiceId};
 
     #[derive(Debug)]
     struct TestProvider {
@@ -875,7 +875,7 @@ mod tests {
                     enum_values: vec![],
                     default_value: None,
                     description: None,
-                    provider: Some(heroku_types::ValueProvider::Command {
+                    provider: Some(oatty_types::ValueProvider::Command {
                         command_id: "apps:list".into(),
                         binds: vec![],
                     }),
@@ -919,7 +919,7 @@ mod tests {
             positional_args: vec![PositionalArgument {
                 name: "addon".into(),
                 help: None,
-                provider: Some(heroku_types::ValueProvider::Command {
+                provider: Some(oatty_types::ValueProvider::Command {
                     command_id: "addons:list".into(),
                     binds: vec![],
                 }),
@@ -975,7 +975,7 @@ mod tests {
                 enum_values: vec![],
                 default_value: None,
                 description: None,
-                provider: Some(heroku_types::ValueProvider::Command {
+                provider: Some(oatty_types::ValueProvider::Command {
                     command_id: "apps:list".into(),
                     binds: vec![],
                 }),
@@ -1026,7 +1026,7 @@ mod tests {
                 enum_values: vec![],
                 default_value: None,
                 description: None,
-                provider: Some(heroku_types::ValueProvider::Command {
+                provider: Some(oatty_types::ValueProvider::Command {
                     command_id: "apps:list".into(),
                     binds: vec![],
                 }),
@@ -1072,7 +1072,7 @@ mod tests {
             positional_args: vec![PositionalArgument {
                 name: "app".into(),
                 help: None,
-                provider: Some(heroku_types::ValueProvider::Command {
+                provider: Some(oatty_types::ValueProvider::Command {
                     command_id: "apps:list".into(),
                     binds: vec![],
                 }),
@@ -1122,7 +1122,7 @@ mod tests {
                 PositionalArgument {
                     name: "pipeline".into(),
                     help: None,
-                    provider: Some(heroku_types::ValueProvider::Command {
+                    provider: Some(oatty_types::ValueProvider::Command {
                         command_id: "pipelines:list".into(),
                         binds: vec![],
                     }),
@@ -1130,7 +1130,7 @@ mod tests {
                 PositionalArgument {
                     name: "branch".into(),
                     help: None,
-                    provider: Some(heroku_types::ValueProvider::Command {
+                    provider: Some(oatty_types::ValueProvider::Command {
                         command_id: "branches:list".into(),
                         binds: vec![],
                     }),

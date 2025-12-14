@@ -2,7 +2,7 @@ use crate::app::App;
 use crate::ui::components::Component;
 use crate::ui::theme::theme_helpers::{ButtonRenderOptions, block_with_severity, build_hint_spans, render_button};
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::{Effect, Msg};
+use oatty_types::{Effect, Msg};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::prelude::Span;

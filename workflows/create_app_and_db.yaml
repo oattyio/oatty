@@ -19,7 +19,7 @@ inputs:
       value: "us"
   addon_plan:
     name: "Postgres plan"
-    description: "Heroku Postgres plan"
+    description: "Oatty Postgres plan"
     provider:
       id: addon-services plans:list
     provider_args: { add_on_service: heroku-postgresql }

@@ -2,13 +2,13 @@
 
 ## Overview
 
-The Value Provider Registry is a sophisticated system that enables dynamic, context-aware suggestions for Heroku CLI commands. It bridges the gap between static command definitions and dynamic runtime data by providing intelligent autocomplete suggestions for flags, positional arguments, and command values.
+The Value Provider Registry is a sophisticated system that enables dynamic, context-aware suggestions for Oatty CLI commands. It bridges the gap between static command definitions and dynamic runtime data by providing intelligent autocomplete suggestions for flags, positional arguments, and command values.
 
 ## Purpose
 
 The Value Provider Registry serves several key purposes:
 
-1. **Dynamic Autocomplete**: Provides real-time suggestions based on actual Heroku API data
+1. **Dynamic Autocomplete**: Provides real-time suggestions based on actual Oatty API data
 2. **Context Awareness**: Understands command relationships and suggests relevant values
 3. **Intelligent Binding**: Automatically maps command parameters to appropriate data sources
 4. **Performance Optimization**: Implements caching and background fetching to maintain responsiveness
@@ -354,7 +354,7 @@ paths:
 
 ### Data Protection
 
-- **API Key Management**: Secure handling of Heroku API credentials
+- **API Key Management**: Secure handling of Oatty API credentials
 - **Request Validation**: Input sanitization and validation
 - **Rate Limiting**: Respects API rate limits
 - **Error Masking**: Sensitive information is not exposed in logs
@@ -362,7 +362,7 @@ paths:
 ### Access Control
 
 - **Provider Isolation**: Each provider operates independently
-- **Permission Checking**: Respects user's Heroku account permissions
+- **Permission Checking**: Respects user's Oatty account permissions
 - **Audit Logging**: Tracks provider usage for debugging
 
 ## Testing Strategy
@@ -377,7 +377,7 @@ paths:
 ### Integration Tests
 
 - **End-to-End Flows**: Complete suggestion workflows
-- **API Integration**: Real Heroku API interactions
+- **API Integration**: Real Oatty API interactions
 - **Performance Testing**: Cache efficiency and response times
 - **Concurrency Testing**: Multiple simultaneous requests
 

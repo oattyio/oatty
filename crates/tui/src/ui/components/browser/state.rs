@@ -1,8 +1,8 @@
 use std::sync::{Arc, Mutex};
 
 use crate::ui::components::common::TextInputState;
-use heroku_types::{CommandSpec, Field};
-use heroku_util::fuzzy_score;
+use oatty_types::{CommandSpec, Field};
+use oatty_util::fuzzy_score;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
@@ -15,7 +15,7 @@ pub enum CursorDirection {
 }
 #[derive(Debug, Clone)]
 pub struct BrowserState {
-    pub registry: Arc<Mutex<heroku_registry::CommandRegistry>>,
+    pub registry: Arc<Mutex<oatty_registry::CommandRegistry>>,
     pub list_state: ListState,
     selected_command: Option<CommandSpec>,
     input_fields: Vec<Field>,
@@ -32,7 +32,7 @@ pub struct BrowserState {
 }
 
 impl BrowserState {
-    pub fn new(registry: Arc<Mutex<heroku_registry::CommandRegistry>>) -> Self {
+    pub fn new(registry: Arc<Mutex<oatty_registry::CommandRegistry>>) -> Self {
         Self {
             registry,
             selected_command: None,
@@ -228,7 +228,7 @@ impl HasFocus for BrowserState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use heroku_registry::CommandRegistry;
+    use oatty_registry::CommandRegistry;
     use std::sync::{Arc, Mutex};
 
     fn build_state() -> BrowserState {

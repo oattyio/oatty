@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::schema::*;
-    use heroku_types::ServiceId;
+    use oatty_types::ServiceId;
     use serde_json::json;
 
     #[test]

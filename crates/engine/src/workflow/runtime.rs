@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use crate::model::{ContractField, OutputContract, StepRepeat, StepSpec, WorkflowSpec};
-use heroku_types::workflow::{RuntimeWorkflow, WorkflowOutputContract, WorkflowOutputField, WorkflowRepeat, WorkflowStepDefinition};
+use oatty_types::workflow::{RuntimeWorkflow, WorkflowOutputContract, WorkflowOutputField, WorkflowRepeat, WorkflowStepDefinition};
 use indexmap::IndexMap;
 use serde_json::{Map as JsonMap, Value};
 
@@ -94,7 +94,7 @@ fn normalize_condition_expression(raw: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use heroku_types::workflow::{WorkflowOutputContract, WorkflowOutputField, WorkflowRepeat};
+    use oatty_types::workflow::{WorkflowOutputContract, WorkflowOutputField, WorkflowRepeat};
 
     fn sample_runtime_workflow() -> RuntimeWorkflow {
         let mut with = IndexMap::new();

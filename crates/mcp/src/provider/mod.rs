@@ -127,7 +127,7 @@ pub enum McpProviderError {
 mod tests {
     use super::*;
     use crate::config::McpConfig;
-    use heroku_registry::CommandRegistry;
+    use oatty_registry::CommandRegistry;
     use std::sync::Mutex;
 
     #[tokio::test]

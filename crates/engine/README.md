@@ -1,6 +1,6 @@
-# Heroku Engine
+# Oatty Engine
 
-The Heroku Engine is a robust workflow execution engine that provides comprehensive support for defining, validating, and executing automation workflows. It's designed with a focus on developer experience, type safety, and extensibility.
+The Oatty Engine is a robust workflow execution engine that provides comprehensive support for defining, validating, and executing automation workflows. It's designed with a focus on developer experience, type safety, and extensibility.
 
 ## Features
 
@@ -50,7 +50,7 @@ crates/engine/
 ### Basic Workflow Parsing
 
 ```rust
-use heroku_engine::parse_workflow_file;
+use oatty_engine::parse_workflow_file;
 
 let workflow_bundle = parse_workflow_file("workflow.yaml")?;
 for (name, spec) in &workflow_bundle.workflows {
@@ -62,7 +62,7 @@ for (name, spec) in &workflow_bundle.workflows {
 ### Prepare + Execute (Noop Runner)
 
 ```rust
-use heroku_engine::{parse_workflow_file, RunContext, execute_workflow};
+use oatty_engine::{parse_workflow_file, RunContext, execute_workflow};
 
 let bundle = parse_workflow_file("crates/engine/workflows/create_app_and_db.yaml")?;
 let spec = bundle.workflows.values().next().unwrap();
@@ -77,10 +77,10 @@ let results = execute_workflow(spec, &mut ctx)?;
 assert!(!results.is_empty());
 ```
 
-### Execute with Real Heroku API
+### Execute with Real Oatty API
 
 ```rust
-use heroku_engine::{parse_workflow_file, RunContext, execute_workflow_with_runner, RegistryCommandRunner};
+use oatty_engine::{parse_workflow_file, RunContext, execute_workflow_with_runner, RegistryCommandRunner};
 
 // Requires HEROKU_API_KEY in the environment
 let runner = RegistryCommandRunner::from_env()?;
@@ -99,7 +99,7 @@ for r in results { println!("{} -> {:?}", r.id, r.status); }
 ### Template Interpolation
 
 ```rust
-use heroku_engine::resolve::{RunContext, interpolate_value};
+use oatty_engine::resolve::{RunContext, interpolate_value};
 use serde_json::json;
 
 let mut context = RunContext::default();
@@ -117,7 +117,7 @@ let interpolated = interpolate_value(&value, &context);
 ### Provider Integration
 
 ```rust
-use heroku_engine::provider::{ProviderRegistry, NullProvider};
+use oatty_engine::provider::{ProviderRegistry, NullProvider};
 
 let registry: Box<dyn ProviderRegistry> = Box::new(NullProvider);
 let values = registry.fetch_values("apps:list", &serde_json::Map::new())?;
@@ -208,7 +208,7 @@ Providers enable dynamic value resolution for workflow inputs:
 ### Custom Provider Implementation
 
 ```rust
-use heroku_engine::provider::{ProviderRegistry, ProviderContract};
+use oatty_engine::provider::{ProviderRegistry, ProviderContract};
 
 pub struct CustomProvider;
 

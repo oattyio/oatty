@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::{Effect, ExecOutcome, Msg, Pagination};
+use oatty_types::{Effect, ExecOutcome, Msg, Pagination};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},

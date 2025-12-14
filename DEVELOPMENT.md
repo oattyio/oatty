@@ -1,6 +1,6 @@
 # Development Setup Guide
 
-This guide will help you set up your local development environment for the Heroku CLI (Rust).
+This guide will help you set up your local development environment for the Oatty CLI (Rust).
 
 ## Prerequisites
 
@@ -51,7 +51,7 @@ cargo --version
 cargo build --workspace
 
 # Or build just the CLI
-cargo build -p heroku-cli
+cargo build -p oatty-cli
 ```
 
 This will:
@@ -67,7 +67,7 @@ This will:
 cargo test --workspace
 
 # Run tests for a specific package
-cargo test -p heroku-cli
+cargo test -p oatty-cli
 ```
 
 ### 5. Set Up Environment Variables
@@ -79,7 +79,7 @@ Create a `.env` file in the project root (or set in your shell profile):
 export HEROKU_API_KEY="your-heroku-api-key"
 
 # Optional: Set log level (error|warn|info|debug|trace)
-export HEROKU_LOG="debug"
+export OATTY_LOG="debug"
 
 # Optional: Choose TUI theme (dracula|dracula_hc|nord|nord_hc)
 export TUI_THEME="dracula"
@@ -102,23 +102,23 @@ export MCP_CONFIG_PATH="$HOME/.config/heroku/mcp.json"
 cargo run -p heroku-cli
 
 # With debug logging
-HEROKU_LOG=debug cargo run -p heroku-cli
+OATTY_LOG=debug cargo run -p oatty-cli
 
 # With a specific theme
-TUI_THEME=nord cargo run -p heroku-cli
+TUI_THEME=nord cargo run -p oatty-cli
 ```
 
 #### CLI Mode (Non-Interactive)
 
 ```bash
 # List apps
-cargo run -p heroku-cli -- apps list
+cargo run -p oatty-cli -- apps list
 
 # Get app info
-cargo run -p heroku-cli -- apps info my-app
+cargo run -p oatty-cli -- apps info my-app
 
 # Create an app
-cargo run -p heroku-cli -- apps create --name demo
+cargo run -p oatty-cli -- apps create --name demo
 ```
 
 ### Development Commands
@@ -184,13 +184,13 @@ To debug:
 
 ```bash
 # Run with backtrace
-RUST_BACKTRACE=1 cargo run -p heroku-cli
+RUST_BACKTRACE=1 cargo run -p oatty-cli
 
 # Run with full backtrace
-RUST_BACKTRACE=full cargo run -p heroku-cli
+RUST_BACKTRACE=full cargo run -p oatty-cli
 
 # Use LLDB directly
-rust-lldb target/debug/heroku-cli
+rust-lldb target/debug/oatty
 ```
 
 ### VS Code Tasks
@@ -212,16 +212,16 @@ Press `Cmd+Shift+P` (macOS) or `Ctrl+Shift+P` (Linux/Windows) and type "Tasks: R
 
 ### Registry Generator
 
-The registry generator creates the command manifest from the Heroku schema:
+The registry generator creates the command manifest from the Oatty schema:
 
 ```bash
 # Generate JSON manifest (for inspection)
-cargo run -p heroku-registry-gen -- --json \
+cargo run -p oatty-registry-gen -- --json \
     schemas/heroku-schema.enhanced.json \
     target/manifest.json
 
 # Generate bincode manifest (for production)
-cargo run -p heroku-registry-gen -- \
+cargo run -p oatty-registry-gen -- \
     schemas/heroku-schema.enhanced.json \
     target/manifest.bin
 ```
@@ -238,7 +238,7 @@ next-gen-cli/
 │   ├── registry/   # Command registry and schema
 │   ├── registry-gen/ # Manifest generator
 │   ├── engine/     # Workflow execution engine
-│   ├── api/        # Heroku API client
+│   ├── api/        # Oatty API client (targets Oatty endpoints)
 │   ├── mcp/        # MCP plugin infrastructure
 │   ├── util/       # Shared utilities
 │   └── types/      # Shared type definitions
@@ -259,7 +259,7 @@ Located inline with code in `#[cfg(test)]` modules:
 cargo test --workspace --lib
 
 # Run tests for specific crate
-cargo test -p heroku-registry --lib
+cargo test -p oatty-registry --lib
 ```
 
 ### Integration Tests
@@ -271,7 +271,7 @@ Located in `crates/*/tests/` directories:
 cargo test --workspace --test '*'
 
 # Run specific integration test
-cargo test -p heroku-registry-gen --test schema_tests
+cargo test -p oatty-registry-gen --test schema_tests
 ```
 
 ### Test-Driven Development
@@ -345,7 +345,7 @@ test: add integration tests for registry generation
 
 ### Runtime Errors
 
-**Error**: `Heroku API authentication failed`
+**Error**: `Oatty API authentication failed`
 
 - **Solution**: Set `HEROKU_API_KEY` environment variable with a valid API key
 
@@ -382,9 +382,9 @@ KEYCHAIN_PASSWORD='your-login-password' \
     scripts/macos/create-dev-cert.sh "next-gen-cli-dev (LOCAL)"
 
 # Build and sign
-cargo build -p heroku-cli
+cargo build -p oatty-cli
 NEXTGEN_CODESIGN_ID="next-gen-cli-dev (LOCAL)" \
-    NEXTGEN_CODESIGN_BIN=target/debug/heroku-cli \
+    NEXTGEN_CODESIGN_BIN=target/debug/oatty \
     scripts/macos/sign.sh
 ```
 
@@ -401,7 +401,7 @@ To test with a custom schema:
 MCP plugins extend the CLI with custom value providers:
 
 1. Create plugin configuration in `~/.config/heroku/mcp.json`
-2. Enable debug logging: `HEROKU_LOG=debug`
+2. Enable debug logging: `OATTY_LOG=debug`
 3. Test plugin: Use TUI to trigger value provider
 
 See `specs/PLUGINS.md` for details.
@@ -419,7 +419,7 @@ See `specs/PLUGINS.md` for details.
 
 - Check existing documentation in `specs/` and `README.md`
 - Review `ARCHITECTURE.md` for system design
-- Run with `HEROKU_LOG=debug` for detailed logging
+- Run with `OATTY_LOG=debug` for detailed logging
 - Use `cargo doc --open` to browse generated documentation
 
 ## Next Steps

@@ -1,6 +1,6 @@
 workflow: postgres_promote_primary
 title: "Postgres Promote Primary"
-description: "Promote a selected Heroku Postgres database attachment to be the primary DATABASE_URL for an app."
+description: "Promote a selected Oatty Postgres database attachment to be the primary DATABASE_URL for an app."
 inputs:
   app:
     name: "App"

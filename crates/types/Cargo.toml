@@ -1,11 +1,11 @@
 [package]
-name = "heroku-types"
+name = "oatty-types"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
-description = "Heroku CLI shared type definitions"
+description = "Oatty CLI shared type definitions"
 license = "MIT OR Apache-2.0"
-authors = ["Heroku CLI Team <devnull@example.com>"]
+authors = ["Oatty CLI Team <devnull@example.com>"]
 repository = "https://example.com/heroku"
 
 [lib]

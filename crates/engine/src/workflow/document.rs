@@ -1,14 +1,14 @@
 //! Runtime workflow catalog and conversion utilities.
 //!
 //! The registry embeds authored workflow definitions using the shared
-//! [`heroku_types::workflow`] schema. The engine consumes those definitions at
+//! [`oatty_types::workflow`] schema. The engine consumes those definitions at
 //! runtime, normalizing identifiers and providing convenient lookups for the
 //! execution pipeline. This module owns the lightweight conversion layer that
 //! maps raw manifest entries into engine-friendly structures while preserving
 //! authoring order.
 
 use anyhow::{Context, Result, bail};
-use heroku_types::{RuntimeWorkflow, WorkflowDefinition};
+use oatty_types::{RuntimeWorkflow, WorkflowDefinition};
 use indexmap::IndexMap;
 
 /// Builds a runtime workflow from a manifest definition.
@@ -62,7 +62,7 @@ pub fn build_runtime_catalog(definitions: &[WorkflowDefinition]) -> Result<Index
 #[cfg(test)]
 mod tests {
     use super::*;
-    use heroku_types::WorkflowStepDefinition;
+    use oatty_types::WorkflowStepDefinition;
     use indexmap::IndexMap;
 
     #[test]

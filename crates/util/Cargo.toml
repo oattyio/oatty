@@ -1,20 +1,20 @@
 [package]
-name = "heroku-util"
+name = "oatty-util"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
-description = "Heroku CLI utility functions and helpers"
+description = "Oatty CLI utility functions and helpers"
 license = "MIT OR Apache-2.0"
-authors = ["Heroku CLI Team <devnull@example.com>"]
+authors = ["Oatty CLI Team <devnull@example.com>"]
 repository = "https://example.com/heroku"
 
 [dependencies]
 regex = { workspace = true }
 once_cell = { workspace = true }
 chrono = { workspace = true }
-heroku-types = { path = "../types" }
+oatty-types = { path = "../types" }
 reqwest = { workspace = true }
-heroku-api = { path = "../api" }
+oatty-api = { path = "../api" }
 serde_json = { workspace = true }
 percent-encoding = { workspace = true }
 serde = { workspace = true }

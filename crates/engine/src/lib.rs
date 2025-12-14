@@ -1,6 +1,6 @@
-//! # Heroku Engine
+//! # Oatty Engine
 //!
-//! The Heroku Engine parses, validates, and (eventually) executes modern workflow specifications.
+//! The Oatty Engine parses, validates, and (eventually) executes modern workflow specifications.
 //! It provides a robust framework for defining and running multi-step automation workflows
 //! with support for conditional execution, input validation, and dynamic value resolution.
 //!
@@ -14,7 +14,7 @@
 //! ## Usage
 //!
 //! ```rust
-//! use heroku_engine::{parse_workflow_file, WorkflowBundle};
+//! use oatty_engine::{parse_workflow_file, WorkflowBundle};
 //!
 //! // Create a temporary workflow file for testing
 //! let temp_dir = tempfile::tempdir()?;
@@ -93,7 +93,7 @@ pub use workflow::state::{
 /// # Examples
 ///
 /// ```rust
-/// use heroku_engine::parse_workflow_file;
+/// use oatty_engine::parse_workflow_file;
 ///
 /// // Create a temporary workflow file for testing
 /// let temp_dir = tempfile::tempdir()?;

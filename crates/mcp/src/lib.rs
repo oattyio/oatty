@@ -1,4 +1,4 @@
-//! Model Context Protocol (MCP) plugin infrastructure for Heroku CLI.
+//! Model Context Protocol (MCP) plugin infrastructure for Oatty CLI.
 //!
 //! This crate provides the core infrastructure for managing MCP plugins,
 //! including configuration management, client lifecycle, logging, and
