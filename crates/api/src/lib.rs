@@ -29,8 +29,8 @@
 //! }
 //! ```
 
-use std::time::Duration;
 use std::env;
+use std::time::Duration;
 
 use anyhow::{Context, Result, anyhow};
 use oatty_types::{ServiceId, ToServiceIdInfo};

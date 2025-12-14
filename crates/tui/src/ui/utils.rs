@@ -4,7 +4,7 @@
 //! across the UI components. It includes layout utilities, string helpers,
 //! and other common functionality needed for UI rendering.
 
-use std::{collections::{BTreeSet, HashMap}};
+use std::collections::{BTreeSet, HashMap};
 
 use heck::ToTitleCase;
 use oatty_util::{format_date_mmddyyyy, is_date_like_key, redact_json, redact_sensitive};
@@ -68,12 +68,7 @@ pub fn centered_min_max(percent_x: u16, percent_y: u16, min: Rect, max: Rect, ar
     let height = rect.height.clamp(min.height, max.height);
     let x = (area.x + area.width / 2) - width / 2;
     let y = (area.y + area.height / 2) - height / 2;
-    Rect {
-        x,
-        y,
-        width,
-        height,
-    }
+    Rect { x, y, width, height }
 }
 
 /// Infer a set of column names from a list of JSON-like values.

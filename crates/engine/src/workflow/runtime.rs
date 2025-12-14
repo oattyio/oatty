@@ -7,8 +7,8 @@
 use std::collections::HashMap;
 
 use crate::model::{ContractField, OutputContract, StepRepeat, StepSpec, WorkflowSpec};
-use oatty_types::workflow::{RuntimeWorkflow, WorkflowOutputContract, WorkflowOutputField, WorkflowRepeat, WorkflowStepDefinition};
 use indexmap::IndexMap;
+use oatty_types::workflow::{RuntimeWorkflow, WorkflowOutputContract, WorkflowOutputField, WorkflowRepeat, WorkflowStepDefinition};
 use serde_json::{Map as JsonMap, Value};
 
 /// Builds an engine-friendly `WorkflowSpec` from a runtime workflow definition.

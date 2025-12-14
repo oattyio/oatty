@@ -149,7 +149,7 @@ impl McpClientGateway {
                 return Err(ClientGatewayError::ClientAlreadyExists { name: plugin_name.clone() });
             }
         }
-        
+
         {
             let mut starting_guard = self.starting.lock().await;
             if !starting_guard.insert(plugin_name.clone()) {

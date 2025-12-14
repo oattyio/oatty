@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+use indexmap::IndexMap;
 use oatty_types::{CommandSpec, ProviderContract, manifest::RegistryManifest, workflow::WorkflowDefinition};
 use oatty_util::sort_and_dedup_commands;
-use indexmap::IndexMap;
 
 static MANIFEST: &str = include_str!(concat!(env!("OUT_DIR"), "/heroku-manifest.json"));
 /// The main registry containing all available Oatty CLI commands.

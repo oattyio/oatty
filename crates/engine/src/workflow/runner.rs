@@ -302,10 +302,10 @@ impl ControlState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indexmap::{IndexMap, indexmap};
     use oatty_types::workflow::{
         RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault, WorkflowInputDefinition, WorkflowStepDefinition,
     };
-    use indexmap::{IndexMap, indexmap};
     use serde_json::{Map as JsonMap, Value};
     use std::collections::HashMap;
     use tokio::sync::mpsc::unbounded_channel;

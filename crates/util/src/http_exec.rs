@@ -114,8 +114,8 @@ async fn exec_remote_from_spec_inner(
     body: Map<String, Value>,
     path: String,
 ) -> Result<(StatusCode, HeaderMap, String, Option<String>), String> {
-    let client = OattyClient::new_from_service_id(http.service_id)
-        .map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY", e))?;
+    let client =
+        OattyClient::new_from_service_id(http.service_id).map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY", e))?;
 
     let method = Method::from_bytes(http.method.as_bytes()).map_err(|e| e.to_string())?;
     let mut builder = client.request(method.clone(), &path);
@@ -146,12 +146,10 @@ async fn exec_remote_from_spec_inner(
         }
     }
 
-    let resp = builder.send().await.map_err(|e| {
-        format!(
-            "Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY is set",
-            e
-        )
-    })?;
+    let resp = builder
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY is set", e))?;
 
     let status = resp.status();
     let headers = resp.headers().clone();
@@ -290,19 +288,18 @@ fn truncate_for_summary(text: &str, max_len: usize) -> String {
 pub async fn fetch_json_array(spec: &CommandSpec) -> Result<Vec<Value>, String> {
     let http = spec.http().ok_or_else(|| format!("Command '{}' is not HTTP-backed", spec.name))?;
 
-    let client = OattyClient::new_from_service_id(http.service_id)
-        .map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY", e))?;
+    let client =
+        OattyClient::new_from_service_id(http.service_id).map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY", e))?;
 
     let method = Method::from_bytes(http.method.as_bytes()).map_err(|e| e.to_string())?;
     if method != Method::GET {
         return Err("GET method required for list endpoints".into());
     }
-    let resp = client.request(method, &http.path).send().await.map_err(|e| {
-        format!(
-            "Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY is set",
-            e
-        )
-    })?;
+    let resp = client
+        .request(method, &http.path)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY is set", e))?;
 
     let status = resp.status();
     let text = resp.text().await.unwrap_or_else(|_| String::from("<no body>"));

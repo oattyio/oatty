@@ -2,7 +2,6 @@ use std::path::PathBuf;
 
 use dirs_next::home_dir;
 
-
 pub fn expand_tilde(path: &str) -> PathBuf {
     let p = path.trim();
     if p == "~" {

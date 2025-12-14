@@ -157,7 +157,9 @@ impl MainView {
                 }
                 Modal::Confirmation => (
                     Box::new(ConfirmationModal::default()),
-                    ModalLayout(Box::new(|rect| centered_min_max(45, 35, Rect::new(0, 0, 80, 10), Rect::new(0, 0, 160, 16), rect))),
+                    ModalLayout(Box::new(|rect| {
+                        centered_min_max(45, 35, Rect::new(0, 0, 80, 10), Rect::new(0, 0, 160, 16), rect)
+                    })),
                 ),
             };
             self.modal_view = Some(modal_view);

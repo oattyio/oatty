@@ -26,12 +26,12 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures_util::{StreamExt, stream::FuturesUnordered};
+use notify::{Config as NotifyConfig, Event as NotifyEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use oatty_mcp::{
     PluginEngine,
     config::{default_config_path, load_config_from_path},
 };
 use oatty_types::{Effect, ExecOutcome, Msg};
-use notify::{Config as NotifyConfig, Event as NotifyEvent, RecommendedWatcher, RecursiveMode, Watcher};
 use ratatui::{Terminal, prelude::*};
 use std::time::Instant;
 use std::{

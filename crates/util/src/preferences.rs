@@ -11,7 +11,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use dirs_next::{config_dir};
+use dirs_next::config_dir;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use tracing::warn;

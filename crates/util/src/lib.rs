@@ -32,11 +32,11 @@ pub mod history_store;
 pub mod http;
 pub mod http_exec;
 pub mod http_path_resolution;
+pub mod path_processing;
 pub mod preferences;
 pub mod schema;
 pub mod shell_lexing;
 pub mod text_processing;
-pub mod path_processing;
 
 // Re-export commonly used items for convenience
 pub use command_vec_utils::*;
@@ -45,11 +45,11 @@ pub use history_store::*;
 pub use http::*;
 pub use http_exec::*;
 pub use http_path_resolution::*;
+pub use path_processing::*;
 pub use preferences::*;
 pub use schema::*;
 pub use shell_lexing::*;
 pub use text_processing::*;
-pub use path_processing::*;
 
 // Generated date fields from build-time schema processing
 pub mod generated_date_fields {

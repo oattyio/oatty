@@ -506,8 +506,8 @@ fn select_path(value: &Value, path: Option<&str>) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oatty_types::workflow::{WorkflowMissingBehavior, WorkflowProviderArgumentBinding, WorkflowProviderArgumentValue};
     use indexmap::indexmap;
+    use oatty_types::workflow::{WorkflowMissingBehavior, WorkflowProviderArgumentBinding, WorkflowProviderArgumentValue};
     use serde_json::json;
 
     fn resolver_with_context(context: RunContext) -> ProviderArgumentResolver<'static> {

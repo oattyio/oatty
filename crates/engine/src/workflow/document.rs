@@ -8,8 +8,8 @@
 //! authoring order.
 
 use anyhow::{Context, Result, bail};
-use oatty_types::{RuntimeWorkflow, WorkflowDefinition};
 use indexmap::IndexMap;
+use oatty_types::{RuntimeWorkflow, WorkflowDefinition};
 
 /// Builds a runtime workflow from a manifest definition.
 pub fn runtime_workflow_from_definition(definition: &WorkflowDefinition) -> Result<RuntimeWorkflow> {
@@ -62,8 +62,8 @@ pub fn build_runtime_catalog(definitions: &[WorkflowDefinition]) -> Result<Index
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oatty_types::WorkflowStepDefinition;
     use indexmap::IndexMap;
+    use oatty_types::WorkflowStepDefinition;
 
     #[test]
     fn converts_definition_to_runtime_workflow() {

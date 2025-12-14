@@ -1,2 +1,2 @@
 pub mod search;
-pub use search::{Indexer};
+pub use search::Indexer;

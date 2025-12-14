@@ -101,33 +101,23 @@ impl Component for RunViewComponent {
         if Self::handle_focus_cycle_keys(app, key.code) {
             return Vec::new();
         }
-    
+
         let Some(run_state) = app.workflows.run_view_state_mut() else {
             return Vec::new();
         };
-        
+
         let run_id = run_state.run_id().to_string();
-        
-        let effects = match () {
-            _ if run_state.steps_table.focus().get() => {
-                self.handle_steps_table_keys(run_state, key.code)
-            }
-            _ if run_state.cancel_button_focus.get() => {
-                Self::handle_cancel_button_keys(run_state, &run_id, key.code)
-            }
-            _ if run_state.pause_button_focus.get() => {
-                Self::handle_pause_button_keys(run_state, &run_id, key.code)
-            }
-            _ if run_state.view_details_button_focus.get() => {
-                self.show_step_output(run_state)
-            }
+
+        match () {
+            _ if run_state.steps_table.focus().get() => self.handle_steps_table_keys(run_state, key.code),
+            _ if run_state.cancel_button_focus.get() => Self::handle_cancel_button_keys(run_state, &run_id, key.code),
+            _ if run_state.pause_button_focus.get() => Self::handle_pause_button_keys(run_state, &run_id, key.code),
+            _ if run_state.view_details_button_focus.get() => self.show_step_output(run_state),
             _ if run_state.done_button_focus.get() && key.code == KeyCode::Enter => {
                 vec![Effect::SwitchTo(Route::Workflows)]
             }
             () => Vec::new(),
-        };
-    
-        effects
+        }
     }
 
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {

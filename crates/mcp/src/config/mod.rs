@@ -6,9 +6,9 @@ mod interpolation;
 mod model;
 mod validation;
 
-use oatty_util::expand_tilde;
 pub use interpolation::{InterpolationError, determine_env_source, interpolate_config};
 pub use model::{ConfigError, McpAuthConfig, McpConfig, McpServer};
+use oatty_util::expand_tilde;
 pub use validation::{ValidationError, validate_config, validate_server_name};
 
 use crate::config::interpolation::tokenize_config;

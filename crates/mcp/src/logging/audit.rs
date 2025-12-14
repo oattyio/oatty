@@ -116,14 +116,14 @@ impl AuditLogger {
 
         // Redact sensitive fields in the audit entry before writing
         let redacted_entry = redact_audit_entry(entry);
-        let json_line = serde_json::to_string(&redacted_entry).map_err(|e| AuditError::SerializationError(e.to_string()))?;
+        let json_line = serde_json::to_string(&redacted_entry).map_err(|e| AuditError::Serialization(e.to_string()))?;
 
         let mut file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&self.log_path)
             .await
-            .map_err(AuditError::IoError)?;
+            .map_err(AuditError::Io)?;
 
         #[cfg(unix)]
         {
@@ -131,11 +131,11 @@ impl AuditLogger {
             let permissions = std::fs::Permissions::from_mode(0o600);
             tokio::fs::set_permissions(&self.log_path, permissions)
                 .await
-                .map_err(AuditError::IoError)?;
+                .map_err(AuditError::Io)?;
         }
 
-        file.write_all(json_line.as_bytes()).await.map_err(AuditError::IoError)?;
-        file.write_all(b"\n").await.map_err(AuditError::IoError)?;
+        file.write_all(json_line.as_bytes()).await.map_err(AuditError::Io)?;
+        file.write_all(b"\n").await.map_err(AuditError::Io)?;
 
         debug!(
             "Audit log entry: {} {} {}",
@@ -154,18 +154,18 @@ impl AuditLogger {
         }
 
         // Check file size
-        let metadata = tokio::fs::metadata(&self.log_path).await.map_err(AuditError::IoError)?;
+        let metadata = tokio::fs::metadata(&self.log_path).await.map_err(AuditError::Io)?;
 
         if metadata.len() > self.max_size {
             return Ok(true);
         }
 
         // Check file age
-        let modified = metadata.modified().map_err(AuditError::IoError)?;
+        let modified = metadata.modified().map_err(AuditError::Io)?;
 
         let age = std::time::SystemTime::now()
             .duration_since(modified)
-            .map_err(|e| AuditError::IoError(std::io::Error::other(e)))?;
+            .map_err(|e| AuditError::Io(std::io::Error::other(e)))?;
 
         if age.as_secs() > self.max_age_days * 24 * 60 * 60 {
             return Ok(true);
@@ -183,9 +183,7 @@ impl AuditLogger {
         let timestamp = Utc::now().format("%Y%m%d_%H%M%S");
         let rotated_path = self.log_path.with_extension(format!("{}.jsonl", timestamp));
 
-        tokio::fs::rename(&self.log_path, &rotated_path)
-            .await
-            .map_err(AuditError::IoError)?;
+        tokio::fs::rename(&self.log_path, &rotated_path).await.map_err(AuditError::Io)?;
 
         debug!("Rotated audit log: {} -> {}", self.log_path.display(), rotated_path.display());
 
@@ -198,7 +196,7 @@ impl AuditLogger {
             return Ok(Vec::new());
         }
 
-        let content = tokio::fs::read_to_string(&self.log_path).await.map_err(AuditError::IoError)?;
+        let content = tokio::fs::read_to_string(&self.log_path).await.map_err(AuditError::Io)?;
 
         let mut entries = Vec::new();
 
@@ -267,18 +265,18 @@ fn redact_json_value(v: serde_json::Value) -> serde_json::Value {
 #[derive(Debug, Error)]
 pub enum AuditError {
     #[error("IO error: {0}")]
-    IoError(std::io::Error),
+    Io(std::io::Error),
 
     #[error("Serialization error: {0}")]
-    SerializationError(String),
+    Serialization(String),
 
     #[error("Deserialization error: {0}")]
-    DeserializationError(String),
+    Deserialization(String),
 }
 
 impl From<std::io::Error> for AuditError {
     fn from(error: std::io::Error) -> Self {
-        Self::IoError(error)
+        Self::Io(error)
     }
 }
 

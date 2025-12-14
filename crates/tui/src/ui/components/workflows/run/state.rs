@@ -437,8 +437,8 @@ impl RepeatAnimationState {
 mod tests {
     use super::*;
     use crate::ui::theme::dracula::DraculaTheme;
-    use oatty_types::workflow::{WorkflowRepeat, WorkflowStepDefinition};
     use indexmap::IndexMap;
+    use oatty_types::workflow::{WorkflowRepeat, WorkflowStepDefinition};
     use serde_json::{Value, json};
 
     fn make_step(id: &str, description: Option<&str>) -> WorkflowStepDefinition {

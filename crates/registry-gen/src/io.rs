@@ -7,6 +7,7 @@ use crate::openapi::transform_openapi_to_links;
 use crate::schema::{derive_commands_from_schema, generate_commands};
 use anyhow::{Context, Result};
 use bincode::config;
+use indexmap::{IndexMap, map::Entry as IndexMapEntry};
 use oatty_types::{
     CommandSpec, ServiceId,
     command::SchemaProperty,
@@ -14,7 +15,6 @@ use oatty_types::{
     provider::{ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract},
     workflow::WorkflowDefinition,
 };
-use indexmap::{IndexMap, map::Entry as IndexMapEntry};
 
 pub struct ManifestInput {
     pub input: PathBuf,
