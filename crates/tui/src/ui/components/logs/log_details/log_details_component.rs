@@ -13,8 +13,8 @@ use crate::{
     },
 };
 use crossterm::event::KeyCode;
-use heroku_types::Effect;
-use heroku_util::redact_sensitive;
+use oatty_types::Effect;
+use oatty_util::redact_sensitive;
 use ratatui::{
     Frame,
     layout::Rect,

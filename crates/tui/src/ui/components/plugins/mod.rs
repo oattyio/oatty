@@ -15,7 +15,7 @@ mod types;
 
 pub use details_component::PluginsDetailsComponent;
 pub use details_state::{PluginDetailsData, PluginDetailsLoadState, PluginDetailsModalState};
-pub use heroku_mcp::{PluginDetail, PluginToolSummary};
+pub use oatty_mcp::{PluginDetail, PluginToolSummary};
 pub use plugin_editor::PluginTransport;
 pub use plugin_editor::PluginsEditComponent;
 pub use plugins_component::PluginsComponent;

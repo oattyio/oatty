@@ -3,14 +3,14 @@
 //! This module provides utility functions for working with HTTP requests and responses,
 //! including header parsing, request body manipulation, and response handling.
 
-use heroku_types::Pagination;
+use oatty_types::Pagination;
 use reqwest::StatusCode;
 use serde_json::{Map, Value};
 use thiserror::Error;
 
 /// Parse Content-Range header value into a Pagination struct.
 ///
-/// This function parses HTTP Content-Range headers that follow the Heroku API format.
+/// This function parses HTTP Content-Range headers that follow the Oatty API format.
 /// The header specifies pagination information including the field name, range values,
 /// maximum items per page, and sort order.
 ///
@@ -22,7 +22,7 @@ use thiserror::Error;
 ///
 /// # Example
 /// ```rust
-/// use heroku_util::http::parse_content_range_value;
+/// use oatty_util::http::parse_content_range_value;
 ///
 /// let header_value = "name app7a..app9x; max=200; order=desc;";
 /// let pagination = parse_content_range_value(header_value).unwrap();
@@ -84,7 +84,7 @@ pub fn parse_content_range_value(value: &str) -> Option<Pagination> {
 ///
 /// # Example
 /// ```rust
-/// use heroku_util::http::strip_range_body_fields;
+/// use oatty_util::http::strip_range_body_fields;
 /// use serde_json::Map;
 ///
 /// let mut body = Map::new();
@@ -111,7 +111,7 @@ pub fn strip_range_body_fields(mut body: Map<String, Value>) -> Map<String, Valu
 ///
 /// This function constructs an HTTP Range header value from fields in the request body.
 /// It's useful for converting user-friendly body parameters into the proper header format
-/// expected by the Heroku API.
+/// expected by the Oatty API.
 ///
 /// # Arguments
 /// * `body` - The request body containing range parameters
@@ -121,7 +121,7 @@ pub fn strip_range_body_fields(mut body: Map<String, Value>) -> Map<String, Valu
 ///
 /// # Example
 /// ```rust
-/// use heroku_util::http::build_range_header_from_body;
+/// use oatty_util::http::build_range_header_from_body;
 /// use serde_json::{json, Map};
 ///
 /// let mut body = Map::new();
@@ -191,7 +191,7 @@ pub fn build_range_header_from_body(body: &Map<String, Value>) -> Option<String>
 ///
 /// # Example
 /// ```rust
-/// use heroku_util::http::status_error_message;
+/// use oatty_util::http::status_error_message;
 ///
 /// let error_401 = status_error_message(401).unwrap();
 /// assert!(error_401.contains("HEROKU_API_KEY"));
@@ -205,7 +205,7 @@ pub fn build_range_header_from_body(body: &Map<String, Value>) -> Option<String>
 /// ```
 pub fn status_error_message(status_code: u16) -> Option<String> {
     match status_code {
-        401 => Some("Unauthorized (401). Hint: set HEROKU_API_KEY=... or configure ~/.netrc with machine api.heroku.com".into()),
+        401 => Some("Unauthorized (401). Hint: set HEROKU_API_KEY=...".into()),
         403 => Some("Forbidden (403). Hint: check team/app access, permissions, and role membership".into()),
         _ => None,
     }
@@ -225,7 +225,7 @@ pub fn status_error_message(status_code: u16) -> Option<String> {
 ///
 /// # Example
 /// ```rust
-/// use heroku_util::http::parse_response_json;
+/// use oatty_util::http::parse_response_json;
 ///
 /// let json = parse_response_json(r#"{"name": "myapp"}"#);
 /// assert!(json.is_some());

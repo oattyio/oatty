@@ -1,9 +1,9 @@
 use std::fs;
 use std::path::PathBuf;
 
-use heroku_registry_gen::openapi::transform_openapi_to_links;
-use heroku_registry_gen::schema::derive_commands_from_schema;
-use heroku_types::ServiceId;
+use oatty_registry_gen::openapi::transform_openapi_to_links;
+use oatty_registry_gen::schema::derive_commands_from_schema;
+use oatty_types::ServiceId;
 #[test]
 fn openapi_v3_smoke_generates_commands() {
     // Load the example swagger.yaml we downloaded during planning

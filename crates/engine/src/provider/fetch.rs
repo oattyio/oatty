@@ -1,7 +1,7 @@
 use anyhow::anyhow;
-use heroku_registry::CommandSpec;
-use heroku_util::fetch_json_array;
-use heroku_util::http_path_resolution::build_path;
+use oatty_registry::CommandSpec;
+use oatty_util::fetch_json_array;
+use oatty_util::http_path_resolution::build_path;
 use serde_json::{Map as JsonMap, Value};
 
 pub trait ProviderValueFetcher: Send + Sync {

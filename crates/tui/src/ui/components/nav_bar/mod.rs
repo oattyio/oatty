@@ -15,7 +15,7 @@
 //! # Usage
 //!
 //! ```ignore
-//! use heroku_types::Route;
+//! use oatty_types::Route;
 //! use heroku_tui::ui::components::nav_bar::{
 //!     NavItem, NavItemAction, VerticalNavBarComponent, VerticalNavBarState,
 //! };

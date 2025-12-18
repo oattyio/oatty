@@ -1,6 +1,6 @@
-# heroku-mcp
+# oatty-mcp
 
-Model Context Protocol (MCP) plugin infrastructure for the Heroku CLI.
+Model Context Protocol (MCP) plugin infrastructure for the Oatty CLI.
 
 This crate provides the core building blocks to discover, configure, start/stop, and interact with MCP-enabled plugins over stdio or HTTP/SSE transports. It includes a plugin engine, client/transport management, provider integration, configuration loading/validation, health monitoring, and logging/auditing with redaction.
 
@@ -9,7 +9,7 @@ This crate provides the core building blocks to discover, configure, start/stop,
 - Plugin engine orchestrating lifecycle, registry, health, and logs
 - Stdio and HTTP/SSE transports built on `rmcp`
 - Managed clients with connection status, health checks, and error tracking
-- Synchronous config loader for `~/.config/heroku/mcp.json` with interpolation and validation
+- Synchronous config loader for `~/.config/oatty/mcp.json` with interpolation and validation
 - Provider bridge to expose MCP tools to the broader engine provider system
 - Structured logging, redaction, ring buffers, and audit log to file
 
@@ -29,7 +29,7 @@ This crate provides the core building blocks to discover, configure, start/stop,
 
 ## Concepts and data flow
 
-1. Configuration is loaded synchronously via `config::load_config()` from `MCP_CONFIG_PATH` or `~/.config/heroku/mcp.json`.
+1. Configuration is loaded synchronously via `config::load_config()` from `MCP_CONFIG_PATH` or `~/.config/oatty/mcp.json`.
    - `${env:FOO}` and `${secret:NAME}` are resolved via process env and OS keychain (`keyring-rs`).
    - Config is validated (naming, transport presence, headers/env constraints).
 2. `PluginEngine::new(config)` wires together:
@@ -43,7 +43,7 @@ This crate provides the core building blocks to discover, configure, start/stop,
 
 ## Configuration
 
-Default path: `~/.config/heroku/mcp.json` (override with `MCP_CONFIG_PATH`). Example:
+Default path: `~/.config/oatty/mcp.json` (override with `MCP_CONFIG_PATH`). Example:
 
 ```json
 {
@@ -73,11 +73,11 @@ Default path: `~/.config/heroku/mcp.json` (override with `MCP_CONFIG_PATH`). Exa
 Notes:
 - Stdio requires `command` (and optional `args`, `env`, `cwd`).
 - HTTP/SSE requires `baseUrl` (and optional `headers`).
-- `${env:NAME}` pulls from the environment; `${secret:NAME}` resolves via OS keychain service `heroku-mcp`.
+- `${env:NAME}` pulls from the environment; `${secret:NAME}` resolves via OS keychain service `oatty-mcp`.
 - Server names must match `^[a-z0-9._-]+$`.
 
 TUI Add Plugin view:
-- The Heroku TUI provides an Add Plugin panel with a transport radio selector: `Transport: [✓] Local   [ ] Remote`.
+- The Oatty TUI provides an Add Plugin panel with a transport radio selector: `Transport: [✓] Local   [ ] Remote`.
 - Selecting Local exposes `command` and `args`; Remote exposes `baseUrl`.
 - Keyboard: when the radio is focused, use Left/Right to change and Space/Enter to toggle.
 
@@ -110,7 +110,7 @@ Re-exports from `rmcp` allow calling tools and working with content types.
 Create and start the engine:
 
 ```rust
-use heroku_mcp::{config, PluginEngine};
+use oatty_mcp::{config, PluginEngine};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -128,7 +128,7 @@ async fn main() -> anyhow::Result<()> {
 Call a tool through a provider:
 
 ```rust
-use heroku_mcp::{plugin::PluginEngine, provider::{McpProvider, McpProviderOps}};
+use oatty_mcp::{plugin::PluginEngine, provider::{McpProvider, McpProviderOps}};
 use serde_json::json;
 use std::sync::Arc;
 
@@ -152,7 +152,7 @@ use std::sync::Arc;
 ## Logging and auditing
 
 - Logs are buffered per plugin using a ring buffer (`logging::LogRingBuffer`) and formatted with redaction (`logging::LogFormatter`).
-- Audit events (start, stop, restart, tool invoke, health checks) are written to `~/.config/heroku/mcp-audit.jsonl` by default.
+- Audit events (start, stop, restart, tool invoke, health checks) are written to `~/.config/oatty/mcp-audit.jsonl` by default.
 - Use `LogManager::export_logs(plugin, path)` to export with redaction, or `export_logs_with_redaction(..., false)` for raw logs.
 
 ## Health monitoring
@@ -171,7 +171,7 @@ use std::sync::Arc;
 
 Helpful env for development/integration:
 - `RUST_LOG=debug`
-- `MCP_CONFIG_PATH=~/.config/heroku/mcp.json`
+- `MCP_CONFIG_PATH=~/.config/oatty/mcp.json`
 
 ## Error handling
 
@@ -191,7 +191,7 @@ Code style:
 ## Security
 
 - Never log secrets. Redaction utilities are applied in formatters.
-- `${secret:NAME}` uses the OS keychain (`keyring-rs`) with the service name `heroku-mcp`.
+- `${secret:NAME}` uses the OS keychain (`keyring-rs`) with the service name `oatty-mcp`.
 
 ## License
 

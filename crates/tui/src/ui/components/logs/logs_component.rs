@@ -14,8 +14,8 @@
 //! The component follows the TEA (The Elm Architecture) pattern and integrates
 //! with the application's focus management system.
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use heroku_types::{Effect, ExecOutcome, Modal, Msg};
-use heroku_util::redact_json;
+use oatty_types::{Effect, ExecOutcome, Modal, Msg};
+use oatty_util::redact_json;
 use once_cell::sync::Lazy;
 use ratatui::{
     Frame,

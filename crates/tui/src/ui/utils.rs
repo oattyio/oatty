@@ -7,7 +7,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use heck::ToTitleCase;
-use heroku_util::{format_date_mmddyyyy, is_date_like_key, redact_json, redact_sensitive};
+use oatty_util::{format_date_mmddyyyy, is_date_like_key, redact_json, redact_sensitive};
 use ratatui::prelude::*;
 use serde_json::{Map, Value};
 
@@ -58,6 +58,19 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     .split(popup_layout[1]);
     area[1]
 }
+
+pub fn centered_min_max(percent_x: u16, percent_y: u16, min: Rect, max: Rect, area: Rect) -> Rect {
+    if min.width > area.width || min.height > area.height {
+        return area;
+    }
+    let rect = centered_rect(percent_x, percent_y, area);
+    let width = rect.width.clamp(min.width, max.width);
+    let height = rect.height.clamp(min.height, max.height);
+    let x = (area.x + area.width / 2) - width / 2;
+    let y = (area.y + area.height / 2) - height / 2;
+    Rect { x, y, width, height }
+}
+
 /// Infer a set of column names from a list of JSON-like values.
 ///
 /// This function analyzes the provided array of JSON-like objects (`arr`) to infer which

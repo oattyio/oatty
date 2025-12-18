@@ -5,9 +5,9 @@
 
 use crate::ui::components::common::TextInputState;
 use anyhow::{Result, anyhow};
-use heroku_engine::workflow::document::build_runtime_catalog;
-use heroku_registry::{CommandRegistry, feat_gate::feature_workflows};
-use heroku_types::workflow::RuntimeWorkflow;
+use oatty_engine::workflow::document::build_runtime_catalog;
+use oatty_registry::{CommandRegistry, feat_gate::feature_workflows};
+use oatty_types::workflow::RuntimeWorkflow;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::{layout::Rect, widgets::ListState};
 use std::sync::{Arc, Mutex};

@@ -1,7 +1,7 @@
 //! Table state for the MCP plugins view, covering filtering, focus, and selection.
 
 use crate::ui::components::plugins::PluginDetail;
-use heroku_types::PluginStatus;
+use oatty_types::PluginStatus;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use ratatui::widgets::TableState;

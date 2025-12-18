@@ -5,7 +5,7 @@
 //! render tabular data, key-value fallback views, and scrolling chrome while
 //! leaving ownership of the domain state with the caller.
 
-use heroku_util::format_date_mmddyyyy;
+use oatty_util::format_date_mmddyyyy;
 use ratatui::{
     Frame,
     layout::{Constraint, Rect},

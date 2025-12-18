@@ -1,6 +1,6 @@
 use super::table::PluginsTableState;
 use crate::ui::components::plugins::{PluginDetailsModalState, plugin_editor::state::PluginEditViewState};
-use heroku_types::{Effect, ExecOutcome, PluginDetail};
+use oatty_types::{Effect, ExecOutcome, PluginDetail};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::prelude::Rect;
 

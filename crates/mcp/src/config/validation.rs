@@ -2,7 +2,7 @@
 
 use crate::config::model::TransportType;
 use crate::config::{McpConfig, McpServer};
-use heroku_types::EnvVar;
+use oatty_types::EnvVar;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use thiserror::Error;

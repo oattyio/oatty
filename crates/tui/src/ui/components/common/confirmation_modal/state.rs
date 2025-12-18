@@ -1,4 +1,4 @@
-use heroku_types::Severity;
+use oatty_types::Severity;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 

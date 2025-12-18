@@ -1,6 +1,6 @@
-//! # Heroku Utility Library
+//! # Oatty Utility Library
 //!
-//! This crate provides utility functions for the Heroku CLI, including HTTP utilities,
+//! This crate provides utility functions for the Oatty CLI, including HTTP utilities,
 //! text processing, fuzzy matching, shell-like lexing, and date handling.
 //!
 //! ## Modules
@@ -13,7 +13,7 @@
 //! ## Usage
 //!
 //! ```rust
-//! use heroku_util::{redact_sensitive, fuzzy_score, lex_shell_like};
+//! use oatty_util::{redact_sensitive, fuzzy_score, lex_shell_like};
 //!
 //! // Redact sensitive information
 //! let redacted = redact_sensitive("API_KEY=abc123");
@@ -32,6 +32,7 @@ pub mod history_store;
 pub mod http;
 pub mod http_exec;
 pub mod http_path_resolution;
+pub mod path_processing;
 pub mod preferences;
 pub mod schema;
 pub mod shell_lexing;
@@ -44,6 +45,7 @@ pub use history_store::*;
 pub use http::*;
 pub use http_exec::*;
 pub use http_path_resolution::*;
+pub use path_processing::*;
 pub use preferences::*;
 pub use schema::*;
 pub use shell_lexing::*;

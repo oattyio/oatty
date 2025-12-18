@@ -66,7 +66,7 @@ Complete this checklist to get your development environment ready.
   cp .env.example .env
   ```
 
-- [ ] **Add Heroku API Key** (choose one method)
+- [ ] **Add Oatty API Key** (choose one method)
 
   **Option A: Quick (.env file)**
   1. Get your API key: https://dashboard.heroku.com/account
@@ -89,7 +89,7 @@ Complete this checklist to get your development environment ready.
 
   ```bash
   # In .env
-  HEROKU_LOG=debug  # Options: error|warn|info|debug|trace
+  OATTY_LOG=debug  # Options: error|warn|info|debug|trace
   ```
 
 - [ ] **Choose theme (optional)**
@@ -138,7 +138,7 @@ Complete this checklist to get your development environment ready.
   ```bash
   cargo run -p heroku-cli -- apps list
   ```
-  - Should list your Heroku apps
+  - Should list your Oatty apps
   - Verifies API authentication works
 
 ## ☐ VS Code / Cursor Setup
@@ -269,7 +269,7 @@ See main README for details.
     tui/        # Terminal UI
     registry/   # Command registry
     engine/     # Workflow execution
-    api/        # Heroku API client
+    api/        # Oatty API client
     mcp/        # Plugin system
     util/       # Shared utilities
   ```

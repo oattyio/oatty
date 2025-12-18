@@ -5,7 +5,7 @@
 //! where the pure state management of the app interacts with side effects
 //! such as
 //! - Writing to the system clipboard
-//! - Making live API calls to Heroku
+//! - Making live API calls to Oatty
 //! - Spawning background tasks and recording logs
 //!
 //! ## Design
@@ -22,20 +22,20 @@
 use anyhow::Result;
 use anyhow::anyhow;
 use chrono::Utc;
-use heroku_api::HerokuClient;
-use heroku_engine::{RegistryCommandRunner, drive_workflow_run, provider::ProviderFetchPlan};
-use heroku_mcp::config::{
+use oatty_api::OattyClient;
+use oatty_engine::{RegistryCommandRunner, drive_workflow_run, provider::ProviderFetchPlan};
+use oatty_mcp::config::{
     McpServer, default_config_path, determine_env_source, load_config_from_path, save_config_to_path, validate_config, validate_server_name,
 };
-use heroku_mcp::{McpConfig, PluginEngine};
-use heroku_registry::find_by_group_and_cmd;
-use heroku_registry::{CommandRegistry, CommandSpec};
-use heroku_types::service::ServiceId;
-use heroku_types::{Effect, EnvVar, Msg, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
-use heroku_types::{ExecOutcome, command::CommandExecution};
-use heroku_util::build_request_body;
-use heroku_util::exec_remote_from_shell_command;
-use heroku_util::lex_shell_like;
+use oatty_mcp::{McpConfig, PluginEngine};
+use oatty_registry::find_by_group_and_cmd;
+use oatty_registry::{CommandRegistry, CommandSpec};
+use oatty_types::service::ServiceId;
+use oatty_types::{Effect, EnvVar, Msg, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
+use oatty_types::{ExecOutcome, command::CommandExecution};
+use oatty_util::build_request_body;
+use oatty_util::exec_remote_from_shell_command;
+use oatty_util::lex_shell_like;
 use reqwest::Url;
 use serde_json::Map;
 use serde_json::Value;
@@ -72,7 +72,7 @@ pub enum Cmd {
     /// ```
     ClipboardSet(String),
 
-    /// Make an HTTP request to the Heroku API.
+    /// Make an HTTP request to the Oatty API.
     ///
     /// Carries:
     /// - [`CommandSpec`]: API request metadata (including a path, method, and service)
@@ -81,8 +81,8 @@ pub enum Cmd {
     /// # Example
     /// ```rust,ignore
     /// use your_crate::Cmd;
-    /// use heroku_registry::{CommandSpec, HttpCommandSpec, ServiceId};
-    /// use heroku_types::CommandExecution;
+    /// use oatty_registry::{CommandSpec, HttpCommandSpec, ServiceId};
+    /// use oatty_types::CommandExecution;
     /// use std::collections::HashMap;
     /// use serde_json::{Map, Value};
     ///
@@ -569,10 +569,10 @@ fn handle_workflow_run_requested(app: &mut App<'_>, request: WorkflowRunRequest)
         }
     };
 
-    let client = match HerokuClient::new_from_service_id(ServiceId::CoreApi) {
+    let client = match OattyClient::new_from_service_id(ServiceId::CoreApi) {
         Ok(client) => client,
         Err(error) => {
-            app.append_log_message(format!("Failed to initialize Heroku client: {}", error));
+            app.append_log_message(format!("Failed to initialize Oatty client: {}", error));
             return;
         }
     };

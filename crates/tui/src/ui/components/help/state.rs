@@ -1,4 +1,4 @@
-use heroku_types::CommandSpec;
+use oatty_types::CommandSpec;
 
 /// State container for the help modal.
 ///

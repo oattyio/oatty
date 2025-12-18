@@ -5,8 +5,8 @@ use crate::ui::components::workflows::collector::manual_entry::state::{ManualEnt
 use crate::ui::theme::Theme;
 use crate::ui::theme::theme_helpers::{self as th, ButtonRenderOptions, build_hint_spans};
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::Effect;
-use heroku_types::workflow::validate_candidate_value;
+use oatty_types::Effect;
+use oatty_types::workflow::validate_candidate_value;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::text::{Line, Span};

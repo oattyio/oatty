@@ -1,13 +1,13 @@
 //! Plugin engine implementation.
 
-use crate::client::{ClientManagerEvent, McpClientManager};
+use crate::client::{ClientGatewayEvent, McpClientGateway};
 use crate::config::McpConfig;
 use crate::logging::{AuditEntry, AuditResult, LogManager};
 use crate::plugin::{LifecycleManager, PluginRegistry, RegistryError};
 use crate::types::{AuthStatus, McpToolMetadata, PluginDetail, PluginStatus, PluginToolSummary};
-use heroku_registry::{CommandRegistry, CommandSpec};
-use heroku_types::{CommandFlag, ExecOutcome, McpCommandSpec, PositionalArgument};
-use heroku_util::resolve_output_schema;
+use oatty_registry::{CommandRegistry, CommandSpec};
+use oatty_types::{CommandFlag, ExecOutcome, McpCommandSpec, PositionalArgument};
+use oatty_util::resolve_output_schema;
 use serde_json::Value;
 use std::sync::Mutex;
 use std::{
@@ -15,7 +15,7 @@ use std::{
     sync::Arc,
 };
 use tokio::{
-    sync::{Mutex as TokioMutex, RwLock},
+    sync::{Mutex as TokioMutex, RwLock, broadcast::error::RecvError as TokioRecvError},
     task::JoinHandle,
 };
 
@@ -23,7 +23,7 @@ use tokio::{
 #[derive(Debug)]
 pub struct PluginEngine {
     /// Client manager for handling MCP connections.
-    client_manager: McpClientManager,
+    client_manager: McpClientGateway,
 
     /// Log manager for plugin logs.
     log_manager: Arc<LogManager>,
@@ -54,7 +54,7 @@ pub struct PluginEngine {
 impl PluginEngine {
     /// Create a new plugin engine.
     pub fn new(config: McpConfig, command_registry: Arc<Mutex<CommandRegistry>>) -> anyhow::Result<Self> {
-        let client_manager = McpClientManager::new(config.clone())?;
+        let client_manager = McpClientGateway::new(config.clone())?;
         let log_manager = Arc::new(LogManager::new()?);
         let lifecycle_manager = LifecycleManager::new();
 
@@ -137,7 +137,7 @@ impl PluginEngine {
         let handle = tokio::spawn(async move {
             loop {
                 match receiver.recv().await {
-                    Ok(ClientManagerEvent::ToolsUpdated { name, tools }) => {
+                    Ok(ClientGatewayEvent::ToolsUpdated { name, tools }) => {
                         if let Err(update_err) = registry.set_plugin_tool_count(&name, tools.len()) {
                             tracing::warn!(plugin = %name, error = %update_err, "Failed to update tool count");
                         }
@@ -171,22 +171,22 @@ impl PluginEngine {
                     }
                     Ok(event) => {
                         let (name, status) = match event {
-                            ClientManagerEvent::Starting { name } => (name, PluginStatus::Starting),
-                            ClientManagerEvent::Started { name } => (name, PluginStatus::Running),
-                            ClientManagerEvent::StartFailed { name, error } => {
+                            ClientGatewayEvent::Starting { name } => (name, PluginStatus::Starting),
+                            ClientGatewayEvent::Started { name } => (name, PluginStatus::Running),
+                            ClientGatewayEvent::StartFailed { name, error } => {
                                 tracing::warn!(plugin = %name, error = %error, "Plugin failed to start");
                                 (name, PluginStatus::Error)
                             }
-                            ClientManagerEvent::Stopping { name } => (name, PluginStatus::Stopping),
-                            ClientManagerEvent::Stopped { name } => (name, PluginStatus::Stopped),
-                            ClientManagerEvent::ToolsUpdated { .. } => unreachable!("tools updates handled above"),
+                            ClientGatewayEvent::Stopping { name } => (name, PluginStatus::Stopping),
+                            ClientGatewayEvent::Stopped { name } => (name, PluginStatus::Stopped),
+                            ClientGatewayEvent::ToolsUpdated { .. } => unreachable!("tools updates handled above"),
                         };
                         if let Err(update_err) = registry.set_plugin_status(&name, status) {
                             tracing::warn!(plugin = %name, error = %update_err, "Failed to update registry status");
                         }
                     }
-                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
-                    Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    Err(TokioRecvError::Closed) => break,
+                    Err(TokioRecvError::Lagged(skipped)) => {
                         tracing::warn!("Plugin status listener lagged by {} events", skipped);
                     }
                 }
@@ -236,8 +236,7 @@ impl PluginEngine {
             move || {
                 let client_manager = client_manager.clone();
                 let name = name.clone();
-                Box::pin(async move { client_manager.start_plugin(&name).await.map_err(|e| e.to_string()) })
-                    as std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
+                async move { client_manager.start_plugin(&name).await.map_err(|e| e.to_string()) }
             }
         };
 
@@ -269,8 +268,7 @@ impl PluginEngine {
             move || {
                 let client_manager = client_manager.clone();
                 let name = name.clone();
-                Box::pin(async move { client_manager.stop_plugin(&name).await.map_err(|e| e.to_string()) })
-                    as std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
+                async move { client_manager.stop_plugin(&name).await.map_err(|e| e.to_string()) }
             }
         };
 
@@ -299,7 +297,6 @@ impl PluginEngine {
         if !self.lifecycle_manager.can_restart(name).await {
             return Err(PluginEngineError::MaxRestartAttemptsExceeded { name: name.to_string() });
         }
-
         // Restart the plugin using lifecycle management
         let stop_fn = {
             let client_manager = self.client_manager.clone();
@@ -307,8 +304,7 @@ impl PluginEngine {
             move || {
                 let client_manager = client_manager.clone();
                 let name = name.clone();
-                Box::pin(async move { client_manager.stop_plugin(&name).await.map_err(|e| e.to_string()) })
-                    as std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
+                async move { client_manager.stop_plugin(&name).await.map_err(|e| e.to_string()) }
             }
         };
 
@@ -318,8 +314,7 @@ impl PluginEngine {
             move || {
                 let client_manager = client_manager.clone();
                 let name = name.clone();
-                Box::pin(async move { client_manager.start_plugin(&name).await.map_err(|e| e.to_string()) })
-                    as std::pin::Pin<Box<dyn Future<Output = Result<(), String>> + Send>>
+                async move { client_manager.start_plugin(&name).await.map_err(|e| e.to_string()) }
             }
         };
 
@@ -397,7 +392,7 @@ impl PluginEngine {
     }
 
     /// Get the client manager.
-    pub fn client_manager(&self) -> &McpClientManager {
+    pub fn client_manager(&self) -> &McpClientGateway {
         &self.client_manager
     }
 
@@ -952,7 +947,7 @@ mod tests {
             "properties": {
                 "app": {
                     "type": "string",
-                    "description": "Heroku application name"
+                    "description": "Oatty application name"
                 },
                 "confirm": {
                     "type": "boolean",
@@ -966,7 +961,7 @@ mod tests {
 
         assert_eq!(positionals.len(), 1);
         assert_eq!(positionals[0].name, "app");
-        assert_eq!(positionals[0].help.as_deref(), Some("Heroku application name"));
+        assert_eq!(positionals[0].help.as_deref(), Some("Oatty application name"));
 
         assert_eq!(flags.len(), 1);
         let confirm = &flags[0];
@@ -1060,7 +1055,7 @@ mod tests {
         assert_eq!(spec.flags.len(), 1);
         assert_eq!(spec.flags[0].name, "verbose");
         assert_eq!(spec.flags[0].r#type, "boolean");
-        assert!(matches!(spec.execution(), heroku_types::command::CommandExecution::Mcp(_)));
+        assert!(matches!(spec.execution(), oatty_types::command::CommandExecution::Mcp(_)));
         let mcp = spec.mcp().expect("mcp execution present");
         assert_eq!(mcp.plugin_name, "demo-plugin");
         assert_eq!(mcp.tool_name, "demo_info");

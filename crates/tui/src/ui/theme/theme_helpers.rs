@@ -1,6 +1,6 @@
 use super::roles::Theme;
 use crate::ui::theme::roles::ThemeRoles;
-use heroku_types::Severity;
+use oatty_types::Severity;
 use ratatui::text::Line;
 use ratatui::{
     Frame,

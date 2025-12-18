@@ -1,20 +1,20 @@
 //! HTTP execution helpers shared across TUI and Engine.
 //!
-//! This module centralizes remote execution of Heroku API requests based on
+//! This module centralizes remote execution of Oatty API requests based on
 //! `CommandSpec`, handling headers, pagination, and response parsing.
 //! It also provides a convenient `fetch_json_array` helper for list endpoints.
 
 use crate::{build_path, http, resolve_path, shell_lexing};
-use heroku_api::HerokuClient;
-use heroku_types::ExecOutcome;
-use heroku_types::{CommandSpec, HttpCommandSpec};
+use oatty_api::OattyClient;
+use oatty_types::ExecOutcome;
+use oatty_types::{CommandSpec, HttpCommandSpec};
 use reqwest::header::{CONTENT_RANGE, HeaderMap};
 use reqwest::{Method, StatusCode};
 use serde_json::{Map as JsonMap, Map, Number, Value};
 use std::collections::HashMap;
 use std::str::FromStr;
 
-/// Perform an asynchronous REST API call against the Heroku platform.
+/// Perform an asynchronous REST API call against the Oatty platform.
 ///
 /// - Constructs the request from the `CommandSpec`.
 /// - Applies Range headers from the body when present.
@@ -114,8 +114,8 @@ async fn exec_remote_from_spec_inner(
     body: Map<String, Value>,
     path: String,
 ) -> Result<(StatusCode, HeaderMap, String, Option<String>), String> {
-    let client = HerokuClient::new_from_service_id(http.service_id)
-        .map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc", e))?;
+    let client =
+        OattyClient::new_from_service_id(http.service_id).map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY", e))?;
 
     let method = Method::from_bytes(http.method.as_bytes()).map_err(|e| e.to_string())?;
     let mut builder = client.request(method.clone(), &path);
@@ -146,12 +146,10 @@ async fn exec_remote_from_spec_inner(
         }
     }
 
-    let resp = builder.send().await.map_err(|e| {
-        format!(
-            "Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY or ~/.netrc is set",
-            e
-        )
-    })?;
+    let resp = builder
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY is set", e))?;
 
     let status = resp.status();
     let headers = resp.headers().clone();
@@ -241,7 +239,7 @@ fn truncate_for_summary(text: &str, max_len: usize) -> String {
 /// # Description
 /// This asynchronous function retrieves a JSON array from a remote endpoint defined
 /// in the [`CommandSpec`] parameter. It verifies the HTTP service configuration,
-/// initializes a Heroku API client, performs a GET request, and processes the response
+/// initializes a Oatty API client, performs a GET request, and processes the response
 /// to validate and extract the desired JSON array.
 ///
 /// # Parameters
@@ -255,8 +253,8 @@ fn truncate_for_summary(text: &str, max_len: usize) -> String {
 ///
 /// # Errors
 /// - Returns an error if the [`CommandSpec`] is not associated with an HTTP-backed service.
-/// - Returns an error if authentication setup for the Heroku API client fails (e.g., missing
-///   `HEROKU_API_KEY` or improperly configured `~/.netrc` file).
+/// - Returns an error if authentication setup for the Oatty API client fails (e.g., missing
+///   `HEROKU_API_KEY`).
 /// - Returns an error if the HTTP request fails (e.g., network error, invalid proxy settings).
 /// - Returns an error if the response status code indicates failure (non-2xx status code).
 /// - Returns an error if the response body is not a valid JSON array or cannot be deserialized.
@@ -276,10 +274,9 @@ fn truncate_for_summary(text: &str, max_len: usize) -> String {
 /// ```
 ///
 /// # Dependencies
-/// - This function uses the `HerokuClient` for API requests, and the `serde_json` crate
+/// - This function uses the `OattyClient` for API requests, and the `serde_json` crate
 ///   for parsing JSON responses.
-/// - Ensure the environment variable `HEROKU_API_KEY` or the `~/.netrc` configuration is
-///   set up properly for authentication.
+/// - Ensure the environment variable `HEROKU_API_KEY` is set for authentication.
 ///
 /// # Notes
 /// - The function unwraps the response body text (`text().await`) if reading the body fails,
@@ -291,19 +288,18 @@ fn truncate_for_summary(text: &str, max_len: usize) -> String {
 pub async fn fetch_json_array(spec: &CommandSpec) -> Result<Vec<Value>, String> {
     let http = spec.http().ok_or_else(|| format!("Command '{}' is not HTTP-backed", spec.name))?;
 
-    let client = HerokuClient::new_from_service_id(http.service_id)
-        .map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY or configure ~/.netrc", e))?;
+    let client =
+        OattyClient::new_from_service_id(http.service_id).map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY", e))?;
 
     let method = Method::from_bytes(http.method.as_bytes()).map_err(|e| e.to_string())?;
     if method != Method::GET {
         return Err("GET method required for list endpoints".into());
     }
-    let resp = client.request(method, &http.path).send().await.map_err(|e| {
-        format!(
-            "Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY or ~/.netrc is set",
-            e
-        )
-    })?;
+    let resp = client
+        .request(method, &http.path)
+        .send()
+        .await
+        .map_err(|e| format!("Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY is set", e))?;
 
     let status = resp.status();
     let text = resp.text().await.unwrap_or_else(|_| String::from("<no body>"));
@@ -339,8 +335,8 @@ fn get_range_header_value(body: &JsonMap<String, Value>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use heroku_types::CommandFlag;
-    use heroku_types::service::ServiceId;
+    use oatty_types::CommandFlag;
+    use oatty_types::service::ServiceId;
     use serde_json::json;
     use std::collections::HashMap;
 

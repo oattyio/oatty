@@ -1,6 +1,6 @@
 workflow: app_bootstrap
 title: "App Bootstrap"
-description: "Create a new Heroku app, configure basics, provision an addon, and optionally add a buildpack."
+description: "Create a new Oatty app, configure basics, provision an addon, and optionally add a buildpack."
 inputs:
   app_name:
     name: "App Name"

@@ -7,16 +7,16 @@ use crate::ui::components::workflows::list::WorkflowListState;
 use crate::ui::components::workflows::run::{RunViewState, StepFinishedData, WorkflowRunControlHandle};
 use crate::ui::theme::Theme;
 use anyhow::Result;
-use heroku_engine::{ProviderBindingOutcome, WorkflowRunState};
-use heroku_registry::{CommandRegistry, utils::find_by_group_and_cmd};
-use heroku_types::{
+use indexmap::IndexMap;
+use oatty_engine::{ProviderBindingOutcome, WorkflowRunState};
+use oatty_registry::{CommandRegistry, utils::find_by_group_and_cmd};
+use oatty_types::{
     command::SchemaProperty,
     workflow::{
         RuntimeWorkflow, WorkflowInputDefinition, WorkflowRunControl, WorkflowRunEvent, WorkflowRunStatus, WorkflowRunStepStatus,
         WorkflowValueProvider,
     },
 };
-use indexmap::IndexMap;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
@@ -596,10 +596,10 @@ mod workflow_run_tests {
     use crate::ui::components::workflows::run::state::RunExecutionStatus;
     use crate::ui::theme::dracula::DraculaTheme;
     use chrono::Utc;
-    use heroku_types::workflow::{
+    use indexmap::IndexMap;
+    use oatty_types::workflow::{
         RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault, WorkflowInputDefinition, WorkflowStepDefinition,
     };
-    use indexmap::IndexMap;
     use serde_json::{Value, json};
 
     fn sample_workflow() -> RuntimeWorkflow {

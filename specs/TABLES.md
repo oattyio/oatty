@@ -1,4 +1,4 @@
-# Heroku CLI — Table Rendering Design
+# Oatty CLI — Table Rendering Design
 
 ## Default Behavior
 - **Array JSON responses** → tables by default.

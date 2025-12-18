@@ -34,7 +34,6 @@ steps:
     run: apps addons:create
     with:
       app: ${{ inputs.app_name }}
-      addon: ${{ inputs.choose_addon }}
       plan: ${{ inputs.addon_plan }}
 
   - id: set_config

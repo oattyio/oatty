@@ -2,13 +2,13 @@
 //!
 //! This module provides a component for rendering the command palette, which
 //! handles text input, command suggestions, and user interactions for
-//! building Heroku CLI commands.
+//! building Oatty CLI commands.
 
 use std::hash::{DefaultHasher, Hasher};
 use std::vec;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::{Effect, ExecOutcome, ItemKind, Modal, Msg, Severity};
+use oatty_types::{Effect, ExecOutcome, ItemKind, Modal, Msg, Severity};
 use rat_focus::{FocusFlag, HasFocus};
 use ratatui::{
     Frame,
@@ -35,7 +35,7 @@ struct PaletteLayout {
 ///
 /// This component encapsulates the command palette experience, including the
 /// input line, suggestions popup, and help integration. It provides a
-/// comprehensive interface for building and executing Heroku commands.
+/// comprehensive interface for building and executing Oatty commands.
 ///
 /// # Features
 ///

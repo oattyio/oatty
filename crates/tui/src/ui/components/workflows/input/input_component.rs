@@ -11,8 +11,8 @@ use crate::ui::theme::{
     theme_helpers::{self as th, ButtonRenderOptions},
 };
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use heroku_engine::WorkflowRunState;
-use heroku_types::{Effect, Modal, Route};
+use oatty_engine::WorkflowRunState;
+use oatty_types::{Effect, Modal, Route};
 use rat_focus::HasFocus;
 use ratatui::layout::Position;
 use ratatui::widgets::Block;

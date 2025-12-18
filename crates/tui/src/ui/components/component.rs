@@ -1,4 +1,4 @@
-//! Component system for the Heroku TUI application.
+//! Component system for the Oatty TUI application.
 //!
 //! This module defines the Component trait and related abstractions that enable
 //! modular UI development. Components are self-contained UI elements that
@@ -9,7 +9,7 @@ use std::fmt::Debug;
 
 use crate::app::App;
 use crossterm::event::{KeyEvent, MouseEvent};
-use heroku_types::{Effect, Msg};
+use oatty_types::{Effect, Msg};
 use ratatui::layout::Position;
 use ratatui::{Frame, layout::Rect, text::Span};
 

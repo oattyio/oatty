@@ -18,8 +18,8 @@ use crate::{
     },
 };
 use anyhow::Result;
-use heroku_types::workflow::{RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault};
 use indexmap::{IndexMap, map::Entry as IndexMapEntry};
+use oatty_types::workflow::{RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault};
 use serde_json::Value;
 use std::env;
 
@@ -337,11 +337,11 @@ pub struct StepTelemetryEvent {
 mod tests {
     use super::*;
     use crate::executor::runner::NoopRunner;
-    use heroku_types::workflow::{
+    use indexmap::indexmap;
+    use oatty_types::workflow::{
         WorkflowDefaultSource, WorkflowInputDefault, WorkflowInputDefinition, WorkflowJoinConfiguration, WorkflowProviderArgumentBinding,
         WorkflowProviderArgumentValue, WorkflowProviderErrorPolicy, WorkflowStepDefinition, WorkflowValueProvider,
     };
-    use indexmap::indexmap;
 
     fn demo_workflow() -> RuntimeWorkflow {
         let input_definition = WorkflowInputDefinition {

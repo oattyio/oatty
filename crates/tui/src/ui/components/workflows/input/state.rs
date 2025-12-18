@@ -1,7 +1,7 @@
 use crate::ui::components::workflows::{JsonSyntaxRole, classify_json_value, format_preview};
-use heroku_engine::{ProviderBindingOutcome, WorkflowRunState};
-use heroku_types::{WorkflowInputDefinition, WorkflowProviderArgumentValue, WorkflowValueProvider, validate_candidate_value};
-use heroku_util::has_meaningful_value;
+use oatty_engine::{ProviderBindingOutcome, WorkflowRunState};
+use oatty_types::{WorkflowInputDefinition, WorkflowProviderArgumentValue, WorkflowValueProvider, validate_candidate_value};
+use oatty_util::has_meaningful_value;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;

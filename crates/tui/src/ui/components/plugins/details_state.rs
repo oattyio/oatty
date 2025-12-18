@@ -1,7 +1,7 @@
 //! State container for the plugin details modal, including loading lifecycle, tab selection,
 //! and the cached data required for rendering the overview/health/environment/logs/tools tabs.
 
-use heroku_mcp::{EnvVar, McpLogEntry, PluginDetail, PluginToolSummary};
+use oatty_mcp::{EnvVar, McpLogEntry, PluginDetail, PluginToolSummary};
 
 /// Loading lifecycle for the plugin details payload.
 #[derive(Debug, Clone)]

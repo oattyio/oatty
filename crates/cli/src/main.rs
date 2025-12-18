@@ -7,21 +7,21 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
-use heroku_api::HerokuClient;
-use heroku_engine::workflow::document::{build_runtime_catalog, runtime_workflow_from_definition};
-use heroku_engine::{
+use oatty_api::OattyClient;
+use oatty_engine::workflow::document::{build_runtime_catalog, runtime_workflow_from_definition};
+use oatty_engine::{
     ProviderBindingOutcome, ProviderResolutionEvent, ProviderResolutionSource, RegistryCommandRunner, StepResult, StepStatus,
     WorkflowRunState,
 };
-use heroku_mcp::{PluginEngine, config::load_config};
-use heroku_registry::{CommandRegistry, build_clap, feat_gate::feature_workflows, find_by_group_and_cmd};
-use heroku_types::{
+use oatty_mcp::{PluginEngine, config::load_config};
+use oatty_registry::{CommandRegistry, build_clap, feat_gate::feature_workflows, find_by_group_and_cmd};
+use oatty_types::{
     ExecOutcome, RuntimeWorkflow,
     command::CommandExecution,
     service::ServiceId,
     workflow::{WorkflowDefinition, validate_candidate_value},
 };
-use heroku_util::{
+use oatty_util::{
     DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, has_meaningful_value, resolve_path,
     value_contains_secret, workflow_input_uses_history,
 };
@@ -56,7 +56,7 @@ impl Write for GatedStderr {
 #[tokio::main]
 /// Entrypoint for the CLI application.
 ///
-/// This function serves as the main entry point for the Heroku CLI tool. It
+/// This function serves as the main entry point for the Oatty CLI tool. It
 /// handles command-line argument parsing and routes execution to either the TUI
 /// interface or command execution mode.
 ///
@@ -64,7 +64,7 @@ impl Write for GatedStderr {
 /// - If no subcommands are provided, launches the TUI interface
 /// - If workflow subcommands are provided (when FEATURE_WORKFLOWS=1), handles
 ///   workflow operations
-/// - Otherwise, executes the specified Heroku API command
+/// - Otherwise, executes the specified Oatty API command
 ///
 /// # Returns
 /// Returns `Result<()>` where `Ok(())` indicates successful execution and `Err`
@@ -73,13 +73,13 @@ impl Write for GatedStderr {
 /// # Examples
 /// ```bash
 /// # Launch TUI
-/// heroku-cli
+/// oatty
 ///
 /// # Execute command
-/// heroku-cli apps list
+/// oatty apps list
 ///
 /// # Workflow command (if enabled)
-/// heroku-cli workflow list
+/// oatty workflow list
 /// ```
 async fn main() -> Result<()> {
     init_tracing();
@@ -96,7 +96,7 @@ async fn main() -> Result<()> {
     if matches.subcommand_name().is_none() {
         // Silence tracing output to stderr while the TUI is active to avoid overlay
         TUI_ACTIVE.store(true, Ordering::Relaxed);
-        let tui_result = heroku_tui::run(Arc::clone(&command_registry), Arc::clone(&plugin_engine)).await;
+        let tui_result = oatty_tui::run(Arc::clone(&command_registry), Arc::clone(&plugin_engine)).await;
         TUI_ACTIVE.store(false, Ordering::Relaxed);
         plugin_engine.stop().await?;
         return tui_result;
@@ -110,11 +110,11 @@ async fn main() -> Result<()> {
 /// Initializes the tracing system for logging and diagnostics.
 ///
 /// This function sets up the tracing subscriber with configuration based on the
-/// `HEROKU_LOG` environment variable. It configures log levels and output
+/// `OATTY_LOG` environment variable. It configures log levels and output
 /// formatting for the application's diagnostic system.
 ///
 /// # Environment Variables
-/// - `HEROKU_LOG`: Controls the logging level. Valid values are:
+/// - `OATTY_LOG`: Controls the logging level. Valid values are:
 ///   - `error`: Only error messages
 ///   - `warn`: Warning and error messages
 ///   - `info`: Info, warning, and error messages (default)
@@ -122,7 +122,7 @@ async fn main() -> Result<()> {
 ///   - `trace`: All log levels
 ///
 /// # Behavior
-/// - Reads the `HEROKU_LOG` environment variable
+/// - Reads the `OATTY_LOG` environment variable
 /// - Defaults to "info" level if not set or invalid
 /// - Configures the tracing subscriber with the specified filter
 /// - Sets maximum log level to `Level::INFO`
@@ -130,15 +130,15 @@ async fn main() -> Result<()> {
 /// # Examples
 /// ```bash
 /// # Set debug logging
-/// HEROKU_LOG=debug cargo run
+/// OATTY_LOG=debug cargo run
 ///
 /// # Set error-only logging
-/// HEROKU_LOG=error cargo run
+/// OATTY_LOG=error cargo run
 /// ```
 fn init_tracing() {
-    // Respect HEROKU_LOG without imposing a lower max level ceiling.
-    // Example: HEROKU_LOG=debug will now allow `tracing::debug!` to emit.
-    let filter = std::env::var("HEROKU_LOG").unwrap_or_else(|_| "info".into());
+    // Respect OATTY_LOG without imposing a lower max level ceiling.
+    // Example: OATTY_LOG=debug will now allow `tracing::debug!` to emit.
+    let filter = std::env::var("OATTY_LOG").unwrap_or_else(|_| "info".into());
     let _ = fmt().with_env_filter(filter).with_writer(|| GatedStderr).try_init();
 }
 
@@ -370,11 +370,11 @@ fn describe_provider_outcome(outcome: &ProviderBindingOutcome) -> String {
     }
 }
 
-fn describe_binding_source(source: &heroku_engine::BindingSource) -> String {
+fn describe_binding_source(source: &oatty_engine::BindingSource) -> String {
     match source {
-        heroku_engine::BindingSource::Step { step_id } => format!("step:{step_id}"),
-        heroku_engine::BindingSource::Input { input_name } => format!("input:{input_name}"),
-        heroku_engine::BindingSource::Multiple { step_id, input_name } => {
+        oatty_engine::BindingSource::Step { step_id } => format!("step:{step_id}"),
+        oatty_engine::BindingSource::Input { input_name } => format!("input:{input_name}"),
+        oatty_engine::BindingSource::Multiple { step_id, input_name } => {
             format!("step:{step_id}, input:{input_name}")
         }
     }
@@ -388,11 +388,11 @@ fn format_step_status(status: StepStatus) -> &'static str {
     }
 }
 
-/// Executes a Heroku API command in CLI mode.
+/// Executes a Oatty API command in CLI mode.
 ///
-/// This function handles the execution of Heroku API commands when the CLI is
+/// This function handles the execution of Oatty API commands when the CLI is
 /// run with specific command arguments. It parses the command structure, builds
-/// the appropriate HTTP request, and executes it against the Heroku API.
+/// the appropriate HTTP request, and executes it against the Oatty API.
 ///
 /// # Arguments
 /// - `registry`: The command registry containing API endpoint specifications
@@ -410,7 +410,7 @@ fn format_step_status(status: StepStatus) -> &'static str {
 /// 2. Looks up the command specification in the registry
 /// 3. Collects positional arguments and flags from the command line
 /// 4. Builds the HTTP request body from flags
-/// 5. Constructs and executes the HTTP request to the Heroku API
+/// 5. Constructs and executes the HTTP request to the Oatty API
 /// 7. Outputs the response to stdout
 ///
 /// # Returns
@@ -420,12 +420,12 @@ fn format_step_status(status: StepStatus) -> &'static str {
 /// # Examples
 /// ```bash
 /// # List apps
-/// heroku-cli apps list
+/// oatty apps list
 ///
-/// heroku-cli apps app:create --name my-app
+/// oatty apps app:create --name my-app
 ///
 /// # Set config var
-/// heroku-cli config config:set KEY=value
+/// oatty config config:set KEY=value
 /// ```
 async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches, plugin_engine: Arc<PluginEngine>) -> Result<()> {
     // format is <group> <qualified subcommand> e.g. apps app:create
@@ -466,7 +466,7 @@ async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches
 
     match cmd_spec.execution() {
         CommandExecution::Http(http) => {
-            let client = HerokuClient::new_from_service_id(http.service_id)?;
+            let client = OattyClient::new_from_service_id(http.service_id)?;
             let method = Method::from_bytes(http.method.as_bytes())?;
             let path = resolve_path(&http.path, &pos_values);
             let mut builder = client.request(method, &path);
@@ -626,7 +626,7 @@ fn run_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, matche
         guard.clone()
     };
 
-    let client = HerokuClient::new_from_service_id(ServiceId::CoreApi)?;
+    let client = OattyClient::new_from_service_id(ServiceId::CoreApi)?;
     let runner = RegistryCommandRunner::new(registry_snapshot, client);
     let results = state.execute_with_runner(&runner)?;
     let run_succeeded = results.iter().all(|result| result.status != StepStatus::Failed);
@@ -646,7 +646,7 @@ fn run_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, matche
 #[cfg(test)]
 mod tests {
     use super::*;
-    use heroku_engine::{
+    use oatty_engine::{
         ArgumentPrompt, BindingFailure, BindingSource, MissingReason, ProviderResolutionEvent, ProviderResolutionSource, SkipDecision,
     };
     use serde_json::json;

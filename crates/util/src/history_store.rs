@@ -8,7 +8,7 @@ use crate::text_processing::is_secret;
 use chrono::serde::ts_seconds;
 use chrono::{DateTime, Utc};
 use dirs_next::{config_dir, home_dir};
-use heroku_types::workflow::{WorkflowDefaultSource, WorkflowInputDefinition};
+use oatty_types::workflow::{WorkflowDefaultSource, WorkflowInputDefinition};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::VecDeque;
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn workflow_input_history_detection() {
         let mut definition = WorkflowInputDefinition {
-            default: Some(heroku_types::workflow::WorkflowInputDefault {
+            default: Some(oatty_types::workflow::WorkflowInputDefault {
                 from: WorkflowDefaultSource::History,
                 value: None,
             }),
@@ -468,7 +468,7 @@ mod tests {
 
         assert!(workflow_input_uses_history(&definition));
 
-        definition.default = Some(heroku_types::workflow::WorkflowInputDefault {
+        definition.default = Some(oatty_types::workflow::WorkflowInputDefault {
             from: WorkflowDefaultSource::Literal,
             value: None,
         });

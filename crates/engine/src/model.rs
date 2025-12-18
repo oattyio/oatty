@@ -15,7 +15,7 @@
 //! ## Usage
 //!
 //! ```rust
-//! use heroku_engine::model::{WorkflowBundle, WorkflowSpec, StepSpec};
+//! use oatty_engine::model::{WorkflowBundle, WorkflowSpec, StepSpec};
 //! use serde_json::json;
 //! use std::collections::HashMap;
 //!

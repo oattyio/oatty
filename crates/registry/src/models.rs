@@ -1,12 +1,12 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use heroku_types::{CommandSpec, ProviderContract, manifest::RegistryManifest, workflow::WorkflowDefinition};
-use heroku_util::sort_and_dedup_commands;
 use indexmap::IndexMap;
+use oatty_types::{CommandSpec, ProviderContract, manifest::RegistryManifest, workflow::WorkflowDefinition};
+use oatty_util::sort_and_dedup_commands;
 
 static MANIFEST: &str = include_str!(concat!(env!("OUT_DIR"), "/heroku-manifest.json"));
-/// The main registry containing all available Heroku CLI commands.
+/// The main registry containing all available Oatty CLI commands.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct CommandRegistry {
     /// Collection of all available command specifications
@@ -21,7 +21,7 @@ impl CommandRegistry {
     /// Creates a new Registry instance by loading command definitions from the
     /// embedded schema.
     ///
-    /// This method reads the Heroku API manifest that was embedded during the
+    /// This method reads the Oatty API manifest that was embedded during the
     /// build process and deserializes it into a Registry. If the workflows
     /// feature is enabled, it also adds synthetic workflow commands.
     ///
@@ -33,7 +33,7 @@ impl CommandRegistry {
     /// # Examples
     ///
     /// ```rust
-    /// use heroku_registry::CommandRegistry;
+    /// use oatty_registry::CommandRegistry;
     ///
     /// let registry = CommandRegistry::from_embedded_schema().expect("load registry from schema");
     /// println!("Loaded {} commands", registry.commands.len());

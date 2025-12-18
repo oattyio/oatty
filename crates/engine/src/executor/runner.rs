@@ -6,9 +6,9 @@ use tokio::{runtime::Handle, task};
 
 use crate::resolve::RunContext;
 
-use heroku_api::HerokuClient;
-use heroku_registry::{CommandRegistry, CommandSpec, find_by_group_and_cmd};
-use heroku_util::{
+use oatty_api::OattyClient;
+use oatty_registry::{CommandRegistry, CommandSpec, find_by_group_and_cmd};
+use oatty_util::{
     build_path,
     http::{build_range_header_from_body, parse_response_json_strict, strip_range_body_fields},
 };
@@ -43,24 +43,24 @@ impl CommandRunner for NoopRunner {
 }
 
 /// Registry-backed command runner that resolves `run` identifiers via the
-/// command registry and executes HTTP requests with the Heroku API client.
+/// command registry and executes HTTP requests with the Oatty API client.
 pub struct RegistryCommandRunner {
     registry: CommandRegistry,
-    client: HerokuClient,
+    client: OattyClient,
 }
 
 impl RegistryCommandRunner {
     /// Create a new registry-backed runner from explicit dependencies.
-    pub fn new(registry: CommandRegistry, client: HerokuClient) -> Self {
+    pub fn new(registry: CommandRegistry, client: OattyClient) -> Self {
         Self { registry, client }
     }
 
     /// Create a new registry-backed runner by loading the embedded schema and
-    /// constructing a `HerokuClient` from environment variables.
+    /// constructing an `OattyClient` from environment variables.
     pub fn from_spec(spec: &CommandSpec) -> Result<Self> {
         let registry = CommandRegistry::from_embedded_schema()?;
         let http = spec.http().ok_or_else(|| anyhow!("command '{}' is not HTTP-backed", spec.name))?;
-        let client = HerokuClient::new_from_service_id(http.service_id)?;
+        let client = OattyClient::new_from_service_id(http.service_id)?;
         Ok(Self { registry, client })
     }
 }

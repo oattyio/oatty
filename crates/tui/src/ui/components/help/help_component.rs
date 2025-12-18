@@ -1,7 +1,7 @@
 //! Help modal component for displaying command documentation.
 //!
 //! This module provides a component for rendering the help modal, which
-//! displays comprehensive documentation for Heroku commands, including usage
+//! displays comprehensive documentation for Oatty commands, including usage
 //! syntax, arguments, options, and examples.
 
 use crate::ui::theme::Theme;
@@ -13,7 +13,7 @@ use crate::{
     },
 };
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
-use heroku_types::{CommandSpec, Effect};
+use oatty_types::{CommandSpec, Effect};
 use ratatui::layout::Position;
 use ratatui::prelude::Span;
 use ratatui::{

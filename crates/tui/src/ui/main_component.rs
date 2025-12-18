@@ -11,8 +11,9 @@ use crate::ui::components::palette::PaletteComponent;
 use crate::ui::components::theme_picker::ThemePickerComponent;
 use crate::ui::components::workflows::{RunViewComponent, WorkflowInputsComponent};
 use crate::ui::components::{BrowserComponent, PluginsComponent, WorkflowsComponent};
+use crate::ui::utils::centered_min_max;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
-use heroku_types::{Effect, Modal, Msg, Route};
+use oatty_types::{Effect, Modal, Msg, Route};
 use rat_focus::{FocusBuilder, HasFocus};
 use ratatui::widgets::Clear;
 use ratatui::{
@@ -156,7 +157,9 @@ impl MainView {
                 }
                 Modal::Confirmation => (
                     Box::new(ConfirmationModal::default()),
-                    ModalLayout(Box::new(|rect| centered_rect(45, 35, rect))),
+                    ModalLayout(Box::new(|rect| {
+                        centered_min_max(45, 35, Rect::new(0, 0, 80, 10), Rect::new(0, 0, 160, 16), rect)
+                    })),
                 ),
             };
             self.modal_view = Some(modal_view);

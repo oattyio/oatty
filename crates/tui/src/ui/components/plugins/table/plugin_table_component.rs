@@ -6,8 +6,8 @@ use crate::ui::{
 };
 use crate::{app::App, ui::components::component::Component};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use heroku_mcp::AuthStatus;
-use heroku_types::{Effect, Modal, PluginStatus};
+use oatty_mcp::AuthStatus;
+use oatty_types::{Effect, Modal, PluginStatus};
 use rat_focus::FocusFlag;
 use ratatui::layout::Position;
 use ratatui::prelude::Layout;
@@ -611,7 +611,7 @@ fn format_auth_status(status: &AuthStatus) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use heroku_mcp::AuthStatus;
+    use oatty_mcp::AuthStatus;
 
     #[test]
     fn format_auth_status_returns_correct_symbols() {

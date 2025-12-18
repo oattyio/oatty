@@ -12,13 +12,13 @@ NC := \033[0m # No Color
 SERVICE ?= core-api
 
 help: ## Show this help message
-	@echo "$(BLUE)Heroku CLI (Rust) - Development Commands$(NC)"
+	@echo "$(BLUE)Oatty CLI (Rust) - Development Commands$(NC)"
 	@echo ""
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-20s$(NC) %s\n", $$1, $$2}'
 	@echo ""
 	@echo "$(YELLOW)Environment Variables:$(NC)"
-	@echo "  HEROKU_API_KEY   - Your Heroku API key (required for API calls)"
-	@echo "  HEROKU_LOG       - Log level: error|warn|info|debug|trace (default: info)"
+	@echo "  HEROKU_API_KEY   - Your Oatty API key (required for API calls)"
+	@echo "  OATTY_LOG       - Log level: error|warn|info|debug|trace (default: info)"
 	@echo "  TUI_THEME        - Theme: dracula|dracula_hc|nord|nord_hc (default: dracula)"
 	@echo "  DEBUG            - Enable debug mode: 1|0"
 
@@ -33,7 +33,7 @@ build: ## Build all workspace crates (debug)
 build-release: ## Build all workspace crates (optimized)
 	@echo "$(BLUE)==> Building workspace (release)...$(NC)"
 	@cargo build --workspace --release
-	@echo "$(GREEN)✓ Release binary: target/release/heroku-cli$(NC)"
+	@echo "$(GREEN)✓ Release binary: target/release/oatty$(NC)"
 
 clean: ## Clean build artifacts
 	@echo "$(BLUE)==> Cleaning build artifacts...$(NC)"
@@ -69,19 +69,19 @@ clippy-fix: ## Run clippy with auto-fix
 
 run-tui: ## Run the TUI (interactive mode)
 	@echo "$(BLUE)==> Launching TUI...$(NC)"
-	@cargo run -p heroku-cli
+	@cargo run -p oatty-cli
 
 run-cli: ## Run CLI with arguments (use ARGS="apps list")
 	@echo "$(BLUE)==> Running CLI: $(ARGS)$(NC)"
-	@cargo run -p heroku-cli -- $(ARGS)
+	@cargo run -p oatty-cli -- $(ARGS)
 
 run-apps-list: ## Run: apps list
 	@echo "$(BLUE)==> Running: apps list$(NC)"
-	@cargo run -p heroku-cli -- apps list
+	@cargo run -p oatty-cli -- apps list
 
 run-apps-info: ## Run: apps info (use APP=my-app)
 	@echo "$(BLUE)==> Running: apps info $(APP)$(NC)"
-	@cargo run -p heroku-cli -- apps info $(APP)
+	@cargo run -p oatty-cli -- apps info $(APP)
 
 doc: ## Generate and open documentation
 	@echo "$(BLUE)==> Generating documentation...$(NC)"
@@ -93,12 +93,12 @@ doc-all: ## Generate documentation including dependencies
 
 manifest-json: ## Generate manifest as JSON
 	@echo "$(BLUE)==> Generating manifest (JSON)...$(NC)"
-	@cargo run -p heroku-registry-gen -- --json --service $(SERVICE) schemas/heroku-schema.enhanced.json target/manifest-debug.json
+	@cargo run -p oatty-registry-gen -- --json --service $(SERVICE) schemas/heroku-schema.enhanced.json target/manifest-debug.json
 	@echo "$(GREEN)✓ Generated: target/manifest-debug.json$(NC)"
 
 manifest-bin: ## Generate manifest as bincode
 	@echo "$(BLUE)==> Generating manifest (bincode)...$(NC)"
-	@cargo run -p heroku-registry-gen -- --service $(SERVICE) schemas/heroku-schema.enhanced.json target/manifest-debug.bin
+	@cargo run -p oatty-registry-gen -- --service $(SERVICE) schemas/heroku-schema.enhanced.json target/manifest-debug.bin
 	@echo "$(GREEN)✓ Generated: target/manifest-debug.bin$(NC)"
 
 pre-commit: fmt clippy test ## Run all pre-commit checks
@@ -129,7 +129,7 @@ tree: ## Show dependency tree
 
 bloat: ## Analyze binary size
 	@echo "$(BLUE)==> Analyzing binary size...$(NC)"
-	@cargo bloat --release -p heroku-cli
+	@cargo bloat --release -p oatty-cli
 
 # Quick run examples
 .PHONY: example-apps-list example-apps-create example-tui
@@ -138,7 +138,7 @@ example-apps-list: ## Example: List all apps
 
 example-apps-create: ## Example: Create an app (use NAME=my-app)
 	@echo "$(BLUE)==> Running: apps create --name $(NAME)$(NC)"
-	@cargo run -p heroku-cli -- apps create --name $(NAME)
+	@cargo run -p oatty-cli -- apps create --name $(NAME)
 
 example-tui: ## Example: Launch TUI with debug logging
-	@HEROKU_LOG=debug TUI_THEME=dracula $(MAKE) run-tui
+	@OATTY_LOG=debug TUI_THEME=dracula $(MAKE) run-tui

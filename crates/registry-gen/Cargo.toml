@@ -1,11 +1,11 @@
 [package]
-name = "heroku-registry-gen"
+name = "oatty-registry-gen"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
-description = "Heroku registry code generation utilities"
+description = "Oatty registry code generation utilities"
 license = "MIT OR Apache-2.0"
-authors = ["Heroku CLI Team <devnull@example.com>"]
+authors = ["Oatty CLI Team <devnull@example.com>"]
 repository = "https://example.com/heroku"
 readme = "README.md"
 
@@ -18,8 +18,8 @@ serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 percent-encoding = { workspace = true }
 heck = { workspace = true }
-heroku-types = { path = "../types" }
-heroku-util = {path = "../util"}
+oatty-types = { path = "../types" }
+oatty-util = {path = "../util"}
 bincode = { workspace = true }
 clap = { workspace = true }
 indexmap = { workspace = true }

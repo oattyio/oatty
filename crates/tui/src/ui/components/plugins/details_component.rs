@@ -10,8 +10,8 @@ use crate::{
 };
 use chrono::{DateTime, Local};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use heroku_mcp::{EnvVar, McpLogEntry, PluginDetail, PluginStatus};
-use heroku_types::Effect;
+use oatty_mcp::{EnvVar, McpLogEntry, PluginDetail, PluginStatus};
+use oatty_types::Effect;
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},

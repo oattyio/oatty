@@ -1,11 +1,11 @@
 # Quick Start Guide
 
-Get up and running with the Heroku CLI (Rust) in 5 minutes.
+Get up and running with the Oatty CLI (Rust) in 5 minutes.
 
 ## Prerequisites
 
 - **Rust** (nightly toolchain) - Install from [rustup.rs](https://rustup.rs/)
-- **Heroku API Key** - Get yours from [dashboard.heroku.com/account](https://dashboard.heroku.com/account)
+- **Oatty API Key** - Get yours from [dashboard.heroku.com/account](https://dashboard.heroku.com/account)
 
 ## Setup (Automated)
 
@@ -49,7 +49,7 @@ cargo test --workspace
 Launch the Terminal UI:
 
 ```bash
-cargo run -p heroku-cli
+cargo run -p oatty-cli
 ```
 
 **TUI Controls:**
@@ -71,16 +71,16 @@ Run commands directly:
 
 ```bash
 # List all apps
-cargo run -p heroku-cli -- apps list
+cargo run -p oatty-cli -- apps list
 
 # Get info about an app
-cargo run -p heroku-cli -- apps info my-app
+cargo run -p oatty-cli -- apps info my-app
 
 # Create a new app
-cargo run -p heroku-cli -- apps create --name demo-app
+cargo run -p oatty-cli -- apps create --name demo-app
 
 # List releases
-cargo run -p heroku-cli -- releases list my-app
+cargo run -p oatty-cli -- releases list my-app
 ```
 
 ## Development Workflow
@@ -128,7 +128,7 @@ cargo fmt --all
 
 # Build optimized release binary
 cargo build --release -p heroku-cli
-# Binary will be at: target/release/heroku-cli
+# Binary will be at: target/release/oatty
 ```
 
 ### Using VS Code / Cursor
@@ -145,27 +145,27 @@ cargo build --release -p heroku-cli
 
 ```bash
 # Debug logging
-HEROKU_LOG=debug cargo run -p heroku-cli
+OATTY_LOG=debug cargo run -p oatty-cli
 
 # Trace logging (very verbose)
-HEROKU_LOG=trace cargo run -p heroku-cli
+OATTY_LOG=trace cargo run -p oatty-cli
 ```
 
 ### Change Theme
 
 ```bash
 # Use Nord theme
-TUI_THEME=nord cargo run -p heroku-cli
+TUI_THEME=nord cargo run -p oatty-cli
 
 # Use high-contrast Dracula
-TUI_THEME=dracula_hc cargo run -p heroku-cli
+TUI_THEME=dracula_hc cargo run -p oatty-cli
 ```
 
 ### Generate Command Manifest
 
 ```bash
 # Generate JSON manifest (for inspection)
-cargo run -p heroku-registry-gen -- --json \
+cargo run -p oatty-registry-gen -- --json \
     schemas/heroku-schema.enhanced.json \
     target/manifest.json
 
@@ -220,7 +220,7 @@ Create a `.env` file (see `.env.example`):
 HEROKU_API_KEY=your-api-key-here
 
 # Optional
-HEROKU_LOG=debug              # Log level
+OATTY_LOG=debug              # Log level
 TUI_THEME=dracula             # Theme
 DEBUG=1                       # Debug mode
 RUST_BACKTRACE=1              # Show backtraces
@@ -232,10 +232,10 @@ RUST_BACKTRACE=1              # Show backtraces
 
 ```bash
 # Run with backtrace
-RUST_BACKTRACE=1 cargo run -p heroku-cli -- apps list
+RUST_BACKTRACE=1 cargo run -p oatty-cli -- apps list
 
 # Full backtrace
-RUST_BACKTRACE=full cargo run -p heroku-cli
+RUST_BACKTRACE=full cargo run -p oatty-cli
 ```
 
 ### VS Code / Cursor
@@ -254,7 +254,7 @@ RUST_BACKTRACE=full cargo run -p heroku-cli
 cargo test --workspace
 
 # Run tests for specific crate
-cargo test -p heroku-cli
+cargo test -p oatty-cli
 
 # Run a specific test
 cargo test test_name -- --exact
@@ -291,7 +291,7 @@ make pre-commit
 
 ## Troubleshooting
 
-### "Heroku API authentication failed"
+### "Oatty API authentication failed"
 
 → Set `HEROKU_API_KEY` in `.env` or environment
 
@@ -315,8 +315,8 @@ make pre-commit
 
 1. ✅ **Read the docs**: [DEVELOPMENT.md](./DEVELOPMENT.md) has comprehensive info
 2. ✅ **Explore the code**: Start with `crates/cli/src/main.rs`
-3. ✅ **Try the TUI**: `cargo run -p heroku-cli`
-4. ✅ **Run some commands**: `cargo run -p heroku-cli -- apps list`
+3. ✅ **Try the TUI**: `cargo run -p oatty-cli`
+4. ✅ **Run some commands**: `cargo run -p oatty-cli -- apps list`
 5. ✅ **Set up your editor**: Install VS Code extensions
 6. ✅ **Pick a task**: Check issues or roadmap
 

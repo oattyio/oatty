@@ -1,6 +1,6 @@
 workflow: ci_manual_run
 title: "CI Manual Run"
-description: "Trigger a Heroku CI test run for a given pipeline and branch."
+description: "Trigger a Oatty CI test run for a given pipeline and branch."
 inputs:
   pipeline:
     name: "Pipeline"

@@ -9,7 +9,7 @@ use crate::ui::{
     theme::theme_helpers as th,
 };
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::{Effect, Msg};
+use oatty_types::{Effect, Msg};
 use rat_focus::HasFocus;
 use ratatui::layout::Position;
 use ratatui::widgets::{Borders, Padding};

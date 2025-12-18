@@ -1,6 +1,6 @@
 workflow: postgres_cluster_health_snapshot
 title: "Postgres cluster health snapshot"
-description: "Gather a consistent health snapshot for a Performance-tier Heroku Postgres cluster: topology, pools, settings, and quotas."
+description: "Gather a consistent health snapshot for a Performance-tier Oatty Postgres cluster: topology, pools, settings, and quotas."
 inputs:
   app:
     name: "App"
@@ -8,7 +8,7 @@ inputs:
     select: { value_field: name, display_field: name }
   addon:
     name: "Addon"
-    description: "Heroku Postgres addon name or ID (Performance tier)."
+    description: "Oatty Postgres addon name or ID (Performance tier)."
     provider: apps addons:list
     depends_on:
       app: ${{ inputs.app }}

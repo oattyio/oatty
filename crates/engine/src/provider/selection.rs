@@ -61,7 +61,7 @@ impl Default for FieldSelection {
 ///
 /// Examples
 /// ```rust
-/// use heroku_engine::provider::{ProviderContract, ProviderReturns, ReturnField, infer_selection};
+/// use oatty_engine::provider::{ProviderContract, ProviderReturns, ReturnField, infer_selection};
 ///
 /// let contract = ProviderContract {
 ///     arguments: Vec::new(),

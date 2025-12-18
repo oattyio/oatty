@@ -1,4 +1,4 @@
-use heroku_types::manifest::RegistryManifest;
+use oatty_types::manifest::RegistryManifest;
 
 // Re-export public items from modules
 pub mod io;

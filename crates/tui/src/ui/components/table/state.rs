@@ -11,7 +11,7 @@ use crate::ui::{
         status_color_for_value,
     },
 };
-use heroku_types::ExecOutcome;
+use oatty_types::ExecOutcome;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use ratatui::prelude::{Line, Span};

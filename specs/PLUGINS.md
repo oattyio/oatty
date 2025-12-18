@@ -1,14 +1,14 @@
 # MCP Plugin Architecture Specification
 
 This document describes the current Model Context Protocol (MCP) plugin system that powers the
-Heroku CLI and Terminal UI (TUI). It covers the runtime architecture, configuration contract,
+Oatty CLI and Terminal UI (TUI). It covers the runtime architecture, configuration contract,
 transport support, lifecycle management, logging pipeline, provider integration, and user
 experience. The specification reflects the multi-crate implementation that ships today, spanning
 `crates/mcp`, `crates/registry`, `crates/tui`, and `crates/util`.
 
 ## Current Capabilities
 
-- **Configuration:** Uses `~/.config/heroku/mcp.json` (override via `MCP_CONFIG_PATH`) with
+- **Configuration:** Uses `~/.config/oatty/mcp.json` (override via `MCP_CONFIG_PATH`) with
   camelCase fields under `mcpServers`. Supports `${env:}` and `${secret:}` interpolation during
   load, and preserves redactions on write.
 - **Transports:** Fully supports stdio plugins (spawned child process) and HTTP/SSE transports via
@@ -26,7 +26,7 @@ experience. The specification reflects the multi-crate implementation that ships
 - **Security & Secrets:** Sensitive values are redacted in UI, logs, and audit trails. `${secret:}`
   entries resolve through `keyring-rs`, and OAuth tokens can be pulled from the OS keychain for
   remote transports.
-- **Live Reload:** The TUI watches `~/.config/heroku/mcp.json` for changes. When a valid write is
+- **Live Reload:** The TUI watches `~/.config/oatty/mcp.json` for changes. When a valid write is
   detected, the MCP engine reloads the configuration, rewrites the registry, and restarts any
   plugins that were running before the edit so the UI reflects manual changes without re-launching
   the CLI.
@@ -81,14 +81,14 @@ experience. The specification reflects the multi-crate implementation that ships
    with or without redaction.
 2. `AuditLogger` writes JSONL records with rotation after 10MB or seven days, ensuring restrictive
    permissions. Entries capture action (`Start`, `ToolInvoke`, etc.), result, and metadata.
-3. All text output goes through `LogFormatter`, which applies `heroku_util::redact_sensitive_with`
+3. All text output goes through `LogFormatter`, which applies `oatty_util::redact_sensitive_with`
    to scrub tokens before rendering in the UI or terminal.
 
 ## Configuration Reference
 
 ### File Location
 
-- Default: `~/.config/heroku/mcp.json`.
+- Default: `~/.config/oatty/mcp.json`.
 - Override: `MCP_CONFIG_PATH` environment variable (supports `~` expansion).
 - No fallback to `~/.cursor/mcp.json`; configuration remains local to the CLI.
 

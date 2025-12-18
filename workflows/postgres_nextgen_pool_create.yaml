@@ -1,6 +1,6 @@
 workflow: postgres_nextgen_pool_create
 title: "Postgres Next-Gen Pool Create"
-description: "Create and activate a Next-Gen Heroku Postgres compute pool, then wait for it to become available."
+description: "Create and activate a Next-Gen Oatty Postgres compute pool, then wait for it to become available."
 inputs:
   app:
     name: "App"
@@ -8,7 +8,7 @@ inputs:
     select: { value_field: name, display_field: name }
   addon:
     name: "Addon"
-    description: "Heroku Postgres addon name or ID (Next-Gen performance tier)."
+    description: "Oatty Postgres addon name or ID (Next-Gen performance tier)."
     provider: apps addons:list
     depends_on:
       app: ${{ inputs.app }}

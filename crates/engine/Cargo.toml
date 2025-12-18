@@ -1,11 +1,11 @@
 [package]
-name = "heroku-engine"
+name = "oatty-engine"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
-description = "Heroku workflow execution engine"
+description = "Oatty workflow execution engine"
 license = "MIT OR Apache-2.0"
-authors = ["Heroku CLI Team <devnull@example.com>"]
+authors = ["Oatty CLI Team <devnull@example.com>"]
 repository = "https://example.com/heroku"
 
 [dependencies]
@@ -14,10 +14,10 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
 tracing = { workspace = true }
-heroku-api = { path = "../api" }
-heroku-util = { path = "../util" }
-heroku-registry = { path = "../registry" }
-heroku-types = { path = "../types" }
+oatty-api = { path = "../api" }
+oatty-util = { path = "../util" }
+oatty-registry = { path = "../registry" }
+oatty-types = { path = "../types" }
 tokio = { workspace = true }
 reqwest = { workspace = true }
 indexmap = { workspace = true }

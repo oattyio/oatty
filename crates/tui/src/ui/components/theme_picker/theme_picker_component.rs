@@ -3,7 +3,7 @@ use crate::ui::components::Component;
 use crate::ui::theme::catalog::ThemeDefinition;
 use crate::ui::theme::theme_helpers as th;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use heroku_types::{Effect, Modal};
+use oatty_types::{Effect, Modal};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Modifier, Style};
@@ -72,9 +72,9 @@ impl ThemePickerComponent {
 }
 
 impl Component for ThemePickerComponent {
-    fn handle_message(&mut self, app: &mut App, msg: &heroku_types::Msg) -> Vec<Effect> {
+    fn handle_message(&mut self, app: &mut App, msg: &oatty_types::Msg) -> Vec<Effect> {
         match (msg, app.open_modal_kind.as_ref()) {
-            (heroku_types::Msg::Resize(_, _), Some(Modal::ThemePicker)) => Vec::new(),
+            (oatty_types::Msg::Resize(_, _), Some(Modal::ThemePicker)) => Vec::new(),
             _ => Vec::new(),
         }
     }
@@ -114,7 +114,7 @@ impl Component for ThemePickerComponent {
                 theme.text_secondary_style(),
             )),
             Line::from(Span::styled(
-                "Press Enter to apply, Esc to close. Selection persists to ~/.config/heroku/preferences.json.",
+                "Press Enter to apply, Esc to close. Selection persists to ~/.config/oatty/preferences.json.",
                 theme.text_muted_style(),
             )),
         ];

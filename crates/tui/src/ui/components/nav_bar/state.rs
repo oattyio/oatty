@@ -1,4 +1,4 @@
-use heroku_types::{Modal, Route};
+use oatty_types::{Modal, Route};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 

@@ -1,4 +1,4 @@
-//! Application state and logic for the Heroku TUI.
+//! Application state and logic for the Oatty TUI.
 //!
 //! This module contains the main application state, data structures, and
 //! business logic for the TUI interface. It manages the application lifecycle,
@@ -20,12 +20,12 @@ use crate::ui::{
     },
     theme,
 };
-use heroku_engine::ValueProvider;
-use heroku_engine::provider::{CacheLookupOutcome, PendingProviderFetch, ProviderRegistry};
-use heroku_mcp::PluginEngine;
-use heroku_registry::CommandRegistry;
-use heroku_types::{Effect, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus, validate_candidate_value};
-use heroku_util::{
+use oatty_engine::ValueProvider;
+use oatty_engine::provider::{CacheLookupOutcome, PendingProviderFetch, ProviderRegistry};
+use oatty_mcp::PluginEngine;
+use oatty_registry::CommandRegistry;
+use oatty_types::{Effect, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus, validate_candidate_value};
+use oatty_util::{
     DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, UserPreferences, has_meaningful_value,
     value_contains_secret, workflow_input_uses_history,
 };
@@ -40,7 +40,7 @@ use tracing::warn;
 /// flags. This avoids threading multiple references through components and
 /// helps reduce borrow complexity.
 pub struct SharedCtx {
-    /// Global Heroku command registry
+    /// Global Oatty command registry
     pub command_registry: Arc<Mutex<CommandRegistry>>,
     /// Value providers for suggestions
     pub providers: Vec<Arc<dyn ValueProvider>>,
@@ -78,7 +78,7 @@ impl SharedCtx {
                 Arc::new(InMemoryHistoryStore::new())
             }
         };
-        let preferences = Arc::new(UserPreferences::with_defaults().unwrap_or_else(|error| {
+        let preferences = Arc::new(UserPreferences::new().unwrap_or_else(|error| {
             warn!(
                 error = %error,
                 "Failed to load preferences from disk; falling back to ephemeral in-memory store."
@@ -171,7 +171,7 @@ impl App<'_> {
     ///
     /// # Arguments
     ///
-    /// * `registry` - The Heroku command registry containing all available
+    /// * `registry` - The Oatty command registry containing all available
     ///   commands
     ///
     /// # Returns

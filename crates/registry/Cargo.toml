@@ -1,11 +1,11 @@
 [package]
-name = "heroku-registry"
+name = "oatty-registry"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.89"
-description = "Heroku command registry and schema management"
+description = "Oatty command registry and schema management"
 license = "MIT OR Apache-2.0"
-authors = ["Heroku CLI Team <devnull@example.com>"]
+authors = ["Oatty CLI Team <devnull@example.com>"]
 repository = "https://example.com/heroku"
 
 [dependencies]
@@ -13,12 +13,12 @@ anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 clap = { workspace = true }
-heroku-types = { path = "../types" }
-heroku-util = {path = "../util"}
+oatty-types = { path = "../types" }
+oatty-util = {path = "../util"}
 indexmap = { workspace = true }
 
 [build-dependencies]
 anyhow = { workspace = true }
 serde_json = { workspace = true }
-heroku-registry-gen = { path = "../registry-gen" }
-heroku-types = { path = "../types" }
+oatty-registry-gen = { path = "../registry-gen" }
+oatty-types = { path = "../types" }

@@ -17,7 +17,7 @@
 ///
 /// # Example
 /// ```rust
-/// use heroku_util::shell_lexing::lex_shell_like;
+/// use oatty_util::shell_lexing::lex_shell_like;
 ///
 /// let tokens = lex_shell_like("cmd --flag 'some value'");
 /// assert_eq!(
@@ -81,7 +81,7 @@ pub struct LexToken<'a> {
 ///
 /// # Example
 /// ```rust
-/// use heroku_util::shell_lexing::lex_shell_like_ranged;
+/// use oatty_util::shell_lexing::lex_shell_like_ranged;
 ///
 /// let tokens = lex_shell_like_ranged("hello world");
 /// assert_eq!(tokens.len(), 2);

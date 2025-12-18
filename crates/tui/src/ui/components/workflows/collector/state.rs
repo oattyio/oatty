@@ -8,9 +8,9 @@
 use crate::ui::components::common::TextInputState;
 use crate::ui::components::table::ResultsTableState;
 use crate::ui::theme::Theme;
-use heroku_types::WorkflowProviderErrorPolicy;
-use heroku_util::fuzzy_score;
 use indexmap::IndexMap;
+use oatty_types::WorkflowProviderErrorPolicy;
+use oatty_util::fuzzy_score;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use serde_json::Value;

@@ -8,7 +8,7 @@ use crate::config::McpServer;
 use crate::logging::LogManager;
 use crate::types::McpLogEntry;
 use crate::types::{LogLevel, LogSource};
-use heroku_types::EnvVar;
+use oatty_types::EnvVar;
 use std::sync::Arc;
 
 const DEFAULT_PARENT_ENVIRONMENT_ALLOWLIST: &[&str] = &["PATH", "SystemRoot", "SYSTEMROOT", "WINDIR", "COMSPEC"];

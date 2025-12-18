@@ -1,6 +1,6 @@
 workflow: postgres_storage_quota_guardrail
 title: "Postgres storage quota guardrail"
-description: "Inspect current storage usage for a Heroku Postgres addon and optionally tighten quota thresholds."
+description: "Inspect current storage usage for a Oatty Postgres addon and optionally tighten quota thresholds."
 inputs:
   app:
     name: "App"
@@ -8,7 +8,7 @@ inputs:
     select: { value_field: name, display_field: name }
   addon:
     name: "Addon"
-    description: "Heroku Postgres addon name or ID to manage."
+    description: "Oatty Postgres addon name or ID to manage."
     provider: apps addons:list
     depends_on:
       app: ${{ inputs.app }}

@@ -5,7 +5,7 @@ use crate::{
     ui::theme::theme_helpers::{self as th, ButtonRenderOptions, render_button},
 };
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use heroku_types::Effect;
+use oatty_types::Effect;
 use ratatui::text::Span;
 use ratatui::{
     Frame,

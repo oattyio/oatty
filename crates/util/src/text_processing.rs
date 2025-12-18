@@ -30,7 +30,7 @@ const MIN_BASE64_LENGTH: usize = 24;
 ///
 /// # Example
 /// ```rust
-/// use heroku_util::text_processing::redact_sensitive;
+/// use oatty_util::text_processing::redact_sensitive;
 ///
 /// let input = "API_KEY=abc123 TOKEN=xyz789";
 /// let redacted = redact_sensitive(input);
@@ -450,7 +450,7 @@ fn is_base64_like(value: &str, analysis: &CharacterAnalysis) -> bool {
 ///
 /// # Example
 /// ```rust
-/// use heroku_util::text_processing::fuzzy_score;
+/// use oatty_util::text_processing::fuzzy_score;
 ///
 /// // Basic matching
 /// assert!(fuzzy_score("applications", "app").unwrap() > 0);
@@ -739,7 +739,7 @@ pub fn has_meaningful_value(value: &Value) -> bool {
 ///
 /// # Example
 /// ```rust
-/// use heroku_util::text_processing::truncate_with_ellipsis;
+/// use oatty_util::text_processing::truncate_with_ellipsis;
 ///
 /// let s = "Hello, world!";
 /// assert_eq!(truncate_with_ellipsis(s, 5), "Hello…");
@@ -763,7 +763,7 @@ pub fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
 ///
 /// # Example
 /// ```
-/// use heroku_util::text_processing::format_duration;
+/// use oatty_util::text_processing::format_duration;
 /// use chrono::Duration;
 ///
 /// let formatted = format_duration(Duration::seconds(123));
@@ -786,7 +786,7 @@ pub fn format_duration(duration: Duration) -> String {
 ///
 /// # Example
 /// ```
-/// use heroku_util::text_processing::format_duration_short;
+/// use oatty_util::text_processing::format_duration_short;
 /// use chrono::Duration;
 ///
 /// let formatted = format_duration_short(Duration::seconds(123));

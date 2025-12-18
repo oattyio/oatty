@@ -10,7 +10,7 @@ Redaction
 Examples
 ```rust
 let header_line = "Authorization: Bearer xxxxxx";
-let safe = heroku_util::redact_sensitive(header_line);
+let safe = oatty_util::redact_sensitive(header_line);
 assert!(safe.contains("Authorization: "));
 ```
 

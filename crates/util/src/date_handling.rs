@@ -21,7 +21,7 @@ use crate::generated_date_fields;
 ///
 /// # Example
 /// ```rust
-/// use heroku_util::date_handling::is_date_like_key;
+/// use oatty_util::date_handling::is_date_like_key;
 ///
 /// // Common date field patterns
 /// assert!(is_date_like_key("created_at"));
@@ -105,7 +105,7 @@ fn is_heuristic_date_key(normalized_key: &str) -> bool {
 ///
 /// # Example
 /// ```rust
-/// use heroku_util::date_handling::format_date_mmddyyyy;
+/// use oatty_util::date_handling::format_date_mmddyyyy;
 ///
 /// // RFC3339 timestamps
 /// assert_eq!(format_date_mmddyyyy("2023-12-25T10:30:00Z"), Some("12/25/2023".to_string()));

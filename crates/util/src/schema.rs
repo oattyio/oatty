@@ -1,4 +1,4 @@
-use heroku_types::command::SchemaProperty;
+use oatty_types::command::SchemaProperty;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 

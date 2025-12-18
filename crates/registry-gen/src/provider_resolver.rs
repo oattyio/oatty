@@ -21,7 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use heroku_types::{Bind, CommandFlag, CommandSpec, ValueProvider};
+use oatty_types::{Bind, CommandFlag, CommandSpec, ValueProvider};
 
 /// Represents the outcome of attempting to bind provider parameters to consumer inputs.
 #[derive(Debug)]
@@ -171,7 +171,7 @@ fn apply_flag_providers(flags: &mut [CommandFlag], list_groups: &HashSet<String>
 /// Create a mapping from flag names to their corresponding group names.
 ///
 /// This mapping handles common singular-to-plural transformations and special cases
-/// for Heroku CLI command groups.
+/// for Oatty CLI command groups.
 fn create_flag_to_group_synonyms() -> HashMap<&'static str, &'static str> {
     HashMap::from([
         ("app", "apps"),
@@ -694,7 +694,7 @@ fn map_flag_name_to_group(flag_name: &str, synonyms: &HashMap<&str, &str>) -> Op
 /// Apply conservative pluralization rules for group name inference.
 ///
 /// This function attempts to pluralize a singular noun to match common
-/// Heroku CLI group naming patterns. It uses conservative rules to avoid
+/// Oatty CLI group naming patterns. It uses conservative rules to avoid
 /// incorrect pluralizations.
 ///
 /// # Rules

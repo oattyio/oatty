@@ -31,7 +31,7 @@ use crate::{CommandFlag, CommandRegistry, CommandSpec, feat_gate::feature_workfl
 ///
 /// ```rust
 /// use std::sync::{Arc, Mutex};
-/// use heroku_registry::{CommandRegistry, build_clap};
+/// use oatty_registry::{CommandRegistry, build_clap};
 ///
 /// let registry = CommandRegistry::from_embedded_schema().unwrap();
 /// let registry = Arc::new(Mutex::new(registry));
@@ -72,14 +72,14 @@ pub fn build_clap(registry: Arc<Mutex<CommandRegistry>>) -> ClapCommand {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use heroku_registry::clap_builder::create_root_command;
+/// use oatty_registry::clap_builder::create_root_command;
 ///
 /// let root = create_root_command();
 /// assert_eq!(root.get_name(), "heroku");
 /// ```
 fn create_root_command() -> ClapCommand {
     ClapCommand::new("heroku")
-        .about("Heroku CLI (experimental)")
+        .about("Oatty CLI (experimental)")
         .arg(
             Arg::new("json")
                 .long("json")
@@ -116,7 +116,7 @@ fn create_root_command() -> ClapCommand {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use heroku_registry::{Registry, clap_builder::group_commands_by_resource};
+/// use oatty_registry::{Registry, clap_builder::group_commands_by_resource};
 ///
 /// let registry = Registry::from_embedded_schema()?;
 /// let groups = group_commands_by_resource(&registry);
@@ -154,7 +154,7 @@ fn group_commands_by_resource(commands: &[CommandSpec]) -> BTreeMap<String, Vec<
 /// # Examples
 ///
 /// ```rust,ignore
-/// use heroku_registry::clap_builder::build_group_command;
+/// use oatty_registry::clap_builder::build_group_command;
 ///
 /// let group_cmd = build_group_command("apps", vec![&cmd1, &cmd2]);
 /// assert_eq!(group_cmd.get_name(), "apps");
@@ -250,7 +250,7 @@ fn build_workflow_root_command() -> ClapCommand {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use heroku_registry::clap_builder::build_subcommand;
+/// use oatty_registry::clap_builder::build_subcommand;
 ///
 /// let subcmd = build_subcommand(&command_spec);
 /// // For a command named "apps:list", this creates a "list" subcommand
@@ -288,7 +288,7 @@ fn build_subcommand(cmd: &CommandSpec) -> ClapCommand {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use heroku_registry::clap_builder::add_positional_arguments;
+/// use oatty_registry::clap_builder::add_positional_arguments;
 ///
 /// let subcommand = add_positional_arguments(subcommand, &cmd_spec);
 /// // If cmd_spec has positional_args = ["app", "dyno"], this adds
@@ -325,7 +325,7 @@ fn add_positional_arguments(mut subcommand: ClapCommand, cmd: &CommandSpec) -> C
 /// # Examples
 ///
 /// ```rust,ignore
-/// use heroku_registry::clap_builder::add_flags;
+/// use oatty_registry::clap_builder::add_flags;
 ///
 /// let subcommand = add_flags(subcommand, &cmd_spec);
 /// // Adds all flags from cmd_spec.flags as long-form arguments
@@ -356,7 +356,7 @@ fn add_flags(mut subcommand: ClapCommand, cmd: &CommandSpec) -> ClapCommand {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use heroku_registry::clap_builder::build_flag_argument;
+/// use oatty_registry::clap_builder::build_flag_argument;
 ///
 /// let arg = build_flag_argument(&flag_spec);
 /// // Creates a Clap argument with appropriate type, validation, and help text
@@ -409,7 +409,7 @@ fn build_flag_argument(flag: &CommandFlag) -> Arg {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use heroku_registry::clap_builder::add_enum_values;
+/// use oatty_registry::clap_builder::add_enum_values;
 ///
 /// let arg = add_enum_values(arg, &flag_spec);
 /// // If flag_spec.enum_values = ["dev", "staging", "prod"],
@@ -446,7 +446,7 @@ fn add_enum_values(arg: Arg, flag: &CommandFlag) -> Arg {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use heroku_registry::clap_builder::add_default_value;
+/// use oatty_registry::clap_builder::add_default_value;
 ///
 /// let arg = add_default_value(arg, &flag_spec);
 /// // If flag_spec.default_value = Some("production"),
@@ -477,7 +477,7 @@ fn add_default_value(mut arg: Arg, flag: &CommandFlag) -> Arg {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use heroku_registry::clap_builder::generate_help_text;
+/// use oatty_registry::clap_builder::generate_help_text;
 ///
 /// let help = generate_help_text(&flag_spec);
 /// // Returns either the custom description or "type: string"
