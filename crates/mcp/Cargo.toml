@@ -26,14 +26,14 @@ once_cell = { workspace = true }
 oatty-util = { path = "../util" }
 oatty-types = { path = "../types" }
 oatty-registry = { path = "../registry" }
-rmcp = { version = "0.9.0", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "auth"] }
+rmcp = { version = "0.12.0", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "auth"] }
 
 [features]
 default = []
 
 [dev-dependencies]
 temp-env = "0.3"
-tempfile = "3.0"
+tempfile = "3.24.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2" }

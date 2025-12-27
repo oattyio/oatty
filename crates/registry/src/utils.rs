@@ -22,7 +22,7 @@ use oatty_types::CommandSpec;
 /// ```rust
 /// use oatty_registry::{CommandRegistry, utils::find_by_group_and_cmd};
 ///
-/// let registry = CommandRegistry::from_embedded_schema().expect("load registry from schema");
+/// let registry = CommandRegistry::from_config().expect("load registry from schema");
 /// let apps_list = find_by_group_and_cmd(&registry.commands, "apps", "list").expect("find by group and command");
 /// println!("Found command: {}", apps_list.name);
 /// ```

@@ -12,6 +12,7 @@ repository = "https://example.com/heroku"
 anyhow = { workspace = true }
 ratatui = { workspace = true }
 crossterm = { workspace = true }
+dirs-next = { workspace = true }
 tracing = { workspace = true }
 reqwest = { workspace = true }
 notify = "8.2.0"
@@ -34,7 +35,7 @@ serde_json = { workspace = true }
 textwrap = { workspace = true }
 indexmap = { workspace = true }
 unicode-width = { workspace = true }
-
+url = { workspace = true }
 [lib]
 doctest = false
 

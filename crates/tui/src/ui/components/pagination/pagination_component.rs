@@ -314,7 +314,11 @@ impl Component for PaginationComponent {
     /// - Returns an empty vector if the message is not an execution completed message.
     fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
         if let Msg::ExecCompleted(exec_outcome) = msg
-            && let ExecOutcome::Http(_, _, _, maybe_pagination, request_id) = exec_outcome.as_ref()
+            && let ExecOutcome::Http {
+                pagination: maybe_pagination,
+                request_id,
+                ..
+            } = exec_outcome.as_ref()
         {
             app.table.pagination_state.set_pagination(maybe_pagination.clone(), *request_id);
         }

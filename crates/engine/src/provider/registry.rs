@@ -112,7 +112,7 @@ fn fetch_and_cache(
         let body = args.clone();
         let result = handle.block_on(async move { exec_remote_for_provider(&spec_for_http, body, 0).await });
 
-        if let Ok(ExecOutcome::Http(_, _, result_value, _, _)) = result
+        if let Ok(ExecOutcome::Http { payload: result_value, .. }) = result
             && let Some(items) = result_value.as_array()
         {
             let items = items.clone();
@@ -542,7 +542,7 @@ mod tests {
     #[test]
     fn get_contract_accepts_space_form_and_rejects_colon_form() {
         // Build a real registry from the embedded schema; no network calls are made in get_contract.
-        let registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().expect("embedded schema")));
+        let registry = Arc::new(Mutex::new(CommandRegistry::from_config().unwrap()));
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()

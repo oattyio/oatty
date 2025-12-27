@@ -17,6 +17,7 @@ use seekstorm::{
     },
 };
 use serde_json::Value;
+use thiserror::Error;
 use tokio::sync::broadcast::Receiver;
 
 pub struct Indexer {
@@ -36,7 +37,7 @@ impl Indexer {
 }
 
 impl Indexer {
-    pub async fn spawn_listener(&mut self) -> Result<(), IndexerError> {
+    pub async fn start(&mut self) -> Result<(), IndexerError> {
         let maybe_receiver = mem::take(&mut self.receiver);
         let Some(mut receiver) = maybe_receiver else {
             return Err(IndexerError::Receiver("Indexer is already active".to_string()));
@@ -79,12 +80,15 @@ impl Indexer {
                         }
                         match receiver.recv().await {
                             Ok(ClientGatewayEvent::ToolsUpdated { .. }) => {
-                                if let Err(e) = index_commands().await {
-                                    tracing::error!("Error updating index: {}", e);
+                                if let Err(error) = index_commands().await {
+                                    tracing::error!("Error updating index: {}", error);
                                 }
                             }
                             Ok(_) => {}
-                            Err(e) => tracing::error!("Error receiving event: {}", e),
+                            Err(error) => {
+                                tracing::error!("Error receiving event: {}", error);
+                                break;
+                            }
                         }
                     }
                 })
@@ -135,7 +139,6 @@ impl Indexer {
         {
             return expand_tilde(&path);
         }
-
         config_dir().unwrap_or_else(|| PathBuf::from(".")).join("heroku").join("tools")
     }
 }
@@ -154,7 +157,7 @@ fn synonyms() -> Vec<Synonym> {
     synonyms
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Error)]
 pub enum IndexerError {
     #[error("Create index error: {0}")]
     CreateIndex(String),

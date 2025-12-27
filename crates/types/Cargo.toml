@@ -12,13 +12,14 @@ repository = "https://example.com/heroku"
 path = "src/lib.rs"
 
 [dependencies]
+postcard = { workspace = true }
 serde = { workspace = true }
-bincode = { workspace = true }
 serde_json = { workspace = true }
 chrono = { workspace = true }
 indexmap = { workspace = true }
 regex = { workspace = true }
 anyhow = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

@@ -31,21 +31,26 @@ use oatty_mcp::{McpConfig, PluginEngine};
 use oatty_registry::find_by_group_and_cmd;
 use oatty_registry::{CommandRegistry, CommandSpec};
 use oatty_types::service::ServiceId;
-use oatty_types::{Effect, EnvVar, Msg, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
+use oatty_types::{DirectoryEntry, Effect, EnvVar, Msg, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
 use oatty_types::{ExecOutcome, command::CommandExecution};
 use oatty_util::build_request_body;
 use oatty_util::exec_remote_from_shell_command;
+use oatty_util::fetch_static;
 use oatty_util::lex_shell_like;
-use reqwest::Url;
 use serde_json::Map;
 use serde_json::Value;
 use serde_json::from_str;
+use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::fs::read_dir;
 use std::fs::read_to_string;
+use std::os::unix::ffi::OsStrExt;
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::vec;
 use tokio::{sync::mpsc, task::JoinHandle};
+use url::Url;
 
 use crate::app::App;
 use crate::ui::components::plugins::EnvRow;
@@ -127,6 +132,9 @@ pub enum Cmd {
     PluginsValidate,
     PluginsSave,
     SendMsg(Msg),
+    ReadFileContents(PathBuf),
+    ListDirectoryContents(PathBuf),
+    ReadRemoteFileContents(Url),
 }
 
 /// Collection of immediate and background work generated while handling effects.
@@ -194,6 +202,9 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
                 None
             }
             Effect::SendMsg(nsg) => Some(vec![Cmd::SendMsg(nsg)]),
+            Effect::ReadFileContents(path) => Some(vec![Cmd::ReadFileContents(path)]),
+            Effect::ListDirectoryContents(path) => Some(vec![Cmd::ListDirectoryContents(path)]),
+            Effect::ReadRemoteFileContents(url) => Some(vec![Cmd::ReadRemoteFileContents(url)]),
             _ => None,
         };
         if let Some(cmds) = effect_commands {
@@ -225,61 +236,82 @@ fn handle_send_to_palette(app: &mut App, command_spec: Box<CommandSpec>) -> Opti
 pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
     let mut batch = CommandBatch::default();
     for command in commands {
-        let outcome = match command {
-            Cmd::ApplyPaletteError(error) => apply_palette_error(app, error),
-            Cmd::ClipboardSet(text) => execute_clipboard_set(app, text),
+        let (immediate, background) = match command {
+            Cmd::ApplyPaletteError(error) => (Some(apply_palette_error(app, error)), None),
+            Cmd::ClipboardSet(text) => (Some(execute_clipboard_set(app, text)), None),
             Cmd::ExecuteHttp {
                 spec,
                 input,
                 next_range_override,
                 request_id,
-            } => {
-                batch
-                    .pending
-                    .push(spawn_execute_http(app, spec, input, next_range_override, request_id));
-                continue;
-            }
+            } => (None, Some(spawn_execute_http(app, spec, input, next_range_override, request_id))),
             Cmd::FetchProviderValues {
                 provider_id,
                 cache_key,
                 args,
-            } => {
-                batch.pending.push(spawn_fetch_provider_values(app, provider_id, cache_key, args));
-                continue;
-            }
-            Cmd::ExecuteMcp(spec, body, request_id) => {
-                batch.pending.push(spawn_execute_mcp(app, spec, body, request_id));
-                continue;
-            }
-            Cmd::PluginsStart(name) => {
-                batch.pending.push(spawn_execute_plugin_action(app, PluginAction::Start, name));
-                continue;
-            }
-            Cmd::PluginsStop(name) => {
-                batch.pending.push(spawn_execute_plugin_action(app, PluginAction::Stop, name));
-                continue;
-            }
-            Cmd::PluginsRestart(name) => {
-                batch.pending.push(spawn_execute_plugin_action(app, PluginAction::Restart, name));
-                continue;
-            }
-            Cmd::PluginsLoadDetail(name) => {
-                batch.pending.push(spawn_load_plugin_detail(app, name));
-                continue;
-            }
-            Cmd::LoadPlugins => execute_load_plugins(app).await,
-            Cmd::PluginsRefresh => execute_plugins_refresh(app).await,
-            Cmd::PluginsExportLogsDefault(name) => execute_plugins_export_default(app, name).await,
-            Cmd::PluginsValidate => execute_plugins_validate(app),
-            Cmd::PluginsSave => execute_plugins_save(app).await,
-            Cmd::SendMsg(msg) => {
-                batch.immediate.push(ExecOutcome::Message(msg));
-                continue;
-            }
+            } => (None, Some(spawn_fetch_provider_values(app, provider_id, cache_key, args))),
+            Cmd::ExecuteMcp(spec, body, request_id) => (None, Some(spawn_execute_mcp(app, spec, body, request_id))),
+            Cmd::PluginsStart(name) => (None, Some(spawn_execute_plugin_action(app, PluginAction::Start, name))),
+            Cmd::PluginsStop(name) => (None, Some(spawn_execute_plugin_action(app, PluginAction::Stop, name))),
+            Cmd::PluginsRestart(name) => (None, Some(spawn_execute_plugin_action(app, PluginAction::Restart, name))),
+            Cmd::PluginsLoadDetail(name) => (None, Some(spawn_load_plugin_detail(app, name))),
+            Cmd::LoadPlugins => (Some(execute_load_plugins(app).await), None),
+            Cmd::PluginsRefresh => (Some(execute_plugins_refresh(app).await), None),
+            Cmd::PluginsExportLogsDefault(name) => (Some(execute_plugins_export_default(app, name).await), None),
+            Cmd::PluginsValidate => (Some(execute_plugins_validate(app)), None),
+            Cmd::PluginsSave => (Some(execute_plugins_save(app).await), None),
+            Cmd::SendMsg(msg) => (Some(ExecOutcome::Message(msg)), None),
+            Cmd::ReadFileContents(path) => (Some(read_file_contents(path)), None),
+            Cmd::ListDirectoryContents(path) => (Some(list_dir_contents(path)), None),
+            Cmd::ReadRemoteFileContents(url) => (None, Some(fetch_remote_file_contents(url))),
         };
-        batch.immediate.push(outcome);
+
+        if let Some(immediate) = immediate {
+            batch.immediate.push(immediate);
+        }
+        if let Some(pending) = background {
+            batch.pending.push(pending);
+        }
     }
     batch
+}
+/// List directory contents
+fn list_dir_contents(path: PathBuf) -> ExecOutcome {
+    match read_dir(&path) {
+        Ok(entries) => {
+            let mut entries: Vec<DirectoryEntry> = entries
+                .flatten()
+                .filter(|entry| entry.file_name().as_bytes().first() != Some(&b'.'))
+                .map(|entry| DirectoryEntry {
+                    path: entry.path(),
+                    is_directory: entry.metadata().is_ok_and(|f| f.is_dir()),
+                })
+                .collect();
+            entries.sort_by(|a, b| {
+                b.is_directory
+                    .cmp(&a.is_directory)
+                    .then(a.path.file_name().cmp(&b.path.file_name()))
+            });
+            if let Some(parent) = path.parent() {
+                let mut contents: Vec<DirectoryEntry> = Vec::with_capacity(entries.len() + 1);
+                contents.push(DirectoryEntry {
+                    path: parent.to_path_buf(),
+                    is_directory: true,
+                });
+                contents.append(&mut entries);
+                entries = contents
+            };
+            ExecOutcome::DirectoryContents { entries, root_path: path }
+        }
+        Err(e) => ExecOutcome::Log(format!("Failed to read directory: {}", e)),
+    }
+}
+
+fn read_file_contents(path: PathBuf) -> ExecOutcome {
+    match read_to_string(&path) {
+        Ok(contents) => ExecOutcome::FileContents(Cow::Owned(contents), path),
+        Err(e) => ExecOutcome::Log(format!("Failed to read file: {}", e)),
+    }
 }
 
 /// Execute a clipboard set command by writing text to the system clipboard.
@@ -321,6 +353,21 @@ enum PluginAction {
     Restart,
 }
 
+/// Fetches remote file contents.
+fn fetch_remote_file_contents(url: Url) -> JoinHandle<ExecOutcome> {
+    tokio::spawn(async move {
+        match fetch_static(url.as_str()).await {
+            Ok((status, content)) => {
+                if status.as_u16() > 299 {
+                    return ExecOutcome::Log(format!("Failed to fetch remote file: status: {} message: {}", status, content));
+                }
+                ExecOutcome::RemoteFileContents(content, url)
+            }
+            Err(e) => ExecOutcome::Log(format!("Failed to fetch remote file: {}", e)),
+        }
+    })
+}
+
 /// Execute a plugin lifecycle action using the MCP supervisor.
 fn spawn_execute_plugin_action(app: &mut App<'_>, action: PluginAction, name: String) -> JoinHandle<ExecOutcome> {
     let plugin_engine = app.ctx.plugin_engine.clone();
@@ -340,7 +387,10 @@ fn spawn_execute_plugin_action(app: &mut App<'_>, action: PluginAction, name: St
             (PluginAction::Restart, Err(e)) => format!("Plugins: restart '{}' failed: {}", name, e),
         };
         let detail_result = plugin_engine.get_plugin_detail(&name).await.ok();
-        ExecOutcome::PluginDetail(msg, detail_result)
+        ExecOutcome::PluginDetail {
+            message: msg,
+            detail: detail_result,
+        }
     })
 }
 
@@ -348,8 +398,14 @@ fn spawn_load_plugin_detail(app: &mut App<'_>, name: String) -> JoinHandle<ExecO
     let plugin_engine = app.ctx.plugin_engine.clone();
     tokio::spawn(async move {
         match plugin_engine.get_plugin_detail(&name).await {
-            Ok(detail) => ExecOutcome::PluginDetailLoad(name, Ok(detail)),
-            Err(error) => ExecOutcome::PluginDetailLoad(name, Err(error.to_string())),
+            Ok(detail) => ExecOutcome::PluginDetailLoad {
+                plugin_name: name,
+                result: Ok(detail),
+            },
+            Err(error) => ExecOutcome::PluginDetailLoad {
+                plugin_name: name,
+                result: Err(error.to_string()),
+            },
         }
     })
 }
@@ -361,7 +417,10 @@ async fn execute_plugins_refresh(app: &mut App<'_>) -> ExecOutcome {
 
     app.browser.update_browser_filtered();
 
-    ExecOutcome::PluginsRefresh(format!("{} plugins refreshed", plugins.len()), Some(plugins))
+    ExecOutcome::PluginsRefresh {
+        message: format!("{} plugins refreshed", plugins.len()),
+        details: Some(plugins),
+    }
 }
 
 /// Export logs to a default path in temp dir (redacted).
@@ -386,7 +445,7 @@ fn execute_plugins_validate(app: &mut App) -> ExecOutcome {
     };
     let name = add_view_state.name.trim();
     if let Err(e) = validate_server_name(name) {
-        return ExecOutcome::PluginValidationErr(e.to_string());
+        return ExecOutcome::PluginValidationErr { message: e.to_string() };
     }
 
     // Build server candidate based on selected transport
@@ -395,11 +454,15 @@ fn execute_plugins_validate(app: &mut App) -> ExecOutcome {
         PluginTransport::Remote => {
             let base_url = add_view_state.base_url.trim();
             if base_url.is_empty() {
-                return ExecOutcome::PluginValidationErr("Base URL is required for remote transport".into());
+                return ExecOutcome::PluginValidationErr {
+                    message: "Base URL is required for remote transport".into(),
+                };
             } else if let Ok(url) = Url::parse(base_url) {
                 server.base_url = Some(url);
             } else {
-                return ExecOutcome::PluginValidationErr("Invalid Base URL".into());
+                return ExecOutcome::PluginValidationErr {
+                    message: "Invalid Base URL".into(),
+                };
             }
             match collect_key_value_rows(&add_view_state.kv_editor.rows) {
                 Ok(Some(map)) => {
@@ -407,14 +470,18 @@ fn execute_plugins_validate(app: &mut App) -> ExecOutcome {
                 }
                 Ok(None) => {}
                 Err(errors) => {
-                    return ExecOutcome::PluginValidationErr(format!("Invalid headers: {}", errors.join("; ")));
+                    return ExecOutcome::PluginValidationErr {
+                        message: format!("Invalid headers: {}", errors.join("; ")),
+                    };
                 }
             }
         }
         PluginTransport::Local => {
             let command = add_view_state.command.trim();
             if command.is_empty() {
-                return ExecOutcome::PluginValidationErr("Command is required for local transport".into());
+                return ExecOutcome::PluginValidationErr {
+                    message: "Command is required for local transport".into(),
+                };
             } else {
                 server.command = Some(command.to_string());
                 if !add_view_state.args.trim().is_empty() {
@@ -428,13 +495,17 @@ fn execute_plugins_validate(app: &mut App) -> ExecOutcome {
                 }
                 Ok(None) => {}
                 Err(errors) => {
-                    return ExecOutcome::PluginValidationErr(format!("Invalid env vars: {}", errors.join("; ")));
+                    return ExecOutcome::PluginValidationErr {
+                        message: format!("Invalid env vars: {}", errors.join("; ")),
+                    };
                 }
             }
         }
     }
 
-    ExecOutcome::PluginValidationOk("✓ Looks good!".to_string())
+    ExecOutcome::PluginValidationOk {
+        message: "✓ Looks good!".to_string(),
+    }
 }
 
 /// Apply Add Plugin view: write server to config and refresh plugins list.
@@ -451,7 +522,9 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
             if let Ok(url) = Url::parse(base_url) {
                 server.base_url = Some(url);
             } else {
-                return ExecOutcome::PluginValidationErr("Plugin validation failed: invalid Base URL".into());
+                return ExecOutcome::PluginValidationErr {
+                    message: "Plugin validation failed: invalid Base URL".into(),
+                };
             }
             match collect_key_value_rows(&add_view_state.kv_editor.rows) {
                 Ok(Some(envs)) => {
@@ -459,14 +532,18 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
                 }
                 Ok(None) => {}
                 Err(errors) => {
-                    return ExecOutcome::PluginValidationErr(format!("plugin validation failed: invalid headers: {}", errors.join("; ")));
+                    return ExecOutcome::PluginValidationErr {
+                        message: format!("plugin validation failed: invalid headers: {}", errors.join("; ")),
+                    };
                 }
             }
         }
         PluginTransport::Local => {
             let command = add_view_state.command.trim();
             if command.is_empty() {
-                return ExecOutcome::PluginValidationErr("Plugin validation failed: command is required".into());
+                return ExecOutcome::PluginValidationErr {
+                    message: "Plugin validation failed: command is required".into(),
+                };
             }
             server.command = Some(command.to_string());
             if !add_view_state.args.trim().is_empty() {
@@ -479,7 +556,9 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
                 }
                 Ok(None) => {}
                 Err(errors) => {
-                    return ExecOutcome::PluginValidationErr(format!("Plugin validation failed: invalid env vars: {}", errors.join("; ")));
+                    return ExecOutcome::PluginValidationErr {
+                        message: format!("Plugin validation failed: invalid env vars: {}", errors.join("; ")),
+                    };
                 }
             }
         }
@@ -495,21 +574,29 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
     apply_plugin_name_change(&mut cfg, original_name, &name);
     cfg.mcp_servers.insert(name.clone(), server);
     if let Err(e) = validate_config(&cfg) {
-        return ExecOutcome::PluginValidationErr(format!("Plugin validation failed: {}", e));
+        return ExecOutcome::PluginValidationErr {
+            message: format!("Plugin validation failed: {}", e),
+        };
     }
     if let Err(error) = save_config_to_path(&mut cfg, &path) {
-        return ExecOutcome::PluginValidationErr(format!("Failed to save MCP configuration: {error}"));
+        return ExecOutcome::PluginValidationErr {
+            message: format!("Failed to save MCP configuration: {error}"),
+        };
     }
 
     let runtime_cfg = match load_config_from_path(&path) {
         Ok(config) => config,
         Err(error) => {
-            return ExecOutcome::PluginValidationErr(format!("Saved plugin, but failed to reload configuration: {error}"));
+            return ExecOutcome::PluginValidationErr {
+                message: format!("Saved plugin, but failed to reload configuration: {error}"),
+            };
         }
     };
 
     if let Err(error) = app.ctx.plugin_engine.update_config(runtime_cfg).await {
-        return ExecOutcome::PluginValidationErr(format!("Saved plugin, but failed to refresh MCP engine: {error}"));
+        return ExecOutcome::PluginValidationErr {
+            message: format!("Saved plugin, but failed to refresh MCP engine: {error}"),
+        };
     }
 
     // Refresh list
@@ -643,7 +730,12 @@ fn spawn_fetch_provider_values(app: &App, provider_id: String, cache_key: String
     tokio::task::spawn_blocking(move || {
         let plan = ProviderFetchPlan::new(provider_id.clone(), cache_key.clone(), args);
         match registry.complete_fetch(&plan) {
-            Ok(values) => ExecOutcome::ProviderValues(provider_id, cache_key, values, None),
+            Ok(values) => ExecOutcome::ProviderValues {
+                provider_id,
+                cache_key,
+                values,
+                request_id: None,
+            },
             Err(error) => ExecOutcome::Log(format!("Provider fetch failed: {error}")),
         }
     })

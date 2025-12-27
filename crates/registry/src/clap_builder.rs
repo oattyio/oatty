@@ -5,7 +5,7 @@ use std::{
 
 use clap::{Arg, ArgAction, Command as ClapCommand};
 
-use crate::{CommandFlag, CommandRegistry, CommandSpec, feat_gate::feature_workflows};
+use crate::{CommandFlag, CommandRegistry, CommandSpec};
 
 /// Builds a complete Clap command tree from the registry's command
 /// specifications.
@@ -33,7 +33,7 @@ use crate::{CommandFlag, CommandRegistry, CommandSpec, feat_gate::feature_workfl
 /// use std::sync::{Arc, Mutex};
 /// use oatty_registry::{CommandRegistry, build_clap};
 ///
-/// let registry = CommandRegistry::from_embedded_schema().unwrap();
+/// let registry = CommandRegistry::from_config().unwrap();
 /// let registry = Arc::new(Mutex::new(registry));
 /// let _clap_command = build_clap(Arc::clone(&registry));
 /// ```
@@ -50,11 +50,7 @@ pub fn build_clap(registry: Arc<Mutex<CommandRegistry>>) -> ClapCommand {
         root = root.subcommand(group_command);
     }
 
-    if feature_workflows() {
-        root = root.subcommand(build_workflow_root_command());
-    }
-
-    root
+    root.subcommand(build_workflow_root_command())
 }
 
 /// Creates the root command with global flags.

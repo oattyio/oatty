@@ -189,7 +189,11 @@ impl<'a> ResultsTableState<'_> {
     /// * `execution_outcome` - The result of the command execution
     pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &ExecOutcome, theme: &dyn Theme) {
         let maybe_value = match execution_outcome {
-            ExecOutcome::Http(_, _, value, _, request_id) => {
+            ExecOutcome::Http {
+                payload: value,
+                request_id,
+                ..
+            } => {
                 let mut cloned_value = value.clone();
                 if let Some(array) = cloned_value.as_array_mut()
                     && self.pagination_state.should_reverse(*request_id)
@@ -201,7 +205,7 @@ impl<'a> ResultsTableState<'_> {
                 }
             }
 
-            ExecOutcome::Mcp(_, value, _) => Some(value.clone()),
+            ExecOutcome::Mcp { payload: value, .. } => Some(value.clone()),
             _ => None,
         };
 

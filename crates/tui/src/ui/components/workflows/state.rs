@@ -81,9 +81,14 @@ impl WorkflowState {
         self.list.search_query()
     }
 
-    /// Provides the current cursor position (byte index) in the search input.
-    pub fn search_cursor(&self) -> usize {
-        self.list.search_cursor()
+    /// Provides the search cursor position in display columns (character count).
+    pub fn search_cursor_columns(&self) -> usize {
+        self.list.search_cursor_columns()
+    }
+
+    /// Sets the search cursor based on a display column within the search input.
+    pub fn set_search_cursor_from_column(&mut self, column: u16) {
+        self.list.set_search_cursor_from_column(column);
     }
 
     /// Move the search cursor one character to the left (UTF‑8 safe).

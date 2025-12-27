@@ -7,7 +7,7 @@ use tokio::{runtime::Handle, task};
 use crate::resolve::RunContext;
 
 use oatty_api::OattyClient;
-use oatty_registry::{CommandRegistry, CommandSpec, find_by_group_and_cmd};
+use oatty_registry::{CommandRegistry, find_by_group_and_cmd};
 use oatty_util::{
     build_path,
     http::{build_range_header_from_body, parse_response_json_strict, strip_range_body_fields},
@@ -53,15 +53,6 @@ impl RegistryCommandRunner {
     /// Create a new registry-backed runner from explicit dependencies.
     pub fn new(registry: CommandRegistry, client: OattyClient) -> Self {
         Self { registry, client }
-    }
-
-    /// Create a new registry-backed runner by loading the embedded schema and
-    /// constructing an `OattyClient` from environment variables.
-    pub fn from_spec(spec: &CommandSpec) -> Result<Self> {
-        let registry = CommandRegistry::from_embedded_schema()?;
-        let http = spec.http().ok_or_else(|| anyhow!("command '{}' is not HTTP-backed", spec.name))?;
-        let client = OattyClient::new_from_service_id(http.service_id)?;
-        Ok(Self { registry, client })
     }
 }
 

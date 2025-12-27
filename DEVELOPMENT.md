@@ -220,7 +220,7 @@ cargo run -p oatty-registry-gen -- --json \
     schemas/heroku-schema.enhanced.json \
     target/manifest.json
 
-# Generate bincode manifest (for production)
+# Generate Postcard manifest (for production)
 cargo run -p oatty-registry-gen -- \
     schemas/heroku-schema.enhanced.json \
     target/manifest.bin

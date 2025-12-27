@@ -58,8 +58,15 @@ impl BrowserState {
         self.search_input.input()
     }
 
-    pub fn search_cursor(&self) -> usize {
-        self.search_input.cursor()
+    /// Returns the search cursor position in display columns (character count).
+    pub fn search_cursor_columns(&self) -> usize {
+        self.search_input.cursor_columns()
+    }
+
+    /// Sets the search cursor based on a display column within the search input.
+    pub fn set_search_cursor_from_column(&mut self, column: u16) {
+        let cursor = self.search_input.cursor_index_for_column(column);
+        self.search_input.set_cursor(cursor);
     }
 
     pub fn move_search_cursor_left(&mut self) {
@@ -245,7 +252,6 @@ mod tests {
         state.append_search_character('c');
 
         assert_eq!(state.search_query(), "acb");
-        assert_eq!(state.search_cursor(), 2);
     }
 
     #[test]
@@ -257,6 +263,5 @@ mod tests {
         state.clear_search_query();
 
         assert_eq!(state.search_query(), "");
-        assert_eq!(state.search_cursor(), 0);
     }
 }

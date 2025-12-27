@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::{Context, Result, bail};
 use clap::ArgMatches;
+use oatty_agent::Indexer;
 use oatty_api::OattyClient;
 use oatty_engine::workflow::document::{build_runtime_catalog, runtime_workflow_from_definition};
 use oatty_engine::{
@@ -14,7 +15,7 @@ use oatty_engine::{
     WorkflowRunState,
 };
 use oatty_mcp::{PluginEngine, config::load_config};
-use oatty_registry::{CommandRegistry, build_clap, feat_gate::feature_workflows, find_by_group_and_cmd};
+use oatty_registry::{CommandRegistry, build_clap, find_by_group_and_cmd};
 use oatty_types::{
     ExecOutcome, RuntimeWorkflow,
     command::CommandExecution,
@@ -84,10 +85,14 @@ impl Write for GatedStderr {
 async fn main() -> Result<()> {
     init_tracing();
     let cfg = load_config()?;
-    let command_registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema()?));
+    let command_registry = Arc::new(Mutex::new(CommandRegistry::from_config()?));
+
     let plugin_engine = Arc::new(PluginEngine::new(cfg, Arc::clone(&command_registry))?);
     plugin_engine.prepare_registry().await?;
     plugin_engine.start().await?;
+
+    let mut indexer = Indexer::new(Arc::clone(&command_registry), plugin_engine.client_manager().subscribe());
+    // indexer.start().await?;
 
     let cli = build_clap(Arc::clone(&command_registry));
     let matches = cli.get_matches();
@@ -490,7 +495,7 @@ async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches
 
             let outcome = plugin_engine.execute_tool(&cmd_spec, &arguments, 0).await?;
             match outcome {
-                ExecOutcome::Mcp(log, ..) => println!("{}", log),
+                ExecOutcome::Mcp { log_entry, .. } => println!("{}", log_entry),
                 ExecOutcome::Log(log) => println!("{}", log),
                 other => println!("{:?}", other),
             }
@@ -505,10 +510,6 @@ fn handle_workflow_command(
     subcommand: &str,
     sub_matches: &ArgMatches,
 ) -> Result<()> {
-    if !feature_workflows() {
-        bail!("Workflows feature is disabled. Set FEATURE_WORKFLOWS=1 to enable.");
-    }
-
     let json_output = root_matches.get_flag("json");
 
     match subcommand {

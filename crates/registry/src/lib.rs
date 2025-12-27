@@ -4,11 +4,12 @@
 //! organizing, and generating CLI commands from Oatty API schemas.
 
 pub mod clap_builder;
-pub mod feat_gate;
+pub mod config;
 pub mod models;
 pub mod utils;
 
 pub use clap_builder::build_clap;
+pub use config::*;
 pub use models::CommandRegistry;
 pub use oatty_types::{
     CommandFlag, CommandSpec, ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract,
@@ -30,7 +31,7 @@ mod tests {
     /// 3. All command names are unique (no duplicates)
     #[test]
     fn manifest_non_empty_and_unique_names() {
-        let registry = CommandRegistry::from_embedded_schema().expect("load registry from manifest");
+        let registry = CommandRegistry::from_config().expect("load registry from manifest");
         assert!(!registry.commands.is_empty(), "registry commands should not be empty");
         let mut seen = HashSet::new();
         let mut duplicates: Vec<String> = vec![];

@@ -1,4 +1,4 @@
-use oatty_types::{Modal, Route};
+use oatty_types::Route;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 
@@ -10,8 +10,6 @@ use ratatui::layout::Rect;
 pub enum NavItemAction {
     /// Switches the main content view to the target route.
     Route(Route),
-    /// Opens a modal overlay instead of navigating to a view.
-    Modal(Modal),
 }
 
 /// Declarative description of a navigation item and its action.
@@ -46,11 +44,6 @@ impl NavItem {
     pub fn for_route(icon: impl Into<String>, label: impl Into<String>, route: Route) -> Self {
         Self::new(icon, label, NavItemAction::Route(route))
     }
-
-    /// Convenience constructor for items that open a modal.
-    pub fn for_modal(icon: impl Into<String>, label: impl Into<String>, modal: Modal) -> Self {
-        Self::new(icon, label, NavItemAction::Modal(modal))
-    }
 }
 
 /// State for the vertical navigation bar.
@@ -60,9 +53,6 @@ impl NavItem {
 /// the provided reducers to keep logic testable.
 #[derive(Debug, Default, Clone)]
 pub struct VerticalNavBarState {
-    /// Whether the navbar is visible. The component does not enforce this,
-    /// but consumers may choose to skip rendering when `false`.
-    pub visible: bool,
     /// Items displayed in the navigation bar.
     pub items: Vec<NavItem>,
     /// Index of the currently selected item.
@@ -83,7 +73,6 @@ impl VerticalNavBarState {
     /// Focus defaults to the first item if available.
     pub fn new(items: Vec<NavItem>) -> Self {
         let mut state = Self {
-            visible: true,
             selected_index: 0,
             item_focus_flags: Vec::new(),
             container_focus: FocusFlag::new().with_name("nav.vertical"),
@@ -100,19 +89,14 @@ impl VerticalNavBarState {
     }
 
     /// Creates a nav bar pre-populated with typical application views.
-    ///
-    /// `include_settings_item` controls whether the settings/theme picker shortcut is shown.
-    pub fn defaults_for_views(include_settings_item: bool) -> Self {
-        let mut items = vec![
-            NavItem::for_route("[Cmd]", "Command", Route::Palette),
-            NavItem::for_route("[Brs]", "Browser", Route::Browser),
-            NavItem::for_route("[Ext]", "Extensions", Route::Plugins),
-            NavItem::for_route("[Flw]", "Workflows", Route::Workflows),
+    pub fn defaults_for_views() -> Self {
+        let items = vec![
+            NavItem::for_route("≡ Lib", "Library", Route::Library),
+            NavItem::for_route("› Run", "Command Runner", Route::Palette),
+            NavItem::for_route("⌕ Fnd", "Find", Route::Browser),
+            NavItem::for_route("↺ Wkf", "Workflows", Route::Workflows),
+            NavItem::for_route("↯ Ext", "Extensions", Route::Plugins),
         ];
-
-        if include_settings_item {
-            items.push(NavItem::for_modal("[Set]", "Settings", Modal::ThemePicker));
-        }
 
         Self::new(items)
     }

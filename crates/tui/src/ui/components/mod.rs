@@ -1,22 +1,22 @@
-//! UI components: palette, browser, help, table, pagination.
-
 pub mod browser;
 pub mod common;
 pub mod component;
 pub mod help;
+pub mod library;
 pub mod logs;
 pub mod nav_bar;
 pub mod pagination;
 pub mod palette;
 pub mod plugins;
-#[allow(clippy::module_inception)]
 pub mod table;
 pub mod theme_picker;
 pub mod workflows;
 
 pub use browser::BrowserComponent;
-pub use component::*;
+pub use common::{FilePickerModal, FilePickerState};
+pub use component::{Component, find_target_index_by_mouse_position};
 pub use help::HelpComponent;
+pub use library::{LibraryComponent, LibraryState};
 pub use logs::LogsComponent;
 pub use pagination::PaginationComponent;
 pub use plugins::PluginsComponent;

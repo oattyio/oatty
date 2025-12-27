@@ -1,11 +1,11 @@
-use std::sync::Arc;
-
-use anyhow::{Context, Result};
+use anyhow::Result;
 use indexmap::IndexMap;
 use oatty_types::{CommandSpec, ProviderContract, manifest::RegistryManifest, workflow::WorkflowDefinition};
 use oatty_util::sort_and_dedup_commands;
+use std::{convert::Infallible, sync::Arc};
 
-static MANIFEST: &str = include_str!(concat!(env!("OUT_DIR"), "/heroku-manifest.json"));
+use crate::RegistryConfig;
+
 /// The main registry containing all available Oatty CLI commands.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct CommandRegistry {
@@ -15,6 +15,8 @@ pub struct CommandRegistry {
     pub workflows: Vec<WorkflowDefinition>,
     /// Provider argument and return contracts keyed by command identifier
     pub provider_contracts: IndexMap<String, ProviderContract>,
+    /// Config used to identify locations of each command catalog
+    pub config: RegistryConfig,
 }
 
 impl CommandRegistry {
@@ -35,21 +37,39 @@ impl CommandRegistry {
     /// ```rust
     /// use oatty_registry::CommandRegistry;
     ///
-    /// let registry = CommandRegistry::from_embedded_schema().expect("load registry from schema");
+    /// let registry = CommandRegistry::from_config().expect("load registry from schema");
     /// println!("Loaded {} commands", registry.commands.len());
     /// ```
-    pub fn from_embedded_schema() -> Result<Self> {
-        let manifest: RegistryManifest = serde_json::from_str(MANIFEST).context("decoding manifest failed")?;
+    pub fn from_config() -> Result<Self, Infallible> {
+        let config = RegistryConfig::load()?;
+        let Some(catalogs) = config.catalogs.as_ref() else {
+            return Ok(CommandRegistry {
+                config,
+                ..Default::default()
+            });
+        };
 
-        let provider_contracts = manifest
-            .provider_contracts
-            .into_iter()
-            .map(|entry| (entry.command_id, entry.contract))
-            .collect();
+        let mut commands = Vec::new();
+        let mut workflows = Vec::new();
+        let mut provider_contracts = IndexMap::new();
+
+        for catalog in catalogs {
+            let path = &catalog.manifest_path;
+            let Ok(manifest_bytes) = std::fs::read(path) else {
+                continue;
+            };
+            let Ok(mut manifest) = RegistryManifest::try_from(manifest_bytes) else {
+                continue;
+            };
+            commands.append(&mut manifest.commands);
+            workflows.append(&mut manifest.workflows);
+            provider_contracts.append(&mut manifest.provider_contracts);
+        }
 
         Ok(CommandRegistry {
-            commands: manifest.commands,
-            workflows: manifest.workflows,
+            config,
+            commands,
+            workflows,
             provider_contracts,
         })
     }

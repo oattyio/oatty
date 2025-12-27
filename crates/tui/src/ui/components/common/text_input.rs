@@ -27,8 +27,23 @@ impl TextInputState {
     pub fn cursor(&self) -> usize {
         self.cursor
     }
+    pub fn clear(&mut self) {
+        self.input.clear();
+        self.cursor = 0;
+    }
     pub fn is_empty(&self) -> bool {
         self.input.trim().is_empty()
+    }
+    /// Returns the cursor position in display columns (character count).
+    pub fn cursor_columns(&self) -> usize {
+        let cursor_index = self.cursor.min(self.input.len());
+        self.input[..cursor_index].chars().count()
+    }
+    /// Returns the byte index for a cursor placed at the provided display column.
+    ///
+    /// The `column` value is expected to be relative to the start of the input text.
+    pub fn cursor_index_for_column(&self, column: u16) -> usize {
+        cursor_index_for_column(self.input(), column)
     }
 
     // ----- Setters -----
@@ -79,6 +94,29 @@ impl TextInputState {
         self.input.drain(start..self.cursor);
         self.cursor = start;
     }
+
+    pub fn delete(&mut self) {
+        if self.cursor == self.input.len() {
+            return;
+        }
+        let next = self.input[self.cursor..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+        let end = self.cursor + next;
+        self.input.drain(self.cursor..end);
+    }
+}
+
+/// Convert a display column into a byte index for the provided text.
+///
+/// The `column` value should be relative to the start of the string (excluding any prefixes).
+pub fn cursor_index_for_column(text: &str, column: u16) -> usize {
+    let mut columns = 0u16;
+    for (byte_index, _character) in text.char_indices() {
+        if columns >= column {
+            return byte_index;
+        }
+        columns = columns.saturating_add(1);
+    }
+    text.len()
 }
 
 #[cfg(test)]

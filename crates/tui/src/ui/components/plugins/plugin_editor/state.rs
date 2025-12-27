@@ -1,8 +1,7 @@
+use crate::ui::components::plugins::EnvRow;
 use oatty_mcp::PluginDetail;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
-
-use crate::ui::components::plugins::EnvRow;
 
 use super::key_value_editor::KeyValueEditorState;
 
@@ -35,9 +34,6 @@ pub struct PluginEditViewState {
     pub f_btn_validate: FocusFlag,
     pub f_btn_save: FocusFlag,
     pub f_btn_cancel: FocusFlag,
-    // Focus ring areas for rendering
-    pub last_area: Rect,
-    pub per_item_area: Vec<Rect>,
 }
 
 impl PluginEditViewState {
@@ -66,8 +62,6 @@ impl PluginEditViewState {
             f_btn_validate: FocusFlag::new().with_name("plugins.add.btn.validate"),
             f_btn_save: FocusFlag::new().with_name("plugins.add.btn.save"),
             f_btn_cancel: FocusFlag::new().with_name("plugins.add.btn.cancel"),
-            last_area: Rect::default(),
-            per_item_area: Vec::new(),
         };
         // Set initial focus to transport selector instead of name field
         instance.f_transport.set(true);

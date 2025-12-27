@@ -241,6 +241,20 @@ pub trait Component: Debug {
         vec![area]
     }
 
+    /// Initializes the component when it enters a route.
+    ///
+    /// This method is called when the component is about to enter a route.
+    /// It can be used to perform any necessary setup or initialization tasks.
+    ///
+    /// # Parameters
+    /// - `_app`: A mutable reference to the application (`App`) that this method relates to.
+    ///
+    /// # Returns
+    /// - `Vec<Effect>`: A vector of effects to be executed after the component enters the route.
+    fn on_route_enter(&mut self, _app: &mut App) -> Vec<Effect> {
+        Vec::new()
+    }
+
     /// Notifies the view that the route is about to exit
     /// and this view will be dereferenced.
     fn on_route_exit(&mut self, _app: &mut App) -> Vec<Effect> {

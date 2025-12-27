@@ -544,7 +544,11 @@ impl PluginEngine {
             log.push_str(&pretty);
         }
 
-        Ok(ExecOutcome::Mcp(log, payload, request_id))
+        Ok(ExecOutcome::Mcp {
+            log_entry: log,
+            payload,
+            request_id,
+        })
     }
 
     /// Convert MCP tool metadata into synthetic CLI command specifications.
@@ -896,6 +900,7 @@ mod tests {
     use super::*;
     use crate::McpServer;
     use crate::config::McpConfig;
+    use oatty_registry::RegistryConfig;
     use serde_json::{Value, json};
     use url::Url;
 
@@ -918,6 +923,7 @@ mod tests {
             commands: Vec::new(),
             workflows: vec![],
             provider_contracts: Default::default(),
+            config: RegistryConfig { catalogs: None },
         }));
         let engine = PluginEngine::new(config, Arc::clone(&registry)).unwrap();
 
@@ -932,6 +938,7 @@ mod tests {
             commands: Vec::new(),
             workflows: vec![],
             provider_contracts: Default::default(),
+            config: RegistryConfig { catalogs: None },
         }));
         let engine = PluginEngine::new(config, Arc::clone(&registry)).unwrap();
 
@@ -1264,6 +1271,7 @@ mod tests {
             commands: Vec::new(),
             workflows: vec![],
             provider_contracts: Default::default(),
+            config: RegistryConfig { catalogs: None },
         }));
         let engine = PluginEngine::new(cfg, Arc::clone(&registry)).unwrap();
         engine.start().await.unwrap();

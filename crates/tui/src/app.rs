@@ -9,10 +9,10 @@ use std::{
     time::Duration,
 };
 
-use crate::ui::components::common::ConfirmationModalState;
-use crate::ui::components::nav_bar::VerticalNavBarState;
 use crate::ui::components::workflows::collector::SelectorStatus;
 use crate::ui::components::workflows::run::RunViewState;
+use crate::ui::components::{FilePickerState, common::ConfirmationModalState};
+use crate::ui::components::{LibraryState, nav_bar::VerticalNavBarState};
 use crate::ui::{
     components::{
         browser::BrowserState, help::HelpState, logs::LogsState, palette::PaletteState, plugins::PluginsState, table::ResultsTableState,
@@ -134,10 +134,14 @@ pub struct App<'a> {
     pub palette: PaletteState,
     /// Command browser state
     pub browser: BrowserState,
+    /// File picker state
+    pub file_picker: Option<FilePickerState>,
     /// Table modal state
     pub table: ResultsTableState<'a>,
     /// Help modal state
     pub help: HelpState,
+    /// Library component state
+    pub library: LibraryState,
     /// Plugins state (MCP management)
     pub plugins: PluginsState,
     /// Workflow UI and execution state
@@ -190,25 +194,26 @@ impl App<'_> {
             Arc::clone(&ctx.history_store),
             ctx.history_profile_id.clone(),
         );
-        let theme_picker_available = ctx.theme_picker_available;
         let mut app = Self {
             ctx,
             browser: BrowserState::new(Arc::clone(&registry)),
+            file_picker: None,
             confirmation_modal_state: ConfirmationModalState::default(),
             logs: LogsState::default(),
             help: HelpState::default(),
             plugins: PluginsState::new(),
+            library: LibraryState::default(),
             workflows: WorkflowState::new(),
             table: ResultsTableState::default(),
             palette,
-            nav_bar: VerticalNavBarState::defaults_for_views(theme_picker_available),
+            nav_bar: VerticalNavBarState::defaults_for_views(),
             theme_picker: ThemePickerState::default(),
             executing: false,
             throbber_idx: 0,
             active_exec_count: Arc::new(AtomicUsize::new(0)),
             focus: Focus::default(),
             app_container_focus: FocusFlag::new().with_name("app.container"),
-            current_route: Route::Palette,
+            current_route: Route::Library,
             open_modal_kind: None,
             workflow_event_rx: None,
             workflow_run_sequence: 0,
@@ -581,7 +586,10 @@ impl HasFocus for App<'_> {
                 Modal::Confirmation => {
                     builder.widget(&self.confirmation_modal_state);
                 }
-                Modal::PluginDetails | Modal::Help | Modal::ThemePicker => {
+                Modal::FilePicker(..) if self.file_picker.is_some() => {
+                    builder.widget(self.file_picker.as_ref().unwrap());
+                }
+                Modal::PluginDetails | Modal::Help | Modal::ThemePicker | Modal::FilePicker(..) => {
                     // focusable fields TBD; leave the ring empty
                 }
             }
@@ -604,6 +612,9 @@ impl HasFocus for App<'_> {
             }
             Route::Workflows | Route::WorkflowInputs | Route::WorkflowRun => {
                 builder.widget(&self.workflows);
+            }
+            Route::Library => {
+                builder.widget(&self.library);
             }
         }
         if self.logs.is_visible {

@@ -5,7 +5,7 @@ This crate parses the Oatty JSON Hyper‑Schema and generates a compact command 
 ## Features
 
 - JSON Hyper‑Schema → `CommandSpec` generation (walks `links`, `$ref`, `anyOf/oneOf/allOf`).
-- Compact binary manifest with `bincode`; optional pretty JSON output.
+- Compact binary manifest with `postcard`; optional pretty JSON output.
 - Structured flags, positional args (with help), ranges (for pagination), and summaries.
 - ValueProvider inference: maps flags/positionals to provider commands like `apps:list`,
   attaching input bindings when the provider can be satisfied by earlier consumer inputs.
@@ -21,7 +21,7 @@ This crate is internal to the workspace; consumers generally depend on the gener
 
 This crate can be invoked as a CLI to generate a manifest from a JSON Hyper-Schema.
 
-- Binary (bincode) output:
+- Binary (postcard) output:
 
 ```bash
 cargo run -p heroku-registry-gen -- path/to/schema.json target/manifest.bin
@@ -55,7 +55,7 @@ This will:
 1. Read the JSON hyper-schema from `schema.json`.
 2. Parse it to generate `CommandSpec` entries.
 3. Add synthetic workflow commands if `FEATURE_WORKFLOWS` is enabled.
-4. Serialize the commands to `commands.bin` using `bincode`.
+4. Serialize the commands to `commands.bin` using `postcard`.
 5. Create parent directories for the output file if they don't exist.
 
 ### Command Specification Structure
@@ -167,7 +167,7 @@ cargo test
 ### Dependencies
 
 - `anyhow`: For error handling with context.
-- `bincode`: For binary serialization of the command registry.
+- `postcard`: For binary serialization of the command registry.
 - `heck`: For kebab-case conversion of command names.
 - `percent-encoding`: For decoding URL-encoded placeholders.
 - `serde` and `serde_json`: For JSON hyper-schema serialization/deserialization.

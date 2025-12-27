@@ -10,12 +10,13 @@ repository = "https://example.com/heroku"
 
 [dependencies]
 anyhow = { workspace = true }
+dirs-next = { workspace = true }
+indexmap = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 clap = { workspace = true }
 oatty-types = { path = "../types" }
 oatty-util = {path = "../util"}
-indexmap = { workspace = true }
 
 [build-dependencies]
 anyhow = { workspace = true }

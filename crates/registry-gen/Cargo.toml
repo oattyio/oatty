@@ -20,6 +20,6 @@ percent-encoding = { workspace = true }
 heck = { workspace = true }
 oatty-types = { path = "../types" }
 oatty-util = {path = "../util"}
-bincode = { workspace = true }
 clap = { workspace = true }
 indexmap = { workspace = true }
+postcard = { workspace = true }

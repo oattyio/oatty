@@ -40,7 +40,6 @@ pub mod suggestion {
 pub mod provider {
     //! Value-provider metadata describing how dynamic values are discovered.
 
-    use bincode::{Decode, Encode};
     use serde::{Deserialize, Serialize};
 
     /// Declares how values for a parameter can be populated.
@@ -48,7 +47,7 @@ pub mod provider {
     /// A `ValueProvider` typically references another command that can be executed to fetch
     /// candidate values. For example, a palette may reuse the `apps:list` command to populate the
     /// values for an `--app` flag or a positional `app`.
-    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub enum ValueProvider {
         /// Use another command identified by `<group>:<name>` to supply values.
         ///
@@ -57,7 +56,7 @@ pub mod provider {
     }
 
     /// Declares a mapping from a provider's required to be input to a consumer field name.
-    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct Bind {
         /// The provider's input key (for example, a path placeholder like `app`).
         pub provider_key: String,
@@ -66,7 +65,7 @@ pub mod provider {
     }
 
     /// Describes the argument and return contracts for a provider command.
-    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq, Default)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
     pub struct ProviderContract {
         /// Provider arguments in the order they should be considered for auto-mapping.
         #[serde(default)]
@@ -77,7 +76,7 @@ pub mod provider {
     }
 
     /// Contract metadata for a single provider argument.
-    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq, Default)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
     pub struct ProviderArgumentContract {
         /// Name of the argument (for example, `app`).
         pub name: String,
@@ -93,7 +92,7 @@ pub mod provider {
     }
 
     /// Declarative return metadata for provider results.
-    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq, Default)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
     pub struct ProviderReturnContract {
         /// Fields that the provider returns for each item.
         #[serde(default)]
@@ -101,7 +100,7 @@ pub mod provider {
     }
 
     /// Metadata about an individual provider return field.
-    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct ProviderFieldContract {
         /// Name of the field returned in the provider payload.
         pub name: String,
@@ -120,10 +119,23 @@ pub mod workflow;
 pub mod manifest {
     //! Registry manifest structures embedded into the generated binary artifact.
 
+    use std::collections::HashMap;
+
+    use indexmap::IndexMap;
+    use postcard::from_bytes;
     use serde::{Deserialize, Serialize};
 
     use crate::{command::CommandSpec, provider::ProviderContract, workflow::WorkflowDefinition};
-    use bincode::{Decode, Encode};
+
+    /// Registry catalog structure used by the registry, engine, and TUI layers.
+    #[derive(Debug, Clone, Serialize, Deserialize, Default, Eq, PartialEq)]
+    pub struct RegistryCatalog {
+        pub name: String,
+        pub description: String,
+        pub manifest_path: String,
+        pub headers: HashMap<String, String>,
+        pub base_url: String,
+    }
 
     /// Serialized manifest housing both command specifications and workflow definitions.
     #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
@@ -136,32 +148,29 @@ pub mod manifest {
         pub workflows: Vec<WorkflowDefinition>,
         /// Provider argument and return contracts keyed by command identifier.
         #[serde(default)]
-        pub provider_contracts: Vec<ProviderContractEntry>,
+        pub provider_contracts: IndexMap<String, ProviderContract>,
     }
 
-    /// Manifest entry storing a provider contract alongside its command identifier.
-    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
-    pub struct ProviderContractEntry {
-        /// Identifier of the provider command (for example, `apps:list`).
-        pub command_id: String,
-        /// Declarative contract describing arguments and return fields.
-        pub contract: ProviderContract,
+    impl TryFrom<Vec<u8>> for RegistryManifest {
+        type Error = anyhow::Error;
+
+        fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
+            let manifest = from_bytes::<RegistryManifest>(&bytes)?;
+            Ok(manifest)
+        }
     }
 }
 
 pub mod service {
     //! Supported HTTP API services and helpers for resolving endpoints.
-
-    use std::{error::Error, fmt, str::FromStr};
-
-    use bincode::{Decode, Encode};
     use serde::{Deserialize, Serialize};
+    use std::{error::Error, fmt, str::FromStr};
 
     /// Default accept header shared across Oatty APIs.
     const HEROKU_JSON_ACCEPT_HEADER: &str = "application/vnd.heroku+json; version=3.sdk";
 
     /// Identifies the backend service targeted by a generated request.
-    #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Default, Serialize, Deserialize, Encode, Decode)]
+    #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Default, Serialize, Deserialize)]
     pub enum ServiceId {
         /// Core Oatty Platform API (`https://api.heroku.com`).
         #[default]
@@ -241,7 +250,7 @@ pub mod command {
     use crate::{provider::ValueProvider, service::ServiceId};
     use anyhow::Result;
     use anyhow::anyhow;
-    use bincode::{Decode, Encode};
+
     use serde::{Deserialize, Serialize};
     use std::collections::HashMap;
 
@@ -249,7 +258,7 @@ pub mod command {
     pub type ArgValueMap = HashMap<String, String>;
     pub type ParsedCommandArgs = (FlagValueMap, ArgValueMap);
     /// Represents a command-line flag or option for a Oatty CLI command.
-    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct CommandFlag {
         /// The name of the flag (for example, "app", "region", or "stack").
         pub name: String,
@@ -275,7 +284,7 @@ pub mod command {
     }
 
     /// Represents a positional argument for a command, including its name and help text.
-    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct PositionalArgument {
         /// The name of the positional argument (for example, "app").
         pub name: String,
@@ -293,7 +302,7 @@ pub mod command {
     /// Field Picker, disambiguate auto-mapping targets, and surface the semantic meaning of leaf
     /// values without requiring the full JSON schema. Additional annotations may be layered on by
     /// workflow output contracts or provider metadata.
-    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct SchemaProperty {
         /// JSON type reported by the upstream schema (object, array, string, and so on).
         pub r#type: String,
@@ -365,7 +374,7 @@ pub mod command {
     /// );
     /// assert!(matches!(spec.execution(), CommandExecution::Mcp(_)));
     /// ```
-    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct CommandSpec {
         /// Resource group for the command (for example, "apps").
         #[serde(default)]
@@ -604,7 +613,7 @@ pub mod command {
     }
 
     /// Execution metadata for a command.
-    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     #[serde(tag = "kind", rename_all = "snake_case")]
     pub enum CommandExecution {
         /// Command is fulfilled via an HTTP request described by [`HttpCommandSpec`].
@@ -620,7 +629,7 @@ pub mod command {
     }
 
     /// HTTP execution metadata.
-    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq, Default)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
     pub struct HttpCommandSpec {
         /// HTTP method (GET, POST, DELETE, and so on).
         pub method: String,
@@ -660,7 +669,7 @@ pub mod command {
     /// Instances of this struct are typically constructed from tool discovery metadata provided by
     /// the MCP runtime. Consumers should propagate human-readable authentication requirements into
     /// `auth_summary` so that downstream UIs can display them alongside command descriptions.
-    #[derive(Debug, Clone, Serialize, Deserialize, Encode, Decode, PartialEq, Eq, Default)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
     pub struct McpCommandSpec {
         /// Name of the plugin that owns the tool.
         pub plugin_name: String,
@@ -700,8 +709,11 @@ pub mod command {
 pub mod execution {
     //! Execution outcomes and pagination metadata produced by the engine.
 
+    use std::{borrow::Cow, path::PathBuf};
+
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
+    use url::Url;
 
     use crate::{Msg, PluginDetail};
 
@@ -711,39 +723,104 @@ pub mod execution {
     /// state changes that should occur.
     #[derive(Debug, Clone, Default)]
     pub enum ExecOutcome {
+        /// Result from executing a file contents command containing a structured payload.
+        FileContents(Cow<'static, str>, PathBuf),
+        /// Result from executing a remote file contents command containing a structured payload.
+        RemoteFileContents(Cow<'static, str>, Url),
+        /// Result from executing a directory contents command containing a structured payload.
+        DirectoryContents {
+            /// Files and directories present in the requested location.
+            entries: Vec<DirectoryEntry>,
+            /// Directory that was enumerated.
+            root_path: PathBuf,
+        },
         /// Result from executing an HTTP command containing a structured payload.
-        /// (status_code, log_entry, json_result, maybe_pagination, request_id)
-        Http(u16, String, Value, Option<Pagination>, u64),
+        Http {
+            /// HTTP status returned by the service.
+            status_code: u16,
+            /// Human readable summary of the response.
+            log_entry: String,
+            /// JSON payload parsed from the response body.
+            payload: Value,
+            /// Pagination metadata parsed from headers, if present.
+            pagination: Option<Pagination>,
+            /// Identifier correlating the request to UI events.
+            request_id: u64,
+        },
         /// Simple log entry
         Log(String),
         /// Simple message
         Message(Msg),
         /// Result from executing an MCP tool containing a structured payload.
-        /// (log_entry, json_result, request_id)
-        Mcp(String, Value, u64),
+        Mcp {
+            /// Human readable summary for the tool execution.
+            log_entry: String,
+            /// Structured JSON payload returned by the tool.
+            payload: Value,
+            /// Identifier correlating the request to UI events.
+            request_id: u64,
+        },
         /// Result from fetching provider-backed values for suggestions or selectors.
-        /// (provider_id, cache_key, values, optional request identifier)
-        ProviderValues(String, String, Vec<Value>, Option<u64>),
+        ProviderValues {
+            /// Unique provider identifier requested.
+            provider_id: String,
+            /// Cache key representing the argument combination.
+            cache_key: String,
+            /// Values produced by the provider.
+            values: Vec<Value>,
+            /// Optional identifier correlating the request to UI events.
+            request_id: Option<u64>,
+        },
         /// Result from performing an action on a plugin
         /// Contains a log message and the new plugin detail object
-        PluginDetail(String, Option<PluginDetail>),
+        PluginDetail {
+            /// Message summarizing the action performed.
+            message: String,
+            /// Updated plugin detail (if available).
+            detail: Option<PluginDetail>,
+        },
         /// Result from fetching detailed plugin information for the modal.
-        PluginDetailLoad(String, Result<PluginDetail, String>),
+        PluginDetailLoad {
+            /// Plugin name that was loaded.
+            plugin_name: String,
+            /// Result of fetching detail information.
+            result: Result<PluginDetail, String>,
+        },
         /// Result from refreshing the plugins.
         /// Contains a log message and the entire
         /// list of PluginDetail objects.
-        PluginsRefresh(String, Option<Vec<PluginDetail>>),
+        PluginsRefresh {
+            /// Message summarizing the refresh action.
+            message: String,
+            /// Complete collection of plugin details, when returned.
+            details: Option<Vec<PluginDetail>>,
+        },
         /// Validation plugin error result
         /// Contains the error message
-        PluginValidationErr(String),
+        PluginValidationErr {
+            /// Error message explaining the validation failure.
+            message: String,
+        },
         /// Validation plugin ok result
         /// Contains the success message
-        PluginValidationOk(String),
+        PluginValidationOk {
+            /// Message describing the successful validation.
+            message: String,
+        },
         /// Command validation error
         ValidationErr(String),
         /// Indicates successful completion but with no payload
         #[default]
         None,
+    }
+
+    /// File-system entry returned by [`ExecOutcome::DirectoryContents`].
+    #[derive(Debug, Clone)]
+    pub struct DirectoryEntry {
+        /// Absolute or relative path to the entry.
+        pub path: PathBuf,
+        /// Indicates whether this entry points to a directory.
+        pub is_directory: bool,
     }
 
     /// Pagination metadata parsed from API response headers.
@@ -780,7 +857,8 @@ pub mod messaging {
         workflow::{WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest},
     };
     use serde_json::{Map as JsonMap, Value as JsonValue};
-    use std::fmt::Display;
+    use std::{fmt::Display, path::PathBuf};
+    use url::Url;
     /// Navigation targets within the TUI.
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Route {
@@ -790,6 +868,8 @@ pub mod messaging {
         Browser,
         /// Plugins view for managing MCP plugins.
         Plugins,
+        /// Settings view for configuring application preferences.
+        Library,
         /// Workflows view for browsing workflow catalog.
         Workflows,
         /// Workflow input resolution view.
@@ -801,6 +881,8 @@ pub mod messaging {
     /// Modal overlays that can be displayed on top of the main UI.
     #[derive(Debug, Clone)]
     pub enum Modal {
+        /// File picker modal for selecting files.
+        FilePicker(Vec<&'static str>),
         /// Help modal displaying shortcuts and usage tips.
         Help,
         /// Results modal showing API responses in a table.
@@ -854,6 +936,12 @@ pub mod messaging {
         CopyToClipboardRequested(String),
         /// Request to copy the current logs selection (already rendered/redacted).
         CopyLogsRequested(String),
+        /// Open the selected file for processing.
+        ReadFileContents(PathBuf),
+        /// Fetch the remote file contents.
+        ReadRemoteFileContents(Url),
+        /// List the contents of a directory.
+        ListDirectoryContents(PathBuf),
         /// Load MCP plugins from config into `PluginsState`.
         PluginsLoadRequested,
         /// Refresh plugin statuses and health.

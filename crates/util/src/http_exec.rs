@@ -5,14 +5,38 @@
 //! It also provides a convenient `fetch_json_array` helper for list endpoints.
 
 use crate::{build_path, http, resolve_path, shell_lexing};
+use anyhow::anyhow;
 use oatty_api::OattyClient;
 use oatty_types::ExecOutcome;
 use oatty_types::{CommandSpec, HttpCommandSpec};
-use reqwest::header::{CONTENT_RANGE, HeaderMap};
-use reqwest::{Method, StatusCode};
+use reqwest::header::{self, CONTENT_RANGE, HeaderMap};
+use reqwest::{Client, Method, StatusCode};
 use serde_json::{Map as JsonMap, Map, Number, Value};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::str::FromStr;
+use std::time::Duration;
+
+/// Fetches a static json or text resource using GET
+pub async fn fetch_static(url: &str) -> Result<(StatusCode, Cow<'static, str>), anyhow::Error> {
+    let accept = header::HeaderValue::from_str("application/json,text/html").map_err(|e| anyhow!(e))?;
+    let mut default_headers = HeaderMap::new();
+    default_headers.insert(header::ACCEPT, accept);
+
+    let client = Client::builder()
+        .brotli(true)
+        .connect_timeout(Duration::from_secs(30))
+        .default_headers(default_headers)
+        .build()
+        .map_err(|e| anyhow!(e))?;
+
+    let resp = client.get(url).send().await.map_err(|e| anyhow!("Network error: {}", e))?;
+
+    let status = resp.status();
+    let content = resp.text().await.unwrap_or_default();
+
+    Ok((status, Cow::Owned(content)))
+}
 
 /// Perform an asynchronous REST API call against the Oatty platform.
 ///
@@ -61,13 +85,13 @@ pub async fn exec_remote_from_shell_command(
             // by returning an ExecOutcome with an error message
             // and a null result JSON object
             if !status.is_success() {
-                return Ok(ExecOutcome::Http(
-                    status.as_u16(),
-                    format!("HTTP {}: {}", status.as_u16(), text),
-                    Value::Null,
+                return Ok(ExecOutcome::Http {
+                    status_code: status.as_u16(),
+                    log_entry: format!("HTTP {}: {}", status.as_u16(), text),
+                    payload: Value::Null,
                     pagination,
                     request_id,
-                ));
+                });
             }
             let raw_log = format!("{}\n{}", status, text);
             let mut log = summarize_execution_outcome(&spec.canonical_id(), raw_log.as_str(), status);
@@ -80,7 +104,13 @@ pub async fn exec_remote_from_shell_command(
                     Value::Null
                 }
             };
-            Ok(ExecOutcome::Http(status.as_u16(), log, result_json, pagination, request_id))
+            Ok(ExecOutcome::Http {
+                status_code: status.as_u16(),
+                log_entry: log,
+                payload: result_json,
+                pagination,
+                request_id,
+            })
         }
         Err(e) => Err(e),
     }
@@ -103,7 +133,13 @@ pub async fn exec_remote_for_provider(spec: &CommandSpec, body: Map<String, Valu
                     Value::Null
                 }
             };
-            Ok(ExecOutcome::Http(status.as_u16(), log, result_json, None, request_id))
+            Ok(ExecOutcome::Http {
+                status_code: status.as_u16(),
+                log_entry: log,
+                payload: result_json,
+                pagination: None,
+                request_id,
+            })
         }
         Err(e) => Err(e),
     }

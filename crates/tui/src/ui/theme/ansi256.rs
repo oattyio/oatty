@@ -17,40 +17,40 @@ impl Ansi256Theme {
     pub fn new() -> Self {
         Self {
             roles: ThemeRoles {
-                background: Color::Indexed(236), // ~#303030
+                background: Color::Indexed(236),
                 surface: Color::Indexed(236),
-                surface_muted: Color::Indexed(239), // ~#4E4E4E
+                surface_muted: Color::Indexed(239),
                 border: Color::Indexed(239),
                 divider: Color::Indexed(239),
 
-                text: Color::Indexed(255),           // ~#EEEEEE
-                text_secondary: Color::Indexed(250), // ~#5F5FAF
+                text: Color::Indexed(255),
+                text_secondary: Color::Indexed(250),
                 text_muted: Color::Indexed(247),
 
-                accent_primary: Color::Indexed(212),   // ~#FF87D7
-                accent_secondary: Color::Indexed(117), // ~#87D7FF
+                accent_primary: Color::Indexed(212),
+                accent_secondary: Color::Indexed(117),
                 accent_subtle: Color::Indexed(61),
 
                 info: Color::Indexed(117),
-                success: Color::Indexed(84),  // ~#5FFF87
-                warning: Color::Indexed(215), // ~#FFAF5F
-                error: Color::Indexed(203),   // ~#FF5F5F
+                success: Color::Indexed(84),
+                warning: Color::Indexed(215),
+                error: Color::Indexed(203),
 
                 selection_bg: Color::Indexed(239),
                 selection_fg: Color::Indexed(255),
                 focus: Color::Indexed(117),
-                search_highlight: Color::Indexed(229), // ≈ #ffffaf search highlight
+                search_highlight: Color::Indexed(229),
                 syntax_keyword: Color::Indexed(212),
                 syntax_function: Color::Indexed(141),
                 syntax_string: Color::Indexed(120),
                 syntax_number: Color::Indexed(215),
                 syntax_type: Color::Indexed(123),
-                modal_bg: Color::Indexed(235), // slightly darker overlay
+                modal_bg: Color::Indexed(232),
 
                 scrollbar_track: Color::Indexed(239),
                 scrollbar_thumb: Color::Indexed(61),
-                table_row_even: Color::Indexed(235), // step darker than surface
-                table_row_odd: Color::Indexed(237),  // slight contrast for zebra striping
+                table_row_even: Color::Indexed(235),
+                table_row_odd: Color::Indexed(237),
             },
         }
     }
@@ -75,7 +75,7 @@ impl Ansi256ThemeHighContrast {
                 background: Color::Indexed(236),
                 surface: Color::Indexed(236),
                 surface_muted: Color::Indexed(239),
-                border: Color::Indexed(141), // ~#AF87FF
+                border: Color::Indexed(141),
                 divider: Color::Indexed(239),
 
                 text: Color::Indexed(255),

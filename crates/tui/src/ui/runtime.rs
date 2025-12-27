@@ -31,6 +31,7 @@ use oatty_mcp::{
     PluginEngine,
     config::{default_config_path, load_config_from_path},
 };
+use oatty_registry::CommandRegistry;
 use oatty_types::{Effect, ExecOutcome, Msg};
 use ratatui::{Terminal, prelude::*};
 use std::time::Instant;
@@ -53,8 +54,8 @@ use tokio::{
 
 use crate::app::{App, WorkflowRunEventReceiver};
 use crate::cmd;
+use crate::ui::components::LibraryComponent;
 use crate::ui::components::component::Component;
-use crate::ui::components::palette::PaletteComponent;
 use crate::ui::main_component::MainView;
 use rat_focus::FocusBuilder;
 
@@ -279,9 +280,9 @@ fn handle_input_event(app: &mut App<'_>, main_view: &mut MainView, input_event: 
 
 /// Entry point for the TUI runtime: sets up the terminal, spawns the event
 /// producer, runs the async event loop, and performs cleanup on exit.
-pub async fn run_app(registry: Arc<Mutex<oatty_registry::CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
+pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
     let mut app = App::new(registry, plugin_engine);
-    let mut main_view = MainView::new(Some(Box::new(PaletteComponent::default())));
+    let mut main_view = MainView::new(Some(Box::new(LibraryComponent)));
     let mut terminal = setup_terminal()?;
 
     // Input comes from a dedicated blocking thread to ensure reliability.
@@ -345,18 +346,19 @@ pub async fn run_app(registry: Arc<Mutex<oatty_registry::CommandRegistry>>, plug
                 effects.extend(main_view.handle_message(&mut app, &Msg::Tick));
                 needs_render = needs_animation || !effects.is_empty();
                 if !effects.is_empty() {
-                    // make a copy of the effects to avoid processing
-                    // new effects while processing old ones
-                    let mut dest = Vec::with_capacity(effects.len());
-                    dest.append(&mut effects);
-                    process_effects(&mut app, &mut main_view, dest, &mut pending_execs, &mut effects).await;
+                    // move effects out of their Vec to avoid processing new effects while processing current ones
+                    let mut effects_to_process = Vec::with_capacity(effects.len());
+                    effects_to_process.append(&mut effects);
+
+                    handle_navigation_effects(&mut app, &mut main_view, &mut effects_to_process, &mut effects);
+                    process_effects(&mut app, &mut main_view, effects_to_process, &mut pending_execs, &mut effects).await;
                 }
             }
 
             Some(joined) = pending_execs.next(), if !pending_execs.is_empty() => {
                 let outcome = joined.unwrap_or_else(|error| ExecOutcome::Log(format!("Execution task failed: {error}")));
                 match outcome {
-                    ExecOutcome::ProviderValues(provider_id, cache_key, _, _) => {
+                    ExecOutcome::ProviderValues { provider_id, cache_key, .. } => {
                         effects.extend(main_view.handle_message(&mut app, &Msg::ProviderValuesReady { provider_id, cache_key }));
                     }
                     other => {
@@ -435,34 +437,53 @@ pub async fn run_app(registry: Arc<Mutex<oatty_registry::CommandRegistry>>, plug
     Ok(())
 }
 
+fn handle_navigation_effects(app: &mut App<'_>, main_view: &mut MainView, effects: &mut Vec<Effect>, queued_effects: &mut Vec<Effect>) {
+    let navigation_effects = effects
+        .extract_if(0.., |effect| {
+            matches!(effect, Effect::SwitchTo(_) | Effect::ShowModal(_) | Effect::CloseModal)
+        })
+        .collect::<Vec<Effect>>();
+
+    for effect in navigation_effects {
+        match effect {
+            Effect::SwitchTo(route) => {
+                if let Some(mut view) = main_view.content_view.take() {
+                    queued_effects.extend(view.on_route_exit(app));
+                }
+                main_view.set_current_route(app, route);
+                if let Some(view) = main_view.content_view.as_mut() {
+                    queued_effects.extend(view.on_route_enter(app));
+                }
+            }
+            Effect::ShowModal(modal) => {
+                if let Some((mut view, _)) = main_view.modal_view.take() {
+                    queued_effects.extend(view.on_route_enter(app));
+                }
+                main_view.set_open_modal_kind(app, Some(modal));
+                if let Some((view, _)) = main_view.modal_view.as_mut() {
+                    queued_effects.extend(view.on_route_enter(app));
+                }
+            }
+            Effect::CloseModal => {
+                if let Some((mut view, _)) = main_view.modal_view.take() {
+                    queued_effects.extend(view.on_route_enter(app));
+                }
+                main_view.set_open_modal_kind(app, None);
+            }
+            _ => {}
+        }
+    }
+}
+
 async fn process_effects(
     app: &mut App<'_>,
     main_view: &mut MainView,
-    mut effects: Vec<Effect>,
+    effects: Vec<Effect>,
     pending_execs: &mut FuturesUnordered<JoinHandle<ExecOutcome>>,
     effects_out: &mut Vec<Effect>,
 ) {
     if effects.is_empty() {
         return;
-    }
-
-    let mut switch_to_effect = effects
-        .extract_if(0.., |effect| matches!(effect, Effect::SwitchTo(_)))
-        .collect::<Vec<Effect>>();
-    if let Some(Effect::SwitchTo(route)) = switch_to_effect.pop() {
-        effects.extend(main_view.set_current_route(app, route));
-    }
-    let mut show_modal_effect = effects
-        .extract_if(0.., |effect| matches!(effect, Effect::ShowModal(_)))
-        .collect::<Vec<Effect>>();
-    if let Some(Effect::ShowModal(modal)) = show_modal_effect.pop() {
-        main_view.set_open_modal_kind(app, Some(modal));
-    }
-    let mut close_modal_effect = effects
-        .extract_if(0.., |effect| matches!(effect, Effect::CloseModal))
-        .collect::<Vec<Effect>>();
-    if close_modal_effect.pop().is_some() {
-        main_view.set_open_modal_kind(app, None);
     }
 
     let command_batch = cmd::run_from_effects(app, effects).await;
@@ -486,7 +507,9 @@ async fn process_effects(
         let still_executing = app.active_exec_count.load(Ordering::Relaxed) > 0 || !pending_execs.is_empty();
         app.executing = still_executing;
         match outcome {
-            ExecOutcome::ProviderValues(provider_id, cache_key, _, _) => {
+            ExecOutcome::ProviderValues {
+                provider_id, cache_key, ..
+            } => {
                 effects_out.extend(main_view.handle_message(app, &Msg::ProviderValuesReady { provider_id, cache_key }));
             }
             ExecOutcome::Message(msg) => {

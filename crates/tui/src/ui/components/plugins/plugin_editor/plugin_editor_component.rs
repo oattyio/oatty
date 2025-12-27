@@ -51,6 +51,36 @@ struct RadioButtonLayout {
     transport_remote: Rect,
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+struct PluginEditorLayout {
+    container_area: Rect,
+    transport_local_area: Rect,
+    transport_remote_area: Rect,
+    name_area: Rect,
+    command_area: Rect,
+    args_area: Rect,
+    base_url_area: Rect,
+    validate_button_area: Rect,
+    save_button_area: Rect,
+    cancel_button_area: Rect,
+}
+
+impl PluginEditorLayout {
+    fn focus_areas(&self) -> [Rect; 9] {
+        [
+            self.transport_local_area,
+            self.transport_remote_area,
+            self.name_area,
+            self.command_area,
+            self.args_area,
+            self.base_url_area,
+            self.validate_button_area,
+            self.save_button_area,
+            self.cancel_button_area,
+        ]
+    }
+}
+
 /// Component for the "edit plugin" plugin interface.
 ///
 /// This component handles the UI for adding new MCP plugins to the system.
@@ -62,6 +92,7 @@ pub struct PluginsEditComponent {
     kv_component: KeyValueEditorComponent,
     // Map Focus widget IDs to persistent text input states for inline fields
     focus_id_to_input: HashMap<usize, TextInputState>,
+    layout: PluginEditorLayout,
 }
 
 impl PluginsEditComponent {
@@ -108,6 +139,23 @@ impl PluginsEditComponent {
             add_state.base_url = ti.input().to_string();
             add_state.base_url_cursor = ti.cursor();
         }
+    }
+
+    fn set_cursor_for_input(&mut self, add_state: &mut PluginEditViewState, widget_id: usize, area: Rect, label: &str, column: u16) {
+        self.ensure_inputs_initialized(add_state);
+        let start_column = Self::input_start_column(area, label);
+        let relative_column = column.saturating_sub(start_column);
+        if let Some(input_state) = self.focus_id_to_input.get_mut(&widget_id) {
+            let cursor_index = input_state.cursor_index_for_column(relative_column);
+            input_state.set_cursor(cursor_index);
+            Self::sync_back(add_state, widget_id, input_state);
+        }
+    }
+
+    fn input_start_column(area: Rect, label: &str) -> u16 {
+        let label_width = label.chars().count() as u16;
+        let prefix_width = 2 + label_width + 2; // focus indicator + label + ": "
+        area.x.saturating_add(prefix_width)
     }
 
     fn edit_focused_input<F: FnOnce(&mut TextInputState)>(&mut self, app: &mut App, f: F) -> bool {
@@ -207,10 +255,8 @@ impl Component for PluginsEditComponent {
         }
         let edit_state = &mut app.plugins.add.as_mut().expect("add state should be something");
         let MouseEvent { column, row, .. } = mouse;
-        let PluginEditViewState {
-            last_area, per_item_area, ..
-        } = edit_state;
-        if let Some(idx) = find_target_index_by_mouse_position(last_area, per_item_area, column, row) {
+        let focus_areas = self.layout.focus_areas();
+        if let Some(idx) = find_target_index_by_mouse_position(&self.layout.container_area, &focus_areas, column, row) {
             let focusables = [
                 &edit_state.f_transport,    // local transport radio
                 &edit_state.f_transport,    // remote transport radio
@@ -223,6 +269,45 @@ impl Component for PluginsEditComponent {
                 &edit_state.f_btn_cancel,   // Cancel button
             ];
             app.focus.focus(focusables[idx]);
+            match idx {
+                2 => self.set_cursor_for_input(edit_state, edit_state.f_name.widget_id(), self.layout.name_area, "Name", column),
+                3 => {
+                    if matches!(edit_state.transport, PluginTransport::Local) {
+                        self.set_cursor_for_input(
+                            edit_state,
+                            edit_state.f_command.widget_id(),
+                            self.layout.command_area,
+                            "Command",
+                            column,
+                        );
+                    } else {
+                        self.set_cursor_for_input(
+                            edit_state,
+                            edit_state.f_base_url.widget_id(),
+                            self.layout.base_url_area,
+                            "Base URL",
+                            column,
+                        );
+                    }
+                }
+                4 => {
+                    if matches!(edit_state.transport, PluginTransport::Local) {
+                        self.set_cursor_for_input(edit_state, edit_state.f_args.widget_id(), self.layout.args_area, "Args", column);
+                    }
+                }
+                5 => {
+                    if matches!(edit_state.transport, PluginTransport::Remote) {
+                        self.set_cursor_for_input(
+                            edit_state,
+                            edit_state.f_base_url.widget_id(),
+                            self.layout.base_url_area,
+                            "Base URL",
+                            column,
+                        );
+                    }
+                }
+                _ => {}
+            }
             // normalize the index to the focusables array
             if (2..=8).contains(&idx) {
                 return handle_enter_key(app);
@@ -263,20 +348,18 @@ impl Component for PluginsEditComponent {
         // Position the cursor in the active input field
         position_cursor_in_active_field(frame, &form_layout, add_state);
 
-        // Update the state with the new layout
-        // so mouse events can be handled
-        add_state.last_area = area;
-        add_state.per_item_area = vec![
-            transport_layout.transport_local,  // Local Radio
-            transport_layout.transport_remote, // Remote radio
-            form_layout.name_area,             // Name
-            form_layout.command_area,          // Command
-            form_layout.args_area,             // Args
-            form_layout.base_url_area,         // Base URL
-            button_layout.btn_validate_area,   // Validate button
-            button_layout.btn_save_area,       // Save button
-            button_layout.btn_cancel_area,     // Cancel button
-        ];
+        self.layout = PluginEditorLayout {
+            container_area: area,
+            transport_local_area: transport_layout.transport_local,
+            transport_remote_area: transport_layout.transport_remote,
+            name_area: form_layout.name_area,
+            command_area: form_layout.command_area,
+            args_area: form_layout.args_area,
+            base_url_area: form_layout.base_url_area,
+            validate_button_area: button_layout.btn_validate_area,
+            save_button_area: button_layout.btn_save_area,
+            cancel_button_area: button_layout.btn_cancel_area,
+        };
     }
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {

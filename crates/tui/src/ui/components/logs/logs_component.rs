@@ -175,7 +175,13 @@ impl LogsComponent {
                     app.logs.detail = None;
                     app.logs.cached_detail_index = None;
                     app.logs.cached_redacted_json = None;
-                    modal_to_open = Modal::Results(Box::new(ExecOutcome::Http(*status, raw.to_string(), json_value.clone(), None, 0)));
+                    modal_to_open = Modal::Results(Box::new(ExecOutcome::Http {
+                        status_code: *status,
+                        log_entry: raw.to_string(),
+                        payload: json_value.clone(),
+                        pagination: None,
+                        request_id: 0,
+                    }));
                 }
                 Some(LogEntry::Api {
                     json: Some(json_value), ..

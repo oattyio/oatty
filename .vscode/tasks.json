@@ -222,7 +222,7 @@
             }
         },
         {
-            "label": "registry-gen: Generate Manifest (Bincode)",
+            "label": "registry-gen: Generate Manifest (Postcard)",
             "type": "shell",
             "command": "cargo",
             "args": [

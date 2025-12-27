@@ -96,8 +96,8 @@ manifest-json: ## Generate manifest as JSON
 	@cargo run -p oatty-registry-gen -- --json --service $(SERVICE) schemas/heroku-schema.enhanced.json target/manifest-debug.json
 	@echo "$(GREEN)✓ Generated: target/manifest-debug.json$(NC)"
 
-manifest-bin: ## Generate manifest as bincode
-	@echo "$(BLUE)==> Generating manifest (bincode)...$(NC)"
+manifest-bin: ## Generate manifest as postcard
+	@echo "$(BLUE)==> Generating manifest (postcard)...$(NC)"
 	@cargo run -p oatty-registry-gen -- --service $(SERVICE) schemas/heroku-schema.enhanced.json target/manifest-debug.bin
 	@echo "$(GREEN)✓ Generated: target/manifest-debug.bin$(NC)"
 

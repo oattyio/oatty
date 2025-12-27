@@ -37,7 +37,7 @@ Add the following to your `Cargo.toml`:
 heroku-cli-registry = { git = "https://github.com/heroku/heroku-cli-registry" }
 ```
 
-Ensure the required dependencies (`clap`, `bincode`, `serde`, `anyhow`, etc.) are also included in your project.
+Ensure the required dependencies (`clap`, `postcard`, `serde`, `anyhow`, etc.) are also included in your project.
 
 ## Usage
 

@@ -1,17 +1,17 @@
+use crate::openapi::transform_openapi_to_links;
+use crate::schema::{derive_commands_from_schema, generate_commands};
+use anyhow::{Context, Result};
+use indexmap::{IndexMap, map::Entry as IndexMapEntry};
+use postcard::to_stdvec;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-use crate::openapi::transform_openapi_to_links;
-use crate::schema::{derive_commands_from_schema, generate_commands};
-use anyhow::{Context, Result};
-use bincode::config;
-use indexmap::{IndexMap, map::Entry as IndexMapEntry};
 use oatty_types::{
     CommandSpec, ServiceId,
     command::SchemaProperty,
-    manifest::{ProviderContractEntry, RegistryManifest},
+    manifest::RegistryManifest,
     provider::{ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract},
     workflow::WorkflowDefinition,
 };
@@ -48,8 +48,7 @@ pub fn write_manifest(inputs: Vec<ManifestInput>, workflow_root: Option<PathBuf>
         workflows,
         provider_contracts,
     };
-    let config = config::standard();
-    let bytes = bincode::serde::encode_to_vec(&manifest, config)?;
+    let bytes = to_stdvec(&manifest)?;
     fs::write(&output, &bytes)?;
     println!("wrote {} bytes to {}", bytes.len(), output.display());
 
@@ -220,7 +219,7 @@ fn create_commands_from_input(inputs: Vec<ManifestInput>) -> Result<Vec<CommandS
 /// let provider_contracts = build_provider_contracts(&commands);
 /// assert!(!provider_contracts.is_empty());
 /// ```
-fn build_provider_contracts(commands: &[CommandSpec]) -> Vec<ProviderContractEntry> {
+fn build_provider_contracts(commands: &[CommandSpec]) -> IndexMap<String, ProviderContract> {
     let mut contracts = IndexMap::new();
 
     for command in commands {
@@ -237,9 +236,6 @@ fn build_provider_contracts(commands: &[CommandSpec]) -> Vec<ProviderContractEnt
     }
 
     contracts
-        .into_iter()
-        .map(|(command_id, contract)| ProviderContractEntry { command_id, contract })
-        .collect()
 }
 /// Populates the `arguments` field of a `ProviderContract` based on the provided `CommandSpec`.
 ///

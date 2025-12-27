@@ -2,6 +2,7 @@ use super::roles::Theme;
 use crate::ui::theme::roles::ThemeRoles;
 use oatty_types::Severity;
 use ratatui::text::Line;
+use ratatui::widgets::{List, ListItem};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -333,6 +334,7 @@ pub fn highlight_segments(needle: &str, text: &str, base: Style, highlight: Styl
         create_spans_with_match(needle.to_string(), text.to_string(), base, highlight)
     }
 }
+
 pub fn create_spans_with_match(needle: String, display: String, default_style: Style, emphasis_style: Style) -> Vec<Span<'static>> {
     if needle.is_empty() {
         return vec![Span::styled(display, default_style)];
@@ -344,16 +346,13 @@ pub fn create_spans_with_match(needle: String, display: String, default_style: S
     let needle_lower = needle.to_ascii_lowercase();
     let hay_lower = hay.to_ascii_lowercase();
 
-    // Find and highlight all matches
     while let Some(pos) = hay_lower[i..].find(&needle_lower) {
         let start = i + pos;
 
-        // Add text before the match
         if start > i {
             spans.push(Span::styled(hay[i..start].to_string(), default_style));
         }
 
-        // Add highlighted match
         let end = start + needle.len();
         spans.push(Span::styled(hay[start..end].to_string(), emphasis_style));
 
@@ -363,12 +362,30 @@ pub fn create_spans_with_match(needle: String, display: String, default_style: S
         }
     }
 
-    // Add remaining text after the last match
     if i < hay.len() {
         spans.push(Span::styled(hay[i..].to_string(), default_style));
     }
 
     spans
+}
+
+/// Creates a styled list with a highlight indicator.
+pub fn create_list_with_highlight<'a>(
+    list_items: &[ListItem<'static>],
+    theme: &dyn Theme,
+    is_focused: bool,
+    maybe_block: Option<Block<'a>>,
+) -> List<'a> {
+    let mut list = List::new(list_items.to_vec())
+        .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
+        .style(panel_style(theme))
+        .highlight_symbol(if is_focused { "> " } else { " " });
+
+    if let Some(block) = maybe_block {
+        list = list.block(block);
+    }
+
+    list
 }
 
 pub fn build_hint_spans(theme: &dyn Theme, hints: &[(&str, &str)]) -> Vec<Span<'static>> {

@@ -18,8 +18,11 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::ui::components::palette::suggestion_engine::SuggestionEngine;
 use crate::ui::theme::Theme;
+use crate::ui::{
+    components::palette::suggestion_engine::SuggestionEngine,
+    utils::{SpanCollector, truncate_to_width},
+};
 use chrono::Utc;
 
 use super::suggestion_engine::{parse_user_flags_args, required_flags_remaining};
@@ -30,7 +33,7 @@ use oatty_registry::{CommandRegistry, find_by_group_and_cmd};
 use oatty_types::{CommandExecution, CommandSpec, Effect, ExecOutcome, ItemKind, Modal, SuggestionItem};
 use oatty_util::{
     HistoryKey, HistoryScope, HistoryScopeKind, HistoryStore, StoredHistoryValue, has_meaningful_value, lex_shell_like,
-    lex_shell_like_ranged, truncate_with_ellipsis, value_contains_secret,
+    lex_shell_like_ranged, value_contains_secret,
 };
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::widgets::{ListItem, ListState};
@@ -41,7 +44,6 @@ use ratatui::{
 };
 use serde_json::Value;
 use tracing::warn;
-use unicode_width::UnicodeWidthStr;
 
 /// Locate the index of the token under the cursor.
 ///
@@ -450,6 +452,25 @@ impl PaletteState {
         self.with_text_input(|ti| ti.backspace());
     }
 
+    /// Remove the character immediately after the cursor.
+    ///
+    /// This method removes the character after the cursor and adjusts
+    /// the cursor position accordingly, handling multi-byte UTF-8
+    /// characters correctly.
+    ///
+    /// - No-op if the cursor is at the end of the input.
+    /// - Handles multi-byte UTF-8 characters correctly.
+    ///
+    /// Returns: nothing; mutates `self.input` and `self.cursor`.
+    pub fn reduce_delete(&mut self) {
+        // Editing cancels history browsing
+        if self.history_index.is_some() {
+            self.history_index = None;
+            self.draft_input = None;
+        }
+        self.with_text_input(|ti| ti.delete());
+    }
+
     /// Finalize the suggestions list for the UI: rank, truncate, ghost text, and
     /// state flags.
     fn finalize_suggestions(&mut self, items: &mut [SuggestionItem], theme: &dyn Theme) {
@@ -849,7 +870,6 @@ impl PaletteState {
             let commands = &lock.commands;
 
             let result = SuggestionEngine::build(commands, providers, &self.input);
-
             let mut items = result.items;
             pending_fetches = result.pending_fetches;
             self.provider_loading = result.provider_loading || !pending_fetches.is_empty();
@@ -1038,8 +1058,18 @@ impl PaletteState {
     pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &ExecOutcome) -> Vec<Effect> {
         let mut effects = Vec::new();
         let (status, log, value, request_id) = match execution_outcome {
-            ExecOutcome::Http(status_code, log, value, _, request_id) => (status_code, log, value.clone(), request_id),
-            ExecOutcome::Mcp(log, value, request_id) => (&200, log, value.clone(), request_id),
+            ExecOutcome::Http {
+                status_code,
+                log_entry,
+                payload,
+                request_id,
+                ..
+            } => (status_code, log_entry, payload.clone(), request_id),
+            ExecOutcome::Mcp {
+                log_entry,
+                payload,
+                request_id,
+            } => (&200, log_entry, payload.clone(), request_id),
             _ => return effects,
         };
 
@@ -1201,59 +1231,6 @@ const DEFAULT_FLAG_DESCRIPTION_WIDTH: u16 = 80;
 const DEFAULT_VALUE_META_WIDTH: u16 = 60;
 const DEFAULT_POSITIONAL_HELP_WIDTH: u16 = 80;
 const MIN_TRUNCATION_WIDTH: u16 = 4;
-
-#[derive(Default)]
-struct SpanCollector {
-    spans: Vec<Span<'static>>,
-    width: u16,
-}
-
-impl SpanCollector {
-    fn with_capacity(capacity: usize) -> Self {
-        Self {
-            spans: Vec::with_capacity(capacity),
-            width: 0,
-        }
-    }
-
-    fn push(&mut self, span: Span<'static>) {
-        self.width = self.width.saturating_add(span_display_width(&span));
-        self.spans.push(span);
-    }
-
-    fn extend(&mut self, spans: Vec<Span<'static>>) {
-        for span in spans {
-            self.push(span);
-        }
-    }
-
-    fn remaining_with_fallback(&self, width_hint: Option<u16>, fallback: u16) -> u16 {
-        width_hint.unwrap_or(fallback).saturating_sub(self.width)
-    }
-
-    fn into_vec(self) -> Vec<Span<'static>> {
-        self.spans
-    }
-}
-
-fn span_display_width(span: &Span<'_>) -> u16 {
-    UnicodeWidthStr::width(span.content.as_ref()) as u16
-}
-
-fn truncate_to_width(text: &str, available: u16) -> String {
-    if available == 0 {
-        return String::new();
-    }
-    let character_count = text.chars().count() as u16;
-    if character_count <= available {
-        return text.to_string();
-    }
-    if available == 1 {
-        return "…".to_string();
-    }
-    let max_columns = available.saturating_sub(1) as usize;
-    truncate_with_ellipsis(text, max_columns)
-}
 
 fn normalized_width_hint(width_hint: Option<u16>) -> Option<u16> {
     width_hint
@@ -1459,7 +1436,7 @@ fn infer_value_style(theme: &dyn Theme, value: &str) -> Style {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::theme::dracula::DraculaTheme;
+    use crate::ui::{theme::dracula::DraculaTheme, utils::span_display_width};
     use oatty_util::{DEFAULT_HISTORY_PROFILE, InMemoryHistoryStore};
 
     fn palette_state_with_registry(registry: Arc<Mutex<CommandRegistry>>) -> PaletteState {
@@ -1468,7 +1445,7 @@ mod tests {
     }
 
     fn make_palette_state() -> PaletteState {
-        let registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap()));
+        let registry = Arc::new(Mutex::new(CommandRegistry::from_config().unwrap()));
         palette_state_with_registry(registry)
     }
 
@@ -1478,7 +1455,7 @@ mod tests {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::Hasher;
 
-        let registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap()));
+        let registry = Arc::new(Mutex::new(CommandRegistry::from_config().unwrap()));
         let store: Arc<InMemoryHistoryStore> = Arc::new(InMemoryHistoryStore::new());
         let mut palette = PaletteState::new(
             Arc::clone(&registry),
@@ -1498,7 +1475,13 @@ mod tests {
         palette.record_pending_execution(command_id.clone(), command_input.to_string());
         palette.set_cmd_exec_hash(request_hash);
 
-        let outcome = ExecOutcome::Http(200, "ok".into(), json!({"ok": true}), None, request_hash);
+        let outcome = ExecOutcome::Http {
+            status_code: 200,
+            log_entry: "ok".into(),
+            payload: json!({"ok": true}),
+            pagination: None,
+            request_id: request_hash,
+        };
         palette.process_general_execution_result(&Box::new(outcome));
 
         assert_eq!(palette.history.last().map(|s| s.as_str()), Some(command_input));
@@ -1537,7 +1520,7 @@ mod tests {
 
     #[test]
     fn handle_provider_fetch_failure_clears_loading_placeholder_and_sets_error() {
-        let registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().expect("embedded registry")));
+        let registry = Arc::new(Mutex::new(CommandRegistry::from_config().expect("embedded registry")));
         let mut state = palette_state_with_registry(registry);
         state.set_input("apps info --app ".to_string());
         state.provider_loading = true;
@@ -1604,7 +1587,7 @@ mod tests {
     }
 
     fn run_palette(input: &str, cursor: usize, ops: &[Op]) -> (String, usize) {
-        let reg = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap()));
+        let reg = Arc::new(Mutex::new(CommandRegistry::from_config().unwrap()));
         let mut st = palette_state_with_registry(reg);
         st.set_input(input.to_string());
         st.set_cursor(cursor);

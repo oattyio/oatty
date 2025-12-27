@@ -59,7 +59,7 @@ The registry is derived from the Oatty JSON Hyper-Schema using the `registry-gen
 
 ### CLI Usage
 
-- Binary (bincode) manifest:
+- Binary (postcard) manifest:
 
 ```
 cargo run -p heroku-registry-gen -- schemas/heroku-schema.json target/manifest.bin
@@ -73,7 +73,7 @@ cargo run -p heroku-registry-gen -- --json schemas/heroku-schema.json target/man
 
 Notes:
 - The CLI creates parent directories for the output path if needed.
-- By default, it writes a compact bincode file for fast loading.
+- By default, it writes a compact postcard file for fast loading.
 
 ### Library Usage
 
@@ -84,7 +84,7 @@ Add a dependency on the generator crate from within the workspace:
 oatty-registry-gen = { path = "crates/registry-gen" }
 ```
 
-Generate a manifest file (bincode):
+Generate a manifest file (postcard):
 
 ```rust
 use std::path::PathBuf;
