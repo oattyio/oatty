@@ -12,13 +12,12 @@ use oatty_types::{CommandSpec, HttpCommandSpec};
 use reqwest::header::{self, CONTENT_RANGE, HeaderMap};
 use reqwest::{Client, Method, StatusCode};
 use serde_json::{Map as JsonMap, Map, Number, Value};
-use std::borrow::Cow;
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::Duration;
 
 /// Fetches a static json or text resource using GET
-pub async fn fetch_static(url: &str) -> Result<(StatusCode, Cow<'static, str>), anyhow::Error> {
+pub async fn fetch_static(url: &str) -> Result<(StatusCode, String), anyhow::Error> {
     let accept = header::HeaderValue::from_str("application/json,text/html").map_err(|e| anyhow!(e))?;
     let mut default_headers = HeaderMap::new();
     default_headers.insert(header::ACCEPT, accept);
@@ -35,17 +34,19 @@ pub async fn fetch_static(url: &str) -> Result<(StatusCode, Cow<'static, str>), 
     let status = resp.status();
     let content = resp.text().await.unwrap_or_default();
 
-    Ok((status, Cow::Owned(content)))
+    Ok((status, content))
 }
 
 /// Perform an asynchronous REST API call against the Oatty platform.
 ///
 /// - Constructs the request from the `CommandSpec`.
+/// - Uses the provided `base_url` override when available.
 /// - Applies Range headers from the body when present.
 /// - Sends the request and parses the response into [`ExecOutcome`].
 /// - Returns a user-friendly `Err(String)` on HTTP/auth/network issues.
 pub async fn exec_remote_from_shell_command(
     spec: &CommandSpec,
+    base_url: Option<String>,
     hydrated_shell_command: String,
     range_header_override: Option<String>,
     request_id: u64,
@@ -61,7 +62,12 @@ pub async fn exec_remote_from_shell_command(
     let http = spec.http().ok_or_else(|| format!("Command '{}' is not HTTP-backed", spec.name))?;
     let path = resolve_path(&http.path, &user_args);
 
-    match exec_remote_from_spec_inner(http, body, path).await {
+    let resolved_base_url = base_url
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(http.base_url.as_str());
+
+    match exec_remote_from_spec_inner(http, resolved_base_url, body, path).await {
         Ok((status, headers, text, maybe_range_header)) => {
             let mut pagination = headers
                 .get(CONTENT_RANGE)
@@ -116,11 +122,22 @@ pub async fn exec_remote_from_shell_command(
     }
 }
 
-pub async fn exec_remote_for_provider(spec: &CommandSpec, body: Map<String, Value>, request_id: u64) -> Result<ExecOutcome, String> {
+/// Executes an HTTP-backed provider command with an optional base URL override.
+pub async fn exec_remote_for_provider(
+    spec: &CommandSpec,
+    base_url: Option<String>,
+    body: Map<String, Value>,
+    request_id: u64,
+) -> Result<ExecOutcome, String> {
     let http = spec.http().ok_or_else(|| format!("Command '{}' is not HTTP-backed", spec.name))?;
     let path = build_path(http.path.as_str(), &body);
 
-    match exec_remote_from_spec_inner(http, body, path).await {
+    let resolved_base_url = base_url
+        .as_deref()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(http.base_url.as_str());
+
+    match exec_remote_from_spec_inner(http, resolved_base_url, body, path).await {
         Ok((status, _, text, _)) => {
             let raw_log = format!("{}\n{}", status, text);
             let mut log = summarize_execution_outcome(&spec.canonical_id(), raw_log.as_str(), status);
@@ -147,11 +164,11 @@ pub async fn exec_remote_for_provider(spec: &CommandSpec, body: Map<String, Valu
 
 async fn exec_remote_from_spec_inner(
     http: &HttpCommandSpec,
+    base_url: &str,
     body: Map<String, Value>,
     path: String,
 ) -> Result<(StatusCode, HeaderMap, String, Option<String>), String> {
-    let client =
-        OattyClient::new_from_service_id(http.service_id).map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY", e))?;
+    let client = build_client_from_http_spec(base_url)?;
 
     let method = Method::from_bytes(http.method.as_bytes()).map_err(|e| e.to_string())?;
     let mut builder = client.request(method.clone(), &path);
@@ -185,7 +202,7 @@ async fn exec_remote_from_spec_inner(
     let resp = builder
         .send()
         .await
-        .map_err(|e| format!("Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY is set", e))?;
+        .map_err(|e| format!("Network error: {}. Hint: check connection/proxy; ensure OATTY_API_TOKEN is set", e))?;
 
     let status = resp.status();
     let headers = resp.headers().clone();
@@ -290,7 +307,7 @@ fn truncate_for_summary(text: &str, max_len: usize) -> String {
 /// # Errors
 /// - Returns an error if the [`CommandSpec`] is not associated with an HTTP-backed service.
 /// - Returns an error if authentication setup for the Oatty API client fails (e.g., missing
-///   `HEROKU_API_KEY`).
+///   `OATTY_API_TOKEN`).
 /// - Returns an error if the HTTP request fails (e.g., network error, invalid proxy settings).
 /// - Returns an error if the response status code indicates failure (non-2xx status code).
 /// - Returns an error if the response body is not a valid JSON array or cannot be deserialized.
@@ -312,7 +329,7 @@ fn truncate_for_summary(text: &str, max_len: usize) -> String {
 /// # Dependencies
 /// - This function uses the `OattyClient` for API requests, and the `serde_json` crate
 ///   for parsing JSON responses.
-/// - Ensure the environment variable `HEROKU_API_KEY` is set for authentication.
+/// - Ensure the environment variable `OATTY_API_TOKEN` is set for authentication.
 ///
 /// # Notes
 /// - The function unwraps the response body text (`text().await`) if reading the body fails,
@@ -324,8 +341,7 @@ fn truncate_for_summary(text: &str, max_len: usize) -> String {
 pub async fn fetch_json_array(spec: &CommandSpec) -> Result<Vec<Value>, String> {
     let http = spec.http().ok_or_else(|| format!("Command '{}' is not HTTP-backed", spec.name))?;
 
-    let client =
-        OattyClient::new_from_service_id(http.service_id).map_err(|e| format!("Auth setup failed: {}. Hint: set HEROKU_API_KEY", e))?;
+    let client = build_client_from_http_spec(http.base_url.as_str())?;
 
     let method = Method::from_bytes(http.method.as_bytes()).map_err(|e| e.to_string())?;
     if method != Method::GET {
@@ -335,7 +351,7 @@ pub async fn fetch_json_array(spec: &CommandSpec) -> Result<Vec<Value>, String> 
         .request(method, &http.path)
         .send()
         .await
-        .map_err(|e| format!("Network error: {}. Hint: check connection/proxy; ensure HEROKU_API_KEY is set", e))?;
+        .map_err(|e| format!("Network error: {}. Hint: check connection/proxy; ensure OATTY_API_TOKEN is set", e))?;
 
     let status = resp.status();
     let text = resp.text().await.unwrap_or_else(|_| String::from("<no body>"));
@@ -368,13 +384,21 @@ fn get_range_header_value(body: &JsonMap<String, Value>) -> Option<String> {
     None
 }
 
+fn build_client_from_http_spec(base_url: &str) -> Result<OattyClient, String> {
+    if base_url.trim().is_empty() {
+        return Err("Missing base URL for HTTP command".to_string());
+    }
+    OattyClient::new_with_base_url(base_url.to_string()).map_err(|error| format!("Auth setup failed: {}. Hint: set OATTY_API_TOKEN", error))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use oatty_types::CommandFlag;
-    use oatty_types::service::ServiceId;
     use serde_json::json;
     use std::collections::HashMap;
+
+    const TEST_BASE_URL: &str = "https://api.example.com";
 
     fn build_test_spec(flags: Vec<CommandFlag>) -> CommandSpec {
         CommandSpec::new_http(
@@ -383,7 +407,8 @@ mod tests {
             "List apps".to_string(),
             Vec::new(),
             flags,
-            HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new(), None),
+            HttpCommandSpec::new("GET", "/apps", TEST_BASE_URL, Vec::new(), None),
+            1,
         )
     }
 

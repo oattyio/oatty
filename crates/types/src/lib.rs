@@ -1,6 +1,6 @@
 //! Core type definitions shared across the Oatty CLI workspace.
 //!
-//! The `heroku-types` crate centralizes serde-friendly data structures that describe CLI commands,
+//! The `oatty-types` crate centralizes serde-friendly data structures that describe CLI commands,
 //! palette suggestions, execution outcomes, and the message/effect system shared by the engine and
 //! TUI crates.
 
@@ -122,23 +122,41 @@ pub mod manifest {
     use std::collections::HashMap;
 
     use indexmap::IndexMap;
-    use postcard::from_bytes;
+    use postcard::{from_bytes, to_stdvec};
     use serde::{Deserialize, Serialize};
 
     use crate::{command::CommandSpec, provider::ProviderContract, workflow::WorkflowDefinition};
 
     /// Registry catalog structure used by the registry, engine, and TUI layers.
-    #[derive(Debug, Clone, Serialize, Deserialize, Default, Eq, PartialEq)]
+    #[derive(Default, Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
     pub struct RegistryCatalog {
-        pub name: String,
+        /// Title of the registry.
+        pub title: String,
+        /// Description of the registry. May be copied from the schema description.
         pub description: String,
+        /// Path to the manifest file.
         pub manifest_path: String,
+        /// Headers to include when making requests to the API endpoints.
         pub headers: HashMap<String, String>,
-        pub base_url: String,
+        /// Base URLs for the API endpoints.
+        pub base_urls: Vec<String>,
+        /// Index of the currently selected base URL.
+        pub base_url_index: usize,
+        /// Manifest registry if loaded.
+        pub manifest: Option<RegistryManifest>,
+        /// Whether the registry is enabled.
+        pub is_enabled: bool,
+    }
+
+    impl RegistryCatalog {
+        /// Returns the currently selected base URL for this catalog, if available.
+        pub fn selected_base_url(&self) -> Option<&str> {
+            self.base_urls.get(self.base_url_index).map(String::as_str)
+        }
     }
 
     /// Serialized manifest housing both command specifications and workflow definitions.
-    #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq)]
+    #[derive(Debug, Clone, Serialize, Deserialize, Default, Eq, PartialEq)]
     pub struct RegistryManifest {
         /// All command specifications generated from the platform schemas.
         #[serde(default)]
@@ -149,6 +167,17 @@ pub mod manifest {
         /// Provider argument and return contracts keyed by command identifier.
         #[serde(default)]
         pub provider_contracts: IndexMap<String, ProviderContract>,
+        /// Vendor information for the registry.
+        #[serde(default)]
+        pub vendor: String,
+    }
+
+    impl TryInto<Vec<u8>> for RegistryManifest {
+        type Error = anyhow::Error;
+
+        fn try_into(self) -> Result<Vec<u8>, Self::Error> {
+            to_stdvec(&self).map_err(Into::into)
+        }
     }
 
     impl TryFrom<Vec<u8>> for RegistryManifest {
@@ -161,93 +190,10 @@ pub mod manifest {
     }
 }
 
-pub mod service {
-    //! Supported HTTP API services and helpers for resolving endpoints.
-    use serde::{Deserialize, Serialize};
-    use std::{error::Error, fmt, str::FromStr};
-
-    /// Default accept header shared across Oatty APIs.
-    const HEROKU_JSON_ACCEPT_HEADER: &str = "application/vnd.heroku+json; version=3.sdk";
-
-    /// Identifies the backend service targeted by a generated request.
-    #[derive(Clone, Copy, Debug, Hash, Eq, PartialEq, Default, Serialize, Deserialize)]
-    pub enum ServiceId {
-        /// Core Oatty Platform API (`https://api.heroku.com`).
-        #[default]
-        CoreApi,
-        /// Oatty Data API (`https://api.data.heroku.com`).
-        DataApi,
-        /// Oatty Data API staging environment (`https://heroku-data-api-staging.herokuapp.com`).
-        DataApiStaging,
-    }
-
-    impl ServiceId {
-        fn base_url(&self) -> &str {
-            match self {
-                Self::CoreApi => "https://api.heroku.com",
-                Self::DataApi => "https://api.data.heroku.com",
-                Self::DataApiStaging => "https://heroku-data-api-staging.herokuapp.com",
-            }
-        }
-    }
-
-    /// Provides convenient accessors for service metadata.
-    pub trait ToServiceIdInfo {
-        /// Returns the environment variable that overrides the base URL.
-        fn env_var(&self) -> &str;
-        /// Returns the default base URL for the service.
-        fn default_base_url(&self) -> &str;
-        /// Returns the HTTP `Accept` header expected by the service.
-        fn accept_headers(&self) -> &str;
-    }
-
-    impl ToServiceIdInfo for ServiceId {
-        fn env_var(&self) -> &str {
-            match self {
-                Self::CoreApi => "HEROKU_API_BASE",
-                Self::DataApi | Self::DataApiStaging => "HEROKU_DATA_API_BASE",
-            }
-        }
-
-        fn default_base_url(&self) -> &str {
-            self.base_url()
-        }
-
-        fn accept_headers(&self) -> &str {
-            HEROKU_JSON_ACCEPT_HEADER
-        }
-    }
-
-    /// Error returned when attempting to parse an unsupported service identifier.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct ParseServiceIdError;
-
-    impl fmt::Display for ParseServiceIdError {
-        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            f.write_str("invalid service id; expected 'core-api', 'data-api', or 'data-api-staging'")
-        }
-    }
-
-    impl Error for ParseServiceIdError {}
-
-    impl FromStr for ServiceId {
-        type Err = ParseServiceIdError;
-
-        fn from_str(value: &str) -> Result<Self, Self::Err> {
-            match value {
-                "core-api" => Ok(Self::CoreApi),
-                "data-api" => Ok(Self::DataApi),
-                "data-api-staging" => Ok(Self::DataApiStaging),
-                _ => Err(ParseServiceIdError),
-            }
-        }
-    }
-}
-
 pub mod command {
     //! Command metadata describing CLI commands and their inputs.
 
-    use crate::{provider::ValueProvider, service::ServiceId};
+    use crate::provider::ValueProvider;
     use anyhow::Result;
     use anyhow::anyhow;
 
@@ -339,9 +285,9 @@ pub mod command {
     ///
     /// Creating an HTTP-backed command:
     /// ```rust
-    /// use oatty_types::{CommandExecution, CommandSpec, HttpCommandSpec, ServiceId};
+    /// use oatty_types::{CommandExecution, CommandSpec, HttpCommandSpec};
     ///
-    /// let http = HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new(), None);
+    /// let http = HttpCommandSpec::new("GET", "/apps", "https://api.example.com", Vec::new(), None);
     /// let spec = CommandSpec::new_http(
     ///     "apps".into(),
     ///     "apps:list".into(),
@@ -381,6 +327,8 @@ pub mod command {
         pub group: String,
         /// The full command name in format "resource:action" (for example, "apps:list").
         pub name: String,
+        /// Catalog identifier derived from the cataglog index at the time of deserialization.
+        pub catalog_identifier: usize,
         /// Brief description of what the command does.
         pub summary: String,
         /// Ordered list of positional arguments with inline help.
@@ -450,10 +398,12 @@ pub mod command {
             positional_args: Vec<PositionalArgument>,
             flags: Vec<CommandFlag>,
             http: HttpCommandSpec,
+            catalog_identifier: usize,
         ) -> Self {
             Self {
                 group,
                 name,
+                catalog_identifier,
                 summary,
                 positional_args,
                 flags,
@@ -473,6 +423,7 @@ pub mod command {
             Self {
                 group,
                 name,
+                catalog_identifier: 0,
                 summary,
                 positional_args,
                 flags,
@@ -629,7 +580,7 @@ pub mod command {
     }
 
     /// HTTP execution metadata.
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct HttpCommandSpec {
         /// HTTP method (GET, POST, DELETE, and so on).
         pub method: String,
@@ -638,19 +589,30 @@ pub mod command {
         /// Supported range fields for pagination or sorting (for example, "id", "name").
         #[serde(default)]
         pub ranges: Vec<String>,
-        /// Identifier for the API service that owns the endpoint.
-        #[serde(default)]
-        pub service_id: ServiceId,
+        /// Base URL for the API host that serves this command.
+        pub base_url: String,
         // Schema expected from API
         pub output_schema: Option<SchemaProperty>,
     }
 
     impl HttpCommandSpec {
         /// Create a new HTTP execution payload with the provided metadata.
+        ///
+        /// # Arguments
+        ///
+        /// * `method` - The HTTP method (for example, `GET` or `POST`).
+        /// * `path` - The API-relative path for the endpoint.
+        /// * `base_url` - The base URL for the API host.
+        /// * `ranges` - Range fields supported by the endpoint.
+        /// * `output_schema` - Optional schema metadata for responses.
+        ///
+        /// # Returns
+        ///
+        /// A new [`HttpCommandSpec`] bound to the provided base URL.
         pub fn new(
             method: impl Into<String>,
             path: impl Into<String>,
-            service_id: ServiceId,
+            base_url: impl Into<String>,
             ranges: Vec<String>,
             output_schema: Option<SchemaProperty>,
         ) -> Self {
@@ -658,8 +620,20 @@ pub mod command {
                 method: method.into(),
                 path: path.into(),
                 ranges,
-                service_id,
+                base_url: base_url.into(),
                 output_schema,
+            }
+        }
+    }
+
+    impl Default for HttpCommandSpec {
+        fn default() -> Self {
+            Self {
+                method: String::new(),
+                path: String::new(),
+                ranges: Vec::new(),
+                base_url: String::new(),
+                output_schema: None,
             }
         }
     }
@@ -709,13 +683,13 @@ pub mod command {
 pub mod execution {
     //! Execution outcomes and pagination metadata produced by the engine.
 
-    use std::{borrow::Cow, path::PathBuf};
+    use std::path::PathBuf;
 
     use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use url::Url;
 
-    use crate::{Msg, PluginDetail};
+    use crate::{Msg, PluginDetail, manifest::RegistryCatalog};
 
     /// Result of an asynchronous command execution.
     ///
@@ -724,9 +698,11 @@ pub mod execution {
     #[derive(Debug, Clone, Default)]
     pub enum ExecOutcome {
         /// Result from executing a file contents command containing a structured payload.
-        FileContents(Cow<'static, str>, PathBuf),
+        FileContents(String, PathBuf),
         /// Result from executing a remote file contents command containing a structured payload.
-        RemoteFileContents(Cow<'static, str>, Url),
+        RemoteFileContents(String, Url),
+        ///Result from executing a generate manifest command containing a structured payload.
+        RegistryCatalog(RegistryCatalog),
         /// Result from executing a directory contents command containing a structured payload.
         DirectoryContents {
             /// Files and directories present in the requested location.
@@ -942,6 +918,8 @@ pub mod messaging {
         ReadRemoteFileContents(Url),
         /// List the contents of a directory.
         ListDirectoryContents(PathBuf),
+        /// Parse a RegistryCatalog from the given contents.
+        ImportRegistryCatalog(String),
         /// Load MCP plugins from config into `PluginsState`.
         PluginsLoadRequested,
         /// Refresh plugin statuses and health.
@@ -1619,7 +1597,6 @@ pub use execution::*;
 pub use messaging::*;
 pub use plugin::*;
 pub use provider::*;
-pub use service::*;
 pub use suggestion::*;
 pub use workflow::*;
 
@@ -1635,7 +1612,8 @@ mod tests {
             "execution": {
                 "kind": "http",
                 "method": "GET",
-                "path": "/apps"
+                "path": "/apps",
+                "base_url": "https://api.example.com"
             }
         }"#;
 
@@ -1648,6 +1626,7 @@ mod tests {
         let http = spec.http().expect("http execution present");
         assert_eq!(http.method, "GET");
         assert_eq!(http.path, "/apps");
+        assert_eq!(http.base_url, "https://api.example.com");
 
         let back = serde_json::to_string(&spec).expect("serialize CommandSpec");
         let spec2: CommandSpec = serde_json::from_str(&back).expect("round-trip deserialize");
@@ -1657,6 +1636,13 @@ mod tests {
         assert_eq!(http2.path, http.path);
         assert_eq!(spec2.positional_args.len(), spec.positional_args.len());
         assert_eq!(spec2.flags.len(), 0);
+    }
+
+    #[test]
+    fn http_command_spec_new_sets_base_url() {
+        let http_command_spec = HttpCommandSpec::new("GET", "/apps", "https://example.com", Vec::new(), None);
+
+        assert_eq!(http_command_spec.base_url, "https://example.com");
     }
 
     #[test]
@@ -1689,6 +1675,7 @@ mod tests {
         let spec = CommandSpec {
             group: String::new(),
             name: "apps:list".into(),
+            catalog_identifier: 1,
             summary: "List apps".into(),
             positional_args: Vec::new(),
             flags: Vec::new(),

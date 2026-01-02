@@ -38,7 +38,7 @@ use crate::{CommandFlag, CommandRegistry, CommandSpec};
 /// let _clap_command = build_clap(Arc::clone(&registry));
 /// ```
 pub fn build_clap(registry: Arc<Mutex<CommandRegistry>>) -> ClapCommand {
-    let mut root = create_root_command();
+    let mut root = create_root_command("oatty");
     let Some(lock) = registry.lock().ok() else {
         return root;
     };
@@ -55,7 +55,7 @@ pub fn build_clap(registry: Arc<Mutex<CommandRegistry>>) -> ClapCommand {
 
 /// Creates the root command with global flags.
 ///
-/// This function creates the main "heroku" command with global flags that apply
+/// This function creates the main command with global flags that apply
 /// to all subcommands. The global flags include:
 ///
 /// - `--json` - Enables JSON output format
@@ -70,12 +70,14 @@ pub fn build_clap(registry: Arc<Mutex<CommandRegistry>>) -> ClapCommand {
 /// ```rust,ignore
 /// use oatty_registry::clap_builder::create_root_command;
 ///
-/// let root = create_root_command();
-/// assert_eq!(root.get_name(), "heroku");
+/// let root = create_root_command("example");
+/// assert_eq!(root.get_name(), "example");
 /// ```
-fn create_root_command() -> ClapCommand {
-    ClapCommand::new("heroku")
-        .about("Oatty CLI (experimental)")
+fn create_root_command(product_name: &str) -> ClapCommand {
+    // Clap command names require a 'static lifetime, so we leak the computed name once.
+    let static_product_name: &'static str = Box::leak(product_name.to_string().into_boxed_str());
+    ClapCommand::new(static_product_name)
+        .about(format!("{} CLI (powered by Oatty)", product_name))
         .arg(
             Arg::new("json")
                 .long("json")

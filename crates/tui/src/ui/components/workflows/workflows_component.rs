@@ -182,7 +182,7 @@ impl WorkflowsComponent {
         }
         let list = List::new(items)
             .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
-            .highlight_symbol(if is_list_focused { "> " } else { "" });
+            .highlight_symbol(if is_list_focused { "▸ " } else { "" });
 
         frame.render_stateful_widget(list, list_area, list_state);
         list_area

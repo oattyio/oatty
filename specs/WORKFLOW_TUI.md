@@ -178,7 +178,7 @@ Buttons: [Cancel]   [Run ✓]
 - Defaults declared in the workflow manifest populate the run context immediately. Literal and
   workflow-output defaults are interpolated before rendering, and environment defaults prefer the
   run context's environment map before falling back to OS variables. History defaults pull from the
-  per-user history store (`~/.config/heroku/history.json` by default); successful runs persist
+  per-user history store (`~/.config/oatty/history.json` by default); successful runs persist
   values automatically, and the UI logs a friendly message whenever a stored value is skipped
   because it failed validation or matched redaction heuristics.
 - The footer hosts **Cancel** (secondary) and **Run** (primary) buttons. Run stays disabled until every
@@ -338,7 +338,7 @@ Buttons: [Cancel]   [Apply ✓]
 │──────────────────────┼──────────────────────────────────────────────────────────────────────────│
 │ start_build.id       │ bld-9876                                                                 │
 │ start_build.slug     │ slug-3333                                                                │
-│ source_blob.get_url  │ https://sources.heroku.com/...                                           │
+│ source_blob.get_url  │ https://sources.example.com/...                                          │
 │─────────────────────────────────────────────────────────────────────────────────────────────────│
 │ [Cancel]   [Pause]   Status: running • awaiting build confirmation                              │
 └─────────────────────────────────────────────────────────────────────────────────────────────────┘

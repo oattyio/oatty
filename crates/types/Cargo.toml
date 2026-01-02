@@ -6,7 +6,7 @@ rust-version = "1.89"
 description = "Oatty CLI shared type definitions"
 license = "MIT OR Apache-2.0"
 authors = ["Oatty CLI Team <devnull@example.com>"]
-repository = "https://example.com/heroku"
+repository = "https://example.com/oatty"
 
 [lib]
 path = "src/lib.rs"

@@ -86,7 +86,7 @@ pub struct RunViewComponent {
 }
 
 impl Component for RunViewComponent {
-    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+    fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
         if let Msg::Tick = msg
             && let Some(run_state) = app.workflows.run_view_state_mut()
         {

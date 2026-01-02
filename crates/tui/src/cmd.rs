@@ -19,10 +19,12 @@
 //! This design follows a **functional core, imperative shell** pattern:
 //! state updates are pure, but commands handle side effects.
 
+use crate::app::App;
+use crate::ui::components::common::key_value_editor::EnvRow;
+use crate::ui::components::plugins::PluginTransport;
 use anyhow::Result;
 use anyhow::anyhow;
 use chrono::Utc;
-use oatty_api::OattyClient;
 use oatty_engine::{RegistryCommandRunner, drive_workflow_run, provider::ProviderFetchPlan};
 use oatty_mcp::config::{
     McpServer, default_config_path, determine_env_source, load_config_from_path, save_config_to_path, validate_config, validate_server_name,
@@ -30,7 +32,8 @@ use oatty_mcp::config::{
 use oatty_mcp::{McpConfig, PluginEngine};
 use oatty_registry::find_by_group_and_cmd;
 use oatty_registry::{CommandRegistry, CommandSpec};
-use oatty_types::service::ServiceId;
+use oatty_registry_gen::io::ManifestInput;
+use oatty_registry_gen::io::generate_catalog;
 use oatty_types::{DirectoryEntry, Effect, EnvVar, Msg, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
 use oatty_types::{ExecOutcome, command::CommandExecution};
 use oatty_util::build_request_body;
@@ -40,7 +43,6 @@ use oatty_util::lex_shell_like;
 use serde_json::Map;
 use serde_json::Value;
 use serde_json::from_str;
-use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::fs::read_dir;
 use std::fs::read_to_string;
@@ -51,10 +53,6 @@ use std::sync::{Arc, Mutex};
 use std::vec;
 use tokio::{sync::mpsc, task::JoinHandle};
 use url::Url;
-
-use crate::app::App;
-use crate::ui::components::plugins::EnvRow;
-use crate::ui::components::plugins::PluginTransport;
 
 /// Represents side-effectful system commands executed outside pure state
 /// updates.
@@ -80,18 +78,18 @@ pub enum Cmd {
     /// Make an HTTP request to the Oatty API.
     ///
     /// Carries:
-    /// - [`CommandSpec`]: API request metadata (including a path, method, and service)
+    /// - [`CommandSpec`]: API request metadata (including a path, method, and base URL)
     /// - `serde_json::Map`: JSON body
     ///
     /// # Example
     /// ```rust,ignore
     /// use your_crate::Cmd;
-    /// use oatty_registry::{CommandSpec, HttpCommandSpec, ServiceId};
+    /// use oatty_registry::{CommandSpec, HttpCommandSpec};
     /// use oatty_types::CommandExecution;
     /// use std::collections::HashMap;
     /// use serde_json::{Map, Value};
     ///
-    /// let http = HttpCommandSpec::new("GET", "/apps", ServiceId::CoreApi, Vec::new());
+    /// let http = HttpCommandSpec::new("GET", "/apps", "https://api.example.com", Vec::new(), None);
     /// let spec = CommandSpec::new_http(
     ///     "apps".into(),
     ///     "apps:list".into(),
@@ -135,6 +133,7 @@ pub enum Cmd {
     ReadFileContents(PathBuf),
     ListDirectoryContents(PathBuf),
     ReadRemoteFileContents(Url),
+    ImportRegistryCatalog(String),
 }
 
 /// Collection of immediate and background work generated while handling effects.
@@ -205,7 +204,8 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
             Effect::ReadFileContents(path) => Some(vec![Cmd::ReadFileContents(path)]),
             Effect::ListDirectoryContents(path) => Some(vec![Cmd::ListDirectoryContents(path)]),
             Effect::ReadRemoteFileContents(url) => Some(vec![Cmd::ReadRemoteFileContents(url)]),
-            _ => None,
+            Effect::ImportRegistryCatalog(content) => Some(vec![Cmd::ImportRegistryCatalog(content)]),
+            Effect::Log(_) | Effect::SwitchTo(_) | Effect::ShowModal(_) | Effect::CloseModal => None,
         };
         if let Some(cmds) = effect_commands {
             commands.extend(cmds);
@@ -264,6 +264,7 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
             Cmd::ReadFileContents(path) => (Some(read_file_contents(path)), None),
             Cmd::ListDirectoryContents(path) => (Some(list_dir_contents(path)), None),
             Cmd::ReadRemoteFileContents(url) => (None, Some(fetch_remote_file_contents(url))),
+            Cmd::ImportRegistryCatalog(inputs) => (Some(import_registry_catalog_from(app, inputs)), None),
         };
 
         if let Some(immediate) = immediate {
@@ -304,13 +305,6 @@ fn list_dir_contents(path: PathBuf) -> ExecOutcome {
             ExecOutcome::DirectoryContents { entries, root_path: path }
         }
         Err(e) => ExecOutcome::Log(format!("Failed to read directory: {}", e)),
-    }
-}
-
-fn read_file_contents(path: PathBuf) -> ExecOutcome {
-    match read_to_string(&path) {
-        Ok(contents) => ExecOutcome::FileContents(Cow::Owned(contents), path),
-        Err(e) => ExecOutcome::Log(format!("Failed to read file: {}", e)),
     }
 }
 
@@ -366,6 +360,23 @@ fn fetch_remote_file_contents(url: Url) -> JoinHandle<ExecOutcome> {
             Err(e) => ExecOutcome::Log(format!("Failed to fetch remote file: {}", e)),
         }
     })
+}
+
+/// Reads file contents from a local file path.
+fn read_file_contents(path: PathBuf) -> ExecOutcome {
+    match read_to_string(&path) {
+        Ok(contents) => ExecOutcome::FileContents(contents, path),
+        Err(e) => ExecOutcome::Log(format!("Failed to read file: {}", e)),
+    }
+}
+
+/// Generates a catalog from a given content.
+fn import_registry_catalog_from(app: &mut App, content: String) -> ExecOutcome {
+    let input = ManifestInput::new(None, Some(content));
+    match generate_catalog(input) {
+        Ok(catalog) => ExecOutcome::RegistryCatalog(catalog),
+        Err(e) => ExecOutcome::Log(format!("Failed to generate catalog: {}", e)),
+    }
 }
 
 /// Execute a plugin lifecycle action using the MCP supervisor.
@@ -656,15 +667,7 @@ fn handle_workflow_run_requested(app: &mut App<'_>, request: WorkflowRunRequest)
         }
     };
 
-    let client = match OattyClient::new_from_service_id(ServiceId::CoreApi) {
-        Ok(client) => client,
-        Err(error) => {
-            app.append_log_message(format!("Failed to initialize Oatty client: {}", error));
-            return;
-        }
-    };
-
-    let runner = Arc::new(RegistryCommandRunner::new(registry_snapshot, client));
+    let runner = Arc::new(RegistryCommandRunner::new(registry_snapshot));
     let (event_tx, event_rx) = mpsc::unbounded_channel();
     let (control_tx, control_rx) = mpsc::unbounded_channel();
 
@@ -721,7 +724,15 @@ fn spawn_execute_http(
     let active = app.active_exec_count.clone();
     active.fetch_add(1, Ordering::Relaxed);
 
-    tokio::spawn(async move { execute_http_task(active, spec, input, next_range_override, request_id).await })
+    let base_url = app
+        .ctx
+        .command_registry
+        .lock()
+        .ok()
+        .and_then(|registry| registry.resolve_base_url_for_command(&spec))
+        .or_else(|| spec.http().map(|http| http.base_url.clone()));
+
+    tokio::spawn(async move { execute_http_task(active, spec, input, base_url, next_range_override, request_id).await })
 }
 
 fn spawn_fetch_provider_values(app: &App, provider_id: String, cache_key: String, args: Map<String, Value>) -> JoinHandle<ExecOutcome> {
@@ -755,10 +766,11 @@ async fn execute_http_task(
     active_exec_count: Arc<AtomicUsize>,
     spec: CommandSpec,
     input: String,
+    base_url: Option<String>,
     next_range_override: Option<String>,
     request_id: u64,
 ) -> ExecOutcome {
-    let result = exec_remote_from_shell_command(&spec, input, next_range_override, request_id).await;
+    let result = exec_remote_from_shell_command(&spec, base_url, input, next_range_override, request_id).await;
     let outcome = result.unwrap_or_else(|err| ExecOutcome::Log(format!("Error: {}", err)));
 
     active_exec_count.fetch_sub(1, Ordering::Relaxed);

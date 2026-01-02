@@ -100,7 +100,7 @@ experience. The specification reflects the multi-crate implementation that ships
     "plugin-name": {
       "command": "node",
       "args": ["-e", "require('@mcp/server').start()"],
-      "env": { "HEROKU_API_TOKEN": "${env:HEROKU_API_TOKEN}" },
+      "env": { "OATTY_API_TOKEN": "${env:OATTY_API_TOKEN}" },
       "cwd": "/optional/path",
       "disabled": false,
       "tags": ["code", "gh"]
@@ -188,7 +188,7 @@ experience. The specification reflects the multi-crate implementation that ships
   ├────────────────────────────────────────────────┤            │
   │ Env (masked)                                   │            │
   │   GITHUB_TOKEN  •••••••••••  secret ✓          │            │
-  │   USER_AGENT    heroku-cli    file   ✓         │            │
+  │   USER_AGENT    oatty-cli     file   ✓         │            │
   ├────────────────────────────────────────────────┤            │
   │ Logs (recent)                                  │            │
   │   [12:41:03] info handshake ok (180ms)         │            │

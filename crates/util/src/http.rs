@@ -194,7 +194,7 @@ pub fn build_range_header_from_body(body: &Map<String, Value>) -> Option<String>
 /// use oatty_util::http::status_error_message;
 ///
 /// let error_401 = status_error_message(401).unwrap();
-/// assert!(error_401.contains("HEROKU_API_KEY"));
+/// assert!(error_401.contains("OATTY_API_TOKEN"));
 /// assert!(error_401.contains("Unauthorized"));
 ///
 /// let error_403 = status_error_message(403).unwrap();
@@ -205,7 +205,7 @@ pub fn build_range_header_from_body(body: &Map<String, Value>) -> Option<String>
 /// ```
 pub fn status_error_message(status_code: u16) -> Option<String> {
     match status_code {
-        401 => Some("Unauthorized (401). Hint: set HEROKU_API_KEY=...".into()),
+        401 => Some("Unauthorized (401). Hint: set OATTY_API_TOKEN=...".into()),
         403 => Some("Forbidden (403). Hint: check team/app access, permissions, and role membership".into()),
         _ => None,
     }

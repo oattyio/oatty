@@ -21,10 +21,15 @@ Key Features
   - Arrays → rendered as tables with heuristic column selection.
   - Objects → key/value list; scalars → plain text.
   - Table modal includes styled footer hints and scrolling.
+- Library import + File Picker modal:
+  - Import button in the Library view launches a modal with quick shortcuts (Home/Desktop/Documents/Downloads).
+  - Path input accepts fully qualified paths or URLs; invalid values surface inline errors.
+  - Directory listing supports keyboard/mouse navigation, filtering by allowed extensions, and inline preview with scrollback.
+  - Selecting a file reads and stages the manifest for the Registry Library.
 - Safety: secret-like fields masked in tables; Authorization redacted in logs (via util).
 
 Execution
-- Live requests: via `oatty-api` with auth using `HEROKU_API_KEY`.
+- Live requests: via `oatty-api` with auth using `OATTY_API_TOKEN`.
 - Errors: show inline with hints (auth/network/permissions), and also log.
 
 Keybindings
@@ -38,6 +43,10 @@ Keybindings
   - Up/Down/Enter: select/apply; hints line shows `Ctrl+F close  Enter send to palette  Esc cancel`.
 - Table modal:
   - Up/Down/PgUp/PgDn/Home/End: scroll; Esc close.
+- Library/File Picker:
+  - Tab/BackTab: cycle Import, Remove, list, and detail focus targets.
+  - Enter (Import): open the file picker modal; Esc closes the modal.
+  - Within the file picker: ↑/↓ to navigate directories, Space/Enter to open, mouse hover + scroll for preview, and shortcuts column for quick jumps.
 
 Providers (Value Suggestions)
 - Asynchronous provider hook for flags/positionals:
@@ -60,12 +69,12 @@ Usage
 ```bash
 cargo run -p oatty-cli              # opens TUI
 DEBUG=1 cargo run -p oatty-cli      # enables extra debug
-HEROKU_API_KEY=... cargo run -p oatty-cli
+ OATTY_API_TOKEN=... cargo run -p oatty-cli
 ```
 
 Troubleshooting
 - “Unknown command …” — Use the `group sub` form (e.g., `apps info`); use Ctrl+H to see help.
-- 401 Unauthorized — Set `HEROKU_API_KEY`.
+- 401 Unauthorized — Set `OATTY_API_TOKEN`.
 - 403 Forbidden — Check team/app access and role membership.
 - Network error — Check connectivity/proxy; `RUST_LOG=info` for more details.
 ### Provider-backed Suggestions

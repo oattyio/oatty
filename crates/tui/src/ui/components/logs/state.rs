@@ -161,7 +161,7 @@ impl LogsState {
             | ExecOutcome::PluginValidationErr { message: text }
             | ExecOutcome::PluginsRefresh { message: text, .. }
             | ExecOutcome::PluginValidationOk { message: text } => {
-                self.append_text_entry(text.to_string());
+                self.append_text_entry(text.clone());
             }
             _ => {}
         }

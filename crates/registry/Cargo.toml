@@ -6,7 +6,7 @@ rust-version = "1.89"
 description = "Oatty command registry and schema management"
 license = "MIT OR Apache-2.0"
 authors = ["Oatty CLI Team <devnull@example.com>"]
-repository = "https://example.com/heroku"
+repository = "https://example.com/oatty"
 
 [dependencies]
 anyhow = { workspace = true }
@@ -17,6 +17,7 @@ serde_json = { workspace = true }
 clap = { workspace = true }
 oatty-types = { path = "../types" }
 oatty-util = {path = "../util"}
+heck = { workspace = true }
 
 [build-dependencies]
 anyhow = { workspace = true }

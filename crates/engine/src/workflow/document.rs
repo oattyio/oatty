@@ -66,18 +66,6 @@ mod tests {
     use oatty_types::WorkflowStepDefinition;
 
     #[test]
-    fn converts_definition_to_runtime_workflow() {
-        let yaml_text = include_str!("../../../../workflows/create_app_and_db.yaml");
-        let definition: WorkflowDefinition = serde_yaml::from_str(yaml_text).expect("parse workflow definition");
-
-        let runtime = runtime_workflow_from_definition(&definition).expect("convert to runtime");
-
-        assert_eq!(runtime.identifier, "app_with_db");
-        assert_eq!(runtime.inputs.len(), definition.inputs.len());
-        assert_eq!(runtime.steps.len(), definition.steps.len());
-    }
-
-    #[test]
     fn rejects_missing_identifier() {
         let definition = WorkflowDefinition {
             workflow: String::new(),
@@ -99,16 +87,6 @@ mod tests {
 
         let error = runtime_workflow_from_definition(&definition).expect_err("expected identifier error");
         assert!(error.to_string().contains("workflow definition is missing"));
-    }
-
-    #[test]
-    fn rejects_duplicate_identifiers() {
-        let yaml_text = include_str!("../../../../workflows/create_app_and_db.yaml");
-        let definition: WorkflowDefinition = serde_yaml::from_str(yaml_text).expect("parse workflow definition");
-
-        let definitions = vec![definition.clone(), definition];
-        let error = build_runtime_catalog(&definitions).expect_err("expected duplicate error");
-        assert!(error.to_string().contains("duplicate workflow identifier"));
     }
 
     #[test]

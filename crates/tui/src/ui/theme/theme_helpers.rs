@@ -2,7 +2,7 @@ use super::roles::Theme;
 use crate::ui::theme::roles::ThemeRoles;
 use oatty_types::Severity;
 use ratatui::text::Line;
-use ratatui::widgets::{List, ListItem};
+use ratatui::widgets::{HighlightSpacing, List, ListItem};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -307,7 +307,7 @@ pub fn render_button(frame: &mut Frame, area: Rect, label: &str, theme: &dyn The
 pub fn create_radio_button(label: &str, is_selected: bool, is_focused: bool, theme: &dyn Theme) -> Line<'static> {
     let mut radio_spans = Vec::new();
     radio_spans.push(Span::styled(
-        if is_selected { "[✓]" } else { "[ ]" },
+        if is_selected { "(*)" } else { "( )" },
         if is_selected {
             theme.status_success()
         } else {
@@ -322,6 +322,43 @@ pub fn create_radio_button(label: &str, is_selected: bool, is_focused: bool, the
     } else {
         Line::from(radio_spans).style(theme.text_primary_style())
     }
+}
+
+/// Create a checkbox with a label.
+///
+/// - `label`: The text to display next to the checkbox.
+/// - `is_checked`: Whether the checkbox is checked.
+/// - `is_focused`: Whether the checkbox is focused.
+/// - `theme`: The theme to use for styling.
+///
+/// Returns a `Line` containing the checkbox and label.
+pub fn create_checkbox(label: Option<&str>, is_checked: bool, is_focused: bool, theme: &dyn Theme) -> Line<'static> {
+    let mut checkbox_spans = Vec::with_capacity(5);
+    let mut lb = Span::raw("[");
+    let mut rb = Span::raw("]");
+    if is_focused {
+        lb = lb.patch_style(theme.interactive_style());
+        rb = rb.patch_style(theme.interactive_style());
+    }
+    let icon = Span::styled(
+        if is_checked { "✓" } else { " " },
+        if is_checked {
+            theme.status_success()
+        } else {
+            theme.text_primary_style()
+        },
+    );
+
+    checkbox_spans.push(lb);
+    checkbox_spans.push(icon);
+    checkbox_spans.push(rb);
+
+    if let Some(l) = label {
+        checkbox_spans.push(Span::raw(" "));
+        checkbox_spans.push(Span::styled(l.to_string(), theme.text_primary_style()));
+    }
+
+    Line::from(checkbox_spans)
 }
 
 pub fn highlight_segments(needle: &str, text: &str, base: Style, highlight: Style) -> Vec<Span<'static>> {
@@ -371,15 +408,16 @@ pub fn create_spans_with_match(needle: String, display: String, default_style: S
 
 /// Creates a styled list with a highlight indicator.
 pub fn create_list_with_highlight<'a>(
-    list_items: &[ListItem<'static>],
+    list_items: Vec<ListItem<'a>>,
     theme: &dyn Theme,
     is_focused: bool,
     maybe_block: Option<Block<'a>>,
 ) -> List<'a> {
-    let mut list = List::new(list_items.to_vec())
+    let mut list = List::new(list_items)
         .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
         .style(panel_style(theme))
-        .highlight_symbol(if is_focused { "> " } else { " " });
+        .highlight_symbol(if is_focused { "▸ " } else { "  " })
+        .highlight_spacing(HighlightSpacing::Always);
 
     if let Some(block) = maybe_block {
         list = list.block(block);

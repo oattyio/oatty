@@ -301,8 +301,8 @@ mod tests {
                     "value": "bar"
                 },
                 {
-                    "key": "HEROKU_API_TOKEN",
-                    "value": "${env:HEROKU_API_TOKEN}"
+                    "key": "OATTY_API_TOKEN",
+                    "value": "${env:OATTY_API_TOKEN}"
                 }
                ],
               "cwd": "/path/optional",

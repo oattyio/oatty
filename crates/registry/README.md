@@ -4,24 +4,24 @@ This crate provides the core functionality for managing Oatty CLI command defini
 
 ## Overview
 
-The `heroku-cli-registry` crate is designed to:
-- Load command definitions from an embedded Oatty API manifest.
-- Organize commands by resource groups (e.g., `apps`, `dynos`).
+The `oatty-registry` crate is designed to:
+- Load command definitions from registry manifests generated from OpenAPI specs.
+- Organize commands by resource groups (e.g., `apps`, `services`).
 - Generate a `clap`-based command tree for argument parsing and help generation.
 - Support feature flags, such as workflows, controlled via environment variables.
 
 The crate is built with extensibility in mind, allowing for easy integration of new commands and features while maintaining a robust and maintainable CLI structure.
 
-## Benefits of Using a Binary Schema
+## Benefits of Using a Precompiled Manifest
 
-The crate uses a precompiled JSON schema (`heroku-manifest.json`) instead of parsing remote data at runtime. This approach provides:
-- **Improved Performance**: Binary deserialization is faster than JSON parsing, reducing startup time.
-- **Reduced Overhead**: Embedding the schema in the binary eliminates runtime file I/O.
+The crate uses a precompiled JSON manifest (`registry-manifest.json`) instead of parsing remote data at runtime. This approach provides:
+- **Improved Performance**: Startup avoids expensive OpenAPI parsing.
+- **Reduced Overhead**: Loading from a manifest is lighter than full schema traversal.
 - **Reliability**: The schema is validated and compiled during the build process, ensuring consistency.
 
 ## Features
 
-- **Embedded Schema Loading**: Loads command specifications from a precompiled JSON manifest (`heroku-manifest.json`) during the build process.
+- **Manifest Loading**: Loads command specifications from a precompiled JSON manifest (`registry-manifest.json`) during the build process.
 - **Command Grouping**: Organizes commands by resource type (e.g., `apps:list`, `apps:create`) for intuitive CLI navigation.
 - **Clap Integration**: Builds a hierarchical `clap` command tree with support for global flags (`--json`, `--verbose`) and command-specific arguments.
 - **Feature Gating**: Supports enabling/disabling features like workflows via environment variables (e.g., `FEATURE_WORKFLOWS`).
@@ -34,7 +34,7 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-heroku-cli-registry = { git = "https://github.com/heroku/heroku-cli-registry" }
+oatty-registry = { path = "../registry" }
 ```
 
 Ensure the required dependencies (`clap`, `postcard`, `serde`, `anyhow`, etc.) are also included in your project.
@@ -43,13 +43,13 @@ Ensure the required dependencies (`clap`, `postcard`, `serde`, `anyhow`, etc.) a
 
 ### Loading the Registry
 
-The `Registry` struct is the central component for managing command specifications. You can load it from the embedded schema as follows:
+The `CommandRegistry` struct is the central component for managing command specifications. You can load it from the registry configuration as follows:
 
 ```rust
-use heroku_cli_registry::Registry;
+use oatty_registry::CommandRegistry;
 
 fn main() -> anyhow::Result<()> {
-    let registry = Registry::from_embedded_schema()?;
+    let registry = CommandRegistry::from_config()?;
     println!("Loaded {} commands", registry.commands.len());
     Ok(())
 }
@@ -60,11 +60,11 @@ fn main() -> anyhow::Result<()> {
 You can search for a specific command by its group and name:
 
 ```rust
-use heroku_cli_registry::Registry;
+use oatty_registry::{CommandRegistry, find_by_group_and_cmd};
 
 fn main() -> anyhow::Result<()> {
-    let registry = Registry::from_embedded_schema()?;
-    let apps_list = registry.find_by_group_and_cmd("apps", "list")?;
+    let registry = CommandRegistry::from_config()?;
+    let apps_list = find_by_group_and_cmd(&registry.commands, "apps", "list")?;
     println!("Found command: {}", apps_list.name);
     Ok(())
 }
@@ -76,10 +76,10 @@ Provider argument and return metadata are available on the registry via the `pro
 map, keyed by `<group> <name>` command identifiers:
 
 ```rust
-use heroku_cli_registry::Registry;
+use oatty_registry::CommandRegistry;
 
 fn main() -> anyhow::Result<()> {
-    let registry = Registry::from_embedded_schema()?;
+    let registry = CommandRegistry::from_config()?;
     if let Some(contract) = registry.provider_contracts.get("apps list") {
         println!("apps list returns {} fields", contract.returns.fields.len());
     }
@@ -92,25 +92,26 @@ fn main() -> anyhow::Result<()> {
 To generate a `clap` command tree for argument parsing:
 
 ```rust
-use heroku_cli_registry::{Registry, build_clap};
+use oatty_registry::{CommandRegistry, build_clap};
+use std::sync::{Arc, Mutex};
 use clap::Parser;
 
 fn main() -> anyhow::Result<()> {
-    let registry = Registry::from_embedded_schema()?;
-    let clap_command = build_clap(&registry);
+    let registry = Arc::new(Mutex::new(CommandRegistry::from_config()?));
+    let clap_command = build_clap(Arc::clone(&registry));
     let matches = clap_command.get_matches();
     Ok(())
 }
 ```
 
-This creates a command tree with global flags (`--json`, `--verbose`) and grouped subcommands (e.g., `heroku apps list`, `heroku dynos restart`).
+This creates a command tree with global flags (`--json`, `--verbose`) and grouped subcommands (e.g., `example apps list`, `example services restart`).
 
 ### Feature Gating
 
 Check if the workflows feature is enabled:
 
 ```rust
-use heroku_cli_registry::feature_workflows;
+use oatty_registry::feature_workflows;
 
 fn main() {
     if feature_workflows() {
@@ -127,15 +128,15 @@ Set the `FEATURE_WORKFLOWS` environment variable to `"1"` or `"true"` to enable 
 
 The crate is organized into several modules:
 
-- **`models.rs`**: Defines the `Registry` struct and methods for loading and querying command specifications.
+- **`models.rs`**: Defines the `CommandRegistry` struct and methods for loading and querying command specifications.
 - **`clap_builder.rs`**: Implements functions to build a `clap` command tree from the registry.
 - **`feat_gate.rs`**: Provides feature-gating functionality via environment variables.
 - **`lib.rs`**: Exports core functionality and includes tests for the registry.
-- **`build.rs`**: Handles the build process, generating the `heroku-manifest.json` from the Oatty API schema.
+- **`build.rs`**: Handles the build process, generating the `registry-manifest.json` from the sample OpenAPI schemas.
 
 ## Build Process
 
-The crate uses a custom build script (`build.rs`) to process the Oatty API schema (`schemas/heroku-schema.json`) and generate a JSON manifest (`heroku-manifest.json`). This manifest is embedded in the compiled binary and loaded at runtime by the `Registry::from_embedded_schema` method.
+The crate uses a custom build script (`build.rs`) to process OpenAPI documents (for example, `schemas/samples/render-public-api.json`) and generate a JSON manifest (`registry-manifest.json`). This manifest is loaded at runtime by `CommandRegistry::from_config`.
 
 To rebuild the manifest when the schema changes, the build script monitors the schema file:
 
@@ -150,7 +151,7 @@ The crate includes tests to ensure the embedded manifest is valid and contains u
 ```rust
 #[test]
 fn manifest_non_empty_and_unique_names() {
-    let registry = Registry::from_embedded_schema().expect("load registry from manifest");
+    let registry = CommandRegistry::from_config().expect("load registry from manifest");
     assert!(!registry.commands.is_empty(), "registry commands should not be empty");
     let mut seen = HashSet::new();
     for c in &*registry.commands {

@@ -126,8 +126,8 @@ impl PaletteState {
             registry,
             history_store,
             history_profile_id,
-            container_focus: FocusFlag::new().with_name("heroku.palette"),
-            f_input: FocusFlag::new().with_name("heroku.palette.input"),
+            container_focus: FocusFlag::new().with_name("oatty.palette"),
+            f_input: FocusFlag::new().with_name("oatty.palette.input"),
             input: String::new(),
             cursor_position: 0,
             ghost_text: None,
@@ -852,7 +852,7 @@ impl PaletteState {
     /// Example:
     ///
     /// ```rust,ignore
-    /// use heroku_tui::ui::components::palette::state::PaletteState;
+    /// use oatty_tui::ui::components::palette::state::PaletteState;
     /// use Registry;
     ///
     /// let mut st = PaletteState::default();
@@ -1055,21 +1055,21 @@ impl PaletteState {
     /// # Arguments
     ///
     /// * `execution_outcome` - The result of the command execution
-    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &ExecOutcome) -> Vec<Effect> {
+    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: ExecOutcome) -> Vec<Effect> {
         let mut effects = Vec::new();
-        let (status, log, value, request_id) = match execution_outcome {
+        let (status, log, is_null, request_id) = match &execution_outcome {
             ExecOutcome::Http {
                 status_code,
                 log_entry,
                 payload,
                 request_id,
                 ..
-            } => (status_code, log_entry, payload.clone(), request_id),
+            } => (status_code, log_entry, payload.is_null(), request_id),
             ExecOutcome::Mcp {
                 log_entry,
                 payload,
                 request_id,
-            } => (&200, log_entry, payload.clone(), request_id),
+            } => (&200, log_entry, payload.is_null(), request_id),
             _ => return effects,
         };
 
@@ -1083,7 +1083,7 @@ impl PaletteState {
             return effects;
         }
 
-        if value.is_null() {
+        if is_null {
             self.error_message = Some("Command completed successfully but no value was returned".to_string());
             self.reduce_clear_all();
             return effects;
@@ -1100,7 +1100,7 @@ impl PaletteState {
         }
 
         self.reduce_clear_all();
-        effects.push(Effect::ShowModal(Modal::Results(Box::new(execution_outcome.clone()))));
+        effects.push(Effect::ShowModal(Modal::Results(Box::new(execution_outcome))));
 
         effects
     }
@@ -1482,7 +1482,7 @@ mod tests {
             pagination: None,
             request_id: request_hash,
         };
-        palette.process_general_execution_result(&Box::new(outcome));
+        palette.process_general_execution_result(outcome);
 
         assert_eq!(palette.history.last().map(|s| s.as_str()), Some(command_input));
         let stored_value = palette.stored_commands.get(&command_id).and_then(|record| record.value.as_str());
@@ -1503,8 +1503,8 @@ mod tests {
         let mut st = make_palette_state();
         st.set_input("apps info hero".into());
         st.set_cursor(st.input().len());
-        st.apply_accept_positional_suggestion("heroku-prod");
-        assert_eq!(st.input(), "apps info heroku-prod ");
+        st.apply_accept_positional_suggestion("sample-prod");
+        assert_eq!(st.input(), "apps info sample-prod ");
     }
 
     #[test]
@@ -1514,8 +1514,8 @@ mod tests {
         st.set_input("apps info <app> ".into());
         st.set_cursor(st.input().len());
         // Selecting a provider value (non-flag) should replace placeholder
-        st.apply_accept_non_command_suggestion("heroku-prod");
-        assert_eq!(st.input(), "apps info heroku-prod ");
+        st.apply_accept_non_command_suggestion("sample-prod");
+        assert_eq!(st.input(), "apps info sample-prod ");
     }
 
     #[test]

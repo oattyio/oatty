@@ -69,17 +69,17 @@ Complete this checklist to get your development environment ready.
 - [ ] **Add Oatty API Key** (choose one method)
 
   **Option A: Quick (.env file)**
-  1. Get your API key: https://dashboard.heroku.com/account
+  1. Get your API token from your provider's dashboard.
   2. Edit `.env` and set:
      ```bash
-     HEROKU_API_KEY=your-actual-api-key-here
+     OATTY_API_TOKEN=your-actual-api-key-here
      ```
 
   **Option B: Secure (OS Keychain)** ⭐
   1. Run: `./scripts/set-api-key.sh`
   2. Add to `~/.zshrc`:
      ```bash
-     export HEROKU_API_KEY=$(security find-generic-password -s "heroku-cli-api-key" -w 2>/dev/null)
+     export OATTY_API_TOKEN=$(security find-generic-password -s "oatty-cli-api-token" -w 2>/dev/null)
      ```
   3. Reload: `source ~/.zshrc`
 
@@ -112,7 +112,7 @@ Complete this checklist to get your development environment ready.
 
 - [ ] **Verify build succeeded**
   - Look for: "Finished dev [unoptimized + debuginfo]"
-  - Binary location: `target/debug/heroku-cli`
+  - Binary location: `target/debug/oatty-cli`
 
 ## ☐ Run Tests
 
@@ -128,7 +128,7 @@ Complete this checklist to get your development environment ready.
 - [ ] **Launch the TUI**
 
   ```bash
-  cargo run -p heroku-cli
+  cargo run -p oatty-cli
   ```
 
   - Should show the interactive terminal UI
@@ -136,7 +136,7 @@ Complete this checklist to get your development environment ready.
 
 - [ ] **Run a CLI command**
   ```bash
-  cargo run -p heroku-cli -- apps list
+  cargo run -p oatty-cli -- apps list
   ```
   - Should list your Oatty apps
   - Verifies API authentication works
@@ -238,9 +238,9 @@ Only needed if you're getting repeated Keychain prompts:
 
 - [ ] **Sign the binary**
   ```bash
-  cargo build -p heroku-cli
+  cargo build -p oatty-cli
   NEXTGEN_CODESIGN_ID="next-gen-cli-dev (LOCAL)" \
-    NEXTGEN_CODESIGN_BIN=target/debug/heroku-cli \
+    NEXTGEN_CODESIGN_BIN=target/debug/oatty-cli \
     scripts/macos/sign.sh
   ```
 
@@ -367,7 +367,7 @@ make help
 
 ### API authentication fails
 
-→ Check `HEROKU_API_KEY` in `.env`
+→ Check `OATTY_API_TOKEN` in `.env`
 
 ### Tests fail
 

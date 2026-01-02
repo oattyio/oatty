@@ -43,16 +43,15 @@ impl CommandRunner for NoopRunner {
 }
 
 /// Registry-backed command runner that resolves `run` identifiers via the
-/// command registry and executes HTTP requests with the Oatty API client.
+/// command registry and executes HTTP requests using the catalog-selected base URL.
 pub struct RegistryCommandRunner {
     registry: CommandRegistry,
-    client: OattyClient,
 }
 
 impl RegistryCommandRunner {
     /// Create a new registry-backed runner from explicit dependencies.
-    pub fn new(registry: CommandRegistry, client: OattyClient) -> Self {
-        Self { registry, client }
+    pub fn new(registry: CommandRegistry) -> Self {
+        Self { registry }
     }
 }
 
@@ -77,6 +76,18 @@ impl CommandRunner for RegistryCommandRunner {
         }
         let http = spec.http().ok_or_else(|| anyhow!("command '{}' is not HTTP-backed", spec.name))?;
         let method = Method::from_str(&http.method).unwrap_or(Method::GET);
+        let base_url = self
+            .registry
+            .resolve_base_url_for_command(&spec)
+            .or_else(|| {
+                if http.base_url.is_empty() {
+                    None
+                } else {
+                    Some(http.base_url.clone())
+                }
+            })
+            .ok_or_else(|| anyhow!("missing base URL for command '{}'", spec.name))?;
+        let client = OattyClient::new_with_base_url(base_url).map_err(|error| anyhow!("auth setup failed: {error}"))?;
 
         // Inputs map from `with` if object
         let mut with_map: serde_json::Map<String, Value> = match with {
@@ -93,7 +104,7 @@ impl CommandRunner for RegistryCommandRunner {
         }
 
         let path = build_path(&http.path, &path_variables);
-        let mut req = self.client.request(method.clone(), &path);
+        let mut req = client.request(method.clone(), &path);
 
         match method {
             Method::GET | Method::DELETE => {

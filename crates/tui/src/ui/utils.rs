@@ -38,7 +38,7 @@ use crate::{
 ///
 /// ```rust,ignore
 /// use ratatui::prelude::*;
-/// use heroku_tui::ui::utils::centered_rect;
+/// use oatty_tui::ui::utils::centered_rect;
 ///
 /// let parent = Rect::new(0, 0, 100, 50);
 /// let centered = centered_rect(80, 70, parent);
@@ -591,14 +591,17 @@ pub fn build_copy_text(app: &app::App) -> String {
 /// the root level, so this helper unwraps objects that meet this pattern. All other payloads
 /// are returned unchanged.
 pub fn normalize_result_payload(value: Value) -> Value {
-    if let Value::Object(map) = &value
-        && map.len() == 1
-        && let Some(inner_value) = map.values().next()
-        && inner_value.is_array()
+    if !value.is_object()
+        || value
+            .as_object()
+            .is_some_and(|o| o.len() != 1 || !o.values().next().unwrap().is_array())
     {
-        return inner_value.clone();
+        return value;
     }
-    value
+    let Value::Object(map) = value else {
+        return value;
+    };
+    map.into_values().next().unwrap()
 }
 
 pub fn span_display_width(span: &Span<'_>) -> u16 {

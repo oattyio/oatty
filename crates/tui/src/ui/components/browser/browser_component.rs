@@ -20,7 +20,7 @@
 use crate::app::App;
 use crate::ui::components::HelpComponent;
 use crate::ui::components::browser::state::CursorDirection;
-use crate::ui::theme::theme_helpers::highlight_segments;
+use crate::ui::theme::theme_helpers::{create_list_with_highlight, highlight_segments};
 use crate::ui::{components::component::Component, theme::theme_helpers as th};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use oatty_types::{Effect, Route};
@@ -433,10 +433,7 @@ impl BrowserComponent {
                 .collect()
         };
         let is_focused = browser.f_commands.get();
-        let commands_list = List::new(command_items)
-            .block(commands_block)
-            .highlight_style(selection_style)
-            .highlight_symbol(if is_focused { "> " } else { "" });
+        let commands_list = create_list_with_highlight(command_items, &*app.ctx.theme, is_focused, Some(commands_block));
         let list_state = &mut browser.list_state;
         frame.render_stateful_widget(commands_list, area, list_state);
 

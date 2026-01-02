@@ -6,7 +6,7 @@ rust-version = "1.89"
 description = "Oatty CLI terminal user interface"
 license = "MIT OR Apache-2.0"
 authors = ["Oatty CLI Team <devnull@example.com>"]
-repository = "https://example.com/heroku"
+repository = "https://example.com/oatty"
 
 [dependencies]
 anyhow = { workspace = true }
@@ -14,15 +14,13 @@ ratatui = { workspace = true }
 crossterm = { workspace = true }
 dirs-next = { workspace = true }
 tracing = { workspace = true }
-reqwest = { workspace = true }
 notify = "8.2.0"
 oatty-registry = { path = "../registry" }
+oatty-registry-gen = {path = "../registry-gen"}
 oatty-util = { path = "../util" }
 oatty-types = { path = "../types" }
 oatty-mcp = { path = "../mcp" }
 oatty-engine = { path = "../engine" }
-oatty-api = { path = "../api" }
-oatty-agent = { path = "../agent" }
 arboard = { workspace = true }
 tokio = { workspace = true }
 futures-util = { workspace = true }
@@ -36,6 +34,7 @@ textwrap = { workspace = true }
 indexmap = { workspace = true }
 unicode-width = { workspace = true }
 url = { workspace = true }
+
 [lib]
 doctest = false
 

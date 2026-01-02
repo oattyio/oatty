@@ -95,7 +95,7 @@ impl VerticalNavBarState {
             NavItem::for_route("› Run", "Command Runner", Route::Palette),
             NavItem::for_route("⌕ Fnd", "Find", Route::Browser),
             NavItem::for_route("↺ Wkf", "Workflows", Route::Workflows),
-            NavItem::for_route("↯ Ext", "Extensions", Route::Plugins),
+            NavItem::for_route("↯ MCP", "Model Context Protocol Servers", Route::Plugins),
         ];
 
         Self::new(items)

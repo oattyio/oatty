@@ -42,7 +42,7 @@ pub(crate) async fn build_http_client_with_auth(server: &McpServer) -> Result<re
 /// Retrieve a bearer token from the OS keyring for the given server base URL.
 async fn load_oauth_token_from_keyring(server: &McpServer) -> Result<Option<String>> {
     // Compose a stable key based on base_url host + path
-    let service = "heroku-mcp-oauth";
+    let service = "oatty-mcp-oauth";
     let account = if let Some(url) = &server.base_url {
         format!("{}://{}{}", url.scheme(), url.host_str().unwrap_or(""), url.path())
     } else {

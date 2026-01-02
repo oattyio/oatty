@@ -86,31 +86,46 @@ of) producing `Cmd`s: `ShowModal`, `CloseModal`, and `SwitchTo` update the model
 without enqueuing additional work.
 
 ```rust
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub enum Effect {
+    Log(String),
+    Run {
+        hydrated_command: String,
+        range_override: Option<String>,
+        request_hash: u64,
+    },
     CopyToClipboardRequested(String),
     CopyLogsRequested(String),
-    NextPageRequested(String),
-    PrevPageRequested,
-    FirstPageRequested,
-    LastPageRequested,
+    ReadFileContents(PathBuf),
+    ReadRemoteFileContents(Url),
+    ListDirectoryContents(PathBuf),
+    GenerateManifest(String),
     PluginsLoadRequested,
     PluginsRefresh,
     PluginsStart(String),
     PluginsStop(String),
     PluginsRestart(String),
-    PluginsOpenLogs(String),
-    PluginsRefreshLogs(String),
     PluginsExportLogsDefault(String),
-    PluginsOpenSecrets(String),
-    PluginsSaveEnv { name: String, rows: Vec<(String, String)> },
-    PluginsOpenAdd,
     PluginsValidateAdd,
-    PluginsApplyAdd,
-    PluginsCancel,
+    PluginsSave,
+    PluginsLoadDetail(String),
     SwitchTo(Route),
     ShowModal(Modal),
     CloseModal,
+    SendToPalette(Box<CommandSpec>),
+    ProviderFetchRequested {
+        provider_id: String,
+        cache_key: String,
+        args: JsonMap<String, JsonValue>,
+    },
+    WorkflowRunRequested {
+        request: Box<WorkflowRunRequest>,
+    },
+    WorkflowRunControl {
+        run_id: String,
+        command: WorkflowRunControl,
+    },
+    SendMsg(Msg),
 }
 ```
 
@@ -121,6 +136,12 @@ pub enum Effect {
 - Keep vectors short—most key handlers return zero or one effect per event.
 - When new effects mutate `App` immediately, document that behavior next to the
   handler to keep expectations clear.
+- File import flows should use the `ReadFileContents`, `ReadRemoteFileContents`,
+  and `ListDirectoryContents` effects so preview + manifest generation reuse the
+  centralized runtime helpers.
+- Provider-backed autocompletion must flow through `ProviderFetchRequested` to
+  ensure caching and error handling remain consistent; workflow execution hooks
+  should emit `WorkflowRunRequested`/`WorkflowRunControl`.
 
 ## Commands (`Cmd`)
 
@@ -130,20 +151,34 @@ are the only place that performs I/O, network calls, or filesystem access.
 ```rust
 #[derive(Debug)]
 pub enum Cmd {
+    ApplyPaletteError(String),
     ClipboardSet(String),
-    ExecuteHttp(Box<CommandSpec>, Map<String, Value>),
+    ExecuteHttp {
+        spec: CommandSpec,
+        input: String,
+        next_range_override: Option<String>,
+        request_id: u64,
+    },
+    FetchProviderValues {
+        provider_id: String,
+        cache_key: String,
+        args: Map<String, Value>,
+    },
+    ExecuteMcp(CommandSpec, Map<String, Value>, u64),
     LoadPlugins,
     PluginsStart(String),
     PluginsStop(String),
     PluginsRestart(String),
+    PluginsLoadDetail(String),
     PluginsRefresh,
-    PluginsRefreshLogs(String),
     PluginsExportLogsDefault(String),
-    PluginsOpenSecrets(String),
-    PluginsSaveEnv { name: String, rows: Vec<(String, String)> },
-    PluginsValidateAdd,
-    PluginsApplyAdd,
-    PluginsCancel,
+    PluginsValidate,
+    PluginsSave,
+    SendMsg(Msg),
+    ReadFileContents(PathBuf),
+    ListDirectoryContents(PathBuf),
+    ReadRemoteFileContents(Url),
+    GenerateManifest(String),
 }
 ```
 

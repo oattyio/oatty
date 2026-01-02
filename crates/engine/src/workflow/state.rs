@@ -505,12 +505,12 @@ mod tests {
         let mut workflow = demo_workflow();
         workflow.inputs.get_mut("target").unwrap().default = Some(WorkflowInputDefault {
             from: WorkflowDefaultSource::Env,
-            value: Some(Value::String("HEROKU_WORKFLOW_TEST_HOME".into())),
+            value: Some(Value::String("OATTY_WORKFLOW_TEST_HOME".into())),
         });
 
         let mut state = WorkflowRunState::new(workflow);
 
-        let key = "HEROKU_WORKFLOW_TEST_HOME";
+        let key = "OATTY_WORKFLOW_TEST_HOME";
         let previous = env::var(key).ok();
         unsafe {
             env::set_var(key, "home-value");

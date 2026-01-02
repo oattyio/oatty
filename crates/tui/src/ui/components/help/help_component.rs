@@ -47,7 +47,7 @@ use ratatui::{
 /// # Examples
 ///
 /// ```rust,ignore
-/// use heroku_tui::ui::components::HelpComponent;
+/// use oatty_tui::ui::components::HelpComponent;
 ///
 /// let mut help = HelpComponent::default();
 /// help.init()?;
@@ -126,7 +126,7 @@ impl Component for HelpComponent {
         let spec = app.help.spec().or(app.browser.selected_command()).cloned();
         let theme = &*app.ctx.theme;
         let help = &mut app.help;
-        let (title, text) = self.resolve_title_and_text(spec, theme);
+        let (title, text) = self.resolve_title_and_text(spec, theme, &app.ctx.product_name);
         let block = th::block(theme, Some(&title), self.focused);
 
         frame.render_widget(block.clone(), rect);
@@ -202,10 +202,15 @@ impl HelpComponent {
         }
     }
 
-    fn resolve_title_and_text<'a>(&self, command_spec: Option<CommandSpec>, theme: &'a dyn Theme) -> (String, Text<'a>) {
+    fn resolve_title_and_text<'a>(
+        &self,
+        command_spec: Option<CommandSpec>,
+        theme: &'a dyn Theme,
+        product_name: &str,
+    ) -> (String, Text<'a>) {
         if let Some(spec) = command_spec {
             let title = format!("Help — {}", spec.canonical_id());
-            let text = build_command_help_text(theme, spec);
+            let text = build_command_help_text(theme, spec, product_name);
             return (title, text);
         }
 

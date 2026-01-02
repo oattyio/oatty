@@ -19,7 +19,7 @@ use tracing::warn;
 use crate::expand_tilde;
 
 /// Environment variable allowing callers to override the preferences file path.
-pub const PREFERENCES_PATH_ENV: &str = "HEROKU_PREFERENCES_PATH";
+pub const PREFERENCES_PATH_ENV: &str = "OATTY_PREFERENCES_PATH";
 
 /// Default filename for the JSON payload.
 pub const PREFERENCES_FILE_NAME: &str = "preferences.json";

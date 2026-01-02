@@ -5,8 +5,10 @@
 //! form fields and validation. The component handles keyboard input, focus management,
 //! and rendering of the "edit plugin" interface.
 
+use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use oatty_types::Effect;
+use rat_focus::HasFocus;
 // Focus management uses FocusFlag booleans on state; no ring needed here
 use ratatui::{
     Frame,
@@ -205,7 +207,7 @@ impl Component for PluginsEditComponent {
         };
         // Use focus flags directly to avoid building a focus ring repeatedly
         let is_transport_focused = add_state.f_transport.get();
-        if add_state.is_key_value_editor_focused() {
+        if add_state.kv_editor.is_focused() {
             return self.kv_component.handle_key_events(app, key_event);
         }
 
@@ -328,10 +330,6 @@ impl Component for PluginsEditComponent {
     /// * `area` - The rectangular area available for rendering
     /// * `app` - Mutable reference to the app state
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
-        let Some(add_state) = &mut app.plugins.add else { return };
-
-        let theme = &*app.ctx.theme;
-
         let layout = Layout::vertical([
             Constraint::Min(1),          // Transport
             Constraint::Min(4),          // Form Fields
@@ -340,10 +338,13 @@ impl Component for PluginsEditComponent {
         ])
         .split(area);
 
+        self.kv_component.render(frame, layout[2], app);
+
+        let theme = &*app.ctx.theme;
+        let Some(add_state) = &mut app.plugins.add else { return };
+
         let transport_layout = render_radio_buttons(frame, layout[0], theme, add_state);
         let form_layout = render_form_fields(frame, layout[1], theme, add_state);
-
-        self.kv_component.render_with_state(frame, layout[2], theme, add_state);
         let button_layout = render_action_buttons(frame, layout[3], theme, add_state);
         // Position the cursor in the active input field
         position_cursor_in_active_field(frame, &form_layout, add_state);
@@ -371,7 +372,7 @@ impl Component for PluginsEditComponent {
             spans.extend(theme_helpers::build_hint_spans(theme, &[("Space bar", " Toggle ")]));
         }
 
-        if add_state.is_key_value_editor_focused() {
+        if add_state.kv_editor.is_focused() {
             spans.extend(self.kv_component.get_hint_spans(app));
         } else {
             spans.extend(theme_helpers::build_hint_spans(theme, &[("Esc", " Cancel ")]));
@@ -560,10 +561,10 @@ fn render_labeled_input_field(
 }
 
 /// Render a validation message for the "edit plugin" form.
-fn render_validation_message(frame: &mut Frame, area: Rect, theme: &dyn Theme, result: &Result<String, String>) {
+fn render_validation_message(frame: &mut Frame, area: Rect, theme: &dyn Theme, result: &Result<String>) {
     let (message, style) = match result {
-        Ok(message) => (message, theme.status_success()),
-        Err(message) => (message, theme.status_error()),
+        Ok(message) => (message.to_string(), theme.status_success()),
+        Err(message) => (message.to_string(), theme.status_error()),
     };
 
     let spans = vec![
@@ -637,7 +638,7 @@ fn render_action_buttons(frame: &mut Frame, area: Rect, theme: &dyn Theme, add_s
 /// * `add_state` - Reference to the "edit plugin" plugin state
 ///
 fn position_cursor_in_active_field(frame: &mut Frame, layout: &EditPluginFormLayout, add_state: &PluginEditViewState) {
-    if add_state.is_key_value_editor_focused() {
+    if add_state.kv_editor.is_focused() {
         // The key/value component manages cursor placement while editing.
         return;
     }

@@ -48,7 +48,7 @@ impl PluginsState {
     ///
     /// Returns `true` if the execution was handled as a special case (plugin response)
     /// and the caller should return early, `false` if normal processing should continue.
-    pub fn handle_execution_completion(&mut self, execution_outcome: &ExecOutcome) -> Vec<Effect> {
+    pub fn handle_execution_completion(&mut self, execution_outcome: ExecOutcome) -> Vec<Effect> {
         // Keep executing=true if other executions are still active
         match execution_outcome {
             ExecOutcome::PluginDetailLoad { plugin_name, result } => self.handle_plugin_detail_load(plugin_name, result.clone()),
@@ -78,7 +78,7 @@ impl PluginsState {
         self.table.update_item(detail);
     }
 
-    fn handle_plugin_detail_load(&mut self, name: &String, result: anyhow::Result<PluginDetail, String>) {
+    fn handle_plugin_detail_load(&mut self, name: String, result: anyhow::Result<PluginDetail, String>) {
         match result {
             Ok(detail) => {
                 if let Some(state) = self.details.as_mut()

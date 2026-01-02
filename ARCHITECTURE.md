@@ -1,6 +1,6 @@
 # Architecture Overview
 
-- Core Crates: `crates/cli` (binary entry, args dispatch, launches TUI), `crates/tui` (Ratatui UI, focus, autocomplete, tables, theme), `crates/registry` (loads command manifest), `crates/registry-gen` (schema → manifest generator + provider inference), `crates/engine` (workflow orchestration, templating, step I/O), `crates/api` (`reqwest` client, auth, retries), `crates/util` (logging, redaction, caching, JSON helpers), `crates/mcp` (MCP plugin infrastructure, client management, logging).
+- Core Crates: `crates/cli` (binary entry, args dispatch, launches TUI), `crates/tui` (Ratatui UI, focus, autocomplete, tables, theme), `crates/registry` (loads command manifest), `crates/registry-gen` (OpenAPI → manifest generator + provider inference), `crates/engine` (workflow orchestration, templating, step I/O), `crates/api` (`reqwest` client, auth, retries), `crates/util` (logging, redaction, caching, JSON helpers), `crates/mcp` (MCP plugin infrastructure, client management, logging).
 
 - Command Spec & Manifest: Commands are identified by `group` + `name` (e.g., `apps info`). Fields are `positional_args` or `flags`. The manifest is generated at build-time by `crates/registry-gen` from the API schema and embeds per-field `provider` metadata directly in `CommandSpec`. Colon-delimited identifiers (e.g., `apps:list`) are deprecated; the engine logs and rejects them in favor of the canonical `<group> <name>` form.
 
@@ -54,7 +54,7 @@
 
 See plans/FOCUS_MANAGEMENT.md for details on the rat-focus model (flags, local focus rings, and traversal rules). It documents the root ring (palette/logs), browser rings, and the table ↔ pagination navigation flow (Grid ↔ First ↔ Prev ↔ Next ↔ Last buttons).
 
-- API & Security: `reqwest` + TLS; auth via `HEROKU_API_KEY`. Redaction patterns (`token`, `password`, `secret`, etc.) applied to logs. Provider results are cached with a TTL in the TUI.
+- API & Security: `reqwest` + TLS; auth via `OATTY_API_TOKEN`. Redaction patterns (`token`, `password`, `secret`, etc.) applied to logs. Provider results are cached with a TTL in the TUI.
 
 - Example: `addons info <app> <addon>`
   - Provider: `addons list` exists at `/apps/{app}/addons`.

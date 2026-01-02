@@ -3,6 +3,13 @@ use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 
 #[derive(Default, Clone)]
+pub struct ConfirmationModalOpts {
+    pub buttons: Vec<(String, FocusFlag)>,
+    pub title: Option<String>,
+    pub message: Option<String>,
+    pub severity: Option<Severity>,
+}
+#[derive(Default, Clone)]
 pub struct ConfirmationModalState {
     title: Option<String>,
     message: Option<String>,
@@ -13,36 +20,27 @@ pub struct ConfirmationModalState {
 }
 
 impl ConfirmationModalState {
-    pub fn title(&self) -> Option<&str> {
-        self.title.as_deref()
+    pub fn update_opts(&mut self, opts: ConfirmationModalOpts) {
+        self.title = opts.title;
+        self.message = opts.message;
+        self.severity = opts.severity;
+        self.buttons = opts.buttons;
     }
 
-    pub fn set_title(&mut self, title: Option<String>) {
-        self.title = title;
+    pub fn title(&self) -> Option<&str> {
+        self.title.as_deref()
     }
 
     pub fn message(&self) -> Option<&str> {
         self.message.as_deref()
     }
 
-    pub fn set_message(&mut self, message: Option<String>) {
-        self.message = message;
-    }
-
     pub fn severity(&self) -> Option<Severity> {
         self.severity.clone()
     }
 
-    pub fn set_severity(&mut self, severity: Option<Severity>) {
-        self.severity = severity;
-    }
-
     pub fn buttons(&self) -> &[(String, FocusFlag)] {
         &self.buttons
-    }
-
-    pub fn set_buttons(&mut self, buttons: Vec<(String, FocusFlag)>) {
-        self.buttons = buttons;
     }
 
     pub fn is_button_focused(&self, idx: usize) -> bool {

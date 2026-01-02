@@ -1,12 +1,12 @@
 # Oatty CLI (Rust, Experimental)
 
-A schema-driven Oatty CLI with both non-interactive and interactive TUI modes. Commands, arguments, and flags are derived from a pre-built manifest generated at build time from the Oatty JSON Hyper-Schema.
+A schema-driven Oatty CLI with both non-interactive and interactive TUI modes. Commands, arguments, and flags are derived from a pre-built manifest generated at build time from OpenAPI documents.
 
 ## Features
 - Dynamic command registry from a generated manifest (no static command tables at runtime).
 - CLI and TUI supported:
   - TUI: modern dark theme, search + auto-scrolling command list, inputs with validation, enum cycling, boolean toggles, live Command preview, logs.
-- Auth: `HEROKU_API_KEY` environment variable.
+- Auth: `OATTY_API_TOKEN` environment variable.
 - Redaction: Authorization and secret-like values are masked in output.
 
 ## Usage
@@ -35,7 +35,7 @@ A schema-driven Oatty CLI with both non-interactive and interactive TUI modes. C
 - Util: redaction helpers.
 
 ## Environment
-- `HEROKU_API_KEY`: Bearer token for Oatty API.
+- `OATTY_API_TOKEN`: Bearer token for API requests.
 - `OATTY_LOG`: set log level for tracing output (`error`, `warn`, `info` [default], `debug`, `trace`).
 
 ### Logging behavior
@@ -49,31 +49,13 @@ A schema-driven Oatty CLI with both non-interactive and interactive TUI modes. C
 - Lint: `cargo clippy --workspace -- -D warnings`
 - Format: `cargo fmt --all`
 ### Build-time manifest
-- Source schema: `schemas/heroku-schema.json`
-- Generator crate: `crates/registry-gen` (library + bin)
-- Build script: `crates/registry/build.rs` writes `OUT_DIR/heroku-manifest.json`
+- Source schema: OpenAPI documents under `schemas/samples/`
+- Generator crate: `crates/registry-gen` (library)
+- Build script: `crates/registry/build.rs` writes `OUT_DIR/registry-manifest.json`
 
-## Registry Generator (Library + CLI)
+## Registry Generator (Library)
 
-The registry is derived from the Oatty JSON Hyper-Schema using the `registry-gen` crate. You can use it both as a standalone CLI and as a Rust library.
-
-### CLI Usage
-
-- Binary (postcard) manifest:
-
-```
-cargo run -p heroku-registry-gen -- schemas/heroku-schema.json target/manifest.bin
-```
-
-- JSON manifest with `--json` flag:
-
-```
-cargo run -p heroku-registry-gen -- --json schemas/heroku-schema.json target/manifest.json
-```
-
-Notes:
-- The CLI creates parent directories for the output path if needed.
-- By default, it writes a compact postcard file for fast loading.
+The registry is derived from OpenAPI documents using the `registry-gen` crate.
 
 ### Library Usage
 
@@ -89,16 +71,14 @@ Generate a manifest file (postcard):
 ```rust
 use std::path::PathBuf;
 use oatty_registry_gen::{io::ManifestInput, write_manifest};
-use oatty_types::ServiceId;
 
 fn main() -> anyhow::Result<()> {
-    let schema = PathBuf::from("schemas/heroku-schema.json");
+    let schema = PathBuf::from("schemas/samples/render-public-api.json");
     let workflows = Some(PathBuf::from("workflows"));
     let output = PathBuf::from("target/manifest.bin");
     write_manifest(
         vec![ManifestInput {
             input: schema,
-            service_id: ServiceId::CoreApi,
         }],
         workflows,
         output,
@@ -112,16 +92,14 @@ Generate a manifest file (JSON):
 ```rust
 use std::path::PathBuf;
 use oatty_registry_gen::{io::ManifestInput, write_manifest_json};
-use oatty_types::ServiceId;
 
 fn main() -> anyhow::Result<()> {
-    let schema = PathBuf::from("schemas/heroku-schema.json");
+    let schema = PathBuf::from("schemas/samples/render-public-api.json");
     let workflows = Some(PathBuf::from("workflows"));
     let output = PathBuf::from("target/manifest.json");
     write_manifest_json(
         vec![ManifestInput {
             input: schema,
-            service_id: ServiceId::CoreApi,
         }],
         workflows,
         output,
@@ -130,13 +108,14 @@ fn main() -> anyhow::Result<()> {
 }
 ```
 
-Derive commands in-memory from a schema string:
+Derive commands in-memory from an OpenAPI document:
 
 ```rust
-use oatty_registry_gen::generate_commands;
+use oatty_registry_gen::openapi::derive_commands_from_openapi;
 
-fn load_commands(schema_json: &str) -> anyhow::Result<Vec<oatty_types::CommandSpec>> {
-    let cmds = generate_commands(schema_json)?;
+fn load_commands(openapi_json: &str) -> anyhow::Result<Vec<oatty_types::CommandSpec>> {
+    let document: serde_json::Value = serde_json::from_str(openapi_json)?;
+    let cmds = derive_commands_from_openapi(&document)?;
     Ok(cmds)
 }
 ```
@@ -152,7 +131,7 @@ flowchart LR
   end
 
   subgraph Registry
-    S[Embedded Hyper-Schema] --> D[Derive Commands/Args/Flags]
+    S[OpenAPI Document] --> D[Derive Commands/Args/Flags]
     D --> C[Clap Tree]
   end
 

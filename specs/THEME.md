@@ -363,7 +363,7 @@ Implementation notes
 - The picker is only available when the terminal advertises truecolor support; ANSI256-only terminals fall back to the default palette and hide both the `[Set]` nav item and the `Ctrl+T` shortcut.
 - Navigation is vertical (`↑/↓`, `j/k`), `Enter` applies immediately (no restart), and, or `Ctrl+C` closes the overlay.
 - Color decisions remain purely informational—the modal itself uses the *current* theme for borders, badges, and typography to keep focus styling consistent.
-- The chosen palette persists to `~/.config/heroku/preferences.json` (see `crates/util/src/preferences.rs`). On startup the loader prefers `TUI_THEME`, then the persisted preference, then the capability-based default.
+- The chosen palette persists to `~/.config/oatty/preferences.json` (see `crates/util/src/preferences.rs`). On startup the loader prefers `TUI_THEME`, then the persisted preference, then the capability-based default.
 
 ## 10) Non-Goals (avoid)
 

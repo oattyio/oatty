@@ -7,7 +7,7 @@ use regex::Regex;
 use thiserror::Error;
 use tracing::debug;
 
-static SERVICE: &str = "heroku";
+static SERVICE: &str = "oatty";
 
 /// Interpolate environment variables and secrets in the configuration.
 pub fn interpolate_config(config: &mut McpConfig) -> Result<(), InterpolationError> {

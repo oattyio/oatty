@@ -102,15 +102,19 @@ fn fetch_and_cache(
 ) -> Result<Vec<Value>> {
     let (group, name) = split_identifier(&provider_id).ok_or_else(|| anyhow!("invalid provider identifier: {}", provider_id))?;
 
-    let spec = {
+    let (spec, base_url) = {
         let registry_lock = registry.lock().map_err(|error| anyhow!(error.to_string()))?;
-        find_by_group_and_cmd(&registry_lock.commands, &group, &name)?.clone()
+        let spec = find_by_group_and_cmd(&registry_lock.commands, &group, &name)?.clone();
+        let base_url = registry_lock
+            .resolve_base_url_for_command(&spec)
+            .or_else(|| spec.http().map(|http| http.base_url.clone()));
+        (spec, base_url)
     };
 
     let spec_for_http = spec.clone();
     if spec_for_http.http().is_some() {
         let body = args.clone();
-        let result = handle.block_on(async move { exec_remote_for_provider(&spec_for_http, body, 0).await });
+        let result = handle.block_on(async move { exec_remote_for_provider(&spec_for_http, base_url, body, 0).await });
 
         if let Ok(ExecOutcome::Http { payload: result_value, .. }) = result
             && let Some(items) = result_value.as_array()

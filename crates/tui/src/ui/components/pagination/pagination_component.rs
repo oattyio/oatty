@@ -1,5 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use oatty_types::{Effect, ExecOutcome, Msg, Pagination};
+use oatty_types::{Effect, Pagination};
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
@@ -300,31 +300,6 @@ impl PaginationComponent {
 }
 
 impl Component for PaginationComponent {
-    /// Handles the message for the pagination component.
-    ///
-    /// # Arguments
-    /// * `app` - The application state
-    /// * `msg` - The message to handle
-    ///
-    /// # Returns
-    /// A vector of effects to be processed by the application
-    ///
-    /// # Behavior
-    /// - If the message is an execution completed message, it sets the pagination state.
-    /// - Returns an empty vector if the message is not an execution completed message.
-    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-        if let Msg::ExecCompleted(exec_outcome) = msg
-            && let ExecOutcome::Http {
-                pagination: maybe_pagination,
-                request_id,
-                ..
-            } = exec_outcome.as_ref()
-        {
-            app.table.pagination_state.set_pagination(maybe_pagination.clone(), *request_id);
-        }
-        Vec::new()
-    }
-
     /// Handles keyboard events for the pagination component.
     ///
     /// Processes keyboard input to manage:

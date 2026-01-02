@@ -20,7 +20,7 @@ use thiserror::Error;
 use tracing::warn;
 
 /// Environment variable controlling the history file location.
-pub const HISTORY_PATH_ENV: &str = "HEROKU_HISTORY_PATH";
+pub const HISTORY_PATH_ENV: &str = "OATTY_HISTORY_PATH";
 
 /// Default filename for the persisted history store.
 pub const HISTORY_FILE_NAME: &str = "history.json";
@@ -321,7 +321,7 @@ fn default_history_path() -> PathBuf {
 
     config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("heroku")
+        .join("oatty")
         .join(HISTORY_FILE_NAME)
 }
 
@@ -509,7 +509,7 @@ mod tests {
     fn detects_secret_in_nested_value() {
         let nested = json!({
             "app": "example",
-            "token": "heroku_api_key=abc123def456ghi789",
+            "token": "oatty_api_token=abc123def456ghi789",
         });
         assert!(value_contains_secret(&nested));
 

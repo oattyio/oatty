@@ -6,7 +6,7 @@ rust-version = "1.89"
 description = "Oatty CLI utility functions and helpers"
 license = "MIT OR Apache-2.0"
 authors = ["Oatty CLI Team <devnull@example.com>"]
-repository = "https://example.com/heroku"
+repository = "https://example.com/oatty"
 
 [dependencies]
 regex = { workspace = true }
@@ -26,7 +26,7 @@ anyhow.workspace = true
 url = { workspace = true }
 
 [dev-dependencies]
-tempfile = "3.23.0"
+tempfile = "3.24.0"
 temp-env = "0.3.6"
 
 [build-dependencies]

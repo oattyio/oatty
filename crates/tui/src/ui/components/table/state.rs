@@ -187,7 +187,7 @@ impl<'a> ResultsTableState<'_> {
     /// # Arguments
     ///
     /// * `execution_outcome` - The result of the command execution
-    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &ExecOutcome, theme: &dyn Theme) {
+    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: ExecOutcome, theme: &dyn Theme) {
         let maybe_value = match execution_outcome {
             ExecOutcome::Http {
                 payload: value,
@@ -196,7 +196,7 @@ impl<'a> ResultsTableState<'_> {
             } => {
                 let mut cloned_value = value.clone();
                 if let Some(array) = cloned_value.as_array_mut()
-                    && self.pagination_state.should_reverse(*request_id)
+                    && self.pagination_state.should_reverse(request_id)
                 {
                     array.reverse();
                     serde_json::to_value(array).ok()
@@ -210,7 +210,7 @@ impl<'a> ResultsTableState<'_> {
         };
 
         if let Some(value) = maybe_value {
-            let normalized_value = normalize_result_payload(value.clone());
+            let normalized_value = normalize_result_payload(value);
             self.apply_result_json(Some(normalized_value), theme, true);
         }
     }

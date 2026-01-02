@@ -1,5 +1,5 @@
-use crate::ui::components::common::TextInputState;
-use crate::ui::components::plugins::EnvRow;
+use crate::ui::components::common::{TextInputState, key_value_editor::EnvRow};
+use anyhow::{Result, anyhow};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 
@@ -14,7 +14,7 @@ pub enum KeyValueEditorMode {
 }
 
 /// State container for table-driven editing of key/value pairs.
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct KeyValueEditorState {
     /// Persisted rows backing the table.
     pub rows: Vec<EnvRow>,
@@ -22,6 +22,8 @@ pub struct KeyValueEditorState {
     pub selected_row_index: Option<usize>,
     /// Interaction mode for the editor.
     pub mode: KeyValueEditorMode,
+    /// Label for the editor.
+    label: String,
     /// Container focus flag used when integrating with the global focus ring.
     focus: FocusFlag,
     /// Focus flag associated with the table surface while browsing rows.
@@ -38,7 +40,7 @@ impl KeyValueEditorState {
     /// The `namespace` argument is used to derive unique names for the
     /// container, table, key field, and value field focus flags. Callers should
     /// pass a stable namespace to avoid rebuilding focus structures unnecessarily.
-    pub fn new(namespace: &str) -> Self {
+    pub fn new(namespace: &str, label: &str) -> Self {
         let focus = FocusFlag::new().with_name(&format!("{namespace}.container"));
         let table_focus = FocusFlag::new().with_name(&format!("{namespace}.table"));
         let key_field_focus = FocusFlag::new().with_name(&format!("{namespace}.field.key"));
@@ -51,9 +53,20 @@ impl KeyValueEditorState {
             table_focus,
             key_field_focus,
             value_field_focus,
+            label: label.to_string(),
         };
         state.focus_table();
         state
+    }
+
+    /// Returns the label of the key-value editor.
+    pub fn label(&self) -> &str {
+        &self.label
+    }
+
+    /// Sets the label of the key-value editor.
+    pub fn set_label(&mut self, label: &str) {
+        self.label = label.to_string();
     }
 
     /// Returns `true` when the inline editor is active.
@@ -90,11 +103,6 @@ impl KeyValueEditorState {
     /// Returns a human-readable label for the active inline editor field.
     pub fn active_field_label(&self) -> &'static str {
         if self.is_value_field_focused() { "value" } else { "key" }
-    }
-
-    /// Exposes the container focus flag for integration with other state.
-    pub fn focus_flag(&self) -> FocusFlag {
-        self.focus.clone()
     }
 
     /// Selects the previous row when browsing.
@@ -198,13 +206,13 @@ impl KeyValueEditorState {
     }
 
     /// Commits the current edit session into the underlying row storage.
-    pub fn commit_edit(&mut self) -> Result<String, String> {
+    pub fn commit_edit(&mut self) -> Result<String> {
         let ok = Ok("✓ Looks good!".to_string());
         let KeyValueEditorMode::Editing(edit) = &self.mode else {
             return ok;
         };
         if edit.key_buffer.trim().is_empty() {
-            return Err("✘ Key name missing".to_string());
+            return Err(anyhow!("✘ Key name missing"));
         }
         if edit.row_index >= self.rows.len() {
             return ok;

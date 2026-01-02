@@ -9,7 +9,7 @@ use crate::ui::{
     theme::theme_helpers as th,
 };
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
-use oatty_types::{Effect, Msg};
+use oatty_types::{Effect, ExecOutcome, Msg};
 use rat_focus::HasFocus;
 use ratatui::layout::Position;
 use ratatui::widgets::{Borders, Padding};
@@ -49,7 +49,7 @@ use ratatui::{
 /// # Examples
 ///
 /// ```rust,ignore
-/// use heroku_tui::ui::components::TableComponent;
+/// use oatty_tui::ui::components::TableComponent;
 ///
 /// let mut table = TableComponent::new();
 /// table.init()?;
@@ -73,11 +73,16 @@ impl TableComponent {
 }
 
 impl Component for TableComponent {
-    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-        if let Msg::ExecCompleted(exec_outcome) = msg {
-            app.table.process_general_execution_result(exec_outcome, &*app.ctx.theme);
+    fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
+        if let Msg::ExecCompleted(exec_outcome) = msg
+            && let ExecOutcome::Http {
+                pagination, request_id, ..
+            } = &*exec_outcome
+        {
+            app.table.pagination_state.set_pagination(pagination.clone(), *request_id);
+            app.table.process_general_execution_result(*exec_outcome, &*app.ctx.theme);
         }
-        self.pagination.handle_message(app, msg)
+        Vec::new()
     }
 
     /// Handle key events for the result table modal.

@@ -16,7 +16,7 @@
 //!
 //! ```ignore
 //! use oatty_types::Route;
-//! use heroku_tui::ui::components::nav_bar::{
+//! use oatty_tui::ui::components::nav_bar::{
 //!     NavItem, NavItemAction, VerticalNavBarComponent, VerticalNavBarState,
 //! };
 //!

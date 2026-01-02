@@ -19,6 +19,7 @@ use ratatui::{
 };
 
 use crate::app::App;
+use crate::ui::components::common::ConfirmationModalOpts;
 use crate::ui::components::common::text_input::cursor_index_for_column;
 use crate::ui::theme::theme_helpers::create_list_with_highlight;
 use crate::ui::{
@@ -63,7 +64,7 @@ struct PaletteLayout {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use heroku_tui::ui::components::PaletteComponent;
+/// use oatty_tui::ui::components::PaletteComponent;
 ///
 /// let mut palette = PaletteComponent::default();
 /// palette.init()?;
@@ -77,9 +78,6 @@ pub struct PaletteComponent {
 }
 
 impl PaletteComponent {
-    pub fn new() -> Self {
-        Self::default()
-    }
     /// Creates the input paragraph widget with the current state.
     ///
     /// This function creates the input paragraph with throbber, input text, and
@@ -389,11 +387,12 @@ impl PaletteComponent {
             "You are about to run a destructive action that cannot be undone.\nAre you sure you want to run `{}`?",
             command
         );
-        app.confirmation_modal_state.set_buttons(buttons);
-        app.confirmation_modal_state.set_message(Some(message));
-        app.confirmation_modal_state.set_severity(Some(Severity::Warning));
-        app.confirmation_modal_state
-            .set_title(Some("Confirm Destructive Action".to_string()));
+        app.confirmation_modal_state.update_opts(ConfirmationModalOpts {
+            title: Some("Confirm Destructive Action".to_string()),
+            message: Some(message),
+            severity: Some(Severity::Warning),
+            buttons,
+        });
 
         vec![Effect::ShowModal(Modal::Confirmation)]
     }
@@ -416,7 +415,7 @@ impl PaletteComponent {
 }
 
 impl Component for PaletteComponent {
-    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+    fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
         match msg {
             Msg::Tick => {
                 if app.executing || app.palette.is_provider_loading() {
@@ -429,9 +428,9 @@ impl Component for PaletteComponent {
                     app.palette.handle_provider_fetch_failure(log_message, &*app.ctx.theme);
                     Vec::new()
                 }
-                _ => app.palette.process_general_execution_result(outcome),
+                _ => app.palette.process_general_execution_result(*outcome),
             },
-            Msg::ConfirmationModalButtonClicked(id) if *id == self.confirm_button.widget_id() => {
+            Msg::ConfirmationModalButtonClicked(id) if id == self.confirm_button.widget_id() => {
                 self.execute_command(app).unwrap_or_default()
             }
             _ => Vec::new(),
@@ -624,7 +623,7 @@ impl Component for PaletteComponent {
         if should_show_suggestions {
             app.palette.update_suggestions_view_width(suggestions_area.width, theme);
             let suggestions = app.palette.rendered_suggestions();
-            let suggestions_list = create_list_with_highlight(suggestions, &*app.ctx.theme, true, None);
+            let suggestions_list = create_list_with_highlight(suggestions.to_vec(), &*app.ctx.theme, true, None);
             frame.render_stateful_widget(suggestions_list, *suggestions_area, &mut app.palette.list_state);
         }
         self.layout = palette_layout;

@@ -18,7 +18,7 @@
 - Tests: `cargo test --workspace` — run unit/integration tests.
 - Lint: `cargo clippy --workspace -- -D warnings` — fail on warnings.
 - Format: `cargo fmt --all` — apply repo `rustfmt` settings.
-- Helpful env: `OATTY_LOG=debug` (stderr logs are silenced during TUI), `HEROKU_API_KEY=…`, `FEATURE_WORKFLOWS=1`, `DEBUG=1`, `MCP_CONFIG_PATH=~/.config/oatty/mcp.json`.
+- Helpful env: `OATTY_LOG=debug` (stderr logs are silenced during TUI), `OATTY_API_TOKEN=…`, `FEATURE_WORKFLOWS=1`, `DEBUG=1`, `MCP_CONFIG_PATH=~/.config/oatty/mcp.json`.
 
 ## Coding Style & Naming Conventions
 - Edition: Rust 2024; indent 4 spaces; max width 100 (see `rustfmt.toml`).
@@ -38,7 +38,7 @@
 - Checklist: `cargo fmt` + `clippy` clean; no stray `dbg!`/`println!`.
 
 ## Security & Configuration Tips
-- Never commit secrets; prefer `HEROKU_API_KEY` via environment for authentication.
+- Never commit secrets; prefer `OATTY_API_TOKEN` via environment for authentication.
 - Redaction utilities mask sensitive values in logs; still avoid pasting tokens.
 - Network via `reqwest` + TLS; set `OATTY_LOG=error|warn|info|debug|trace` for diagnostics (stderr logs are silenced during TUI).
 - MCP plugins: Use `${secret:NAME}` interpolation for sensitive values; secrets stored in OS keychain via `keyring-rs`.

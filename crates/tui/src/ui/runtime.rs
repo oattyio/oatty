@@ -272,7 +272,7 @@ fn handle_input_event(app: &mut App<'_>, main_view: &mut MainView, input_event: 
     match input_event {
         Event::Key(key_event) => main_view.handle_key_events(app, key_event),
         Event::Mouse(mouse_event) => main_view.handle_mouse_events(app, mouse_event),
-        Event::Resize(width, height) => main_view.handle_message(app, &Msg::Resize(width, height)),
+        Event::Resize(width, height) => main_view.handle_message(app, Msg::Resize(width, height)),
 
         Event::FocusGained | Event::FocusLost | Event::Paste(_) => Vec::new(),
     }
@@ -282,7 +282,7 @@ fn handle_input_event(app: &mut App<'_>, main_view: &mut MainView, input_event: 
 /// producer, runs the async event loop, and performs cleanup on exit.
 pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
     let mut app = App::new(registry, plugin_engine);
-    let mut main_view = MainView::new(Some(Box::new(LibraryComponent)));
+    let mut main_view = MainView::new(Some(Box::new(LibraryComponent::default())));
     let mut terminal = setup_terminal()?;
 
     // Input comes from a dedicated blocking thread to ensure reliability.
@@ -343,7 +343,7 @@ pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<P
 
             // Periodic animation tick
             _ = ticker.tick() => {
-                effects.extend(main_view.handle_message(&mut app, &Msg::Tick));
+                effects.extend(main_view.handle_message(&mut app, Msg::Tick));
                 needs_render = needs_animation || !effects.is_empty();
                 if !effects.is_empty() {
                     // move effects out of their Vec to avoid processing new effects while processing current ones
@@ -359,10 +359,10 @@ pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<P
                 let outcome = joined.unwrap_or_else(|error| ExecOutcome::Log(format!("Execution task failed: {error}")));
                 match outcome {
                     ExecOutcome::ProviderValues { provider_id, cache_key, .. } => {
-                        effects.extend(main_view.handle_message(&mut app, &Msg::ProviderValuesReady { provider_id, cache_key }));
+                        effects.extend(main_view.handle_message(&mut app, Msg::ProviderValuesReady { provider_id, cache_key }));
                     }
                     other => {
-                        effects.extend(main_view.handle_message(&mut app, &Msg::ExecCompleted(Box::new(other))));
+                        effects.extend(main_view.handle_message(&mut app, Msg::ExecCompleted(Box::new(other))));
                     }
                 }
                 let still_running = app.active_exec_count.load(Ordering::Relaxed) > 0 || !pending_execs.is_empty();
@@ -382,7 +382,7 @@ pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<P
             }, if workflow_events.is_some() => {
                 match maybe_run_event {
                     Some((run_id, event)) => {
-                        effects.extend(main_view.handle_message(&mut app, &Msg::WorkflowRunEvent { run_id, event }));
+                        effects.extend(main_view.handle_message(&mut app, Msg::WorkflowRunEvent { run_id, event }));
                         needs_render = true;
                     }
                     None => {
@@ -510,13 +510,13 @@ async fn process_effects(
             ExecOutcome::ProviderValues {
                 provider_id, cache_key, ..
             } => {
-                effects_out.extend(main_view.handle_message(app, &Msg::ProviderValuesReady { provider_id, cache_key }));
+                effects_out.extend(main_view.handle_message(app, Msg::ProviderValuesReady { provider_id, cache_key }));
             }
             ExecOutcome::Message(msg) => {
-                effects_out.extend(main_view.handle_message(app, &msg));
+                effects_out.extend(main_view.handle_message(app, msg));
             }
             other => {
-                effects_out.extend(main_view.handle_message(app, &Msg::ExecCompleted(Box::new(other))));
+                effects_out.extend(main_view.handle_message(app, Msg::ExecCompleted(Box::new(other))));
             }
         }
     }

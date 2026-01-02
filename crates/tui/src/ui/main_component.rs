@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::components::logs::LogDetailsComponent;
 use super::components::nav_bar::VerticalNavBarComponent;
 use super::components::plugins::PluginsDetailsComponent;
@@ -95,12 +97,15 @@ impl MainView {
 
         let (view, state): (Box<dyn Component>, Box<&dyn HasFocus>) = match route {
             Route::Browser => (Box::new(BrowserComponent::default()), Box::new(&app.browser)),
-            Route::Palette => (Box::new(PaletteComponent::new()), Box::new(&app.palette)),
+            Route::Palette => (Box::new(PaletteComponent::default()), Box::new(&app.palette)),
             Route::Plugins => (Box::new(PluginsComponent::default()), Box::new(&app.plugins)),
             Route::WorkflowInputs => (Box::new(WorkflowInputsComponent::default()), Box::new(&app.workflows)),
             Route::Workflows => (Box::new(WorkflowsComponent::default()), Box::new(&app.workflows)),
             Route::WorkflowRun => (Box::new(RunViewComponent::default()), Box::new(&app.workflows)),
-            Route::Library => (Box::new(LibraryComponent), Box::new(&app.library)),
+            Route::Library => (
+                Box::new(LibraryComponent::new(Arc::clone(&app.ctx.command_registry))),
+                Box::new(&app.library),
+            ),
         };
 
         app.current_route = app.nav_bar.set_route(route);
@@ -120,7 +125,7 @@ impl MainView {
                 ),
                 Modal::Results(exec_outcome) => {
                     let mut table = TableComponent::default();
-                    table.handle_message(app, &Msg::ExecCompleted(exec_outcome.clone()));
+                    table.handle_message(app, Msg::ExecCompleted(exec_outcome.clone()));
                     (Box::new(table), ModalLayout(Box::new(|rect| centered_rect(96, 90, rect))))
                 }
                 Modal::LogDetails => (
@@ -186,16 +191,26 @@ impl MainView {
 }
 
 impl Component for MainView {
-    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-        let mut effects = app.update(msg);
-
-        effects.extend(self.nav_bar_view.handle_message(app, msg));
-        effects.extend(self.content_view.as_mut().map(|c| c.handle_message(app, msg)).unwrap_or_default());
-        effects.extend(self.logs_view.handle_message(app, msg));
-
-        if let Some(target) = self.modal_view.as_mut() {
-            return target.0.handle_message(app, msg);
+    fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
+        let mut effects = app.update(&msg);
+        if let Msg::ExecCompleted(outcome) = &msg {
+            app.logs.process_general_execution_result(&outcome)
         }
+
+        // Since messages are consumed, the recipient is assumed to be
+        // the first component that is not None. If multiple components
+        // require messages, cloning is required to avoid borrowing issues
+        // but may lead to performance issues.
+        match () {
+            _ if self.modal_view.is_some() => {
+                effects.append(&mut self.modal_view.as_mut().map(|c| c.0.handle_message(app, msg)).unwrap_or_default());
+            }
+            _ => {
+                if self.content_view.is_some() {
+                    effects.append(&mut self.content_view.as_mut().map(|c| c.handle_message(app, msg)).unwrap_or_default());
+                }
+            }
+        };
 
         effects
     }

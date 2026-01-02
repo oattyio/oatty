@@ -139,7 +139,7 @@ impl Indexer {
         {
             return expand_tilde(&path);
         }
-        config_dir().unwrap_or_else(|| PathBuf::from(".")).join("heroku").join("tools")
+        config_dir().unwrap_or_else(|| PathBuf::from(".")).join("oatty").join("tools")
     }
 }
 

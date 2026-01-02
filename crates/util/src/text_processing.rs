@@ -172,15 +172,6 @@ fn build_sensitive_env_patterns() -> Vec<Regex> {
         "DB_URI",
         "DB_URL",
         "ENCRYPTION_KEY",
-        "HEROKU_API_KEY",
-        "HEROKU_API_TOKEN",
-        "HEROKU_OAUTH_ACCESS_TOKEN",
-        "HEROKU_OAUTH_ID",
-        "HEROKU_OAUTH_REFRESH_TOKEN",
-        "HEROKU_OAUTH_SECRET",
-        "HEROKU_OAUTH_TOKEN",
-        "HEROKU_POSTGRESQL",
-        "HEROKU_REDIS",
         "JWT",
         "KAFKA_API_SECRET",
         "KAFKA_PASSWORD",
@@ -254,7 +245,6 @@ fn get_value_only_patterns() -> &'static Vec<Regex> {
 
 fn build_value_only_patterns() -> Vec<Regex> {
     vec![
-        Regex::new(r"(?i)(HRKU-[A-Za-z0-9_-]{60})").unwrap(),
         Regex::new(r"(?i)(sk_(?:live|test)_[A-Za-z0-9]{16,})").unwrap(),
         Regex::new(r"(?i)(rk_(?:live|test)_[A-Za-z0-9]{16,})").unwrap(),
         Regex::new(r"(?i)(pk_(?:live|test)_[A-Za-z0-9]{16,})").unwrap(),
@@ -276,7 +266,6 @@ fn build_value_only_patterns() -> Vec<Regex> {
         Regex::new(r"(?i)(ya29\.[0-9A-Za-z\-_]{20,})").unwrap(),
         Regex::new(r"(?i)(AIzaSy[A-Za-z0-9_-]{33})").unwrap(),
         Regex::new(r"(?i)(shp(?:at|ca|ea|mp|pc|se)_[0-9a-f]{32})").unwrap(),
-        Regex::new(r"(?i)(heroku_[0-9a-f]{32,})").unwrap(),
         Regex::new(r"(?i)(postgres(?:ql)?://\S+)").unwrap(),
         Regex::new(r"(?i)(mysql://\S+)").unwrap(),
         Regex::new(r"(?i)(rediss?://\S+)").unwrap(),
@@ -868,8 +857,8 @@ mod tests {
     }
 
     #[test]
-    fn redacts_bare_prefixed_heroku_token() {
-        let input = "HRKU-AALJCYR7SRzPkj9_BGqhi1jAI1J5P4WfD6ITENvdVydAPCnNcAlrMMahHrTo";
+    fn redacts_bare_prefixed_access_token() {
+        let input = "ghp_abcdEFGHijklMNOPqrstUVWXyz0123456789";
         assert_eq!(redact_sensitive(input), "[REDACTED]");
     }
 
@@ -886,15 +875,15 @@ mod tests {
     }
 
     #[test]
-    fn redacts_heroku_api_key_assignment() {
-        let input = "HEROKU_API_KEY=01234567-89ab-cdef-0123-456789abcdef";
-        let expected = "HEROKU_API_KEY=[REDACTED]";
+    fn redacts_api_token_assignment() {
+        let input = "OATTY_API_TOKEN=01234567-89ab-cdef-0123-456789abcdef";
+        let expected = "OATTY_API_TOKEN=[REDACTED]";
 
         assert_eq!(redact_sensitive(input), expected);
     }
 
     #[test]
-    fn redacts_heroku_postgres_url_value() {
+    fn redacts_postgres_url_value() {
         let input = "postgres://user:superSecretPass@ec2-34-201-12-34.compute-1.amazonaws.com:5432/dbname";
 
         assert_eq!(redact_sensitive(input), "[REDACTED]");
@@ -910,8 +899,6 @@ mod tests {
         assert!(is_secret("ghp_abcdEFGHijklMNOPqrstUVWXyz0123456789"));
         assert!(is_secret("github_pat_11ABCDxyz0123456789ABCDEFGH"));
         assert!(is_secret("ya29.A0AVA9y1ExampleTokenValue1234567890ABCDEFGHI"));
-        assert!(is_secret("HRKU-AALJCYR7SRzPkj9_BGqhi1jAI1J5P4WfD6ITENvdVydAPCnNcAlrMMahHrTo"));
-        assert!(is_secret("heroku_abcdefabcdefabcdefabcdefabcdefab"));
         assert!(is_secret(
             "postgres://user:superSecretPass@ec2-34-201-12-34.compute-1.amazonaws.com:5432/dbname"
         ));

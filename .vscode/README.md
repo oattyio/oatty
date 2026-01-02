@@ -202,7 +202,7 @@ To add project-specific tasks:
 
 ### Storing API Tokens Securely
 
-See **[SECURE_TOKENS.md](SECURE_TOKENS.md)** for comprehensive guide on securely storing bearer tokens (like `HEROKU_API_KEY`) in VS Code.
+See **[SECURE_TOKENS.md](SECURE_TOKENS.md)** for comprehensive guide on securely storing bearer tokens (like `OATTY_API_TOKEN`) in VS Code.
 
 **Quick Options:**
 - ✅ `.env` file (gitignored, medium security)

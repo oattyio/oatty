@@ -150,7 +150,7 @@ impl Default for LogManager {
 pub fn default_audit_log_path() -> PathBuf {
     config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("heroku")
+        .join("oatty")
         .join("mcp-audit.jsonl")
 }
 

@@ -3,8 +3,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 
 /// Resolves a path template by replacing placeholders with actual values.
-/// The path template follow the same format as JSON hyper-schema URI
-/// templates. See https://json-schema.org/draft/2019-09/json-schema-hypermedia#uriTemplating
+/// The path template follows the same placeholder format used by OpenAPI
+/// (`/resource/{id}`).
 ///
 /// This function takes a path template containing placeholders in the format
 /// `{key}` and replaces them with corresponding values from the provided

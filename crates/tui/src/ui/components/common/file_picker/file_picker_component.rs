@@ -1,3 +1,5 @@
+//! Interactive modal that lets the user browse and preview files before importing them.
+
 use std::path::{Path, PathBuf};
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -19,6 +21,7 @@ use crate::{
     },
 };
 
+/// Layout helper that stores the resolved rectangles for each render region.
 #[derive(Debug, Clone, Default)]
 pub struct FilePickerLayout {
     shortcut_bar_area: Rect,
@@ -46,12 +49,13 @@ impl From<&[Rect]> for FilePickerLayout {
     }
 }
 
+/// Controller + renderer for the shared file picker modal.
 #[derive(Debug, Clone, Default)]
 pub struct FilePickerModal {
     layout: FilePickerLayout,
     shortcut_rects: Vec<Rect>,
 }
-
+/// Component responsible for rendering the file picker and handling user input.
 impl FilePickerModal {
     fn render_shortcuts(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) -> Option<()> {
         let theme = &*app.ctx.theme;
@@ -153,13 +157,15 @@ impl FilePickerModal {
             );
             return None;
         };
-        let lines = file_contents.lines().collect::<Vec<&str>>();
-        let start = file_picker.preview_scroll_offset() as usize;
-        let end = lines.len().min(start + area.height as usize);
-        let lines = lines.get(start..end)?;
-        let preview = Paragraph::new(lines.join("\n"))
-            .block(p_block)
-            .style(app.ctx.theme.text_primary_style());
+        let line_indices = file_picker.line_indices();
+        let offset = file_picker.preview_scroll_offset() as usize;
+        let len = line_indices.len().min(offset + area.height as usize);
+
+        let begin = line_indices[offset].0;
+        let end = line_indices[len - 1].1;
+        let slice = file_contents.get(begin..end)?;
+
+        let preview = Paragraph::new(slice).block(p_block).style(app.ctx.theme.text_primary_style());
         frame.render_widget(preview, area);
         Some(())
     }
@@ -236,16 +242,16 @@ impl FilePickerModal {
 }
 
 impl Component for FilePickerModal {
-    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+    fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
         let (Msg::ExecCompleted(outcome), Some(file_picker)) = (msg, app.file_picker.as_mut()) else {
             return Vec::new();
         };
 
-        match *outcome.to_owned() {
-            ExecOutcome::FileContents(contents, path) if file_picker.selected_file().is_some_and(|f| f.path == path) => {
+        match *outcome {
+            ExecOutcome::FileContents(contents, path) if file_picker.selected_file().is_some_and(|f| f.path == *path) => {
                 file_picker.set_file_contents(contents);
             }
-            ExecOutcome::DirectoryContents { entries, root_path } if file_picker.cur_dir().is_some_and(|f| f == &root_path) => {
+            ExecOutcome::DirectoryContents { entries, root_path } if file_picker.cur_dir().is_some_and(|f| *f == root_path) => {
                 file_picker.set_dir_contents(Some(entries));
                 file_picker.rebuild_list_items(&*app.ctx.theme);
             }
@@ -416,10 +422,22 @@ impl Component for FilePickerModal {
         self.layout = layout;
     }
 
+    /// Builds the footer hint line describing the file picker key bindings.
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
-        build_hint_spans(&*app.ctx.theme, &[(" Enter/Space", " Select"), (" ↑/↓", " Navigate")]).to_vec()
+        let Some(file_picker) = app.file_picker.as_ref() else {
+            return vec![];
+        };
+        let mut hints = vec![(" Esc", " Cancel")];
+        if file_picker.f_list.get() {
+            hints.push((" ↑/↓", " Navigate"));
+        }
+        if file_picker.f_list.get() || file_picker.f_confirm.get() {
+            hints.push((" Enter/Space", " Select"));
+        }
+        build_hint_spans(&*app.ctx.theme, &hints).to_vec()
     }
 
+    /// Calculates the preferred layout for the modal's regions.
     fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
         let outer_areas = Layout::horizontal([
             Constraint::Length(13), // Left pane
@@ -466,6 +484,7 @@ impl Component for FilePickerModal {
         ]
     }
 
+    /// Requests the initial directory listing when the modal becomes visible.
     fn on_route_enter(&mut self, app: &mut App) -> Vec<Effect> {
         if let Some(file_picker) = app.file_picker.as_ref()
             && let Some(shortcut) = file_picker.shortcuts().first()

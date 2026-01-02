@@ -41,7 +41,7 @@
 - `c` column picker.
 - `Enter` row expand (detail drawer).
 - Copy cell or row JSON.
-- Presets saved to `~/.heroku/ui/presets.json`.
+- Presets saved to `~/.config/oatty/ui/presets.json`.
 
 ---
 

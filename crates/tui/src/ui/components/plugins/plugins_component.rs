@@ -42,10 +42,11 @@ pub struct PluginsComponent {
 }
 
 impl Component for PluginsComponent {
-    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+    fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
         if let Msg::ExecCompleted(outcome) = msg {
-            return app.plugins.handle_execution_completion(outcome);
+            return app.plugins.handle_execution_completion(*outcome);
         }
+
         Vec::new()
     }
 

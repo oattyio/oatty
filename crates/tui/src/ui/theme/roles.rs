@@ -67,7 +67,6 @@ pub trait Theme: Send + Sync + Debug {
         Style::default().fg(self.roles().text_secondary)
     }
     fn text_muted_style(&self) -> Style {
-        // Use the muted color directly without DIM to improve readability.
         Style::default().fg(self.roles().text_muted)
     }
 
@@ -80,6 +79,10 @@ pub trait Theme: Send + Sync + Debug {
     // Selection
     fn selection_style(&self) -> Style {
         Style::default().bg(self.roles().selection_bg)
+    }
+
+    fn interactive_style(&self) -> Style {
+        Style::default().fg(self.roles().focus)
     }
 
     /// Background style applied to even-numbered rows in tables.

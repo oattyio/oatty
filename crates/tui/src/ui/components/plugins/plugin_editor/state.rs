@@ -1,12 +1,11 @@
-use crate::ui::components::plugins::EnvRow;
+use crate::ui::components::common::key_value_editor::{EnvRow, KeyValueEditorState};
+use anyhow::Result;
 use oatty_mcp::PluginDetail;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 
-use super::key_value_editor::KeyValueEditorState;
-
 /// Add Plugin view state
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct PluginEditViewState {
     pub visible: bool,
     /// Selected transport for the plugin: Local (stdio) or Remote (http/sse)
@@ -23,7 +22,7 @@ pub struct PluginEditViewState {
     pub base_url_cursor: usize,
     /// Editor state for environment variables on local transports.
     pub kv_editor: KeyValueEditorState,
-    pub validation: Result<String, String>,
+    pub validation: Result<String>,
     // Focus flags for focusable controls
     pub container_focus: FocusFlag,
     pub f_transport: FocusFlag,
@@ -38,7 +37,7 @@ pub struct PluginEditViewState {
 
 impl PluginEditViewState {
     pub fn new() -> Self {
-        let kv_editor = KeyValueEditorState::new("plugins.add.env");
+        let kv_editor = KeyValueEditorState::new("plugins.add.env", "");
         let instance = Self {
             visible: true,
             transport: PluginTransport::Local,
@@ -127,22 +126,14 @@ impl PluginEditViewState {
         }
     }
 
-    /// Returns the focus flag for the currently active key/value editor container.
-    pub fn active_key_value_focus_flag(&self) -> FocusFlag {
-        self.kv_editor.focus_flag()
-    }
-
-    /// Indicates whether the key/value editor currently holds input focus.
-    pub fn is_key_value_editor_focused(&self) -> bool {
-        self.active_key_value_focus_flag().get()
-    }
-
     /// Provides a transport-specific label for the key/value table.
-    pub fn key_value_table_label(&self) -> &'static str {
-        match self.transport {
+    pub fn update_key_value_table_label(&mut self) {
+        let label = match self.transport {
             PluginTransport::Local => "Env Vars",
             PluginTransport::Remote => "Headers",
-        }
+        };
+
+        self.kv_editor.set_label(label);
     }
 }
 

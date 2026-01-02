@@ -60,6 +60,8 @@ pub struct SharedCtx {
     pub active_theme_id: String,
     /// Whether the runtime can show the theme picker (truecolor terminals only).
     pub theme_picker_available: bool,
+    /// Product name derived from the registry's base URL metadata.
+    pub product_name: String,
 }
 
 impl SharedCtx {
@@ -100,6 +102,7 @@ impl SharedCtx {
             preferences,
             active_theme_id: loaded_theme.definition.id.to_string(),
             theme_picker_available,
+            product_name: "oatty".to_string(),
         }
     }
 }
@@ -281,7 +284,6 @@ impl App<'_> {
     pub fn update(&mut self, message: &Msg) -> Vec<Effect> {
         match message {
             Msg::Tick => self.handle_tick_message(),
-            Msg::Resize(..) => vec![],
             Msg::CopyToClipboard(text) => vec![Effect::CopyToClipboardRequested(text.clone())],
             Msg::ProviderValuesReady { provider_id, cache_key } => {
                 self.handle_provider_values_ready(provider_id.clone(), cache_key.clone())
@@ -307,7 +309,7 @@ impl App<'_> {
             if self.throbber_idx != previous_throbber_index {}
         }
 
-        // Periodically refresh plugin statuses when overlay is visible
+        // Periodically refresh plugin statuses when the overlay is visible
         if self.plugins.table.should_refresh() {
             return vec![Effect::PluginsRefresh];
         }
@@ -410,7 +412,7 @@ impl App<'_> {
         }
     }
 
-    /// Appends a plain-text message to the logs collections.
+    /// Appends a plain-text message to the log collections.
     ///
     /// This helper ensures both the flat string list and the rich log entries
     /// remain in sync so detail views can resolve JSON payloads accurately. It

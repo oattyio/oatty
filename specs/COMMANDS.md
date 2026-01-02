@@ -15,7 +15,7 @@ Implementation notes:
 
 ## Command Definitions
 
-- **Source of truth:** `oatty_registry::Registry` loads command metadata from the embedded `heroku-manifest.json` (see `crates/registry/src/models.rs`). Synthetic MCP tools are merged through `Registry::insert_synthetic`, then deduplicated.
+- **Source of truth:** `oatty_registry::CommandRegistry` loads command metadata from `registry-manifest.json` files (see `crates/registry/src/models.rs`). Synthetic MCP tools are merged through `CommandRegistry::insert_synthetic`, then deduplicated.
 - **CommandSpec:** (`crates/types/src/lib.rs:364`) captures the user-facing command surfaces.
   - `group`: primary resource bucket (e.g., `"apps"`).
   - `name`: subcommand token paired with the group in palette input (e.g., `"list"`, `"addons:list"`). The CLI always references commands as `<group> <name>`.
@@ -24,7 +24,7 @@ Implementation notes:
   - `flags`: list of `CommandFlag`s enumerating required/optional switches, their types, enum values, defaults, descriptions, and optional providers.
   - `execution`: discriminated union (`CommandExecution`) describing the backend.
 - **Execution metadata:**
-  - `CommandExecution::Http(HttpCommandSpec)` includes method, raw path template (with `{placeholder}` slots), API `ServiceId`, declared pagination ranges, and optional output schema.
+- `CommandExecution::Http(HttpCommandSpec)` includes method, raw path template (with `{placeholder}` slots), required `base_url`, declared pagination ranges, and optional output schema.
   - `CommandExecution::Mcp(McpCommandSpec)` stores plugin/tool identifiers, optional authentication summary, output schema, and render hint.
   - Default execution is HTTP; helper constructors `CommandSpec::new_http` and `CommandSpec::new_mcp` wire the appropriate variant.
 - **Provider contracts:** Manifest entries also include `provider_contracts` keyed by command id. The TUI consumes these via the registry for palette value providers and workflow collectors.
@@ -35,7 +35,7 @@ Implementation notes:
 - `SchemaProperty` (`crates/types/src/lib.rs:303`) summarizes output schemas for downstream rendering.
 
 ### Naming Derivation (registry-gen)
-- `oatty_registry_gen::schema::derive_command_group_and_name` produces the `(group, name)` pair. The first concrete path segment becomes the group, while remaining segments join with `:` and append the HTTP-derived action (`list`, `info`, `create`, `update`, `delete`).
+- `crates/registry-gen/src/openapi.rs` (`derive_command_group_and_name`) produces the `(group, name)` pair. The first concrete path segment becomes the group, while remaining segments join with `:` and append the HTTP-derived action (`list`, `info`, `create`, `update`, `delete`).
 - Examples:
   - `/apps` + `GET` → group `apps`, name `list`.
   - `/apps/{app}/addons` + `GET` → group `apps`, name `addons:list`.
@@ -111,7 +111,7 @@ Implementation notes:
 ## HTTP vs MCP Execution
 
 - HTTP (default)
-  - Uses `HttpCommandSpec { method, path, service_id, pagination, output_schema }`.
+  - Uses `HttpCommandSpec { method, path, base_url, pagination, output_schema }`.
   - Path placeholders are resolved, query/body are shaped as above, request is executed via `OattyClient`.
   - Results are packaged into an HTTP `ExecOutcome` including status code, optional `Content-Range`, and parsed JSON payload.
 - MCP

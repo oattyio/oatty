@@ -19,7 +19,6 @@ use oatty_registry::{CommandRegistry, build_clap, find_by_group_and_cmd};
 use oatty_types::{
     ExecOutcome, RuntimeWorkflow,
     command::CommandExecution,
-    service::ServiceId,
     workflow::{WorkflowDefinition, validate_candidate_value},
 };
 use oatty_util::{
@@ -471,7 +470,7 @@ async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches
 
     match cmd_spec.execution() {
         CommandExecution::Http(http) => {
-            let client = OattyClient::new_from_service_id(http.service_id)?;
+            let client = OattyClient::new_with_base_url(http.base_url.clone())?;
             let method = Method::from_bytes(http.method.as_bytes())?;
             let path = resolve_path(&http.path, &pos_values);
             let mut builder = client.request(method, &path);
@@ -627,8 +626,7 @@ fn run_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, matche
         guard.clone()
     };
 
-    let client = OattyClient::new_from_service_id(ServiceId::CoreApi)?;
-    let runner = RegistryCommandRunner::new(registry_snapshot, client);
+    let runner = RegistryCommandRunner::new(registry_snapshot);
     let results = state.execute_with_runner(&runner)?;
     let run_succeeded = results.iter().all(|result| result.status != StepStatus::Failed);
 

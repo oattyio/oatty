@@ -6,7 +6,7 @@ rust-version = "1.89"
 description = "Oatty registry code generation utilities"
 license = "MIT OR Apache-2.0"
 authors = ["Oatty CLI Team <devnull@example.com>"]
-repository = "https://example.com/heroku"
+repository = "https://example.com/oatty"
 readme = "README.md"
 
 [lib]
@@ -16,10 +16,9 @@ path = "src/lib.rs"
 anyhow = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-percent-encoding = { workspace = true }
 heck = { workspace = true }
 oatty-types = { path = "../types" }
-oatty-util = {path = "../util"}
-clap = { workspace = true }
+oatty-util = { path = "../util" }
 indexmap = { workspace = true }
 postcard = { workspace = true }
+url = { workspace = true }
