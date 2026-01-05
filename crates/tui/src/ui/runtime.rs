@@ -281,8 +281,8 @@ fn handle_input_event(app: &mut App<'_>, main_view: &mut MainView, input_event: 
 /// Entry point for the TUI runtime: sets up the terminal, spawns the event
 /// producer, runs the async event loop, and performs cleanup on exit.
 pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
-    let mut app = App::new(registry, plugin_engine);
     let mut main_view = MainView::new(Some(Box::new(LibraryComponent::default())));
+    let mut app = App::new(registry, plugin_engine);
     let mut terminal = setup_terminal()?;
 
     // Input comes from a dedicated blocking thread to ensure reliability.

@@ -7,7 +7,7 @@ use chrono::Duration;
 use once_cell::sync::Lazy;
 use regex::Regex;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::{collections::HashMap, ops::Mul};
 
 const MIN_SECRET_LENGTH: usize = 16;
 const HIGH_ENTROPY_THRESHOLD: f64 = 3.5;
@@ -741,6 +741,27 @@ pub fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
     } else {
         s.to_string()
     }
+}
+
+/// Truncates a string with an ellipsis if it exceeds the maximum length.
+///
+/// # Arguments
+/// * `s` - The input string to truncate
+/// * `num_lines` - The maximum number of lines to display
+/// * `line_width` - The maximum width of each line
+///
+/// # Returns
+/// A new string with the ellipsis added if the string exceeds the maximum length
+///
+/// # Example
+/// ```rust
+/// use oatty_util::text_processing::line_clamp;
+///
+/// let s = "Hello, world!";
+/// assert_eq!(line_clamp(s, 2, 5), "Hello…");
+/// ```
+pub fn line_clamp(s: &str, num_lines: usize, line_width: usize) -> String {
+    truncate_with_ellipsis(s, num_lines.mul(line_width))
 }
 
 /// Formats a duration into a human-readable string

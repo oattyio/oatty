@@ -118,9 +118,6 @@ pub mod workflow;
 
 pub mod manifest {
     //! Registry manifest structures embedded into the generated binary artifact.
-
-    use std::collections::HashMap;
-
     use indexmap::IndexMap;
     use postcard::{from_bytes, to_stdvec};
     use serde::{Deserialize, Serialize};
@@ -137,12 +134,13 @@ pub mod manifest {
         /// Path to the manifest file.
         pub manifest_path: String,
         /// Headers to include when making requests to the API endpoints.
-        pub headers: HashMap<String, String>,
+        pub headers: IndexMap<String, String>,
         /// Base URLs for the API endpoints.
         pub base_urls: Vec<String>,
         /// Index of the currently selected base URL.
         pub base_url_index: usize,
-        /// Manifest registry if loaded.
+        /// Manifest registry if loaded. Do not serialize this field
+        #[serde(skip)]
         pub manifest: Option<RegistryManifest>,
         /// Whether the registry is enabled.
         pub is_enabled: bool,
@@ -184,7 +182,7 @@ pub mod manifest {
         type Error = anyhow::Error;
 
         fn try_from(bytes: Vec<u8>) -> Result<Self, Self::Error> {
-            let manifest = from_bytes::<RegistryManifest>(&bytes)?;
+            let manifest = from_bytes::<Self>(&bytes)?;
             Ok(manifest)
         }
     }
@@ -295,6 +293,7 @@ pub mod command {
     ///     Vec::new(),
     ///     Vec::new(),
     ///     http,
+    ///     0,
     /// );
     /// assert!(matches!(spec.execution(), CommandExecution::Http(_)));
     /// ```
@@ -326,10 +325,13 @@ pub mod command {
         #[serde(default)]
         pub group: String,
         /// The full command name in format "resource:action" (for example, "apps:list").
+        #[serde(default)]
         pub name: String,
         /// Catalog identifier derived from the cataglog index at the time of deserialization.
+        #[serde(default)]
         pub catalog_identifier: usize,
         /// Brief description of what the command does.
+        #[serde(default)]
         pub summary: String,
         /// Ordered list of positional arguments with inline help.
         #[serde(default)]
@@ -565,7 +567,6 @@ pub mod command {
 
     /// Execution metadata for a command.
     #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-    #[serde(tag = "kind", rename_all = "snake_case")]
     pub enum CommandExecution {
         /// Command is fulfilled via an HTTP request described by [`HttpCommandSpec`].
         Http(HttpCommandSpec),
@@ -702,7 +703,13 @@ pub mod execution {
         /// Result from executing a remote file contents command containing a structured payload.
         RemoteFileContents(String, Url),
         ///Result from executing a generate manifest command containing a structured payload.
-        RegistryCatalog(RegistryCatalog),
+        RegistryCatalogGenerated(RegistryCatalog),
+        /// Error from executing a generate manifest command containing an error message.
+        RegistryCatalogGenerationError(String),
+        /// Result from saving the registry configuration.
+        RegistryConfigSaved,
+        /// Result from saving the registry configuration.
+        RegistryConfigSaveError(String),
         /// Result from executing a directory contents command containing a structured payload.
         DirectoryContents {
             /// Files and directories present in the requested location.
@@ -833,7 +840,7 @@ pub mod messaging {
         workflow::{WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest},
     };
     use serde_json::{Map as JsonMap, Value as JsonValue};
-    use std::{fmt::Display, path::PathBuf};
+    use std::{borrow::Cow, fmt::Display, path::PathBuf};
     use url::Url;
     /// Navigation targets within the TUI.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -967,7 +974,12 @@ pub mod messaging {
             /// Control command (pause, resume, cancel).
             command: WorkflowRunControl,
         },
+        /// Send a generic message.
         SendMsg(Msg),
+        /// Save the registry configuration.
+        UpdateCatalogEnabledState { is_enabled: bool, title: Cow<'static, str> },
+        /// Remove a catalog from the registry.
+        RemoveCatalog(Cow<'static, str>),
     }
 
     /// Messages that can be sent to update the application state.
@@ -1610,10 +1622,11 @@ mod tests {
             "name": "apps:list",
             "summary": "List apps",
             "execution": {
-                "kind": "http",
-                "method": "GET",
-                "path": "/apps",
-                "base_url": "https://api.example.com"
+                "Http": {
+                    "method": "GET",
+                    "path": "/apps",
+                    "base_url": "https://api.example.com"
+                }
             }
         }"#;
 
@@ -1652,11 +1665,12 @@ mod tests {
             "name": "demo:tool",
             "summary": "Needs OAuth — Run demo tool",
             "execution": {
-                "kind": "mcp",
-                "plugin_name": "demo-plugin",
-                "tool_name": "demo_tool",
-                "auth_summary": "Needs OAuth",
-                "input_schema": "{\"type\":\"object\"}"
+                "Mcp": {
+                    "plugin_name": "demo-plugin",
+                    "tool_name": "demo_tool",
+                    "auth_summary": "Needs OAuth",
+                    "input_schema": "{\"type\":\"object\"}"
+                }
             }
         }"#;
 
@@ -1701,5 +1715,31 @@ mod tests {
         assert_eq!(flag.enum_values, Vec::<String>::new());
         assert!(flag.default_value.is_none());
         assert!(flag.description.is_none());
+    }
+
+    #[test]
+    fn command_execution_postcard_round_trip() {
+        use postcard::{from_bytes, to_stdvec};
+
+        let spec = CommandSpec {
+            group: "apps".into(),
+            name: "apps:list".into(),
+            catalog_identifier: 1,
+            summary: "List apps".into(),
+            positional_args: Vec::new(),
+            flags: Vec::new(),
+            execution: CommandExecution::Http(HttpCommandSpec {
+                method: "GET".into(),
+                path: "/apps".into(),
+                ranges: vec!["id".into()],
+                base_url: "https://api.example.com".into(),
+                output_schema: None,
+            }),
+        };
+
+        let bytes = to_stdvec(&spec).expect("serialize to postcard");
+        let decoded: CommandSpec = from_bytes(&bytes).expect("deserialize from postcard");
+
+        assert_eq!(spec, decoded);
     }
 }

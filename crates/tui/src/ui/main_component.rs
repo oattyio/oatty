@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use super::components::logs::LogDetailsComponent;
 use super::components::nav_bar::VerticalNavBarComponent;
 use super::components::plugins::PluginsDetailsComponent;
@@ -102,10 +100,7 @@ impl MainView {
             Route::WorkflowInputs => (Box::new(WorkflowInputsComponent::default()), Box::new(&app.workflows)),
             Route::Workflows => (Box::new(WorkflowsComponent::default()), Box::new(&app.workflows)),
             Route::WorkflowRun => (Box::new(RunViewComponent::default()), Box::new(&app.workflows)),
-            Route::Library => (
-                Box::new(LibraryComponent::new(Arc::clone(&app.ctx.command_registry))),
-                Box::new(&app.library),
-            ),
+            Route::Library => (Box::new(LibraryComponent::default()), Box::new(&app.library)),
         };
 
         app.current_route = app.nav_bar.set_route(route);

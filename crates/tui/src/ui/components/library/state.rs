@@ -1,7 +1,10 @@
 use rat_focus::{FocusFlag, HasFocus};
 use ratatui::{layout::Rect, widgets::ListState};
 
-use crate::ui::components::library::DetailsEditorState;
+use crate::ui::components::{
+    common::key_value_editor::{EnvRow, KeyValueEditorState},
+    library::{CatalogProjection, DetailsEditorState},
+};
 
 /// Tracks focus and selection state for the registry library view.
 #[derive(Debug, Default)]
@@ -9,14 +12,17 @@ pub struct LibraryState {
     list_state: ListState,
     mouse_over_index: Option<usize>,
     details_editor_state: DetailsEditorState,
+    kv_state: KeyValueEditorState,
+    error_message: Option<String>,
+    projections: Vec<CatalogProjection>,
     /// Container focus
     container: FocusFlag,
-
     pub f_import_button: FocusFlag,
     pub f_remove_button: FocusFlag,
     pub f_list_view: FocusFlag,
     pub f_selection_checkbox: FocusFlag,
     pub f_details_area: FocusFlag,
+    pub f_modal_confirmation_button: FocusFlag,
 }
 
 impl LibraryState {
@@ -32,6 +38,10 @@ impl LibraryState {
 
     pub fn set_selected_index(&mut self, index: Option<usize>) {
         self.list_state.select(index);
+        self.kv_state.rows = index
+            .and_then(|idx| self.projections.get(idx))
+            .and_then(|p| Some(p.headers.iter().map(EnvRow::from).collect()))
+            .unwrap_or_default()
     }
 
     pub fn offset(&self) -> usize {
@@ -53,6 +63,41 @@ impl LibraryState {
     pub fn details_editor_state(&self) -> &DetailsEditorState {
         &self.details_editor_state
     }
+
+    pub fn kv_state_mut(&mut self) -> &mut KeyValueEditorState {
+        &mut self.kv_state
+    }
+
+    pub fn kv_state(&self) -> &KeyValueEditorState {
+        &self.kv_state
+    }
+
+    pub fn error_message(&self) -> Option<&str> {
+        self.error_message.as_deref()
+    }
+
+    pub fn set_error_message(&mut self, message: Option<String>) {
+        self.error_message = message;
+    }
+
+    pub fn projections_mut(&mut self) -> &mut Vec<CatalogProjection> {
+        &mut self.projections
+    }
+
+    pub fn projections(&self) -> &Vec<CatalogProjection> {
+        &self.projections
+    }
+
+    pub fn set_projections(&mut self, projections: Vec<CatalogProjection>) {
+        self.projections = projections;
+    }
+
+    pub fn selected_projection(&self) -> Option<&CatalogProjection> {
+        let Some(index) = self.list_state.selected() else {
+            return None;
+        };
+        self.projections.get(index)
+    }
 }
 
 impl HasFocus for LibraryState {
@@ -67,8 +112,7 @@ impl HasFocus for LibraryState {
             builder.leaf_widget(&self.f_selection_checkbox);
         }
 
-        // builder.leaf_widget(&self.f_details_area);
-
+        builder.leaf_widget(&self.f_details_area);
         builder.end(start);
     }
 

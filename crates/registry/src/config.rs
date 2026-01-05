@@ -4,6 +4,7 @@ use dirs_next::config_dir;
 use heck::ToSnakeCase;
 use oatty_types::manifest::RegistryCatalog;
 use oatty_util::expand_tilde;
+use postcard::to_stdvec;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,17 +27,25 @@ impl RegistryConfig {
         let path = default_config_path();
         if let Some(catalogs) = self.catalogs.as_mut() {
             let catalogs_path = default_catalogs_path();
+            std::fs::create_dir_all(&catalogs_path)?;
+
             for catalog in catalogs {
-                let Some(manifest) = catalog.manifest.take() else {
+                // The manifest is a binary format for fast loading
+                // and we do not want it to be stored in the config file.
+                let Some(manifest) = catalog.manifest.as_ref() else {
                     continue;
                 };
-                let Ok(bytes): Result<Vec<u8>, _> = manifest.try_into() else {
+                let Ok(bytes) = to_stdvec(&manifest) else {
                     continue;
                 };
-                let file_name = &catalog.title.to_snake_case();
-                let file_path = catalogs_path.join(file_name);
+                let file_name = format!("{}.bin", catalog.title.to_snake_case());
+                let file_path = &catalogs_path.join(file_name);
+                if let Ok(exists) = std::fs::exists(&file_path)
+                    && !exists
+                {
+                    std::fs::write(file_path, bytes)?;
+                }
                 catalog.manifest_path = file_path.to_string_lossy().to_string();
-                std::fs::write(file_path, bytes)?;
             }
         }
 

@@ -32,6 +32,16 @@ pub struct EnvRow {
     pub is_secret: bool,
 }
 
+impl From<(&String, &String)> for EnvRow {
+    fn from(value: (&String, &String)) -> Self {
+        Self {
+            key: value.0.to_string(),
+            value: value.1.to_string(),
+            is_secret: false,
+        }
+    }
+}
+
 /// Component responsible for rendering and editing key/value pairs.
 ///
 /// This component provides a tabular interface for managing key/value pairs

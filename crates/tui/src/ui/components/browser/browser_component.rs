@@ -28,7 +28,7 @@ use ratatui::layout::Position;
 use ratatui::style::Modifier;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     text::{Line, Span},
     widgets::*,
 };
@@ -178,14 +178,12 @@ impl Component for BrowserComponent {
     }
 
     fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Search panel
-                Constraint::Min(10),   // Main content
-            ])
-            .split(area)
-            .to_vec()
+        Layout::vertical([
+            Constraint::Length(3), // Search panel
+            Constraint::Min(10),   // Main content
+        ])
+        .split(area)
+        .to_vec()
     }
 }
 
@@ -286,14 +284,12 @@ impl BrowserComponent {
     /// # Returns
     /// * `Vec<Rect>` - Vector containing the commands and help panel areas
     fn create_main_layout(&self, area: Rect) -> Vec<Rect> {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(30), // Commands
-                Constraint::Percentage(70), // Inline Help
-            ])
-            .split(area)
-            .to_vec()
+        Layout::horizontal([
+            Constraint::Percentage(30), // Commands
+            Constraint::Percentage(70), // Inline Help
+        ])
+        .split(area)
+        .to_vec()
     }
 
     /// Renders the search input panel with cursor positioning.

@@ -1,5 +1,6 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::borrow::Cow;
 
+use indexmap::IndexMap;
 use oatty_types::manifest::RegistryCatalog;
 
 #[derive(Debug, Default)]
@@ -9,7 +10,7 @@ pub struct CatalogProjection {
     /// Description of the registry. May be copied from the schema description.
     pub description: Cow<'static, str>,
     /// Headers to include when making requests to the API endpoints.
-    pub headers: HashMap<String, String>,
+    pub headers: IndexMap<String, String>,
     /// Base URLs for the API endpoints.
     pub base_urls: Vec<String>,
     /// Index of the currently selected base URL.
@@ -22,8 +23,6 @@ pub struct CatalogProjection {
     pub workflow_count: usize,
     /// Provider contract count for the registry.
     pub provider_contract_count: usize,
-    /// Whether the catalog is staged and not yet written to the registry.
-    pub is_staged: bool,
     /// Whether the catalog is active.
     pub is_enabled: bool,
 }

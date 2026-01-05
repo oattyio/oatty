@@ -18,6 +18,7 @@ clap = { workspace = true }
 oatty-types = { path = "../types" }
 oatty-util = {path = "../util"}
 heck = { workspace = true }
+postcard = { workspace = true }
 
 [build-dependencies]
 anyhow = { workspace = true }

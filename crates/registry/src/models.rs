@@ -6,7 +6,7 @@ use oatty_types::{
     workflow::WorkflowDefinition,
 };
 use oatty_util::sort_and_dedup_commands;
-use std::{convert::Infallible, sync::Arc};
+use std::{collections::HashSet, convert::Infallible, os::unix::fs, path::Path};
 
 use crate::RegistryConfig;
 
@@ -57,24 +57,31 @@ impl CommandRegistry {
         let mut workflows = Vec::new();
         let mut provider_contracts = IndexMap::new();
 
-        for i in 0..catalogs.len() {
+        for i in (0..catalogs.len()).rev() {
             let catalog = &mut catalogs[i];
             let path = &catalog.manifest_path;
 
             let Ok(manifest_bytes) = std::fs::read(path) else {
+                catalogs.swap_remove(i); // invalid - remove from registry
                 continue;
             };
-            let Ok(mut manifest) = RegistryManifest::try_from(manifest_bytes) else {
-                continue;
-            };
-            for command in &mut manifest.commands {
-                command.catalog_identifier = i;
+            match RegistryManifest::try_from(manifest_bytes) {
+                Ok(mut manifest) => {
+                    for command in &mut manifest.commands {
+                        command.catalog_identifier = i;
+                    }
+                    if catalog.is_enabled {
+                        commands.append(&mut manifest.commands.clone());
+                        workflows.append(&mut manifest.workflows.clone());
+                        provider_contracts.append(&mut manifest.provider_contracts.clone());
+                    }
+                    catalog.manifest = Some(manifest);
+                }
+                Err(_) => {
+                    catalogs.swap_remove(i); // invalid - remove from registry
+                    continue;
+                }
             }
-            commands.append(&mut manifest.commands.clone());
-            workflows.append(&mut manifest.workflows.clone());
-            provider_contracts.append(&mut manifest.provider_contracts.clone());
-
-            catalog.manifest = Some(manifest);
         }
 
         Ok(CommandRegistry {
@@ -99,17 +106,20 @@ impl CommandRegistry {
 
     /// Inserts the synthetic commands from an MCP client's
     /// tool definitions and deduplicates them.
-    pub fn insert_synthetic(&mut self, mut synthesized: Vec<CommandSpec>) {
-        self.commands.append(&mut synthesized);
+    pub fn insert_commands(&mut self, commands: &[CommandSpec]) {
+        self.commands.extend_from_slice(commands);
         sort_and_dedup_commands(&mut self.commands);
     }
 
     /// Removes the synthetic commands from the vec
-    pub fn remove_synthetic(&mut self, maybe_synthesized: Option<Arc<[CommandSpec]>>) {
-        let Some(synthesized) = maybe_synthesized else {
-            return;
-        };
-        self.commands.retain(|c| !synthesized.contains(c));
+    pub fn remove_commands(&mut self, command_ids: Vec<String>) {
+        let set: HashSet<String> = command_ids.into_iter().collect();
+        self.commands.retain(|c| !set.contains(&c.canonical_id()));
+    }
+
+    pub fn remove_workflows(&mut self, workflow_ids: Vec<String>) {
+        let set: HashSet<String> = workflow_ids.into_iter().collect();
+        self.workflows.retain(|w| !set.contains(&w.workflow));
     }
 
     /// Inserts a catalog into the registry
@@ -119,10 +129,12 @@ impl CommandRegistry {
         if catalogs.iter().find(|c| c.title == catalog.title).is_some() {
             return Err(anyhow!("Catalog already exists"));
         }
-        if let Some(manifest) = catalog.manifest.as_ref() {
-            self.commands.append(&mut manifest.commands.clone());
-            self.workflows.append(&mut manifest.workflows.clone());
-            self.provider_contracts.append(&mut manifest.provider_contracts.clone());
+        if catalog.is_enabled
+            && let Some(manifest) = catalog.manifest.as_ref()
+        {
+            self.commands.extend_from_slice(&manifest.commands);
+            self.workflows.extend_from_slice(&manifest.workflows);
+            self.provider_contracts.extend(manifest.provider_contracts.clone());
             sort_and_dedup_commands(&mut self.commands);
         }
 
@@ -131,11 +143,58 @@ impl CommandRegistry {
     }
 
     /// Removes a catalog from the registry
-    pub fn remove_catalog(&mut self, catalog_identifier: &str) -> Result<()> {
+    pub fn remove_catalog(&mut self, catalog_title: &str) -> Result<()> {
+        self.disable_catalog(catalog_title)?;
+
+        let catalogs = self.config.catalogs.as_mut().ok_or_else(|| anyhow!("No catalogs configured"))?;
+
+        if let Some(index) = catalogs.iter().position(|c| c.title == catalog_title) {
+            let removed = catalogs.remove(index);
+            let manifest_path = Path::new(&removed.manifest_path);
+            if std::fs::exists(manifest_path).is_ok() {
+                std::fs::remove_file(manifest_path)?;
+            }
+            Ok(())
+        } else {
+            Err(anyhow!("Catalog not found"))
+        }
+    }
+
+    pub fn disable_catalog(&mut self, catalog_title: &str) -> Result<()> {
+        let catalogs = self.config.catalogs.as_mut().ok_or_else(|| anyhow!("No catalogs configured"))?;
+
+        let Some(index) = catalogs.iter().position(|c| c.title == catalog_title) else {
+            return Err(anyhow!("Catalog not found"));
+        };
+        catalogs[index].is_enabled = false;
+        // Note that provider contracts are not removed when disabling a catalog.
+        // This is intentional because the contracts are IndexMapped and never queried
+        // after a catalog is disabled.
+        let (command_ids, workflow_ids) = catalogs[index]
+            .manifest
+            .as_ref()
+            .map(|m| {
+                let command_ids: Vec<String> = m.commands.iter().map(|c| c.canonical_id()).collect();
+                let workflow_ids: Vec<String> = m.workflows.iter().map(|w| w.workflow.clone()).collect();
+                (command_ids, workflow_ids)
+            })
+            .unwrap_or_default();
+
+        self.remove_commands(command_ids);
+        self.remove_workflows(workflow_ids);
+        Ok(())
+    }
+
+    pub fn enable_catalog(&mut self, catalog_identifier: &str) -> Result<()> {
         let catalogs = self.config.catalogs.as_mut().ok_or_else(|| anyhow!("No catalogs configured"))?;
 
         if let Some(index) = catalogs.iter().position(|c| c.title == catalog_identifier) {
-            catalogs.remove(index);
+            catalogs[index].is_enabled = true;
+            if let Some(manifest) = catalogs[index].manifest.as_ref() {
+                self.commands.extend_from_slice(&manifest.commands);
+                self.workflows.extend_from_slice(&manifest.workflows);
+                self.provider_contracts.extend(manifest.provider_contracts.clone());
+            }
             Ok(())
         } else {
             Err(anyhow!("Catalog not found"))

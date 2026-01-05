@@ -1,26 +1,23 @@
-use crate::ui::components::{common::key_value_editor::KeyValueEditorState, library::CatalogProjection};
+use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
+use ratatui::layout::Rect;
 
 #[derive(Debug, Default)]
 pub struct DetailsEditorState {
-    data: Option<CatalogProjection>,
-    kv_state: KeyValueEditorState,
-    is_editing: bool,
+    // focus
+    container: FocusFlag,
 }
 
-impl DetailsEditorState {
-    pub fn data(&self) -> &Option<CatalogProjection> {
-        &self.data
+impl HasFocus for DetailsEditorState {
+    fn build(&self, builder: &mut FocusBuilder) {
+        let tag = builder.start(self);
+        builder.end(tag);
     }
 
-    pub fn set_data(&mut self, data: Option<CatalogProjection>) {
-        self.data = data;
+    fn area(&self) -> Rect {
+        Rect::default()
     }
 
-    pub fn is_editing(&self) -> bool {
-        self.is_editing
-    }
-
-    pub fn set_editing(&mut self, is_editing: bool) {
-        self.is_editing = is_editing;
+    fn focus(&self) -> FocusFlag {
+        self.container.clone()
     }
 }

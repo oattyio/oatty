@@ -43,6 +43,7 @@ use oatty_util::lex_shell_like;
 use serde_json::Map;
 use serde_json::Value;
 use serde_json::from_str;
+use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::fs::read_dir;
 use std::fs::read_to_string;
@@ -62,64 +63,19 @@ use url::Url;
 #[derive(Debug)]
 pub enum Cmd {
     ApplyPaletteError(String),
-    /// Write text into the system clipboard.
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// use your_crate::Cmd;
-    /// let cmd = Cmd::ClipboardSet("hello".into());
-    /// match cmd {
-    ///     Cmd::ClipboardSet(text) => assert_eq!(text, "hello"),
-    ///     _ => panic!("unexpected variant"),
-    /// }
-    /// ```
     ClipboardSet(String),
-
-    /// Make an HTTP request to the Oatty API.
-    ///
-    /// Carries:
-    /// - [`CommandSpec`]: API request metadata (including a path, method, and base URL)
-    /// - `serde_json::Map`: JSON body
-    ///
-    /// # Example
-    /// ```rust,ignore
-    /// use your_crate::Cmd;
-    /// use oatty_registry::{CommandSpec, HttpCommandSpec};
-    /// use oatty_types::CommandExecution;
-    /// use std::collections::HashMap;
-    /// use serde_json::{Map, Value};
-    ///
-    /// let http = HttpCommandSpec::new("GET", "/apps", "https://api.example.com", Vec::new(), None);
-    /// let spec = CommandSpec::new_http(
-    ///     "apps".into(),
-    ///     "apps:list".into(),
-    ///     "List apps".into(),
-    ///     Vec::new(),
-    ///     Vec::new(),
-    ///     http,
-    /// );
-    /// let cmd = Cmd::ExecuteHttp(spec.clone(), Map::new());
-    ///
-    /// if let Cmd::ExecuteHttp(s, b) = cmd {
-    ///     assert!(matches!(s.execution(), CommandExecution::Http(_)));
-    ///     assert!(b.is_empty());
-    /// }
-    /// ```
     ExecuteHttp {
         spec: CommandSpec,
         input: String,
         next_range_override: Option<String>,
         request_id: u64,
     },
-    /// Fetch provider-backed suggestion values asynchronously.
     FetchProviderValues {
         provider_id: String,
         cache_key: String,
         args: Map<String, Value>,
     },
-    /// Invoke an MCP tool via the plugin engine.
     ExecuteMcp(CommandSpec, Map<String, Value>, u64),
-    /// Load MCP plugins from config (synchronous file read) and populate UI state.
     LoadPlugins,
     PluginsStart(String),
     PluginsStop(String),
@@ -134,6 +90,11 @@ pub enum Cmd {
     ListDirectoryContents(PathBuf),
     ReadRemoteFileContents(Url),
     ImportRegistryCatalog(String),
+    UpdateCatalogEnabledState {
+        is_enabled: bool,
+        title: Cow<'static, str>,
+    },
+    RemoveCatalog(Cow<'static, str>),
 }
 
 /// Collection of immediate and background work generated while handling effects.
@@ -205,6 +166,8 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
             Effect::ListDirectoryContents(path) => Some(vec![Cmd::ListDirectoryContents(path)]),
             Effect::ReadRemoteFileContents(url) => Some(vec![Cmd::ReadRemoteFileContents(url)]),
             Effect::ImportRegistryCatalog(content) => Some(vec![Cmd::ImportRegistryCatalog(content)]),
+            Effect::UpdateCatalogEnabledState { title, is_enabled } => Some(vec![Cmd::UpdateCatalogEnabledState { title, is_enabled }]),
+            Effect::RemoveCatalog(title) => Some(vec![Cmd::RemoveCatalog(title)]),
             Effect::Log(_) | Effect::SwitchTo(_) | Effect::ShowModal(_) | Effect::CloseModal => None,
         };
         if let Some(cmds) = effect_commands {
@@ -265,6 +228,8 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
             Cmd::ListDirectoryContents(path) => (Some(list_dir_contents(path)), None),
             Cmd::ReadRemoteFileContents(url) => (None, Some(fetch_remote_file_contents(url))),
             Cmd::ImportRegistryCatalog(inputs) => (Some(import_registry_catalog_from(app, inputs)), None),
+            Cmd::UpdateCatalogEnabledState { title, is_enabled } => (Some(update_enabled_then_save(title, is_enabled, app)), None),
+            Cmd::RemoveCatalog(title) => (Some(remove_catalog(title, app)), None),
         };
 
         if let Some(immediate) = immediate {
@@ -374,9 +339,74 @@ fn read_file_contents(path: PathBuf) -> ExecOutcome {
 fn import_registry_catalog_from(app: &mut App, content: String) -> ExecOutcome {
     let input = ManifestInput::new(None, Some(content));
     match generate_catalog(input) {
-        Ok(catalog) => ExecOutcome::RegistryCatalog(catalog),
-        Err(e) => ExecOutcome::Log(format!("Failed to generate catalog: {}", e)),
+        Ok(mut catalog) => {
+            catalog.is_enabled = true;
+            {
+                let Ok(mut lock) = app.ctx.command_registry.try_lock() else {
+                    return ExecOutcome::RegistryCatalogGenerationError("System busy".to_string());
+                };
+                let Ok(()) = lock.insert_catalog(catalog.clone()) else {
+                    return ExecOutcome::RegistryCatalogGenerationError("Could not insert catalog into command registry".to_string());
+                };
+                if let Err(e) = lock.config.save() {
+                    return ExecOutcome::RegistryCatalogGenerationError(format!("Could not save configuration: {}", e));
+                };
+            }
+            ExecOutcome::RegistryCatalogGenerated(catalog)
+        }
+        Err(e) => ExecOutcome::RegistryCatalogGenerationError(format!("{}", e)),
     }
+}
+
+fn update_enabled_then_save<T>(title: T, is_enabled: bool, app: &mut App) -> ExecOutcome
+where
+    T: AsRef<str>,
+{
+    let Ok(()) = update_enabled_state(title.as_ref(), is_enabled, app) else {
+        return ExecOutcome::RegistryCatalogGenerationError("Could not update enabled state".to_string());
+    };
+    save_registry_config(app)
+}
+
+fn remove_catalog<T>(title: T, app: &mut App) -> ExecOutcome
+where
+    T: AsRef<str>,
+{
+    {
+        let Ok(mut lock) = app.ctx.command_registry.try_lock() else {
+            return ExecOutcome::RegistryCatalogGenerationError("Could not acquire lock".to_string());
+        };
+
+        let Ok(()) = lock.remove_catalog(title.as_ref()) else {
+            return ExecOutcome::RegistryCatalogGenerationError("Could not remove catalog".to_string());
+        };
+    }
+    save_registry_config(app)
+}
+
+/// Update the enabled state of a catalog at the specified index.
+fn update_enabled_state(title: &str, is_enabled: bool, app: &mut App) -> Result<()> {
+    let mut lock = app
+        .ctx
+        .command_registry
+        .try_lock()
+        .map_err(|_| anyhow!("command registry lock failed"))?;
+
+    if is_enabled {
+        lock.enable_catalog(title)
+    } else {
+        lock.disable_catalog(title)
+    }
+}
+
+fn save_registry_config(app: &mut App) -> ExecOutcome {
+    let Ok(mut lock) = app.ctx.command_registry.try_lock() else {
+        return ExecOutcome::RegistryConfigSaveError("System busy".to_string());
+    };
+    if let Err(e) = lock.config.save() {
+        return ExecOutcome::RegistryConfigSaveError(format!("{}", e));
+    };
+    ExecOutcome::RegistryConfigSaved
 }
 
 /// Execute a plugin lifecycle action using the MCP supervisor.
