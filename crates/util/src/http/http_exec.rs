@@ -6,12 +6,13 @@
 
 use crate::{build_path, http, resolve_path, shell_lexing};
 use anyhow::anyhow;
+use indexmap::IndexSet;
 use oatty_api::OattyClient;
-use oatty_types::ExecOutcome;
 use oatty_types::{CommandSpec, HttpCommandSpec};
-use reqwest::header::{self, CONTENT_RANGE, HeaderMap};
+use oatty_types::{EnvVar, ExecOutcome};
+use reqwest::header::{self, HeaderMap};
 use reqwest::{Client, Method, StatusCode};
-use serde_json::{Map as JsonMap, Map, Number, Value};
+use serde_json::{Map, Number, Value};
 use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::Duration;
@@ -46,47 +47,21 @@ pub async fn fetch_static(url: &str) -> Result<(StatusCode, String), anyhow::Err
 /// - Returns a user-friendly `Err(String)` on HTTP/auth/network issues.
 pub async fn exec_remote_from_shell_command(
     spec: &CommandSpec,
-    base_url: Option<String>,
+    base_url: String,
+    headers: &IndexSet<EnvVar>,
     hydrated_shell_command: String,
-    range_header_override: Option<String>,
     request_id: u64,
 ) -> Result<ExecOutcome, String> {
     // Parse and validate arguments
     let tokens = shell_lexing::lex_shell_like(&hydrated_shell_command);
     let (user_flags, user_args) = spec.parse_arguments(&tokens[2..]).map_err(|e| e.to_string())?;
-    let mut body = build_request_body(spec, user_flags);
-    if let Some(range_header_override) = range_header_override {
-        body.insert("next-range".to_string(), Value::String(range_header_override));
-    }
+    let body = build_request_body(spec, user_flags);
     // Prepare client and request
     let http = spec.http().ok_or_else(|| format!("Command '{}' is not HTTP-backed", spec.name))?;
     let path = resolve_path(&http.path, &user_args);
 
-    let resolved_base_url = base_url
-        .as_deref()
-        .filter(|value| !value.is_empty())
-        .unwrap_or(http.base_url.as_str());
-
-    match exec_remote_from_spec_inner(http, resolved_base_url, body, path).await {
-        Ok((status, headers, text, maybe_range_header)) => {
-            let mut pagination = headers
-                .get(CONTENT_RANGE)
-                .and_then(|v| v.to_str().ok())
-                .and_then(http::parse_content_range_value);
-
-            // Handle Next-Range header for 206 responses
-            if status.as_u16() == 206
-                && let Some(pagination_mut) = pagination.as_mut()
-            {
-                pagination_mut.hydrated_shell_command = Some(hydrated_shell_command);
-                if let Some(next_range_header) = headers.get("next-range") {
-                    pagination_mut.next_range = Some(next_range_header.to_str().unwrap().to_string());
-                }
-                if let Some(range_header) = maybe_range_header {
-                    pagination_mut.this_range = Some(range_header);
-                }
-            }
-
+    match exec_remote_from_spec_inner(http, &base_url, headers, body, path).await {
+        Ok((status, _, text)) => {
             // Handle common error status codes
             // by returning an ExecOutcome with an error message
             // and a null result JSON object
@@ -95,7 +70,6 @@ pub async fn exec_remote_from_shell_command(
                     status_code: status.as_u16(),
                     log_entry: format!("HTTP {}: {}", status.as_u16(), text),
                     payload: Value::Null,
-                    pagination,
                     request_id,
                 });
             }
@@ -114,7 +88,6 @@ pub async fn exec_remote_from_shell_command(
                 status_code: status.as_u16(),
                 log_entry: log,
                 payload: result_json,
-                pagination,
                 request_id,
             })
         }
@@ -125,20 +98,16 @@ pub async fn exec_remote_from_shell_command(
 /// Executes an HTTP-backed provider command with an optional base URL override.
 pub async fn exec_remote_for_provider(
     spec: &CommandSpec,
-    base_url: Option<String>,
+    base_url: &str,
+    headers: &IndexSet<EnvVar>,
     body: Map<String, Value>,
     request_id: u64,
 ) -> Result<ExecOutcome, String> {
     let http = spec.http().ok_or_else(|| format!("Command '{}' is not HTTP-backed", spec.name))?;
     let path = build_path(http.path.as_str(), &body);
 
-    let resolved_base_url = base_url
-        .as_deref()
-        .filter(|value| !value.is_empty())
-        .unwrap_or(http.base_url.as_str());
-
-    match exec_remote_from_spec_inner(http, resolved_base_url, body, path).await {
-        Ok((status, _, text, _)) => {
+    match exec_remote_from_spec_inner(http, base_url, headers, body, path).await {
+        Ok((status, _, text)) => {
             let raw_log = format!("{}\n{}", status, text);
             let mut log = summarize_execution_outcome(&spec.canonical_id(), raw_log.as_str(), status);
             let result_json = match http::parse_response_json_strict(&text, Some(status)) {
@@ -154,7 +123,6 @@ pub async fn exec_remote_for_provider(
                 status_code: status.as_u16(),
                 log_entry: log,
                 payload: result_json,
-                pagination: None,
                 request_id,
             })
         }
@@ -165,25 +133,20 @@ pub async fn exec_remote_for_provider(
 async fn exec_remote_from_spec_inner(
     http: &HttpCommandSpec,
     base_url: &str,
+    headers: &IndexSet<EnvVar>,
     body: Map<String, Value>,
     path: String,
-) -> Result<(StatusCode, HeaderMap, String, Option<String>), String> {
-    let client = build_client_from_http_spec(base_url)?;
+) -> Result<(StatusCode, HeaderMap, String), String> {
+    let client = build_http_client(base_url, headers)?;
 
     let method = Method::from_bytes(http.method.as_bytes()).map_err(|e| e.to_string())?;
     let mut builder = client.request(method.clone(), &path);
-    // Build and apply Range header
-    let maybe_range_header = get_range_header_value(&body);
-    if let Some(range_header) = maybe_range_header.as_ref() {
-        builder = builder.header("Range", range_header);
-    }
 
     // Filter out special range-only fields from JSON body
-    let filtered_body = http::strip_range_body_fields(body);
-    if !filtered_body.is_empty() {
+    if !body.is_empty() {
         // For GET/DELETE, pass arguments as query parameters instead of a JSON body
         if method == Method::GET || method == Method::DELETE {
-            let query: Vec<(String, String)> = filtered_body
+            let query: Vec<(String, String)> = body
                 .into_iter()
                 .map(|(k, v)| {
                     let s = match v {
@@ -195,7 +158,7 @@ async fn exec_remote_from_spec_inner(
                 .collect();
             builder = builder.query(&query);
         } else {
-            builder = builder.json(&Value::Object(filtered_body));
+            builder = builder.json(&Value::Object(body));
         }
     }
 
@@ -208,7 +171,7 @@ async fn exec_remote_from_spec_inner(
     let headers = resp.headers().clone();
     let text = resp.text().await.unwrap_or_default();
 
-    Ok((status, headers, text, maybe_range_header))
+    Ok((status, headers, text))
 }
 
 /// Builds a JSON request body from user-provided flags.
@@ -338,10 +301,10 @@ fn truncate_for_summary(text: &str, max_len: usize) -> String {
 ///   settings or ensuring API credentials are configured.
 ///
 /// [`CommandSpec`]: Path to your CommandSpec type definition.
-pub async fn fetch_json_array(spec: &CommandSpec) -> Result<Vec<Value>, String> {
+pub async fn fetch_json_array(spec: &CommandSpec, base_url: &str, headers: &IndexSet<EnvVar>) -> Result<Vec<Value>, String> {
     let http = spec.http().ok_or_else(|| format!("Command '{}' is not HTTP-backed", spec.name))?;
 
-    let client = build_client_from_http_spec(http.base_url.as_str())?;
+    let client = build_http_client(base_url, headers)?;
 
     let method = Method::from_bytes(http.method.as_bytes()).map_err(|e| e.to_string())?;
     if method != Method::GET {
@@ -371,24 +334,11 @@ pub async fn fetch_json_array(spec: &CommandSpec) -> Result<Vec<Value>, String> 
     }
 }
 
-fn get_range_header_value(body: &JsonMap<String, Value>) -> Option<String> {
-    // Raw Next-Range override takes precedence
-    if let Some(next_raw) = body.get("next-range").and_then(|v| v.as_str()).map(String::from) {
-        return Some(next_raw);
-    }
-
-    // Compose range header from individual components
-    if let Some(range_header) = http::build_range_header_from_body(body) {
-        return Some(range_header);
-    }
-    None
-}
-
-fn build_client_from_http_spec(base_url: &str) -> Result<OattyClient, String> {
+fn build_http_client(base_url: &str, headers: &IndexSet<EnvVar>) -> Result<OattyClient, String> {
     if base_url.trim().is_empty() {
         return Err("Missing base URL for HTTP command".to_string());
     }
-    OattyClient::new_with_base_url(base_url.to_string()).map_err(|error| format!("Auth setup failed: {}. Hint: set OATTY_API_TOKEN", error))
+    OattyClient::new(base_url, headers).map_err(|error| format!("Could not build the HTTP client: {}", error))
 }
 
 #[cfg(test)]
@@ -398,8 +348,6 @@ mod tests {
     use serde_json::json;
     use std::collections::HashMap;
 
-    const TEST_BASE_URL: &str = "https://api.example.com";
-
     fn build_test_spec(flags: Vec<CommandFlag>) -> CommandSpec {
         CommandSpec::new_http(
             "apps".to_string(),
@@ -407,7 +355,7 @@ mod tests {
             "List apps".to_string(),
             Vec::new(),
             flags,
-            HttpCommandSpec::new("GET", "/apps", TEST_BASE_URL, Vec::new(), None),
+            HttpCommandSpec::new("GET", "/apps", None),
             1,
         )
     }
@@ -481,32 +429,5 @@ mod tests {
 
         let long = truncate_for_summary("abcdefghij", 5);
         assert_eq!(long, "ab...");
-    }
-
-    #[test]
-    fn get_range_header_value_prefers_raw_next_range() {
-        let mut body = Map::new();
-        body.insert("next-range".to_string(), json!("id abc..def; order=asc;"));
-        body.insert("range-field".to_string(), json!("id"));
-        body.insert("range-start".to_string(), json!("abc"));
-        body.insert("range-end".to_string(), json!("def"));
-
-        let header = get_range_header_value(&body);
-
-        assert_eq!(header, Some("id abc..def; order=asc;".to_string()));
-    }
-
-    #[test]
-    fn get_range_header_value_builds_header_from_components() {
-        let mut body = Map::new();
-        body.insert("range-field".to_string(), json!("name"));
-        body.insert("range-start".to_string(), json!("a"));
-        body.insert("range-end".to_string(), json!("z"));
-        body.insert("order".to_string(), json!("desc"));
-        body.insert("max".to_string(), json!(100));
-
-        let header = get_range_header_value(&body);
-
-        assert_eq!(header, Some("name a..z; order=desc, max=100;".to_string()));
     }
 }

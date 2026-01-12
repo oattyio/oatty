@@ -118,11 +118,11 @@ pub mod workflow;
 
 pub mod manifest {
     //! Registry manifest structures embedded into the generated binary artifact.
-    use indexmap::IndexMap;
+    use indexmap::{IndexMap, IndexSet};
     use postcard::{from_bytes, to_stdvec};
     use serde::{Deserialize, Serialize};
 
-    use crate::{command::CommandSpec, provider::ProviderContract, workflow::WorkflowDefinition};
+    use crate::{EnvVar, command::CommandSpec, provider::ProviderContract, workflow::WorkflowDefinition};
 
     /// Registry catalog structure used by the registry, engine, and TUI layers.
     #[derive(Default, Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
@@ -134,7 +134,7 @@ pub mod manifest {
         /// Path to the manifest file.
         pub manifest_path: String,
         /// Headers to include when making requests to the API endpoints.
-        pub headers: IndexMap<String, String>,
+        pub headers: IndexSet<EnvVar>,
         /// Base URLs for the API endpoints.
         pub base_urls: Vec<String>,
         /// Index of the currently selected base URL.
@@ -581,17 +581,12 @@ pub mod command {
     }
 
     /// HTTP execution metadata.
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub struct HttpCommandSpec {
         /// HTTP method (GET, POST, DELETE, and so on).
         pub method: String,
         /// API endpoint path (for example, "/apps" or "/apps/{app}/dynos").
         pub path: String,
-        /// Supported range fields for pagination or sorting (for example, "id", "name").
-        #[serde(default)]
-        pub ranges: Vec<String>,
-        /// Base URL for the API host that serves this command.
-        pub base_url: String,
         // Schema expected from API
         pub output_schema: Option<SchemaProperty>,
     }
@@ -610,31 +605,11 @@ pub mod command {
         /// # Returns
         ///
         /// A new [`HttpCommandSpec`] bound to the provided base URL.
-        pub fn new(
-            method: impl Into<String>,
-            path: impl Into<String>,
-            base_url: impl Into<String>,
-            ranges: Vec<String>,
-            output_schema: Option<SchemaProperty>,
-        ) -> Self {
+        pub fn new(method: impl Into<String>, path: impl Into<String>, output_schema: Option<SchemaProperty>) -> Self {
             Self {
                 method: method.into(),
                 path: path.into(),
-                ranges,
-                base_url: base_url.into(),
                 output_schema,
-            }
-        }
-    }
-
-    impl Default for HttpCommandSpec {
-        fn default() -> Self {
-            Self {
-                method: String::new(),
-                path: String::new(),
-                ranges: Vec::new(),
-                base_url: String::new(),
-                output_schema: None,
             }
         }
     }
@@ -686,7 +661,6 @@ pub mod execution {
 
     use std::path::PathBuf;
 
-    use serde::{Deserialize, Serialize};
     use serde_json::Value;
     use url::Url;
 
@@ -725,8 +699,6 @@ pub mod execution {
             log_entry: String,
             /// JSON payload parsed from the response body.
             payload: Value,
-            /// Pagination metadata parsed from headers, if present.
-            pagination: Option<Pagination>,
             /// Identifier correlating the request to UI events.
             request_id: u64,
         },
@@ -805,30 +777,6 @@ pub mod execution {
         /// Indicates whether this entry points to a directory.
         pub is_directory: bool,
     }
-
-    /// Pagination metadata parsed from API response headers.
-    #[derive(Debug, Clone, Serialize, Deserialize, Default, Hash, PartialEq, Eq)]
-    pub struct Pagination {
-        /// The start value of the returned range.
-        pub range_start: String,
-        /// The end value of the returned range.
-        pub range_end: String,
-        /// The property used to sort (for example, "id" or "name").
-        pub field: String,
-        /// The server page size limit used for this response (defaults to 200).
-        pub max: usize,
-        /// The shell command needed to fetch the next/previous page of results.
-        pub hydrated_shell_command: Option<String>,
-        /// The sort order for the range ("asc" or "desc") if known.
-        #[serde(default)]
-        pub order: Option<String>,
-        /// Raw value of the Next-Range header for requesting the next page.
-        #[serde(default)]
-        pub next_range: Option<String>,
-        /// Raw value of the Prev-Range header for requesting the previous page.
-        #[serde(default)]
-        pub this_range: Option<String>,
-    }
 }
 
 pub mod messaging {
@@ -837,6 +785,7 @@ pub mod messaging {
     use crate::{
         command::CommandSpec,
         execution::ExecOutcome,
+        value_objects::EnvRow,
         workflow::{WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest},
     };
     use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -910,11 +859,7 @@ pub mod messaging {
         Log(String),
         /// Request to run the current command in the palette
         /// with the hydrated command string and u64 hash of the request.
-        Run {
-            hydrated_command: String,
-            range_override: Option<String>,
-            request_hash: u64,
-        },
+        Run { hydrated_command: String, request_hash: u64 },
         /// Request to copy the current command to the clipboard.
         CopyToClipboardRequested(String),
         /// Request to copy the current logs selection (already rendered/redacted).
@@ -978,6 +923,10 @@ pub mod messaging {
         SendMsg(Msg),
         /// Save the registry configuration.
         UpdateCatalogEnabledState { is_enabled: bool, title: Cow<'static, str> },
+        /// Update the base URL index of a catalog in the registry.
+        UpdateCatalogBaseUrlIndex { base_url_index: usize, title: Cow<'static, str> },
+        /// Updates the headers of a catalog in the registry.
+        UpdateCatalogHeaders { headers: Vec<EnvRow>, title: Cow<'static, str> },
         /// Remove a catalog from the registry.
         RemoveCatalog(Cow<'static, str>),
     }
@@ -1034,16 +983,39 @@ pub mod messaging {
     }
 }
 
+pub mod value_objects {
+    use crate::EnvVar;
+
+    #[derive(Debug, Clone)]
+    pub struct EnvRow {
+        pub key: String,
+        pub value: String,
+        pub is_secret: bool,
+    }
+
+    impl From<&EnvVar> for EnvRow {
+        fn from(value: &EnvVar) -> Self {
+            Self {
+                key: value.key.clone(),
+                value: value.value.clone(),
+                is_secret: value.is_secret(),
+            }
+        }
+    }
+}
+
 pub mod plugin {
     //! Plugin metadata, status tracking, and logging primitives shared between the MCP engine and
     //! the TUI presentation layer.
 
     use std::{
         fmt,
+        hash::{Hash, Hasher},
         time::{Duration, SystemTime},
     };
 
     use chrono::{DateTime, Utc};
+    use indexmap::IndexSet;
     use serde::{Deserialize, Serialize};
 
     /// High-level lifecycle state for a plugin instance.
@@ -1260,7 +1232,7 @@ pub mod plugin {
         pub auth_summary: Option<String>,
     }
 
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Default, Clone, Serialize, Deserialize)]
     pub struct PluginDetail {
         /// Plugin name.
         pub name: String,
@@ -1271,7 +1243,7 @@ pub mod plugin {
         /// Optional arguments when using stdio transport.
         pub args: Option<String>,
         /// Environment variables supplied to the plugin.
-        pub env: Vec<EnvVar>,
+        pub env: IndexSet<EnvVar>,
         /// Recent logs emitted by the plugin.
         pub logs: Vec<McpLogEntry>,
         /// Aggregated health metrics.
@@ -1300,20 +1272,10 @@ pub mod plugin {
         pub fn new(name: String, command_or_url: String, args: Option<String>) -> Self {
             Self {
                 name,
-                status: PluginStatus::Stopped,
                 command_or_url,
                 args,
-                env: Vec::new(),
-                logs: Vec::new(),
-                health: HealthStatus::default(),
-                tags: Vec::new(),
-                transport_type: String::new(),
                 enabled: true,
-                last_start: None,
-                handshake_latency: None,
-                auth_status: AuthStatus::default(),
-                tool_count: 0,
-                tools: Vec::new(),
+                ..Default::default()
             }
         }
 
@@ -1369,7 +1331,7 @@ pub mod plugin {
     }
 
     /// Environment variable associated with a plugin.
-    #[derive(Debug, Clone, Serialize, Deserialize)]
+    #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
     pub struct EnvVar {
         /// Environment variable key.
         pub key: String,
@@ -1379,6 +1341,12 @@ pub mod plugin {
         pub source: EnvSource,
         /// Whether the value is effectively resolved.
         pub effective: bool,
+    }
+
+    impl Hash for EnvVar {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            self.key.hash(state);
+        }
     }
 
     impl EnvVar {
@@ -1639,7 +1607,6 @@ mod tests {
         let http = spec.http().expect("http execution present");
         assert_eq!(http.method, "GET");
         assert_eq!(http.path, "/apps");
-        assert_eq!(http.base_url, "https://api.example.com");
 
         let back = serde_json::to_string(&spec).expect("serialize CommandSpec");
         let spec2: CommandSpec = serde_json::from_str(&back).expect("round-trip deserialize");
@@ -1649,13 +1616,6 @@ mod tests {
         assert_eq!(http2.path, http.path);
         assert_eq!(spec2.positional_args.len(), spec.positional_args.len());
         assert_eq!(spec2.flags.len(), 0);
-    }
-
-    #[test]
-    fn http_command_spec_new_sets_base_url() {
-        let http_command_spec = HttpCommandSpec::new("GET", "/apps", "https://example.com", Vec::new(), None);
-
-        assert_eq!(http_command_spec.base_url, "https://example.com");
     }
 
     #[test]
@@ -1731,8 +1691,6 @@ mod tests {
             execution: CommandExecution::Http(HttpCommandSpec {
                 method: "GET".into(),
                 path: "/apps".into(),
-                ranges: vec!["id".into()],
-                base_url: "https://api.example.com".into(),
                 output_schema: None,
             }),
         };

@@ -28,10 +28,12 @@
 //! }
 //! ```
 
-use std::env;
 use std::time::Duration;
+use std::{env, str::FromStr};
 
 use anyhow::{Context, Result, anyhow};
+use indexmap::IndexSet;
+use oatty_types::EnvVar;
 use reqwest::{Client, RequestBuilder, Url, header};
 use tracing::debug;
 
@@ -70,9 +72,8 @@ impl OattyClient {
     /// # Errors
     ///
     /// Returns an error if the base URL is invalid or the HTTP client fails to initialize.
-    pub fn new_with_base_url(base_url: impl Into<String>) -> Result<Self> {
-        let api_token = env::var("OATTY_API_TOKEN").ok();
-        let http = build_http_client(api_token)?;
+    pub fn new(base_url: impl Into<String>, headers: &IndexSet<EnvVar>) -> Result<Self> {
+        let http = build_http_client(headers)?;
 
         let base_url = base_url.into();
         validate_base_url(&base_url)?;
@@ -95,17 +96,14 @@ impl OattyClient {
     }
 }
 
-fn build_http_client(api_token: Option<String>) -> Result<Client> {
+fn build_http_client(headers: &IndexSet<EnvVar>) -> Result<Client> {
     let mut default_headers = header::HeaderMap::new();
-    if let Some(api_token) = api_token {
-        let authorization_header_value = format!("Bearer {}", api_token);
-        default_headers.insert(
-            header::AUTHORIZATION,
-            header::HeaderValue::from_str(&authorization_header_value).unwrap(),
-        );
-    }
     default_headers.insert(header::ACCEPT, header::HeaderValue::from_str(DEFAULT_ACCEPT_HEADER)?);
-
+    for h in headers {
+        let header_name = header::HeaderName::from_str(&h.key)?;
+        let header_value = header::HeaderValue::from_str(&h.value)?;
+        default_headers.insert(header_name, header_value);
+    }
     Client::builder()
         .default_headers(default_headers)
         .timeout(Duration::from_secs(30))

@@ -406,7 +406,6 @@ impl PaletteComponent {
             app.palette.set_cmd_exec_hash(hash);
             return Some(vec![Effect::Run {
                 hydrated_command: cmd,
-                range_override: None,
                 request_hash: hash,
             }]);
         }

@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use super::components::logs::LogDetailsComponent;
 use super::components::nav_bar::VerticalNavBarComponent;
 use super::components::plugins::PluginsDetailsComponent;
@@ -106,7 +108,7 @@ impl MainView {
         app.current_route = app.nav_bar.set_route(route);
         self.content_view = Some(view);
 
-        app.focus = FocusBuilder::build_for(app);
+        app.focus = Rc::new(FocusBuilder::build_for(app));
         app.focus.focus(*state);
     }
 
@@ -189,7 +191,7 @@ impl Component for MainView {
     fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
         let mut effects = app.update(&msg);
         if let Msg::ExecCompleted(outcome) = &msg {
-            app.logs.process_general_execution_result(&outcome)
+            app.logs.process_general_execution_result(outcome)
         }
 
         // Since messages are consumed, the recipient is assumed to be

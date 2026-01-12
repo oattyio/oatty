@@ -29,7 +29,7 @@ use super::suggestion_engine::{parse_user_flags_args, required_flags_remaining};
 use crate::ui::components::common::TextInputState;
 use crate::ui::theme::theme_helpers::{create_spans_with_match, highlight_segments};
 use oatty_engine::provider::{PendingProviderFetch, ValueProvider};
-use oatty_registry::{CommandRegistry, find_by_group_and_cmd};
+use oatty_registry::CommandRegistry;
 use oatty_types::{CommandExecution, CommandSpec, Effect, ExecOutcome, ItemKind, Modal, SuggestionItem};
 use oatty_util::{
     HistoryKey, HistoryScope, HistoryScopeKind, HistoryStore, StoredHistoryValue, has_meaningful_value, lex_shell_like,
@@ -182,20 +182,11 @@ impl PaletteState {
         self.suggestions.len()
     }
 
-    /// Derive the command spec from the current input tokens ("group sub").
-    fn selected_command_from_input(&self, commands: &[CommandSpec]) -> Option<CommandSpec> {
-        let tokens: Vec<String> = lex_shell_like(&self.input);
-        if tokens.len() < 2 {
-            return None;
-        }
-        let group = &tokens[0];
-        let name = &tokens[1];
-        find_by_group_and_cmd(commands, group.as_str(), name.as_str()).ok()
-    }
+    /// Selected command for help: prefer highlighted suggestion if open, else
+    /// parse input.
+    pub fn selected_command(&self) -> Option<CommandSpec> {
+        let lock = self.registry.lock().ok()?;
 
-    /// Derive the command spec from the currently selected suggestion when it
-    /// is a command.
-    fn selected_command_from_suggestion(&self, commands: &[CommandSpec]) -> Option<CommandSpec> {
         let item = self.suggestions.get(self.list_state.selected()?)?;
         if !matches!(item.kind, ItemKind::Command) {
             return None;
@@ -203,19 +194,19 @@ impl PaletteState {
         let mut parts = item.insert_text.split_whitespace();
         let group = parts.next().unwrap_or("");
         let name = parts.next().unwrap_or("");
-        find_by_group_and_cmd(commands, group, name).ok()
-    }
 
-    /// Selected command for help: prefer highlighted suggestion if open, else
-    /// parse input.
-    pub fn selected_command(&self) -> Option<CommandSpec> {
-        let lock = self.registry.lock().ok()?;
-        let commands = &lock.commands;
-        let selected_command = self.selected_command_from_suggestion(commands);
+        let selected_command = lock.find_by_group_and_cmd(group, name).ok();
         if self.is_suggestions_open && selected_command.is_some() {
             return selected_command;
         }
-        self.selected_command_from_input(commands)
+
+        let tokens: Vec<String> = lex_shell_like(&self.input);
+        if tokens.len() < 2 {
+            return None;
+        }
+        let group = &tokens[0];
+        let name = &tokens[1];
+        lock.find_by_group_and_cmd(group.as_str(), name.as_str()).ok()
     }
 
     /// Get the current input text
@@ -358,7 +349,7 @@ impl PaletteState {
             let Ok(CommandSpec {
                 execution: CommandExecution::Http(execution),
                 ..
-            }) = find_by_group_and_cmd(&lock.commands, group, name)
+            }) = lock.find_by_group_and_cmd(group, name)
             else {
                 return;
             };
@@ -890,7 +881,7 @@ impl PaletteState {
             if items.is_empty() && tokens.len() >= 2 {
                 let group = tokens[0].as_str();
                 let name = tokens[1].as_str();
-                if let Ok(spec) = find_by_group_and_cmd(commands, group, name) {
+                if let Ok(spec) = lock.find_by_group_and_cmd(group, name) {
                     let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
                     let (user_flags, user_args, _flag_values) = parse_user_flags_args(&spec, parts);
                     if let Some(hint) = self.eol_flag_hint(&spec, &user_flags) {
@@ -917,7 +908,7 @@ impl PaletteState {
                 .registry
                 .lock()
                 .ok()
-                .and_then(|lock| find_by_group_and_cmd(&lock.commands, group.as_str(), name.as_str()).ok())
+                .and_then(|lock| lock.find_by_group_and_cmd(group.as_str(), name.as_str()).ok())
             else {
                 return pending_fetches;
             };
@@ -1479,7 +1470,6 @@ mod tests {
             status_code: 200,
             log_entry: "ok".into(),
             payload: json!({"ok": true}),
-            pagination: None,
             request_id: request_hash,
         };
         palette.process_general_execution_result(outcome);

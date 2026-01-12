@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
-use indexmap::IndexMap;
+use indexmap::IndexSet;
+use oatty_mcp::EnvVar;
 use oatty_types::manifest::RegistryCatalog;
 
 #[derive(Debug, Default)]
@@ -10,7 +11,7 @@ pub struct CatalogProjection {
     /// Description of the registry. May be copied from the schema description.
     pub description: Cow<'static, str>,
     /// Headers to include when making requests to the API endpoints.
-    pub headers: IndexMap<String, String>,
+    pub headers: IndexSet<EnvVar>,
     /// Base URLs for the API endpoints.
     pub base_urls: Vec<String>,
     /// Index of the currently selected base URL.
@@ -39,7 +40,7 @@ impl From<&RegistryCatalog> for CatalogProjection {
                 provider_contract_count: m.provider_contracts.len(),
                 ..Default::default()
             })
-            .unwrap_or(CatalogProjection::default());
+            .unwrap_or_default();
 
         projection.title = Cow::Owned(value.title.clone());
         projection.description = Cow::Owned(value.description.clone());

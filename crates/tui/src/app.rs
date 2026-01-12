@@ -5,6 +5,7 @@
 //! user interactions, and coordinates between different UI components.
 
 use std::{
+    rc::Rc,
     sync::{Arc, Mutex, atomic::AtomicUsize},
     time::Duration,
 };
@@ -163,7 +164,7 @@ pub struct App<'a> {
     /// animate
     pub active_exec_count: Arc<AtomicUsize>,
     /// Global focus tree for keyboard/mouse traversal
-    pub focus: Focus,
+    pub focus: Rc<Focus>,
     /// Currently active main route for dynamic focus ring building
     pub current_route: Route,
     /// the confirmation modal state
@@ -205,7 +206,7 @@ impl App<'_> {
             logs: LogsState::default(),
             help: HelpState::default(),
             plugins: PluginsState::new(),
-            library: LibraryState::default(),
+            library: LibraryState::new(),
             workflows: WorkflowState::new(),
             table: ResultsTableState::default(),
             palette,
@@ -214,7 +215,7 @@ impl App<'_> {
             executing: false,
             throbber_idx: 0,
             active_exec_count: Arc::new(AtomicUsize::new(0)),
-            focus: Focus::default(),
+            focus: Rc::new(Focus::default()),
             app_container_focus: FocusFlag::new().with_name("app.container"),
             current_route: Route::Library,
             open_modal_kind: None,
@@ -224,7 +225,7 @@ impl App<'_> {
         app.browser.update_browser_filtered();
 
         // Initialize rat-focus and set a sensible starting focus inside the palette
-        app.focus = FocusBuilder::build_for(&app);
+        app.focus = Rc::new(FocusBuilder::build_for(&app));
         app.focus.focus(&app.palette);
         app.theme_picker.set_active_theme(&app.ctx.active_theme_id);
 

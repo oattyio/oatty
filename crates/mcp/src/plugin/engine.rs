@@ -95,9 +95,9 @@ impl PluginEngine {
             plugin_detail.tags = server.tags.clone().unwrap_or_default();
             plugin_detail.enabled = !server.is_disabled();
             plugin_detail.env = if server.is_stdio() {
-                server.env.clone().unwrap_or_default()
+                server.env.clone()
             } else {
-                server.headers.clone().unwrap_or_default()
+                server.headers.clone()
             };
 
             registry.register_plugin(plugin_detail)?;
@@ -1265,7 +1265,7 @@ mod tests {
         let server = McpServer {
             base_url: Some(Url::parse("https://example.com").unwrap()),
             tags: Some(vec!["alpha".into(), "beta".into()]),
-            disabled: Some(true),
+            disabled: true,
             ..Default::default()
         };
         cfg.mcp_servers.insert("svc".into(), server);

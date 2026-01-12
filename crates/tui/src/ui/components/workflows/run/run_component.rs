@@ -347,7 +347,6 @@ impl RunViewComponent {
                 status_code: 200,
                 log_entry: "View step output".to_string(),
                 payload: value,
-                pagination: None,
                 request_id: 0,
             };
             effects.push(Effect::ShowModal(Modal::Results(Box::new(outcome))));

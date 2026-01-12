@@ -11,6 +11,8 @@
 //! management to the parent `PluginAddViewState` while maintaining focus on
 //! the user interaction experience.
 
+use std::rc::Rc;
+
 use crossterm::event::KeyEvent;
 use oatty_types::Effect;
 use ratatui::{Frame, layout::Rect, text::Span};
@@ -38,9 +40,8 @@ pub struct KeyValueEditorComponent {
 impl Component for KeyValueEditorComponent {
     /// Handle keyboard events for the key/value editor component.
     ///
-    /// This method processes keyboard input when the component has focus,
-    /// delegating to the appropriate handler based on the current editing state.
-    /// It returns a vector of effects that should be processed by the application runtime.
+    /// This method processes keyboard input when the component has focus and
+    /// updates validation messaging based on inline editing actions.
     ///
     /// # Arguments
     ///
@@ -54,21 +55,15 @@ impl Component for KeyValueEditorComponent {
         let Some(add_state) = app.plugins.add.as_mut() else {
             return vec![];
         };
-        let editing = add_state.kv_editor.is_editing();
-        if editing {
-            add_state.validation = self.view.handle_editing_mode_input(&mut add_state.kv_editor, key_event);
-        } else {
-            self.view.handle_navigation_mode_input(&mut add_state.kv_editor, key_event)
-        }
+        self.view
+            .handle_key_event(&mut add_state.kv_editor, key_event, Rc::clone(&app.focus));
 
         vec![]
     }
 
     /// Render the key/value editor component.
     ///
-    /// This method renders the complete key/value editor interface, including
-    /// the table view and inline editor (when active). It delegates to the
-    /// specialized rendering method with the current application state.
+    /// This method renders the complete key/value editor interface.
     ///
     /// # Arguments
     ///
@@ -81,39 +76,25 @@ impl Component for KeyValueEditorComponent {
         };
         add_state.update_key_value_table_label();
         let theme = &*app.ctx.theme;
-        self.view.render_with_state(frame, area, theme, &add_state.kv_editor);
+        self.view.render_with_state(frame, area, theme, &mut add_state.kv_editor);
     }
 
     /// Get hint spans for the key/value editor component.
     ///
-    /// This method provides contextual keyboard shortcuts and hints based on
-    /// the current editing state. It shows different hints for navigation
-    /// mode vs editing mode to help users understand available actions.
+    /// This method provides contextual keyboard shortcuts and hints for
+    /// inline table editing.
     ///
     /// # Arguments
     ///
     /// * `app` - The application state containing the plugin add view state
-    /// * `is_root` - Whether this is the root component (affects hint formatting)
-    ///
     /// # Returns
     ///
     /// A vector of styled spans representing the available keyboard shortcuts.
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
-        let add_state = app.plugins.add.as_ref().expect("add state should be something");
         let theme = &*app.ctx.theme;
         let mut spans = vec![];
 
-        let is_editing = add_state.kv_editor.is_editing();
-
-        // Add common navigation hints
-        self.view.add_common_hints(&mut spans, theme, is_editing);
-
-        // Add mode-specific hints
-        if is_editing {
-            self.view.add_editing_mode_hints(&mut spans, theme);
-        } else {
-            self.view.add_navigation_mode_hints(&mut spans, theme);
-        }
+        self.view.add_table_hints(&mut spans, theme);
 
         spans
     }

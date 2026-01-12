@@ -10,6 +10,7 @@ use ratatui::{
     text::Span,
     widgets::{Block, BorderType, Borders, Padding, Paragraph, Tabs},
 };
+
 use std::borrow::Cow;
 
 /// Build a standard Block with theme surfaces and borders.
@@ -304,24 +305,28 @@ pub fn render_button(frame: &mut Frame, area: Rect, label: &str, theme: &dyn The
 ///
 /// - Ensure the lifetime of the returned `Line` (`'static`) is compatible with
 ///   the downstream usage.
-pub fn create_radio_button(label: &str, is_selected: bool, is_focused: bool, theme: &dyn Theme) -> Line<'static> {
-    let mut radio_spans = Vec::new();
-    radio_spans.push(Span::styled(
-        if is_selected { "(*)" } else { "( )" },
-        if is_selected {
-            theme.status_success()
-        } else {
-            theme.text_primary_style()
-        },
-    ));
-    radio_spans.push(Span::raw(" "));
-    radio_spans.push(Span::styled(label.to_string(), theme.text_primary_style()));
-
+pub fn create_radio_button(label: Option<&str>, is_checked: bool, is_focused: bool, theme: &dyn Theme) -> Line<'static> {
+    let mut radio_spans = Vec::with_capacity(5);
+    let mut lb = Span::raw("(");
+    let mut rb = Span::raw(")");
+    let mut icon = Span::styled(if is_checked { "●" } else { " " }, theme.text_primary_style());
     if is_focused {
-        Line::from(radio_spans).style(theme.selection_style())
-    } else {
-        Line::from(radio_spans).style(theme.text_primary_style())
+        let focused_style = theme.accent_emphasis_style();
+        lb = lb.patch_style(focused_style);
+        rb = rb.patch_style(focused_style);
+        icon = icon.patch_style(focused_style);
     }
+
+    radio_spans.push(lb);
+    radio_spans.push(icon);
+    radio_spans.push(rb);
+
+    if let Some(l) = label {
+        radio_spans.push(Span::raw(" "));
+        radio_spans.push(Span::styled(l.to_string(), theme.text_primary_style()));
+    }
+
+    Line::from(radio_spans)
 }
 
 /// Create a checkbox with a label.
@@ -337,17 +342,10 @@ pub fn create_checkbox(label: Option<&str>, is_checked: bool, is_focused: bool, 
     let mut lb = Span::raw("[");
     let mut rb = Span::raw("]");
     if is_focused {
-        lb = lb.patch_style(theme.interactive_style());
-        rb = rb.patch_style(theme.interactive_style());
+        lb = lb.patch_style(theme.accent_emphasis_style());
+        rb = rb.patch_style(theme.accent_emphasis_style());
     }
-    let icon = Span::styled(
-        if is_checked { "✓" } else { " " },
-        if is_checked {
-            theme.status_success()
-        } else {
-            theme.text_primary_style()
-        },
-    );
+    let icon = Span::styled(if is_checked { "✓" } else { " " }, theme.text_primary_style());
 
     checkbox_spans.push(lb);
     checkbox_spans.push(icon);
@@ -359,6 +357,19 @@ pub fn create_checkbox(label: Option<&str>, is_checked: bool, is_focused: bool, 
     }
 
     Line::from(checkbox_spans)
+}
+
+/// Render a single-line labeled input field with optional placeholder text.
+pub fn create_labeled_input_field(
+    theme: &dyn Theme,
+    label: &str,
+    value: Option<&str>,
+    placeholder: &str,
+    focused: bool,
+) -> Paragraph<'static> {
+    let line = build_syntax_highlighted_line(label, value, placeholder, focused, theme);
+    let paragraph_style = if focused { theme.selection_style() } else { Style::default() };
+    Paragraph::new(line).style(paragraph_style)
 }
 
 pub fn highlight_segments(needle: &str, text: &str, base: Style, highlight: Style) -> Vec<Span<'static>> {
@@ -439,7 +450,7 @@ pub fn build_hint_spans(theme: &dyn Theme, hints: &[(&str, &str)]) -> Vec<Span<'
 /// Build a [`Line`] showing a focus indicator, label, and string value using syntax colors.
 pub(crate) fn build_syntax_highlighted_line(
     label: &str,
-    value: &str,
+    value: Option<&str>,
     placeholder: &str,
     focused: bool,
     theme: &dyn Theme,
@@ -464,11 +475,13 @@ pub(crate) fn build_label_span(label: &str, theme: &dyn Theme) -> Span<'static> 
 }
 
 /// Build the field value span, falling back to a placeholder if empty.
-pub(crate) fn build_value_span(value: &str, placeholder: &str, theme: &dyn Theme) -> Span<'static> {
-    if value.is_empty() {
+pub(crate) fn build_value_span(maybe_value: Option<&str>, placeholder: &str, theme: &dyn Theme) -> Span<'static> {
+    if let Some(value) = maybe_value
+        && !value.is_empty()
+    {
+        Span::styled(value.to_string(), theme.syntax_string_style())
+    } else {
         let placeholder_style = theme.syntax_string_style().patch(theme.text_muted_style());
         Span::styled(placeholder.to_string(), placeholder_style)
-    } else {
-        Span::styled(value.to_string(), theme.syntax_string_style())
     }
 }

@@ -7,11 +7,8 @@ use tokio::{runtime::Handle, task};
 use crate::resolve::RunContext;
 
 use oatty_api::OattyClient;
-use oatty_registry::{CommandRegistry, find_by_group_and_cmd};
-use oatty_util::{
-    build_path,
-    http::{build_range_header_from_body, parse_response_json_strict, strip_range_body_fields},
-};
+use oatty_registry::CommandRegistry;
+use oatty_util::{build_path, http::parse_response_json_strict};
 
 /// Execute a single command.
 ///
@@ -64,7 +61,7 @@ impl CommandRunner for RegistryCommandRunner {
             .filter(|(g, n)| !g.is_empty() && !n.is_empty())
             .ok_or_else(|| anyhow!("invalid run identifier: {run}"))?;
 
-        let spec = find_by_group_and_cmd(&self.registry.commands, &group, &name)?;
+        let spec = self.registry.find_by_group_and_cmd(&group, &name)?;
 
         if let Some(mcp) = spec.mcp() {
             return Err(anyhow!(
@@ -79,15 +76,12 @@ impl CommandRunner for RegistryCommandRunner {
         let base_url = self
             .registry
             .resolve_base_url_for_command(&spec)
-            .or_else(|| {
-                if http.base_url.is_empty() {
-                    None
-                } else {
-                    Some(http.base_url.clone())
-                }
-            })
-            .ok_or_else(|| anyhow!("missing base URL for command '{}'", spec.name))?;
-        let client = OattyClient::new_with_base_url(base_url).map_err(|error| anyhow!("auth setup failed: {error}"))?;
+            .ok_or_else(|| anyhow!("base url not configured"))?;
+        let headers = self
+            .registry
+            .resolve_headers_for_command(&spec)
+            .ok_or_else(|| anyhow!("could not determine headers for command: {}", spec.canonical_id()))?;
+        let client = OattyClient::new(base_url, headers).map_err(|error| anyhow!("could not create the HTTP client: {error}"))?;
 
         // Inputs map from `with` if object
         let mut with_map: serde_json::Map<String, Value> = match with {
@@ -125,17 +119,12 @@ impl CommandRunner for RegistryCommandRunner {
             }
             _ => {
                 // Prefer body if provided; otherwise, fall back to remaining `with` map as body
-                let mut body_obj: serde_json::Map<String, Value> = match body {
+                let body_obj: serde_json::Map<String, Value> = match body {
                     Some(Value::Object(m)) => m.clone(),
                     Some(other) => serde_json::Map::from_iter([("value".into(), other.clone())]),
                     None => with_map,
                 };
 
-                // Build Range header if present and strip body fields
-                if let Some(range_header) = build_range_header_from_body(&body_obj) {
-                    req = req.header("Range", range_header);
-                    body_obj = strip_range_body_fields(body_obj);
-                }
                 req = req.json(&Value::Object(body_obj));
             }
         }

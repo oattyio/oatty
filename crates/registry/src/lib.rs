@@ -6,7 +6,6 @@
 pub mod clap_builder;
 pub mod config;
 pub mod models;
-pub mod utils;
 
 pub use clap_builder::build_clap;
 pub use config::*;
@@ -14,7 +13,6 @@ pub use models::CommandRegistry;
 pub use oatty_types::{
     CommandFlag, CommandSpec, ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract,
 };
-pub use utils::*;
 
 #[cfg(test)]
 mod tests {

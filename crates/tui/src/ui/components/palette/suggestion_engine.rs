@@ -746,8 +746,6 @@ mod tests {
     use oatty_registry::{CommandRegistry, RegistryConfig};
     use oatty_types::{CommandExecution, CommandFlag, HttpCommandSpec, PositionalArgument};
 
-    const TEST_BASE_URL: &str = "https://api.example.com";
-
     #[derive(Debug)]
     struct TestProvider {
         map: std::collections::HashMap<(String, String), Vec<String>>, // ((command_key, field) -> values)
@@ -812,8 +810,6 @@ mod tests {
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/apps".into(),
-                    ranges: vec![],
-                    base_url: TEST_BASE_URL.into(),
                     output_schema: None,
                 }),
                 group: "apps".into(),
@@ -827,8 +823,6 @@ mod tests {
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/apps/{app}".into(),
-                    ranges: vec![],
-                    base_url: TEST_BASE_URL.into(),
                     output_schema: None,
                 }),
                 group: "apps".into(),
@@ -852,8 +846,6 @@ mod tests {
             execution: CommandExecution::Http(HttpCommandSpec {
                 method: "GET".into(),
                 path: "/apps/{app}".into(),
-                ranges: vec![],
-                base_url: TEST_BASE_URL.into(),
                 // Provider is now embedded on the field; legacy vector removed
                 output_schema: None,
             }),
@@ -893,8 +885,6 @@ mod tests {
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/apps".into(),
-                    ranges: vec![],
-                    base_url: TEST_BASE_URL.into(),
                     output_schema: None,
                 }),
                 group: "apps".into(),
@@ -936,8 +926,6 @@ mod tests {
             execution: CommandExecution::Http(HttpCommandSpec {
                 method: "PATCH".into(),
                 path: "/addons/{addon}/config".into(),
-                ranges: vec![],
-                base_url: TEST_BASE_URL.into(),
                 // No legacy providers vector
                 output_schema: None,
             }),
@@ -953,8 +941,6 @@ mod tests {
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/addons".into(),
-                    ranges: vec![],
-                    base_url: TEST_BASE_URL.into(),
                     output_schema: None,
                 }),
             },
@@ -993,8 +979,6 @@ mod tests {
             execution: CommandExecution::Http(HttpCommandSpec {
                 method: "GET".into(),
                 path: "/apps/{app}".into(),
-                ranges: vec![],
-                base_url: TEST_BASE_URL.into(),
                 output_schema: None,
             }),
         };
@@ -1009,8 +993,6 @@ mod tests {
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/apps".into(),
-                    ranges: vec![],
-                    base_url: TEST_BASE_URL.into(),
                     output_schema: None,
                 }),
             },
@@ -1046,8 +1028,6 @@ mod tests {
             execution: CommandExecution::Http(HttpCommandSpec {
                 method: "GET".into(),
                 path: "/apps/{app}".into(),
-                ranges: vec![],
-                base_url: TEST_BASE_URL.into(),
                 output_schema: None,
             }),
         };
@@ -1062,8 +1042,6 @@ mod tests {
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/apps".into(),
-                    ranges: vec![],
-                    base_url: TEST_BASE_URL.into(),
                     output_schema: None,
                 }),
             },
@@ -1095,8 +1073,6 @@ mod tests {
             execution: CommandExecution::Http(HttpCommandSpec {
                 method: "GET".into(),
                 path: "/apps/{app}".into(),
-                ranges: vec![],
-                base_url: TEST_BASE_URL.into(),
                 // No legacy providers vector
                 output_schema: None,
             }),
@@ -1112,8 +1088,6 @@ mod tests {
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/apps".into(),
-                    ranges: vec![],
-                    base_url: TEST_BASE_URL.into(),
                     output_schema: None,
                 }),
             },
@@ -1156,8 +1130,6 @@ mod tests {
             execution: CommandExecution::Http(HttpCommandSpec {
                 method: "POST".into(),
                 path: "/pipelines/{pipeline}/ci".into(),
-                ranges: vec![],
-                base_url: TEST_BASE_URL.into(),
                 // No legacy providers vector
                 output_schema: None,
             }),
@@ -1173,8 +1145,6 @@ mod tests {
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/pipelines".into(),
-                    ranges: vec![],
-                    base_url: TEST_BASE_URL.into(),
                     output_schema: None,
                 }),
             },
@@ -1188,8 +1158,6 @@ mod tests {
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/branches".into(),
-                    ranges: vec![],
-                    base_url: TEST_BASE_URL.into(),
                     output_schema: None,
                 }),
             },

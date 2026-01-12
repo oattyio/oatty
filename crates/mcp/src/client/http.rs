@@ -17,11 +17,9 @@ pub(crate) fn resolve_streamable_endpoint(server: &McpServer) -> Result<String> 
 /// Build a reqwest client injecting configured headers and OAuth bearer if available.
 pub(crate) async fn build_http_client_with_auth(server: &McpServer) -> Result<reqwest::Client> {
     let mut headers = HeaderMap::new();
-    if let Some(map) = &server.headers {
-        for EnvVar { key, value, .. } in map {
-            if let (Ok(name), Ok(value)) = (HeaderName::try_from(key.as_str()), HeaderValue::try_from(value.as_str())) {
-                headers.insert(name, value);
-            }
+    for EnvVar { key, value, .. } in &server.headers {
+        if let (Ok(name), Ok(value)) = (HeaderName::try_from(key.as_str()), HeaderValue::try_from(value.as_str())) {
+            headers.insert(name, value);
         }
     }
     // OAuth bearer from keyring (or fallback to config token) if configured

@@ -388,13 +388,12 @@ impl FilePickerState {
     /// Calculates byte offsets for each newline so preview slicing stays constant time.
     fn calc_line_indices(&mut self, contents: &str) {
         self.line_indices.clear();
-        let bytes = contents.as_bytes();
-        let mut pos = 0;
-        for i in 0..bytes.len() {
-            if bytes[i] == b'\n' {
-                self.line_indices.push((pos, i));
+        let mut line_start = 0;
+        for (index, byte) in contents.as_bytes().iter().enumerate() {
+            if *byte == b'\n' {
+                self.line_indices.push((line_start, index));
+                line_start = index + 1;
             }
-            pos += 1;
         }
     }
 }

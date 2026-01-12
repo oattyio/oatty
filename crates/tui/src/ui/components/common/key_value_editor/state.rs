@@ -1,400 +1,361 @@
-use crate::ui::components::common::{TextInputState, key_value_editor::EnvRow};
-use anyhow::{Result, anyhow};
-use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
-use ratatui::layout::Rect;
+use std::borrow::Cow;
 
-/// Represents the interaction mode of the key/value editor.
-#[derive(Debug, Clone, Default)]
-pub enum KeyValueEditorMode {
-    /// No row is being edited; arrow keys move the selection.
-    #[default]
-    Browsing,
-    /// An existing or newly created row is being edited.
-    Editing(KeyValueEditorEditState),
+use crate::ui::components::common::TextInputState;
+use anyhow::{Result, anyhow};
+use oatty_types::value_objects::EnvRow;
+use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
+use ratatui::{layout::Rect, widgets::TableState};
+
+/// Identifies which field is active within the focused row.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyValueEditorField {
+    /// The key column input.
+    Key,
+    /// The value column input.
+    Value,
 }
 
 /// State container for table-driven editing of key/value pairs.
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct KeyValueEditorState {
-    /// Persisted rows backing the table.
-    pub rows: Vec<EnvRow>,
-    /// Currently selected row when browsing.
-    pub selected_row_index: Option<usize>,
-    /// Interaction mode for the editor.
-    pub mode: KeyValueEditorMode,
-    /// Label for the editor.
-    label: String,
-    /// Container focus flag used when integrating with the global focus ring.
-    focus: FocusFlag,
-    /// Focus flag associated with the table surface while browsing rows.
-    table_focus: FocusFlag,
-    /// Focus flag associated with the inline key editor when editing a row.
-    key_field_focus: FocusFlag,
-    /// Focus flag associated with the inline value editor when editing a row.
-    value_field_focus: FocusFlag,
+    pub f_table: FocusFlag,
+    pub f_key_field: FocusFlag,
+    pub f_value_field: FocusFlag,
+    pub f_add_button: FocusFlag,
+    pub f_remove_button: FocusFlag,
+
+    rows: Vec<EnvRow>,
+    table_state: TableState,
+    block_label: Cow<'static, str>,
+    key_label: Cow<'static, str>,
+    value_label: Cow<'static, str>,
+    container: FocusFlag,
+    key_input_state: TextInputState,
+    value_input_state: TextInputState,
+    is_dirty: bool,
 }
 
 impl KeyValueEditorState {
-    /// Constructs an empty editor with a deterministic focus namespace.
-    ///
-    /// The `namespace` argument is used to derive unique names for the
-    /// container, table, key field, and value field focus flags. Callers should
-    /// pass a stable namespace to avoid rebuilding focus structures unnecessarily.
-    pub fn new(namespace: &str, label: &str) -> Self {
-        let focus = FocusFlag::new().with_name(&format!("{namespace}.container"));
-        let table_focus = FocusFlag::new().with_name(&format!("{namespace}.table"));
-        let key_field_focus = FocusFlag::new().with_name(&format!("{namespace}.field.key"));
-        let value_field_focus = FocusFlag::new().with_name(&format!("{namespace}.field.value"));
-        let mut state = Self {
-            rows: Vec::new(),
-            selected_row_index: None,
-            mode: KeyValueEditorMode::Browsing,
-            focus,
-            table_focus,
-            key_field_focus,
-            value_field_focus,
-            label: label.to_string(),
-        };
-        state.focus_table();
-        state
+    pub fn new(block_label: Cow<'static, str>, key_label: Cow<'static, str>, value_label: Cow<'static, str>) -> Self {
+        Self {
+            key_label,
+            value_label,
+            block_label,
+            ..Default::default()
+        }
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.is_dirty
+    }
+
+    pub fn reset_dirty(&mut self) {
+        self.is_dirty = false;
+    }
+
+    pub fn rows(&self) -> &Vec<EnvRow> {
+        &self.rows
+    }
+
+    pub fn set_rows(&mut self, rows: Vec<EnvRow>) {
+        self.rows = rows;
+        self.is_dirty = false;
+    }
+
+    pub fn is_focused(&self) -> bool {
+        self.container.get()
+    }
+
+    pub fn set_selected_row(&mut self, maybe_idx: Option<usize>) {
+        self.table_state.select(maybe_idx);
+        self.ensure_input_states_for_selected_row();
+    }
+
+    pub fn table_state_mut(&mut self) -> &mut TableState {
+        &mut self.table_state
+    }
+
+    pub fn table_state(&self) -> &TableState {
+        &self.table_state
     }
 
     /// Returns the label of the key-value editor.
-    pub fn label(&self) -> &str {
-        &self.label
+    pub fn block_label(&self) -> Cow<'static, str> {
+        self.block_label.clone()
     }
 
     /// Sets the label of the key-value editor.
-    pub fn set_label(&mut self, label: &str) {
-        self.label = label.to_string();
+    pub fn set_block_label(&mut self, label: Cow<'static, str>) {
+        self.block_label = label;
     }
 
-    /// Returns `true` when the inline editor is active.
-    pub fn is_editing(&self) -> bool {
-        matches!(self.mode, KeyValueEditorMode::Editing(_))
+    pub fn key_label(&self) -> Cow<'static, str> {
+        self.key_label.clone()
     }
 
-    /// Provides the currently edited buffers if the editor is in edit mode.
-    pub fn editing_buffers(&self) -> Option<(&str, &str)> {
-        match &self.mode {
-            KeyValueEditorMode::Browsing => None,
-            KeyValueEditorMode::Editing(edit) => Some((&edit.key_buffer, &edit.value_buffer)),
-        }
+    pub fn value_label(&self) -> Cow<'static, str> {
+        self.value_label.clone()
     }
 
-    /// Returns the index of the row currently being edited, if any.
-    pub fn editing_row_index(&self) -> Option<usize> {
-        match &self.mode {
-            KeyValueEditorMode::Browsing => None,
-            KeyValueEditorMode::Editing(edit) => Some(edit.row_index),
-        }
-    }
-
-    /// Indicates whether the key buffer currently owns the editing focus.
-    pub fn is_key_field_focused(&self) -> bool {
-        self.key_field_focus.get()
-    }
-
-    /// Indicates whether the value buffer currently owns the editing focus.
-    pub fn is_value_field_focused(&self) -> bool {
-        self.value_field_focus.get()
-    }
-
-    /// Returns a human-readable label for the active inline editor field.
-    pub fn active_field_label(&self) -> &'static str {
-        if self.is_value_field_focused() { "value" } else { "key" }
-    }
-
-    /// Selects the previous row when browsing.
-    pub fn select_previous(&mut self) {
-        if self.rows.is_empty() {
-            self.selected_row_index = None;
-            return;
-        }
-        let current = self.selected_row_index.unwrap_or(0);
-        if current == 0 {
-            self.selected_row_index = Some(0);
+    /// Returns the currently active field, defaulting to the value column.
+    pub fn active_field(&self) -> KeyValueEditorField {
+        if self.f_key_field.get() {
+            KeyValueEditorField::Key
         } else {
-            self.selected_row_index = Some(current - 1);
+            KeyValueEditorField::Value
         }
     }
 
-    /// Selects the next row when browsing.
-    pub fn select_next(&mut self) {
-        if self.rows.is_empty() {
-            self.selected_row_index = None;
-            return;
-        }
-        let last_index = self.rows.len() - 1;
-        let current = self.selected_row_index.unwrap_or(0);
-        if current >= last_index {
-            self.selected_row_index = Some(last_index);
-        } else {
-            self.selected_row_index = Some(current + 1);
-        }
+    /// Focuses the key column within the selected row.
+    pub fn prepare_key_field_for_input(&mut self) {
+        self.ensure_input_states_for_selected_row();
+        self.reset_cursor_for_key_field();
     }
 
-    /// Ensures there is an active selection when rows exist.
-    pub fn ensure_selection(&mut self) {
-        if self.rows.is_empty() {
-            self.selected_row_index = None;
-        } else if self.selected_row_index.is_none() {
-            self.selected_row_index = Some(0);
-        }
+    /// Focuses the value column within the selected row.
+    pub fn prepare_value_field_for_input(&mut self) {
+        self.ensure_input_states_for_selected_row();
+        self.reset_cursor_for_value_field();
     }
 
-    /// Begins editing the currently selected row or creates a new row if none exist.
-    pub fn begin_editing_selected(&mut self) {
-        if let Some(index) = self.selected_row_index {
-            self.start_editing_existing(index);
-        } else {
-            self.begin_editing_new_row();
-        }
+    pub fn selected_row(&self) -> Option<usize> {
+        self.table_state.selected()
     }
 
-    /// Begins editing a new row appended to the end of the table.
-    pub fn begin_editing_new_row(&mut self) {
-        let row_index = self.rows.len();
+    /// Selects the previous row when possible.
+    ///
+    /// Returns `true` when the selection moved.
+    pub fn select_previous_row(&mut self) {
+        self.table_state.select_previous();
+        self.load_input_states_for_selected_row();
+    }
+
+    /// Selects the next row when possible.
+    ///
+    /// Returns `true` when the selection moved.
+    pub fn select_next_row(&mut self) {
+        self.table_state.select_next();
+        self.load_input_states_for_selected_row();
+    }
+
+    /// Selects the first row if any rows exist.
+    ///
+    /// Returns `true` when the selection moved.
+    pub fn select_first_row(&mut self) {
+        self.table_state.select_first();
+        self.load_input_states_for_selected_row();
+    }
+
+    /// Selects the last row if any rows exist.
+    ///
+    /// Returns `true` when the selection moved.
+    pub fn select_last_row(&mut self) {
+        self.table_state.select_last();
+        self.load_input_states_for_selected_row();
+    }
+
+    /// Inserts a new empty row and focuses the key column.
+    pub fn add_new_row(&mut self) {
         self.rows.push(EnvRow {
             key: String::new(),
             value: String::new(),
             is_secret: false,
         });
-        self.mode = KeyValueEditorMode::Editing(KeyValueEditorEditState::new_row(row_index));
-        self.selected_row_index = Some(row_index);
-        self.focus_key_field();
+        self.table_state.select(Some(self.rows.len() - 1));
+        self.load_input_states_for_selected_row();
+        self.prepare_key_field_for_input();
+        self.is_dirty = true;
     }
 
-    /// Deletes the currently selected row, returning `true` when a row was removed.
-    pub fn delete_selected(&mut self) -> bool {
-        if self.rows.is_empty() {
-            self.selected_row_index = None;
-            return false;
-        }
-        if let Some(index) = self.selected_row_index
-            && index < self.rows.len()
-        {
-            self.rows.remove(index);
-            if self.rows.is_empty() {
-                self.selected_row_index = None;
-            } else if index >= self.rows.len() {
-                self.selected_row_index = Some(self.rows.len() - 1);
-            }
-            self.focus_table();
-            return true;
-        }
-        false
-    }
-
-    /// Cancels the current edit session, discarding uncommitted changes.
-    pub fn cancel_edit(&mut self) {
-        if let KeyValueEditorMode::Editing(edit) = &self.mode {
-            if edit.is_new_row && edit.row_index < self.rows.len() {
-                self.rows.remove(edit.row_index);
-                if self.rows.is_empty() {
-                    self.selected_row_index = None;
-                } else if edit.row_index >= self.rows.len() {
-                    self.selected_row_index = Some(self.rows.len() - 1);
-                }
-            } else if edit.row_index < self.rows.len() {
-                self.rows[edit.row_index] = edit.original_row.clone();
-                self.selected_row_index = Some(edit.row_index);
-            }
-        }
-        self.mode = KeyValueEditorMode::Browsing;
-        self.focus_table();
-    }
-
-    /// Commits the current edit session into the underlying row storage.
-    pub fn commit_edit(&mut self) -> Result<String> {
-        let ok = Ok("✓ Looks good!".to_string());
-        let KeyValueEditorMode::Editing(edit) = &self.mode else {
-            return ok;
+    /// Deletes the currently selected row.
+    pub fn delete_selected_row(&mut self) {
+        let Some(index) = self.table_state.selected() else {
+            return;
         };
-        if edit.key_buffer.trim().is_empty() {
+        if self.rows.len() > index {
+            return;
+        }
+        self.rows.remove(index);
+        if self.rows.is_empty() {
+            self.clear_input_states();
+        }
+        self.table_state.select_next();
+        self.load_input_states_for_selected_row();
+        self.prepare_value_field_for_input();
+        self.is_dirty = true;
+    }
+
+    /// Inserts a character into the focused input and syncs the backing row.
+    ///
+    /// # Arguments
+    ///
+    /// * `character` - The character to insert at the current cursor position
+    pub fn insert_character(&mut self, character: char) {
+        let Some(row_index) = self.table_state.selected() else {
+            return;
+        };
+        match self.active_field() {
+            KeyValueEditorField::Key => {
+                self.key_input_state.insert_char(character);
+                self.rows[row_index].key = self.key_input_state.input().to_string();
+            }
+            KeyValueEditorField::Value => {
+                self.value_input_state.insert_char(character);
+                self.rows[row_index].value = self.value_input_state.input().to_string();
+            }
+        }
+        self.is_dirty = true;
+    }
+
+    /// Removes the character before the cursor in the focused input.
+    pub fn delete_previous_character(&mut self) {
+        let Some(row_index) = self.table_state.selected() else {
+            return;
+        };
+        match self.active_field() {
+            KeyValueEditorField::Key => {
+                self.key_input_state.backspace();
+                self.rows[row_index].key = self.key_input_state.input().to_string();
+            }
+            KeyValueEditorField::Value => {
+                self.value_input_state.backspace();
+                self.rows[row_index].value = self.value_input_state.input().to_string();
+            }
+        }
+        self.is_dirty = true;
+    }
+
+    /// Removes the character after the cursor in the focused input.
+    pub fn delete_next_character(&mut self) {
+        let Some(row_index) = self.table_state.selected() else {
+            return;
+        };
+        match self.active_field() {
+            KeyValueEditorField::Key => {
+                self.key_input_state.delete();
+                self.rows[row_index].key = self.key_input_state.input().to_string();
+            }
+            KeyValueEditorField::Value => {
+                self.value_input_state.delete();
+                self.rows[row_index].value = self.value_input_state.input().to_string();
+            }
+        }
+        self.is_dirty = true;
+    }
+
+    /// Moves the cursor left in the focused input.
+    pub fn move_cursor_left(&mut self) {
+        match self.active_field() {
+            KeyValueEditorField::Key => self.key_input_state.move_left(),
+            KeyValueEditorField::Value => self.value_input_state.move_left(),
+        }
+    }
+
+    /// Moves the cursor right in the focused input.
+    pub fn move_cursor_right(&mut self) {
+        match self.active_field() {
+            KeyValueEditorField::Key => self.key_input_state.move_right(),
+            KeyValueEditorField::Value => self.value_input_state.move_right(),
+        }
+    }
+
+    /// Returns the key input state for cursor placement.
+    pub fn key_input_state(&self) -> &TextInputState {
+        &self.key_input_state
+    }
+
+    /// Returns the value input state for cursor placement.
+    pub fn value_input_state(&self) -> &TextInputState {
+        &self.value_input_state
+    }
+
+    /// Validates the focused row and commits trimmed key text.
+    ///
+    /// # Returns
+    ///
+    /// A success message when the key is present, or an error message when missing.
+    pub fn validate_focused_row(&mut self) -> Result<String> {
+        let Some(row_index) = self.table_state.selected() else {
+            return Ok(String::new());
+        };
+        self.validate_row(row_index)
+    }
+
+    /// Validates the row and commits trimmed key text.
+    ///
+    /// # Returns
+    ///
+    /// A success message when the key is present, or an error message when missing.
+    pub fn validate_row(&self, row_index: usize) -> Result<String> {
+        // do not validate a focused row since it may
+        // still be actively editing
+        if self
+            .table_state
+            .selected()
+            .is_some_and(|idx| idx == row_index && self.f_key_field.get())
+        {
+            return Ok(String::new());
+        }
+        let maybe_trimmed_key = self.rows.get(row_index).map(|row| row.key.trim().to_string());
+        if let Some(trimmed_key) = maybe_trimmed_key
+            && trimmed_key.is_empty()
+        {
             return Err(anyhow!("✘ Key name missing"));
         }
-        if edit.row_index >= self.rows.len() {
-            return ok;
-        }
-        let target = &mut self.rows[edit.row_index];
-        target.key = edit.key_buffer.trim().to_string();
-        target.value = edit.value_buffer.clone();
-        self.selected_row_index = Some(edit.row_index);
-        self.mode = KeyValueEditorMode::Browsing;
-        self.focus_table();
-
-        ok
+        Ok("✓ Looks good!".to_string())
     }
 
-    /// Toggles the active editing field between key and value.
-    pub fn toggle_field(&mut self) {
-        if !self.is_editing() {
+    fn ensure_input_states_for_selected_row(&mut self) {
+        if self.table_state.selected().is_none() {
+            self.clear_input_states();
             return;
-        }
-        if self.is_value_field_focused() {
-            self.focus_key_field();
-        } else {
-            self.focus_value_field();
-        }
+        };
+        self.load_input_states_for_selected_row();
     }
 
-    /// Focuses the key buffer when editing an inline row.
-    pub fn focus_key_input(&mut self) {
-        if self.is_editing() {
-            self.focus_key_field();
-        }
-    }
-
-    /// Focuses the value buffer when editing an inline row.
-    pub fn focus_value_input(&mut self) {
-        if self.is_editing() {
-            self.focus_value_field();
-        }
-    }
-
-    /// Appends a character to the active buffer while editing (UTF-8 safe, at cursor).
-    pub fn push_character(&mut self, character: char) {
-        if !self.is_editing() {
+    fn load_input_states_for_selected_row(&mut self) {
+        let Some(idx) = self.table_state.selected() else {
             return;
-        }
-        let value_field_active = self.is_value_field_focused();
-        if let KeyValueEditorMode::Editing(edit) = &mut self.mode {
-            if value_field_active {
-                let mut ti = TextInputState::new();
-                ti.set_input(edit.value_buffer.clone());
-                ti.set_cursor(edit.value_cursor);
-                ti.insert_char(character);
-                edit.value_buffer = ti.input().to_string();
-                edit.value_cursor = ti.cursor();
-            } else {
-                let mut ti = TextInputState::new();
-                ti.set_input(edit.key_buffer.clone());
-                ti.set_cursor(edit.key_cursor);
-                ti.insert_char(character);
-                edit.key_buffer = ti.input().to_string();
-                edit.key_cursor = ti.cursor();
-            }
-        }
+        };
+        let row = &self.rows[idx];
+        self.key_input_state.set_input(row.key.clone());
+        self.value_input_state.set_input(row.value.clone());
+        self.reset_cursor_for_key_field();
+        self.reset_cursor_for_value_field();
     }
 
-    /// Removes the character before the cursor in the active buffer (UTF-8 safe).
-    pub fn pop_character(&mut self) {
-        if !self.is_editing() {
-            return;
-        }
-        let value_field_active = self.is_value_field_focused();
-        if let KeyValueEditorMode::Editing(edit) = &mut self.mode {
-            if value_field_active {
-                let mut ti = TextInputState::new();
-                ti.set_input(edit.value_buffer.clone());
-                ti.set_cursor(edit.value_cursor);
-                ti.backspace();
-                edit.value_buffer = ti.input().to_string();
-                edit.value_cursor = ti.cursor();
-            } else {
-                let mut ti = TextInputState::new();
-                ti.set_input(edit.key_buffer.clone());
-                ti.set_cursor(edit.key_cursor);
-                ti.backspace();
-                edit.key_buffer = ti.input().to_string();
-                edit.key_cursor = ti.cursor();
-            }
-        }
+    fn clear_input_states(&mut self) {
+        self.key_input_state.clear();
+        self.value_input_state.clear();
     }
 
-    /// Move cursor left in the active buffer.
-    pub fn move_cursor_left(&mut self) {
-        let value_field = self.is_value_field_focused();
-        if let KeyValueEditorMode::Editing(edit) = &mut self.mode {
-            if value_field {
-                let mut ti = TextInputState::new();
-                ti.set_input(edit.value_buffer.clone());
-                ti.set_cursor(edit.value_cursor);
-                ti.move_left();
-                edit.value_cursor = ti.cursor();
-            } else {
-                let mut ti = TextInputState::new();
-                ti.set_input(edit.key_buffer.clone());
-                ti.set_cursor(edit.key_cursor);
-                ti.move_left();
-                edit.key_cursor = ti.cursor();
-            }
-        }
+    fn reset_cursor_for_key_field(&mut self) {
+        let cursor = self.key_input_state.input().len();
+        self.key_input_state.set_cursor(cursor);
     }
 
-    /// Move cursor right in the active buffer.
-    pub fn move_cursor_right(&mut self) {
-        let value_field = self.is_value_field_focused();
-        if let KeyValueEditorMode::Editing(edit) = &mut self.mode {
-            if value_field {
-                let mut ti = TextInputState::new();
-                ti.set_input(edit.value_buffer.clone());
-                ti.set_cursor(edit.value_cursor);
-                ti.move_right();
-                edit.value_cursor = ti.cursor();
-            } else {
-                let mut ti = TextInputState::new();
-                ti.set_input(edit.key_buffer.clone());
-                ti.set_cursor(edit.key_cursor);
-                ti.move_right();
-                edit.key_cursor = ti.cursor();
-            }
-        }
-    }
-
-    /// Returns the editing cursors (key, value) if in edit mode.
-    pub fn editing_cursors(&self) -> Option<(usize, usize)> {
-        match &self.mode {
-            KeyValueEditorMode::Browsing => None,
-            KeyValueEditorMode::Editing(edit) => Some((edit.key_cursor, edit.value_cursor)),
-        }
-    }
-
-    fn focus_table(&mut self) {
-        self.table_focus.set(true);
-        self.key_field_focus.set(false);
-        self.value_field_focus.set(false);
-    }
-
-    fn focus_key_field(&mut self) {
-        self.table_focus.set(false);
-        self.key_field_focus.set(true);
-        self.value_field_focus.set(false);
-    }
-
-    fn focus_value_field(&mut self) {
-        self.table_focus.set(false);
-        self.key_field_focus.set(false);
-        self.value_field_focus.set(true);
-    }
-
-    fn start_editing_existing(&mut self, index: usize) {
-        if index >= self.rows.len() {
-            return;
-        }
-        let snapshot = self.rows[index].clone();
-        self.mode = KeyValueEditorMode::Editing(KeyValueEditorEditState::from_existing(index, &snapshot));
-        if let KeyValueEditorMode::Editing(edit) = &mut self.mode {
-            edit.original_row = snapshot;
-        }
-        self.focus_key_field();
+    fn reset_cursor_for_value_field(&mut self) {
+        let cursor = self.value_input_state.input().len();
+        self.value_input_state.set_cursor(cursor);
     }
 }
 
 impl HasFocus for KeyValueEditorState {
     fn build(&self, builder: &mut FocusBuilder) {
         let tag = builder.start(self);
-        builder.leaf_widget(&self.table_focus);
-        if self.is_editing() {
-            builder.leaf_widget(&self.key_field_focus);
-            builder.leaf_widget(&self.value_field_focus);
+        builder.leaf_widget(&self.f_add_button);
+        builder.leaf_widget(&self.f_remove_button);
+        builder.leaf_widget(&self.f_table);
+        if !self.rows.is_empty() || !self.f_table.get() {
+            builder.leaf_widget(&self.f_key_field);
+            builder.leaf_widget(&self.f_value_field);
         }
+
         builder.end(tag);
     }
 
     fn focus(&self) -> FocusFlag {
-        self.focus.clone()
+        self.container.clone()
     }
 
     fn area(&self) -> Rect {
@@ -402,55 +363,22 @@ impl HasFocus for KeyValueEditorState {
     }
 }
 
-/// Editing state for a key/value row when in edit mode.
-#[derive(Debug, Clone)]
-pub struct KeyValueEditorEditState {
-    /// Index of the row being edited.
-    pub row_index: usize,
-    /// Working buffer for the key column.
-    pub key_buffer: String,
-    /// Working buffer for the value column.
-    pub value_buffer: String,
-    /// Cursor (byte index) within key_buffer.
-    pub key_cursor: usize,
-    /// Cursor (byte index) within value_buffer.
-    pub value_cursor: usize,
-    /// Original row snapshot for cancellation or change detection.
-    pub original_row: EnvRow,
-    /// Indicates whether the editor created a new row for this edit session.
-    pub is_new_row: bool,
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl KeyValueEditorEditState {
-    /// Creates an edit state from an existing row.
-    pub(super) fn from_existing(row_index: usize, row: &EnvRow) -> Self {
-        let key = row.key.clone();
-        let val = row.value.clone();
-        Self {
-            row_index,
-            key_buffer: key.clone(),
-            value_buffer: val.clone(),
-            key_cursor: key.len(),
-            value_cursor: val.len(),
-            original_row: row.clone(),
-            is_new_row: false,
-        }
-    }
+    #[test]
+    fn validate_focused_row_rejects_empty_key() {
+        let mut state = KeyValueEditorState::default();
+        state.rows.push(EnvRow {
+            key: String::new(),
+            value: String::new(),
+            is_secret: false,
+        });
+        state.prepare_key_field_for_input();
 
-    /// Creates an edit state for a newly inserted row.
-    pub(super) fn new_row(row_index: usize) -> Self {
-        Self {
-            row_index,
-            key_buffer: String::new(),
-            value_buffer: String::new(),
-            key_cursor: 0,
-            value_cursor: 0,
-            original_row: EnvRow {
-                key: String::new(),
-                value: String::new(),
-                is_secret: false,
-            },
-            is_new_row: true,
-        }
+        let validation = state.validate_focused_row();
+
+        assert!(validation.is_err());
     }
 }

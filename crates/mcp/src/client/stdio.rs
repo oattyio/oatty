@@ -48,10 +48,8 @@ fn configure_isolated_environment(command: &mut Command, server: &McpServer) {
         }
     }
 
-    if let Some(server_environment) = &server.env {
-        for EnvVar { key, value, .. } in server_environment {
-            command.env(key, value);
-        }
+    for EnvVar { key, value, .. } in &server.env {
+        command.env(key, value);
     }
 }
 

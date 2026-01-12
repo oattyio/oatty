@@ -8,12 +8,10 @@
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use oatty_types::Effect;
-use rat_focus::HasFocus;
 // Focus management uses FocusFlag booleans on state; no ring needed here
 use ratatui::{
     Frame,
     layout::{Constraint, Direction, Layout, Rect},
-    style::Style,
     text::{Line, Span},
     widgets::{Borders, Paragraph},
 };
@@ -23,7 +21,7 @@ use super::{
     key_value_editor::KeyValueEditorComponent,
     state::{PluginEditViewState, PluginTransport},
 };
-use crate::ui::theme::theme_helpers::build_syntax_highlighted_line;
+use crate::ui::theme::theme_helpers::create_labeled_input_field;
 use crate::{
     app::App,
     ui::{
@@ -175,15 +173,6 @@ impl PluginsEditComponent {
         }
         false
     }
-
-    fn edit_and_reset_validation<F: FnOnce(&mut TextInputState)>(&mut self, app: &mut App, f: F) {
-        if !self.edit_focused_input(app, f) {
-            return;
-        }
-        if let Some(add_state) = app.plugins.add.as_mut() {
-            add_state.validation = Ok(String::new());
-        }
-    }
 }
 
 impl Component for PluginsEditComponent {
@@ -242,9 +231,11 @@ impl Component for PluginsEditComponent {
             KeyCode::Enter => {
                 return handle_enter_key(app);
             }
-            KeyCode::Backspace => self.edit_and_reset_validation(app, |ti| ti.backspace()),
+            KeyCode::Backspace => {
+                self.edit_focused_input(app, |ti| ti.backspace());
+            }
             KeyCode::Char(character) if !key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                self.edit_and_reset_validation(app, |ti| ti.insert_char(character));
+                self.edit_focused_input(app, |ti| ti.insert_char(character));
             }
             _ => {}
         }
@@ -416,11 +407,8 @@ fn handle_enter_key(app: &mut App) -> Vec<Effect> {
             Vec::new()
         };
     }
-    if add_state.f_btn_save.get() && save_enabled {
-        add_state.validation = add_state.kv_editor.commit_edit();
-        if add_state.validation.is_ok() {
-            return vec![Effect::PluginsSave];
-        }
+    if add_state.f_btn_save.get() && save_enabled && add_state.kv_editor.validate_focused_row().is_ok() {
+        return vec![Effect::PluginsSave];
     }
     if add_state.f_btn_cancel.get() {
         app.plugins.add = None;
@@ -449,7 +437,12 @@ fn handle_enter_key(app: &mut App) -> Vec<Effect> {
 /// * `fields_area` - The rectangular area allocated for form fields
 /// * `theme` - Reference to the UI theme for styling
 /// * `add_state` - Reference to the "edit plugin" plugin state
-fn render_form_fields(frame: &mut Frame, fields_area: Rect, theme: &dyn Theme, add_state: &PluginEditViewState) -> EditPluginFormLayout {
+fn render_form_fields(
+    frame: &mut Frame,
+    fields_area: Rect,
+    theme: &dyn Theme,
+    add_state: &mut PluginEditViewState,
+) -> EditPluginFormLayout {
     // Always allow for the max rows to prevent
     // layout jitter when toggling transport
     let constraints: Vec<Constraint> = vec![
@@ -502,7 +495,7 @@ fn render_form_fields(frame: &mut Frame, fields_area: Rect, theme: &dyn Theme, a
             );
         }
     }
-    render_validation_message(frame, sections[3], theme, &add_state.validation);
+    render_validation_message(frame, sections[3], theme, &add_state.kv_editor.validate_focused_row());
     EditPluginFormLayout {
         name_area: sections[0],
         command_area: sections[1],
@@ -525,13 +518,13 @@ fn render_radio_buttons(frame: &mut Frame, area: Rect, theme: &dyn Theme, add_st
     let is_transport_focused = add_state.f_transport.get();
 
     let local_transport = create_radio_button(
-        "Local",
+        Some("Local"),
         matches!(add_state.transport, PluginTransport::Local),
         is_transport_focused,
         theme,
     );
     let remote_transport = create_radio_button(
-        "Remote",
+        Some("Remote"),
         matches!(add_state.transport, PluginTransport::Remote),
         is_transport_focused,
         theme,
@@ -555,9 +548,8 @@ fn render_labeled_input_field(
     placeholder: &str,
     focused: bool,
 ) {
-    let line = build_syntax_highlighted_line(label, value, placeholder, focused, theme);
-    let paragraph_style = if focused { theme.selection_style() } else { Style::default() };
-    frame.render_widget(Paragraph::new(line).style(paragraph_style), area);
+    let p = create_labeled_input_field(theme, label, Some(value), placeholder, focused);
+    frame.render_widget(p, area);
 }
 
 /// Render a validation message for the "edit plugin" form.

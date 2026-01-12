@@ -67,13 +67,12 @@ pub(crate) fn build_command_help_text<'a>(theme: &'a dyn Theme, spec: CommandSpe
         CommandExecution::Http(http) => {
             lines.push(Line::from(""));
             lines.push(Line::styled(" BACKEND:", theme.text_primary_style().add_modifier(Modifier::BOLD)));
-            let mut backend_spans = vec![
+            let backend_spans = vec![
                 Span::styled("  HTTP ", theme.syntax_keyword_style()),
                 Span::styled(http.method.clone(), theme.syntax_keyword_style()),
                 Span::raw(" "),
                 Span::styled(http.path.clone(), theme.syntax_string_style()),
             ];
-            backend_spans.push(Span::styled(format!(" (base: {})", http.base_url), theme.text_muted_style()));
             lines.push(Line::from(backend_spans));
         }
         CommandExecution::Mcp(mcp) => {

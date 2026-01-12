@@ -9,7 +9,7 @@ use crate::ui::theme::Theme;
 use anyhow::Result;
 use indexmap::IndexMap;
 use oatty_engine::{ProviderBindingOutcome, WorkflowRunState};
-use oatty_registry::{CommandRegistry, utils::find_by_group_and_cmd};
+use oatty_registry::CommandRegistry;
 use oatty_types::{
     command::SchemaProperty,
     workflow::{
@@ -527,10 +527,10 @@ fn resolve_selector_field_metadata(
     };
 
     let spec = {
-        let Ok(guard) = registry.lock() else {
+        let Ok(lock) = registry.lock() else {
             return IndexMap::new();
         };
-        find_by_group_and_cmd(&guard.commands, &group, &name).ok()
+        lock.find_by_group_and_cmd(&group, &name).ok()
     };
 
     let Some(spec) = spec else {

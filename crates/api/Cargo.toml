@@ -14,3 +14,4 @@ reqwest = { workspace = true }
 tracing = { workspace = true }
 dirs-next = { workspace = true }
 oatty-types = { path = "../types" }
+indexmap.workspace = true

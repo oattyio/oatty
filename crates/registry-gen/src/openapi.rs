@@ -102,7 +102,7 @@ fn build_command_from_operation(
     let mut flags = collect_flags_from_operation(document, &parameters, operation);
     normalize_flags(&mut flags);
 
-    let http_spec = build_http_command_spec(document, path_item, operation, method_upper, path_template)?;
+    let http_spec = build_http_command_spec(document, operation, method_upper, path_template)?;
 
     let (group, name) = derive_unique_command_name(vendor, path, &action, &title, method, command_names);
     Ok(Some(CommandSpec::new_http(
@@ -143,24 +143,13 @@ fn normalize_flags(flags: &mut [CommandFlag]) {
     });
 }
 
-fn build_http_command_spec(
-    document: &Value,
-    path_item: &Value,
-    operation: &Map<String, Value>,
-    method: String,
-    path: String,
-) -> Result<HttpCommandSpec> {
-    let base_url = resolve_base_url(document, path_item, operation)
-        .and_then(|url| normalize_base_url(&url))
-        .ok_or_else(|| anyhow!("missing OpenAPI servers URL for {} {}", method, path))?;
+fn build_http_command_spec(document: &Value, operation: &Map<String, Value>, method: String, path: String) -> Result<HttpCommandSpec> {
     let target_schema = build_target_schema_from_oas3(document, operation);
     let output_schema = resolve_output_schema(target_schema.as_ref(), document);
 
     Ok(HttpCommandSpec {
         method,
         path,
-        ranges: Vec::new(),
-        base_url,
         output_schema,
     })
 }
@@ -360,29 +349,6 @@ fn build_path_template_and_positionals(path: &str, parameters: &[Value], documen
     (format!("/{}", segments_out.join("/")), args)
 }
 
-fn resolve_base_url(document: &Value, path_item: &Value, operation: &Map<String, Value>) -> Option<String> {
-    let operation_url = operation
-        .get("servers")
-        .and_then(Value::as_array)
-        .and_then(|servers| resolve_servers_base_url(servers));
-    if operation_url.is_some() {
-        return operation_url;
-    }
-
-    let path_item_url = path_item
-        .get("servers")
-        .and_then(Value::as_array)
-        .and_then(|servers| resolve_servers_base_url(servers));
-    if path_item_url.is_some() {
-        return path_item_url;
-    }
-
-    document
-        .get("servers")
-        .and_then(Value::as_array)
-        .and_then(|servers| resolve_servers_base_url(servers))
-}
-
 /// Collects normalized base URLs from the OpenAPI document servers list.
 pub fn collect_base_urls_from_document(document: &Value) -> Vec<String> {
     let Some(servers) = document.get("servers").and_then(Value::as_array) else {
@@ -456,8 +422,10 @@ pub fn derive_vendor_from_base_url(base_url: &str) -> Option<String> {
 
 fn resolve_servers_base_url(servers: &[Value]) -> Option<String> {
     for server in servers {
-        if let Some(url) = server.get("url").and_then(Value::as_str) {
-            if let Some(resolved) = resolve_server_url(url, server.get("variables")) {
+        if let Some(url) = server.get("url").and_then(Value::as_str)
+            && let Some(resolved) = resolve_server_url(url, server.get("variables"))
+        {
+            {
                 return Some(resolved);
             }
         }
@@ -782,12 +750,12 @@ fn resolve_schema_properties(schema: &Value, root: &Value) -> Value {
     let mut merged = schema.clone();
     if let Some(pointer) = schema.get("$ref").and_then(Value::as_str) {
         let pointer = pointer.strip_prefix('#').unwrap_or(pointer);
-        if let Some(target) = root.pointer(pointer) {
-            if let Some(merged_object) = merged.as_object_mut() {
-                let target_object = target.as_object().cloned().unwrap_or_default();
-                for (key, value) in target_object {
-                    merged_object.entry(key).or_insert(value);
-                }
+        if let Some(target) = root.pointer(pointer)
+            && let Some(merged_object) = merged.as_object_mut()
+        {
+            let target_object = target.as_object().cloned().unwrap_or_default();
+            for (key, value) in target_object {
+                merged_object.entry(key).or_insert(value);
             }
         }
     }
@@ -891,53 +859,6 @@ fn get_default(schema: &Value, root: &Value) -> Option<String> {
 mod tests {
     use super::{collect_base_urls_from_document, derive_commands_from_openapi};
     use serde_json::json;
-
-    #[test]
-    fn derives_base_url_from_servers() {
-        let document = json!({
-            "openapi": "3.0.0",
-            "servers": [{"url": "https://api.example.com"}],
-            "paths": {
-                "/apps": {
-                    "get": {
-                        "summary": "List apps",
-                        "responses": { "200": { "description": "ok" } }
-                    }
-                }
-            }
-        });
-
-        let commands = derive_commands_from_openapi(&document).expect("derive commands");
-        let command = commands.first().expect("command exists");
-        let http = command.http().expect("http spec");
-        assert_eq!(http.base_url, "https://api.example.com");
-    }
-
-    #[test]
-    fn resolves_server_variables_when_present() {
-        let document = json!({
-            "openapi": "3.0.0",
-            "servers": [{
-                "url": "https://{region}.example.com",
-                "variables": {
-                    "region": { "default": "us" }
-                }
-            }],
-            "paths": {
-                "/apps": {
-                    "get": {
-                        "summary": "List apps",
-                        "responses": { "200": { "description": "ok" } }
-                    }
-                }
-            }
-        });
-
-        let commands = derive_commands_from_openapi(&document).expect("derive commands");
-        let command = commands.first().expect("command exists");
-        let http = command.http().expect("http spec");
-        assert_eq!(http.base_url, "https://us.example.com");
-    }
 
     #[test]
     fn derives_vendor_group_from_first_resolvable_server() {

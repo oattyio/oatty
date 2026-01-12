@@ -42,7 +42,6 @@ pub enum HistoryStoreError {
 
 /// Logical grouping for a history entry.
 #[derive(Clone, Debug, Eq, PartialEq, Hash, Serialize, Deserialize)]
-#[serde(tag = "scope", rename_all = "snake_case")]
 pub enum HistoryScope {
     /// Workflow input entry scoped by workflow + input identifiers.
     WorkflowInput {

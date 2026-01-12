@@ -81,10 +81,6 @@ pub trait Theme: Send + Sync + Debug {
         Style::default().bg(self.roles().selection_bg)
     }
 
-    fn interactive_style(&self) -> Style {
-        Style::default().fg(self.roles().focus)
-    }
-
     /// Background style applied to even-numbered rows in tables.
     fn table_row_even_style(&self) -> Style {
         Style::default().bg(self.roles().table_row_even)

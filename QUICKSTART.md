@@ -55,7 +55,7 @@ cargo run -p oatty-cli
 **TUI Controls:**
 
 - Type to search/filter commands
-- `↑`/`↓` - Navigate commands
+- `↑/↓` - Navigate commands
 - `Enter` - Select command and fill inputs
 - `Tab`/`Shift+Tab` - Cycle through input fields
 - `Space` - Toggle boolean flags

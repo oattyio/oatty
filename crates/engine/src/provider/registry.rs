@@ -1,6 +1,6 @@
 use crate::ProviderValueResolver;
 use anyhow::{Result, anyhow};
-use oatty_registry::{CommandRegistry, CommandSpec, find_by_group_and_cmd};
+use oatty_registry::{CommandRegistry, CommandSpec};
 use oatty_types::{Bind, ExecOutcome, ItemKind, SuggestionItem, ValueProvider as ProviderBinding};
 use oatty_util::{exec_remote_for_provider, fuzzy_score};
 use serde_json::{Map as JsonMap, Value};
@@ -102,19 +102,26 @@ fn fetch_and_cache(
 ) -> Result<Vec<Value>> {
     let (group, name) = split_identifier(&provider_id).ok_or_else(|| anyhow!("invalid provider identifier: {}", provider_id))?;
 
-    let (spec, base_url) = {
+    let (spec, base_url, headers) = {
         let registry_lock = registry.lock().map_err(|error| anyhow!(error.to_string()))?;
-        let spec = find_by_group_and_cmd(&registry_lock.commands, &group, &name)?.clone();
+        let spec = registry_lock.find_by_group_and_cmd(&group, &name)?.clone();
         let base_url = registry_lock
             .resolve_base_url_for_command(&spec)
-            .or_else(|| spec.http().map(|http| http.base_url.clone()));
-        (spec, base_url)
+            .ok_or_else(|| anyhow!("missing base URL for command '{}'", spec.name))?;
+        let headers = registry_lock
+            .resolve_headers_for_command(&spec)
+            .ok_or_else(|| anyhow!("could not determine headers for command: {}", &spec.canonical_id()))?
+            .clone();
+        (spec, base_url, headers)
     };
 
     let spec_for_http = spec.clone();
     if spec_for_http.http().is_some() {
         let body = args.clone();
-        let result = handle.block_on(async move { exec_remote_for_provider(&spec_for_http, base_url, body, 0).await });
+        let base_url_clone = base_url.clone();
+        let headers_clone = headers.clone();
+        let result =
+            handle.block_on(async move { exec_remote_for_provider(&spec_for_http, &base_url_clone, &headers_clone, body, 0).await });
 
         if let Ok(ExecOutcome::Http { payload: result_value, .. }) = result
             && let Some(items) = result_value.as_array()
@@ -132,7 +139,7 @@ fn fetch_and_cache(
     }
 
     let items = fetcher
-        .fetch_list(spec, &args)
+        .fetch_list(spec, &args, base_url.as_str(), &headers)
         .map_err(|error| anyhow!("provider '{}' fetch error: {}", provider_id, error))?;
     cache.lock().expect("cache lock").insert(
         cache_key,
@@ -278,7 +285,7 @@ impl ProviderRegistry {
         self.registry
             .lock()
             .ok()
-            .and_then(|lock| find_by_group_and_cmd(&lock.commands, &group, &name).ok())
+            .and_then(|lock| lock.find_by_group_and_cmd(&group, &name).ok())
     }
 
     pub fn persist_choice(&self, provider_id: &str, selection: FieldSelection) {

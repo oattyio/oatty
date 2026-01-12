@@ -629,9 +629,9 @@ fn extract_path_placeholders(path: &str) -> Vec<String> {
 fn parse_openapi_document(input: ManifestInput) -> Result<serde_json::Value> {
     let text = input.take_contents()?;
     if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&text) {
-        serde_json::to_value(yaml).context("convert yaml to json")
+        serde_json::to_value(yaml).context("could not convert yaml to json")
     } else {
-        serde_json::from_str(&text).context("parse json")
+        serde_json::from_str(&text).context("Unable to parse json. Invalid document format")
     }
 }
 /// Loads workflow definitions from the specified directory.

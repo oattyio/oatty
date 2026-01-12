@@ -20,23 +20,25 @@
 //! state updates are pure, but commands handle side effects.
 
 use crate::app::App;
-use crate::ui::components::common::key_value_editor::EnvRow;
 use crate::ui::components::plugins::PluginTransport;
 use anyhow::Result;
 use anyhow::anyhow;
 use chrono::Utc;
+use indexmap::IndexSet;
 use oatty_engine::{RegistryCommandRunner, drive_workflow_run, provider::ProviderFetchPlan};
 use oatty_mcp::config::{
-    McpServer, default_config_path, determine_env_source, load_config_from_path, save_config_to_path, validate_config, validate_server_name,
+    McpServer, default_config_path, load_config_from_path, save_config_to_path, validate_config, validate_server_name,
 };
 use oatty_mcp::{McpConfig, PluginEngine};
-use oatty_registry::find_by_group_and_cmd;
+
 use oatty_registry::{CommandRegistry, CommandSpec};
 use oatty_registry_gen::io::ManifestInput;
 use oatty_registry_gen::io::generate_catalog;
+use oatty_types::value_objects::EnvRow;
 use oatty_types::{DirectoryEntry, Effect, EnvVar, Msg, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
 use oatty_types::{ExecOutcome, command::CommandExecution};
 use oatty_util::build_request_body;
+use oatty_util::determine_env_source;
 use oatty_util::exec_remote_from_shell_command;
 use oatty_util::fetch_static;
 use oatty_util::lex_shell_like;
@@ -67,7 +69,6 @@ pub enum Cmd {
     ExecuteHttp {
         spec: CommandSpec,
         input: String,
-        next_range_override: Option<String>,
         request_id: u64,
     },
     FetchProviderValues {
@@ -90,11 +91,19 @@ pub enum Cmd {
     ListDirectoryContents(PathBuf),
     ReadRemoteFileContents(Url),
     ImportRegistryCatalog(String),
+    RemoveCatalog(Cow<'static, str>),
     UpdateCatalogEnabledState {
         is_enabled: bool,
         title: Cow<'static, str>,
     },
-    RemoveCatalog(Cow<'static, str>),
+    UpdateCatalogBaseUrlIndex {
+        base_url_index: usize,
+        title: Cow<'static, str>,
+    },
+    UpdateCatalogHeaders {
+        title: Cow<'static, str>,
+        headers: Vec<EnvRow>,
+    },
 }
 
 /// Collection of immediate and background work generated while handling effects.
@@ -141,9 +150,8 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
             }
             Effect::Run {
                 hydrated_command,
-                range_override,
                 request_hash,
-            } => run_command(app, hydrated_command, range_override, request_hash),
+            } => run_command(app, hydrated_command, request_hash),
             Effect::ProviderFetchRequested {
                 provider_id,
                 cache_key,
@@ -167,6 +175,10 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
             Effect::ReadRemoteFileContents(url) => Some(vec![Cmd::ReadRemoteFileContents(url)]),
             Effect::ImportRegistryCatalog(content) => Some(vec![Cmd::ImportRegistryCatalog(content)]),
             Effect::UpdateCatalogEnabledState { title, is_enabled } => Some(vec![Cmd::UpdateCatalogEnabledState { title, is_enabled }]),
+            Effect::UpdateCatalogBaseUrlIndex { base_url_index, title } => {
+                Some(vec![Cmd::UpdateCatalogBaseUrlIndex { base_url_index, title }])
+            }
+            Effect::UpdateCatalogHeaders { title, headers } => Some(vec![Cmd::UpdateCatalogHeaders { title, headers }]),
             Effect::RemoveCatalog(title) => Some(vec![Cmd::RemoveCatalog(title)]),
             Effect::Log(_) | Effect::SwitchTo(_) | Effect::ShowModal(_) | Effect::CloseModal => None,
         };
@@ -202,12 +214,7 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
         let (immediate, background) = match command {
             Cmd::ApplyPaletteError(error) => (Some(apply_palette_error(app, error)), None),
             Cmd::ClipboardSet(text) => (Some(execute_clipboard_set(app, text)), None),
-            Cmd::ExecuteHttp {
-                spec,
-                input,
-                next_range_override,
-                request_id,
-            } => (None, Some(spawn_execute_http(app, spec, input, next_range_override, request_id))),
+            Cmd::ExecuteHttp { spec, input, request_id } => (None, Some(spawn_execute_http(app, spec, input, request_id))),
             Cmd::FetchProviderValues {
                 provider_id,
                 cache_key,
@@ -228,8 +235,12 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
             Cmd::ListDirectoryContents(path) => (Some(list_dir_contents(path)), None),
             Cmd::ReadRemoteFileContents(url) => (None, Some(fetch_remote_file_contents(url))),
             Cmd::ImportRegistryCatalog(inputs) => (Some(import_registry_catalog_from(app, inputs)), None),
-            Cmd::UpdateCatalogEnabledState { title, is_enabled } => (Some(update_enabled_then_save(title, is_enabled, app)), None),
             Cmd::RemoveCatalog(title) => (Some(remove_catalog(title, app)), None),
+            Cmd::UpdateCatalogEnabledState { title, is_enabled } => (Some(update_enabled_then_save(title, is_enabled, app)), None),
+            Cmd::UpdateCatalogBaseUrlIndex { base_url_index, title } => {
+                (Some(update_base_url_index_then_save(base_url_index, title, app)), None)
+            }
+            Cmd::UpdateCatalogHeaders { title, headers } => (Some(update_headers_then_save(title, headers, app)), None),
         };
 
         if let Some(immediate) = immediate {
@@ -363,7 +374,27 @@ where
     T: AsRef<str>,
 {
     let Ok(()) = update_enabled_state(title.as_ref(), is_enabled, app) else {
-        return ExecOutcome::RegistryCatalogGenerationError("Could not update enabled state".to_string());
+        return ExecOutcome::RegistryConfigSaveError("Could not update enabled state".to_string());
+    };
+    save_registry_config(app)
+}
+
+fn update_headers_then_save<T>(title: T, headers: Vec<EnvRow>, app: &mut App) -> ExecOutcome
+where
+    T: AsRef<str>,
+{
+    let Ok(()) = update_headers(title.as_ref(), headers, app) else {
+        return ExecOutcome::RegistryConfigSaveError("Could not update headers".to_string());
+    };
+    save_registry_config(app)
+}
+
+fn update_base_url_index_then_save<T>(base_url_index: usize, title: T, app: &mut App) -> ExecOutcome
+where
+    T: AsRef<str>,
+{
+    let Ok(()) = update_base_url_index(base_url_index, title.as_ref(), app) else {
+        return ExecOutcome::RegistryConfigSaveError("Could not update base URL index".to_string());
     };
     save_registry_config(app)
 }
@@ -374,11 +405,11 @@ where
 {
     {
         let Ok(mut lock) = app.ctx.command_registry.try_lock() else {
-            return ExecOutcome::RegistryCatalogGenerationError("Could not acquire lock".to_string());
+            return ExecOutcome::RegistryConfigSaveError("Could not acquire lock".to_string());
         };
 
         let Ok(()) = lock.remove_catalog(title.as_ref()) else {
-            return ExecOutcome::RegistryCatalogGenerationError("Could not remove catalog".to_string());
+            return ExecOutcome::RegistryConfigSaveError("Could not remove catalog".to_string());
         };
     }
     save_registry_config(app)
@@ -397,6 +428,28 @@ fn update_enabled_state(title: &str, is_enabled: bool, app: &mut App) -> Result<
     } else {
         lock.disable_catalog(title)
     }
+}
+
+fn update_headers(title: &str, headers: Vec<EnvRow>, app: &mut App) -> Result<()> {
+    let rows = collect_key_value_rows(&headers).map_err(|e| anyhow!("one or more rows contain errors: {:?}", e))?;
+
+    let mut lock = app
+        .ctx
+        .command_registry
+        .try_lock()
+        .map_err(|_| anyhow!("command registry lock failed"))?;
+
+    lock.update_headers(title, rows)
+}
+
+fn update_base_url_index(base_url_index: usize, title: &str, app: &mut App) -> Result<()> {
+    let mut lock = app
+        .ctx
+        .command_registry
+        .try_lock()
+        .map_err(|_| anyhow!("command registry lock failed"))?;
+
+    lock.update_base_url_index(base_url_index, title)
 }
 
 fn save_registry_config(app: &mut App) -> ExecOutcome {
@@ -505,11 +558,10 @@ fn execute_plugins_validate(app: &mut App) -> ExecOutcome {
                     message: "Invalid Base URL".into(),
                 };
             }
-            match collect_key_value_rows(&add_view_state.kv_editor.rows) {
-                Ok(Some(map)) => {
-                    server.headers = Some(map);
+            match collect_key_value_rows(add_view_state.kv_editor.rows()) {
+                Ok(map) => {
+                    server.headers = map;
                 }
-                Ok(None) => {}
                 Err(errors) => {
                     return ExecOutcome::PluginValidationErr {
                         message: format!("Invalid headers: {}", errors.join("; ")),
@@ -530,11 +582,10 @@ fn execute_plugins_validate(app: &mut App) -> ExecOutcome {
                     server.args = Some(parsed);
                 }
             }
-            match collect_key_value_rows(&add_view_state.kv_editor.rows) {
-                Ok(Some(map)) => {
-                    server.env = Some(map);
+            match collect_key_value_rows(add_view_state.kv_editor.rows()) {
+                Ok(map) => {
+                    server.env = map;
                 }
-                Ok(None) => {}
                 Err(errors) => {
                     return ExecOutcome::PluginValidationErr {
                         message: format!("Invalid env vars: {}", errors.join("; ")),
@@ -567,11 +618,10 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
                     message: "Plugin validation failed: invalid Base URL".into(),
                 };
             }
-            match collect_key_value_rows(&add_view_state.kv_editor.rows) {
-                Ok(Some(envs)) => {
-                    server.headers = Some(envs);
+            match collect_key_value_rows(add_view_state.kv_editor.rows()) {
+                Ok(envs) => {
+                    server.headers = envs;
                 }
-                Ok(None) => {}
                 Err(errors) => {
                     return ExecOutcome::PluginValidationErr {
                         message: format!("plugin validation failed: invalid headers: {}", errors.join("; ")),
@@ -591,11 +641,10 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
                 let parsed: Vec<String> = add_view_state.args.split_whitespace().map(|s| s.to_string()).collect();
                 server.args = Some(parsed);
             }
-            match collect_key_value_rows(&add_view_state.kv_editor.rows) {
-                Ok(Some(map)) => {
-                    server.env = Some(map);
+            match collect_key_value_rows(add_view_state.kv_editor.rows()) {
+                Ok(map) => {
+                    server.env = map;
                 }
-                Ok(None) => {}
                 Err(errors) => {
                     return ExecOutcome::PluginValidationErr {
                         message: format!("Plugin validation failed: invalid env vars: {}", errors.join("; ")),
@@ -651,9 +700,9 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
     ExecOutcome::Log(format!("Plugins: added '{}'", name))
 }
 
-/// Strict validator for key/value rows captured in the Add Plugin editor.
-fn collect_key_value_rows(rows: &[EnvRow]) -> Result<Option<Vec<EnvVar>>, Vec<String>> {
-    let mut envs = Vec::new();
+/// Strict validator for key/value rows captured in the KV editor.
+fn collect_key_value_rows(rows: &[EnvRow]) -> Result<IndexSet<EnvVar>, Vec<String>> {
+    let mut envs = IndexSet::new();
     let mut errors: Vec<String> = Vec::new();
 
     for (index, row) in rows.iter().enumerate() {
@@ -665,14 +714,14 @@ fn collect_key_value_rows(rows: &[EnvRow]) -> Result<Option<Vec<EnvVar>>, Vec<St
         let value = row.value.trim().to_string();
         let env_source = determine_env_source(&value);
         let env = EnvVar::new(key.to_string(), value, env_source);
-        envs.push(env);
+        envs.insert(env);
     }
 
     if !errors.is_empty() {
         return Err(errors);
     }
 
-    if envs.is_empty() { Ok(None) } else { Ok(Some(envs)) }
+    Ok(envs)
 }
 
 /// Remove the previous plugin entry when the user renames a server.
@@ -744,25 +793,25 @@ fn handle_workflow_run_control(app: &mut App<'_>, run_id: &str, command: Workflo
 
 /// Spawn an HTTP execution on the Tokio scheduler while updating local state
 /// to show the spinner.
-fn spawn_execute_http(
-    app: &mut App<'_>,
-    spec: CommandSpec,
-    input: String,
-    next_range_override: Option<String>,
-    request_id: u64,
-) -> JoinHandle<ExecOutcome> {
+fn spawn_execute_http(app: &mut App<'_>, spec: CommandSpec, input: String, request_id: u64) -> JoinHandle<ExecOutcome> {
     let active = app.active_exec_count.clone();
     active.fetch_add(1, Ordering::Relaxed);
 
-    let base_url = app
-        .ctx
-        .command_registry
-        .lock()
-        .ok()
-        .and_then(|registry| registry.resolve_base_url_for_command(&spec))
-        .or_else(|| spec.http().map(|http| http.base_url.clone()));
-
-    tokio::spawn(async move { execute_http_task(active, spec, input, base_url, next_range_override, request_id).await })
+    if let Ok(lock) = app.ctx.command_registry.lock()
+        && let Some(base_url) = lock.resolve_base_url_for_command(&spec)
+        && let Some(headers) = lock.resolve_headers_for_command(&spec).cloned()
+    {
+        return tokio::spawn(async move { execute_http_task(active, spec, input, base_url, &headers, request_id).await });
+    }
+    let err = "base url or headers could not be determined for this command. Check configs and retry".to_string();
+    tokio::spawn(async move {
+        ExecOutcome::Http {
+            status_code: 218,
+            log_entry: err.clone(),
+            request_id,
+            payload: Value::String(err),
+        }
+    })
 }
 
 fn spawn_fetch_provider_values(app: &App, provider_id: String, cache_key: String, args: Map<String, Value>) -> JoinHandle<ExecOutcome> {
@@ -796,11 +845,11 @@ async fn execute_http_task(
     active_exec_count: Arc<AtomicUsize>,
     spec: CommandSpec,
     input: String,
-    base_url: Option<String>,
-    next_range_override: Option<String>,
+    base_url: String,
+    headers: &IndexSet<EnvVar>,
     request_id: u64,
 ) -> ExecOutcome {
-    let result = exec_remote_from_shell_command(&spec, base_url, input, next_range_override, request_id).await;
+    let result = exec_remote_from_shell_command(&spec, base_url, headers, input, request_id).await;
     let outcome = result.unwrap_or_else(|err| ExecOutcome::Log(format!("Error: {}", err)));
 
     active_exec_count.fetch_sub(1, Ordering::Relaxed);
@@ -860,13 +909,13 @@ async fn execute_mcp_task(
 /// // For input "apps info my-app --verbose"
 /// // Validates command exists, app_id is provided, starts execution
 /// ```
-fn run_command(app: &mut App, hydrated_command: String, next_range_override: Option<String>, request_id: u64) -> Option<Vec<Cmd>> {
+fn run_command(app: &mut App, hydrated_command: String, request_id: u64) -> Option<Vec<Cmd>> {
     let valid = validate_command(app, &hydrated_command, Arc::clone(&app.ctx.command_registry));
 
     match valid {
         Ok((command_spec, input)) => {
             app.append_log_message_with_level(Some("info".to_string()), format!("Running: {}", &hydrated_command));
-            execute_command(command_spec, input, next_range_override, request_id)
+            execute_command(command_spec, input, request_id)
         }
         Err(error) => Some(vec![Cmd::ApplyPaletteError(error.to_string())]),
     }
@@ -890,8 +939,7 @@ fn validate_command(app: &mut App, hydrated_command: &str, command_registry: Arc
     // Step 2: Find the command specification in the registry
     let command_spec = {
         let lock = command_registry.lock().map_err(|_| anyhow!("Could not obtain lock to registry"))?;
-        let commands = &lock.commands;
-        find_by_group_and_cmd(commands, tokens[0].as_str(), tokens[1].as_str())?
+        lock.find_by_group_and_cmd(tokens[0].as_str(), tokens[1].as_str())?
     };
     command_spec.parse_arguments(&tokens[2..])?;
     persist_execution_context(app, &command_spec, &input);
@@ -906,19 +954,13 @@ fn persist_execution_context(app: &mut App, command_spec: &CommandSpec, input: &
     app.palette.push_history_if_needed(trimmed_input);
 }
 
-fn execute_command(
-    command_spec: CommandSpec,
-    hydrated_shell_command: String,
-    next_range_override: Option<String>,
-    request_id: u64,
-) -> Option<Vec<Cmd>> {
+fn execute_command(command_spec: CommandSpec, hydrated_shell_command: String, request_id: u64) -> Option<Vec<Cmd>> {
     match command_spec.execution() {
         CommandExecution::Http(_) => {
             let command_spec_to_run = command_spec.clone();
             Some(vec![Cmd::ExecuteHttp {
                 spec: command_spec_to_run,
                 input: hydrated_shell_command,
-                next_range_override,
                 request_id,
             }])
         }

@@ -1,12 +1,12 @@
 use anyhow::{Result, anyhow};
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet, set::MutableValues};
 use oatty_types::{
-    CommandSpec, ProviderContract,
+    CommandSpec, EnvVar, ProviderContract,
     manifest::{RegistryCatalog, RegistryManifest},
     workflow::WorkflowDefinition,
 };
-use oatty_util::sort_and_dedup_commands;
-use std::{collections::HashSet, convert::Infallible, os::unix::fs, path::Path};
+use oatty_util::{interpolate_string, sort_and_dedup_commands};
+use std::{collections::HashSet, convert::Infallible, path::Path};
 
 use crate::RegistryConfig;
 
@@ -60,6 +60,15 @@ impl CommandRegistry {
         for i in (0..catalogs.len()).rev() {
             let catalog = &mut catalogs[i];
             let path = &catalog.manifest_path;
+            for j in 0..catalog.headers.len() {
+                let Some(EnvVar { value, .. }) = catalog.headers.get_index_mut2(j) else {
+                    continue;
+                };
+                let Ok(val) = interpolate_string(value) else {
+                    continue;
+                };
+                *value = val;
+            }
 
             let Ok(manifest_bytes) = std::fs::read(path) else {
                 catalogs.swap_remove(i); // invalid - remove from registry
@@ -77,6 +86,7 @@ impl CommandRegistry {
                     }
                     catalog.manifest = Some(manifest);
                 }
+                // We need to handle the error case here
                 Err(_) => {
                     catalogs.swap_remove(i); // invalid - remove from registry
                     continue;
@@ -98,10 +108,48 @@ impl CommandRegistry {
     /// the catalog has no selected base URL configured.
     pub fn resolve_base_url_for_command(&self, command: &CommandSpec) -> Option<String> {
         let catalog_identifier = command.catalog_identifier;
+        let catalog = self.get_catalog(catalog_identifier)?;
+        catalog.selected_base_url().map(|value| value.to_string())
+    }
+
+    /// Resolves the headers for a command from the registry catalog configuration.
+    ///
+    /// Returns `None` when the command is not associated with a catalog or when
+    /// the catalog has no headers configured.
+    pub fn resolve_headers_for_command(&self, command: &CommandSpec) -> Option<&IndexSet<EnvVar>> {
+        let catalog_identifier = command.catalog_identifier;
+        let catalog = self.get_catalog(catalog_identifier)?;
+
+        Some(&catalog.headers)
+    }
+
+    /// Finds a specific command by its group and command name.
+    ///
+    /// This method searches for a command using the format "group command"
+    /// where group is the resource type (e.g., "apps", "dynos") and command
+    /// is the action (e.g., "list", "create").
+    ///
+    /// # Arguments
+    ///
+    /// * `group` - The resource group name (e.g., "apps", "dynos", "config")
+    /// * `cmd` - The command action name (e.g., "list", "create", "restart")
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(&CommandSpec)` - The matching command specification
+    /// - `Err` - If no command is found with the given group and command name
+    pub fn find_by_group_and_cmd(&self, group: &str, cmd: &str) -> Result<CommandSpec> {
+        self.commands
+            .iter()
+            .find(|c| c.group == group && c.name == cmd)
+            .cloned()
+            .ok_or(anyhow!("{} {} command not found", group, cmd))
+    }
+
+    fn get_catalog(&self, id: usize) -> Option<&RegistryCatalog> {
         let catalogs = self.config.catalogs.as_ref()?;
 
-        let catalog = catalogs.get(catalog_identifier)?;
-        catalog.selected_base_url().map(|value| value.to_string())
+        catalogs.get(id)
     }
 
     /// Inserts the synthetic commands from an MCP client's
@@ -126,7 +174,7 @@ impl CommandRegistry {
     pub fn insert_catalog(&mut self, catalog: RegistryCatalog) -> Result<()> {
         let catalogs = self.config.catalogs.get_or_insert(Vec::with_capacity(1));
 
-        if catalogs.iter().find(|c| c.title == catalog.title).is_some() {
+        if catalogs.iter().any(|c| c.title == catalog.title) {
             return Err(anyhow!("Catalog already exists"));
         }
         if catalog.is_enabled
@@ -195,6 +243,28 @@ impl CommandRegistry {
                 self.workflows.extend_from_slice(&manifest.workflows);
                 self.provider_contracts.extend(manifest.provider_contracts.clone());
             }
+            Ok(())
+        } else {
+            Err(anyhow!("Catalog not found"))
+        }
+    }
+
+    pub fn update_base_url_index(&mut self, base_url_index: usize, title: &str) -> Result<()> {
+        let catalogs = self.config.catalogs.as_mut().ok_or_else(|| anyhow!("No catalogs configured"))?;
+
+        if let Some(index) = catalogs.iter().position(|c| c.title == title) {
+            catalogs[index].base_url_index = base_url_index;
+            Ok(())
+        } else {
+            Err(anyhow!("Catalog not found"))
+        }
+    }
+
+    pub fn update_headers(&mut self, title: &str, headers: IndexSet<EnvVar>) -> Result<()> {
+        let catalogs = self.config.catalogs.as_mut().ok_or_else(|| anyhow!("No catalogs configured"))?;
+
+        if let Some(index) = catalogs.iter().position(|c| c.title == title) {
+            catalogs[index].headers = headers;
             Ok(())
         } else {
             Err(anyhow!("Catalog not found"))

@@ -123,6 +123,7 @@ impl Indexer {
             ngram_indexing: NgramSet::NgramFR as u8 | NgramSet::NgramRF as u8 | NgramSet::NgramFFR as u8,
             access_type: AccessType::Mmap,
             spelling_correction: None,
+            query_completion: None,
         };
 
         let schema = schema();

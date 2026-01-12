@@ -5,7 +5,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::ArgMatches;
 use oatty_agent::Indexer;
 use oatty_api::OattyClient;
@@ -15,7 +15,7 @@ use oatty_engine::{
     WorkflowRunState,
 };
 use oatty_mcp::{PluginEngine, config::load_config};
-use oatty_registry::{CommandRegistry, build_clap, find_by_group_and_cmd};
+use oatty_registry::{CommandRegistry, build_clap};
 use oatty_types::{
     ExecOutcome, RuntimeWorkflow,
     command::CommandExecution,
@@ -90,13 +90,13 @@ async fn main() -> Result<()> {
     plugin_engine.prepare_registry().await?;
     plugin_engine.start().await?;
 
-    let mut indexer = Indexer::new(Arc::clone(&command_registry), plugin_engine.client_manager().subscribe());
+    let _indexer = Indexer::new(Arc::clone(&command_registry), plugin_engine.client_manager().subscribe());
     // indexer.start().await?;
 
     let cli = build_clap(Arc::clone(&command_registry));
     let matches = cli.get_matches();
 
-    // No subcommands => TUI
+    // No subcommands --> TUI
     if matches.subcommand_name().is_none() {
         // Silence tracing output to stderr while the TUI is active to avoid overlay
         TUI_ACTIVE.store(true, Ordering::Relaxed);
@@ -441,9 +441,17 @@ async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches
         return handle_workflow_command(Arc::clone(&registry), matches, cmd_name, cmd_matches);
     }
 
-    let cmd_spec = {
+    let (cmd_spec, base_url, headers) = {
         let registry_lock = registry.lock().expect("could not obtain lock on registry");
-        find_by_group_and_cmd(&registry_lock.commands, group, cmd_name)?
+        let cmd_spec = registry_lock.find_by_group_and_cmd(group, cmd_name)?;
+        let base_url = registry_lock
+            .resolve_base_url_for_command(&cmd_spec)
+            .ok_or(anyhow!("base url not defined for this command"))?;
+        let headers = registry_lock
+            .resolve_headers_for_command(&cmd_spec)
+            .ok_or(anyhow!("headers not defined for this command"))?
+            .clone();
+        (cmd_spec, base_url, headers)
     };
 
     // Collect positional values
@@ -470,7 +478,7 @@ async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches
 
     match cmd_spec.execution() {
         CommandExecution::Http(http) => {
-            let client = OattyClient::new_with_base_url(http.base_url.clone())?;
+            let client = OattyClient::new(&base_url, &headers)?;
             let method = Method::from_bytes(http.method.as_bytes())?;
             let path = resolve_path(&http.path, &pos_values);
             let mut builder = client.request(method, &path);

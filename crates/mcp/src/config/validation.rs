@@ -61,10 +61,8 @@ fn validate_stdio_server(server: &McpServer) -> Result<(), ValidationError> {
     }
 
     // Validate environment variable names
-    if let Some(env) = &server.env {
-        for EnvVar { key, .. } in env {
-            validate_env_key(key)?;
-        }
+    for EnvVar { key, .. } in &server.env {
+        validate_env_key(key)?;
     }
 
     Ok(())
@@ -91,10 +89,8 @@ fn validate_http_server(server: &McpServer) -> Result<(), ValidationError> {
     }
 
     // Validate HTTP headers
-    if let Some(headers) = &server.headers {
-        for EnvVar { key, .. } in headers {
-            validate_header_name(key)?;
-        }
+    for EnvVar { key, .. } in &server.headers {
+        validate_header_name(key)?;
     }
 
     Ok(())

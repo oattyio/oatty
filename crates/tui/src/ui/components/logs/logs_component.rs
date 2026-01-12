@@ -179,7 +179,6 @@ impl LogsComponent {
                         status_code: *status,
                         log_entry: raw.to_string(),
                         payload: json_value.clone(),
-                        pagination: None,
                         request_id: 0,
                     }));
                 }
@@ -408,7 +407,7 @@ impl Component for LogsComponent {
             .highlight_symbol(if focused { "▸ " } else { "  " })
             .highlight_spacing(HighlightSpacing::Always);
 
-        let mut list_state = app.logs.list_state.clone();
+        let mut list_state = app.logs.list_state;
         if focused {
             if let Some(sel) = self.selected_index(app) {
                 list_state.select(Some(sel));

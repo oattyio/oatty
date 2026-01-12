@@ -1,17 +1,17 @@
+use std::borrow::Cow;
+
+use oatty_types::value_objects::EnvRow;
 use rat_focus::{FocusFlag, HasFocus};
 use ratatui::{layout::Rect, widgets::ListState};
 
-use crate::ui::components::{
-    common::key_value_editor::{EnvRow, KeyValueEditorState},
-    library::{CatalogProjection, DetailsEditorState},
-};
+use crate::ui::components::{common::key_value_editor::KeyValueEditorState, library::CatalogProjection};
 
 /// Tracks focus and selection state for the registry library view.
 #[derive(Debug, Default)]
 pub struct LibraryState {
-    list_state: ListState,
-    mouse_over_index: Option<usize>,
-    details_editor_state: DetailsEditorState,
+    api_list_state: ListState,
+    url_list_state: ListState,
+    api_mouse_over_index: Option<usize>,
     kv_state: KeyValueEditorState,
     error_message: Option<String>,
     projections: Vec<CatalogProjection>,
@@ -19,49 +19,79 @@ pub struct LibraryState {
     container: FocusFlag,
     pub f_import_button: FocusFlag,
     pub f_remove_button: FocusFlag,
-    pub f_list_view: FocusFlag,
-    pub f_selection_checkbox: FocusFlag,
-    pub f_details_area: FocusFlag,
+    pub f_api_list: FocusFlag,
+    pub f_url_list: FocusFlag,
+    // Focus flag used in the confirmation modal
+    // presented whent the user removes a catalog
     pub f_modal_confirmation_button: FocusFlag,
 }
 
 impl LibraryState {
-    /// Returns mutable access to the list widget state backing the staged manifests view.
-    pub fn list_state_mut(&mut self) -> &mut ListState {
-        &mut self.list_state
+    pub fn new() -> Self {
+        Self {
+            kv_state: KeyValueEditorState::new(Cow::from("Headers"), Cow::from("HEADER"), Cow::from("VALUE")),
+            ..Default::default()
+        }
     }
 
-    /// Returns the currently selected manifest index.
-    pub fn selected_index(&self) -> Option<usize> {
-        self.list_state.selected()
+    pub fn api_list_state_mut(&mut self) -> &mut ListState {
+        &mut self.api_list_state
     }
 
-    pub fn set_selected_index(&mut self, index: Option<usize>) {
-        self.list_state.select(index);
-        self.kv_state.rows = index
-            .and_then(|idx| self.projections.get(idx))
-            .and_then(|p| Some(p.headers.iter().map(EnvRow::from).collect()))
-            .unwrap_or_default()
+    pub fn api_selected_index(&self) -> Option<usize> {
+        self.api_list_state.selected()
     }
 
-    pub fn offset(&self) -> usize {
-        self.list_state.offset()
+    pub fn set_api_selected_index(&mut self, index: Option<usize>) {
+        self.api_list_state.select(index);
+        self.update_details();
     }
 
-    pub fn mouse_over_index(&self) -> Option<usize> {
-        self.mouse_over_index
+    pub fn api_select_previous(&mut self) {
+        self.api_list_state.select_previous();
+        self.update_details();
     }
 
-    pub fn set_mouse_over_index(&mut self, index: Option<usize>) {
-        self.mouse_over_index = index;
+    pub fn api_select_next(&mut self) {
+        self.api_list_state.select_next();
+        self.update_details();
     }
 
-    pub fn details_editor_state_mut(&mut self) -> &mut DetailsEditorState {
-        &mut self.details_editor_state
+    pub fn api_list_offset(&self) -> usize {
+        self.api_list_state.offset()
     }
 
-    pub fn details_editor_state(&self) -> &DetailsEditorState {
-        &self.details_editor_state
+    pub fn api_mouse_over_index(&self) -> Option<usize> {
+        self.api_mouse_over_index
+    }
+
+    pub fn api_set_mouse_over_index(&mut self, index: Option<usize>) {
+        self.api_mouse_over_index = index;
+    }
+
+    // -----------------
+    pub fn url_list_state_mut(&mut self) -> &mut ListState {
+        &mut self.url_list_state
+    }
+
+    pub fn url_selected_index(&self) -> Option<usize> {
+        self.url_list_state.selected()
+    }
+
+    pub fn set_url_selected_index(&mut self, index: Option<usize>) {
+        self.url_list_state.select(index);
+    }
+
+    pub fn url_select_previous(&mut self) {
+        self.url_list_state.select_previous();
+    }
+
+    pub fn url_select_next(&mut self) {
+        self.url_list_state.select_next();
+    }
+
+    pub fn url_list_offset(&self) -> usize {
+        self.url_list_state.offset()
     }
 
     pub fn kv_state_mut(&mut self) -> &mut KeyValueEditorState {
@@ -80,23 +110,41 @@ impl LibraryState {
         self.error_message = message;
     }
 
-    pub fn projections_mut(&mut self) -> &mut Vec<CatalogProjection> {
-        &mut self.projections
-    }
-
     pub fn projections(&self) -> &Vec<CatalogProjection> {
         &self.projections
     }
 
     pub fn set_projections(&mut self, projections: Vec<CatalogProjection>) {
         self.projections = projections;
+        self.update_details();
+    }
+
+    pub fn clear_projections(&mut self) {
+        self.projections.clear();
+        self.update_details();
+    }
+
+    pub fn push_projection(&mut self, projection: CatalogProjection) {
+        self.projections.push(projection);
+    }
+
+    pub fn get_projection_mut(&mut self, idx: usize) -> Option<&mut CatalogProjection> {
+        self.projections.get_mut(idx)
     }
 
     pub fn selected_projection(&self) -> Option<&CatalogProjection> {
-        let Some(index) = self.list_state.selected() else {
-            return None;
-        };
+        let index = self.api_list_state.selected()?;
         self.projections.get(index)
+    }
+
+    fn update_details(&mut self) {
+        self.kv_state.set_rows(Vec::new());
+        self.url_list_state.select(None);
+        if let Some(p) = self.api_list_state.selected().and_then(|idx| self.projections.get(idx)) {
+            let rows: Vec<EnvRow> = p.headers.iter().map(EnvRow::from).collect();
+            self.kv_state.set_block_label(Cow::Owned(format!("{} Headers", p.title)));
+            self.kv_state.set_rows(rows);
+        }
     }
 }
 
@@ -106,13 +154,13 @@ impl HasFocus for LibraryState {
 
         builder.leaf_widget(&self.f_import_button);
         builder.leaf_widget(&self.f_remove_button);
+        builder.leaf_widget(&self.f_api_list);
 
-        builder.leaf_widget(&self.f_list_view);
-        if self.list_state.selected().is_some() {
-            builder.leaf_widget(&self.f_selection_checkbox);
+        if self.api_list_state.selected().is_some() {
+            builder.leaf_widget(&self.f_url_list);
+            builder.widget(&self.kv_state);
         }
 
-        builder.leaf_widget(&self.f_details_area);
         builder.end(start);
     }
 
