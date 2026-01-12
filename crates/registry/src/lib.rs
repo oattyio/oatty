@@ -16,20 +16,78 @@ pub use oatty_types::{
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, vec};
+    use std::{collections::HashSet, fs, time, vec};
+
+    use indexmap::{IndexMap, IndexSet};
+    use oatty_types::{
+        EnvVar, ProviderContract, ProviderFieldContract, ProviderReturnContract,
+        command::HttpCommandSpec,
+        manifest::{RegistryCatalog, RegistryManifest},
+    };
 
     use super::*;
 
-    /// Tests that the embedded manifest loads successfully and contains valid
-    /// commands.
-    ///
-    /// This test verifies that:
-    /// 1. The registry can be loaded from the embedded schema
-    /// 2. The registry contains at least one command
-    /// 3. All command names are unique (no duplicates)
+    fn unique_temp_dir() -> std::path::PathBuf {
+        let nanos = time::SystemTime::now()
+            .duration_since(time::UNIX_EPOCH)
+            .expect("time went backwards")
+            .as_nanos();
+        std::env::temp_dir().join(format!("oatty-registry-test-{nanos}"))
+    }
+
+    /// Tests that the manifest loader can read catalog metadata from disk and produce a non-empty registry.
     #[test]
     fn manifest_non_empty_and_unique_names() {
-        let registry = CommandRegistry::from_config().expect("load registry from manifest");
+        let temp_dir = unique_temp_dir();
+        fs::create_dir_all(&temp_dir).expect("create temp dir");
+        let manifest_path = temp_dir.join("manifest.bin");
+
+        let command = CommandSpec::new_http(
+            "apps".into(),
+            "list".into(),
+            "List applications".into(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/apps", None),
+            0,
+        );
+        let mut provider_contracts = IndexMap::new();
+        provider_contracts.insert(
+            "apps list".into(),
+            ProviderContract {
+                arguments: Vec::new(),
+                returns: ProviderReturnContract {
+                    fields: vec![ProviderFieldContract {
+                        name: "name".into(),
+                        r#type: Some("string".into()),
+                        tags: vec!["display".into()],
+                    }],
+                },
+            },
+        );
+
+        let manifest = RegistryManifest {
+            commands: vec![command],
+            provider_contracts,
+            ..Default::default()
+        };
+        let manifest_bytes: Vec<u8> = manifest.clone().try_into().expect("manifest serializes");
+        fs::write(&manifest_path, manifest_bytes).expect("write manifest");
+
+        let catalog = RegistryCatalog {
+            title: "Test Catalog".into(),
+            description: "Generated for unit tests".into(),
+            manifest_path: manifest_path.to_string_lossy().to_string(),
+            headers: IndexSet::<EnvVar>::new(),
+            base_urls: vec!["https://api.example.com".into()],
+            base_url_index: 0,
+            manifest: Some(manifest),
+            is_enabled: true,
+        };
+        let config = RegistryConfig {
+            catalogs: Some(vec![catalog]),
+        };
+        let registry = CommandRegistry::from_registry_config(config).expect("load registry from manifest");
         assert!(!registry.commands.is_empty(), "registry commands should not be empty");
         let mut seen = HashSet::new();
         let mut duplicates: Vec<String> = vec![];
@@ -42,5 +100,7 @@ mod tests {
         }
         assert!(duplicates.is_empty(), "duplicates seen: {}", duplicates.len());
         assert!(!registry.provider_contracts.is_empty(), "provider contracts should not be empty");
+
+        let _ = fs::remove_dir_all(&temp_dir);
     }
 }

@@ -375,6 +375,7 @@ mod tests {
             value: String::new(),
             is_secret: false,
         });
+        state.select_first_row();
         state.prepare_key_field_for_input();
 
         let validation = state.validate_focused_row();

@@ -9,17 +9,20 @@
 //! - Building requests with a consistent User-Agent and Accept headers
 //!
 //! The primary entry point is [`OattyClient`]. Create an instance via
-//! [`OattyClient::new_from_spec`], and then build requests with
+//! [`OattyClient::new`], and then build requests with
 //! [`OattyClient::request`].
 //!
 //! # Example
 //!
 //! ```ignore
+//! use indexmap::IndexSet;
 //! use oatty_api::OattyClient;
+//! use oatty_types::EnvVar;
 //! use anyhow::Result;
 //!
 //! fn main() -> Result<()> {
-//!     let client = OattyClient::new_with_base_url("https://api.example.com")?;
+//!     let headers = IndexSet::<EnvVar>::new();
+//!     let client = OattyClient::new("https://api.example.com", &headers)?;
 //!     let res = client
 //!         .request(reqwest::Method::GET, "/apps")
 //!         .send()?;
@@ -54,16 +57,12 @@ pub struct OattyClient {
 }
 
 impl OattyClient {
-    /// Construct a [`OattyClient`] from environment variables.
-    ///
-    /// Authentication:
-    /// - `OATTY_API_TOKEN` environment variable
-    ///
-    /// Construct a [`OattyClient`] using an explicit base URL.
+    /// Construct an [`OattyClient`] using an explicit base URL and optional custom headers.
     ///
     /// # Arguments
     ///
     /// * `base_url` - The full base URL for API requests (for example, `https://api.example.com`).
+    /// * `headers` - Additional headers (for example, `Authorization`) pulled from the current environment.
     ///
     /// # Returns
     ///

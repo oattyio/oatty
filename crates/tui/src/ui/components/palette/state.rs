@@ -4,8 +4,8 @@
 //! a simple state, and produces contextual suggestions (commands, flags,
 //! positionals, and values). It follows a linear command structure inspired by
 //! the Node REPL implementation:
-//!   <group> <sub> <required positionals> <optional positionals>
-//!   <required flags> <optional flags>
+//!   `<group> <sub> <required positionals> <optional positionals>`
+//!   `<required flags> <optional flags>`
 //!
 //! Key behaviors:
 //! - Positionals are suggested before flags unless the user explicitly starts a

@@ -1,4 +1,4 @@
-//! McpClientManager: registry and lifecycle management.
+//! McpClientGateway: registry and lifecycle management.
 
 use std::{
     collections::{HashMap, HashSet},
@@ -348,7 +348,7 @@ impl McpClientGateway {
     }
 }
 
-/// Lifecycle events emitted by [`McpClientManager`] for plugin state transitions.
+/// Lifecycle events emitted by [`McpClientGateway`] for plugin state transitions.
 #[derive(Debug, Clone)]
 pub enum ClientGatewayEvent {
     /// A plugin has begun its startup sequence.

@@ -45,7 +45,12 @@ impl CommandRegistry {
     /// println!("Loaded {} commands", registry.commands.len());
     /// ```
     pub fn from_config() -> Result<Self, Infallible> {
-        let mut config = RegistryConfig::load()?;
+        let config = RegistryConfig::load()?;
+        Self::from_registry_config(config)
+    }
+
+    /// Creates a registry instance from the provided configuration.
+    pub fn from_registry_config(mut config: RegistryConfig) -> Result<Self, Infallible> {
         let Some(catalogs) = config.catalogs.as_mut() else {
             return Ok(CommandRegistry {
                 config,

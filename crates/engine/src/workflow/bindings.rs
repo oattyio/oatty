@@ -2,7 +2,7 @@
 //!
 //! Workflows can declare provider arguments that reference previously resolved inputs or
 //! step outputs. This module centralizes the logic for evaluating those bindings against the
-//! current [`RunContext`](RunContext), applying the author-specified
+//! current [`RunContext`], applying the author-specified
 //! `on_missing` policies, and producing outcomes that upstream callers can act upon
 //! (auto-resolve, prompt the user, allow manual entry, or fail fast).
 

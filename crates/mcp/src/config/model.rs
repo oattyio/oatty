@@ -1,9 +1,9 @@
 //! Data models for MCP configuration.
 
-use indexmap::IndexSet;
-use oatty_types::EnvVar;
+use indexmap::{IndexMap, IndexSet};
+use oatty_types::{EnvSource, EnvVar};
 use oatty_util::InterpolationError;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use thiserror::Error;
@@ -28,6 +28,7 @@ pub struct McpServer {
     pub args: Option<Vec<String>>,
 
     /// Environment variables to set for the process.
+    #[serde(default, deserialize_with = "deserialize_env_var_set")]
     pub env: IndexSet<EnvVar>,
 
     /// Working directory for the process.
@@ -37,6 +38,7 @@ pub struct McpServer {
     pub base_url: Option<Url>,
 
     /// HTTP headers to include in requests.
+    #[serde(default, deserialize_with = "deserialize_env_var_set")]
     pub headers: IndexSet<EnvVar>,
 
     /// Optional authorization configuration (e.g., Basic credentials).
@@ -81,6 +83,36 @@ impl McpServer {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum EnvVarCollection {
+    Sequence(Vec<EnvVar>),
+    Map(IndexMap<String, String>),
+}
+
+fn deserialize_env_var_set<'de, D>(deserializer: D) -> Result<IndexSet<EnvVar>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let maybe_collection = Option::<EnvVarCollection>::deserialize(deserializer)?;
+    let mut set = IndexSet::new();
+    if let Some(collection) = maybe_collection {
+        match collection {
+            EnvVarCollection::Sequence(items) => {
+                for var in items {
+                    set.insert(var);
+                }
+            }
+            EnvVarCollection::Map(map) => {
+                for (key, value) in map {
+                    set.insert(EnvVar::new(key, value, EnvSource::File));
+                }
+            }
+        }
+    }
+    Ok(set)
+}
+
 /// Authorization configuration for MCP servers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -92,7 +124,7 @@ pub struct McpAuthConfig {
     /// Password (supports interpolation).
     pub password: Option<String>,
     /// Token (supports interpolation). If present without username/password,
-    /// constructs Basic auth using "<token>:" as the user:pass pair.
+    /// constructs Basic auth using `"<token>:"` as the user:pass pair.
     pub token: Option<String>,
     /// Optional custom header name; defaults to "Authorization" when omitted.
     pub header_name: Option<String>,

@@ -285,7 +285,7 @@ pub mod command {
     /// ```rust
     /// use oatty_types::{CommandExecution, CommandSpec, HttpCommandSpec};
     ///
-    /// let http = HttpCommandSpec::new("GET", "/apps", "https://api.example.com", Vec::new(), None);
+    /// let http = HttpCommandSpec::new("GET", "/apps", None);
     /// let spec = CommandSpec::new_http(
     ///     "apps".into(),
     ///     "apps:list".into(),
@@ -1331,16 +1331,22 @@ pub mod plugin {
     }
 
     /// Environment variable associated with a plugin.
-    #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+    #[derive(Debug, Default, Clone, Serialize, Deserialize, Eq, PartialEq)]
     pub struct EnvVar {
         /// Environment variable key.
         pub key: String,
         /// Environment variable value (masked for secrets).
         pub value: String,
         /// Source of the environment variable.
+        #[serde(default)]
         pub source: EnvSource,
         /// Whether the value is effectively resolved.
+        #[serde(default = "env_var_effective_true")]
         pub effective: bool,
+    }
+
+    fn env_var_effective_true() -> bool {
+        true
     }
 
     impl Hash for EnvVar {
@@ -1383,9 +1389,10 @@ pub mod plugin {
     }
 
     /// Source of an environment variable.
-    #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+    #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
     pub enum EnvSource {
         /// From the configuration file (plain text).
+        #[default]
         File,
         /// From a secret stored in the keychain.
         Secret,

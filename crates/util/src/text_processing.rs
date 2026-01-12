@@ -758,7 +758,7 @@ pub fn truncate_with_ellipsis(s: &str, max_len: usize) -> String {
 /// use oatty_util::text_processing::line_clamp;
 ///
 /// let s = "Hello, world!";
-/// assert_eq!(line_clamp(s, 2, 5), "Hello…");
+/// assert_eq!(line_clamp(s, 2, 5), "Hello, wor…");
 /// ```
 pub fn line_clamp(s: &str, num_lines: usize, line_width: usize) -> String {
     truncate_with_ellipsis(s, num_lines.mul(line_width))

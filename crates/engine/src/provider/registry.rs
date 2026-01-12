@@ -547,13 +547,31 @@ fn default_provider_contract() -> ProviderContract {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use oatty_types::CommandExecution;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
+    fn build_registry_with_apps_list() -> CommandRegistry {
+        let spec = CommandSpec {
+            group: "apps".into(),
+            name: "list".into(),
+            catalog_identifier: 0,
+            summary: "List applications".into(),
+            positional_args: Vec::new(),
+            flags: Vec::new(),
+            execution: CommandExecution::default(),
+        };
+        let mut registry = CommandRegistry {
+            commands: vec![spec],
+            ..Default::default()
+        };
+        registry.provider_contracts.insert("apps list".into(), default_provider_contract());
+        registry
+    }
+
     #[test]
     fn get_contract_accepts_space_form_and_rejects_colon_form() {
-        // Build a real registry from the embedded schema; no network calls are made in get_contract.
-        let registry = Arc::new(Mutex::new(CommandRegistry::from_config().unwrap()));
+        let registry = Arc::new(Mutex::new(build_registry_with_apps_list()));
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
@@ -568,5 +586,18 @@ mod tests {
         // Legacy colon-separated form must be rejected now.
         let bad = provider.get_contract("apps:list");
         assert!(bad.is_none(), "colon form should not be accepted");
+    }
+
+    #[test]
+    fn split_identifier_parses_whitespace_form() {
+        let parsed = split_identifier("apps list");
+        assert_eq!(parsed, Some(("apps".into(), "list".into())));
+    }
+
+    #[test]
+    fn split_identifier_rejects_invalid_forms() {
+        assert!(split_identifier("apps").is_none());
+        assert!(split_identifier("apps:list").is_none());
+        assert!(split_identifier("  ").is_none());
     }
 }

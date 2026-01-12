@@ -349,7 +349,7 @@ pub struct WorkflowOutputField {
     /// Optional description enhancing picker UX.
     #[serde(default)]
     pub description: Option<String>,
-    /// Optional JSON type hint (object, array<uuid>, etc.).
+    /// Optional JSON type hint (object, `array<uuid>`, etc.).
     #[serde(default)]
     pub r#type: Option<String>,
 }

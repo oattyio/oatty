@@ -2,7 +2,7 @@
 //!
 //! The workflow engine evaluates provider-backed inputs iteratively as users
 //! progress through a run. This module tracks the current workflow, maintains
-//! the mutable [`RunContext`](RunContext), and persists the
+//! the mutable [`RunContext`], and persists the
 //! outcome of each provider argument resolution, including manual overrides
 //! supplied through the UI.
 
