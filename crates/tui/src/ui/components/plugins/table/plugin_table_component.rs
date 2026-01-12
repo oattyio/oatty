@@ -54,6 +54,13 @@ impl PluginTableHitArea {
         }
     }
 }
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct PluginTableLayout {
+    search_area: Rect,
+    search_inner_area: Rect,
+    table_area: Rect,
+}
 impl PluginTableHitArea {
     fn focus_flag<'a>(&'a self, app: &'a App) -> &'a FocusFlag {
         match self {
@@ -88,6 +95,7 @@ impl PluginTableHitArea {
 #[derive(Debug, Default, PartialEq)]
 pub struct PluginsTableComponent {
     hit_areas: Vec<PluginTableHitArea>,
+    layout: PluginTableLayout,
 }
 
 impl PluginsTableComponent {
@@ -187,7 +195,7 @@ impl PluginsTableComponent {
         let is_running = selected_item.map(|item| item.status == PluginStatus::Running).unwrap_or(false);
         let has_active_add = app.plugins.add.is_some();
         let buttons = vec![
-            (&state.f_add, "Add", button_columns[0], is_selected && !has_active_add),
+            (&state.f_add, "Add", button_columns[0], !is_selected && !has_active_add),
             (&state.f_start, "Start", button_columns[2], is_selected && !is_running),
             (&state.f_stop, "Stop", button_columns[4], is_selected && is_running),
             (&state.f_edit, "Edit", button_columns[6], is_selected && !has_active_add),
@@ -424,54 +432,6 @@ impl Component for PluginsTableComponent {
     }
     /// Handles mouse events within the application, updating the plugins table state
     /// and potentially generating a set of effects based on the user's interaction.
-    ///
-    /// This function is responsible for processing mouse interactions by checking
-    /// whether a left mouse click occurred within a certain area of the plugins table
-    /// (determined by the `last_area` and `per_item_area` dimensions). If a valid index
-    /// is identified based on the mouse position, the `f_grid` state of the plugin
-    /// table's grid is updated.
-    ///
-    /// # Arguments
-    ///
-    /// * `app` - A mutable reference to the application state (`App`), allowing modifications
-    ///   based on the interaction.
-    /// * `mouse` - A `MouseEvent` object which represents the properties of the mouse event,
-    ///   including its position, button type, and event kind (e.g., mouse down, mouse up).
-    ///
-    /// # Returns
-    ///
-    /// A `Vec<Effect>` which represents any effects resulting from the mouse interaction.
-    /// In this implementation, the vector is always empty.
-    ///
-    /// # Details
-    ///
-    /// - If the `MouseEventKind` is a left mouse button press (`MouseEventKind::Down(MouseButton::Left)`),
-    ///   the function attempts to compute an index, `maybe_idx`, corresponding to the mouse position by
-    ///   using the helper function `find_target_index_by_mouse_position`.
-    /// - If a valid index, `maybe_idx`, is found, the `f_grid` attribute of the plugins table grid
-    ///   (`app.plugins.table.f_grid`) is set to `true`.
-    /// - No effects are added to the returned `effects` vector in this implementation,
-    ///   but the infrastructure exists for future enhancements.
-    ///
-    /// # Notes
-    ///
-    /// This function assumes that `last_area` and `per_item_area` are correctly initialized within
-    /// the `plugins.table` before calling this function. Additionally, `find_target_index_by_mouse_position`
-    /// should be properly implemented to determine the target index based on mouse coordinates.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// let mut app = App::new();
-    /// let mouse_event = MouseEvent {
-    ///     kind: MouseEventKind::Down(MouseButton::Left),
-    ///     column: 5,
-    ///     row: 10,
-    /// };
-    /// let mut handler = EventHandler::new();
-    /// let effects = handler.handle_mouse_events(&mut app, mouse_event);
-    /// assert!(effects.is_empty());
-    /// ```
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
         if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
             return Vec::new();
@@ -488,6 +448,11 @@ impl Component for PluginsTableComponent {
 
         if let Some((flag, rect)) = maybe_focus_flag {
             app.focus.focus(flag);
+            if flag == &app.plugins.table.f_search {
+                let relative_column = position.x.saturating_sub(self.layout.search_inner_area.x);
+                app.plugins.table.set_cursor_from_column(relative_column);
+                return Vec::new();
+            }
             if flag == &app.plugins.table.f_grid {
                 return self.hit_test_table(app, *rect, position);
             }
@@ -514,7 +479,7 @@ impl Component for PluginsTableComponent {
         let theme = &*app.ctx.theme;
         let table_state = &mut app.plugins.table;
         let is_search_focused = table_state.f_search.get();
-        let header_block = theme_helpers::block(theme, Some("Search Plugins"), is_search_focused);
+        let header_block = theme_helpers::block(theme, Some("Search Extensions"), is_search_focused);
 
         // Search input
         let header_inner = header_block.inner(blocks[0]);
@@ -558,6 +523,11 @@ impl Component for PluginsTableComponent {
             PluginTableHitArea::Table(table_area, true),
         ]);
         self.hit_areas = hit_areas;
+        self.layout = PluginTableLayout {
+            search_area: blocks[0],
+            search_inner_area: header_inner,
+            table_area,
+        };
     }
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;

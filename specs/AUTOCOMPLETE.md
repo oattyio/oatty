@@ -16,7 +16,7 @@ A single-line **command palette** that supports:
 - **Inline ghost-text** and a **popup suggestion list**  
 - **History (persisted between sessions) & reverse-search** (Ctrl-R) à la *rustyline*  
 - **Emacs/Vi keybindings**, word/char editing, kill/yank, transpose, etc.  
-- **Schema-aware** (Hyper-Schema + MCP tools) + per-command **value providers**  
+- **Schema-aware** (OpenAPI + MCP tools) + per-command **value providers**  
 - **Low-latency** on thousands of entries inside a TUI frame
 
 ---
@@ -75,7 +75,7 @@ No shell expansion or globbing—just robust tokenization for CLI grammar.
 
 ## 5) Completion sources (priority order)
 
-1. **Command names** from the **Unified Registry** (core Hyper-Schema commands, workflows, MCP tools).  
+1. **Command names** from the **Unified Registry** (core OpenAPI commands, workflows, MCP tools).  
 2. **Flags / positionals** from the selected command’s schema (required first).  
 3. **Values**:
    - **Static** enums/defaults from schema  
@@ -197,7 +197,7 @@ pub enum ItemKind { Command, Flag, Value, History }
 
 ## 12) Integration points
 
-- **Unified Registry**: merges core (Hyper-Schema), workflows, and MCP tools.  
+- **Unified Registry**: merges core (OpenAPI), workflows, and MCP tools.  
 - **Value Providers**:
   - Built-ins: list apps, addons, regions, stacks.  
   - Plugins: MCP `autocomplete(tool, field, partial)` with timeout and cache.
@@ -576,9 +576,9 @@ ghost: :config:set --app
 
 ```
 (reverse-search) api_ ▮
-  heroku config:set API_URL=https://ex.com -a demo
-> heroku config:get API_URL -a demo
-  heroku releases --app demo
+  oatty config:set API_URL=https://ex.com -a demo
+> oatty config:get API_URL -a demo
+  oatty releases --app demo
 ```
 
 **Notes**:  

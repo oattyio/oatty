@@ -70,7 +70,7 @@ let spec = bundle.workflows.values().next().unwrap();
 let mut ctx = RunContext::default();
 ctx.inputs.insert("app_name".into(), serde_json::json!("myapp"));
 ctx.inputs.insert("region".into(), serde_json::json!("us"));
-ctx.inputs.insert("addon_plan".into(), serde_json::json!("heroku-postgresql:hobby-dev"));
+ctx.inputs.insert("addon_plan".into(), serde_json::json!("postgresql:hobby-dev"));
 
 // Uses the Noop runner by default; safe for previews/tests
 let results = execute_workflow(spec, &mut ctx)?;
@@ -82,7 +82,7 @@ assert!(!results.is_empty());
 ```rust
 use oatty_engine::{parse_workflow_file, RunContext, execute_workflow_with_runner, RegistryCommandRunner};
 
-// Requires HEROKU_API_KEY in the environment
+// Requires OATTY_API_TOKEN in the environment
 let runner = RegistryCommandRunner::from_env()?;
 let bundle = parse_workflow_file("crates/engine/workflows/collaborator_lifecycle.yaml")?;
 let spec = bundle.workflows.values().next().unwrap();
@@ -165,7 +165,7 @@ The engine supports rich template expressions for dynamic value resolution:
 ### Environment Variables
 ```yaml
 region: "${{ env.REGION }}"
-api_key: "${{ env.HEROKU_API_KEY }}"
+api_key: "${{ env.OATTY_API_TOKEN }}"
 ```
 
 ### Workflow Inputs

@@ -198,7 +198,7 @@ The system now supports **scoped providers** that can use earlier path segments 
   - Scoped provider: `apps:addons:list` (scoped by app)
   - **Preference**: Scoped provider with successful binding to earlier `app` argument
 
-This enables commands like `heroku apps addons:info <app> <addon>` to use the scoped `apps:addons:list` provider, which can filter addons by the specified app.
+This enables commands like `oatty apps addons:info <app> <addon>` to use the scoped `apps:addons:list` provider, which can filter addons by the specified app.
 
 ## Implementation Details
 

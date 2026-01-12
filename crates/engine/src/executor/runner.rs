@@ -7,11 +7,8 @@ use tokio::{runtime::Handle, task};
 use crate::resolve::RunContext;
 
 use oatty_api::OattyClient;
-use oatty_registry::{CommandRegistry, CommandSpec, find_by_group_and_cmd};
-use oatty_util::{
-    build_path,
-    http::{build_range_header_from_body, parse_response_json_strict, strip_range_body_fields},
-};
+use oatty_registry::CommandRegistry;
+use oatty_util::{build_path, http::parse_response_json_strict};
 
 /// Execute a single command.
 ///
@@ -43,25 +40,15 @@ impl CommandRunner for NoopRunner {
 }
 
 /// Registry-backed command runner that resolves `run` identifiers via the
-/// command registry and executes HTTP requests with the Oatty API client.
+/// command registry and executes HTTP requests using the catalog-selected base URL.
 pub struct RegistryCommandRunner {
     registry: CommandRegistry,
-    client: OattyClient,
 }
 
 impl RegistryCommandRunner {
     /// Create a new registry-backed runner from explicit dependencies.
-    pub fn new(registry: CommandRegistry, client: OattyClient) -> Self {
-        Self { registry, client }
-    }
-
-    /// Create a new registry-backed runner by loading the embedded schema and
-    /// constructing an `OattyClient` from environment variables.
-    pub fn from_spec(spec: &CommandSpec) -> Result<Self> {
-        let registry = CommandRegistry::from_embedded_schema()?;
-        let http = spec.http().ok_or_else(|| anyhow!("command '{}' is not HTTP-backed", spec.name))?;
-        let client = OattyClient::new_from_service_id(http.service_id)?;
-        Ok(Self { registry, client })
+    pub fn new(registry: CommandRegistry) -> Self {
+        Self { registry }
     }
 }
 
@@ -74,7 +61,7 @@ impl CommandRunner for RegistryCommandRunner {
             .filter(|(g, n)| !g.is_empty() && !n.is_empty())
             .ok_or_else(|| anyhow!("invalid run identifier: {run}"))?;
 
-        let spec = find_by_group_and_cmd(&self.registry.commands, &group, &name)?;
+        let spec = self.registry.find_by_group_and_cmd(&group, &name)?;
 
         if let Some(mcp) = spec.mcp() {
             return Err(anyhow!(
@@ -86,6 +73,15 @@ impl CommandRunner for RegistryCommandRunner {
         }
         let http = spec.http().ok_or_else(|| anyhow!("command '{}' is not HTTP-backed", spec.name))?;
         let method = Method::from_str(&http.method).unwrap_or(Method::GET);
+        let base_url = self
+            .registry
+            .resolve_base_url_for_command(&spec)
+            .ok_or_else(|| anyhow!("base url not configured"))?;
+        let headers = self
+            .registry
+            .resolve_headers_for_command(&spec)
+            .ok_or_else(|| anyhow!("could not determine headers for command: {}", spec.canonical_id()))?;
+        let client = OattyClient::new(base_url, headers).map_err(|error| anyhow!("could not create the HTTP client: {error}"))?;
 
         // Inputs map from `with` if object
         let mut with_map: serde_json::Map<String, Value> = match with {
@@ -102,7 +98,7 @@ impl CommandRunner for RegistryCommandRunner {
         }
 
         let path = build_path(&http.path, &path_variables);
-        let mut req = self.client.request(method.clone(), &path);
+        let mut req = client.request(method.clone(), &path);
 
         match method {
             Method::GET | Method::DELETE => {
@@ -123,17 +119,12 @@ impl CommandRunner for RegistryCommandRunner {
             }
             _ => {
                 // Prefer body if provided; otherwise, fall back to remaining `with` map as body
-                let mut body_obj: serde_json::Map<String, Value> = match body {
+                let body_obj: serde_json::Map<String, Value> = match body {
                     Some(Value::Object(m)) => m.clone(),
                     Some(other) => serde_json::Map::from_iter([("value".into(), other.clone())]),
                     None => with_map,
                 };
 
-                // Build Range header if present and strip body fields
-                if let Some(range_header) = build_range_header_from_body(&body_obj) {
-                    req = req.header("Range", range_header);
-                    body_obj = strip_range_body_fields(body_obj);
-                }
                 req = req.json(&Value::Object(body_obj));
             }
         }

@@ -4,8 +4,8 @@
 //! a simple state, and produces contextual suggestions (commands, flags,
 //! positionals, and values). It follows a linear command structure inspired by
 //! the Node REPL implementation:
-//!   <group> <sub> <required positionals> <optional positionals>
-//!   <required flags> <optional flags>
+//!   `<group> <sub> <required positionals> <optional positionals>`
+//!   `<required flags> <optional flags>`
 //!
 //! Key behaviors:
 //! - Positionals are suggested before flags unless the user explicitly starts a
@@ -18,19 +18,22 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use crate::ui::components::palette::suggestion_engine::SuggestionEngine;
 use crate::ui::theme::Theme;
+use crate::ui::{
+    components::palette::suggestion_engine::SuggestionEngine,
+    utils::{SpanCollector, truncate_to_width},
+};
 use chrono::Utc;
 
 use super::suggestion_engine::{parse_user_flags_args, required_flags_remaining};
 use crate::ui::components::common::TextInputState;
 use crate::ui::theme::theme_helpers::{create_spans_with_match, highlight_segments};
 use oatty_engine::provider::{PendingProviderFetch, ValueProvider};
-use oatty_registry::{CommandRegistry, find_by_group_and_cmd};
+use oatty_registry::CommandRegistry;
 use oatty_types::{CommandExecution, CommandSpec, Effect, ExecOutcome, ItemKind, Modal, SuggestionItem};
 use oatty_util::{
     HistoryKey, HistoryScope, HistoryScopeKind, HistoryStore, StoredHistoryValue, has_meaningful_value, lex_shell_like,
-    lex_shell_like_ranged, truncate_with_ellipsis, value_contains_secret,
+    lex_shell_like_ranged, value_contains_secret,
 };
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::widgets::{ListItem, ListState};
@@ -41,7 +44,6 @@ use ratatui::{
 };
 use serde_json::Value;
 use tracing::warn;
-use unicode_width::UnicodeWidthStr;
 
 /// Locate the index of the token under the cursor.
 ///
@@ -124,8 +126,8 @@ impl PaletteState {
             registry,
             history_store,
             history_profile_id,
-            container_focus: FocusFlag::new().with_name("heroku.palette"),
-            f_input: FocusFlag::new().with_name("heroku.palette.input"),
+            container_focus: FocusFlag::new().with_name("oatty.palette"),
+            f_input: FocusFlag::new().with_name("oatty.palette.input"),
             input: String::new(),
             cursor_position: 0,
             ghost_text: None,
@@ -180,20 +182,11 @@ impl PaletteState {
         self.suggestions.len()
     }
 
-    /// Derive the command spec from the current input tokens ("group sub").
-    fn selected_command_from_input(&self, commands: &[CommandSpec]) -> Option<CommandSpec> {
-        let tokens: Vec<String> = lex_shell_like(&self.input);
-        if tokens.len() < 2 {
-            return None;
-        }
-        let group = &tokens[0];
-        let name = &tokens[1];
-        find_by_group_and_cmd(commands, group.as_str(), name.as_str()).ok()
-    }
+    /// Selected command for help: prefer highlighted suggestion if open, else
+    /// parse input.
+    pub fn selected_command(&self) -> Option<CommandSpec> {
+        let lock = self.registry.lock().ok()?;
 
-    /// Derive the command spec from the currently selected suggestion when it
-    /// is a command.
-    fn selected_command_from_suggestion(&self, commands: &[CommandSpec]) -> Option<CommandSpec> {
         let item = self.suggestions.get(self.list_state.selected()?)?;
         if !matches!(item.kind, ItemKind::Command) {
             return None;
@@ -201,19 +194,19 @@ impl PaletteState {
         let mut parts = item.insert_text.split_whitespace();
         let group = parts.next().unwrap_or("");
         let name = parts.next().unwrap_or("");
-        find_by_group_and_cmd(commands, group, name).ok()
-    }
 
-    /// Selected command for help: prefer highlighted suggestion if open, else
-    /// parse input.
-    pub fn selected_command(&self) -> Option<CommandSpec> {
-        let lock = self.registry.lock().ok()?;
-        let commands = &lock.commands;
-        let selected_command = self.selected_command_from_suggestion(commands);
+        let selected_command = lock.find_by_group_and_cmd(group, name).ok();
         if self.is_suggestions_open && selected_command.is_some() {
             return selected_command;
         }
-        self.selected_command_from_input(commands)
+
+        let tokens: Vec<String> = lex_shell_like(&self.input);
+        if tokens.len() < 2 {
+            return None;
+        }
+        let group = &tokens[0];
+        let name = &tokens[1];
+        lock.find_by_group_and_cmd(group.as_str(), name.as_str()).ok()
     }
 
     /// Get the current input text
@@ -356,7 +349,7 @@ impl PaletteState {
             let Ok(CommandSpec {
                 execution: CommandExecution::Http(execution),
                 ..
-            }) = find_by_group_and_cmd(&lock.commands, group, name)
+            }) = lock.find_by_group_and_cmd(group, name)
             else {
                 return;
             };
@@ -448,6 +441,25 @@ impl PaletteState {
             self.draft_input = None;
         }
         self.with_text_input(|ti| ti.backspace());
+    }
+
+    /// Remove the character immediately after the cursor.
+    ///
+    /// This method removes the character after the cursor and adjusts
+    /// the cursor position accordingly, handling multi-byte UTF-8
+    /// characters correctly.
+    ///
+    /// - No-op if the cursor is at the end of the input.
+    /// - Handles multi-byte UTF-8 characters correctly.
+    ///
+    /// Returns: nothing; mutates `self.input` and `self.cursor`.
+    pub fn reduce_delete(&mut self) {
+        // Editing cancels history browsing
+        if self.history_index.is_some() {
+            self.history_index = None;
+            self.draft_input = None;
+        }
+        self.with_text_input(|ti| ti.delete());
     }
 
     /// Finalize the suggestions list for the UI: rank, truncate, ghost text, and
@@ -831,7 +843,7 @@ impl PaletteState {
     /// Example:
     ///
     /// ```rust,ignore
-    /// use heroku_tui::ui::components::palette::state::PaletteState;
+    /// use oatty_tui::ui::components::palette::state::PaletteState;
     /// use Registry;
     ///
     /// let mut st = PaletteState::default();
@@ -849,7 +861,6 @@ impl PaletteState {
             let commands = &lock.commands;
 
             let result = SuggestionEngine::build(commands, providers, &self.input);
-
             let mut items = result.items;
             pending_fetches = result.pending_fetches;
             self.provider_loading = result.provider_loading || !pending_fetches.is_empty();
@@ -870,7 +881,7 @@ impl PaletteState {
             if items.is_empty() && tokens.len() >= 2 {
                 let group = tokens[0].as_str();
                 let name = tokens[1].as_str();
-                if let Ok(spec) = find_by_group_and_cmd(commands, group, name) {
+                if let Ok(spec) = lock.find_by_group_and_cmd(group, name) {
                     let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
                     let (user_flags, user_args, _flag_values) = parse_user_flags_args(&spec, parts);
                     if let Some(hint) = self.eol_flag_hint(&spec, &user_flags) {
@@ -897,7 +908,7 @@ impl PaletteState {
                 .registry
                 .lock()
                 .ok()
-                .and_then(|lock| find_by_group_and_cmd(&lock.commands, group.as_str(), name.as_str()).ok())
+                .and_then(|lock| lock.find_by_group_and_cmd(group.as_str(), name.as_str()).ok())
             else {
                 return pending_fetches;
             };
@@ -1035,11 +1046,21 @@ impl PaletteState {
     /// # Arguments
     ///
     /// * `execution_outcome` - The result of the command execution
-    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &ExecOutcome) -> Vec<Effect> {
+    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: ExecOutcome) -> Vec<Effect> {
         let mut effects = Vec::new();
-        let (status, log, value, request_id) = match execution_outcome {
-            ExecOutcome::Http(status_code, log, value, _, request_id) => (status_code, log, value.clone(), request_id),
-            ExecOutcome::Mcp(log, value, request_id) => (&200, log, value.clone(), request_id),
+        let (status, log, is_null, request_id) = match &execution_outcome {
+            ExecOutcome::Http {
+                status_code,
+                log_entry,
+                payload,
+                request_id,
+                ..
+            } => (status_code, log_entry, payload.is_null(), request_id),
+            ExecOutcome::Mcp {
+                log_entry,
+                payload,
+                request_id,
+            } => (&200, log_entry, payload.is_null(), request_id),
             _ => return effects,
         };
 
@@ -1053,7 +1074,7 @@ impl PaletteState {
             return effects;
         }
 
-        if value.is_null() {
+        if is_null {
             self.error_message = Some("Command completed successfully but no value was returned".to_string());
             self.reduce_clear_all();
             return effects;
@@ -1070,7 +1091,7 @@ impl PaletteState {
         }
 
         self.reduce_clear_all();
-        effects.push(Effect::ShowModal(Modal::Results(Box::new(execution_outcome.clone()))));
+        effects.push(Effect::ShowModal(Modal::Results(Box::new(execution_outcome))));
 
         effects
     }
@@ -1201,59 +1222,6 @@ const DEFAULT_FLAG_DESCRIPTION_WIDTH: u16 = 80;
 const DEFAULT_VALUE_META_WIDTH: u16 = 60;
 const DEFAULT_POSITIONAL_HELP_WIDTH: u16 = 80;
 const MIN_TRUNCATION_WIDTH: u16 = 4;
-
-#[derive(Default)]
-struct SpanCollector {
-    spans: Vec<Span<'static>>,
-    width: u16,
-}
-
-impl SpanCollector {
-    fn with_capacity(capacity: usize) -> Self {
-        Self {
-            spans: Vec::with_capacity(capacity),
-            width: 0,
-        }
-    }
-
-    fn push(&mut self, span: Span<'static>) {
-        self.width = self.width.saturating_add(span_display_width(&span));
-        self.spans.push(span);
-    }
-
-    fn extend(&mut self, spans: Vec<Span<'static>>) {
-        for span in spans {
-            self.push(span);
-        }
-    }
-
-    fn remaining_with_fallback(&self, width_hint: Option<u16>, fallback: u16) -> u16 {
-        width_hint.unwrap_or(fallback).saturating_sub(self.width)
-    }
-
-    fn into_vec(self) -> Vec<Span<'static>> {
-        self.spans
-    }
-}
-
-fn span_display_width(span: &Span<'_>) -> u16 {
-    UnicodeWidthStr::width(span.content.as_ref()) as u16
-}
-
-fn truncate_to_width(text: &str, available: u16) -> String {
-    if available == 0 {
-        return String::new();
-    }
-    let character_count = text.chars().count() as u16;
-    if character_count <= available {
-        return text.to_string();
-    }
-    if available == 1 {
-        return "…".to_string();
-    }
-    let max_columns = available.saturating_sub(1) as usize;
-    truncate_with_ellipsis(text, max_columns)
-}
 
 fn normalized_width_hint(width_hint: Option<u16>) -> Option<u16> {
     width_hint
@@ -1459,7 +1427,7 @@ fn infer_value_style(theme: &dyn Theme, value: &str) -> Style {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ui::theme::dracula::DraculaTheme;
+    use crate::ui::{theme::dracula::DraculaTheme, utils::span_display_width};
     use oatty_util::{DEFAULT_HISTORY_PROFILE, InMemoryHistoryStore};
 
     fn palette_state_with_registry(registry: Arc<Mutex<CommandRegistry>>) -> PaletteState {
@@ -1468,7 +1436,7 @@ mod tests {
     }
 
     fn make_palette_state() -> PaletteState {
-        let registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap()));
+        let registry = Arc::new(Mutex::new(CommandRegistry::from_config().unwrap()));
         palette_state_with_registry(registry)
     }
 
@@ -1478,7 +1446,7 @@ mod tests {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::Hasher;
 
-        let registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap()));
+        let registry = Arc::new(Mutex::new(CommandRegistry::from_config().unwrap()));
         let store: Arc<InMemoryHistoryStore> = Arc::new(InMemoryHistoryStore::new());
         let mut palette = PaletteState::new(
             Arc::clone(&registry),
@@ -1498,8 +1466,13 @@ mod tests {
         palette.record_pending_execution(command_id.clone(), command_input.to_string());
         palette.set_cmd_exec_hash(request_hash);
 
-        let outcome = ExecOutcome::Http(200, "ok".into(), json!({"ok": true}), None, request_hash);
-        palette.process_general_execution_result(&Box::new(outcome));
+        let outcome = ExecOutcome::Http {
+            status_code: 200,
+            log_entry: "ok".into(),
+            payload: json!({"ok": true}),
+            request_id: request_hash,
+        };
+        palette.process_general_execution_result(outcome);
 
         assert_eq!(palette.history.last().map(|s| s.as_str()), Some(command_input));
         let stored_value = palette.stored_commands.get(&command_id).and_then(|record| record.value.as_str());
@@ -1520,8 +1493,8 @@ mod tests {
         let mut st = make_palette_state();
         st.set_input("apps info hero".into());
         st.set_cursor(st.input().len());
-        st.apply_accept_positional_suggestion("heroku-prod");
-        assert_eq!(st.input(), "apps info heroku-prod ");
+        st.apply_accept_positional_suggestion("sample-prod");
+        assert_eq!(st.input(), "apps info sample-prod ");
     }
 
     #[test]
@@ -1531,13 +1504,13 @@ mod tests {
         st.set_input("apps info <app> ".into());
         st.set_cursor(st.input().len());
         // Selecting a provider value (non-flag) should replace placeholder
-        st.apply_accept_non_command_suggestion("heroku-prod");
-        assert_eq!(st.input(), "apps info heroku-prod ");
+        st.apply_accept_non_command_suggestion("sample-prod");
+        assert_eq!(st.input(), "apps info sample-prod ");
     }
 
     #[test]
     fn handle_provider_fetch_failure_clears_loading_placeholder_and_sets_error() {
-        let registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().expect("embedded registry")));
+        let registry = Arc::new(Mutex::new(CommandRegistry::from_config().expect("embedded registry")));
         let mut state = palette_state_with_registry(registry);
         state.set_input("apps info --app ".to_string());
         state.provider_loading = true;
@@ -1604,7 +1577,7 @@ mod tests {
     }
 
     fn run_palette(input: &str, cursor: usize, ops: &[Op]) -> (String, usize) {
-        let reg = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema().unwrap()));
+        let reg = Arc::new(Mutex::new(CommandRegistry::from_config().unwrap()));
         let mut st = palette_state_with_registry(reg);
         st.set_input(input.to_string());
         st.set_cursor(cursor);

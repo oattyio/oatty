@@ -6,7 +6,7 @@
 use crate::ui::components::common::TextInputState;
 use anyhow::{Result, anyhow};
 use oatty_engine::workflow::document::build_runtime_catalog;
-use oatty_registry::{CommandRegistry, feat_gate::feature_workflows};
+use oatty_registry::CommandRegistry;
 use oatty_types::workflow::RuntimeWorkflow;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::{layout::Rect, widgets::ListState};
@@ -43,15 +43,6 @@ impl WorkflowListState {
     ///
     /// The list is populated once, and later calls are inexpensive no-ops.
     pub fn ensure_loaded(&mut self, registry: &Arc<Mutex<CommandRegistry>>) -> Result<()> {
-        if !feature_workflows() {
-            self.workflows.clear();
-            self.filtered_indices.clear();
-            self.search_input.set_input("");
-            self.search_input.set_cursor(0);
-            self.list_state.select(None);
-            return Ok(());
-        }
-
         if self.workflows.is_empty() {
             let definitions = &registry.lock().map_err(|_| anyhow!("could not lock registry"))?.workflows;
 
@@ -107,9 +98,15 @@ impl WorkflowListState {
         self.search_input.input()
     }
 
-    /// Returns the current cursor (byte index) within the search query.
-    pub fn search_cursor(&self) -> usize {
-        self.search_input.cursor()
+    /// Returns the search cursor position in display columns (character count).
+    pub fn search_cursor_columns(&self) -> usize {
+        self.search_input.cursor_columns()
+    }
+
+    /// Sets the search cursor based on a display column within the search input.
+    pub fn set_search_cursor_from_column(&mut self, column: u16) {
+        let cursor = self.search_input.cursor_index_for_column(column);
+        self.search_input.set_cursor(cursor);
     }
 
     /// Move search cursor one character to the left (UTF‑8 safe).

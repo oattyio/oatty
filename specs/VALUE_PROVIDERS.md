@@ -8,7 +8,7 @@ This document describes the **ValueProvider** system for workflows and command e
 
 ValueProviders enable **dynamic and context-aware completion of values** for command flags and positional arguments. They bridge between:
 
-- **Schema-driven flags/args** (from the JSON Hyper-Schema).
+- **Schema-driven flags/args** (from OpenAPI documents).
 - **Real-world dynamic data** (apps, addons, regions, pipelines, team members, etc.).
 - **Workflow orchestration** (reusing outputs of previous steps as inputs).
 

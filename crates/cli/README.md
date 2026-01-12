@@ -2,7 +2,7 @@ Oatty CLI (Rust) — Binary Entry
 
 Overview
 - Entrypoint for the Rust-based Oatty CLI workspace.
-- Builds a dynamic Clap command tree from the registry (derived from the Hyper-Schema) and delegates:
+- Builds a dynamic Clap command tree from the registry (derived from OpenAPI documents) and delegates:
   - No subcommand: launches the interactive TUI (terminal UI).
   - Group + command: executes the command via the API client.
   - Workflow subcommands (feature-gated): preview/run YAML/JSON workflows using the engine.
@@ -17,21 +17,21 @@ Key Features
 
 Auth & Config
 - Auth (handled by `oatty-api`):
-  - `HEROKU_API_KEY` environment variable.
-- Default base URL: `https://api.heroku.com`.
-- Headers: Accept `application/vnd.heroku+json; version=3`, a sensible `User-Agent`.
+  - `OATTY_API_TOKEN` environment variable.
+- Base URL: derived from OpenAPI `servers` metadata in the registry.
+- Headers: `Accept: application/json`, plus a sensible `User-Agent`.
 
 Usage
 - Launch TUI (no subcommand):
   - `cargo run -p oatty-cli` (or installed binary `oatty`)
 - Execute a command directly:
   - `cargo run -p oatty-cli -- apps info <app>`
-  - With auth: `HEROKU_API_KEY=... cargo run -p oatty-cli -- apps info <app>`
+  - With auth: `OATTY_API_TOKEN=... cargo run -p oatty-cli -- apps info <app>`
 - Enable workflows:
   - `FEATURE_WORKFLOWS=1 cargo run -p oatty-cli -- workflow preview --file workflows/create_app_and_db.yaml`
 
 Development
-- Built from `oatty_registry::Registry::from_embedded_schema()`, which walks the Hyper-Schema and produces `CommandSpec` entries.
+- Built from `oatty_registry::Registry::from_embedded_schema()`, which walks the OpenAPI-derived manifest and produces `CommandSpec` entries.
 - CLI glue in `src/main.rs`:
   - Builds Clap from registry.
   - Routes to TUI when no subcommand.
@@ -40,6 +40,5 @@ Development
 
 Troubleshooting
 - “Unknown command …” — Verify the group/sub form (e.g., `apps info`, not `apps:info`).
-- 401 Unauthorized — Set `HEROKU_API_KEY`.
+- 401 Unauthorized — Set `OATTY_API_TOKEN`.
 - Network errors — Check connectivity, proxies, and TLS; `RUST_LOG=info` for more detail.
-

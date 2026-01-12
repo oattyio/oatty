@@ -743,8 +743,8 @@ pub(crate) fn is_flag_value_complete(input: &str) -> bool {
 mod tests {
     use super::*;
     use oatty_engine::provider::{PendingProviderFetch, ProviderFetchPlan};
-    use oatty_registry::CommandRegistry;
-    use oatty_types::{CommandExecution, CommandFlag, HttpCommandSpec, PositionalArgument, ServiceId};
+    use oatty_registry::{CommandRegistry, RegistryConfig};
+    use oatty_types::{CommandExecution, CommandFlag, HttpCommandSpec, PositionalArgument};
 
     #[derive(Debug)]
     struct TestProvider {
@@ -799,6 +799,7 @@ mod tests {
             commands,
             workflows: vec![],
             provider_contracts: Default::default(),
+            config: RegistryConfig { catalogs: None },
         }
     }
 
@@ -809,12 +810,11 @@ mod tests {
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/apps".into(),
-                    ranges: vec![],
-                    service_id: ServiceId::CoreApi,
                     output_schema: None,
                 }),
                 group: "apps".into(),
                 name: "list".into(),
+                catalog_identifier: 0,
                 summary: "list".into(),
                 positional_args: vec![],
                 flags: vec![],
@@ -823,12 +823,11 @@ mod tests {
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/apps/{app}".into(),
-                    ranges: vec![],
-                    service_id: ServiceId::CoreApi,
                     output_schema: None,
                 }),
                 group: "apps".into(),
                 name: "info".into(),
+                catalog_identifier: 0,
                 summary: "info".into(),
                 positional_args: vec![],
                 flags: vec![],
@@ -847,13 +846,12 @@ mod tests {
             execution: CommandExecution::Http(HttpCommandSpec {
                 method: "GET".into(),
                 path: "/apps/{app}".into(),
-                ranges: vec![],
                 // Provider is now embedded on the field; legacy vector removed
-                service_id: ServiceId::CoreApi,
                 output_schema: None,
             }),
             group: "apps".into(),
             name: "info".into(),
+            catalog_identifier: 0,
             summary: "info".into(),
             positional_args: vec![],
             flags: vec![
@@ -887,12 +885,11 @@ mod tests {
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/apps".into(),
-                    ranges: vec![],
-                    service_id: ServiceId::CoreApi,
                     output_schema: None,
                 }),
                 group: "apps".into(),
                 name: "list".into(),
+                catalog_identifier: 0,
                 summary: "list".into(),
                 positional_args: vec![],
                 flags: vec![],
@@ -915,6 +912,7 @@ mod tests {
         let spec = CommandSpec {
             group: "addons".into(),
             name: "config:update".into(),
+            catalog_identifier: 0,
             summary: "update".into(),
             positional_args: vec![PositionalArgument {
                 name: "addon".into(),
@@ -928,9 +926,7 @@ mod tests {
             execution: CommandExecution::Http(HttpCommandSpec {
                 method: "PATCH".into(),
                 path: "/addons/{addon}/config".into(),
-                ranges: vec![],
                 // No legacy providers vector
-                service_id: ServiceId::CoreApi,
                 output_schema: None,
             }),
         };
@@ -938,14 +934,13 @@ mod tests {
             CommandSpec {
                 group: "addons".into(),
                 name: "list".into(),
+                catalog_identifier: 0,
                 summary: "list".into(),
                 positional_args: vec![],
                 flags: vec![],
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/addons".into(),
-                    ranges: vec![],
-                    service_id: ServiceId::CoreApi,
                     output_schema: None,
                 }),
             },
@@ -965,6 +960,7 @@ mod tests {
         let spec = CommandSpec {
             group: "apps".into(),
             name: "info".into(),
+            catalog_identifier: 0,
             summary: "info".into(),
             positional_args: vec![],
             flags: vec![CommandFlag {
@@ -983,8 +979,6 @@ mod tests {
             execution: CommandExecution::Http(HttpCommandSpec {
                 method: "GET".into(),
                 path: "/apps/{app}".into(),
-                ranges: vec![],
-                service_id: ServiceId::CoreApi,
                 output_schema: None,
             }),
         };
@@ -992,14 +986,13 @@ mod tests {
             CommandSpec {
                 group: "apps".into(),
                 name: "list".into(),
+                catalog_identifier: 0,
                 summary: "list".into(),
                 positional_args: vec![],
                 flags: vec![],
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/apps".into(),
-                    ranges: vec![],
-                    service_id: ServiceId::CoreApi,
                     output_schema: None,
                 }),
             },
@@ -1016,6 +1009,7 @@ mod tests {
         let spec = CommandSpec {
             group: "apps".into(),
             name: "info".into(),
+            catalog_identifier: 0,
             summary: "info".into(),
             positional_args: vec![],
             flags: vec![CommandFlag {
@@ -1034,8 +1028,6 @@ mod tests {
             execution: CommandExecution::Http(HttpCommandSpec {
                 method: "GET".into(),
                 path: "/apps/{app}".into(),
-                ranges: vec![],
-                service_id: ServiceId::CoreApi,
                 output_schema: None,
             }),
         };
@@ -1043,14 +1035,13 @@ mod tests {
             CommandSpec {
                 group: "apps".into(),
                 name: "list".into(),
+                catalog_identifier: 0,
                 summary: "list".into(),
                 positional_args: vec![],
                 flags: vec![],
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/apps".into(),
-                    ranges: vec![],
-                    service_id: ServiceId::CoreApi,
                     output_schema: None,
                 }),
             },
@@ -1068,6 +1059,7 @@ mod tests {
         let spec = CommandSpec {
             group: "apps".into(),
             name: "info".into(),
+            catalog_identifier: 0,
             summary: "info".into(),
             positional_args: vec![PositionalArgument {
                 name: "app".into(),
@@ -1081,9 +1073,7 @@ mod tests {
             execution: CommandExecution::Http(HttpCommandSpec {
                 method: "GET".into(),
                 path: "/apps/{app}".into(),
-                ranges: vec![],
                 // No legacy providers vector
-                service_id: ServiceId::CoreApi,
                 output_schema: None,
             }),
         };
@@ -1091,23 +1081,22 @@ mod tests {
             CommandSpec {
                 group: "apps".into(),
                 name: "list".into(),
+                catalog_identifier: 0,
                 summary: "list".into(),
                 positional_args: vec![],
                 flags: vec![],
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/apps".into(),
-                    ranges: vec![],
-                    service_id: ServiceId::CoreApi,
                     output_schema: None,
                 }),
             },
             spec,
         ]);
         let mut map = std::collections::HashMap::new();
-        map.insert(("apps info".into(), "app".into()), vec!["heroku-prod".into()]);
+        map.insert(("apps info".into(), "app".into()), vec!["sample-prod".into()]);
         let provider: Arc<dyn ValueProvider> = Arc::new(TestProvider { map });
-        let result = SuggestionEngine::build(&reg.commands, &[provider], "apps info heroku-prod");
+        let result = SuggestionEngine::build(&reg.commands, &[provider], "apps info sample-prod");
         assert!(result.items.is_empty(), "should not echo current value as sole suggestion");
     }
 
@@ -1117,6 +1106,7 @@ mod tests {
         let spec = CommandSpec {
             group: "pipelines".into(),
             name: "ci:run".into(),
+            catalog_identifier: 0,
             summary: "run".into(),
             positional_args: vec![
                 PositionalArgument {
@@ -1140,9 +1130,7 @@ mod tests {
             execution: CommandExecution::Http(HttpCommandSpec {
                 method: "POST".into(),
                 path: "/pipelines/{pipeline}/ci".into(),
-                ranges: vec![],
                 // No legacy providers vector
-                service_id: ServiceId::CoreApi,
                 output_schema: None,
             }),
         };
@@ -1150,28 +1138,26 @@ mod tests {
             CommandSpec {
                 group: "pipelines".into(),
                 name: "list".into(),
+                catalog_identifier: 0,
                 summary: "list".into(),
                 positional_args: vec![],
                 flags: vec![],
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/pipelines".into(),
-                    ranges: vec![],
-                    service_id: ServiceId::CoreApi,
                     output_schema: None,
                 }),
             },
             CommandSpec {
                 group: "branches".into(),
                 name: "list".into(),
+                catalog_identifier: 0,
                 summary: "list".into(),
                 positional_args: vec![],
                 flags: vec![],
                 execution: CommandExecution::Http(HttpCommandSpec {
                     method: "GET".into(),
                     path: "/branches".into(),
-                    ranges: vec![],
-                    service_id: ServiceId::CoreApi,
                     output_schema: None,
                 }),
             },

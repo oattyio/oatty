@@ -7,9 +7,10 @@
 use std::collections::{BTreeSet, HashMap};
 
 use heck::ToTitleCase;
-use oatty_util::{format_date_mmddyyyy, is_date_like_key, redact_json, redact_sensitive};
+use oatty_util::{format_date_mmddyyyy, is_date_like_key, redact_json, redact_sensitive, truncate_with_ellipsis};
 use ratatui::prelude::*;
 use serde_json::{Map, Value};
+use unicode_width::UnicodeWidthStr;
 
 use crate::{
     app,
@@ -37,7 +38,7 @@ use crate::{
 ///
 /// ```rust,ignore
 /// use ratatui::prelude::*;
-/// use heroku_tui::ui::utils::centered_rect;
+/// use oatty_tui::ui::utils::centered_rect;
 ///
 /// let parent = Rect::new(0, 0, 100, 50);
 /// let centered = centered_rect(80, 70, parent);
@@ -66,8 +67,8 @@ pub fn centered_min_max(percent_x: u16, percent_y: u16, min: Rect, max: Rect, ar
     let rect = centered_rect(percent_x, percent_y, area);
     let width = rect.width.clamp(min.width, max.width);
     let height = rect.height.clamp(min.height, max.height);
-    let x = (area.x + area.width / 2) - width / 2;
-    let y = (area.y + area.height / 2) - height / 2;
+    let x = ((area.x + area.width) / 2) - (width / 2);
+    let y = ((area.y + area.height) / 2) - (height / 2);
     Rect { x, y, width, height }
 }
 
@@ -590,12 +591,68 @@ pub fn build_copy_text(app: &app::App) -> String {
 /// the root level, so this helper unwraps objects that meet this pattern. All other payloads
 /// are returned unchanged.
 pub fn normalize_result_payload(value: Value) -> Value {
-    if let Value::Object(map) = &value
-        && map.len() == 1
-        && let Some(inner_value) = map.values().next()
-        && inner_value.is_array()
+    if !value.is_object()
+        || value
+            .as_object()
+            .is_some_and(|o| o.len() != 1 || !o.values().next().unwrap().is_array())
     {
-        return inner_value.clone();
+        return value;
     }
-    value
+    let Value::Object(map) = value else {
+        return value;
+    };
+    map.into_values().next().unwrap()
+}
+
+pub fn span_display_width(span: &Span<'_>) -> u16 {
+    UnicodeWidthStr::width(span.content.as_ref()) as u16
+}
+
+pub fn truncate_to_width(text: &str, available: u16) -> String {
+    if available == 0 {
+        return String::new();
+    }
+    let character_count = text.chars().count() as u16;
+    if character_count <= available {
+        return text.to_string();
+    }
+    if available == 1 {
+        return "…".to_string();
+    }
+    let max_columns = available.saturating_sub(1) as usize;
+    truncate_with_ellipsis(text, max_columns)
+}
+
+#[derive(Default)]
+pub struct SpanCollector {
+    spans: Vec<Span<'static>>,
+    width: u16,
+}
+
+impl SpanCollector {
+    pub fn with_capacity(capacity: usize) -> Self {
+        Self {
+            spans: Vec::with_capacity(capacity),
+            width: 0,
+        }
+    }
+
+    pub fn push(&mut self, span: Span<'static>) {
+        self.width = self.width.saturating_add(span_display_width(&span));
+        self.spans.push(span);
+    }
+
+    pub fn extend(&mut self, spans: Vec<Span<'static>>) {
+        for span in spans {
+            self.push(span);
+        }
+    }
+
+    pub fn remaining_with_fallback(&self, width_hint: Option<u16>, fallback: u16) -> u16 {
+        width_hint.unwrap_or(fallback).saturating_sub(self.width)
+    }
+
+    pub fn into_vec(self) -> Vec<Span<'static>> {
+        self.spans
+    }
 }

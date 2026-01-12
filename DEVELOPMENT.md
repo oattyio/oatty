@@ -76,7 +76,7 @@ Create a `.env` file in the project root (or set in your shell profile):
 
 ```bash
 # Required for API access
-export HEROKU_API_KEY="your-heroku-api-key"
+export OATTY_API_TOKEN="your-api-token"
 
 # Optional: Set log level (error|warn|info|debug|trace)
 export OATTY_LOG="debug"
@@ -88,7 +88,7 @@ export TUI_THEME="dracula"
 export DEBUG="1"
 
 # Optional: MCP config path
-export MCP_CONFIG_PATH="$HOME/.config/heroku/mcp.json"
+export MCP_CONFIG_PATH="$HOME/.config/oatty/mcp.json"
 ```
 
 ## Development Workflow
@@ -99,7 +99,7 @@ export MCP_CONFIG_PATH="$HOME/.config/heroku/mcp.json"
 
 ```bash
 # Launch the TUI
-cargo run -p heroku-cli
+cargo run -p oatty-cli
 
 # With debug logging
 OATTY_LOG=debug cargo run -p oatty-cli
@@ -207,25 +207,11 @@ Press `Cmd+Shift+P` (macOS) or `Ctrl+Shift+P` (Linux/Windows) and type "Tasks: R
 - **cargo: Format** - Format all code
 - **cargo: Format Check** - Check formatting
 - **cargo: Clean** - Remove build artifacts
-- **registry-gen: Generate Manifest** - Generate command manifest
 - **Pre-commit Check** - Run format, clippy, and tests in sequence
 
 ### Registry Generator
 
-The registry generator creates the command manifest from the Oatty schema:
-
-```bash
-# Generate JSON manifest (for inspection)
-cargo run -p oatty-registry-gen -- --json \
-    schemas/heroku-schema.enhanced.json \
-    target/manifest.json
-
-# Generate bincode manifest (for production)
-cargo run -p oatty-registry-gen -- \
-    schemas/heroku-schema.enhanced.json \
-    target/manifest.bin
-```
-
+The registry generator creates the command manifest from OpenAPI documents.
 The build scripts automatically generate the manifest when building the CLI.
 
 ## Project Structure
@@ -242,7 +228,7 @@ next-gen-cli/
 │   ├── mcp/        # MCP plugin infrastructure
 │   ├── util/       # Shared utilities
 │   └── types/      # Shared type definitions
-├── schemas/        # JSON Hyper-Schema definitions
+├── schemas/        # OpenAPI documents
 ├── workflows/      # Sample workflow YAML files
 ├── specs/          # Design documentation
 └── .vscode/        # VS Code/Cursor configurations
@@ -271,7 +257,7 @@ Located in `crates/*/tests/` directories:
 cargo test --workspace --test '*'
 
 # Run specific integration test
-cargo test -p oatty-registry-gen --test schema_tests
+cargo test -p oatty-registry-gen --tests
 ```
 
 ### Test-Driven Development
@@ -347,7 +333,7 @@ test: add integration tests for registry generation
 
 **Error**: `Oatty API authentication failed`
 
-- **Solution**: Set `HEROKU_API_KEY` environment variable with a valid API key
+- **Solution**: Set `OATTY_API_TOKEN` environment variable with a valid API key
 
 **Error**: TUI not rendering correctly
 
@@ -394,13 +380,13 @@ To test with a custom schema:
 
 1. Place your schema in `schemas/`
 2. Update `crates/registry/build.rs` to reference it
-3. Rebuild: `cargo clean && cargo build -p heroku-cli`
+3. Rebuild: `cargo clean && cargo build -p oatty-cli`
 
 ### MCP Plugin Development
 
 MCP plugins extend the CLI with custom value providers:
 
-1. Create plugin configuration in `~/.config/heroku/mcp.json`
+1. Create plugin configuration in `~/.config/oatty/mcp.json`
 2. Enable debug logging: `OATTY_LOG=debug`
 3. Test plugin: Use TUI to trigger value provider
 

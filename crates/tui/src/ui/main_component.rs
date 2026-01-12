@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use super::components::logs::LogDetailsComponent;
 use super::components::nav_bar::VerticalNavBarComponent;
 use super::components::plugins::PluginsDetailsComponent;
@@ -10,7 +12,7 @@ use crate::ui::components::common::ConfirmationModal;
 use crate::ui::components::palette::PaletteComponent;
 use crate::ui::components::theme_picker::ThemePickerComponent;
 use crate::ui::components::workflows::{RunViewComponent, WorkflowInputsComponent};
-use crate::ui::components::{BrowserComponent, PluginsComponent, WorkflowsComponent};
+use crate::ui::components::{BrowserComponent, FilePickerModal, FilePickerState, LibraryComponent, PluginsComponent, WorkflowsComponent};
 use crate::ui::utils::centered_min_max;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use oatty_types::{Effect, Modal, Msg, Route};
@@ -87,32 +89,27 @@ impl MainView {
     /// let mut app = MyApp::new();
     /// app.set_current_route(Route::Palette);
     /// ```
-    pub fn set_current_route(&mut self, app: &mut App, route: Route) -> Vec<Effect> {
+    pub fn set_current_route(&mut self, app: &mut App, route: Route) {
         if matches!(route, Route::WorkflowRun) && app.workflows.run_view_state().is_none() {
             app.append_log_message("Workflow run view unavailable; falling back to workflow list.");
             return self.set_current_route(app, Route::Workflows);
         }
 
-        let mut effects = Vec::new();
-        if let Some(mut old_view) = self.content_view.take() {
-            effects.extend(old_view.on_route_exit(app));
-        }
-
         let (view, state): (Box<dyn Component>, Box<&dyn HasFocus>) = match route {
             Route::Browser => (Box::new(BrowserComponent::default()), Box::new(&app.browser)),
-            Route::Palette => (Box::new(PaletteComponent::new()), Box::new(&app.palette)),
+            Route::Palette => (Box::new(PaletteComponent::default()), Box::new(&app.palette)),
             Route::Plugins => (Box::new(PluginsComponent::default()), Box::new(&app.plugins)),
             Route::WorkflowInputs => (Box::new(WorkflowInputsComponent::default()), Box::new(&app.workflows)),
             Route::Workflows => (Box::new(WorkflowsComponent::default()), Box::new(&app.workflows)),
             Route::WorkflowRun => (Box::new(RunViewComponent::default()), Box::new(&app.workflows)),
+            Route::Library => (Box::new(LibraryComponent::default()), Box::new(&app.library)),
         };
 
         app.current_route = app.nav_bar.set_route(route);
         self.content_view = Some(view);
-        app.focus = FocusBuilder::build_for(app);
-        app.focus.focus(*state);
 
-        effects
+        app.focus = Rc::new(FocusBuilder::build_for(app));
+        app.focus.focus(*state);
     }
 
     /// Update the open modal kind (use None to clear).
@@ -125,7 +122,7 @@ impl MainView {
                 ),
                 Modal::Results(exec_outcome) => {
                     let mut table = TableComponent::default();
-                    table.handle_message(app, &Msg::ExecCompleted(exec_outcome.clone()));
+                    table.handle_message(app, Msg::ExecCompleted(exec_outcome.clone()));
                     (Box::new(table), ModalLayout(Box::new(|rect| centered_rect(96, 90, rect))))
                 }
                 Modal::LogDetails => (
@@ -137,9 +134,6 @@ impl MainView {
                     ModalLayout(Box::new(|rect| centered_rect(90, 80, rect))),
                 ),
                 Modal::ThemePicker => {
-                    if !app.ctx.theme_picker_available {
-                        return;
-                    }
                     app.theme_picker.set_active_theme(&app.ctx.active_theme_id);
                     (
                         Box::new(ThemePickerComponent),
@@ -161,6 +155,16 @@ impl MainView {
                         centered_min_max(45, 35, Rect::new(0, 0, 80, 10), Rect::new(0, 0, 160, 16), rect)
                     })),
                 ),
+                Modal::FilePicker(extensions) => {
+                    let state = FilePickerState::new(extensions.to_owned());
+                    app.file_picker = Some(state);
+                    (
+                        Box::new(FilePickerModal::default()),
+                        ModalLayout(Box::new(|rect| {
+                            centered_min_max(75, 95, Rect::new(0, 0, 80, 15), Rect::new(0, 0, 160, 150), rect)
+                        })),
+                    )
+                }
             };
             self.modal_view = Some(modal_view);
             // save the current focus to restore when the modal is closed
@@ -184,16 +188,26 @@ impl MainView {
 }
 
 impl Component for MainView {
-    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-        let mut effects = app.update(msg);
-
-        effects.extend(self.nav_bar_view.handle_message(app, msg));
-        effects.extend(self.content_view.as_mut().map(|c| c.handle_message(app, msg)).unwrap_or_default());
-        effects.extend(self.logs_view.handle_message(app, msg));
-
-        if let Some(target) = self.modal_view.as_mut() {
-            return target.0.handle_message(app, msg);
+    fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
+        let mut effects = app.update(&msg);
+        if let Msg::ExecCompleted(outcome) = &msg {
+            app.logs.process_general_execution_result(outcome)
         }
+
+        // Since messages are consumed, the recipient is assumed to be
+        // the first component that is not None. If multiple components
+        // require messages, cloning is required to avoid borrowing issues
+        // but may lead to performance issues.
+        match () {
+            _ if self.modal_view.is_some() => {
+                effects.append(&mut self.modal_view.as_mut().map(|c| c.0.handle_message(app, msg)).unwrap_or_default());
+            }
+            _ => {
+                if self.content_view.is_some() {
+                    effects.append(&mut self.content_view.as_mut().map(|c| c.handle_message(app, msg)).unwrap_or_default());
+                }
+            }
+        };
 
         effects
     }
@@ -256,10 +270,10 @@ impl Component for MainView {
         let layout = self.get_preferred_layout(app, area);
         // Handle main view rendering
         if let Some(current) = self.content_view.as_mut() {
-            // Render nav bar on the left
-            self.nav_bar_view.render(frame, layout[0], app);
             // Render an active view on the right
             current.render(frame, layout[2], app);
+            // Render nav bar on the left
+            self.nav_bar_view.render(frame, layout[0], app);
         }
 
         if app.logs.is_visible {
@@ -271,7 +285,6 @@ impl Component for MainView {
         let hints_widget = Paragraph::new(Line::from(hint_spans)).style(app.ctx.theme.text_muted_style());
         frame.render_widget(hints_widget, layout[1]);
 
-        // Render modal overlays if active
         if let Some((modal, position)) = self.modal_view.as_mut() {
             render_overlay(frame, app);
             let modal_area = position.0(area);
@@ -383,7 +396,5 @@ impl Component for MainView {
 /// * `f` - The frame to render to
 /// * `app` - The application state
 fn render_overlay(frame: &mut Frame, app: &mut App) {
-    // Draw the theme-specific modal overlay when any modal is visible
-    let area = frame.area();
-    frame.render_widget(Block::default().style(app.ctx.theme.modal_background_style()).dim(), area);
+    frame.render_widget(Block::default().style(app.ctx.theme.modal_background_style()).dim(), frame.area());
 }

@@ -95,9 +95,9 @@ impl PluginEngine {
             plugin_detail.tags = server.tags.clone().unwrap_or_default();
             plugin_detail.enabled = !server.is_disabled();
             plugin_detail.env = if server.is_stdio() {
-                server.env.clone().unwrap_or_default()
+                server.env.clone()
             } else {
-                server.headers.clone().unwrap_or_default()
+                server.headers.clone()
             };
 
             registry.register_plugin(plugin_detail)?;
@@ -160,11 +160,14 @@ impl PluginEngine {
                             let mut synthetic_specs_lock = synthetic_specs.lock().await;
                             if let Ok(mut registry_lock) = command_registry.lock() {
                                 if synthesized.is_empty() {
-                                    let removed_specs = synthetic_specs_lock.remove(&name);
-                                    registry_lock.remove_synthetic(removed_specs);
+                                    if let Some(specs) = synthetic_specs_lock.remove(&name).as_ref() {
+                                        let ids = specs.iter().map(|s| s.canonical_id()).collect();
+                                        registry_lock.remove_commands(ids);
+                                    }
                                 } else {
-                                    registry_lock.insert_synthetic(synthesized.clone());
-                                    synthetic_specs_lock.insert(name.clone(), Arc::from(synthesized));
+                                    let syn_arc: Arc<[CommandSpec]> = Arc::from(synthesized);
+                                    registry_lock.insert_commands(syn_arc.clone().as_ref());
+                                    synthetic_specs_lock.insert(name.clone(), syn_arc);
                                 }
                             }
                         }
@@ -544,7 +547,11 @@ impl PluginEngine {
             log.push_str(&pretty);
         }
 
-        Ok(ExecOutcome::Mcp(log, payload, request_id))
+        Ok(ExecOutcome::Mcp {
+            log_entry: log,
+            payload,
+            request_id,
+        })
     }
 
     /// Convert MCP tool metadata into synthetic CLI command specifications.
@@ -896,6 +903,7 @@ mod tests {
     use super::*;
     use crate::McpServer;
     use crate::config::McpConfig;
+    use oatty_registry::RegistryConfig;
     use serde_json::{Value, json};
     use url::Url;
 
@@ -918,6 +926,7 @@ mod tests {
             commands: Vec::new(),
             workflows: vec![],
             provider_contracts: Default::default(),
+            config: RegistryConfig { catalogs: None },
         }));
         let engine = PluginEngine::new(config, Arc::clone(&registry)).unwrap();
 
@@ -932,6 +941,7 @@ mod tests {
             commands: Vec::new(),
             workflows: vec![],
             provider_contracts: Default::default(),
+            config: RegistryConfig { catalogs: None },
         }));
         let engine = PluginEngine::new(config, Arc::clone(&registry)).unwrap();
 
@@ -1255,7 +1265,7 @@ mod tests {
         let server = McpServer {
             base_url: Some(Url::parse("https://example.com").unwrap()),
             tags: Some(vec!["alpha".into(), "beta".into()]),
-            disabled: Some(true),
+            disabled: true,
             ..Default::default()
         };
         cfg.mcp_servers.insert("svc".into(), server);
@@ -1264,6 +1274,7 @@ mod tests {
             commands: Vec::new(),
             workflows: vec![],
             provider_contracts: Default::default(),
+            config: RegistryConfig { catalogs: None },
         }));
         let engine = PluginEngine::new(cfg, Arc::clone(&registry)).unwrap();
         engine.start().await.unwrap();

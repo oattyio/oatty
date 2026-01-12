@@ -160,7 +160,7 @@ interpolation (see §7):
 ```yaml
 provider_args:
   app: ${{ inputs.app_name }}
-  region: ${{ env.HEROKU_REGION }}
+  region: ${{ env.REGION }}
 ```
 
 ### 4.2 Structured Bindings

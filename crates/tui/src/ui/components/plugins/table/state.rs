@@ -1,6 +1,6 @@
 //! Table state for the MCP plugins view, covering filtering, focus, and selection.
 
-use crate::ui::components::plugins::PluginDetail;
+use crate::ui::components::{common::text_input::cursor_index_for_column, plugins::PluginDetail};
 use oatty_types::PluginStatus;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
@@ -188,6 +188,11 @@ impl PluginsTableState {
     /// Expose the current filter text for read-only scenarios.
     pub fn filter_text(&self) -> &str {
         &self.filter
+    }
+
+    /// Update the cursor position based on a display column within the filter.
+    pub fn set_cursor_from_column(&mut self, column: u16) {
+        self.cursor_position = cursor_index_for_column(&self.filter, column);
     }
 
     /// Returns true when the current selection maps to a valid filtered item.

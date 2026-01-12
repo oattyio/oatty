@@ -1,55 +1,139 @@
+use crate::openapi::{collect_base_urls_from_document, derive_commands_from_openapi, derive_vendor_from_document};
+use anyhow::{Context, Result};
+use heck::ToSnakeCase;
+use indexmap::{IndexMap, map::Entry as IndexMapEntry};
+use postcard::to_stdvec;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
 
-use crate::openapi::transform_openapi_to_links;
-use crate::schema::{derive_commands_from_schema, generate_commands};
-use anyhow::{Context, Result};
-use bincode::config;
-use indexmap::{IndexMap, map::Entry as IndexMapEntry};
 use oatty_types::{
-    CommandSpec, ServiceId,
+    CommandSpec,
     command::SchemaProperty,
-    manifest::{ProviderContractEntry, RegistryManifest},
+    manifest::{RegistryCatalog, RegistryManifest},
     provider::{ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract},
     workflow::WorkflowDefinition,
 };
 
-pub struct ManifestInput {
-    pub input: PathBuf,
-    pub service_id: ServiceId,
-}
-/// Writes the command manifest to a file.
+/// Input descriptor for a registry generation pass.
 ///
-/// This function reads a JSON schema from the input path, generates commands,
-/// encodes them using bincode, and writes the output to the specified path.
+/// Each entry identifies an OpenAPI document to parse into `CommandSpec` entries.
+#[derive(Debug, Clone)]
+pub struct ManifestInput {
+    /// Path to the OpenAPI document.
+    pub file_path: Option<PathBuf>,
+    /// Local content of the OpenAPI document.
+    pub local: Option<String>,
+}
+
+impl ManifestInput {
+    pub fn new(file_path: Option<PathBuf>, local: Option<String>) -> Self {
+        Self { file_path, local }
+    }
+
+    /// Reads the input descriptor by consuming self
+    /// and returning the contents as a String.
+    pub fn take_contents(mut self) -> Result<String> {
+        if let Some(file_path) = &self.file_path {
+            let contents = fs::read_to_string(file_path).with_context(|| format!("read {}", file_path.display()))?;
+            return Ok(contents);
+        }
+        if let Some(local) = self.local.take() {
+            return Ok(local);
+        }
+        Err(anyhow::anyhow!("No file path or local content provided"))
+    }
+}
+
+/// Generates a registry catalog from a manifest input.
+///
+/// This function reads OpenAPI documents from the input paths, generates
+/// commands, and constructs a `RegistryCatalog` with the generated commands
+/// and provider contracts.
+pub fn generate_catalog(input: ManifestInput) -> Result<RegistryCatalog> {
+    let document = parse_openapi_document(input)?;
+    let (name, commands) = create_commands_from_document(&document)?;
+    let provider_contracts = build_provider_contracts(&commands);
+    let base_urls = collect_base_urls_from_document(&document);
+    let manifest = RegistryManifest {
+        commands,
+        workflows: Vec::new(),
+        provider_contracts,
+        vendor: name,
+    };
+    let description = document
+        .pointer("/info/description")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    let title = document
+        .pointer("/info/title")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+
+    Ok(RegistryCatalog {
+        title,
+        description,
+        base_urls,
+        base_url_index: 0,
+        manifest: Some(manifest),
+        ..Default::default()
+    })
+}
+
+/// Generates a registry manifest from a list of input descriptors.
+///
+/// This function reads OpenAPI documents from the input paths, generates
+/// commands, and constructs a `RegistryManifest` with the generated commands
+/// and provider contracts.
 ///
 /// # Arguments
 ///
-/// * `input` - Path to the input JSON schema file.
+/// * `inputs` - OpenAPI document paths to read.
+///
+/// # Errors
+///
+/// Returns an error if file reading, command generation, or provider contract
+/// construction fails.
+pub fn generate_manifest(input: ManifestInput) -> Result<RegistryManifest> {
+    let document = parse_openapi_document(input)?;
+    let (vendor, commands) = create_commands_from_document(&document)?;
+    let provider_contracts = build_provider_contracts(&commands);
+    Ok(RegistryManifest {
+        commands,
+        workflows: Vec::new(),
+        provider_contracts,
+        vendor,
+    })
+}
+
+/// Writes the command manifest to a file.
+///
+/// This function reads OpenAPI documents from the input paths, generates
+/// commands, encodes them using bincode, and writes the output to the
+/// specified path.
+///
+/// # Arguments
+///
+/// * `inputs` - OpenAPI document paths to read.
 /// * `output` - Path to write the bincode-encoded manifest.
 ///
 /// # Errors
 ///
 /// Returns an error if file reading, directory creation, command generation,
 /// encoding, or writing fails.
-pub fn write_manifest(inputs: Vec<ManifestInput>, workflow_root: Option<PathBuf>, output: PathBuf) -> Result<()> {
-    let all_commands = create_commands_from_input(inputs)?;
+pub fn write_manifest(input: ManifestInput, workflow_root: Option<PathBuf>, output: PathBuf) -> Result<()> {
+    let mut manifest = generate_manifest(input)?;
     if let Some(parent) = output.parent()
         && !parent.exists()
     {
         fs::create_dir_all(parent).with_context(|| format!("create dir {}", parent.display()))?;
     }
-    let provider_contracts = build_provider_contracts(&all_commands);
-    let workflows = load_workflows(workflow_root.as_deref())?;
-    let manifest = RegistryManifest {
-        commands: all_commands,
-        workflows,
-        provider_contracts,
-    };
-    let config = config::standard();
-    let bytes = bincode::serde::encode_to_vec(&manifest, config)?;
+    manifest.workflows = load_workflows(workflow_root.as_deref())?;
+
+    let bytes = to_stdvec(&manifest)?;
     fs::write(&output, &bytes)?;
     println!("wrote {} bytes to {}", bytes.len(), output.display());
 
@@ -63,27 +147,21 @@ pub fn write_manifest(inputs: Vec<ManifestInput>, workflow_root: Option<PathBuf>
 ///
 /// # Arguments
 ///
-/// * `input` - Path to the input JSON schema file.
+/// * `inputs` - OpenAPI document paths to read.
 /// * `output` - Path to write the JSON manifest.
 ///
 /// # Errors
 ///
 /// Returns an error if file reading, directory creation, command generation,
 /// encoding, or writing fails.
-pub fn write_manifest_json(inputs: Vec<ManifestInput>, workflow_root: Option<PathBuf>, output: PathBuf) -> Result<()> {
-    let all_commands = create_commands_from_input(inputs)?;
+pub fn write_manifest_json(input: ManifestInput, workflow_root: Option<PathBuf>, output: PathBuf) -> Result<()> {
+    let mut manifest = generate_manifest(input)?;
     if let Some(parent) = output.parent()
         && !parent.exists()
     {
         fs::create_dir_all(parent).with_context(|| format!("create dir {}", parent.display()))?;
     }
-    let provider_contracts = build_provider_contracts(&all_commands);
-    let workflows = load_workflows(workflow_root.as_deref())?;
-    let manifest = RegistryManifest {
-        commands: all_commands,
-        workflows,
-        provider_contracts,
-    };
+    manifest.workflows = load_workflows(workflow_root.as_deref())?;
     let json = serde_json::to_vec_pretty(&manifest).context("serialize manifest to json")?;
     fs::write(&output, &json)?;
     println!("wrote {} bytes (json) to {}", json.len(), output.display());
@@ -92,15 +170,12 @@ pub fn write_manifest_json(inputs: Vec<ManifestInput>, workflow_root: Option<Pat
 
 /// Generates a list of `CommandSpec` from a vector of `ManifestInput`.
 ///
-/// This function processes each `ManifestInput` item to derive commands.
-/// An input may represent data in YAML or JSON format.
-/// The function distinguishes between plain schemas and OpenAPI specifications,
-/// applies transformations when necessary, and generates commands based on the inputs.
+/// This function processes each OpenAPI input and derives commands from its
+/// paths and operations. Inputs may be YAML or JSON.
 ///
 /// # Arguments
 ///
-/// * `inputs` - A vector of `ManifestInput` instances, each containing the file path (or input location)
-///   and a service ID.
+/// * `inputs` - A vector of `ManifestInput` instances, each containing the OpenAPI file path.
 ///
 /// # Returns
 ///
@@ -109,13 +184,9 @@ pub fn write_manifest_json(inputs: Vec<ManifestInput>, workflow_root: Option<Pat
 ///
 /// # Processing Steps:
 ///
-/// 1. For each input, determine if the file is a YAML or JSON file using the helper function `is_yaml`.
-/// 2. Read the file contents and apply transformations if the input follows the OpenAPI specification:
-///   - Parse YAML into JSON-like structures using `serde_yaml::from_str`.
-///   - Transform the document to include OpenAPI-style links, if applicable.
-/// 3. Generate commands based on the schema or transformed OpenAPI specification using:
-///   - `derive_commands_from_schema` for complex structured data.
-///   - `generate_commands` for other types of schemas.
+/// 1. For each input, determine if the file is YAML or JSON using `is_yaml`.
+/// 2. Parse the document into a JSON value.
+/// 3. Derive commands directly from the OpenAPI document.
 /// 4. All generated commands across inputs are collected into a vector and sorted by group and name.
 ///
 /// # Errors
@@ -123,8 +194,7 @@ pub fn write_manifest_json(inputs: Vec<ManifestInput>, workflow_root: Option<Pat
 /// This function returns an error if any of the following operations fail:
 /// - File reading (`fs::read_to_string`).
 /// - Parsing YAML or JSON content.
-/// - Transforming an OpenAPI document.
-/// - Generating commands from the schema.
+/// - Generating commands from the OpenAPI document.
 ///
 /// # Example
 ///
@@ -132,11 +202,9 @@ pub fn write_manifest_json(inputs: Vec<ManifestInput>, workflow_root: Option<Pat
 /// let inputs = vec![
 ///     ManifestInput {
 ///         input: PathBuf::from("path/to/schema.yaml"),
-///         service_id: "service1".to_string()
 ///     },
 ///     ManifestInput {
 ///         input: PathBuf::from("path/to/schema.json"),
-///         service_id: "service2".to_string()
 ///     }
 /// ];
 /// let commands = create_commands_from_input(inputs).expect("Failed to create commands");
@@ -151,35 +219,16 @@ pub fn write_manifest_json(inputs: Vec<ManifestInput>, workflow_root: Option<Pat
 /// * `fs::read_to_string`: Reads the schema from the file.
 /// * `serde_yaml::from_str`: Parses YAML content into a JSON-like structure.
 /// * `serde_json::from_str`: Parses a JSON string into a structured value.
-/// * `transform_to_links_if_openapi`: Performs specific transformations for OpenAPI documents.
-/// * `derive_commands_from_schema` and `generate_commands`: Derives command specifications from the input schema.
+/// * `derive_commands_from_openapi`: Derives command specifications from the OpenAPI document.
 ///
 /// # Sorting
 ///
 /// All generated commands are sorted by their group and name before returning.
-fn create_commands_from_input(inputs: Vec<ManifestInput>) -> Result<Vec<CommandSpec>> {
-    let mut all_commands = Vec::new();
-    for input in inputs {
-        let ManifestInput { input, service_id } = input;
-        let commands = if is_yaml(&input) {
-            let text = fs::read_to_string(&input).with_context(|| format!("read {}", input.display()))?;
-            let doc: serde_json::Value = serde_yaml::from_str(&text).context("parse yaml as json value")?;
-            let transformed = transform_to_links_if_openapi(&doc)?;
-            derive_commands_from_schema(&transformed, service_id)?
-        } else {
-            let schema = fs::read_to_string(&input).with_context(|| format!("read {}", input.display()))?;
-            if looks_like_openapi_json(&schema) {
-                let doc: serde_json::Value = serde_json::from_str(&schema).context("parse json")?;
-                let transformed = transform_to_links_if_openapi(&doc)?;
-                derive_commands_from_schema(&transformed, service_id)?
-            } else {
-                generate_commands(&schema, service_id)?
-            }
-        };
-        all_commands.extend(commands);
-    }
-    all_commands.sort_by_key(|c| (c.group.clone(), c.name.clone()));
-    Ok(all_commands)
+fn create_commands_from_document(document: &serde_json::Value) -> Result<(String, Vec<CommandSpec>)> {
+    let vendor = derive_vendor_from_document(document);
+    let mut commands = derive_commands_from_openapi(document)?;
+    commands.sort_by(|a, b| a.group.cmp(&b.group).then(a.name.cmp(&b.name)));
+    Ok((vendor, commands))
 }
 /// Builds a collection of provider contracts from a list of command specifications.
 ///
@@ -213,14 +262,14 @@ fn create_commands_from_input(inputs: Vec<ManifestInput>) -> Result<Vec<CommandS
 /// # Example
 /// ```rust,ignore
 /// let commands = vec![
-///     CommandSpec { group: "group1", name: "command1" },
-///     CommandSpec { group: "group2", name: "command2" }
+///     CommandSpec { group: "group1", name: "command1", catalog_identifier: None },
+///     CommandSpec { group: "group2", name: "command2", catalog_identifier: None }
 /// ];
 ///
 /// let provider_contracts = build_provider_contracts(&commands);
 /// assert!(!provider_contracts.is_empty());
 /// ```
-fn build_provider_contracts(commands: &[CommandSpec]) -> Vec<ProviderContractEntry> {
+fn build_provider_contracts(commands: &[CommandSpec]) -> IndexMap<String, ProviderContract> {
     let mut contracts = IndexMap::new();
 
     for command in commands {
@@ -237,9 +286,6 @@ fn build_provider_contracts(commands: &[CommandSpec]) -> Vec<ProviderContractEnt
     }
 
     contracts
-        .into_iter()
-        .map(|(command_id, contract)| ProviderContractEntry { command_id, contract })
-        .collect()
 }
 /// Populates the `arguments` field of a `ProviderContract` based on the provided `CommandSpec`.
 ///
@@ -264,8 +310,8 @@ fn build_provider_contracts(commands: &[CommandSpec]) -> Vec<ProviderContractEnt
 ///   to the list of argument names.
 /// - Adds the names of any required flags from the `CommandSpec` to the list.
 /// - Converts these names into `ProviderArgumentContract` objects layered with semantic tag
-///   expectations derived from the argument name (for example, `app` → accepts `app_id`,
-///   `app_name`).
+///   expectations derived from the argument name (for example, `resource` → accepts
+///   `resource_id`, `resource_name`, `resource_slug`).
 ///
 /// # Behavior
 ///
@@ -327,48 +373,34 @@ fn create_argument_contract(argument_name: &str, required: bool) -> ProviderArgu
 
 fn argument_accepts_and_preference(argument_name: &str) -> (Vec<String>, Option<String>) {
     let normalized = normalize_argument_key(argument_name);
-    match normalized.as_str() {
-        "app" => accepts_with_preference(&["app_id", "app_name"], Some("app_id")),
-        "app_id" => accepts_with_preference(&["app_id"], Some("app_id")),
-        "addon" => accepts_with_preference(&["addon_id", "addon_name"], Some("addon_id")),
-        "addon_id" => accepts_with_preference(&["addon_id"], Some("addon_id")),
-        "pipeline" => accepts_with_preference(&["pipeline_id", "pipeline_name", "pipeline_slug"], Some("pipeline_id")),
-        "pipeline_id" => accepts_with_preference(&["pipeline_id"], Some("pipeline_id")),
-        "team" => accepts_with_preference(&["team_id", "team_name"], Some("team_id")),
-        "team_name" => accepts_with_preference(&["team_name"], Some("team_name")),
-        "space" => accepts_with_preference(&["space_id", "space_name"], Some("space_id")),
-        "space_id" => accepts_with_preference(&["space_id"], Some("space_id")),
-        "region" => accepts_with_preference(&["region_slug", "region", "region_name"], Some("region_slug")),
-        "stack" => accepts_with_preference(&["stack_name", "stack"], Some("stack_name")),
-        "user" | "collaborator" => accepts_with_preference(&["user_email", "user_id"], Some("user_email")),
-        "database" => accepts_with_preference(&["database_id", "database_name"], Some("database_id")),
-        other => fallback_argument_accepts(other),
-    }
+    fallback_argument_accepts(&normalized)
 }
 
 fn fallback_argument_accepts(argument_key: &str) -> (Vec<String>, Option<String>) {
-    if let Some(stripped) = argument_key.strip_suffix("_id") {
-        let tag = format!("{}_id", stripped);
-        return (vec![tag.clone()], Some(tag));
+    let normalized = argument_key.trim();
+    if normalized.is_empty() {
+        return (Vec::new(), None);
     }
-    if let Some(stripped) = argument_key.strip_suffix("_slug") {
-        let tag = format!("{}_slug", stripped);
-        return (vec![tag.clone()], Some(tag));
-    }
-    if let Some(stripped) = argument_key.strip_suffix("_name") {
-        let tag = format!("{}_name", stripped);
-        return (vec![tag.clone()], Some(tag));
-    }
-    if argument_key == "id" {
+    if normalized == "id" {
         return (vec!["id".to_string()], Some("id".to_string()));
     }
-    (Vec::new(), None)
-}
 
-fn accepts_with_preference(tags: &[&str], preferred: Option<&str>) -> (Vec<String>, Option<String>) {
-    let accepts = tags.iter().map(|tag| tag.to_string()).collect::<Vec<_>>();
-    let prefer = preferred.map(|tag| tag.to_string());
-    (accepts, prefer)
+    let suffixes = ["_id", "_name", "_slug"];
+    for suffix in suffixes {
+        if let Some(stripped) = normalized.strip_suffix(suffix)
+            && !stripped.is_empty()
+        {
+            let tag = format!("{}{}", stripped, suffix);
+            return (vec![tag.clone()], Some(tag));
+        }
+    }
+
+    let expanded = suffixes
+        .iter()
+        .map(|suffix| format!("{}{}", normalized, suffix))
+        .collect::<Vec<_>>();
+    let preferred = expanded.first().cloned();
+    (expanded, preferred)
 }
 
 fn normalize_argument_key(argument_name: &str) -> String {
@@ -377,7 +409,8 @@ fn normalize_argument_key(argument_name: &str) -> String {
         .rsplit_once('.')
         .map(|(_, trailing)| trailing)
         .unwrap_or(&without_indices);
-    segment.replace('-', "_").to_ascii_lowercase()
+    let sanitized = segment.replace('-', "_");
+    sanitized.to_snake_case().trim_matches('_').to_string()
 }
 /// Builds and assigns a return contract for a given provider contract based on the HTTP output schema specified in the command.
 ///
@@ -580,126 +613,25 @@ fn extract_path_placeholders(path: &str) -> Vec<String> {
         .collect()
 }
 
-/// Determines if the given file path has a YAML file extension.
+/// Parses the OpenAPI document from the given path.
 ///
 /// # Arguments
 ///
-/// * `path` - A reference to a `Path` object representing the file path to check.
+/// * `path` - Path to the OpenAPI document.
 ///
 /// # Returns
 ///
-/// * `true` if the file path has an extension of "yaml" or "yml".
-/// * `false` if the file path does not have an extension or if the extension is not "yaml" or "yml".
-///
-/// # Examples
-///
-/// ```ignore
-/// use std::path::Path;
-///
-/// let path = Path::new("config.yaml");
-/// assert_eq!(is_yaml(path), true);
-///
-/// let path = Path::new("config.json");
-/// assert_eq!(is_yaml(path), false);
-///
-/// let path = Path::new("no_extension");
-/// assert_eq!(is_yaml(path), false);
-/// ```ignore
-fn is_yaml(path: &Path) -> bool {
-    match path.extension().and_then(|s| s.to_str()) {
-        Some(ext) => matches!(ext, "yaml" | "yml"),
-        None => false,
-    }
-}
-/// Determines if a given string appears to represent an OpenAPI or Swagger JSON document.
-///
-/// This function performs lightweight detection by checking if the input string contains
-/// either the `"openapi"` or `"swagger"` keywords. It does not fully parse the JSON structure
-/// and is intended as a quick heuristic for identifying potential OpenAPI/Swagger content.
-///
-/// # Arguments
-///
-/// * `s` - A string slice that potentially contains an OpenAPI or Swagger JSON document.
-///
-/// # Returns
-///
-/// * `true` if the string contains the keywords `"openapi"` or `"swagger"`, indicating that
-///   it likely represents an OpenAPI or Swagger document.
-/// * `false` otherwise.
-///
-/// # Examples
-///
-/// ```text
-/// let valid_openapi = r#"{"openapi": "3.0.0"}"#;
-/// let valid_swagger = r#"{"swagger": "2.0"}"#;
-/// let invalid_json = r#"{"title": "Not OpenAPI"}"#;
-///
-/// assert!(looks_like_openapi_json(valid_openapi));
-/// assert!(looks_like_openapi_json(valid_swagger));
-/// assert!(!looks_like_openapi_json(invalid_json));
-/// ```text
-fn looks_like_openapi_json(s: &str) -> bool {
-    // Lightweight detection to avoid parsing twice
-    s.contains("\"openapi\"") || s.contains("\"swagger\"")
-}
-/// Transforms a given JSON document into a hyper-schema-like structure with links if it is identified as an OpenAPI document.
-///
-/// # Description
-/// This function checks if the given JSON document corresponds to an OpenAPI specification.
-/// If the document contains an "openapi" field, it is assumed to be an OpenAPI v3 document.
-/// The function will then transform the OpenAPI document into a hyper-schema-like format using the `transform_openapi_to_links` function.
-/// If the "openapi" field is not present, the function assumes the input is already in a hyper-schema-like format and returns it unchanged.
-///
-/// # Parameters
-/// - `doc`: A reference to a `serde_json::Value` that represents the input JSON document.
-///
-/// # Returns
-/// - On success, returns a `Result<serde_json::Value>` containing the transformed document if it is OpenAPI,
-///   or the original document if it is not OpenAPI.
-/// - On failure, returns an error from the underlying transformation function (`transform_openapi_to_links`).
-///
-/// # Notes
-/// - Only OpenAPI v3 is supported currently. OpenAPI v2 support can be added in the future.
-/// - In the absence of the "openapi" field, no transformation is performed.
+/// The parsed OpenAPI document as a JSON value.
 ///
 /// # Errors
-/// This function may return an error if the `transform_openapi_to_links` function fails during the transformation process.
 ///
-/// # Examples
-/// ```ignore
-/// use serde_json::json;
-///
-/// let openapi_doc = json!({
-///     "openapi": "3.0.0",
-///     "info": { "title": "Sample API", "version": "1.0.0" },
-///     "paths": {}
-/// });
-///
-/// let result = transform_to_links_if_openapi(&openapi_doc);
-///
-/// assert!(result.is_ok());
-/// ```text
-///
-/// ```ignore
-/// use serde_json::json;
-///
-/// let non_openapi_doc = json!({
-///     "title": "Example Schema",
-///     "type": "object"
-/// });
-///
-/// let result = transform_to_links_if_openapi(&non_openapi_doc);
-///
-/// assert!(result.is_ok());
-/// assert_eq!(result.unwrap(), non_openapi_doc);
-/// ```text
-fn transform_to_links_if_openapi(doc: &serde_json::Value) -> Result<serde_json::Value> {
-    // For now we support OpenAPI v3 only; v2 can be added later
-    if doc.get("openapi").is_some() {
-        transform_openapi_to_links(doc)
+/// Returns an error if the file cannot be read or the contents are invalid.
+fn parse_openapi_document(input: ManifestInput) -> Result<serde_json::Value> {
+    let text = input.take_contents()?;
+    if let Ok(yaml) = serde_yaml::from_str::<serde_yaml::Value>(&text) {
+        serde_json::to_value(yaml).context("could not convert yaml to json")
     } else {
-        // Not OpenAPI; assume it's already hyper-schema-like
-        Ok(doc.clone())
+        serde_json::from_str(&text).context("Unable to parse json. Invalid document format")
     }
 }
 /// Loads workflow definitions from the specified directory.
@@ -786,11 +718,8 @@ fn load_workflows(workflow_root: Option<&Path>) -> Result<Vec<WorkflowDefinition
     let mut workflows = Vec::with_capacity(files.len());
     for path in files {
         let content = fs::read_to_string(&path).with_context(|| format!("read workflow {}", path.display()))?;
-        let workflow: WorkflowDefinition = if is_yaml(&path) {
-            serde_yaml::from_str(&content).with_context(|| format!("parse workflow yaml {}", path.display()))?
-        } else {
-            serde_json::from_str(&content).with_context(|| format!("parse workflow json {}", path.display()))?
-        };
+        let workflow =
+            serde_yaml::from_str::<WorkflowDefinition>(&content).with_context(|| format!("parse workflow yaml {}", path.display()))?;
         workflows.push(workflow);
     }
 
@@ -906,14 +835,6 @@ mod tests {
     }
 
     #[test]
-    fn is_yaml_detects_yaml_and_yml() {
-        assert!(is_yaml(Path::new("workflow.yaml")));
-        assert!(is_yaml(Path::new("workflow.yml")));
-        assert!(!is_yaml(Path::new("workflow.json")));
-        assert!(!is_yaml(Path::new("workflow")));
-    }
-
-    #[test]
     fn extract_path_placeholders_happy_and_edge_cases() {
         let path = "/apps/{app_id}/addons/{addon_id}";
         let placeholders = extract_path_placeholders(path);
@@ -927,13 +848,30 @@ mod tests {
     }
 
     #[test]
-    fn looks_like_openapi_json_detects_keywords() {
-        assert!(looks_like_openapi_json("{\"openapi\": \"3.0.0\"}"));
-        assert!(looks_like_openapi_json("{\"swagger\": \"2.0\"}"));
-        assert!(!looks_like_openapi_json("{\"title\": \"nope\"}"));
+    fn normalize_argument_key_handles_camel_case_and_segments() {
+        assert_eq!(normalize_argument_key("resourceId"), "resource_id");
+        assert_eq!(normalize_argument_key("userName"), "user_name");
+        assert_eq!(normalize_argument_key("userID"), "user_id");
+        assert_eq!(normalize_argument_key("metadata.ownerId"), "owner_id");
+        assert_eq!(normalize_argument_key("items[].resourceId"), "resource_id");
+        assert_eq!(normalize_argument_key("resource-id"), "resource_id");
     }
 
-    fn make_temp_dir() -> PathBuf {
+    #[test]
+    fn argument_accepts_respects_camel_case_suffixes() {
+        let (accepts, prefer) = argument_accepts_and_preference("resourceId");
+        assert_eq!(accepts, vec!["resource_id"]);
+        assert_eq!(prefer.as_deref(), Some("resource_id"));
+    }
+
+    #[test]
+    fn argument_accepts_expands_base_names() {
+        let (accepts, prefer) = argument_accepts_and_preference("resource");
+        assert_eq!(accepts, vec!["resource_id", "resource_name", "resource_slug"]);
+        assert_eq!(prefer.as_deref(), Some("resource_id"));
+    }
+
+    fn create_temporary_dir() -> PathBuf {
         let mut dir = std::env::temp_dir();
         let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
         dir.push(format!("io_rs_tests_{}", nanos));
@@ -943,7 +881,7 @@ mod tests {
 
     #[test]
     fn load_workflows_reads_yaml_and_json_recursively_and_sorts() -> Result<()> {
-        let root = make_temp_dir();
+        let root = create_temporary_dir();
 
         // Create nested directories
         let nested = root.join("nested");
@@ -972,29 +910,6 @@ mod tests {
         workflows.sort_by(|a, b| a.workflow.cmp(&b.workflow));
         assert_eq!(workflows[0].workflow, "app_with_db");
         assert_eq!(workflows[1].workflow, "backup_db");
-        Ok(())
-    }
-
-    #[test]
-    fn write_manifest_json_writes_file_with_workflows_only() -> Result<()> {
-        // Set up temp output and workflows; skip schema generation by providing an empty inputs vec
-        let dir = make_temp_dir();
-        let out_path = dir.join("manifest.json");
-
-        // Create a simple workflow dir
-        let wf_dir = dir.join("workflows");
-        fs::create_dir_all(&wf_dir)?;
-        fs::write(wf_dir.join("x.yaml"), "workflow: test\ndescription: test workflow\n")?;
-
-        write_manifest_json(vec![], Some(wf_dir.clone()), out_path.clone())?;
-
-        // Verify the file exists and is non-empty
-        let bytes = fs::read(&out_path)?;
-        assert!(!bytes.is_empty());
-
-        // Verify JSON structure has a workflows array
-        let v: serde_json::Value = serde_json::from_slice(&bytes)?;
-        assert!(v.get("workflows").and_then(|w| w.as_array()).is_some());
         Ok(())
     }
 }

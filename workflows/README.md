@@ -30,3 +30,5 @@ steps:
 
 During the build, every workflow is parsed via `oatty_types::workflow::WorkflowDefinition` and
 bundled into the manifest. Validation errors surface with the offending file path.
+
+Legacy Heroku-centric workflow samples have been moved to `legacy/workflows/`.

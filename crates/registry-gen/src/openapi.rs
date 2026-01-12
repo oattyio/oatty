@@ -1,993 +1,901 @@
-//! OpenAPI document transformation utilities.
+//! OpenAPI command generation utilities.
 //!
-//! This module provides functionality to transform OpenAPI v2 (Swagger) and v3 documents
-//! into a minimal hyper-schema-like format with a `links` array for command generation.
+//! This module parses OpenAPI v3 documents directly into `CommandSpec` entries,
+//! extracting path parameters, query/body flags, response schemas, and server
+//! base URLs without converting to Hyper-Schema.
 
 use anyhow::{Result, anyhow};
-use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
-use serde_json::{Map, Value, json};
+use heck::ToKebabCase;
+use oatty_types::{CommandFlag, CommandSpec, HttpCommandSpec, PositionalArgument};
+use oatty_util::{get_description, get_type, resolve_output_schema, sort_and_dedup_commands};
+use serde_json::{Map, Value};
+use std::collections::{HashMap, HashSet};
+use url::Url;
 
-// ============================================================================
-// Utility Functions
-// ============================================================================
+use crate::provider_resolver::resolve_and_infer_providers;
 
-/// Converts HTTP method to uppercase for consistency.
-fn upper_http(method: &str) -> String {
-    method.to_ascii_uppercase()
-}
-
-/// Determines if a document is OpenAPI v3 based on the presence of an "openapi" field.
-fn is_oas3(doc: &Value) -> bool {
-    doc.get("openapi").and_then(Value::as_str).is_some()
-}
-
-// No JSON pointer token escaping needed in strict draft-04 mode.
-
-/// Resolves local JSON references within the same document.
-///
-/// Handles references like "#/components/schemas/Foo" or "#/components/parameters/Bar"
-/// by stripping the '#' prefix and using JSON pointer resolution.
-fn resolve_local_ref(root: &Value, r: &str) -> Option<Value> {
-    let ptr = r.strip_prefix('#').unwrap_or(r);
-    root.pointer(ptr).cloned()
-}
-
-// ============================================================================
-// Parameter Collection and Merging
-// ============================================================================
-
-/// Collects and resolves parameters declared at both the path and operation levels within an
-/// OpenAPI document. Operation-level parameters override path-level definitions that share the
-/// same name and location.
+/// Generate command specifications from an OpenAPI document.
 ///
 /// # Arguments
 ///
-/// * `root` - Root [`Value`] used to resolve any local `$ref` pointers.
-/// * `path_item` - Path-level object that may contribute shared parameters.
-/// * `op` - Operation-level object whose parameters override path-level entries.
+/// * `document` - Parsed OpenAPI document value.
 ///
 /// # Returns
 ///
-/// Resolved and deduplicated parameters with any `$ref` indirections expanded.
+/// A list of `CommandSpec` entries derived from the OpenAPI paths and operations.
 ///
-/// # Example
+/// The command group for each entry is derived from the registrable domain of the
+/// first server URL in the document.
 ///
-/// ```ignore
-/// use serde_json::json;
-/// use serde_json::Value;
+/// # Errors
 ///
-/// let root = json!({
-///     "components": {
-///         "parameters": {
-///             "ExampleParam": {
-///                 "name": "example",
-///                 "in": "query",
-///                 "required": true,
-///                 "schema": { "type": "string" }
-///             }
-///         }
-///     }
-/// });
-///
-/// let path_item = json!({
-///     "parameters": [
-///         { "$ref": "#/components/parameters/ExampleParam" },
-///         { "name": "other", "in": "query", "required": true }
-///     ]
-/// });
-///
-/// let op = json!({
-///     "parameters": [
-///         { "name": "example", "in": "query", "required": false }
-///     ]
-/// });
-///
-/// let collected = collect_parameters(&root, &path_item, &op);
-/// assert_eq!(collected.len(), 2); // No duplicate parameters
-/// assert_eq!(collected[0]["name"], "other"); // Keeps `other` parameter from path level
-/// assert_eq!(collected[1]["name"], "example"); // Operation-level `example` overrides
-/// ```
-///
-/// # Notes
-///
-/// Unresolvable `$ref` pointers are returned as-is to preserve the input structure.
-fn collect_parameters(root: &Value, path_item: &Value, op: &Value) -> Vec<Value> {
-    let mut out: Vec<Value> = Vec::new();
+/// Returns an error if the document is not OpenAPI v3 or lacks required sections.
+pub fn derive_commands_from_openapi(document: &Value) -> Result<Vec<CommandSpec>> {
+    if !is_oas3(document) {
+        return Err(anyhow!(
+            "unsupported OpenAPI document: expected OpenAPI v3 (missing 'openapi' field)"
+        ));
+    }
+
+    let mut commands = derive_commands_from_oas3(document)?;
+    sort_and_dedup_commands(&mut commands);
+    resolve_and_infer_providers(&mut commands);
+    Ok(commands)
+}
+
+fn derive_commands_from_oas3(document: &Value) -> Result<Vec<CommandSpec>> {
+    let paths = document
+        .get("paths")
+        .and_then(Value::as_object)
+        .ok_or_else(|| anyhow!("OpenAPI document missing paths"))?;
+
+    let vendor = derive_vendor_from_document(document);
+    let mut commands = Vec::new();
+    let mut command_names: HashSet<String> = HashSet::new();
+
+    for (path, path_item) in paths {
+        let Some(path_item_object) = path_item.as_object() else {
+            return Err(anyhow!("OpenAPI path item is not an object: {}", path));
+        };
+
+        for (method, operation) in path_item_object {
+            if !is_supported_http_method(method) {
+                continue;
+            }
+            let Some(operation_object) = operation.as_object() else {
+                continue;
+            };
+
+            if let Some(command_spec) =
+                build_command_from_operation(document, &vendor, path, path_item, operation_object, method, &mut command_names)?
+            {
+                commands.push(command_spec);
+            }
+        }
+    }
+
+    Ok(commands)
+}
+
+fn build_command_from_operation(
+    document: &Value,
+    vendor: &str,
+    path: &str,
+    path_item: &Value,
+    operation: &Map<String, Value>,
+    method: &str,
+    command_names: &mut HashSet<String>,
+) -> Result<Option<CommandSpec>> {
+    let method_upper = method.to_ascii_uppercase();
+    let Some((_, action)) = classify_command(path, method_upper.as_str()) else {
+        return Ok(None);
+    };
+
+    let (title, description) = extract_operation_summary(operation);
+
+    let parameters = collect_parameters(document, path_item, operation);
+    let (path_template, positional_args) = build_path_template_and_positionals(path, &parameters, document);
+    if path_template.is_empty() {
+        return Ok(None);
+    }
+
+    let mut flags = collect_flags_from_operation(document, &parameters, operation);
+    normalize_flags(&mut flags);
+
+    let http_spec = build_http_command_spec(document, operation, method_upper, path_template)?;
+
+    let (group, name) = derive_unique_command_name(vendor, path, &action, &title, method, command_names);
+    Ok(Some(CommandSpec::new_http(
+        group,
+        name,
+        description,
+        positional_args,
+        flags,
+        http_spec,
+        0,
+    )))
+}
+
+fn extract_operation_summary(operation: &Map<String, Value>) -> (String, String) {
+    let title = operation
+        .get("summary")
+        .and_then(Value::as_str)
+        .or_else(|| operation.get("operationId").and_then(Value::as_str))
+        .unwrap_or("")
+        .to_string();
+    let description = operation.get("description").and_then(Value::as_str).unwrap_or(&title).to_string();
+    (title, description)
+}
+
+fn normalize_flags(flags: &mut [CommandFlag]) {
+    assign_unique_short_names(flags);
+    flags.sort_by(|left, right| {
+        if left.required && right.required {
+            return left.name.cmp(&right.name);
+        }
+        if left.required {
+            return std::cmp::Ordering::Less;
+        }
+        if right.required {
+            return std::cmp::Ordering::Greater;
+        }
+        std::cmp::Ordering::Equal
+    });
+}
+
+fn build_http_command_spec(document: &Value, operation: &Map<String, Value>, method: String, path: String) -> Result<HttpCommandSpec> {
+    let target_schema = build_target_schema_from_oas3(document, operation);
+    let output_schema = resolve_output_schema(target_schema.as_ref(), document);
+
+    Ok(HttpCommandSpec {
+        method,
+        path,
+        output_schema,
+    })
+}
+
+fn derive_unique_command_name(
+    vendor: &str,
+    path: &str,
+    action: &str,
+    title: &str,
+    method: &str,
+    command_names: &mut HashSet<String>,
+) -> (String, String) {
+    let (group, name) = derive_command_group_and_name(vendor, path, action);
+    if command_names.insert(format!("{}{}", group, name)) {
+        return (group, name);
+    }
+
+    if !title.is_empty() {
+        let (title_group, title_name) = derive_command_group_and_name(vendor, path, &title.to_kebab_case());
+        if command_names.insert(format!("{}{}", title_group, title_name)) {
+            return (title_group, title_name);
+        }
+    }
+
+    let (method_group, method_name) = derive_command_group_and_name(vendor, path, &method.to_lowercase());
+    command_names.insert(format!("{}{}", method_group, method_name));
+    (method_group, method_name)
+}
+
+fn collect_flags_from_operation(document: &Value, parameters: &[Value], operation: &Map<String, Value>) -> Vec<CommandFlag> {
+    let mut flags_by_name: HashMap<String, CommandFlag> = HashMap::new();
+
+    for parameter in parameters {
+        if parameter.get("in").and_then(Value::as_str) != Some("query") {
+            continue;
+        }
+        if let Some(flag) = build_flag_from_parameter(document, parameter) {
+            flags_by_name
+                .entry(flag.name.clone())
+                .and_modify(|existing| existing.required |= flag.required)
+                .or_insert(flag);
+        }
+    }
+
+    for flag in build_flags_from_request_body(document, operation) {
+        flags_by_name
+            .entry(flag.name.clone())
+            .and_modify(|existing| existing.required |= flag.required)
+            .or_insert(flag);
+    }
+
+    flags_by_name.into_values().collect()
+}
+
+fn build_flag_from_parameter(document: &Value, parameter: &Value) -> Option<CommandFlag> {
+    let name = parameter.get("name").and_then(Value::as_str)?.to_string();
+    let required = parameter.get("required").and_then(Value::as_bool).unwrap_or(false);
+
+    let schema = parameter.get("schema").cloned().unwrap_or_else(|| Value::Object(Map::new()));
+    let merged_schema = resolve_schema_properties(&schema, document);
+    let schema_type = get_type(&merged_schema, document);
+    let enum_values = get_enum_values(&merged_schema, document);
+    let default_value = get_default(&merged_schema, document)
+        .or_else(|| get_default(parameter, document))
+        .or_else(|| enum_values.first().cloned());
+    let description = parameter
+        .get("description")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .or_else(|| get_description(&merged_schema, document));
+
+    Some(CommandFlag {
+        name,
+        short_name: None,
+        required,
+        r#type: schema_type,
+        enum_values,
+        default_value,
+        description,
+        provider: None,
+    })
+}
+
+fn build_flags_from_request_body(document: &Value, operation: &Map<String, Value>) -> Vec<CommandFlag> {
+    let Some(request_body) = operation.get("requestBody") else {
+        return Vec::new();
+    };
+    let Some(schema) = request_body
+        .get("content")
+        .and_then(|content| content.get("application/json"))
+        .and_then(|content| content.get("schema"))
+    else {
+        return Vec::new();
+    };
+
+    let resolved_schema = if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
+        resolve_local_ref(document, reference).unwrap_or_else(|| schema.clone())
+    } else {
+        schema.clone()
+    };
+
+    let merged_schema = resolve_schema_properties(&resolved_schema, document);
+    let required_names = collect_required(&merged_schema);
+    let mut flags = Vec::new();
+
+    if let Some(properties) = collect_properties(&merged_schema) {
+        for (name, value) in properties {
+            let merged_property = resolve_schema_properties(&value, document);
+            let schema_type = get_type(&merged_property, document);
+            let enum_values = get_enum_values(&merged_property, document);
+            let default_value = get_default(&merged_property, document).or_else(|| enum_values.first().cloned());
+            let description = get_description(&merged_property, document);
+            let is_required = required_names.contains(&name);
+
+            flags.push(CommandFlag {
+                name,
+                short_name: None,
+                required: is_required,
+                r#type: schema_type,
+                enum_values,
+                default_value,
+                description,
+                provider: None,
+            });
+        }
+    } else {
+        let schema_type = get_type(&merged_schema, document);
+        let enum_values = get_enum_values(&merged_schema, document);
+        let default_value = get_default(&merged_schema, document).or_else(|| enum_values.first().cloned());
+        let description = get_description(&merged_schema, document);
+        let is_required = request_body.get("required").and_then(Value::as_bool).unwrap_or(false);
+
+        flags.push(CommandFlag {
+            name: "body".to_string(),
+            short_name: None,
+            required: is_required,
+            r#type: schema_type,
+            enum_values,
+            default_value,
+            description,
+            provider: None,
+        });
+    }
+
+    flags
+}
+
+fn build_path_template_and_positionals(path: &str, parameters: &[Value], document: &Value) -> (String, Vec<PositionalArgument>) {
+    let mut parameter_descriptions: HashMap<String, Option<String>> = HashMap::new();
+    for parameter in parameters {
+        if parameter.get("in").and_then(Value::as_str) != Some("path") {
+            continue;
+        }
+        let Some(name) = parameter.get("name").and_then(Value::as_str) else {
+            continue;
+        };
+        let description = parameter
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::to_string)
+            .or_else(|| parameter.get("schema").and_then(|schema| get_description(schema, document)));
+        parameter_descriptions.insert(sanitize_placeholder_name(name), description);
+    }
+
+    let mut args = Vec::new();
+    let mut segments_out = Vec::new();
+    let mut previous_concrete: Option<&str> = None;
+
+    for segment in path.trim_start_matches('/').split('/') {
+        if segment.starts_with('{') && segment.ends_with('}') {
+            let raw_name = &segment[1..segment.len() - 1];
+            let sanitized = sanitize_placeholder_name(raw_name);
+            let arg_name = if sanitized == "id" {
+                previous_concrete
+                    .filter(|value| !is_version_segment(value))
+                    .map(singularize)
+                    .unwrap_or_else(|| "id".to_string())
+            } else {
+                sanitized.clone()
+            };
+            let help = parameter_descriptions.get(&sanitized).cloned().unwrap_or(None);
+
+            args.push(PositionalArgument {
+                name: arg_name.clone(),
+                help,
+                provider: None,
+            });
+            segments_out.push(format!("{{{}}}", arg_name));
+        } else {
+            segments_out.push(segment.to_string());
+            if !segment.is_empty() && !is_version_segment(segment) {
+                previous_concrete = Some(segment);
+            }
+        }
+    }
+
+    (format!("/{}", segments_out.join("/")), args)
+}
+
+/// Collects normalized base URLs from the OpenAPI document servers list.
+pub fn collect_base_urls_from_document(document: &Value) -> Vec<String> {
+    let Some(servers) = document.get("servers").and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    collect_base_urls_from_servers(servers)
+}
+
+pub fn derive_vendor_from_document(document: &Value) -> String {
+    let Some(servers) = document.get("servers").and_then(Value::as_array) else {
+        return "misc".to_string();
+    };
+    let Some(resolved_url) = resolve_servers_base_url(servers) else {
+        return "misc".to_string();
+    };
+
+    derive_vendor_from_base_url(&resolved_url).unwrap_or_else(|| "misc".to_string())
+}
+
+pub fn derive_vendor_from_base_url(base_url: &str) -> Option<String> {
+    let url = Url::parse(base_url).ok()?;
+    let host_str = url.host_str()?;
+    let labels: Vec<&str> = host_str.split('.').filter(|l| !l.is_empty()).collect();
+
+    if labels.is_empty() {
+        return None;
+    }
+    if labels.len() == 1 {
+        return Some(labels[0].to_lowercase());
+    }
+
+    let mut candidate = labels[labels.len() - 2];
+    let common_slds = [
+        "co",
+        "com",
+        "net",
+        "org",
+        "gov",
+        "edu",
+        "ac",
+        "io",
+        "ne",
+        "or",
+        "go",
+        "ed",
+        "lg",
+        "gr",
+        "blogspot",
+        "github",
+        "herokuapp",
+        "vercel",
+        "pages",
+        "appspot",
+        "cloudfront",
+        "wordpress",
+        "blog",
+        "dev",
+        "xyz",
+        "local",
+    ];
+    if labels.len() >= 3 && common_slds.contains(&candidate) {
+        candidate = labels[labels.len() - 3];
+    }
+
+    if candidate.is_empty() {
+        None
+    } else {
+        Some(candidate.to_lowercase())
+    }
+}
+
+fn resolve_servers_base_url(servers: &[Value]) -> Option<String> {
+    for server in servers {
+        if let Some(url) = server.get("url").and_then(Value::as_str)
+            && let Some(resolved) = resolve_server_url(url, server.get("variables"))
+        {
+            {
+                return Some(resolved);
+            }
+        }
+    }
+    None
+}
+
+fn collect_base_urls_from_servers(servers: &[Value]) -> Vec<String> {
+    let mut urls = Vec::new();
+    let mut seen = HashSet::new();
+
+    for server in servers {
+        let Some(url) = server.get("url").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(resolved) = resolve_server_url(url, server.get("variables")) else {
+            continue;
+        };
+        let Some(normalized) = normalize_base_url(&resolved) else {
+            continue;
+        };
+        if seen.insert(normalized.clone()) {
+            urls.push(normalized);
+        }
+    }
+
+    urls
+}
+
+fn resolve_server_url(url: &str, variables: Option<&Value>) -> Option<String> {
+    let mut resolved = url.to_string();
+    if let Some(variable_map) = variables.and_then(Value::as_object) {
+        for (name, value) in variable_map {
+            if let Some(default_value) = value.get("default").and_then(Value::as_str) {
+                let placeholder = format!("{{{}}}", name);
+                resolved = resolved.replace(&placeholder, default_value);
+            }
+        }
+    }
+
+    if resolved.contains('{') || resolved.contains('}') {
+        return None;
+    }
+    Some(resolved)
+}
+
+fn normalize_base_url(raw_url: &str) -> Option<String> {
+    let trimmed = raw_url.trim_end_matches('/');
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") {
+        return Some(trimmed.to_string());
+    }
+    None
+}
+
+fn build_target_schema_from_oas3(root: &Value, operation: &Map<String, Value>) -> Option<Value> {
+    let responses = operation.get("responses")?.as_object()?;
+    let preferred = ["200", "201", "202", "204"];
+    let mut response_schema: Option<&Value> = None;
+
+    for key in preferred {
+        if let Some(response) = responses.get(key) {
+            response_schema = Some(response);
+            break;
+        }
+    }
+
+    if response_schema.is_none() {
+        for (key, response) in responses {
+            if key.starts_with('2') {
+                response_schema = Some(response);
+                break;
+            }
+        }
+    }
+
+    let response = response_schema?;
+    let schema = response
+        .get("content")
+        .and_then(|content| content.get("application/json"))
+        .and_then(|content| content.get("schema"))?;
+    if let Some(reference) = schema.get("$ref").and_then(Value::as_str) {
+        resolve_local_ref(root, reference)
+    } else {
+        Some(schema.clone())
+    }
+}
+
+fn is_supported_http_method(method: &str) -> bool {
+    matches!(method, "get" | "post" | "put" | "patch" | "delete")
+}
+
+fn is_oas3(document: &Value) -> bool {
+    document.get("openapi").and_then(Value::as_str).is_some()
+}
+
+fn resolve_local_ref(root: &Value, reference: &str) -> Option<Value> {
+    let pointer = reference.strip_prefix('#').unwrap_or(reference);
+    root.pointer(pointer).cloned()
+}
+
+fn collect_parameters(root: &Value, path_item: &Value, operation: &Map<String, Value>) -> Vec<Value> {
+    let mut collected: Vec<Value> = Vec::new();
     let mut seen: Vec<(String, String)> = Vec::new();
 
-    let push_param = |out: &mut Vec<Value>, seen: &mut Vec<(String, String)>, p: Value| {
-        let (name, location) = (
-            p.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
-            p.get("in").and_then(Value::as_str).unwrap_or("").to_string(),
-        );
+    let mut push_parameter = |parameter: Value| {
+        let name = parameter.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+        let location = parameter.get("in").and_then(Value::as_str).unwrap_or("").to_string();
 
         if !name.is_empty() && !location.is_empty() {
-            // Replace existing parameter with same name+location
-            if let Some(idx) = seen.iter().position(|(n, i)| n == &name && i == &location) {
-                out[idx] = p;
+            if let Some(index) = seen.iter().position(|(n, loc)| n == &name && loc == &location) {
+                collected[index] = parameter;
             } else {
-                out.push(p);
+                collected.push(parameter);
                 seen.push((name, location));
             }
         }
     };
 
-    // Process path-level parameters
-    if let Some(arr) = path_item.get("parameters").and_then(Value::as_array) {
-        for p in arr {
-            let resolved = if let Some(r) = p.get("$ref").and_then(Value::as_str) {
-                resolve_local_ref(root, r).unwrap_or_else(|| p.clone())
+    if let Some(params) = path_item.get("parameters").and_then(Value::as_array) {
+        for parameter in params {
+            let resolved = if let Some(reference) = parameter.get("$ref").and_then(Value::as_str) {
+                resolve_local_ref(root, reference).unwrap_or_else(|| parameter.clone())
             } else {
-                p.clone()
+                parameter.clone()
             };
-            push_param(&mut out, &mut seen, resolved);
+            push_parameter(resolved);
         }
     }
 
-    // Process operation-level parameters (these override path-level ones)
-    if let Some(arr) = op.get("parameters").and_then(Value::as_array) {
-        for p in arr {
-            let resolved = if let Some(r) = p.get("$ref").and_then(Value::as_str) {
-                resolve_local_ref(root, r).unwrap_or_else(|| p.clone())
+    if let Some(params) = operation.get("parameters").and_then(Value::as_array) {
+        for parameter in params {
+            let resolved = if let Some(reference) = parameter.get("$ref").and_then(Value::as_str) {
+                resolve_local_ref(root, reference).unwrap_or_else(|| parameter.clone())
             } else {
-                p.clone()
+                parameter.clone()
             };
-            push_param(&mut out, &mut seen, resolved);
+            push_parameter(resolved);
         }
     }
 
-    out
+    collected
 }
 
-/// Merges required field arrays, avoiding duplicates.
-fn merge_required(into: &mut Vec<String>, from: Option<&Value>) {
-    if let Some(arr) = from.and_then(Value::as_array) {
-        for n in arr.iter().filter_map(|v| v.as_str()) {
-            if !into.contains(&n.to_string()) {
-                into.push(n.to_string());
-            }
-        }
-    }
+fn sanitize_placeholder_name(name: &str) -> String {
+    name.trim_matches(|c: char| matches!(c, '{' | '}' | ' ')).replace('-', "_")
 }
 
-/// Merges property maps, preserving existing values.
-fn merge_properties(into: &mut Map<String, Value>, from: Option<&Map<String, Value>>) {
-    if let Some(map) = from {
-        for (k, v) in map.iter() {
-            into.entry(k.clone()).or_insert_with(|| v.clone());
-        }
-    }
-}
-
-// ============================================================================
-// Schema Building
-// ============================================================================
-
-/// Builds a link schema from OpenAPI v3 operation parameters and request body.
-///
-/// Converts query parameters to flags and request body to properties,
-/// creating a unified schema for the command.
-fn build_link_schema_from_oas3(root: &Value, path_item: &Value, op: &Value) -> Option<Value> {
-    let params = collect_parameters(root, path_item, op);
-    let mut required: Vec<String> = Vec::new();
-    let mut props: Map<String, Value> = Map::new();
-
-    // Convert query parameters to flags
-    for p in params {
-        let location = p.get("in").and_then(Value::as_str).unwrap_or("");
-        if location == "query" {
-            let name = match p.get("name").and_then(Value::as_str) {
-                Some(n) => n.to_string(),
-                None => continue,
-            };
-
-            // Mark as required if specified
-            if p.get("required").and_then(Value::as_bool) == Some(true) && !required.contains(&name) {
-                required.push(name.clone());
-            }
-
-            // Build parameter schema
-            let mut schema = p.get("schema").cloned().unwrap_or_else(|| json!({}));
-
-            // Promote description and default from parameter to schema
-            if schema.get("description").is_none()
-                && let Some(desc) = p.get("description").cloned()
-                && let Some(obj) = schema.as_object_mut()
-            {
-                obj.insert("description".into(), desc.clone());
-            }
-
-            if schema.get("default").is_none()
-                && let Some(def) = p.get("default").cloned()
-                && let Some(obj) = schema.as_object_mut()
-            {
-                obj.insert("default".into(), def.clone());
-            }
-
-            props.insert(name, schema);
-        }
+fn classify_command(path: &str, method: &str) -> Option<(String, String)> {
+    let segments: Vec<&str> = path.trim_start_matches('/').split('/').collect();
+    if segments.is_empty() {
+        return None;
     }
 
-    // Handle request body schema
-    if let Some(rb_schema) = op
-        .get("requestBody")
-        .and_then(|rb| rb.get("content"))
-        .and_then(|c| c.get("application/json"))
-        .and_then(|aj| aj.get("schema"))
-    {
-        let body_schema = if let Some(r) = rb_schema.get("$ref").and_then(Value::as_str) {
-            resolve_local_ref(root, r).unwrap_or_else(|| rb_schema.clone())
-        } else {
-            rb_schema.clone()
-        };
-
-        if let Some(obj) = body_schema.as_object() {
-            if obj.get("properties").is_some() {
-                // Merge object properties
-                let body_props = obj.get("properties").and_then(Value::as_object).cloned().unwrap_or_default();
-                merge_properties(&mut props, Some(&body_props));
-                merge_required(&mut required, obj.get("required"));
-            } else {
-                // Fallback: expose as synthetic "body" property
-                props.entry("body").or_insert_with(|| body_schema);
-            }
-        } else {
-            props.entry("body").or_insert_with(|| body_schema);
-        }
-    }
-
-    // Return schema only if we have properties or required fields
-    if props.is_empty() && required.is_empty() {
-        None
-    } else {
-        let mut schema = Map::new();
-        schema.insert("type".into(), json!("object"));
-        schema.insert("properties".into(), Value::Object(props));
-        if !required.is_empty() {
-            schema.insert("required".into(), json!(required));
-        }
-        Some(Value::Object(schema))
-    }
-}
-
-// ============================================================================
-// HREF Rewriting
-// ============================================================================
-
-/// Leaves `href` unchanged, using standard URI Template variables.
-// Encode set for pointer components like "#/definitions/foo/definitions/identity"
-const PTR_ENCODE_SET: &AsciiSet = &CONTROLS
-    .add(b' ')
-    .add(b'"')
-    .add(b'#')
-    .add(b'%')
-    .add(b'<')
-    .add(b'>')
-    .add(b'?')
-    .add(b'{')
-    .add(b'}')
-    .add(b'/');
-
-/// Rewrites the `href` by replacing path parameters with encoded references to their schema
-/// definitions, while simultaneously collecting and enriching parameter definitions.
-///
-/// # Parameters
-/// - `path`: A string slice representing the path in which placeholders like `{name}` need
-///   to be replaced with encoded definitions.
-/// - `params`: A slice of JSON values, where each element represents a parameter definition
-///   that might include metadata such as `name`, `in`, `schema`, and `description`.
-/// - `definitions`: A mutable map that will be updated with parameter definitions under their
-///   respective names. Each definition includes details within `"definitions.identity"`.
-///
-/// # Returns
-/// Returns a new `String` where path parameters, such as `{name}`, have been replaced with
-/// encoded references pointing to their respective schema definitions (e.g.,
-/// `{(%23%2Fdefinitions%2Fname%2Fdefinitions%2Fidentity)}`).
-///
-/// # Behavior
-/// - Only processes parameters where the `"in"` field is `"path"`.
-/// - If a parameter definition has a name (`"name"` field), a corresponding entry in the
-///   `definitions` map is created or updated:
-///     - Adds a `"definitions.identity"` object with:
-///         - A `"type"` field, defaulting to `"string"` if unspecified in the parameter schema.
-///         - A `"description"` field, if present in the parameter.
-/// - Modifies the `href` to replace `{param_name}` with an encoded reference to
-///   `#/definitions/{param_name}/definitions/identity`.
-///
-/// # Example
-/// ```ignore
-/// use serde_json::{Value, json, Map};
-///
-/// let path = "/users/{userId}";
-/// let params = vec![
-///     json!({
-///         "in": "path",
-///         "name": "userId",
-///         "description": "The ID of the user",
-///         "schema": { "type": "string" }
-///     })
-/// ];
-/// let mut definitions = Map::new();
-///
-/// let new_path = rewrite_href_and_collect_definitions(&path, &params, &mut definitions);
-///
-/// assert_eq!(new_path, "/users/{(%23%2Fdefinitions%2FuserId%2Fdefinitions%2Fidentity)}");
-/// assert!(definitions.contains_key("userId"));
-/// assert_eq!(
-///     definitions.get("userId").unwrap(),
-///     &json!({
-///         "definitions": {
-///             "identity": {
-///                 "type": "string",
-///                 "description": "The ID of the user"
-///             }
-///         }
-///     })
-/// );
-/// ```
-///
-/// # Notes
-/// - Parameters without a `"name"` or where `"in"` is not `"path"` are ignored.
-/// - Existing fields in `definitions.<name>.definitions.identity` are preserved unless explicitly
-///   specified by the current parameter.
-/// - Encoding of references ensures they work properly in JSON Pointer contexts by escaping special
-///   characters like `/`.
-fn rewrite_href_and_collect_definitions(path: &str, params: &[Value], definitions: &mut Map<String, Value>) -> String {
-    let mut href = path.to_string();
-
-    for p in params {
-        if p.get("in").and_then(Value::as_str) != Some("path") {
-            continue;
-        }
-        let Some(name) = p.get("name").and_then(Value::as_str) else {
-            continue;
-        };
-        // Build or merge definitions.<name>.definitions.identity
-        let ty = p
-            .get("schema")
-            .and_then(|s| s.get("type"))
-            .cloned()
-            .unwrap_or_else(|| json!("string"));
-        let desc = p.get("description").cloned();
-
-        let mut identity = Map::new();
-        identity.insert("type".into(), ty);
-        if let Some(d) = desc {
-            identity.insert("description".into(), d);
-        }
-
-        // Ensure definitions[name].definitions.identity exists and merge fields without panicking
-        let entry = definitions.entry(name.to_string()).or_insert_with(|| Value::Object(Map::new()));
-        if let Some(obj) = entry.as_object_mut() {
-            let defs_val = obj.entry("definitions").or_insert_with(|| Value::Object(Map::new()));
-            if let Some(defs_obj) = defs_val.as_object_mut() {
-                match defs_obj.get_mut("identity") {
-                    Some(existing) if existing.is_object() => {
-                        if let Some(existing_map) = existing.as_object_mut() {
-                            for (k, v) in identity.into_iter() {
-                                existing_map.entry(k).or_insert(v);
-                            }
-                        }
-                    }
-                    _ => {
-                        defs_obj.insert("identity".into(), Value::Object(identity));
-                    }
-                }
-            }
-        }
-
-        // Rewrite {name} to {(%23%2Fdefinitions%2Fname%2Fdefinitions%2Fidentity)}
-        let ptr = format!("#/definitions/{}/definitions/identity", name);
-        let encoded = utf8_percent_encode(&ptr, PTR_ENCODE_SET).to_string();
-        href = href.replace(&format!("{{{}}}", name), &format!("{{({})}}", encoded));
-    }
-
-    href
-}
-
-// ============================================================================
-// REL Field Determination
-// ============================================================================
-
-/// Determines the "rel" field for a link based on HTTP method and path pattern.
-///
-/// Uses common hyper-schema conventions:
-/// - GET /resources (no path params) -> "instances"
-/// - POST /resources -> "create"
-/// - GET /resources/{id} -> "self"
-/// - PATCH/PUT /resources/{id} -> "update"
-/// - DELETE /resources/{id} -> "delete"
-fn determine_rel(method: &str, path: &str) -> String {
-    let has_path_params = path.contains('{') && path.contains('}');
-    let is_collection = !has_path_params;
-
-    match (method.to_lowercase().as_str(), is_collection) {
-        ("get", true) => "instances".to_string(),
-        ("post", _) => "create".to_string(),
-        ("get", false) => "self".to_string(),
-        ("put" | "patch", false) => "update".to_string(),
-        ("delete", false) => "delete".to_string(),
-        _ => {
-            // Fallback: use method + path pattern
-            if is_collection {
-                format!("{}_{}", method.to_lowercase(), "collection")
-            } else {
-                format!("{}_{}", method.to_lowercase(), "resource")
-            }
-        }
-    }
-}
-
-// ============================================================================
-// Main Transformation Functions
-// ============================================================================
-
-/// Transforms an OpenAPI document into a minimal hyper-schema-like format.
-///
-/// Supports both OpenAPI v3 and Swagger v2 documents, converting them to a
-/// unified format with a `links` array and preserved components for reference resolution.
-///
-/// # Arguments
-/// * `doc` - The OpenAPI document as a JSON Value
-///
-/// # Returns
-/// * `Result<Value>` - Transformed document or error
-///
-/// # Errors
-/// * Returns error for unsupported document types
-pub fn transform_openapi_to_links(doc: &Value) -> Result<Value> {
-    if is_oas3(doc) {
-        transform_oas3(doc)
-    } else if doc.get("swagger").is_some() {
-        transform_swagger2(doc)
-    } else {
-        Err(anyhow!("Unsupported OpenAPI document: expected v3 (openapi) or v2 (swagger)"))
-    }
-}
-
-/// Transforms OpenAPI v3 documents to the target format.
-fn transform_oas3(doc: &Value) -> Result<Value> {
-    let mut links: Vec<Value> = Vec::new();
-    let mut definitions: Map<String, Value> = Map::new();
-
-    let paths = doc
-        .get("paths")
-        .and_then(Value::as_object)
-        .ok_or_else(|| anyhow!("OpenAPI document missing paths"))?;
-
-    // Process each path and operation
-    for (path, path_item) in paths.iter() {
-        let path_obj = path_item.as_object().ok_or_else(|| anyhow!("Path item not an object: {}", path))?;
-
-        for (method, operation) in path_obj.iter() {
-            match method.as_str() {
-                "get" | "post" | "put" | "patch" | "delete" => {
-                    let link = build_link_from_operation(doc, path_item, operation, method, path, &mut definitions)?;
-                    links.push(link);
-                }
-                _ => {} // Skip non-HTTP methods
-            }
-        }
-    }
-
-    // Build final document
-    let mut root = Map::new();
-    root.insert("links".into(), Value::Array(links));
-
-    // Preserve components for reference resolution
-    if let Some(components) = doc.get("components").cloned() {
-        root.insert("components".into(), components);
-    }
-    // Add synthesized definitions for path params so placeholders can reference them
-    if !definitions.is_empty() {
-        root.insert("definitions".into(), Value::Object(definitions));
-    }
-
-    Ok(Value::Object(root))
-}
-
-/// Transforms Swagger v2 documents to the target format.
-fn transform_swagger2(doc: &Value) -> Result<Value> {
-    let mut links: Vec<Value> = Vec::new();
-    let mut definitions: Map<String, Value> = Map::new();
-
-    let paths = doc
-        .get("paths")
-        .and_then(Value::as_object)
-        .ok_or_else(|| anyhow!("Swagger v2 document missing paths"))?;
-
-    // Process each path and operation
-    for (path, path_item) in paths.iter() {
-        let path_obj = path_item.as_object().ok_or_else(|| anyhow!("Path item not an object: {}", path))?;
-
-        for (method, operation) in path_obj.iter() {
-            match method.as_str() {
-                "get" | "post" | "put" | "patch" | "delete" => {
-                    let link = build_link_from_swagger2_operation(doc, path_item, operation, method, path, &mut definitions)?;
-                    links.push(link);
-                }
-                _ => {} // Skip non-HTTP methods
-            }
-        }
-    }
-
-    // Build final document
-    let mut root = Map::new();
-    root.insert("links".into(), Value::Array(links));
-
-    // Preserve definitions and parameters for reference resolution
-    let mut defs_out = Map::new();
-    if let Some(defs) = doc.get("definitions").and_then(Value::as_object) {
-        defs_out = defs.clone();
-    }
-    // Merge synthesized path param definitions
-    for (k, v) in definitions.into_iter() {
-        defs_out.entry(k).or_insert(v);
-    }
-    if !defs_out.is_empty() {
-        root.insert("definitions".into(), Value::Object(defs_out));
-    }
-    if let Some(params) = doc.get("parameters").cloned() {
-        root.insert("parameters".into(), params);
-    }
-
-    Ok(Value::Object(root))
-}
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/// Builds a link object from an OpenAPI v3 operation.
-fn build_link_from_operation(
-    doc: &Value,
-    path_item: &Value,
-    op: &Value,
-    method: &str,
-    path: &str,
-    definitions: &mut Map<String, Value>,
-) -> Result<Value> {
-    let title = op
-        .get("summary")
-        .and_then(Value::as_str)
-        .or_else(|| op.get("operationId").and_then(Value::as_str))
-        .unwrap_or("")
+    let group = segments
+        .iter()
+        .rev()
+        .find(|segment| !segment.starts_with('{'))
+        .map_or(segments[0], |segment| segment)
         .to_string();
 
-    let description = op.get("description").and_then(Value::as_str).unwrap_or(&title).to_string();
+    let group = if group == "config-vars" { "config".into() } else { group };
+    let is_resource = segments.last().map(|segment| segment.starts_with('{')) == Some(true);
+    let ends_with_collection = segments.last().map(|segment| !segment.starts_with('{')) == Some(true);
 
-    let params = collect_parameters(doc, path_item, op);
-    let href = rewrite_href_and_collect_definitions(path, &params, definitions);
-    let schema = build_link_schema_from_oas3(doc, path_item, op);
-    let target_schema = build_target_schema_from_oas3(doc, op);
+    let action = match method {
+        "GET" if is_resource => "info",
+        "GET" if ends_with_collection => "list",
+        "POST" => "create",
+        "PATCH" | "PUT" => "update",
+        "DELETE" => "delete",
+        _ => return None,
+    };
 
-    let mut link_obj = Map::new();
-    link_obj.insert("href".into(), json!(href));
-    link_obj.insert("method".into(), json!(upper_http(method)));
-    link_obj.insert("rel".into(), json!(determine_rel(method, path)));
-
-    if !title.is_empty() {
-        link_obj.insert("title".into(), json!(title));
-    }
-    if !description.is_empty() {
-        link_obj.insert("description".into(), json!(description));
-    }
-    if let Some(s) = schema {
-        link_obj.insert("schema".into(), s);
-    }
-    if let Some(ts) = target_schema {
-        link_obj.insert("targetSchema".into(), ts);
-    }
-
-    // Draft-04 Hyper-Schema has no standard per-variable schema; omit non-standard keys.
-
-    Ok(Value::Object(link_obj))
+    Some((group, action.to_string()))
 }
 
-/// Builds a link object from a Swagger v2 operation.
-fn build_link_from_swagger2_operation(
-    doc: &Value,
-    path_item: &Value,
-    op: &Value,
-    method: &str,
-    path: &str,
-    definitions: &mut Map<String, Value>,
-) -> Result<Value> {
-    let title = op
-        .get("summary")
-        .and_then(Value::as_str)
-        .or_else(|| op.get("operationId").and_then(Value::as_str))
-        .unwrap_or("")
-        .to_string();
-
-    let description = op.get("description").and_then(Value::as_str).unwrap_or(&title).to_string();
-
-    let all_params = collect_swagger2_parameters(doc, path_item, op);
-    let href = rewrite_href_and_collect_definitions(path, &all_params, definitions);
-    let schema = build_swagger2_link_schema(doc, &all_params);
-    let target_schema = build_target_schema_from_swagger2(doc, op);
-
-    let mut link_obj = Map::new();
-    link_obj.insert("href".into(), json!(href));
-    link_obj.insert("method".into(), json!(upper_http(method)));
-    link_obj.insert("rel".into(), json!(determine_rel(method, path)));
-
-    if !title.is_empty() {
-        link_obj.insert("title".into(), json!(title));
-    }
-    if !description.is_empty() {
-        link_obj.insert("description".into(), json!(description));
-    }
-    if let Some(s) = schema {
-        link_obj.insert("schema".into(), s);
-    }
-    if let Some(ts) = target_schema {
-        link_obj.insert("targetSchema".into(), ts);
-    }
-
-    // Draft-04 Hyper-Schema has no standard per-variable schema; omit non-standard keys.
-
-    Ok(Value::Object(link_obj))
+fn concrete_segments(path: &str) -> Vec<String> {
+    path.trim_start_matches('/')
+        .split('/')
+        .filter(|segment| !segment.is_empty() && !segment.starts_with('{') && !is_version_segment(segment))
+        .map(str::to_string)
+        .collect()
 }
 
-/// Collects all parameters for a Swagger v2 operation, resolving references.
-fn collect_swagger2_parameters(doc: &Value, path_item: &Value, op: &Value) -> Vec<Value> {
-    let mut all_params: Vec<Value> = Vec::new();
-
-    // Add path-level parameters
-    if let Some(arr) = path_item.get("parameters").and_then(Value::as_array) {
-        for p in arr {
-            all_params.push(resolve_swagger2_param_ref(doc, p));
-        }
-    }
-
-    // Add operation-level parameters (these override path-level ones)
-    if let Some(arr) = op.get("parameters").and_then(Value::as_array) {
-        for p in arr {
-            all_params.push(resolve_swagger2_param_ref(doc, p));
-        }
-    }
-
-    all_params
+fn is_version_segment(segment: &str) -> bool {
+    let value = segment.trim();
+    value.len() > 1 && value.starts_with('v') && value[1..].chars().all(|c| c.is_ascii_digit())
 }
 
-/// Resolves a Swagger v2 parameter reference.
-fn resolve_swagger2_param_ref(root: &Value, p: &Value) -> Value {
-    if let Some(r) = p.get("$ref").and_then(Value::as_str) {
-        resolve_local_ref(root, r).unwrap_or_else(|| p.clone())
+fn normalize_group(group: &str) -> String {
+    if group == "config-vars" {
+        "config".to_string()
     } else {
-        p.clone()
+        group.to_string()
     }
 }
 
-/// Builds a targetSchema from OAS3 responses (first available 2xx JSON schema).
-fn build_target_schema_from_oas3(root: &Value, op: &Value) -> Option<Value> {
-    let responses = op.get("responses")?.as_object()?;
-    // Try 200 then 201 then any 2xx
-    let keys_preferred = ["200", "201", "202", "204"];
-    let mut resp_schema: Option<&Value> = None;
-    for k in keys_preferred.iter() {
-        if let Some(r) = responses.get(*k) {
-            resp_schema = Some(r);
-            break;
+fn derive_command_group_and_name(vendor: &str, path: &str, action: &str) -> (String, String) {
+    let segments: Vec<String> = concrete_segments(path)
+        .into_iter()
+        .map(|segment| normalize_group(&segment))
+        .collect();
+    let group = if vendor.is_empty() {
+        "misc".to_string()
+    } else {
+        vendor.to_string()
+    };
+    let name = if segments.is_empty() {
+        action.to_string()
+    } else {
+        format!("{}:{}", segments.join(":"), action)
+    };
+
+    (group, name)
+}
+
+fn singularize(segment: &str) -> String {
+    let value = segment.trim_matches(|c: char| matches!(c, '{' | '}' | ' '));
+    let value = value.replace('-', "_");
+    if value.ends_with('s') && value.len() > 1 {
+        value[..value.len() - 1].to_string()
+    } else {
+        value
+    }
+}
+
+fn assign_unique_short_names(flags: &mut [CommandFlag]) {
+    let mut used = HashSet::new();
+
+    for flag in flags.iter_mut() {
+        if let Some(existing) = flag.short_name.take() {
+            let normalized = existing.to_ascii_lowercase();
+            if is_valid_short_name(&normalized) && used.insert(normalized.clone()) {
+                flag.short_name = Some(normalized);
+            }
         }
     }
-    if resp_schema.is_none() {
-        for (k, v) in responses.iter() {
-            if k.starts_with('2') {
-                resp_schema = Some(v);
+
+    for flag in flags.iter_mut() {
+        if flag.short_name.is_some() {
+            continue;
+        }
+
+        for candidate in generate_short_name_candidates(&flag.name) {
+            if used.insert(candidate.clone()) {
+                flag.short_name = Some(candidate);
                 break;
             }
         }
     }
-    let resp = resp_schema?;
-    let schema = resp
-        .get("content")
-        .and_then(|c| c.get("application/json"))
-        .and_then(|aj| aj.get("schema"))?;
-    if let Some(r) = schema.get("$ref").and_then(Value::as_str) {
-        resolve_local_ref(root, r)
-    } else {
-        Some(schema.clone())
+}
+
+fn generate_short_name_candidates(name: &str) -> Vec<String> {
+    let sanitized = sanitize_flag_name(name);
+    let mut candidates = Vec::new();
+    let mut seen = HashSet::new();
+
+    if !sanitized.is_empty() {
+        for length in 1..=sanitized.len().min(3) {
+            let candidate = sanitized[..length].to_string();
+            push_candidate(&mut candidates, &mut seen, candidate);
+        }
+    }
+
+    let segments: Vec<&str> = name.split(|c: char| ['-', '_', '.'].contains(&c)).collect();
+    if segments.len() > 1 {
+        let mut initials = String::new();
+        for segment in segments {
+            if let Some(ch) = segment.chars().find(|c| c.is_ascii_alphabetic()) {
+                initials.push(ch.to_ascii_lowercase());
+                if initials.len() == 3 {
+                    break;
+                }
+            }
+        }
+        if !initials.is_empty() {
+            for length in 1..=initials.len() {
+                let candidate = initials[..length].to_string();
+                push_candidate(&mut candidates, &mut seen, candidate);
+            }
+        }
+    }
+
+    if let Some(first) = sanitized.chars().next() {
+        for suffix in 1..=9 {
+            let candidate = format!("{}{}", first, suffix);
+            push_candidate(&mut candidates, &mut seen, candidate);
+        }
+    }
+
+    candidates
+}
+
+fn sanitize_flag_name(name: &str) -> String {
+    name.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .map(|c| c.to_ascii_lowercase())
+        .collect()
+}
+
+fn push_candidate(candidates: &mut Vec<String>, seen: &mut HashSet<String>, candidate: String) {
+    if candidate.is_empty() {
+        return;
+    }
+    if candidate.chars().count() > 3 {
+        return;
+    }
+    if !candidate.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return;
+    }
+    if seen.insert(candidate.clone()) {
+        candidates.push(candidate);
     }
 }
 
-/// Builds a targetSchema from Swagger2 responses (first available 2xx schema).
-fn build_target_schema_from_swagger2(root: &Value, op: &Value) -> Option<Value> {
-    let responses = op.get("responses")?.as_object()?;
-    let mut resp_schema: Option<&Value> = None;
-    for k in ["200", "201", "202", "204"].iter() {
-        if let Some(r) = responses.get(*k) {
-            resp_schema = Some(r);
-            break;
-        }
-    }
-    if resp_schema.is_none() {
-        for (k, v) in responses.iter() {
-            if k.starts_with('2') {
-                resp_schema = Some(v);
-                break;
-            }
-        }
-    }
-    let resp = resp_schema?;
-    let schema = resp.get("schema")?;
-    if let Some(r) = schema.get("$ref").and_then(Value::as_str) {
-        resolve_local_ref(root, r)
-    } else {
-        Some(schema.clone())
-    }
+fn is_valid_short_name(candidate: &str) -> bool {
+    let length = candidate.chars().count();
+    (1..=3).contains(&length) && candidate.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
-/**
- * Constructs a Swagger 2.0-compatible schema for a link from the given parameters and root definitions.
- *
- * This function processes an array of parameters and builds a JSON schema definition for query
- * and body parameters according to the Swagger 2.0 specification. It extracts metadata such as
- * parameter types, requirements, and descriptions, and combines them into a cohesive schema object.
- *
- * ### Parameters:
- * - `root: &Value`:
- *   A JSON document representing the root Swagger specification. This is used to resolve `$ref`
- *   pointers when processing body parameters.
- *
- * - `params: &[Value]`:
- *   A slice of JSON objects representing the parameters of a Swagger operation. Each parameter
- *   may contain fields like `in`, `name`, `type`, `required`, `schema`, `enum`, `description`,
- *   and `default`.
- *
- * ### Returns:
- * - `Option<Value>`:
- *   - Returns `Some(Value)` if there are valid properties or required fields in the resulting schema.
- *   - Returns `None` if there are no valid properties or required fields to construct a schema.
- *
- * ### Behavior:
- * 1. **Query Parameters**:
- *    - Processes parameters with `"in": "query"`.
- *    - Constructs their schema using fields (`type`, `enum`, `default`, `description`) and merges
- *      it into the resulting schema.
- *    - Tracks `required` query parameters explicitly to include them in the output schema.
- *
- * 2. **Body Parameters**:
- *    - Processes parameters with `"in": "body"`.
- *    - Attempts to resolve the `$ref` field in their `schema` against the `root` definition.
- *    - If the body schema contains `properties` and `required` fields, merges them into
- *      the resultant schema.
- *    - If no `properties` are found, includes the body schema as a single `body` property.
- *
- * 3. **Other Parameter Types**:
- *    - Skips these parameters (e.g., `header`, `path`) as they are not handled by this function.
- *
- * 4. Returns the constructed schema as a JSON object if it contains either `properties` or `required` fields.
- *
- * ### Example Input:
- * ```json
- * {
- *   "parameters": [
- *     { "name": "id", "in": "query", "type": "string", "required": true },
- *     { "name": "filter", "in": "query", "type": "string" },
- *     { "in": "body", "schema": { "$ref": "#/definitions/BodySchema" } }
- *   ]
- * }
- * ```
- *
- * ### Example Output:
- * ```json
- * {
- *   "type": "object",
- *   "properties": {
- *     "id": { "type": "string" },
- *     "filter": { "type": "string" },
- *     "body": { "$ref": "#/definitions/BodySchema" }
- *   },
- *   "required": ["id"]
- * }
- * ```
- *
- * ### Notes:
- * - Fields in the `schema` are prioritized over legacy Swagger v2 fields like `type`, `default`, and `description`.
- * - The function relies on helper functions `resolve_local_ref` to resolve `$ref` pointers and `merge_properties`
- *   or `merge_required` to combine properties and requirements, respectively.
- */
-fn build_swagger2_link_schema(root: &Value, params: &[Value]) -> Option<Value> {
-    let mut required: Vec<String> = Vec::new();
-    let mut properties: Map<String, Value> = Map::new();
-
-    for param in params {
-        match param.get("in").and_then(Value::as_str) {
-            Some("query") => {
-                if let Some(name) = param.get("name").and_then(Value::as_str) {
-                    // Mark as required if specified
-                    if param.get("required").and_then(Value::as_bool) == Some(true) && !required.contains(&name.to_string()) {
-                        required.push(name.to_string());
-                    }
-
-                    // Build parameter schema: Swagger v2 query params usually place type/default at top level
-                    let schema = if let Some(s) = param.get("schema").cloned() {
-                        // Use provided schema and promote description/default if absent
-                        let mut s_owned = s;
-                        if s_owned.get("description").is_none()
-                            && let Some(desc) = param.get("description").cloned()
-                            && let Some(obj) = s_owned.as_object_mut()
-                        {
-                            obj.insert("description".into(), desc.clone());
-                        }
-                        if s_owned.get("default").is_none()
-                            && let Some(def) = param.get("default").cloned()
-                            && let Some(obj) = s_owned.as_object_mut()
-                        {
-                            obj.insert("default".into(), def.clone());
-                        }
-                        s_owned
-                    } else {
-                        let mut s = Map::new();
-                        if let Some(t) = param.get("type").cloned() {
-                            s.insert("type".into(), t);
-                        }
-                        if let Some(e) = param.get("enum").cloned() {
-                            s.insert("enum".into(), e);
-                        }
-                        if let Some(d) = param.get("default").cloned() {
-                            s.insert("default".into(), d);
-                        }
-                        if let Some(desc) = param.get("description").cloned() {
-                            s.insert("description".into(), desc);
-                        }
-                        Value::Object(s)
-                    };
-
-                    properties.insert(name.to_string(), schema);
-                }
+fn resolve_schema_properties(schema: &Value, root: &Value) -> Value {
+    let mut merged = schema.clone();
+    if let Some(pointer) = schema.get("$ref").and_then(Value::as_str) {
+        let pointer = pointer.strip_prefix('#').unwrap_or(pointer);
+        if let Some(target) = root.pointer(pointer)
+            && let Some(merged_object) = merged.as_object_mut()
+        {
+            let target_object = target.as_object().cloned().unwrap_or_default();
+            for (key, value) in target_object {
+                merged_object.entry(key).or_insert(value);
             }
-            Some("body") => {
-                if let Some(body_schema) = param.get("schema") {
-                    let schema = if let Some(r) = body_schema.get("$ref").and_then(Value::as_str) {
-                        resolve_local_ref(root, r).unwrap_or_else(|| body_schema.clone())
-                    } else {
-                        body_schema.clone()
-                    };
+        }
+    }
+    merged
+}
 
-                    if let Some(obj) = schema.as_object() {
-                        if obj.get("properties").is_some() {
-                            let body_props = obj.get("properties").and_then(Value::as_object).cloned().unwrap_or_default();
-                            merge_properties(&mut properties, Some(&body_props));
-                            merge_required(&mut required, obj.get("required"));
-                        } else {
-                            properties.entry("body").or_insert_with(|| schema.clone());
-                        }
-                    } else {
-                        properties.entry("body").or_insert_with(|| schema);
+fn collect_properties(schema: &Value) -> Option<Map<String, Value>> {
+    if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+        return Some(properties.clone());
+    }
+    for key in ["allOf", "anyOf", "oneOf"] {
+        if let Some(items) = schema.get(key).and_then(Value::as_array) {
+            let mut merged = Map::new();
+            for item in items {
+                if let Some(properties) = item.get("properties").and_then(Value::as_object) {
+                    for (property_key, property_value) in properties {
+                        merged.entry(property_key.clone()).or_insert_with(|| property_value.clone());
                     }
                 }
             }
-            _ => {} // Skip other parameter types
+            if !merged.is_empty() {
+                return Some(merged);
+            }
+        }
+    }
+    None
+}
+
+fn collect_required(schema: &Value) -> Vec<String> {
+    let mut required: Vec<String> = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|values| values.iter().filter_map(|value| value.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+
+    for key in ["allOf", "anyOf", "oneOf"] {
+        if let Some(items) = schema.get(key).and_then(Value::as_array) {
+            for item in items {
+                required.extend(
+                    item.get("required")
+                        .and_then(Value::as_array)
+                        .into_iter()
+                        .flat_map(|values| values.iter().filter_map(|value| value.as_str().map(str::to_string))),
+                );
+            }
         }
     }
 
-    // Return schema only if we have properties or required fields
-    if properties.is_empty() && required.is_empty() {
-        None
-    } else {
-        let mut schema = Map::new();
-        schema.insert("type".into(), json!("object"));
-        schema.insert("properties".into(), Value::Object(properties));
-        if !required.is_empty() {
-            schema.insert("required".into(), json!(required));
-        }
-        Some(Value::Object(schema))
+    required.sort();
+    required.dedup();
+    required
+}
+
+fn get_enum_values(schema: &Value, root: &Value) -> Vec<String> {
+    if let Some(pointer) = schema.get("$ref").and_then(Value::as_str) {
+        let pointer = pointer.strip_prefix('#').unwrap_or(pointer);
+        return root.pointer(pointer).map_or(Vec::new(), |target| get_enum_values(target, root));
     }
+
+    if let Some(values) = schema.get("enum").and_then(Value::as_array) {
+        return values.iter().filter_map(|value| value.as_str().map(str::to_string)).collect();
+    }
+
+    ["anyOf", "oneOf"]
+        .iter()
+        .filter_map(|key| schema.get(*key).and_then(Value::as_array))
+        .flat_map(|values| values.iter().flat_map(|item| get_enum_values(item, root)))
+        .collect()
+}
+
+fn get_default(schema: &Value, root: &Value) -> Option<String> {
+    if let Some(pointer) = schema.get("$ref").and_then(Value::as_str) {
+        let pointer = pointer.strip_prefix('#').unwrap_or(pointer);
+        return root.pointer(pointer).and_then(|target| get_default(target, root));
+    }
+
+    if let Some(default) = schema.get("default") {
+        return default
+            .as_str()
+            .map(str::to_string)
+            .or_else(|| default.as_bool().map(|value| value.to_string()))
+            .or_else(|| default.as_i64().map(|value| value.to_string()))
+            .or_else(|| default.as_u64().map(|value| value.to_string()))
+            .or_else(|| default.as_f64().map(|value| value.to_string()));
+    }
+
+    for key in ["anyOf", "oneOf"] {
+        if let Some(values) = schema.get(key).and_then(Value::as_array) {
+            for item in values {
+                if let Some(default) = get_default(item, root) {
+                    return Some(default);
+                }
+            }
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]
 mod tests {
-    use super::transform_openapi_to_links;
+    use super::{collect_base_urls_from_document, derive_commands_from_openapi};
     use serde_json::json;
-    use std::fs;
 
     #[test]
-    fn oas3_path_with_params_carries_over_to_links_href() {
-        let doc = json!({
+    fn derives_vendor_group_from_first_resolvable_server() {
+        let document = json!({
             "openapi": "3.0.0",
+            "servers": [
+                { "url": "https://{region}.1password.com" },
+                { "url": "https://api.example.com" }
+            ],
             "paths": {
-                "/data/postgres/v1/{addon}/credentials/{cred_name}/rotate": {
+                "/users/{id}/tokens": {
                     "post": {
-                        "summary": "Rotate credentials",
-                        "parameters": [
-                            {"name": "addon", "in": "path", "required": true, "schema": {"type": "string"}},
-                            {"name": "cred_name", "in": "path", "required": true, "schema": {"type": "string"}}
-                        ]
+                        "summary": "Create user token",
+                        "responses": { "200": { "description": "ok" } }
                     }
                 }
             }
         });
 
-        let out = transform_openapi_to_links(&doc).expect("transform should succeed");
-        let links = out.get("links").and_then(|v| v.as_array()).expect("links array");
-        assert_eq!(links.len(), 1, "expected a single link");
-        let href = links[0].get("href").and_then(|v| v.as_str()).expect("href string");
-
-        // Ensure the static parts of the path carry over intact
-        assert!(href.starts_with("/data/postgres/v1/"), "href should preserve prefix: {}", href);
-        assert!(href.contains("/credentials/"), "href should preserve middle segment: {}", href);
-        assert!(href.ends_with("/rotate"), "href should preserve trailing segment: {}", href);
-
-        // Ensure href variables are rewritten to encoded definition pointers
-        assert!(
-            href.contains("{(%23%2Fdefinitions%2Faddon%2Fdefinitions%2Fidentity)}"),
-            "href should include encoded addon ref"
-        );
-        assert!(
-            href.contains("{(%23%2Fdefinitions%2Fcred_name%2Fdefinitions%2Fidentity)}"),
-            "href should include encoded cred_name ref"
-        );
+        let commands = derive_commands_from_openapi(&document).expect("derive commands");
+        let command = commands.first().expect("command exists");
+        assert_eq!(command.group, "example");
+        assert_eq!(command.name, "users:tokens:create");
     }
 
     #[test]
-    fn pretty_print_transformed_data_schema_debug() {
-        // Always succeed: best-effort parse -> transform -> pretty string
-        let path = format!("{}/../../schemas/data-schema.yaml", env!("CARGO_MANIFEST_DIR"));
-
-        let yaml = fs::read_to_string(&path).unwrap_or_default();
-        let parsed: serde_json::Value = serde_yaml::from_str(&yaml).unwrap_or(serde_json::Value::Null);
-        let transformed = transform_openapi_to_links(&parsed).unwrap_or_else(|_| parsed.clone());
-        let pretty = serde_json::to_string_pretty(&transformed).unwrap_or_else(|_| String::new());
-
-        // Keep this for local debugging convenience; test should always pass
-        assert!(!pretty.is_empty());
-    }
-
-    #[test]
-    fn oas3_query_parameter_description_and_default_flow_into_properties() {
-        let doc = json!({
+    fn collects_base_urls_from_document_servers() {
+        let document = json!({
             "openapi": "3.0.0",
-            "paths": {
-                "/apps": {
-                    "get": {
-                        "summary": "List apps",
-                        "parameters": [
-                            {
-                                "name": "owner",
-                                "in": "query",
-                                "description": "Filter by owner",
-                                "required": false,
-                                "schema": {"type": "string", "default": "me"}
-                            }
-                        ]
-                    }
-                }
-            }
+            "servers": [
+                { "url": "https://api.example.com/" },
+                { "url": "https://{region}.example.com", "variables": { "region": { "default": "eu" } } },
+                { "url": "https://api.example.com" }
+            ]
         });
 
-        let out = transform_openapi_to_links(&doc).expect("transform should succeed");
-        let links = out.get("links").and_then(|v| v.as_array()).expect("links array");
-        let schema = links[0].get("schema").and_then(|v| v.as_object()).expect("schema object");
-        let props = schema.get("properties").and_then(|v| v.as_object()).expect("properties object");
-        let owner = props.get("owner").and_then(|v| v.as_object()).expect("owner schema");
-        assert_eq!(owner.get("description").and_then(|v| v.as_str()), Some("Filter by owner"));
-        assert_eq!(owner.get("default").and_then(|v| v.as_str()), Some("me"));
-    }
-
-    #[test]
-    fn swagger2_query_parameter_description_and_default_flow_into_properties() {
-        let doc = json!({
-            "swagger": "2.0",
-            "paths": {
-                "/apps": {
-                    "get": {
-                        "parameters": [
-                            {"name": "owner", "in": "query", "type": "string", "description": "Filter by owner", "default": "me"}
-                        ]
-                    }
-                }
-            }
-        });
-
-        let out = transform_openapi_to_links(&doc).expect("transform should succeed");
-        let links = out.get("links").and_then(|v| v.as_array()).expect("links array");
-        let schema = links[0].get("schema").and_then(|v| v.as_object()).expect("schema object");
-        let props = schema.get("properties").and_then(|v| v.as_object()).expect("properties object");
-        let owner = props.get("owner").and_then(|v| v.as_object()).expect("owner schema");
-        assert_eq!(owner.get("description").and_then(|v| v.as_str()), Some("Filter by owner"));
-        assert_eq!(owner.get("default").and_then(|v| v.as_str()), Some("me"));
+        let base_urls = collect_base_urls_from_document(&document);
+        assert_eq!(base_urls, vec!["https://api.example.com", "https://eu.example.com"]);
     }
 }

@@ -26,24 +26,17 @@ use crossterm::{
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
 use futures_util::{StreamExt, stream::FuturesUnordered};
-use notify::{Config as NotifyConfig, Event as NotifyEvent, RecommendedWatcher, RecursiveMode, Watcher};
-use oatty_mcp::{
-    PluginEngine,
-    config::{default_config_path, load_config_from_path},
-};
+use oatty_mcp::PluginEngine;
+use oatty_registry::CommandRegistry;
 use oatty_types::{Effect, ExecOutcome, Msg};
 use ratatui::{Terminal, prelude::*};
+use std::rc::Rc;
 use std::time::Instant;
 use std::{
-    fs,
-    path::{Path, PathBuf},
-    sync::atomic::{AtomicU64, Ordering},
-    sync::mpsc::RecvTimeoutError,
+    sync::atomic::Ordering,
     sync::{Arc, Mutex},
-    thread,
     time::Duration,
 };
-use tokio::runtime::Handle;
 use tokio::task::JoinHandle;
 use tokio::{
     signal,
@@ -53,42 +46,10 @@ use tokio::{
 
 use crate::app::{App, WorkflowRunEventReceiver};
 use crate::cmd;
+use crate::ui::components::LibraryComponent;
 use crate::ui::components::component::Component;
-use crate::ui::components::palette::PaletteComponent;
 use crate::ui::main_component::MainView;
 use rat_focus::FocusBuilder;
-
-/// Handle for the MCP config watcher thread, ensuring proper shutdown on a drop.
-struct McpConfigWatchHandle {
-    shutdown_tx: Option<std::sync::mpsc::Sender<()>>,
-    join_handle: Option<thread::JoinHandle<()>>,
-}
-
-impl McpConfigWatchHandle {
-    fn new(shutdown_tx: std::sync::mpsc::Sender<()>, join_handle: thread::JoinHandle<()>) -> Self {
-        Self {
-            shutdown_tx: Some(shutdown_tx),
-            join_handle: Some(join_handle),
-        }
-    }
-
-    fn stop(&mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
-        }
-        if let Some(handle) = self.join_handle.take()
-            && let Err(error) = handle.join()
-        {
-            tracing::warn!("Watcher thread join failed: {:?}", error);
-        }
-    }
-}
-
-impl Drop for McpConfigWatchHandle {
-    fn drop(&mut self) {
-        self.stop();
-    }
-}
 
 /// Spawn a dedicated input thread that blocks on terminal input and forwards
 /// `crossterm` events over a Tokio channel.
@@ -148,116 +109,11 @@ fn cleanup_terminal(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>) 
     Ok(())
 }
 
-fn spawn_mcp_config_watcher(plugin_engine: Arc<PluginEngine>) -> Result<(McpConfigWatchHandle, mpsc::UnboundedReceiver<Effect>)> {
-    let config_path = default_config_path();
-    if let Some(parent) = config_path.parent()
-        && let Err(error) = fs::create_dir_all(parent)
-    {
-        tracing::warn!(path = %parent.display(), %error, "Failed to ensure MCP config directory exists");
-    }
-    let watch_root = config_path.parent().map(Path::to_path_buf).unwrap_or_else(|| PathBuf::from("."));
-    let (effects_tx, effects_rx) = mpsc::unbounded_channel();
-    let (shutdown_tx, shutdown_rx) = std::sync::mpsc::channel();
-    let runtime_handle = Handle::current();
-    let debounce_counter = Arc::new(AtomicU64::new(0));
-
-    let join_handle = thread::spawn({
-        let plugin_engine = Arc::clone(&plugin_engine);
-        let config_path = config_path.clone();
-        let watch_root = watch_root.clone();
-        let effects_tx = effects_tx.clone();
-        let debounce_counter = Arc::clone(&debounce_counter);
-        move || {
-            let (event_tx, event_rx) = std::sync::mpsc::channel::<notify::Result<NotifyEvent>>();
-            let mut watcher = match RecommendedWatcher::new(
-                move |res| {
-                    let _ = event_tx.send(res);
-                },
-                NotifyConfig::default(),
-            ) {
-                Ok(watcher) => watcher,
-                Err(error) => {
-                    tracing::warn!(%error, "Failed to initialize MCP config watcher");
-                    return;
-                }
-            };
-            if let Err(error) = watcher.watch(&watch_root, RecursiveMode::NonRecursive) {
-                tracing::warn!(%error, path = %watch_root.display(), "Failed to watch MCP config directory");
-                return;
-            }
-
-            loop {
-                match shutdown_rx.try_recv() {
-                    Ok(_) | Err(std::sync::mpsc::TryRecvError::Disconnected) => break,
-                    Err(std::sync::mpsc::TryRecvError::Empty) => {}
-                }
-
-                match event_rx.recv_timeout(Duration::from_millis(250)) {
-                    Ok(Ok(event)) => {
-                        if !event_targets_config(&event, &config_path) {
-                            continue;
-                        }
-                        let sequence = debounce_counter.fetch_add(1, Ordering::SeqCst) + 1;
-                        let engine_clone = Arc::clone(&plugin_engine);
-                        let effects_tx = effects_tx.clone();
-                        let counter_clone = Arc::clone(&debounce_counter);
-                        let path_clone = config_path.clone();
-                        let runtime = runtime_handle.clone();
-
-                        runtime.spawn(async move {
-                            tokio::time::sleep(Duration::from_millis(350)).await;
-                            if counter_clone.load(Ordering::SeqCst) != sequence {
-                                return;
-                            }
-                            match reload_mcp_config_from_disk(engine_clone, path_clone.clone()).await {
-                                Ok(()) => {
-                                    let _ = effects_tx.send(Effect::Log("Detected MCP config change; reloading plugins".into()));
-                                    let _ = effects_tx.send(Effect::PluginsLoadRequested);
-                                }
-                                Err(error) => {
-                                    tracing::warn!(%error, "Failed to reload MCP config");
-                                    let _ = effects_tx.send(Effect::Log(format!("Reloading MCP config failed: {error}")));
-                                }
-                            }
-                        });
-                    }
-                    Ok(Err(error)) => {
-                        tracing::warn!(%error, "MCP config watcher emitted error");
-                    }
-                    Err(RecvTimeoutError::Timeout) => {}
-                    Err(RecvTimeoutError::Disconnected) => break,
-                }
-            }
-        }
-    });
-
-    Ok((McpConfigWatchHandle::new(shutdown_tx, join_handle), effects_rx))
-}
-
-fn event_targets_config(event: &NotifyEvent, config_path: &Path) -> bool {
-    event.paths.iter().any(|changed| {
-        if changed == config_path {
-            return true;
-        }
-        match (changed.canonicalize(), config_path.canonicalize()) {
-            (Ok(lhs), Ok(rhs)) => lhs == rhs,
-            _ => false,
-        }
-    })
-}
-
-async fn reload_mcp_config_from_disk(plugin_engine: Arc<PluginEngine>, config_path: PathBuf) -> Result<()> {
-    let path_clone = config_path.clone();
-    let config = tokio::task::spawn_blocking(move || load_config_from_path(&path_clone)).await??;
-    plugin_engine.update_config(config).await?;
-    Ok(())
-}
-
 /// Renders a frame by delegating to `ui::main::draw`.
 fn render(terminal: &mut Terminal<CrosstermBackend<std::io::Stdout>>, app: &mut App, main_view: &mut MainView) -> Result<()> {
     // Rebuild focus just before rendering so structure changes are reflected
     let old_focus = std::mem::take(&mut app.focus);
-    app.focus = FocusBuilder::rebuild_for(app, Some(old_focus));
+    app.focus = Rc::new(FocusBuilder::rebuild_for(app, Some(Rc::unwrap_or_clone(old_focus))));
     if app.focus.focused().is_none() {
         main_view.restore_focus(app);
     }
@@ -271,7 +127,7 @@ fn handle_input_event(app: &mut App<'_>, main_view: &mut MainView, input_event: 
     match input_event {
         Event::Key(key_event) => main_view.handle_key_events(app, key_event),
         Event::Mouse(mouse_event) => main_view.handle_mouse_events(app, mouse_event),
-        Event::Resize(width, height) => main_view.handle_message(app, &Msg::Resize(width, height)),
+        Event::Resize(width, height) => main_view.handle_message(app, Msg::Resize(width, height)),
 
         Event::FocusGained | Event::FocusLost | Event::Paste(_) => Vec::new(),
     }
@@ -279,9 +135,9 @@ fn handle_input_event(app: &mut App<'_>, main_view: &mut MainView, input_event: 
 
 /// Entry point for the TUI runtime: sets up the terminal, spawns the event
 /// producer, runs the async event loop, and performs cleanup on exit.
-pub async fn run_app(registry: Arc<Mutex<oatty_registry::CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
+pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
+    let mut main_view = MainView::new(Some(Box::new(LibraryComponent::default())));
     let mut app = App::new(registry, plugin_engine);
-    let mut main_view = MainView::new(Some(Box::new(PaletteComponent::default())));
     let mut terminal = setup_terminal()?;
 
     // Input comes from a dedicated blocking thread to ensure reliability.
@@ -302,13 +158,6 @@ pub async fn run_app(registry: Arc<Mutex<oatty_registry::CommandRegistry>>, plug
 
     render(&mut terminal, &mut app, &mut main_view)?;
 
-    let (_, mut config_watch_effects) = match spawn_mcp_config_watcher(app.ctx.plugin_engine.clone()) {
-        Ok((handle, rx)) => (Some(handle), Some(rx)),
-        Err(error) => {
-            tracing::warn!(%error, "Failed to start MCP config watcher");
-            (None, None)
-        }
-    };
     // Track the last known terminal size to synthesize Resize messages when
     // some terminals fail to emit them reliably (e.g., certain iTerm2 setups).
     let mut last_size: Option<(u16, u16)> = crossterm::terminal::size().ok();
@@ -342,25 +191,26 @@ pub async fn run_app(registry: Arc<Mutex<oatty_registry::CommandRegistry>>, plug
 
             // Periodic animation tick
             _ = ticker.tick() => {
-                effects.extend(main_view.handle_message(&mut app, &Msg::Tick));
+                effects.extend(main_view.handle_message(&mut app, Msg::Tick));
                 needs_render = needs_animation || !effects.is_empty();
                 if !effects.is_empty() {
-                    // make a copy of the effects to avoid processing
-                    // new effects while processing old ones
-                    let mut dest = Vec::with_capacity(effects.len());
-                    dest.append(&mut effects);
-                    process_effects(&mut app, &mut main_view, dest, &mut pending_execs, &mut effects).await;
+                    // move effects out of their Vec to avoid processing new effects while processing current ones
+                    let mut effects_to_process = Vec::with_capacity(effects.len());
+                    effects_to_process.append(&mut effects);
+
+                    handle_navigation_effects(&mut app, &mut main_view, &mut effects_to_process, &mut effects);
+                    process_effects(&mut app, &mut main_view, effects_to_process, &mut pending_execs, &mut effects).await;
                 }
             }
 
             Some(joined) = pending_execs.next(), if !pending_execs.is_empty() => {
                 let outcome = joined.unwrap_or_else(|error| ExecOutcome::Log(format!("Execution task failed: {error}")));
                 match outcome {
-                    ExecOutcome::ProviderValues(provider_id, cache_key, _, _) => {
-                        effects.extend(main_view.handle_message(&mut app, &Msg::ProviderValuesReady { provider_id, cache_key }));
+                    ExecOutcome::ProviderValues { provider_id, cache_key, .. } => {
+                        effects.extend(main_view.handle_message(&mut app, Msg::ProviderValuesReady { provider_id, cache_key }));
                     }
                     other => {
-                        effects.extend(main_view.handle_message(&mut app, &Msg::ExecCompleted(Box::new(other))));
+                        effects.extend(main_view.handle_message(&mut app, Msg::ExecCompleted(Box::new(other))));
                     }
                 }
                 let still_running = app.active_exec_count.load(Ordering::Relaxed) > 0 || !pending_execs.is_empty();
@@ -380,7 +230,7 @@ pub async fn run_app(registry: Arc<Mutex<oatty_registry::CommandRegistry>>, plug
             }, if workflow_events.is_some() => {
                 match maybe_run_event {
                     Some((run_id, event)) => {
-                        effects.extend(main_view.handle_message(&mut app, &Msg::WorkflowRunEvent { run_id, event }));
+                        effects.extend(main_view.handle_message(&mut app, Msg::WorkflowRunEvent { run_id, event }));
                         needs_render = true;
                     }
                     None => {
@@ -388,25 +238,6 @@ pub async fn run_app(registry: Arc<Mutex<oatty_registry::CommandRegistry>>, plug
                     }
                 }
             }
-
-            maybe_config_effect = async {
-                if let Some(receiver) = config_watch_effects.as_mut() {
-                    receiver.recv().await
-                } else {
-                    None
-                }
-            }, if config_watch_effects.is_some() => {
-                match maybe_config_effect {
-                    Some(effect) => {
-                        effects.push(effect);
-                        needs_render = true;
-                    }
-                    None => {
-                        config_watch_effects = None;
-                    }
-                }
-            }
-
             // Handle Ctrl+C
             _ = signal::ctrl_c() => { break; }
         }
@@ -435,34 +266,53 @@ pub async fn run_app(registry: Arc<Mutex<oatty_registry::CommandRegistry>>, plug
     Ok(())
 }
 
+fn handle_navigation_effects(app: &mut App<'_>, main_view: &mut MainView, effects: &mut Vec<Effect>, queued_effects: &mut Vec<Effect>) {
+    let navigation_effects = effects
+        .extract_if(0.., |effect| {
+            matches!(effect, Effect::SwitchTo(_) | Effect::ShowModal(_) | Effect::CloseModal)
+        })
+        .collect::<Vec<Effect>>();
+
+    for effect in navigation_effects {
+        match effect {
+            Effect::SwitchTo(route) => {
+                if let Some(mut view) = main_view.content_view.take() {
+                    queued_effects.extend(view.on_route_exit(app));
+                }
+                main_view.set_current_route(app, route);
+                if let Some(view) = main_view.content_view.as_mut() {
+                    queued_effects.extend(view.on_route_enter(app));
+                }
+            }
+            Effect::ShowModal(modal) => {
+                if let Some((mut view, _)) = main_view.modal_view.take() {
+                    queued_effects.extend(view.on_route_enter(app));
+                }
+                main_view.set_open_modal_kind(app, Some(modal));
+                if let Some((view, _)) = main_view.modal_view.as_mut() {
+                    queued_effects.extend(view.on_route_enter(app));
+                }
+            }
+            Effect::CloseModal => {
+                if let Some((mut view, _)) = main_view.modal_view.take() {
+                    queued_effects.extend(view.on_route_enter(app));
+                }
+                main_view.set_open_modal_kind(app, None);
+            }
+            _ => {}
+        }
+    }
+}
+
 async fn process_effects(
     app: &mut App<'_>,
     main_view: &mut MainView,
-    mut effects: Vec<Effect>,
+    effects: Vec<Effect>,
     pending_execs: &mut FuturesUnordered<JoinHandle<ExecOutcome>>,
     effects_out: &mut Vec<Effect>,
 ) {
     if effects.is_empty() {
         return;
-    }
-
-    let mut switch_to_effect = effects
-        .extract_if(0.., |effect| matches!(effect, Effect::SwitchTo(_)))
-        .collect::<Vec<Effect>>();
-    if let Some(Effect::SwitchTo(route)) = switch_to_effect.pop() {
-        effects.extend(main_view.set_current_route(app, route));
-    }
-    let mut show_modal_effect = effects
-        .extract_if(0.., |effect| matches!(effect, Effect::ShowModal(_)))
-        .collect::<Vec<Effect>>();
-    if let Some(Effect::ShowModal(modal)) = show_modal_effect.pop() {
-        main_view.set_open_modal_kind(app, Some(modal));
-    }
-    let mut close_modal_effect = effects
-        .extract_if(0.., |effect| matches!(effect, Effect::CloseModal))
-        .collect::<Vec<Effect>>();
-    if close_modal_effect.pop().is_some() {
-        main_view.set_open_modal_kind(app, None);
     }
 
     let command_batch = cmd::run_from_effects(app, effects).await;
@@ -486,14 +336,16 @@ async fn process_effects(
         let still_executing = app.active_exec_count.load(Ordering::Relaxed) > 0 || !pending_execs.is_empty();
         app.executing = still_executing;
         match outcome {
-            ExecOutcome::ProviderValues(provider_id, cache_key, _, _) => {
-                effects_out.extend(main_view.handle_message(app, &Msg::ProviderValuesReady { provider_id, cache_key }));
+            ExecOutcome::ProviderValues {
+                provider_id, cache_key, ..
+            } => {
+                effects_out.extend(main_view.handle_message(app, Msg::ProviderValuesReady { provider_id, cache_key }));
             }
             ExecOutcome::Message(msg) => {
-                effects_out.extend(main_view.handle_message(app, &msg));
+                effects_out.extend(main_view.handle_message(app, msg));
             }
             other => {
-                effects_out.extend(main_view.handle_message(app, &Msg::ExecCompleted(Box::new(other))));
+                effects_out.extend(main_view.handle_message(app, Msg::ExecCompleted(Box::new(other))));
             }
         }
     }

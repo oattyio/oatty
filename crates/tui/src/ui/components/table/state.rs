@@ -1,7 +1,6 @@
 use crate::ui::theme::Theme;
 use crate::ui::utils::normalize_result_payload;
 use crate::ui::{
-    components::pagination::state::PaginationState,
     theme::{
         roles::Theme as UiTheme,
         theme_helpers::{table_header_style, table_row_style},
@@ -35,7 +34,6 @@ pub struct ResultsTableState<'a> {
     // for use by the caller to render the table
     pub table_state: TableState,
     pub list_state: ListState,
-    pub pagination_state: PaginationState,
     pub container_focus: FocusFlag,
     pub grid_f: FocusFlag,
     pub mouse_over_idx: Option<usize>,
@@ -187,26 +185,16 @@ impl<'a> ResultsTableState<'_> {
     /// # Arguments
     ///
     /// * `execution_outcome` - The result of the command execution
-    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &ExecOutcome, theme: &dyn Theme) {
+    pub(crate) fn process_general_execution_result(&mut self, execution_outcome: ExecOutcome, theme: &dyn Theme) {
         let maybe_value = match execution_outcome {
-            ExecOutcome::Http(_, _, value, _, request_id) => {
-                let mut cloned_value = value.clone();
-                if let Some(array) = cloned_value.as_array_mut()
-                    && self.pagination_state.should_reverse(*request_id)
-                {
-                    array.reverse();
-                    serde_json::to_value(array).ok()
-                } else {
-                    Some(cloned_value)
-                }
-            }
+            ExecOutcome::Http { payload: value, .. } => Some(value),
 
-            ExecOutcome::Mcp(_, value, _) => Some(value.clone()),
+            ExecOutcome::Mcp { payload: value, .. } => Some(value.clone()),
             _ => None,
         };
 
         if let Some(value) = maybe_value {
-            let normalized_value = normalize_result_payload(value.clone());
+            let normalized_value = normalize_result_payload(value);
             self.apply_result_json(Some(normalized_value), theme, true);
         }
     }
@@ -247,7 +235,6 @@ impl HasFocus for ResultsTableState<'_> {
         let tag = builder.start(self);
         // Single focusable grid area; treat as a leaf.
         builder.leaf_widget(&self.grid_f);
-        builder.widget(&self.pagination_state);
         builder.end(tag);
     }
 

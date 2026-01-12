@@ -5,14 +5,15 @@
 //! user interactions, and coordinates between different UI components.
 
 use std::{
+    rc::Rc,
     sync::{Arc, Mutex, atomic::AtomicUsize},
     time::Duration,
 };
 
-use crate::ui::components::common::ConfirmationModalState;
-use crate::ui::components::nav_bar::VerticalNavBarState;
 use crate::ui::components::workflows::collector::SelectorStatus;
 use crate::ui::components::workflows::run::RunViewState;
+use crate::ui::components::{FilePickerState, common::ConfirmationModalState};
+use crate::ui::components::{LibraryState, nav_bar::VerticalNavBarState};
 use crate::ui::{
     components::{
         browser::BrowserState, help::HelpState, logs::LogsState, palette::PaletteState, plugins::PluginsState, table::ResultsTableState,
@@ -60,6 +61,8 @@ pub struct SharedCtx {
     pub active_theme_id: String,
     /// Whether the runtime can show the theme picker (truecolor terminals only).
     pub theme_picker_available: bool,
+    /// Product name derived from the registry's base URL metadata.
+    pub product_name: String,
 }
 
 impl SharedCtx {
@@ -100,6 +103,7 @@ impl SharedCtx {
             preferences,
             active_theme_id: loaded_theme.definition.id.to_string(),
             theme_picker_available,
+            product_name: "oatty".to_string(),
         }
     }
 }
@@ -134,10 +138,14 @@ pub struct App<'a> {
     pub palette: PaletteState,
     /// Command browser state
     pub browser: BrowserState,
+    /// File picker state
+    pub file_picker: Option<FilePickerState>,
     /// Table modal state
     pub table: ResultsTableState<'a>,
     /// Help modal state
     pub help: HelpState,
+    /// Library component state
+    pub library: LibraryState,
     /// Plugins state (MCP management)
     pub plugins: PluginsState,
     /// Workflow UI and execution state
@@ -156,7 +164,7 @@ pub struct App<'a> {
     /// animate
     pub active_exec_count: Arc<AtomicUsize>,
     /// Global focus tree for keyboard/mouse traversal
-    pub focus: Focus,
+    pub focus: Rc<Focus>,
     /// Currently active main route for dynamic focus ring building
     pub current_route: Route,
     /// the confirmation modal state
@@ -190,25 +198,26 @@ impl App<'_> {
             Arc::clone(&ctx.history_store),
             ctx.history_profile_id.clone(),
         );
-        let theme_picker_available = ctx.theme_picker_available;
         let mut app = Self {
             ctx,
             browser: BrowserState::new(Arc::clone(&registry)),
+            file_picker: None,
             confirmation_modal_state: ConfirmationModalState::default(),
             logs: LogsState::default(),
             help: HelpState::default(),
             plugins: PluginsState::new(),
+            library: LibraryState::new(),
             workflows: WorkflowState::new(),
             table: ResultsTableState::default(),
             palette,
-            nav_bar: VerticalNavBarState::defaults_for_views(theme_picker_available),
+            nav_bar: VerticalNavBarState::defaults_for_views(),
             theme_picker: ThemePickerState::default(),
             executing: false,
             throbber_idx: 0,
             active_exec_count: Arc::new(AtomicUsize::new(0)),
-            focus: Focus::default(),
+            focus: Rc::new(Focus::default()),
             app_container_focus: FocusFlag::new().with_name("app.container"),
-            current_route: Route::Palette,
+            current_route: Route::Library,
             open_modal_kind: None,
             workflow_event_rx: None,
             workflow_run_sequence: 0,
@@ -216,7 +225,7 @@ impl App<'_> {
         app.browser.update_browser_filtered();
 
         // Initialize rat-focus and set a sensible starting focus inside the palette
-        app.focus = FocusBuilder::build_for(&app);
+        app.focus = Rc::new(FocusBuilder::build_for(&app));
         app.focus.focus(&app.palette);
         app.theme_picker.set_active_theme(&app.ctx.active_theme_id);
 
@@ -276,7 +285,6 @@ impl App<'_> {
     pub fn update(&mut self, message: &Msg) -> Vec<Effect> {
         match message {
             Msg::Tick => self.handle_tick_message(),
-            Msg::Resize(..) => vec![],
             Msg::CopyToClipboard(text) => vec![Effect::CopyToClipboardRequested(text.clone())],
             Msg::ProviderValuesReady { provider_id, cache_key } => {
                 self.handle_provider_values_ready(provider_id.clone(), cache_key.clone())
@@ -302,7 +310,7 @@ impl App<'_> {
             if self.throbber_idx != previous_throbber_index {}
         }
 
-        // Periodically refresh plugin statuses when overlay is visible
+        // Periodically refresh plugin statuses when the overlay is visible
         if self.plugins.table.should_refresh() {
             return vec![Effect::PluginsRefresh];
         }
@@ -405,7 +413,7 @@ impl App<'_> {
         }
     }
 
-    /// Appends a plain-text message to the logs collections.
+    /// Appends a plain-text message to the log collections.
     ///
     /// This helper ensures both the flat string list and the rich log entries
     /// remain in sync so detail views can resolve JSON payloads accurately. It
@@ -581,7 +589,10 @@ impl HasFocus for App<'_> {
                 Modal::Confirmation => {
                     builder.widget(&self.confirmation_modal_state);
                 }
-                Modal::PluginDetails | Modal::Help | Modal::ThemePicker => {
+                Modal::FilePicker(..) if self.file_picker.is_some() => {
+                    builder.widget(self.file_picker.as_ref().unwrap());
+                }
+                Modal::PluginDetails | Modal::Help | Modal::ThemePicker | Modal::FilePicker(..) => {
                     // focusable fields TBD; leave the ring empty
                 }
             }
@@ -604,6 +615,9 @@ impl HasFocus for App<'_> {
             }
             Route::Workflows | Route::WorkflowInputs | Route::WorkflowRun => {
                 builder.widget(&self.workflows);
+            }
+            Route::Library => {
+                builder.widget(&self.library);
             }
         }
         if self.logs.is_visible {

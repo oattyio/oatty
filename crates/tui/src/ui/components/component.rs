@@ -45,7 +45,7 @@ use ratatui::{Frame, layout::Rect, text::Span};
 /// # Example Implementation
 ///
 /// ```rust,ignore
-/// use heroku_tui::component::Component;
+/// use oatty_tui::component::Component;
 /// use ratatui::{Frame, layout::Rect};
 /// use crossterm::event::KeyEvent;
 /// use anyhow::Result;
@@ -63,14 +63,14 @@ use ratatui::{Frame, layout::Rect, text::Span};
 ///
 ///     fn handle_key_events(
 ///         &mut self,
-///         app: &mut heroku_tui::app::App,
+///         app: &mut oatty_tui::app::App,
 ///         key: KeyEvent,
-///     ) -> Vec<heroku_tui::app::Effect> {
+///     ) -> Vec<oatty_tui::app::Effect> {
 ///         // Handle key events specific to this component
 ///         vec![]
 ///     }
 ///
-///     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut heroku_tui::app::App) {
+///     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut oatty_tui::app::App) {
 ///         // Draw the component's UI elements
 ///         use ratatui::widgets::Paragraph;
 ///         let widget = Paragraph::new(&self.internal_state);
@@ -91,7 +91,7 @@ pub trait Component: Debug {
     /// * `msg` - The application message to handle
     ///
     /// # Returns
-    fn handle_message(&mut self, _app: &mut App, _msg: &Msg) -> Vec<Effect> {
+    fn handle_message(&mut self, _app: &mut App, _msg: Msg) -> Vec<Effect> {
         Vec::new()
     }
 
@@ -239,6 +239,20 @@ pub trait Component: Debug {
     /// - This is likely to be a placeholder stub for future layout logic in a UI or rendering system.
     fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
         vec![area]
+    }
+
+    /// Initializes the component when it enters a route.
+    ///
+    /// This method is called when the component is about to enter a route.
+    /// It can be used to perform any necessary setup or initialization tasks.
+    ///
+    /// # Parameters
+    /// - `_app`: A mutable reference to the application (`App`) that this method relates to.
+    ///
+    /// # Returns
+    /// - `Vec<Effect>`: A vector of effects to be executed after the component enters the route.
+    fn on_route_enter(&mut self, _app: &mut App) -> Vec<Effect> {
+        Vec::new()
     }
 
     /// Notifies the view that the route is about to exit

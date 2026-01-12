@@ -20,7 +20,7 @@
 use crate::app::App;
 use crate::ui::components::HelpComponent;
 use crate::ui::components::browser::state::CursorDirection;
-use crate::ui::theme::theme_helpers::highlight_segments;
+use crate::ui::theme::theme_helpers::{create_list_with_highlight, highlight_segments};
 use crate::ui::{components::component::Component, theme::theme_helpers as th};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use oatty_types::{Effect, Route};
@@ -28,7 +28,7 @@ use ratatui::layout::Position;
 use ratatui::style::Modifier;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Layout, Rect},
     text::{Line, Span},
     widgets::*,
 };
@@ -50,10 +50,16 @@ use ratatui::{
 /// # State Management
 /// The component operates on the `BrowserState,` which is owned by the app context.
 /// This allows other parts of the UI to coordinate with the browser's state.
+#[derive(Debug, Default, Clone, Copy)]
+struct BrowserLayout {
+    search_area: Rect,
+    search_inner_area: Rect,
+    list_area: Rect,
+}
+
 #[derive(Debug, Default)]
 pub struct BrowserComponent {
-    search_area: Rect,
-    list_area: Rect,
+    layout: BrowserLayout,
     mouse_over_idx: Option<usize>,
     help_component: HelpComponent,
 }
@@ -97,10 +103,12 @@ impl Component for BrowserComponent {
 
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                if self.search_area.contains(pos) {
+                if self.layout.search_area.contains(pos) {
                     app.focus.focus(&app.browser.f_search);
+                    let relative_column = mouse.column.saturating_sub(self.layout.search_inner_area.x);
+                    app.browser.set_search_cursor_from_column(relative_column);
                 }
-                if self.list_area.contains(pos) {
+                if self.layout.list_area.contains(pos) {
                     app.focus.focus(&app.browser.f_commands);
                     if let Some(idx) = self.hit_test_list(app, &pos) {
                         app.browser.list_state.select(Some(idx));
@@ -109,7 +117,7 @@ impl Component for BrowserComponent {
                 }
             }
             MouseEventKind::Moved | MouseEventKind::Up(MouseButton::Left) => {
-                self.mouse_over_idx = if self.list_area.contains(pos) {
+                self.mouse_over_idx = if self.layout.list_area.contains(pos) {
                     self.hit_test_list(app, &pos)
                 } else {
                     None
@@ -117,12 +125,12 @@ impl Component for BrowserComponent {
             }
 
             MouseEventKind::ScrollDown => {
-                if self.list_area.contains(pos) {
+                if self.layout.list_area.contains(pos) {
                     app.browser.list_state.scroll_down_by(1);
                 }
             }
             MouseEventKind::ScrollUp => {
-                if self.list_area.contains(pos) {
+                if self.layout.list_area.contains(pos) {
                     app.browser.list_state.scroll_up_by(1);
                 }
             }
@@ -145,12 +153,16 @@ impl Component for BrowserComponent {
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
         let layout_chunks = self.get_preferred_layout(app, rect);
 
-        self.render_search_panel(frame, app, layout_chunks[0]);
-        self.search_area = layout_chunks[0];
+        let search_inner_area = self.render_search_panel(frame, app, layout_chunks[0]);
 
         let main_layout = self.create_main_layout(layout_chunks[1]);
-        self.render_commands_panel(frame, app, main_layout[0]);
+        let list_area = self.render_commands_panel(frame, app, main_layout[0]);
         self.render_inline_help_panel(frame, app, main_layout[1]);
+        self.layout = BrowserLayout {
+            search_area: layout_chunks[0],
+            search_inner_area,
+            list_area,
+        };
     }
 
     /// Renders the footer with keyboard shortcut hints.
@@ -166,14 +178,12 @@ impl Component for BrowserComponent {
     }
 
     fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3), // Search panel
-                Constraint::Min(10),   // Main content
-            ])
-            .split(area)
-            .to_vec()
+        Layout::vertical([
+            Constraint::Length(3), // Search panel
+            Constraint::Min(10),   // Main content
+        ])
+        .split(area)
+        .to_vec()
     }
 }
 
@@ -274,14 +284,12 @@ impl BrowserComponent {
     /// # Returns
     /// * `Vec<Rect>` - Vector containing the commands and help panel areas
     fn create_main_layout(&self, area: Rect) -> Vec<Rect> {
-        Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([
-                Constraint::Percentage(30), // Commands
-                Constraint::Percentage(70), // Inline Help
-            ])
-            .split(area)
-            .to_vec()
+        Layout::horizontal([
+            Constraint::Percentage(30), // Commands
+            Constraint::Percentage(70), // Inline Help
+        ])
+        .split(area)
+        .to_vec()
     }
 
     /// Renders the search input panel with cursor positioning.
@@ -294,7 +302,7 @@ impl BrowserComponent {
     /// * `frame` - The Ratatui frame to render to
     /// * `app` - The application state containing search input and theme
     /// * `area` - The area to render the search panel in
-    fn render_search_panel(&self, frame: &mut Frame, app: &mut App, area: Rect) {
+    fn render_search_panel(&self, frame: &mut Frame, app: &mut App, area: Rect) -> Rect {
         let search_title = self.create_search_title(app);
         let is_focused = app.browser.f_search.get();
         let mut search_block = th::block::<String>(&*app.ctx.theme, None, is_focused);
@@ -310,6 +318,7 @@ impl BrowserComponent {
         let search_paragraph = Paragraph::new(content_line).style(theme.text_primary_style()).block(search_block);
         frame.render_widget(search_paragraph, area);
         self.set_search_cursor(frame, app, inner_area);
+        inner_area
     }
 
     /// Creates the title for the search panel with an optional debug indicator.
@@ -341,10 +350,7 @@ impl BrowserComponent {
     /// * `inner_area` - The inner area of the search panel
     fn set_search_cursor(&self, frame: &mut Frame, app: &App, inner_area: Rect) {
         if app.browser.f_search.get() {
-            let query = app.browser.search_query();
-            let cursor_byte_index = app.browser.search_cursor().min(query.len());
-            let prefix = &query[..cursor_byte_index];
-            let cursor_columns = prefix.chars().count() as u16;
+            let cursor_columns = app.browser.search_cursor_columns() as u16;
             let cursor_x = inner_area.x.saturating_add(cursor_columns);
             let cursor_y = inner_area.y;
             frame.set_cursor_position((cursor_x, cursor_y));
@@ -353,7 +359,7 @@ impl BrowserComponent {
 
     fn hit_test_list(&mut self, app: &mut App, pos: &Position) -> Option<usize> {
         let list_offset = app.browser.list_state.offset();
-        let idx = pos.y.saturating_sub(self.list_area.y) as usize + list_offset;
+        let idx = pos.y.saturating_sub(self.layout.list_area.y) as usize + list_offset;
         if idx >= app.browser.filtered().len() {
             return None;
         }
@@ -370,7 +376,7 @@ impl BrowserComponent {
     /// * `frame` - The Ratatui frame to render to
     /// * `app` - The application state containing commands and theme information
     /// * `area` - The area to render the commands panel in
-    fn render_commands_panel(&mut self, frame: &mut Frame, app: &mut App, area: Rect) {
+    fn render_commands_panel(&mut self, frame: &mut Frame, app: &mut App, area: Rect) -> Rect {
         let browser = &mut app.browser;
         let commands_title = format!("Commands ({})", browser.filtered().len());
         let is_focused = browser.f_commands.get();
@@ -381,7 +387,7 @@ impl BrowserComponent {
         // Create command items and get list state separately to avoid borrowing conflicts
         let command_items: Vec<ListItem<'_>> = {
             let Some(lock) = browser.registry.lock().ok() else {
-                return;
+                return Rect::default();
             };
             let all_commands = &lock.commands;
             let search_query = browser.search_query();
@@ -423,19 +429,16 @@ impl BrowserComponent {
                 .collect()
         };
         let is_focused = browser.f_commands.get();
-        let commands_list = List::new(command_items)
-            .block(commands_block)
-            .highlight_style(selection_style)
-            .highlight_symbol(if is_focused { "> " } else { "" });
+        let commands_list = create_list_with_highlight(command_items, &*app.ctx.theme, is_focused, Some(commands_block));
         let list_state = &mut browser.list_state;
         frame.render_stateful_widget(commands_list, area, list_state);
 
-        self.list_area = Rect {
+        Rect {
             x: area.x,
             y: area.y + 1, // 1 for border-top
             width: area.width,
             height: area.height.saturating_sub(2), // 1 for border-top and 1 for border-bottom
-        };
+        }
     }
 
     /// Renders the inline help panel with command documentation.

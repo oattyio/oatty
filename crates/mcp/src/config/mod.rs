@@ -6,7 +6,7 @@ mod interpolation;
 mod model;
 mod validation;
 
-pub use interpolation::{InterpolationError, determine_env_source, interpolate_config};
+pub use interpolation::interpolate_config;
 pub use model::{ConfigError, McpAuthConfig, McpConfig, McpServer};
 use oatty_util::expand_tilde;
 pub use validation::{ValidationError, validate_config, validate_server_name};
@@ -75,7 +75,7 @@ mod tests {
 
     #[test]
     fn default_path_honors_env_override() {
-        let override_path = "~/custom/heroku/mcp.json";
+        let override_path = "~/custom/oatty/mcp.json";
         temp_env::with_var("MCP_CONFIG_PATH", Some(override_path), || {
             let path = default_config_path();
             let expected = expand_tilde(override_path);

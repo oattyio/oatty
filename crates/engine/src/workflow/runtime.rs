@@ -1,7 +1,7 @@
 //! Workflow runtime execution helpers.
 //!
-//! Utilities in this module convert a [`RuntimeWorkflow`](RuntimeWorkflow)
-//! into the engine's internal [`WorkflowSpec`](WorkflowSpec) so the existing
+//! Utilities in this module convert a [`RuntimeWorkflow`]
+//! into the engine's internal [`WorkflowSpec`] so the existing
 //! executor pipeline can be reused without duplicating planning logic.
 
 use std::collections::HashMap;

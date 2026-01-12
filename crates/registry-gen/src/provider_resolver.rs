@@ -9,7 +9,7 @@
 //! # Architecture
 //!
 //! The resolution process follows a two-pass strategy:
-//! 1. **Pass 1**: Commands are constructed from the schema in `schema::derive_commands_from_schema`
+//! 1. **Pass 1**: Commands are constructed from the OpenAPI document in `openapi::derive_commands_from_openapi`
 //! 2. **Pass 2**: This module builds a command index and assigns verified providers
 //!
 //! # Key Concepts
@@ -142,7 +142,7 @@ fn find_groups_with_list_commands(command_index: &HashSet<String>) -> HashSet<St
 /// Apply verified flag providers to command flags.
 ///
 /// This function examines each flag and assigns a value provider if:
-/// 1. The flag name maps to a known group via synonyms
+/// 1. The flag name maps to a group via conservative pluralization
 /// 2. The group has a corresponding `list` command
 /// 3. The `list` command exists in the command index
 ///
@@ -152,10 +152,8 @@ fn find_groups_with_list_commands(command_index: &HashSet<String>) -> HashSet<St
 /// * `list_groups` - Set of groups that have `list` commands
 /// * `command_index` - Set of all available command identifiers
 fn apply_flag_providers(flags: &mut [CommandFlag], list_groups: &HashSet<String>, command_index: &HashSet<String>) {
-    let flag_to_group_synonyms = create_flag_to_group_synonyms();
-
     for flag in flags.iter_mut() {
-        if let Some(group_name) = map_flag_name_to_group(&flag.name, &flag_to_group_synonyms) {
+        if let Some(group_name) = map_flag_name_to_group(&flag.name) {
             let list_provider_id = format!("{} {}", group_name, "list");
 
             if list_groups.contains(&group_name) && command_index.contains(&list_provider_id) {
@@ -166,25 +164,6 @@ fn apply_flag_providers(flags: &mut [CommandFlag], list_groups: &HashSet<String>
             }
         }
     }
-}
-
-/// Create a mapping from flag names to their corresponding group names.
-///
-/// This mapping handles common singular-to-plural transformations and special cases
-/// for Oatty CLI command groups.
-fn create_flag_to_group_synonyms() -> HashMap<&'static str, &'static str> {
-    HashMap::from([
-        ("app", "apps"),
-        ("addon", "addons"),
-        ("pipeline", "pipelines"),
-        ("team", "teams"),
-        ("space", "spaces"),
-        ("dyno", "dynos"),
-        ("release", "releases"),
-        ("collaborator", "collaborators"),
-        ("region", "regions"),
-        ("stack", "stacks"),
-    ])
 }
 
 /// Apply verified positional providers to command positional arguments.
@@ -343,17 +322,7 @@ fn process_placeholder(
     provider_placeholders: &HashMap<String, Vec<String>>,
     provider_required_flags: &HashMap<String, Vec<String>>,
 ) {
-    let mut candidate_group_names: Vec<String> = Vec::new();
-
-    let normalized_group = normalize_group_name(previous_segment);
-    candidate_group_names.push(normalized_group);
-
-    if let Some(group_from_placeholder) = map_placeholder_to_group(placeholder_name) {
-        candidate_group_names.push(group_from_placeholder);
-    }
-
-    candidate_group_names.sort();
-    candidate_group_names.dedup();
+    let candidate_group_names = vec![previous_segment.to_string()];
 
     // Try to find the best provider by checking both scoped and unscoped options
     let mut provider_candidates = Vec::new();
@@ -408,26 +377,13 @@ fn process_placeholder(
     }
 }
 
-/// Map specific placeholder names to known provider group names.
-///
-/// Some command paths use placeholder names that do not align with the
-/// immediately preceding concrete segment (e.g., `/pipelines/{pipeline}/stage/{pipeline_coupling}`).
-/// In those cases, we can infer a better provider group directly from the
-/// placeholder to unlock scoped providers such as `pipelines:pipeline-couplings:list`.
-fn map_placeholder_to_group(placeholder_name: &str) -> Option<String> {
-    match placeholder_name {
-        "pipeline_coupling" => Some("pipeline-couplings".to_string()),
-        _ => None,
-    }
-}
-
 /// Attempt to compute bindings for a provider by matching the provider's required
 /// path placeholders to consumer fields available before the target positional.
 ///
 /// This function determines if a provider can be bound to consumer inputs by:
 /// 1. Checking if the provider has any placeholders or required flags
 /// 2. Building a set of available consumer inputs (positionals before target)
-/// 3. Attempting to match provider requirements to available inputs using synonyms
+/// 3. Attempting to match provider requirements to available inputs by name
 ///
 /// # Arguments
 ///
@@ -464,13 +420,11 @@ fn compute_provider_bindings(
         return BindingOutcome::Unsatisfied;
     }
 
-    let name_synonyms = create_name_synonyms_mapping();
-
     // Attempt to bind path placeholders
     let mut bindings = Vec::new();
 
     for placeholder_name in provider_placeholders {
-        if let Some(binding) = find_binding_for_placeholder(&placeholder_name, &available_inputs, &name_synonyms) {
+        if let Some(binding) = find_binding_for_placeholder(&placeholder_name, &available_inputs) {
             bindings.push(binding);
         } else {
             return BindingOutcome::Unsatisfied;
@@ -478,13 +432,7 @@ fn compute_provider_bindings(
     }
 
     // Attempt to bind required flags
-    if let Err(()) = bind_required_flags(
-        &provider_required_flags,
-        &available_inputs,
-        consumer_command,
-        &name_synonyms,
-        &mut bindings,
-    ) {
+    if let Err(()) = bind_required_flags(&provider_required_flags, &available_inputs, consumer_command, &mut bindings) {
         return BindingOutcome::Unsatisfied;
     }
 
@@ -511,41 +459,16 @@ fn build_available_inputs(
         .collect()
 }
 
-/// Create a mapping of name synonyms for flexible binding matching.
-fn create_name_synonyms_mapping() -> HashMap<&'static str, &'static [&'static str]> {
-    HashMap::from([
-        ("app", &["app", "app_id"][..]),
-        ("app_id", &["app_id", "app"][..]),
-        ("addon", &["addon", "addon_id"][..]),
-        ("addon_id", &["addon_id", "addon"][..]),
-        ("team", &["team", "team_name"][..]),
-        ("team_name", &["team_name", "team"][..]),
-        ("pipeline", &["pipeline"][..]),
-        ("space", &["space", "space_id"][..]),
-        ("space_id", &["space_id", "space"][..]),
-        ("region", &["region"][..]),
-        ("stack", &["stack"][..]),
-    ])
-}
-
-/// Find a binding for a placeholder by checking synonyms against available inputs.
-fn find_binding_for_placeholder(
-    placeholder_name: &str,
-    available_inputs: &HashSet<String>,
-    name_synonyms: &HashMap<&str, &[&str]>,
-) -> Option<Bind> {
-    let candidate_names: Vec<String> = name_synonyms
-        .get(placeholder_name)
-        .map(|synonyms| synonyms.iter().map(|s| s.to_string()).collect())
-        .unwrap_or_else(|| vec![placeholder_name.to_string()]);
-
-    candidate_names
-        .iter()
-        .find(|candidate| available_inputs.contains(*candidate))
-        .map(|found_name| Bind {
+/// Find a binding for a placeholder by checking available inputs.
+fn find_binding_for_placeholder(placeholder_name: &str, available_inputs: &HashSet<String>) -> Option<Bind> {
+    if available_inputs.contains(placeholder_name) {
+        Some(Bind {
             provider_key: placeholder_name.to_string(),
-            from: found_name.clone(),
+            from: placeholder_name.to_string(),
         })
+    } else {
+        None
+    }
 }
 
 /// Attempt to bind required provider flags to available consumer inputs.
@@ -555,23 +478,8 @@ fn bind_required_flags(
     required_flags: &[String],
     available_inputs: &HashSet<String>,
     consumer_command: &CommandSpec,
-    name_synonyms: &HashMap<&str, &[&str]>,
     bindings: &mut Vec<Bind>,
 ) -> Result<(), ()> {
-    let allowed_flag_names: HashSet<&str> = HashSet::from([
-        "app",
-        "app_id",
-        "pipeline",
-        "team",
-        "team_name",
-        "addon",
-        "addon_id",
-        "space",
-        "space_id",
-        "region",
-        "stack",
-    ]);
-
     let consumer_required_flag_names: HashSet<String> = consumer_command
         .flags
         .iter()
@@ -580,32 +488,20 @@ fn bind_required_flags(
         .collect();
 
     for required_flag in required_flags {
-        if !allowed_flag_names.contains(required_flag.as_str()) {
-            continue; // Skip non-core flag names
-        }
-
-        let candidate_names: Vec<String> = name_synonyms
-            .get(required_flag.as_str())
-            .map(|synonyms| synonyms.iter().map(|s| s.to_string()).collect())
-            .unwrap_or_else(|| vec![required_flag.clone()]);
-
         // Try to bind from available positional inputs first
-        if let Some(found_name) = candidate_names.iter().find(|candidate| available_inputs.contains(*candidate)) {
+        if available_inputs.contains(required_flag) {
             bindings.push(Bind {
                 provider_key: required_flag.clone(),
-                from: found_name.clone(),
+                from: required_flag.clone(),
             });
             continue;
         }
 
         // Try to bind from consumer required flags
-        if let Some(found_name) = candidate_names
-            .iter()
-            .find(|candidate| consumer_required_flag_names.contains(*candidate))
-        {
+        if consumer_required_flag_names.contains(required_flag) {
             bindings.push(Bind {
                 provider_key: required_flag.clone(),
-                from: found_name.clone(),
+                from: required_flag.clone(),
             });
             continue;
         }
@@ -635,22 +531,6 @@ fn extract_path_placeholders(path: &str) -> Vec<String> {
         .collect()
 }
 
-/// Normalize a group name for provider resolution.
-///
-/// This function handles special cases where the group name in the path doesn't
-/// directly correspond to the group name used for list commands.
-///
-/// # Examples
-///
-/// - `"config-vars"` → `"config"` (config-vars list command is under config group)
-/// - `"apps"` → `"apps"` (no change needed)
-fn normalize_group_name(group_name: &str) -> String {
-    match group_name {
-        "config-vars" => "config".to_string(),
-        _ => group_name.to_string(),
-    }
-}
-
 /// Detect API version segments in command paths.
 ///
 /// This function identifies version segments like `v1`, `v2`, etc. that should
@@ -669,24 +549,19 @@ fn is_version_segment(segment: &str) -> bool {
 
 /// Map a flag name to its corresponding group name.
 ///
-/// This function first checks the synonyms mapping, then falls back to
-/// conservative pluralization rules.
+/// This function applies conservative pluralization rules to infer the
+/// group name from a flag name.
 ///
 /// # Arguments
 ///
 /// * `flag_name` - The name of the flag to map
-/// * `synonyms` - Mapping of flag names to group names
 ///
 /// # Returns
 ///
 /// * `Some(group_name)` if a mapping is found
 /// * `None` if no mapping can be determined
-fn map_flag_name_to_group(flag_name: &str, synonyms: &HashMap<&str, &str>) -> Option<String> {
+fn map_flag_name_to_group(flag_name: &str) -> Option<String> {
     let normalized_flag_name = flag_name.to_lowercase();
-
-    if let Some(&group_name) = synonyms.get(normalized_flag_name.as_str()) {
-        return Some(group_name.to_string());
-    }
 
     apply_conservative_pluralization(&normalized_flag_name)
 }

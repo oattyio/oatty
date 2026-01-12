@@ -55,7 +55,7 @@ use std::sync::{Arc, Mutex};
 ///
 /// ```no_run
 /// use oatty_registry::Registry;
-/// use heroku_tui::run;
+/// use oatty_tui::run;
 ///
 /// #[tokio::main]
 /// async fn main() -> anyhow::Result<()> {

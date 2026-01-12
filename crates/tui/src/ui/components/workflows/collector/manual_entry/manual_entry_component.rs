@@ -396,7 +396,7 @@ fn render_text_value(frame: &mut Frame, area: Rect, state: &ManualEntryState, th
     let paragraph = Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true });
     frame.render_widget(paragraph, area);
 
-    let cursor_offset = buffer.input()[..buffer.cursor()].chars().count() as u16;
+    let cursor_offset = buffer.cursor_columns() as u16;
     let cursor_x = area.x + 7 + cursor_offset;
     frame.set_cursor_position((cursor_x, area.y));
 }

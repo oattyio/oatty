@@ -1,13 +1,13 @@
+use std::borrow::Cow;
+
+use crate::ui::components::common::key_value_editor::KeyValueEditorState;
 use oatty_mcp::PluginDetail;
+use oatty_types::value_objects::EnvRow;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 
-use crate::ui::components::plugins::EnvRow;
-
-use super::key_value_editor::KeyValueEditorState;
-
 /// Add Plugin view state
-#[derive(Debug, Clone)]
+#[derive(Debug, Default)]
 pub struct PluginEditViewState {
     pub visible: bool,
     /// Selected transport for the plugin: Local (stdio) or Remote (http/sse)
@@ -24,7 +24,6 @@ pub struct PluginEditViewState {
     pub base_url_cursor: usize,
     /// Editor state for environment variables on local transports.
     pub kv_editor: KeyValueEditorState,
-    pub validation: Result<String, String>,
     // Focus flags for focusable controls
     pub container_focus: FocusFlag,
     pub f_transport: FocusFlag,
@@ -35,28 +34,12 @@ pub struct PluginEditViewState {
     pub f_btn_validate: FocusFlag,
     pub f_btn_save: FocusFlag,
     pub f_btn_cancel: FocusFlag,
-    // Focus ring areas for rendering
-    pub last_area: Rect,
-    pub per_item_area: Vec<Rect>,
 }
 
 impl PluginEditViewState {
     pub fn new() -> Self {
-        let kv_editor = KeyValueEditorState::new("plugins.add.env");
         let instance = Self {
             visible: true,
-            transport: PluginTransport::Local,
-            name: String::new(),
-            original_name: None,
-            name_cursor: 0,
-            command: String::new(),
-            command_cursor: 0,
-            args: String::new(),
-            args_cursor: 0,
-            base_url: String::new(),
-            base_url_cursor: 0,
-            kv_editor,
-            validation: Ok(String::new()),
             container_focus: FocusFlag::new().with_name("plugins.add"),
             f_transport: FocusFlag::new().with_name("plugins.add.transport"),
             f_name: FocusFlag::new().with_name("plugins.add.name"),
@@ -66,8 +49,7 @@ impl PluginEditViewState {
             f_btn_validate: FocusFlag::new().with_name("plugins.add.btn.validate"),
             f_btn_save: FocusFlag::new().with_name("plugins.add.btn.save"),
             f_btn_cancel: FocusFlag::new().with_name("plugins.add.btn.cancel"),
-            last_area: Rect::default(),
-            per_item_area: Vec::new(),
+            ..Default::default()
         };
         // Set initial focus to transport selector instead of name field
         instance.f_transport.set(true);
@@ -83,7 +65,7 @@ impl PluginEditViewState {
 
         instance.args = client.args.unwrap_or_default();
         instance.args_cursor = instance.args.len();
-        instance.kv_editor.rows = client
+        let rows: Vec<EnvRow> = client
             .env
             .iter()
             .map(|e| EnvRow {
@@ -92,6 +74,7 @@ impl PluginEditViewState {
                 is_secret: e.is_secret(),
             })
             .collect();
+        instance.kv_editor.set_rows(rows);
         if instance.transport == PluginTransport::Local {
             instance.command = client.command_or_url;
             instance.command_cursor = instance.command.len();
@@ -133,28 +116,21 @@ impl PluginEditViewState {
         }
     }
 
-    /// Returns the focus flag for the currently active key/value editor container.
-    pub fn active_key_value_focus_flag(&self) -> FocusFlag {
-        self.kv_editor.focus_flag()
-    }
-
-    /// Indicates whether the key/value editor currently holds input focus.
-    pub fn is_key_value_editor_focused(&self) -> bool {
-        self.active_key_value_focus_flag().get()
-    }
-
     /// Provides a transport-specific label for the key/value table.
-    pub fn key_value_table_label(&self) -> &'static str {
-        match self.transport {
-            PluginTransport::Local => "Env Vars",
-            PluginTransport::Remote => "Headers",
-        }
+    pub fn update_key_value_table_label(&mut self) {
+        let label = match self.transport {
+            PluginTransport::Local => Cow::from("Env Vars"),
+            PluginTransport::Remote => Cow::from("Headers"),
+        };
+
+        self.kv_editor.set_block_label(label);
     }
 }
 
 /// Transport selection for Add Plugin view
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
 pub enum PluginTransport {
+    #[default]
     Local,
     Remote,
 }

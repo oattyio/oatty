@@ -1,7 +1,9 @@
 # Schemas
 
-This folder holds the Heroku JSON Hyper-Schema used for code generation.
+This folder holds OpenAPI documents used for command generation.
 
-During development, we reference the provided `../../heroku-schema.json` at the repo root.
-You may copy or symlink it here as `heroku-schema.json` if preferred.
+Sample OpenAPI specs live under `schemas/samples/` and are used by the registry
+build script during development. Drop additional `.json`, `.yaml`, or `.yml`
+files into that directory to include them in the manifest build.
 
+Legacy Heroku schemas have been moved to `legacy/`.

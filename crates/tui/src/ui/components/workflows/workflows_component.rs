@@ -20,11 +20,17 @@ use ratatui::{
 };
 use tracing::warn;
 
+#[derive(Debug, Default, Clone, Copy)]
+struct WorkflowsLayout {
+    search_area: Rect,
+    search_inner_area: Rect,
+    list_area: Rect,
+}
+
 /// Renders the workflow picker view, including search, filtered listing, and footer hints.
 #[derive(Debug, Default)]
 pub struct WorkflowsComponent {
-    search_area: Rect,
-    list_area: Rect,
+    layout: WorkflowsLayout,
     mouse_over_idx: Option<usize>,
 }
 
@@ -75,11 +81,16 @@ impl WorkflowsComponent {
         ])
         .split(area);
 
-        self.render_search_bar(frame, layout[0], app);
-        self.render_workflow_list(frame, layout[1], app, &title);
+        let search_inner_area = self.render_search_bar(frame, layout[0], app);
+        let list_area = self.render_workflow_list(frame, layout[1], app, &title);
+        self.layout = WorkflowsLayout {
+            search_area: layout[0],
+            search_inner_area,
+            list_area,
+        };
     }
 
-    fn render_search_bar(&mut self, frame: &mut Frame, area: Rect, app: &App) {
+    fn render_search_bar(&mut self, frame: &mut Frame, area: Rect, app: &App) -> Rect {
         let search_query = app.workflows.search_query();
         let theme = &*app.ctx.theme;
         let is_focused = app.workflows.f_search.get();
@@ -104,16 +115,15 @@ impl WorkflowsComponent {
         frame.render_widget(paragraph, area);
 
         if is_focused {
-            let cursor_byte = app.workflows.search_cursor();
-            let prefix = &search_query[..cursor_byte.min(search_query.len())];
-            let cursor_cols = prefix.chars().count() as u16;
+            let cursor_cols = app.workflows.search_cursor_columns() as u16;
             let cursor_x = inner_area.x.saturating_add(cursor_cols);
             let cursor_y = inner_area.y;
             frame.set_cursor_position((cursor_x, cursor_y));
         }
+        inner_area
     }
 
-    fn render_workflow_list(&mut self, frame: &mut Frame, area: Rect, app: &mut App, title: &str) {
+    fn render_workflow_list(&mut self, frame: &mut Frame, area: Rect, app: &mut App, title: &str) -> Rect {
         let theme = &*app.ctx.theme;
         let is_focused = app.workflows.list.f_list.get();
         let block = th::block(theme, Some(title), is_focused);
@@ -163,7 +173,7 @@ impl WorkflowsComponent {
             };
             let message_paragraph = Paragraph::new(message).style(theme.text_muted_style()).wrap(Wrap { trim: true });
             frame.render_widget(message_paragraph, list_area);
-            return;
+            return list_area;
         }
         let is_list_focused = app.workflows.list.f_list.get();
         let list_state = app.workflows.list_state();
@@ -172,10 +182,10 @@ impl WorkflowsComponent {
         }
         let list = List::new(items)
             .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
-            .highlight_symbol(if is_list_focused { "> " } else { "" });
+            .highlight_symbol(if is_list_focused { "▸ " } else { "" });
 
         frame.render_stateful_widget(list, list_area, list_state);
-        self.list_area = list_area;
+        list_area
     }
 
     fn summarize_workflow(workflow: &RuntimeWorkflow, max_width: usize) -> String {
@@ -251,7 +261,7 @@ impl WorkflowsComponent {
 
     fn hit_test_list(&mut self, app: &mut App, position: Position) -> Option<usize> {
         let offset = app.workflows.list.list_state().offset();
-        let idx = (position.y as usize).saturating_sub(self.list_area.y as usize) + offset;
+        let idx = (position.y as usize).saturating_sub(self.layout.list_area.y as usize) + offset;
         if app.workflows.list.workflow_by_index(idx).is_some() {
             Some(idx)
         } else {
@@ -329,11 +339,13 @@ impl Component for WorkflowsComponent {
         };
 
         if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
-            if self.search_area.contains(position) {
+            if self.layout.search_area.contains(position) {
                 app.focus.focus(&app.workflows.f_search);
+                let relative_column = mouse.column.saturating_sub(self.layout.search_inner_area.x);
+                app.workflows.set_search_cursor_from_column(relative_column);
             }
 
-            if self.list_area.contains(position)
+            if self.layout.list_area.contains(position)
                 && let Some(idx) = self.hit_test_list(app, position)
             {
                 app.focus.focus(&app.workflows.list.focus());

@@ -10,7 +10,7 @@ use ratatui::{
 /// Build comprehensive help text for a command specification.
 ///
 /// Produces a themed `Text` with sections: USAGE, DESCRIPTION, BACKEND, ARGUMENTS, OPTIONS.
-pub(crate) fn build_command_help_text<'a>(theme: &'a dyn Theme, spec: CommandSpec) -> Text<'a> {
+pub(crate) fn build_command_help_text<'a>(theme: &'a dyn Theme, spec: CommandSpec, product_name: &str) -> Text<'a> {
     let name = &spec.name;
     let group = &spec.group;
 
@@ -19,7 +19,7 @@ pub(crate) fn build_command_help_text<'a>(theme: &'a dyn Theme, spec: CommandSpe
 
     let mut usage_spans: Vec<Span<'_>> = vec![
         Span::styled("  ", theme.text_primary_style()),
-        Span::styled("heroku", theme.syntax_keyword_style()),
+        Span::styled(product_name.to_string(), theme.syntax_keyword_style()),
         Span::raw(" "),
         Span::styled(group.to_string(), theme.syntax_type_style()),
         Span::raw(" "),
@@ -67,13 +67,12 @@ pub(crate) fn build_command_help_text<'a>(theme: &'a dyn Theme, spec: CommandSpe
         CommandExecution::Http(http) => {
             lines.push(Line::from(""));
             lines.push(Line::styled(" BACKEND:", theme.text_primary_style().add_modifier(Modifier::BOLD)));
-            let mut backend_spans = vec![
+            let backend_spans = vec![
                 Span::styled("  HTTP ", theme.syntax_keyword_style()),
                 Span::styled(http.method.clone(), theme.syntax_keyword_style()),
                 Span::raw(" "),
                 Span::styled(http.path.clone(), theme.syntax_string_style()),
             ];
-            backend_spans.push(Span::styled(format!(" (service: {:?})", http.service_id), theme.text_muted_style()));
             lines.push(Line::from(backend_spans));
         }
         CommandExecution::Mcp(mcp) => {

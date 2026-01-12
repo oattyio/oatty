@@ -91,7 +91,7 @@ impl ResultsTableView {
             })
             .style(th::panel_style(theme));
 
-        let mut cloned_state = state.table_state.clone();
+        let mut cloned_state = state.table_state;
         frame.render_stateful_widget(&table_widget, area, &mut cloned_state);
 
         let max_start = rows_len.saturating_sub(visible_rows.max(1));

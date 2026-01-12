@@ -30,7 +30,7 @@ pub struct RuntimeWorkflow {
 }
 
 /// Describes a fully authored workflow, including metadata, inputs, and sequential steps.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct WorkflowDefinition {
     /// Canonical workflow identifier (for example, `app_with_db`).
     #[serde(default)]
@@ -349,7 +349,7 @@ pub struct WorkflowOutputField {
     /// Optional description enhancing picker UX.
     #[serde(default)]
     pub description: Option<String>,
-    /// Optional JSON type hint (object, array<uuid>, etc.).
+    /// Optional JSON type hint (object, `array<uuid>`, etc.).
     #[serde(default)]
     pub r#type: Option<String>,
 }
@@ -589,15 +589,6 @@ steps:
         assert!(definition.inputs.contains_key("app"));
         assert_eq!(definition.steps.len(), 1);
         assert_eq!(definition.steps[0].id, "create_app");
-    }
-
-    #[test]
-    fn repository_sample_workflow_parses() {
-        let yaml_text = include_str!("../../../workflows/create_app_and_db.yaml");
-        let definition: WorkflowDefinition = serde_yaml::from_str(yaml_text).expect("parse sample workflow");
-        assert_eq!(definition.workflow, "app_with_db");
-        assert!(definition.inputs.contains_key("app_name"));
-        assert_eq!(definition.steps.len(), 3);
     }
 
     #[test]

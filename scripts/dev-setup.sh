@@ -89,7 +89,7 @@ if [ ! -f ".env" ]; then
     print_status "Creating .env file from template..."
     cp .env.example .env
     print_success "Created .env file - please edit it with your API key"
-    print_warning "Don't forget to set HEROKU_API_KEY in .env!"
+    print_warning "Don't forget to set OATTY_API_TOKEN in .env!"
 else
     print_success ".env file already exists"
 fi

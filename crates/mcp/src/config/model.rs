@@ -1,8 +1,9 @@
 //! Data models for MCP configuration.
 
+use indexmap::{IndexMap, IndexSet};
 use oatty_types::{EnvSource, EnvVar};
-use serde::de::Deserializer;
-use serde::{Deserialize, Serialize};
+use oatty_util::InterpolationError;
+use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use thiserror::Error;
@@ -17,7 +18,7 @@ pub struct McpConfig {
 }
 
 /// Configuration for a single MCP server.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct McpServer {
     /// Command to execute for stdio transport (required for stdio).
@@ -27,12 +28,8 @@ pub struct McpServer {
     pub args: Option<Vec<String>>,
 
     /// Environment variables to set for the process.
-    #[serde(
-        default,
-        deserialize_with = "deserialize_environment_variables",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub env: Option<Vec<EnvVar>>,
+    #[serde(default, deserialize_with = "deserialize_env_var_set")]
+    pub env: IndexSet<EnvVar>,
 
     /// Working directory for the process.
     pub cwd: Option<PathBuf>,
@@ -41,18 +38,14 @@ pub struct McpServer {
     pub base_url: Option<Url>,
 
     /// HTTP headers to include in requests.
-    #[serde(
-        default,
-        deserialize_with = "deserialize_environment_variables",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub headers: Option<Vec<EnvVar>>,
+    #[serde(default, deserialize_with = "deserialize_env_var_set")]
+    pub headers: IndexSet<EnvVar>,
 
     /// Optional authorization configuration (e.g., Basic credentials).
     pub auth: Option<McpAuthConfig>,
 
     /// Whether this server is disabled.
-    pub disabled: Option<bool>,
+    pub disabled: bool,
 
     /// Optional tags for display/filtering in the UI.
     pub tags: Option<Vec<String>>,
@@ -61,142 +54,7 @@ pub struct McpServer {
     pub err: Option<String>,
 }
 
-/// Default `effective` flag for configuration entries.
-fn default_effective_flag() -> bool {
-    true
-}
-
-/// Deserialize environment variables supporting both list and map formats.
-fn deserialize_environment_variables<'de, D>(deserializer: D) -> Result<Option<Vec<EnvVar>>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let raw_collection = Option::<RawEnvironmentVariableCollection>::deserialize(deserializer)?;
-    Ok(raw_collection.map(|collection| collection.into_environment_variables()))
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum RawEnvironmentVariableCollection {
-    List(Vec<RawEnvironmentVariable>),
-    Map(HashMap<String, RawEnvironmentVariableValue>),
-}
-
-impl RawEnvironmentVariableCollection {
-    fn into_environment_variables(self) -> Vec<EnvVar> {
-        match self {
-            RawEnvironmentVariableCollection::List(list) => {
-                list.into_iter().map(RawEnvironmentVariable::into_environment_variable).collect()
-            }
-            RawEnvironmentVariableCollection::Map(map) => {
-                let mut variables: Vec<EnvVar> = map.into_iter().map(|(key, value)| value.into_environment_variable(key)).collect();
-                variables.sort_by(|a, b| a.key.cmp(&b.key));
-                variables
-            }
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct RawEnvironmentVariable {
-    key: String,
-    value: String,
-    #[serde(default)]
-    source: Option<EnvSource>,
-    #[serde(default)]
-    effective: Option<bool>,
-}
-
-impl RawEnvironmentVariable {
-    fn into_environment_variable(self) -> EnvVar {
-        let RawEnvironmentVariable {
-            key,
-            value,
-            source,
-            effective,
-        } = self;
-
-        let environment_source = compute_environment_source(source, &value);
-        EnvVar {
-            key,
-            value,
-            source: environment_source,
-            effective: effective.unwrap_or_else(default_effective_flag),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(untagged)]
-enum RawEnvironmentVariableValue {
-    Simple(String),
-    Detailed(RawEnvironmentVariableDetail),
-}
-
-impl RawEnvironmentVariableValue {
-    fn into_environment_variable(self, key: String) -> EnvVar {
-        match self {
-            RawEnvironmentVariableValue::Simple(value) => {
-                let environment_source = compute_environment_source(None, &value);
-                EnvVar {
-                    key,
-                    value,
-                    source: environment_source,
-                    effective: default_effective_flag(),
-                }
-            }
-            RawEnvironmentVariableValue::Detailed(detail) => detail.into_environment_variable(key),
-        }
-    }
-}
-
-#[derive(Debug, Deserialize)]
-struct RawEnvironmentVariableDetail {
-    value: String,
-    #[serde(default)]
-    source: Option<EnvSource>,
-    #[serde(default)]
-    effective: Option<bool>,
-}
-
-impl RawEnvironmentVariableDetail {
-    fn into_environment_variable(self, key: String) -> EnvVar {
-        let environment_source = compute_environment_source(self.source, &self.value);
-        EnvVar {
-            key,
-            value: self.value,
-            source: environment_source,
-            effective: self.effective.unwrap_or_else(default_effective_flag),
-        }
-    }
-}
-
 /// Determine the environment variable source, honoring explicitly provided metadata.
-fn compute_environment_source(provided_source: Option<EnvSource>, value: &str) -> EnvSource {
-    if let Some(source) = provided_source {
-        return source;
-    }
-
-    super::interpolation::determine_env_source(value)
-}
-
-impl Default for McpServer {
-    fn default() -> Self {
-        Self {
-            command: None,
-            args: None,
-            env: None,
-            cwd: None,
-            base_url: None,
-            headers: None,
-            auth: None,
-            disabled: Some(false),
-            tags: None,
-            err: None,
-        }
-    }
-}
-
 impl McpServer {
     /// Check if this server is configured for stdio transport.
     pub fn is_stdio(&self) -> bool {
@@ -210,7 +68,7 @@ impl McpServer {
 
     /// Check if this server is disabled.
     pub fn is_disabled(&self) -> bool {
-        self.disabled.unwrap_or(false)
+        self.disabled
     }
 
     /// Get the transport type for this server.
@@ -225,6 +83,36 @@ impl McpServer {
     }
 }
 
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum EnvVarCollection {
+    Sequence(Vec<EnvVar>),
+    Map(IndexMap<String, String>),
+}
+
+fn deserialize_env_var_set<'de, D>(deserializer: D) -> Result<IndexSet<EnvVar>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let maybe_collection = Option::<EnvVarCollection>::deserialize(deserializer)?;
+    let mut set = IndexSet::new();
+    if let Some(collection) = maybe_collection {
+        match collection {
+            EnvVarCollection::Sequence(items) => {
+                for var in items {
+                    set.insert(var);
+                }
+            }
+            EnvVarCollection::Map(map) => {
+                for (key, value) in map {
+                    set.insert(EnvVar::new(key, value, EnvSource::File));
+                }
+            }
+        }
+    }
+    Ok(set)
+}
+
 /// Authorization configuration for MCP servers.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -236,7 +124,7 @@ pub struct McpAuthConfig {
     /// Password (supports interpolation).
     pub password: Option<String>,
     /// Token (supports interpolation). If present without username/password,
-    /// constructs Basic auth using "<token>:" as the user:pass pair.
+    /// constructs Basic auth using `"<token>:"` as the user:pass pair.
     pub token: Option<String>,
     /// Optional custom header name; defaults to "Authorization" when omitted.
     pub header_name: Option<String>,
@@ -275,7 +163,7 @@ pub enum ConfigError {
     Url(#[from] url::ParseError),
 
     #[error("Interpolation error: {0}")]
-    Interpolation(#[from] crate::config::InterpolationError),
+    Interpolation(#[from] InterpolationError),
 
     #[error("Validation error: {0}")]
     Validation(#[from] crate::config::ValidationError),
@@ -301,8 +189,8 @@ mod tests {
                     "value": "bar"
                 },
                 {
-                    "key": "HEROKU_API_TOKEN",
-                    "value": "${env:HEROKU_API_TOKEN}"
+                    "key": "OATTY_API_TOKEN",
+                    "value": "${env:OATTY_API_TOKEN}"
                 }
                ],
               "cwd": "/path/optional",

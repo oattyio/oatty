@@ -3,7 +3,7 @@ use crate::ui::components::Component;
 use crate::ui::theme::catalog::ThemeDefinition;
 use crate::ui::theme::theme_helpers as th;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use oatty_types::{Effect, Modal};
+use oatty_types::Effect;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::style::{Modifier, Style};
@@ -72,13 +72,6 @@ impl ThemePickerComponent {
 }
 
 impl Component for ThemePickerComponent {
-    fn handle_message(&mut self, app: &mut App, msg: &oatty_types::Msg) -> Vec<Effect> {
-        match (msg, app.open_modal_kind.as_ref()) {
-            (oatty_types::Msg::Resize(_, _), Some(Modal::ThemePicker)) => Vec::new(),
-            _ => Vec::new(),
-        }
-    }
-
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         match key.code {
             KeyCode::Esc => return vec![Effect::CloseModal],

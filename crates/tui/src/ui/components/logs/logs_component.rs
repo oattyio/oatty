@@ -14,7 +14,7 @@
 //! The component follows the TEA (The Elm Architecture) pattern and integrates
 //! with the application's focus management system.
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use oatty_types::{Effect, ExecOutcome, Modal, Msg};
+use oatty_types::{Effect, ExecOutcome, Modal};
 use oatty_util::redact_json;
 use once_cell::sync::Lazy;
 use ratatui::{
@@ -175,7 +175,12 @@ impl LogsComponent {
                     app.logs.detail = None;
                     app.logs.cached_detail_index = None;
                     app.logs.cached_redacted_json = None;
-                    modal_to_open = Modal::Results(Box::new(ExecOutcome::Http(*status, raw.to_string(), json_value.clone(), None, 0)));
+                    modal_to_open = Modal::Results(Box::new(ExecOutcome::Http {
+                        status_code: *status,
+                        log_entry: raw.to_string(),
+                        payload: json_value.clone(),
+                        request_id: 0,
+                    }));
                 }
                 Some(LogEntry::Api {
                     json: Some(json_value), ..
@@ -289,13 +294,6 @@ impl LogsComponent {
 }
 
 impl Component for LogsComponent {
-    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
-        if let Msg::ExecCompleted(outcome) = msg {
-            app.logs.process_general_execution_result(outcome)
-        }
-        Vec::new()
-    }
-
     /// Handles keyboard input events for the log component.
     ///
     /// This method processes various key combinations to provide navigation,
@@ -402,15 +400,14 @@ impl Component for LogsComponent {
             .map(|l| ListItem::from(self.styled_line(&*app.ctx.theme, l)))
             .collect();
 
-        // Configure the main log list widget
         let list = List::new(items)
             .block(block)
             .highlight_style(app.ctx.theme.selection_style().add_modifier(Modifier::BOLD))
             .style(th::panel_style(&*app.ctx.theme))
-            .highlight_symbol(if focused { "> " } else { "" });
+            .highlight_symbol(if focused { "▸ " } else { "  " })
+            .highlight_spacing(HighlightSpacing::Always);
 
-        // Set up the list state for selection highlighting
-        let mut list_state = app.logs.list_state.clone();
+        let mut list_state = app.logs.list_state;
         if focused {
             if let Some(sel) = self.selected_index(app) {
                 list_state.select(Some(sel));
@@ -420,22 +417,19 @@ impl Component for LogsComponent {
         }
         frame.render_stateful_widget(list, rect, &mut list_state);
 
-        // Render scrollbar when focused to show position within a log list
-        if focused {
-            let content_len = app.logs.entries.len();
-            if content_len > 0 {
-                let visible = rect.height.saturating_sub(2) as usize; // Account for borders
-                if visible > 0 && content_len > visible {
-                    let sel = self.selected_index(app).unwrap_or(0);
-                    let max_top = content_len.saturating_sub(visible);
-                    let top = sel.min(max_top);
-                    let scrollable_range = content_len.saturating_sub(visible).saturating_add(1);
-                    let mut sb_state = ScrollbarState::new(scrollable_range).position(top).viewport_content_length(visible);
-                    let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                        .thumb_style(Style::default().fg(app.ctx.theme.roles().scrollbar_thumb))
-                        .track_style(Style::default().fg(app.ctx.theme.roles().scrollbar_track));
-                    frame.render_stateful_widget(sb, rect, &mut sb_state);
-                }
+        let content_len = app.logs.entries.len();
+        if focused && content_len > 0 {
+            let visible = rect.height.saturating_sub(2) as usize; // Account for borders
+            if visible > 0 && content_len > visible {
+                let sel = self.selected_index(app).unwrap_or(0);
+                let max_top = content_len.saturating_sub(visible);
+                let top = sel.min(max_top);
+                let scrollable_range = content_len.saturating_sub(visible).saturating_add(1);
+                let mut sb_state = ScrollbarState::new(scrollable_range).position(top).viewport_content_length(visible);
+                let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                    .thumb_style(Style::default().fg(app.ctx.theme.roles().scrollbar_thumb))
+                    .track_style(Style::default().fg(app.ctx.theme.roles().scrollbar_track));
+                frame.render_stateful_widget(sb, rect, &mut sb_state);
             }
         }
     }

@@ -9,7 +9,7 @@ use crate::ui::theme::Theme;
 use anyhow::Result;
 use indexmap::IndexMap;
 use oatty_engine::{ProviderBindingOutcome, WorkflowRunState};
-use oatty_registry::{CommandRegistry, utils::find_by_group_and_cmd};
+use oatty_registry::CommandRegistry;
 use oatty_types::{
     command::SchemaProperty,
     workflow::{
@@ -81,9 +81,14 @@ impl WorkflowState {
         self.list.search_query()
     }
 
-    /// Provides the current cursor position (byte index) in the search input.
-    pub fn search_cursor(&self) -> usize {
-        self.list.search_cursor()
+    /// Provides the search cursor position in display columns (character count).
+    pub fn search_cursor_columns(&self) -> usize {
+        self.list.search_cursor_columns()
+    }
+
+    /// Sets the search cursor based on a display column within the search input.
+    pub fn set_search_cursor_from_column(&mut self, column: u16) {
+        self.list.set_search_cursor_from_column(column);
     }
 
     /// Move the search cursor one character to the left (UTF‑8 safe).
@@ -522,10 +527,10 @@ fn resolve_selector_field_metadata(
     };
 
     let spec = {
-        let Ok(guard) = registry.lock() else {
+        let Ok(lock) = registry.lock() else {
             return IndexMap::new();
         };
-        find_by_group_and_cmd(&guard.commands, &group, &name).ok()
+        lock.find_by_group_and_cmd(&group, &name).ok()
     };
 
     let Some(spec) = spec else {

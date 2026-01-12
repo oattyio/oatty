@@ -1,4 +1,4 @@
-heroku-util — Utilities & Redaction
+oatty-util — Utilities & Redaction
 
 Overview
 - Small helpers shared across crates; notably, redaction of sensitive values for safe logging.
@@ -18,4 +18,3 @@ Testing
 - Recommended golden tests exercising common sensitive fields:
   - `Authorization` headers, `api_key`, `password`, `token`, `secret` keys.
   - Ensure redaction is consistent across different contexts.
-

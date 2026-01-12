@@ -6,7 +6,7 @@ rust-version = "1.89"
 description = "Oatty API client library"
 license = "MIT OR Apache-2.0"
 authors = ["Oatty CLI Team <devnull@example.com>"]
-repository = "https://example.com/heroku"
+repository = "https://example.com/oatty"
 
 [dependencies]
 anyhow = { workspace = true }
@@ -14,3 +14,4 @@ reqwest = { workspace = true }
 tracing = { workspace = true }
 dirs-next = { workspace = true }
 oatty-types = { path = "../types" }
+indexmap.workspace = true

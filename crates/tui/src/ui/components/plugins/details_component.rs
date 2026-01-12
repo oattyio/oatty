@@ -234,7 +234,7 @@ impl Component for PluginsDetailsComponent {
     ///
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        let mut spans = th::build_hint_spans(theme, &[("Esc", " Close  "), ("↑/↓", " Scroll logs  "), ("Ctrl-R", " Refresh  ")]);
+        let mut spans = th::build_hint_spans(theme, &[("Esc", " Close  "), ("↑/↓", " Scroll logs  "), ("Ctrl+R", " Refresh  ")]);
 
         if let Some(details) = app.plugins.details.as_ref()
             && matches!(details.load_state(), PluginDetailsLoadState::Loaded(_))
@@ -405,7 +405,6 @@ impl PluginsDetailsComponent {
             },
         ));
 
-        // Actions inline per PLUGINS.md
         lines.push(Line::from(vec![
             Span::styled("Actions   ", theme.accent_emphasis_style()),
             Span::styled("[R]", theme.accent_emphasis_style()),
@@ -417,7 +416,7 @@ impl PluginsDetailsComponent {
         ]));
         lines.push(Line::from(vec![
             Span::styled("           ", theme.accent_emphasis_style()),
-            Span::styled("[Ctrl-R]", theme.accent_emphasis_style()),
+            Span::styled("[Ctrl+R]", theme.accent_emphasis_style()),
             Span::styled(" Refresh", theme.text_muted_style()),
         ]));
 

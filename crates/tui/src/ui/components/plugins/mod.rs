@@ -11,7 +11,6 @@ mod plugins_component;
 mod state;
 #[allow(clippy::module_inception)]
 mod table;
-mod types;
 
 pub use details_component::PluginsDetailsComponent;
 pub use details_state::{PluginDetailsData, PluginDetailsLoadState, PluginDetailsModalState};
@@ -21,4 +20,3 @@ pub use plugin_editor::PluginsEditComponent;
 pub use plugins_component::PluginsComponent;
 pub use state::PluginsState;
 pub use table::{PluginsTableComponent, PluginsTableState};
-pub use types::*;

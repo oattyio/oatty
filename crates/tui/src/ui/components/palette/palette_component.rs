@@ -19,6 +19,9 @@ use ratatui::{
 };
 
 use crate::app::App;
+use crate::ui::components::common::ConfirmationModalOpts;
+use crate::ui::components::common::text_input::cursor_index_for_column;
+use crate::ui::theme::theme_helpers::create_list_with_highlight;
 use crate::ui::{
     components::component::Component,
     theme::{Theme, theme_helpers as th},
@@ -28,6 +31,7 @@ static FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 #[derive(Default, Debug, Clone)]
 struct PaletteLayout {
     input_area: Rect,
+    input_inner_area: Rect,
     error_area: Rect,
     suggestions_area: Rect,
 }
@@ -60,23 +64,20 @@ struct PaletteLayout {
 /// # Examples
 ///
 /// ```rust,ignore
-/// use heroku_tui::ui::components::PaletteComponent;
+/// use oatty_tui::ui::components::PaletteComponent;
 ///
 /// let mut palette = PaletteComponent::default();
 /// palette.init()?;
 /// ```
 #[derive(Debug, Default)]
 pub struct PaletteComponent {
-    palette_layout: PaletteLayout,
+    layout: PaletteLayout,
     /// Focus flag for confirming a destructive command
     /// used in the confirmation modal
     confirm_button: FocusFlag,
 }
 
 impl PaletteComponent {
-    pub fn new() -> Self {
-        Self::default()
-    }
     /// Creates the input paragraph widget with the current state.
     ///
     /// This function creates the input paragraph with throbber, input text, and
@@ -157,26 +158,6 @@ impl PaletteComponent {
         }
     }
 
-    /// Creates the suggestion list widget.
-    ///
-    /// This function creates the suggestion list with highlighting and
-    /// styling.
-    ///
-    /// # Arguments
-    ///
-    /// * `app` - The application state containing palette data
-    /// * `theme` - The current theme for styling
-    ///
-    /// # Returns
-    ///
-    /// The suggestions list widget
-    fn create_suggestions_list<'a>(&'_ self, suggestions: Vec<ListItem<'static>>, theme: &dyn Theme) -> List<'a> {
-        List::new(suggestions.to_vec())
-            .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
-            .style(th::panel_style(theme))
-            .highlight_symbol("> ")
-    }
-
     /// Positions the cursor in the input line.
     ///
     /// This function calculates the correct cursor position based on the
@@ -187,17 +168,11 @@ impl PaletteComponent {
     /// # Arguments
     ///
     /// * `frame` - The frame to set cursor position on
-    /// * `input_area` - The rectangular area of the input line
     /// * `app` - The application state containing palette data
-    /// * `theme` - The current theme for styling
-    fn position_cursor(&self, frame: &mut Frame, input_area: Rect, app: &App, theme: &dyn Theme) {
+    fn position_cursor(&self, frame: &mut Frame, app: &App) {
         if app.palette.is_focused() {
             // Create the same block structure to get the inner area
-            let input_title = self.create_input_title(theme);
-            let is_focused = app.palette.is_focused();
-            let mut input_block = th::block::<String>(theme, None, is_focused);
-            input_block = input_block.title(input_title);
-            let inner_area = input_block.inner(input_area);
+            let inner_area = self.layout.input_inner_area;
 
             let col = app
                 .palette
@@ -259,6 +234,12 @@ impl PaletteComponent {
     /// * `app` - The application state to update
     fn handle_backspace(&self, app: &mut App) {
         app.palette.reduce_backspace();
+        app.palette.reduce_clear_error();
+        app.palette.apply_suggestions(vec![]);
+    }
+
+    fn handle_delete(&self, app: &mut App) {
+        app.palette.reduce_delete();
         app.palette.reduce_clear_error();
         app.palette.apply_suggestions(vec![]);
     }
@@ -390,8 +371,9 @@ impl PaletteComponent {
         let rects = self.get_preferred_layout(app, area);
         PaletteLayout {
             input_area: rects[0],
-            error_area: rects[1],
-            suggestions_area: rects[2],
+            input_inner_area: rects[1],
+            error_area: rects[2],
+            suggestions_area: rects[3],
         }
     }
 
@@ -405,11 +387,12 @@ impl PaletteComponent {
             "You are about to run a destructive action that cannot be undone.\nAre you sure you want to run `{}`?",
             command
         );
-        app.confirmation_modal_state.set_buttons(buttons);
-        app.confirmation_modal_state.set_message(Some(message));
-        app.confirmation_modal_state.set_severity(Some(Severity::Warning));
-        app.confirmation_modal_state
-            .set_title(Some("Confirm Destructive Action".to_string()));
+        app.confirmation_modal_state.update_opts(ConfirmationModalOpts {
+            title: Some("Confirm Destructive Action".to_string()),
+            message: Some(message),
+            severity: Some(Severity::Warning),
+            buttons,
+        });
 
         vec![Effect::ShowModal(Modal::Confirmation)]
     }
@@ -423,7 +406,6 @@ impl PaletteComponent {
             app.palette.set_cmd_exec_hash(hash);
             return Some(vec![Effect::Run {
                 hydrated_command: cmd,
-                range_override: None,
                 request_hash: hash,
             }]);
         }
@@ -432,7 +414,7 @@ impl PaletteComponent {
 }
 
 impl Component for PaletteComponent {
-    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+    fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
         match msg {
             Msg::Tick => {
                 if app.executing || app.palette.is_provider_loading() {
@@ -445,9 +427,9 @@ impl Component for PaletteComponent {
                     app.palette.handle_provider_fetch_failure(log_message, &*app.ctx.theme);
                     Vec::new()
                 }
-                _ => app.palette.process_general_execution_result(outcome),
+                _ => app.palette.process_general_execution_result(*outcome),
             },
-            Msg::ConfirmationModalButtonClicked(id) if *id == self.confirm_button.widget_id() => {
+            Msg::ConfirmationModalButtonClicked(id) if id == self.confirm_button.widget_id() => {
                 self.execute_command(app).unwrap_or_default()
             }
             _ => Vec::new(),
@@ -489,38 +471,33 @@ impl Component for PaletteComponent {
         let mut effects: Vec<Effect> = vec![];
         match key.code {
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
-                // Handle character input
                 self.handle_character_input(app, c);
             }
             KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                // Handle help request
                 effects.extend(self.handle_help_request(app));
             }
             KeyCode::Backspace => {
-                // Handle backspace
                 self.handle_backspace(app);
             }
+            KeyCode::Delete => {
+                self.handle_delete(app);
+            }
             KeyCode::Left => {
-                // Handle cursor left
                 self.handle_cursor_left(app);
             }
             KeyCode::Right => {
-                // Handle cursor right
                 self.handle_cursor_right(app);
             }
             KeyCode::Down | KeyCode::Up => {
                 if app.palette.is_suggestions_open() {
-                    // Navigate suggestions when the popup is open
                     self.handle_suggestion_navigation(app, key.code);
                 } else {
-                    // Navigate command history when the popup is closed
                     let changed = if key.code == KeyCode::Up {
                         app.palette.history_up()
                     } else {
                         app.palette.history_down()
                     };
                     if changed {
-                        // Clear errors/suggestions while browsing history
                         app.palette.reduce_clear_error();
                         app.palette.set_is_suggestions_open(false);
                     }
@@ -530,20 +507,16 @@ impl Component for PaletteComponent {
                 app.focus.prev();
             }
             KeyCode::Tab => {
-                // When input is empty, use Tab/BackTab for focus traversal between palette and logs.
                 if app.palette.is_input_empty() {
                     app.focus.next();
                 } else {
-                    // Otherwise, Tab refreshes/opens suggestions
                     effects.extend(self.handle_tab_press(app));
                 }
             }
             KeyCode::Enter => {
-                // Handle enters keypress
                 effects.extend(self.handle_enter(app));
             }
             KeyCode::Esc => {
-                // Handle escape
                 self.handle_escape(app);
             }
             _ => {}
@@ -556,7 +529,7 @@ impl Component for PaletteComponent {
             suggestions_area,
             input_area,
             ..
-        } = &self.palette_layout;
+        } = &self.layout;
         let position = Position {
             x: mouse.column,
             y: mouse.row,
@@ -582,6 +555,9 @@ impl Component for PaletteComponent {
             MouseEventKind::Down(MouseButton::Left) => {
                 if input_area.contains(position) {
                     app.focus.focus(&app.palette.f_input);
+                    let relative_column = mouse.column.saturating_sub(self.layout.input_inner_area.x);
+                    let cursor_index = cursor_index_for_column(app.palette.input(), relative_column);
+                    app.palette.set_cursor(cursor_index);
                 }
                 if hit_test_suggestions {
                     app.palette.list_state.select(idx);
@@ -624,6 +600,7 @@ impl Component for PaletteComponent {
             input_area,
             error_area,
             suggestions_area,
+            ..
         } = &palette_layout;
         let theme = &*app.ctx.theme;
         // Render input line with throbber and ghost text
@@ -631,7 +608,7 @@ impl Component for PaletteComponent {
         frame.render_widget(input_para, *input_area);
 
         // Position cursor in the input line
-        self.position_cursor(frame, *input_area, app, theme);
+        self.position_cursor(frame, app);
 
         // Render error message if present
         if let Some(error_para) = self.create_error_paragraph(app, theme) {
@@ -644,11 +621,11 @@ impl Component for PaletteComponent {
 
         if should_show_suggestions {
             app.palette.update_suggestions_view_width(suggestions_area.width, theme);
-            let suggestions = app.palette.rendered_suggestions().to_vec();
-            let suggestions_list = self.create_suggestions_list(suggestions, theme);
+            let suggestions = app.palette.rendered_suggestions();
+            let suggestions_list = create_list_with_highlight(suggestions.to_vec(), &*app.ctx.theme, true, None);
             frame.render_stateful_widget(suggestions_list, *suggestions_area, &mut app.palette.list_state);
         }
-        self.palette_layout = palette_layout;
+        self.layout = palette_layout;
     }
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
@@ -668,12 +645,14 @@ impl Component for PaletteComponent {
     fn get_preferred_layout(&self, app: &App, area: Rect) -> Vec<Rect> {
         let has_error = app.palette.error_message().is_some();
         // 3 areas in total, stacked on top of one another
-        Layout::vertical([
+        let outter_area = Layout::vertical([
             Constraint::Length(3),                             // input area
             Constraint::Length(if has_error { 1 } else { 0 }), // error area
             Constraint::Min(1),                                // Suggestion area
         ])
-        .split(area)
-        .to_vec()
+        .split(area);
+
+        let block = Block::bordered();
+        vec![outter_area[0], block.inner(outter_area[0]), outter_area[1], outter_area[2]]
     }
 }

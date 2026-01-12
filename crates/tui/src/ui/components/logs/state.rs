@@ -141,22 +141,27 @@ impl LogsState {
     /// * `execution_outcome` - The execution outcome to process.
     pub(crate) fn process_general_execution_result(&mut self, execution_outcome: &ExecOutcome) {
         match execution_outcome {
-            ExecOutcome::Http(status, log, value, ..) => {
-                self.append_api_entry(*status, log.clone(), Some(normalize_result_payload(value.clone())));
+            ExecOutcome::Http {
+                status_code,
+                log_entry,
+                payload,
+                ..
+            } => {
+                self.append_api_entry(*status_code, log_entry.clone(), Some(normalize_result_payload(payload.clone())));
             }
-            ExecOutcome::Mcp(log, value, ..) => {
-                self.append_mcp_entry(log.clone(), Some(normalize_result_payload(value.clone())));
+            ExecOutcome::Mcp { log_entry, payload, .. } => {
+                self.append_mcp_entry(log_entry.clone(), Some(normalize_result_payload(payload.clone())));
             }
-            ExecOutcome::PluginDetailLoad(name, ..) => {
-                let message = format!("Plugins: loading details for '{}'", name);
+            ExecOutcome::PluginDetailLoad { plugin_name, .. } => {
+                let message = format!("Plugins: loading details for '{}'", plugin_name);
                 self.append_text_entry(message);
             }
             ExecOutcome::Log(text)
-            | ExecOutcome::PluginDetail(text, ..)
-            | ExecOutcome::PluginValidationErr(text, ..)
-            | ExecOutcome::PluginsRefresh(text, ..)
-            | ExecOutcome::PluginValidationOk(text, ..) => {
-                self.append_text_entry(text.to_string());
+            | ExecOutcome::PluginDetail { message: text, .. }
+            | ExecOutcome::PluginValidationErr { message: text }
+            | ExecOutcome::PluginsRefresh { message: text, .. }
+            | ExecOutcome::PluginValidationOk { message: text } => {
+                self.append_text_entry(text.clone());
             }
             _ => {}
         }

@@ -67,7 +67,6 @@ pub trait Theme: Send + Sync + Debug {
         Style::default().fg(self.roles().text_secondary)
     }
     fn text_muted_style(&self) -> Style {
-        // Use the muted color directly without DIM to improve readability.
         Style::default().fg(self.roles().text_muted)
     }
 

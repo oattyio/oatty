@@ -86,7 +86,7 @@ pub struct RunViewComponent {
 }
 
 impl Component for RunViewComponent {
-    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+    fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
         if let Msg::Tick = msg
             && let Some(run_state) = app.workflows.run_view_state_mut()
         {
@@ -343,7 +343,12 @@ impl RunViewComponent {
         if let Some(selected_index) = run_state.steps_table.table_state.selected()
             && let Some(value) = run_state.output_by_index(selected_index)
         {
-            let outcome = ExecOutcome::Http(200, "View step output".to_string(), value, None, 0);
+            let outcome = ExecOutcome::Http {
+                status_code: 200,
+                log_entry: "View step output".to_string(),
+                payload: value,
+                request_id: 0,
+            };
             effects.push(Effect::ShowModal(Modal::Results(Box::new(outcome))));
         }
         effects

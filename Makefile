@@ -17,7 +17,7 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-20s$(NC) %s\n", $$1, $$2}'
 	@echo ""
 	@echo "$(YELLOW)Environment Variables:$(NC)"
-	@echo "  HEROKU_API_KEY   - Your Oatty API key (required for API calls)"
+	@echo "  OATTY_API_TOKEN  - Your API token (required for API calls)"
 	@echo "  OATTY_LOG       - Log level: error|warn|info|debug|trace (default: info)"
 	@echo "  TUI_THEME        - Theme: dracula|dracula_hc|nord|nord_hc (default: dracula)"
 	@echo "  DEBUG            - Enable debug mode: 1|0"
@@ -90,16 +90,6 @@ doc: ## Generate and open documentation
 doc-all: ## Generate documentation including dependencies
 	@echo "$(BLUE)==> Generating documentation (with deps)...$(NC)"
 	@cargo doc --workspace --open
-
-manifest-json: ## Generate manifest as JSON
-	@echo "$(BLUE)==> Generating manifest (JSON)...$(NC)"
-	@cargo run -p oatty-registry-gen -- --json --service $(SERVICE) schemas/heroku-schema.enhanced.json target/manifest-debug.json
-	@echo "$(GREEN)✓ Generated: target/manifest-debug.json$(NC)"
-
-manifest-bin: ## Generate manifest as bincode
-	@echo "$(BLUE)==> Generating manifest (bincode)...$(NC)"
-	@cargo run -p oatty-registry-gen -- --service $(SERVICE) schemas/heroku-schema.enhanced.json target/manifest-debug.bin
-	@echo "$(GREEN)✓ Generated: target/manifest-debug.bin$(NC)"
 
 pre-commit: fmt clippy test ## Run all pre-commit checks
 	@echo "$(GREEN)✓ All pre-commit checks passed!$(NC)"

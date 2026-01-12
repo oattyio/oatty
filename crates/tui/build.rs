@@ -1,12 +1,11 @@
-//! # Builder for extracting date-like fields from the heroku schema
+//! # Builder for extracting date-like fields from a sample OpenAPI schema
 //!
 //! This build script extracts date-like fields to include
 //! in sources for date formatting.
 use std::{collections::BTreeSet, env, fs, path::PathBuf};
 
 fn main() {
-    // Path to the repo root schemas directory from crates/tui
-    let schema_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../schemas/heroku-schema.enhanced.json");
+    let schema_path = resolve_schema_path();
 
     // Re-run build script if schema changes
     println!("cargo:rerun-if-changed={}", schema_path.display());
@@ -34,6 +33,16 @@ fn main() {
     let mut list: Vec<String> = keys.into_iter().collect();
     list.sort();
     write_output(&list);
+}
+
+fn resolve_schema_path() -> PathBuf {
+    if let Ok(path) = env::var("OATTY_DATE_SCHEMA_PATH")
+        && !path.trim().is_empty()
+    {
+        return PathBuf::from(path);
+    }
+
+    PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("../../schemas/samples/render-public-api.json")
 }
 
 fn write_output(keys: &[String]) {

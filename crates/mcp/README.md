@@ -53,7 +53,7 @@ Default path: `~/.config/oatty/mcp.json` (override with `MCP_CONFIG_PATH`). Exam
       "args": ["-e", "require('@mcp/server').start()"],
       "env": {
         "FOO": "bar",
-        "HEROKU_API_TOKEN": "${env:HEROKU_API_TOKEN}"
+        "OATTY_API_TOKEN": "${env:OATTY_API_TOKEN}"
       },
       "cwd": "/path/optional",
       "disabled": false,
@@ -140,7 +140,7 @@ use std::sync::Arc;
     provider.initialize().await?; // fetch tool metadata, build contract
 
     let args = serde_json::Map::from_iter([
-        ("owner".to_string(), json!("heroku"))
+        ("owner".to_string(), json!("example"))
     ]);
 
     let items = provider.fetch_values(&args).await?;

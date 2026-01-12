@@ -198,7 +198,7 @@ impl PluginRegistry {
     }
 
     /// Search plugins by name or tag.
-    pub fn search_plugins(&self, query: &str) -> Vec<PluginDetail> {
+    pub fn search(&self, query: &str) -> Vec<PluginDetail> {
         let query_lower = query.to_lowercase();
 
         self.plugins
@@ -269,7 +269,7 @@ mod tests {
         assert_eq!(all_plugins.len(), 1);
 
         // Search plugins
-        let search_results = registry.search_plugins("test");
+        let search_results = registry.search("test");
         assert_eq!(search_results.len(), 1);
 
         // Get plugins by tag

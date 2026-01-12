@@ -26,6 +26,8 @@ use serde_json::{Value as JsonValue, Value};
 struct WorkflowCollectorLayoutState {
     /// Rect covering the filter input at the top of the modal.
     pub filter_panel: Rect,
+    /// Rect covering the inner text area for the filter input.
+    pub filter_inner_area: Rect,
     /// Rect covering the filter input at the top of the modal.
     pub status_area: Rect,
     /// Rect covering the result table.
@@ -44,6 +46,7 @@ impl From<Vec<Rect>> for WorkflowCollectorLayoutState {
     fn from(value: Vec<Rect>) -> Self {
         Self {
             filter_panel: value[0],
+            filter_inner_area: Rect::default(),
             status_area: value[1],
 
             table_area: value[2],
@@ -148,6 +151,9 @@ impl Component for WorkflowCollectorComponent {
         if self.layout.filter_panel.contains(position) {
             app.focus.focus(&collector.f_filter);
             collector.focus_filter();
+            let relative_column = position.x.saturating_sub(self.layout.filter_inner_area.x);
+            let cursor_index = collector.filter.cursor_index_for_column(relative_column);
+            collector.filter.set_cursor(cursor_index);
         }
 
         if self.layout.table_area.contains(position) {
@@ -535,7 +541,7 @@ impl WorkflowCollectorComponent {
         }
         collector.sync_stage_with_selection(selected_idx);
 
-        self.render_filter_panel(frame, layout.filter_panel, collector, theme);
+        let filter_inner_area = self.render_filter_panel(frame, layout.filter_panel, collector, theme);
         self.render_status_line(frame, layout.status_area, collector, theme);
 
         let table_focused = collector.f_table.get();
@@ -561,10 +567,12 @@ impl WorkflowCollectorComponent {
         let apply_options = ButtonRenderOptions::new(collector.apply_enabled(), collector.f_apply.get(), false, Borders::ALL, true);
         th::render_button(frame, layout.apply_button_area, "Apply", theme, apply_options);
 
+        let mut layout = layout;
+        layout.filter_inner_area = filter_inner_area;
         self.layout = layout;
     }
 
-    fn render_filter_panel(&self, frame: &mut Frame, area: Rect, collector: &CollectorViewState<'_>, theme: &dyn Theme) {
+    fn render_filter_panel(&self, frame: &mut Frame, area: Rect, collector: &CollectorViewState<'_>, theme: &dyn Theme) -> Rect {
         let filter_block_title = Line::from(Span::styled(
             "Filter Results",
             theme.text_secondary_style().add_modifier(Modifier::BOLD),
@@ -585,13 +593,12 @@ impl WorkflowCollectorComponent {
         frame.render_widget(paragraph, area);
 
         if is_focused {
-            let cursor_index = collector.filter.cursor().min(filter_text.len());
-            let prefix = &filter_text[..cursor_index];
-            let cursor_columns = prefix.chars().count() as u16;
+            let cursor_columns = collector.filter.cursor_columns() as u16;
             let cursor_x = inner_area.x.saturating_add(cursor_columns);
             let cursor_y = inner_area.y;
             frame.set_cursor_position((cursor_x, cursor_y));
         }
+        inner_area
     }
 
     fn render_status_line(&self, frame: &mut Frame, area: Rect, selector: &CollectorViewState<'_>, theme: &dyn Theme) {

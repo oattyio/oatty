@@ -42,10 +42,11 @@ pub struct PluginsComponent {
 }
 
 impl Component for PluginsComponent {
-    fn handle_message(&mut self, app: &mut App, msg: &Msg) -> Vec<Effect> {
+    fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
         if let Msg::ExecCompleted(outcome) = msg {
-            return app.plugins.handle_execution_completion(outcome);
+            return app.plugins.handle_execution_completion(*outcome);
         }
+
         Vec::new()
     }
 
@@ -53,7 +54,7 @@ impl Component for PluginsComponent {
     ///
     /// This method implements a hierarchical event handling strategy:
     /// 1. First, check if any overlay is open and delegate to it
-    /// 2. Handle focus cycling (Tab/BackTab) if no overlay is active
+    /// 2. Handle focus cycling (Tab/BackTab), allowing inline editors to intercept
     /// 3. Process Ctrl-based shortcuts for plugin operations
     /// 4. Finally, delegate to child components for specific functionality
     ///
@@ -162,8 +163,8 @@ impl PluginsComponent {
     ///
     /// This method checks if any overlay (environment editor, logs viewer, or add plugin plugin)
     /// is currently open and delegates the keyboard event to the appropriate component.
-    /// Tab/BackTab events are intentionally not handled here to allow the focus cycling
-    /// handler to manage them consistently across all contexts.
+    /// Tab/BackTab events are forwarded to the inline key/value editor when it
+    /// owns focus; otherwise they fall through to the global focus cycling logic.
     ///
     /// # Arguments
     ///
@@ -175,9 +176,17 @@ impl PluginsComponent {
     /// Returns `Some(Vec<Effect>)` if the event was handled by an overlay, or `None` if
     /// no overlay is open or the event should be handled by the focus cycling system.
     fn delegate_to_open_overlays(&mut self, app: &mut App, key_event: KeyEvent) -> Vec<Effect> {
-        // Let the focus cycling handler manage Tab/BackTab events
-        // This ensures consistent focus management whether overlays are open or not
+        // Forward Tab/BackTab to the inline editor when it owns focus; otherwise
+        // allow the focus cycling handler to manage them.
         if matches!(key_event.code, KeyCode::Tab | KeyCode::BackTab) {
+            if app
+                .plugins
+                .add
+                .as_ref()
+                .is_some_and(|add_state| add_state.container_focus.get() && add_state.kv_editor.is_focused())
+            {
+                return self.edit_component.handle_key_events(app, key_event);
+            }
             return vec![];
         }
 

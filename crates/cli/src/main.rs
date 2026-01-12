@@ -5,8 +5,9 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::ArgMatches;
+use oatty_agent::Indexer;
 use oatty_api::OattyClient;
 use oatty_engine::workflow::document::{build_runtime_catalog, runtime_workflow_from_definition};
 use oatty_engine::{
@@ -14,11 +15,10 @@ use oatty_engine::{
     WorkflowRunState,
 };
 use oatty_mcp::{PluginEngine, config::load_config};
-use oatty_registry::{CommandRegistry, build_clap, feat_gate::feature_workflows, find_by_group_and_cmd};
+use oatty_registry::{CommandRegistry, build_clap};
 use oatty_types::{
     ExecOutcome, RuntimeWorkflow,
     command::CommandExecution,
-    service::ServiceId,
     workflow::{WorkflowDefinition, validate_candidate_value},
 };
 use oatty_util::{
@@ -84,15 +84,19 @@ impl Write for GatedStderr {
 async fn main() -> Result<()> {
     init_tracing();
     let cfg = load_config()?;
-    let command_registry = Arc::new(Mutex::new(CommandRegistry::from_embedded_schema()?));
+    let command_registry = Arc::new(Mutex::new(CommandRegistry::from_config()?));
+
     let plugin_engine = Arc::new(PluginEngine::new(cfg, Arc::clone(&command_registry))?);
     plugin_engine.prepare_registry().await?;
     plugin_engine.start().await?;
 
+    let _indexer = Indexer::new(Arc::clone(&command_registry), plugin_engine.client_manager().subscribe());
+    // indexer.start().await?;
+
     let cli = build_clap(Arc::clone(&command_registry));
     let matches = cli.get_matches();
 
-    // No subcommands => TUI
+    // No subcommands --> TUI
     if matches.subcommand_name().is_none() {
         // Silence tracing output to stderr while the TUI is active to avoid overlay
         TUI_ACTIVE.store(true, Ordering::Relaxed);
@@ -437,9 +441,17 @@ async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches
         return handle_workflow_command(Arc::clone(&registry), matches, cmd_name, cmd_matches);
     }
 
-    let cmd_spec = {
+    let (cmd_spec, base_url, headers) = {
         let registry_lock = registry.lock().expect("could not obtain lock on registry");
-        find_by_group_and_cmd(&registry_lock.commands, group, cmd_name)?
+        let cmd_spec = registry_lock.find_by_group_and_cmd(group, cmd_name)?;
+        let base_url = registry_lock
+            .resolve_base_url_for_command(&cmd_spec)
+            .ok_or(anyhow!("base url not defined for this command"))?;
+        let headers = registry_lock
+            .resolve_headers_for_command(&cmd_spec)
+            .ok_or(anyhow!("headers not defined for this command"))?
+            .clone();
+        (cmd_spec, base_url, headers)
     };
 
     // Collect positional values
@@ -466,7 +478,7 @@ async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches
 
     match cmd_spec.execution() {
         CommandExecution::Http(http) => {
-            let client = OattyClient::new_from_service_id(http.service_id)?;
+            let client = OattyClient::new(&base_url, &headers)?;
             let method = Method::from_bytes(http.method.as_bytes())?;
             let path = resolve_path(&http.path, &pos_values);
             let mut builder = client.request(method, &path);
@@ -490,7 +502,7 @@ async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches
 
             let outcome = plugin_engine.execute_tool(&cmd_spec, &arguments, 0).await?;
             match outcome {
-                ExecOutcome::Mcp(log, ..) => println!("{}", log),
+                ExecOutcome::Mcp { log_entry, .. } => println!("{}", log_entry),
                 ExecOutcome::Log(log) => println!("{}", log),
                 other => println!("{:?}", other),
             }
@@ -505,10 +517,6 @@ fn handle_workflow_command(
     subcommand: &str,
     sub_matches: &ArgMatches,
 ) -> Result<()> {
-    if !feature_workflows() {
-        bail!("Workflows feature is disabled. Set FEATURE_WORKFLOWS=1 to enable.");
-    }
-
     let json_output = root_matches.get_flag("json");
 
     match subcommand {
@@ -626,8 +634,7 @@ fn run_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, matche
         guard.clone()
     };
 
-    let client = OattyClient::new_from_service_id(ServiceId::CoreApi)?;
-    let runner = RegistryCommandRunner::new(registry_snapshot, client);
+    let runner = RegistryCommandRunner::new(registry_snapshot);
     let results = state.execute_with_runner(&runner)?;
     let run_succeeded = results.iter().all(|result| result.status != StepStatus::Failed);
 

@@ -1,6 +1,7 @@
 //! State container for the plugin details modal, including loading lifecycle, tab selection,
 //! and the cached data required for rendering the overview/health/environment/logs/tools tabs.
 
+use indexmap::IndexSet;
 use oatty_mcp::{EnvVar, McpLogEntry, PluginDetail, PluginToolSummary};
 
 /// Loading lifecycle for the plugin details payload.
@@ -24,7 +25,7 @@ impl PluginDetailsLoadState {
 pub struct PluginDetailsData {
     pub detail: PluginDetail,
     pub logs: Vec<McpLogEntry>,
-    pub environment: Vec<EnvVar>,
+    pub environment: IndexSet<EnvVar>,
     pub tools: Vec<PluginToolSummary>,
 }
 

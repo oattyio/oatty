@@ -17,11 +17,9 @@ pub(crate) fn resolve_streamable_endpoint(server: &McpServer) -> Result<String> 
 /// Build a reqwest client injecting configured headers and OAuth bearer if available.
 pub(crate) async fn build_http_client_with_auth(server: &McpServer) -> Result<reqwest::Client> {
     let mut headers = HeaderMap::new();
-    if let Some(map) = &server.headers {
-        for EnvVar { key, value, .. } in map {
-            if let (Ok(name), Ok(value)) = (HeaderName::try_from(key.as_str()), HeaderValue::try_from(value.as_str())) {
-                headers.insert(name, value);
-            }
+    for EnvVar { key, value, .. } in &server.headers {
+        if let (Ok(name), Ok(value)) = (HeaderName::try_from(key.as_str()), HeaderValue::try_from(value.as_str())) {
+            headers.insert(name, value);
         }
     }
     // OAuth bearer from keyring (or fallback to config token) if configured
@@ -42,7 +40,7 @@ pub(crate) async fn build_http_client_with_auth(server: &McpServer) -> Result<re
 /// Retrieve a bearer token from the OS keyring for the given server base URL.
 async fn load_oauth_token_from_keyring(server: &McpServer) -> Result<Option<String>> {
     // Compose a stable key based on base_url host + path
-    let service = "heroku-mcp-oauth";
+    let service = "oatty-mcp-oauth";
     let account = if let Some(url) = &server.base_url {
         format!("{}://{}{}", url.scheme(), url.host_str().unwrap_or(""), url.path())
     } else {
