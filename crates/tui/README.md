@@ -68,7 +68,6 @@ Dev Notes
 Usage
 ```bash
 cargo run -p oatty-cli              # opens TUI
-DEBUG=1 cargo run -p oatty-cli      # enables extra debug
  OATTY_API_TOKEN=... cargo run -p oatty-cli
 ```
 

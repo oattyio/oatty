@@ -4,6 +4,7 @@
 //! variables, or provider selections obey the declarative constraints supplied
 //! in the workflow definition.
 
+use anyhow::{Result, anyhow};
 use regex::Regex;
 use serde_json::Value;
 
@@ -16,14 +17,14 @@ use super::WorkflowInputValidation;
 /// - Patterns, minimum length, and maximum length only apply to strings.
 /// - Non-string values are allowed when the validation metadata does not
 ///   specify string-specific requirements.
-pub fn validate_candidate_value(candidate: &Value, validation: &WorkflowInputValidation) -> Result<(), String> {
+pub fn validate_candidate_value(candidate: &Value, validation: &WorkflowInputValidation) -> Result<()> {
     if !validation.allowed_values.is_empty() {
         let matches_allowed_value = validation
             .allowed_values
             .iter()
             .any(|allowed| json_values_match(allowed, candidate));
         if !matches_allowed_value {
-            return Err("value is not in the allowed set".to_string());
+            return Err(anyhow!("value is not in the allowed set"));
         }
     }
 
@@ -32,30 +33,30 @@ pub fn validate_candidate_value(candidate: &Value, validation: &WorkflowInputVal
             if let Some(min_length) = validation.min_length
                 && text.chars().count() < min_length
             {
-                return Err(format!("value must be at least {} characters", min_length));
+                return Err(anyhow!("value must be at least {} characters", min_length));
             }
 
             if let Some(max_length) = validation.max_length
                 && text.chars().count() > max_length
             {
-                return Err(format!("value must be at most {} characters", max_length));
+                return Err(anyhow!("value must be at most {} characters", max_length));
             }
 
             if let Some(pattern) = &validation.pattern {
-                let regex = Regex::new(pattern).map_err(|error| format!("invalid pattern '{}': {}", pattern, error))?;
+                let regex = Regex::new(pattern).map_err(|error| anyhow!("invalid pattern '{}': {}", pattern, error))?;
                 if !regex.is_match(text) {
-                    return Err(format!("value must match the pattern {}", pattern));
+                    return Err(anyhow!("value must match the pattern {}", pattern));
                 }
             }
             Ok(())
         }
         other => {
             if validation.pattern.is_some() || validation.min_length.is_some() || validation.max_length.is_some() {
-                Err("value must be text to satisfy validation rules".to_string())
+                Err(anyhow!("value must be text to satisfy validation rules"))
             } else if validation.allowed_values.is_empty() || validation.allowed_values.iter().any(|item| item == other) {
                 Ok(())
             } else {
-                Err("value is not in the allowed set".to_string())
+                Err(anyhow!("value is not in the allowed set"))
             }
         }
     }

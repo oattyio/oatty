@@ -134,7 +134,8 @@ impl ManualEntryValueState {
 /// Complete mutable state for the manual entry modal.
 #[derive(Debug, Clone)]
 pub struct ManualEntryState {
-    pub label: String,
+    pub title: String,
+    pub label: Option<String>,
     pub placeholder: Option<String>,
     pub error: Option<String>,
     pub validation: Option<WorkflowInputValidation>,
@@ -148,7 +149,8 @@ pub struct ManualEntryState {
 impl Default for ManualEntryState {
     fn default() -> Self {
         Self {
-            label: String::new(),
+            title: String::new(),
+            label: None,
             placeholder: None,
             error: None,
             validation: None,
@@ -180,7 +182,7 @@ impl ManualEntryState {
     /// Builds manual entry state for the provided workflow input definition.
     pub fn from_definition(definition: &WorkflowInputDefinition, label: &str, existing: Option<&JsonValue>) -> Self {
         let mut state = ManualEntryState {
-            label: label.to_string(),
+            label: Some(label.to_string()),
             placeholder: definition.placeholder.clone(),
             validation: definition.validate.clone(),
             ..ManualEntryState::default()

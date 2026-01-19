@@ -8,7 +8,7 @@ use crate::ui::components::workflows::collector::manual_entry::ManualEntryCompon
 use crate::ui::components::workflows::collector::{CollectorStagedSelection, CollectorViewState, SelectorStatus};
 use crate::ui::components::workflows::view_utils::{classify_json_value, style_for_role};
 use crate::ui::theme::Theme;
-use crate::ui::theme::theme_helpers::{self as th, ButtonRenderOptions, build_hint_spans};
+use crate::ui::theme::theme_helpers::{self as th, ButtonRenderOptions, ButtonType, build_hint_spans};
 use crate::ui::utils::render_value;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use oatty_engine::provider::ProviderRegistry;
@@ -412,7 +412,7 @@ impl WorkflowCollectorComponent {
         let Some(idx) = collector.table.table_state.selected() else {
             return false;
         };
-        if let (Some(staged), Some(row)) = (collector.staged_selection(), collector.table.selected_data(idx)) {
+        if let Some((staged, row)) = collector.staged_selection().zip(collector.table.selected_data(idx)) {
             staged.row == *row
         } else {
             false
@@ -561,10 +561,16 @@ impl WorkflowCollectorComponent {
                 .render_kv_or_text(frame, detail_inner, &mut collector.table, &row_json, theme);
             self.render_detail_metadata(frame, layout.metadata_area, collector, theme);
         }
-        let cancel_options = ButtonRenderOptions::new(true, collector.f_cancel.get(), false, Borders::ALL, false);
+        let cancel_options = ButtonRenderOptions::new(true, collector.f_cancel.get(), false, Borders::ALL, ButtonType::Secondary);
         th::render_button(frame, layout.cancel_button_area, "Cancel", theme, cancel_options);
 
-        let apply_options = ButtonRenderOptions::new(collector.apply_enabled(), collector.f_apply.get(), false, Borders::ALL, true);
+        let apply_options = ButtonRenderOptions::new(
+            collector.apply_enabled(),
+            collector.f_apply.get(),
+            false,
+            Borders::ALL,
+            ButtonType::Primary,
+        );
         th::render_button(frame, layout.apply_button_area, "Apply", theme, apply_options);
 
         let mut layout = layout;

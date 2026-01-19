@@ -13,7 +13,7 @@ Key Features
   - `--json`: print raw JSON responses (when implemented for each command).
   - `--verbose`: more verbose logs (via `RUST_LOG`).
 - TUI handoff: Running `oatty` with no subcommands opens the TUI (`oatty-tui`).
-- Workflows (optional): `FEATURE_WORKFLOWS=1` enables `oatty workflow ...` commands.
+- Workflows: `oatty workflow ...` commands are always available and operate on local files or workflows bundled in catalogs.
 
 Auth & Config
 - Auth (handled by `oatty-api`):
@@ -28,14 +28,14 @@ Usage
   - `cargo run -p oatty-cli -- apps info <app>`
   - With auth: `OATTY_API_TOKEN=... cargo run -p oatty-cli -- apps info <app>`
 - Enable workflows:
-  - `FEATURE_WORKFLOWS=1 cargo run -p oatty-cli -- workflow preview --file workflows/create_app_and_db.yaml`
+  - `cargo run -p oatty-cli -- workflow preview --file workflows/create_app_and_db.yaml`
 
 Development
 - Built from `oatty_registry::Registry::from_embedded_schema()`, which walks the OpenAPI-derived manifest and produces `CommandSpec` entries.
 - CLI glue in `src/main.rs`:
   - Builds Clap from registry.
   - Routes to TUI when no subcommand.
-  - Binds workflow subcommands behind `FEATURE_WORKFLOWS`.
+  - Implements workflow subcommands under `workflow`.
   - Executes requests with `oatty_api::OattyClient`.
 
 Troubleshooting

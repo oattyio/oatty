@@ -197,7 +197,14 @@ Run a full workflow or a single step. **Requires a session nonce** and is always
 ## 7) UX Integration
 
 - The **Editor** remains central (YAML/Form toggle).  
-- The Agent proposes drafts; the TUI provides **Live Validation**, **Dry‑run**, **Field Picker**, and **Diff/Save**.  
+- The Agent proposes drafts; the TUI provides **Live Validation**, **Dry-run**, **Field Picker**, and **Diff/Save**.
+
+## 8) Source Alignment
+
+- **MCP infrastructure** lives in `crates/mcp/src/lib.rs`, with `plugin/engine.rs` orchestrating plugin processes and `provider/mcp_provider.rs` exposing tools as registry-backed value providers.
+- **Configuration loading and reloads** are handled in `crates/mcp/src/config/mod.rs`; the UI calls `PluginEngine::update_config` whenever the config watcher in `crates/tui/src/ui/runtime.rs` fires.
+- **TUI integration** wires the engine into `App::new` (`crates/tui/src/app.rs`) and dispatches MCP-backed effects through `crates/tui/src/cmd.rs` so Agent-issued commands share the same execution path as palette runs.
+- **Schema contracts** referenced above map directly to the definitions in `crates/types/src/lib.rs` (`CommandSpec`, `ProviderContract`, `DraftWorkflow`, and `DryRunPlan`), ensuring the Agent and UI consume the same typed models.
 - Explanations re-use the same “why” strings: `accepts`, `prefer`, and tag badges (`app_id`, `app_name`).
 
 **UI hooks:**

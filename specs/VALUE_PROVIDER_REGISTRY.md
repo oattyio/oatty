@@ -198,6 +198,13 @@ The system now supports **scoped providers** that can use earlier path segments 
   - Scoped provider: `apps:addons:list` (scoped by app)
   - **Preference**: Scoped provider with successful binding to earlier `app` argument
 
+## Source Alignment
+
+- **Inference logic**: `crates/registry-gen/src/openapi.rs` implements `resolve_and_infer_providers`, `apply_flag_providers`, and binding heuristics exactly as specified in this document.
+- **Runtime registry**: `crates/registry/src/provider.rs` exposes `ProviderRegistry` and enforces caching, async fetches, and deduplicated inflight requests that align with sections 2 and 3.
+- **Palette + workflow usage**: `crates/tui/src/ui/components/palette/` and `crates/tui/src/ui/components/workflows/collector/` call the shared registry through the `ValueProvider` trait, so the suggestion flow diagrams map directly onto production code.
+- **Engine integration**: `crates/engine/src/provider/` consumes providers during workflow execution, ensuring chained providers and bindings behave as described.
+
 This enables commands like `oatty apps addons:info <app> <addon>` to use the scoped `apps:addons:list` provider, which can filter addons by the specified app.
 
 ## Implementation Details

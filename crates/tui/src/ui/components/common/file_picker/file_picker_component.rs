@@ -17,7 +17,7 @@ use crate::{
     app::App,
     ui::{
         components::{Component, common::file_picker::state::Shortcut, find_target_index_by_mouse_position},
-        theme::theme_helpers::{ButtonRenderOptions, block, build_hint_spans, render_button},
+        theme::theme_helpers::{ButtonRenderOptions, ButtonType, block, build_hint_spans, render_button},
     },
 };
 
@@ -79,7 +79,7 @@ impl FilePickerModal {
                 height: 3,
             };
             let borders = if is_focused { Borders::ALL } else { Borders::NONE };
-            let options = ButtonRenderOptions::new(true, is_focused, is_selected, borders, false);
+            let options = ButtonRenderOptions::new(true, is_focused, is_selected, borders, ButtonType::Secondary);
             if area.y + area.height > inner.y + inner.height {
                 continue;
             }
@@ -181,11 +181,11 @@ impl FilePickerModal {
 
     fn render_buttons(&self, frame: &mut Frame, layout: &FilePickerLayout, app: &mut App) -> Option<()> {
         let file_picker = app.file_picker.as_ref()?;
-        let options = ButtonRenderOptions::new(true, file_picker.f_cancel.get(), false, Borders::ALL, false);
+        let options = ButtonRenderOptions::new(true, file_picker.f_cancel.get(), false, Borders::ALL, ButtonType::Secondary);
         render_button(frame, layout.cancel_button_area, "Cancel", &*app.ctx.theme, options);
 
         let selected = file_picker.selected_file().is_some() || file_picker.is_path_input_valid();
-        let options = ButtonRenderOptions::new(selected, file_picker.f_confirm.get(), false, Borders::ALL, false);
+        let options = ButtonRenderOptions::new(selected, file_picker.f_confirm.get(), false, Borders::ALL, ButtonType::Secondary);
         render_button(frame, layout.open_button_area, "Open", &*app.ctx.theme, options);
 
         Some(())

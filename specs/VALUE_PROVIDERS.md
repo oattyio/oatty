@@ -196,4 +196,11 @@ pub struct CompletionItem {
 - How to handle **multi-value flags** (e.g., `--var KEY=VALUE`) in providers?
 - Should **workflow outputs** be persisted for later sessions, or ephemeral only?
 
+## Source Alignment
+
+- **Schema annotations** originate from `crates/registry-gen/src/openapi.rs` and `crates/registry/src/models.rs`, where providers, bindings, and select metadata are embedded into each `CommandSpec`.
+- **Runtime provider registry**: `crates/registry/src/provider.rs` implements caching, async fetches, and suggestion ranking, so the lifecycle described above matches the shipping code.
+- **TUI integrations**: `crates/tui/src/ui/components/palette/` and `crates/tui/src/ui/components/workflows/collector/` call the same `ValueProvider` trait to power completions and selectors, ensuring Guided and Power modes share behavior.
+- **Workflow engine usage**: `crates/engine/src/workflow/` consumes provider metadata when executing steps, guaranteeing that workflow defaults, dependencies, and fallbacks align with this spec.
+
 ---

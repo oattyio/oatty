@@ -161,8 +161,8 @@ Buttons: [Cancel]   [Run ✓]
   Esc cancel  •  ↑↓ navigate  •  Enter choose  •  / filter  •  r refresh  •  Tab focus  •  F2 fallback to manual  •  Enter run
 ```
 
-- **Left column** is a compact step list rendered like the runtime List view in
-  `workflows/input.rs` (status prefix, provider label, required badge, highlight marker) without
+- **Left column** is a compact step list rendered like the runtime list view in
+  `crates/tui/src/ui/components/workflows/input/input_component.rs` (status prefix, provider label, required badge, highlight marker) without
   inlining provider result tables, and each step stays on a single line for quick scanning.
 - **Right column** summarizes workflow readiness: completion state, next unresolved step,
   currently selected values (show `— pending —` for unresolved items), cache freshness, and
@@ -491,3 +491,10 @@ inputs:
 2. Provider pagination contract: standardize on `{ items, next_cursor }`?
 3. Global registry vs. per-command declaration for providers?
 4. Should we allow per-input min-width / column list overrides for Table widget?
+
+## 10) Source Alignment
+
+- **Collector and input components** live under `crates/tui/src/ui/components/workflows/`, specifically `input/` for the step list and status detail pane, and `collector/` for provider-backed pickers.
+- **Manual entry** is implemented by `ManualEntryComponent` and `ManualEntryView` in `crates/tui/src/ui/components/workflows/collector/manual_entry/` and `crates/tui/src/ui/components/common/manual_entry_modal/`.
+- **Focus and hint wiring** run through `App::workflows` plus the shared theme helpers in `crates/tui/src/ui/theme/theme_helpers.rs` so the ASCII layouts above match the live Ratatui widgets.
+- **Provider tables and detail panes** use `ResultsTableView` and `ResultsTableState` from `crates/tui/src/ui/components/common/results_table_view.rs` and `crates/tui/src/ui/components/table/state.rs`.

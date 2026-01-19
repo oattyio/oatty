@@ -265,11 +265,45 @@ impl CommandRegistry {
         }
     }
 
+    pub fn update_description(&mut self, description: String, title: &str) -> Result<()> {
+        let catalogs = self.config.catalogs.as_mut().ok_or_else(|| anyhow!("No catalogs configured"))?;
+
+        if let Some(index) = catalogs.iter().position(|c| c.title == title) {
+            catalogs[index].description = description;
+            Ok(())
+        } else {
+            Err(anyhow!("Catalog not found"))
+        }
+    }
+
+    pub fn update_base_urls(&mut self, base_urls: Vec<String>, title: &str) -> Result<()> {
+        let catalogs = self.config.catalogs.as_mut().ok_or_else(|| anyhow!("No catalogs configured"))?;
+
+        if let Some(index) = catalogs.iter().position(|c| c.title == title) {
+            catalogs[index].base_urls = base_urls;
+            Ok(())
+        } else {
+            Err(anyhow!("Catalog not found"))
+        }
+    }
+
     pub fn update_headers(&mut self, title: &str, headers: IndexSet<EnvVar>) -> Result<()> {
         let catalogs = self.config.catalogs.as_mut().ok_or_else(|| anyhow!("No catalogs configured"))?;
 
         if let Some(index) = catalogs.iter().position(|c| c.title == title) {
             catalogs[index].headers = headers;
+            Ok(())
+        } else {
+            Err(anyhow!("Catalog not found"))
+        }
+    }
+
+    pub fn update_command_prefix(&mut self, title: &str, prefix: &str) -> Result<()> {
+        let catalogs = self.config.catalogs.as_mut().ok_or_else(|| anyhow!("No catalogs configured"))?;
+
+        if let Some(index) = catalogs.iter().position(|c| c.title == title) {
+            catalogs[index].title = prefix.to_string();
+
             Ok(())
         } else {
             Err(anyhow!("Catalog not found"))

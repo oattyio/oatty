@@ -23,6 +23,7 @@ pub struct KeyValueEditorState {
     pub f_value_field: FocusFlag,
     pub f_add_button: FocusFlag,
     pub f_remove_button: FocusFlag,
+    pub f_show_secrets_button: FocusFlag,
 
     rows: Vec<EnvRow>,
     table_state: TableState,
@@ -33,6 +34,7 @@ pub struct KeyValueEditorState {
     key_input_state: TextInputState,
     value_input_state: TextInputState,
     is_dirty: bool,
+    show_secrets: bool,
 }
 
 impl KeyValueEditorState {
@@ -43,6 +45,14 @@ impl KeyValueEditorState {
             block_label,
             ..Default::default()
         }
+    }
+
+    pub fn show_secrets(&self) -> bool {
+        self.show_secrets
+    }
+
+    pub fn toggle_show_secrets(&mut self) {
+        self.show_secrets = !self.show_secrets;
     }
 
     pub fn is_dirty(&self) -> bool {
@@ -172,7 +182,7 @@ impl KeyValueEditorState {
         let Some(index) = self.table_state.selected() else {
             return;
         };
-        if self.rows.len() > index {
+        if index >= self.rows.len() {
             return;
         }
         self.rows.remove(index);
@@ -305,6 +315,10 @@ impl KeyValueEditorState {
         Ok("✓ Looks good!".to_string())
     }
 
+    pub fn valid_rows(&self) -> Vec<EnvRow> {
+        self.rows.iter().filter(|row| !row.key.trim().is_empty()).cloned().collect()
+    }
+
     fn ensure_input_states_for_selected_row(&mut self) {
         if self.table_state.selected().is_none() {
             self.clear_input_states();
@@ -314,12 +328,13 @@ impl KeyValueEditorState {
     }
 
     fn load_input_states_for_selected_row(&mut self) {
-        let Some(idx) = self.table_state.selected() else {
-            return;
+        if let Some(idx) = self.table_state.selected()
+            && let Some(row) = self.rows.get(idx)
+        {
+            self.key_input_state.set_input(row.key.clone());
+            self.value_input_state.set_input(row.value.clone());
         };
-        let row = &self.rows[idx];
-        self.key_input_state.set_input(row.key.clone());
-        self.value_input_state.set_input(row.value.clone());
+
         self.reset_cursor_for_key_field();
         self.reset_cursor_for_value_field();
     }
@@ -345,6 +360,7 @@ impl HasFocus for KeyValueEditorState {
         let tag = builder.start(self);
         builder.leaf_widget(&self.f_add_button);
         builder.leaf_widget(&self.f_remove_button);
+        builder.leaf_widget(&self.f_show_secrets_button);
         builder.leaf_widget(&self.f_table);
         if !self.rows.is_empty() || !self.f_table.get() {
             builder.leaf_widget(&self.f_key_field);

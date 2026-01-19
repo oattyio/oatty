@@ -136,3 +136,10 @@ It is a design contract for contributors, ensuring that **new features remain co
 ## 9. Guiding Principle
 > **“Make the first run effortless, the 100th run lightning-fast.”**  
 The interface should be welcoming for beginners, while removing friction for experts.
+
+## Source Alignment
+
+- **Routing + modes**: `crates/tui/src/app.rs` owns the `Route` enum and focus orchestration, so Guided vs. Power mode toggles (`F1`) and `/` search behaviors align with this spec.
+- **Power mode implementation**: `crates/tui/src/ui/components/palette/` implements the colon-prefixed palette, history, completion, and validation rules called out in sections 1–3.
+- **Guided workflows**: `crates/tui/src/ui/components/workflows/` (list, input collector, run view) delivers the multi-pane experience, inline validation, and status messaging described under Workflow UX.
+- **Tables/logs**: `crates/tui/src/ui/components/common/results_table_view.rs` and `components/logs/` provide the search, sort, column picker, and error presentation patterns referenced in sections 3 and 6.

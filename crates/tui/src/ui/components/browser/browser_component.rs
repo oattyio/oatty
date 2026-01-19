@@ -242,7 +242,7 @@ impl BrowserComponent {
 
     /// Applies the 'enter' keypress action by switching to the palette
     /// and sending the selected command to the input
-    pub fn apply_enter(&self, app: &App) -> Vec<Effect> {
+    fn apply_enter(&self, app: &App) -> Vec<Effect> {
         if let Some(spec) = app.browser.selected_command().cloned() {
             return vec![Effect::SwitchTo(Route::Palette), Effect::SendToPalette(Box::new(spec))];
         }

@@ -30,79 +30,68 @@ Notes:
 - Omit any data not present in `RegistryManifest`.
 
 ## 3) TUI Layouts (Annotated ASCII)
-### 3.1 Details pane, view mode
+### 3.1 Details pane
 ```
-+-- Details ---------------------------------------------------+
-| Catalog: Acme Registry                                       |
-| Manifest: Loaded from /path/to/manifest.bin                  |
-| Base URLs: 2 (selected: https://api.acme.com)                |
-| Headers: 3 (1 redacted)                                      |
-|--------------------------------------------------------------|
-| Manifest Summary                                             |
-| Vendor: Acme Corp. 128 commands and 6 workflows available.   |
-|                                                              |
-| Providers: 42 provider contracts defined. 31 commands rely   |
-| on provider-backed inputs.                                   |
-|--------------------------------------------------------------|
-| Configuration                                                |
-| Base URL: https://api.acme.com                               |
-| Headers: 3 entries (press E to edit)                         |
-+--------------------------------------------------------------+
++─ Catalog Detail ────────────────────────────────────────────────+
+│ Import   Remove                                                 │
+│ Catalogs                                                        │
+│ [v] Render Public API   enable                                  │
++─────────────────────────────────────────────────────────────────+
+│ Render Public API (enabled)                                     │
+│ Command Prefix: render                                          │
+│ Endpoints: 193      Workflows: 0      Value providers: 177      │
+│ Description: Manage everything about your Render services       │
+│─────────────────────────────────────────────────────────────────│
+│ Active base URL                                 + Add  - Remove │
+│   ⓧ                                              (error chip)  │
+│  (●) https://api.render.com/v1                                 │
+│─────────────────────────────────────────────────────────────────│
+│ Vimeo API Headers                              + Add  - Remove  │
+│                                              [ ] Show secrets   │
+│ Header                             Value (optional)             │
+│ ─────────────────────────────────────────────────────────────── │
++─────────────────────────────────────────────────────────────────+
 ```
 
-### 3.2 Details pane, edit mode
-```
-+-- Details (Edit) --------------------------------------------+
-|                                                  [Save] [X]  |
-| Catalog: Acme Registry                                       |
-| Manifest: Loaded from /path/to/manifest.bin                  |
-|--------------------------------------------------------------|
-| Base URL                                                     |
-| > https://api.acme.com                                       |
-|   https://api.acme.com             (selected)                |
-|   https://staging.acme.com                                   |
-|   https://eu.acme.com                                        |
-|--------------------------------------------------------------|
-| Headers                                                      |
-| KEY                         VALUE                            |
-| Authorization              ***************                   |
-| X-Client-Id                123456                            |
-|--------------------------------------------------------------|
-| Edit row 2 (value)                                           |
-| Key:   X-Client-Id                                           |
-| Value: 123456                                                |
-+--------------------------------------------------------------+
-```
+### 3.2 Inline editors
+- Selecting **Add** in the base URL section opens the palette-style input directly inline (no full-pane edit mode), with the text field replacing the current radio list until a value is committed or cancelled with `Esc`.
+- Selecting **Add** in the headers section appends a new editable row at the top of the table, focusing the key column and following the inline editing contract from §6.
 
 ## 4) Interaction Model
-### 4.1 View mode
-- Details are read-only.
-- Press `E` to enter edit mode when the details pane has focus.
-- Press `Enter` on the base URL row to quick-open edit mode and focus the base URL input.
+### 4.1 Summary + stats
+- The header block always shows the selected catalog name, enablement state, command prefix, endpoint/workflow/provider counts, and description. These fields update live when the catalog is toggled.
+- Pressing `Enter` while the catalog list on the left is focused keeps the detail pane in sync; there is no separate summary modal.
 
-### 4.2 Edit mode
-- `Save` applies base URL selection and headers updates to the `RegistryCatalog`.
-- `X` (or `Esc`) exits edit mode, discarding uncommitted edits.
-- If a header row is actively edited, `Esc` first cancels the inline edit, then exits edit mode.
+### 4.2 Base URLs
+- The section is always interactive: radio buttons select the active base URL.
+- `+ Add` opens the palette-style editor inline (see §5) and seeds it with the currently selected base URL.
+- `- Remove` deletes the highlighted base URL after confirming (reuse the confirmation modal if multiple URLs exist; otherwise disable the control).
+- A leading red `x` badge appears when validation fails (missing base URL, invalid scheme, etc.).
+
+### 4.3 Headers
+- `+ Add` inserts a new row and focuses the key column.
+- `- Remove` deletes the currently highlighted row; disable when no headers exist.
+- `[ ] Show secrets` toggles redaction for the value column (defaults to redacted). When revealed, emit a toast warning per security guidelines.
+- Rows are editable in place; there is no separate edit mode.
 
 ## 5) Base URL Editor (Palette-Style Completions)
 ### 5.1 Layout
-- A single-line input at the top of the section.
-- A suggestions list directly below, populated from `catalog.base_urls`.
-- When the input is empty, show all base URLs with the currently selected item marked.
+- When the user chooses `+ Add` or presses `Enter` on an existing radio option, replace the radio list with:
+  - A single-line input styled like the command palette.
+  - A suggestion list below it populated from `catalog.base_urls` plus recents.
+  - Footer hints inline with the section title (`Enter add • Esc cancel`).
 
 ### 5.2 Behavior
 - Character input filters suggestions by substring (case-insensitive).
 - `Tab` opens the suggestions list if hidden.
 - `Up/Down` moves the selection in the list.
-- `Enter` accepts the selected suggestion.
-- If the input does not match an existing URL, `Enter` adds it to `base_urls` and selects it.
-- `Esc` closes the suggestions list (does not exit edit mode).
+- `Enter` accepts the selected suggestion (creating it if it does not already exist) and restores the radio list with the new entry selected.
+- `Esc` cancels editing and restores the previous list.
 - Display a ghost text suffix for the top suggestion, following command palette behavior.
 
 ### 5.3 Validation and hints
-- Basic URL validation: must be a valid scheme + host (use existing URL parser if available).
-- Display errors inline under the input (muted/error style) without blocking typing.
+- Basic URL validation: must be a valid scheme + host (use the existing URL parser).
+- Errors appear as a red badge (`ⓧ`) above the input and a single-line message beneath it; keep the field focused until the value is fixed or cancelled.
 
 ## 6) Headers Editor (Key/Value Table)
 ### 6.1 Layout
@@ -138,3 +127,9 @@ Notes:
 - Use `theme_helpers::block` and `theme.border_style(focused)` for all sections.
 - Keep summary copy in a `Paragraph` with `Wrap { trim: true }` for clean line breaks.
 - The details pane should never scroll the list on the left; it manages its own layout only.
+
+## 10) Source Alignment
+
+- **Component + state**: `crates/tui/src/ui/components/library/library_component.rs`, `state.rs`, and `types.rs` implement the detail pane, edit mode transitions, and registry catalog wiring described in this spec.
+- **Base URL editor**: The palette-style single-line input and suggestion list reuse the palette helpers and focus flags defined in `library/state.rs`, so the copy above mirrors the actual Ratatui widgets.
+- **Headers editor**: Inline editing behavior is backed by `crates/tui/src/ui/components/common/key_value_editor/`, which enforces the autosave/commit contract and redaction rules referenced in sections 6.2 and 6.3.

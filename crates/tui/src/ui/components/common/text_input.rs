@@ -7,7 +7,7 @@
 #[derive(Clone, Debug, Default)]
 pub struct TextInputState {
     /// The underlying text buffer
-    input: String,
+    inner: String,
     /// Cursor byte index into `input` (always on a UTF-8 boundary)
     cursor: usize,
 }
@@ -15,29 +15,29 @@ pub struct TextInputState {
 impl TextInputState {
     pub fn new() -> Self {
         Self {
-            input: String::new(),
+            inner: String::new(),
             cursor: 0,
         }
     }
 
     // ----- Getters -----
     pub fn input(&self) -> &str {
-        &self.input
+        &self.inner
     }
     pub fn cursor(&self) -> usize {
         self.cursor
     }
     pub fn clear(&mut self) {
-        self.input.clear();
+        self.inner.clear();
         self.cursor = 0;
     }
     pub fn is_empty(&self) -> bool {
-        self.input.trim().is_empty()
+        self.inner.trim().is_empty()
     }
     /// Returns the cursor position in display columns (character count).
     pub fn cursor_columns(&self) -> usize {
-        let cursor_index = self.cursor.min(self.input.len());
-        self.input[..cursor_index].chars().count()
+        let cursor_index = self.cursor.min(self.inner.len());
+        self.inner[..cursor_index].chars().count()
     }
     /// Returns the byte index for a cursor placed at the provided display column.
     ///
@@ -48,12 +48,12 @@ impl TextInputState {
 
     // ----- Setters -----
     pub fn set_input<S: Into<String>>(&mut self, s: S) {
-        self.input = s.into();
-        self.cursor = self.input.len().min(self.cursor);
+        self.inner = s.into();
+        self.cursor = self.inner.len().min(self.cursor);
     }
 
     pub fn set_cursor(&mut self, cursor: usize) {
-        self.cursor = cursor.min(self.input.len());
+        self.cursor = cursor.min(self.inner.len());
     }
 
     // ----- Editing primitives (UTF-8 safe) -----
@@ -63,16 +63,16 @@ impl TextInputState {
         if self.cursor == 0 {
             return;
         }
-        let prev_len = self.input[..self.cursor].chars().last().map(|c| c.len_utf8()).unwrap_or(1);
+        let prev_len = self.inner[..self.cursor].chars().last().map(|c| c.len_utf8()).unwrap_or(1);
         self.cursor = self.cursor.saturating_sub(prev_len);
     }
 
     /// Move cursor one Unicode scalar to the right.
     pub fn move_right(&mut self) {
-        if self.cursor >= self.input.len() {
+        if self.cursor >= self.inner.len() {
             return;
         }
-        let mut iter = self.input[self.cursor..].chars();
+        let mut iter = self.inner[self.cursor..].chars();
         if let Some(next) = iter.next() {
             self.cursor = self.cursor.saturating_add(next.len_utf8());
         }
@@ -80,7 +80,7 @@ impl TextInputState {
 
     /// Insert a char at the cursor.
     pub fn insert_char(&mut self, c: char) {
-        self.input.insert(self.cursor, c);
+        self.inner.insert(self.cursor, c);
         self.cursor += c.len_utf8();
     }
 
@@ -89,19 +89,19 @@ impl TextInputState {
         if self.cursor == 0 {
             return;
         }
-        let prev = self.input[..self.cursor].chars().last().map(|c| c.len_utf8()).unwrap_or(1);
+        let prev = self.inner[..self.cursor].chars().last().map(|c| c.len_utf8()).unwrap_or(1);
         let start = self.cursor - prev;
-        self.input.drain(start..self.cursor);
+        self.inner.drain(start..self.cursor);
         self.cursor = start;
     }
 
     pub fn delete(&mut self) {
-        if self.cursor == self.input.len() {
+        if self.cursor == self.inner.len() {
             return;
         }
-        let next = self.input[self.cursor..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
+        let next = self.inner[self.cursor..].chars().next().map(|c| c.len_utf8()).unwrap_or(1);
         let end = self.cursor + next;
-        self.input.drain(self.cursor..end);
+        self.inner.drain(self.cursor..end);
     }
 }
 

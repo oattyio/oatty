@@ -2,4 +2,4 @@ mod confirmation_modal_component;
 mod state;
 
 pub use confirmation_modal_component::ConfirmationModal;
-pub use state::{ConfirmationModalOpts, ConfirmationModalState};
+pub use state::{ConfirmationModalButton, ConfirmationModalOpts, ConfirmationModalState};

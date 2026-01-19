@@ -9,7 +9,7 @@ This guide will help you set up your local development environment for the Oatty
 1. **Rust Toolchain**
 
    - Install via [rustup](https://rustup.rs/)
-   - This project requires Rust nightly (specified in `rust-toolchain.toml`)
+   - This project uses Rust stable (specified in `rust-toolchain.toml`)
    - The toolchain will be automatically selected when you work in this directory
 
 2. **Build Dependencies**
@@ -33,13 +33,13 @@ This guide will help you set up your local development environment for the Oatty
 ### 1. Clone and Navigate
 
 ```bash
-cd /Users/jwilaby/Documents/dev/next-gen-cli
+cd path/to/next-gen-cli
 ```
 
 ### 2. Verify Rust Installation
 
 ```bash
-rustup show  # Should display nightly toolchain
+rustup show  # Should display the toolchain specified by rust-toolchain.toml
 rustc --version
 cargo --version
 ```
@@ -84,11 +84,12 @@ export OATTY_LOG="debug"
 # Optional: Choose TUI theme (dracula|dracula_hc|nord|nord_hc)
 export TUI_THEME="dracula"
 
-# Optional: Enable debug mode
-export DEBUG="1"
-
 # Optional: MCP config path
 export MCP_CONFIG_PATH="$HOME/.config/oatty/mcp.json"
+
+# Optional: Override registry config locations
+export REGISTRY_CONFIG_PATH="$HOME/.config/oatty/registry.json"
+export REGISTRY_CATALOGS_PATH="$HOME/.config/oatty/catalogs"
 ```
 
 ## Development Workflow
@@ -107,6 +108,12 @@ OATTY_LOG=debug cargo run -p oatty-cli
 # With a specific theme
 TUI_THEME=nord cargo run -p oatty-cli
 ```
+
+If no registry catalogs are configured yet, import one from the TUI Library view:
+
+1. Import a local OpenAPI document (e.g., `schemas/samples/render-public-api.json`) or a URL.
+2. Accept the default command prefix (or enter your own).
+3. The TUI writes `~/.config/oatty/registry.json` and stores catalog manifests under `~/.config/oatty/catalogs/`.
 
 #### CLI Mode (Non-Interactive)
 
@@ -321,9 +328,9 @@ test: add integration tests for registry generation
 
 - **Solution**: Ensure you're in the project root directory
 
-**Error**: `error: toolchain 'nightly-...' is not installed`
+**Error**: `error: toolchain '...' is not installed`
 
-- **Solution**: Run `rustup toolchain install nightly`
+- **Solution**: Install Rust via rustup and ensure the toolchain in `rust-toolchain.toml` is available
 
 **Error**: Linker errors on Linux
 
@@ -379,8 +386,8 @@ NEXTGEN_CODESIGN_ID="next-gen-cli-dev (LOCAL)" \
 To test with a custom schema:
 
 1. Place your schema in `schemas/`
-2. Update `crates/registry/build.rs` to reference it
-3. Rebuild: `cargo clean && cargo build -p oatty-cli`
+2. Import it via the TUI Library view (generates and persists a registry catalog), or generate a manifest with `oatty-registry-gen` and reference it from `~/.config/oatty/registry.json`
+3. Rebuild/run: `cargo build -p oatty-cli && cargo run -p oatty-cli`
 
 ### MCP Plugin Development
 

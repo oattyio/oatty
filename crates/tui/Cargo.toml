@@ -34,6 +34,7 @@ textwrap = { workspace = true }
 indexmap = { workspace = true }
 unicode-width = { workspace = true }
 url = { workspace = true }
+thiserror.workspace = true
 
 [lib]
 doctest = false

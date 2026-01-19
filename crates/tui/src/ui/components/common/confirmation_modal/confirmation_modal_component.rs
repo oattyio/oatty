@@ -25,10 +25,10 @@ impl Component for ConfirmationModal {
                 app.focus.prev();
             }
             KeyCode::Enter => {
-                if let Some(button) = app.confirmation_modal_state.buttons().iter().find(|(_, button)| button.get()) {
+                if let Some(button) = app.confirmation_modal_state.buttons().iter().find(|button| button.focus.get()) {
                     effects.extend([
                         Effect::CloseModal,
-                        Effect::SendMsg(Msg::ConfirmationModalButtonClicked(button.1.widget_id())),
+                        Effect::SendMsg(Msg::ConfirmationModalButtonClicked(button.focus.widget_id())),
                     ]);
                 }
             }
@@ -44,7 +44,7 @@ impl Component for ConfirmationModal {
             let position = Position::new(column, row);
             let button_index = self.button_areas.iter().position(|area| area.contains(position));
             if let Some(index) = button_index {
-                let button_id = app.confirmation_modal_state.buttons()[index].1.widget_id();
+                let button_id = app.confirmation_modal_state.buttons()[index].focus.widget_id();
                 return vec![Effect::CloseModal, Effect::SendMsg(Msg::ConfirmationModalButtonClicked(button_id))];
             }
         }
@@ -55,8 +55,8 @@ impl Component for ConfirmationModal {
         let theme = &*app.ctx.theme;
         let confirmation_modal_state = &app.confirmation_modal_state;
         let title = confirmation_modal_state.title().unwrap_or_default();
-        let severity = confirmation_modal_state.severity().unwrap_or_default();
-        let block = block_with_severity(theme, severity, true);
+        let severity = confirmation_modal_state.r#type().unwrap_or_default();
+        let block = block_with_severity(theme, severity, Some(title), true);
         let inner = block.inner(rect);
 
         frame.render_widget(&block, rect);
@@ -70,7 +70,7 @@ impl Component for ConfirmationModal {
                 .lines()
                 .map(|line| Line::from(Span::from(line.to_string())))
                 .collect::<Vec<Line>>();
-            let paragraph = Paragraph::new(lines).block(Block::default().title(Span::styled(title, theme.text_primary_style())));
+            let paragraph = Paragraph::new(lines).block(Block::default());
             frame.render_widget(paragraph, message_rect);
         }
 
@@ -85,9 +85,15 @@ impl Component for ConfirmationModal {
             render_button(
                 frame,
                 rect,
-                button.0.as_str(),
+                button.label.as_str(),
                 theme,
-                ButtonRenderOptions::new(true, confirmation_modal_state.is_button_focused(i), false, Borders::ALL, false),
+                ButtonRenderOptions::new(
+                    true,
+                    confirmation_modal_state.is_button_focused(i),
+                    false,
+                    Borders::ALL,
+                    button.button_type,
+                ),
             );
             button_areas.push(rect);
         }
@@ -96,7 +102,7 @@ impl Component for ConfirmationModal {
     }
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
-        build_hint_spans(&*app.ctx.theme, &[("Esc", " close")])
+        build_hint_spans(&*app.ctx.theme, &[("Esc", " close/cancel")])
     }
 
     fn get_preferred_layout(&self, app: &App, area: Rect) -> Vec<Rect> {

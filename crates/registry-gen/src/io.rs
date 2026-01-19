@@ -25,11 +25,17 @@ pub struct ManifestInput {
     pub file_path: Option<PathBuf>,
     /// Local content of the OpenAPI document.
     pub local: Option<String>,
+    /// Prefix override for commands. If None, it defaults to the vendor name.
+    pub prefix_override: Option<String>,
 }
 
 impl ManifestInput {
-    pub fn new(file_path: Option<PathBuf>, local: Option<String>) -> Self {
-        Self { file_path, local }
+    pub fn new(file_path: Option<PathBuf>, local: Option<String>, prefix_override: Option<String>) -> Self {
+        Self {
+            file_path,
+            local,
+            prefix_override,
+        }
     }
 
     /// Reads the input descriptor by consuming self
@@ -51,9 +57,10 @@ impl ManifestInput {
 /// This function reads OpenAPI documents from the input paths, generates
 /// commands, and constructs a `RegistryCatalog` with the generated commands
 /// and provider contracts.
-pub fn generate_catalog(input: ManifestInput) -> Result<RegistryCatalog> {
+pub fn generate_catalog(mut input: ManifestInput) -> Result<RegistryCatalog> {
+    let prefix_override = input.prefix_override.take();
     let document = parse_openapi_document(input)?;
-    let (name, commands) = create_commands_from_document(&document)?;
+    let (name, commands) = create_commands_from_document(&document, prefix_override)?;
     let provider_contracts = build_provider_contracts(&commands);
     let base_urls = collect_base_urls_from_document(&document);
     let manifest = RegistryManifest {
@@ -97,9 +104,10 @@ pub fn generate_catalog(input: ManifestInput) -> Result<RegistryCatalog> {
 ///
 /// Returns an error if file reading, command generation, or provider contract
 /// construction fails.
-pub fn generate_manifest(input: ManifestInput) -> Result<RegistryManifest> {
+pub fn generate_manifest(mut input: ManifestInput) -> Result<RegistryManifest> {
+    let prefix_override = input.prefix_override.take();
     let document = parse_openapi_document(input)?;
-    let (vendor, commands) = create_commands_from_document(&document)?;
+    let (vendor, commands) = create_commands_from_document(&document, prefix_override)?;
     let provider_contracts = build_provider_contracts(&commands);
     Ok(RegistryManifest {
         commands,
@@ -224,9 +232,9 @@ pub fn write_manifest_json(input: ManifestInput, workflow_root: Option<PathBuf>,
 /// # Sorting
 ///
 /// All generated commands are sorted by their group and name before returning.
-fn create_commands_from_document(document: &serde_json::Value) -> Result<(String, Vec<CommandSpec>)> {
-    let vendor = derive_vendor_from_document(document);
-    let mut commands = derive_commands_from_openapi(document)?;
+fn create_commands_from_document(document: &serde_json::Value, prefix_override: Option<String>) -> Result<(String, Vec<CommandSpec>)> {
+    let vendor = prefix_override.unwrap_or_else(|| derive_vendor_from_document(document));
+    let mut commands = derive_commands_from_openapi(document, &vendor)?;
     commands.sort_by(|a, b| a.group.cmp(&b.group).then(a.name.cmp(&b.name)));
     Ok((vendor, commands))
 }

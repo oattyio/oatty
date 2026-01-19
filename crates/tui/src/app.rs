@@ -10,10 +10,10 @@ use std::{
     time::Duration,
 };
 
-use crate::ui::components::workflows::collector::SelectorStatus;
 use crate::ui::components::workflows::run::RunViewState;
 use crate::ui::components::{FilePickerState, common::ConfirmationModalState};
 use crate::ui::components::{LibraryState, nav_bar::VerticalNavBarState};
+use crate::ui::components::{common::manual_entry_modal::state::ManualEntryState, workflows::collector::SelectorStatus};
 use crate::ui::{
     components::{
         browser::BrowserState, help::HelpState, logs::LogsState, palette::PaletteState, plugins::PluginsState, table::ResultsTableState,
@@ -140,6 +140,8 @@ pub struct App<'a> {
     pub browser: BrowserState,
     /// File picker state
     pub file_picker: Option<FilePickerState>,
+    /// Manual entry state
+    pub manual_entry_state: Option<ManualEntryState>,
     /// Table modal state
     pub table: ResultsTableState<'a>,
     /// Help modal state
@@ -202,6 +204,7 @@ impl App<'_> {
             ctx,
             browser: BrowserState::new(Arc::clone(&registry)),
             file_picker: None,
+            manual_entry_state: None,
             confirmation_modal_state: ConfirmationModalState::default(),
             logs: LogsState::default(),
             help: HelpState::default(),
@@ -592,7 +595,10 @@ impl HasFocus for App<'_> {
                 Modal::FilePicker(..) if self.file_picker.is_some() => {
                     builder.widget(self.file_picker.as_ref().unwrap());
                 }
-                Modal::PluginDetails | Modal::Help | Modal::ThemePicker | Modal::FilePicker(..) => {
+                Modal::ManualEntry if self.manual_entry_state.is_some() => {
+                    builder.widget(self.manual_entry_state.as_ref().unwrap());
+                }
+                Modal::PluginDetails | Modal::Help | Modal::ThemePicker | Modal::FilePicker(..) | Modal::ManualEntry => {
                     // focusable fields TBD; leave the ring empty
                 }
             }

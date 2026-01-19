@@ -1,6 +1,6 @@
 use super::roles::Theme;
 use crate::ui::theme::roles::ThemeRoles;
-use oatty_types::Severity;
+use oatty_types::MessageType;
 use ratatui::text::Line;
 use ratatui::widgets::{HighlightSpacing, List, ListItem};
 use ratatui::{
@@ -29,19 +29,23 @@ where
     block
 }
 
-pub fn block_with_severity<'a>(theme: &dyn Theme, severity: Severity, focused: bool) -> Block<'a> {
+pub fn block_with_severity<'a>(theme: &dyn Theme, severity: MessageType, title: Option<&str>, focused: bool) -> Block<'a> {
     let style = match severity {
-        Severity::Info => theme.status_info(),
-        Severity::Warning => theme.status_warning(),
-        Severity::Error => theme.status_error(),
+        MessageType::Info => theme.status_info(),
+        MessageType::Warning => theme.status_warning(),
+        MessageType::Error => theme.status_error(),
+        MessageType::Success => theme.status_success(),
     };
-    let title = format!(" {} ", severity);
+    let mut title_str = format!(" {}", severity);
+    if let Some(t) = title {
+        title_str.push_str(&format!(": {}", t));
+    }
     Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Plain)
         .border_style(theme.border_style(focused))
         .style(panel_style(theme))
-        .title(Span::styled(title, style.add_modifier(Modifier::BOLD)))
+        .title(Span::styled(title_str, style.add_modifier(Modifier::BOLD)))
 }
 
 /// Style for panel-like containers (set background on widget using `.style`).
@@ -153,6 +157,17 @@ pub fn button_secondary_style(theme: &dyn Theme, enabled: bool, selected: bool) 
     }
 }
 
+/// Destructive button style (error accent with readable text).
+pub fn button_destructive_style(theme: &dyn Theme, enabled: bool, selected: bool) -> Style {
+    if enabled {
+        let ThemeRoles { error, selection_fg, .. } = *theme.roles();
+        let style = Style::default().fg(error).add_modifier(Modifier::BOLD);
+        if selected { style.bg(error).fg(selection_fg) } else { style }
+    } else {
+        theme.text_muted_style()
+    }
+}
+
 /// Badge/tag style (filled accent, readable text).
 #[allow(dead_code)]
 pub fn badge_style(theme: &dyn Theme) -> Style {
@@ -160,6 +175,16 @@ pub fn badge_style(theme: &dyn Theme) -> Style {
     theme.badge_style()
 }
 
+#[derive(Default, Debug, Clone, Copy)]
+pub enum ButtonType {
+    #[default]
+    /// Primary button style (filled accent, readable text).
+    Primary,
+    /// Secondary button style (outlined accent, readable text).
+    Secondary,
+    /// Destructive button style (filled red, white text).
+    Destructive,
+}
 /// Immutable configuration specifying how a button should be rendered.
 #[derive(Default, Debug, Clone, Copy)]
 pub struct ButtonRenderOptions {
@@ -171,19 +196,19 @@ pub struct ButtonRenderOptions {
     pub selected: bool,
     /// Border configuration to apply when drawing the button.
     pub borders: Borders,
-    /// Whether the button is the primary action.
-    pub is_primary: bool,
+    /// The button category (primary, secondary, or destructive) that controls styling.
+    pub button_type: ButtonType,
 }
 
 impl ButtonRenderOptions {
     /// Construct a new `ButtonRenderOptions` using positional arguments.
-    pub const fn new(enabled: bool, focused: bool, selected: bool, borders: Borders, is_primary: bool) -> Self {
+    pub const fn new(enabled: bool, focused: bool, selected: bool, borders: Borders, button_type: ButtonType) -> Self {
         Self {
             enabled,
             focused,
             selected,
             borders,
-            is_primary,
+            button_type,
         }
     }
 }
@@ -218,7 +243,7 @@ impl ButtonRenderOptions {
 ///     area,
 ///     "Click Me",
 ///     &theme,
-///     ButtonRenderOptions::new(true, true, false, Borders::ALL),
+///     ButtonRenderOptions::new(true, true, false, Borders::ALL, ButtonType::Primary),
 /// );
 /// ```
 pub fn render_button(frame: &mut Frame, area: Rect, label: &str, theme: &dyn Theme, options: ButtonRenderOptions) {
@@ -228,14 +253,10 @@ pub fn render_button(frame: &mut Frame, area: Rect, label: &str, theme: &dyn The
         theme.text_muted_style()
     };
 
-    let button_style = if options.enabled {
-        if options.is_primary {
-            button_primary_style(theme, true, options.selected)
-        } else {
-            button_secondary_style(theme, true, options.selected)
-        }
-    } else {
-        theme.text_muted_style()
+    let button_style = match options.button_type {
+        ButtonType::Primary => button_primary_style(theme, options.enabled, options.selected),
+        ButtonType::Secondary => button_secondary_style(theme, options.enabled, options.selected),
+        ButtonType::Destructive => button_destructive_style(theme, options.enabled, options.selected),
     };
 
     let padding = if options.borders.is_empty() {

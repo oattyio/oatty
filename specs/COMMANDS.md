@@ -15,7 +15,7 @@ Implementation notes:
 
 ## Command Definitions
 
-- **Source of truth:** `oatty_registry::CommandRegistry` loads command metadata from `registry-manifest.json` files (see `crates/registry/src/models.rs`). Synthetic MCP tools are merged through `CommandRegistry::insert_synthetic`, then deduplicated.
+- **Source of truth:** `oatty_registry::CommandRegistry` loads command metadata from catalog manifest files referenced by the registry config (see `crates/registry/src/models.rs`). MCP tools are merged through `CommandRegistry::insert_commands`, then deduplicated.
 - **CommandSpec:** (`crates/types/src/lib.rs:364`) captures the user-facing command surfaces.
   - `group`: primary resource bucket (e.g., `"apps"`).
   - `name`: subcommand token paired with the group in palette input (e.g., `"list"`, `"addons:list"`). The CLI always references commands as `<group> <name>`.
@@ -144,3 +144,10 @@ Implementation notes:
 
 - Canonical user-facing form: space-separated `group name`.
 - The legacy colon form (`group:name`) is no longer accepted in this release. Update any workflows, scripts, or docs to the space-separated form.
+
+## Source Alignment
+
+- **Command registry**: `crates/registry/src/models.rs` defines `CommandSpec`, `CommandFlag`, `PositionalArgument`, and associated helpers, while `crates/registry/src/config.rs` loads manifests from disk.
+- **Suggestion plumbing**: `crates/tui/src/ui/components/palette/suggestion_engine.rs` and `palette/state.rs` implement the lexing, resolution, and provider-aware suggestion pipeline documented above.
+- **Execution flow**: `crates/tui/src/cmd.rs` contains `run_from_effects`, `run_cmds`, and dispatcher helpers (`start_palette_execution`, `execute_command`, `build_request_body`, pagination helpers) that translate validated commands into HTTP or MCP requests.
+- **Effect and outcome types**: `crates/types/src/lib.rs` houses the `Effect`, `Cmd`, and `ExecOutcome` enums consumed across the TUI and runtime, ensuring the data contracts described here match the shared models.

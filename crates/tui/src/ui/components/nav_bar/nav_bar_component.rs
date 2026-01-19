@@ -2,7 +2,7 @@ use super::{NavItemAction, VerticalNavBarState};
 use crate::ui::components::{Component, find_target_index_by_mouse_position};
 use crate::{
     app::App,
-    ui::theme::theme_helpers::{self as th, ButtonRenderOptions, render_button},
+    ui::theme::theme_helpers::{self as th, ButtonRenderOptions, ButtonType, render_button},
 };
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use oatty_types::Effect;
@@ -147,7 +147,7 @@ impl Component for VerticalNavBarComponent {
                     row_area,
                     &item.icon,
                     theme,
-                    ButtonRenderOptions::new(true, is_focused, is_selected, borders, false),
+                    ButtonRenderOptions::new(true, is_focused, is_selected, borders, ButtonType::Secondary),
                 );
             }
         }

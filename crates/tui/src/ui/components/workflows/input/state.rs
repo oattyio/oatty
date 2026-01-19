@@ -131,7 +131,7 @@ impl WorkflowInputViewState {
                         }
                         Err(message) => {
                             status = InputStatus::Error;
-                            status_message = Some(message);
+                            status_message = Some(format!("{}", message));
                         }
                     }
                 } else {

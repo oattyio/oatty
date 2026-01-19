@@ -5,8 +5,8 @@ Oatty CLI TUI. It captures every supported field in the YAML schema, explains ho
 interprets those fields, and cross-links the companion UX specifications:
 
 - `specs/WORKFLOW_TUI.md` — input collection, manual entry behaviours, run view UI
-- `specs/WORKFLOW_RUN_EXECUTION_PLAN.md` — execution pipeline, pause/resume/cancel controls
-- `specs/WORKFLOW_VALUE_PROVIDERS_UX.md` — provider discovery and picker ergonomics
+- `crates/engine/src/workflow/` — execution pipeline, pause/resume/cancel controls
+- `specs/VALUE_PROVIDERS.md` — provider discovery and picker ergonomics
 
 The definitions below mirror the shared Rust model in `crates/types/src/workflow.rs`. When the
 schema evolves, keep this file, the Rust structures, and the UI/engine specs in sync.
@@ -253,7 +253,7 @@ Use `repeat` to describe polling or retry loops:
 | `timeout`     | string  | `null`  | Maximum wall-clock duration (e.g., `5m`). |
 | `max_attempts`| integer | `null`  | Hard cap on attempt count. |
 
-The execution plan (see `WORKFLOW_RUN_EXECUTION_PLAN.md`) covers how the runner evaluates these
+The execution plan (implemented in `crates/engine/src/workflow/`) covers how the runner evaluates these
 fields and emits status updates.
 
 ### 6.2 Output Contracts
@@ -339,7 +339,7 @@ See `specs/WORKFLOW_TUI.md` for control layouts and focus behaviour.
 
 - **Collection experience**: `specs/WORKFLOW_TUI.md`
 - **Collector manual entry component**: `crates/tui/src/ui/components/workflows/collector/manual_entry/`
-- **Run view and execution controls**: `specs/WORKFLOW_RUN_EXECUTION_PLAN.md`
+- **Run view and execution controls**: `crates/engine/src/workflow/`
 - **Provider registry contracts**: `specs/VALUE_PROVIDER_REGISTRY.md`
 - **Runtime schema**: `crates/types/src/workflow.rs` (mirror changes here)
 
@@ -348,7 +348,15 @@ engine specs affected by the change.
 
 ---
 
-## 11. Change Log
+## 11. Source Alignment
+
+- **Schema definitions** mirror `crates/types/src/workflow.rs`, which owns the serialized models used by both the engine and TUI.
+- **Runtime evaluation** lives in `crates/engine/src/workflow/`, where `WorkflowRunState` normalizes inputs, resolves templates, and manages execution control flow.
+- **Collector and run UIs** are implemented under `crates/tui/src/ui/components/workflows/`, with `input/` and `collector/` handling the pre-run flow and `run/` rendering live execution.
+- **Provider selection** relies on the builder logic in `crates/registry-gen/src/openapi.rs` and the runtime registry in `crates/registry/src/provider.rs`.
+- **Persistence** of workflow manifests happens in `workflows/` on disk; the CLI loads manifests through `crates/registry/src/config.rs`.
+
+## 12. Change Log
 
 - **2025-10-17** — Expanded specification to cover workflow titles, provider bindings, validation,
   repeat loops, manual entry metadata, and cross-spec references. Document now mirrors the entire

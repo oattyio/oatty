@@ -191,7 +191,7 @@ impl FilePickerState {
 
     /// Returns the directory entry currently highlighted in the list.
     pub fn selected_file(&self) -> Option<&DirectoryEntry> {
-        if let (Some(idx), Some(contents)) = (self.selected_file_idx, self.dir_contents.as_ref()) {
+        if let Some((idx, contents)) = self.selected_file_idx.zip(self.dir_contents.as_ref()) {
             contents.get(idx)
         } else {
             None

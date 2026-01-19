@@ -16,20 +16,25 @@
 - Run CLI: `cargo run -p oatty-cli -- <group> <command> [flags]`.
 - TUI mode: `cargo run -p oatty-cli` — launches Ratatui UI, or run installed binary `oatty`.
 - Tests: `cargo test --workspace` — run unit/integration tests.
+- Single test: `cargo test --workspace <test_name>` — run specific test function.
+- Single crate tests: `cargo test -p <crate_name>` — run tests for specific crate.
 - Lint: `cargo clippy --workspace -- -D warnings` — fail on warnings.
 - Format: `cargo fmt --all` — apply repo `rustfmt` settings.
-- Helpful env: `OATTY_LOG=debug` (stderr logs are silenced during TUI), `OATTY_API_TOKEN=…`, `FEATURE_WORKFLOWS=1`, `DEBUG=1`, `MCP_CONFIG_PATH=~/.config/oatty/mcp.json`.
+- Helpful env: `OATTY_LOG=debug` (stderr logs are silenced during TUI), `OATTY_API_TOKEN=…`, `MCP_CONFIG_PATH=~/.config/oatty/mcp.json`.
 
 ## Coding Style & Naming Conventions
-- Edition: Rust 2024; indent 4 spaces; max width 100 (see `rustfmt.toml`).
+- Edition: Rust 2024; indent 4 spaces; max width 140 (see `rustfmt.toml`).
 - Naming: modules/files `snake_case`; types/enums `PascalCase`; functions/vars `snake_case`, do not abbreviate; constants `SCREAMING_SNAKE_CASE`.
 - Errors: apps use `anyhow::Result`; libraries prefer `thiserror`.
+- Imports: Group std imports first, then external crates, then internal modules. Use `use` statements at file top.
 - Keep diffs minimal; run `cargo fmt` and fix all `clippy` issues before pushing.
 
 ## Testing Guidelines
 - Unit tests inline with code: `#[cfg(test)] mod tests { … }`.
 - Integration tests under `crates/<name>/tests/` when needed.
 - Async tests: `#[tokio::test]` where appropriate.
+- Single test: `cargo test --workspace <test_name>` — run specific test function.
+- Single crate tests: `cargo test -p <crate_name>` — run tests for specific crate.
 - Ensure deterministic output; run `cargo test --workspace` locally.
 
 ## Commit & Pull Request Guidelines
@@ -92,8 +97,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for a full overview of crates, command/re
 
 ## Testing Tips
 - **Unit tests:** Co-locate simple reducers/selectors under `#[cfg(test)]` in `state.rs` or the component module. Favor pure functions for parsing/formatting.
-- **Manual checks:** Run `cargo run -p oatty-cli` (or `oatty` if installed) and verify focus, key handling, and styling in a small terminal. Use `OATTY_LOG=debug` and `DEBUG=1` to surface useful info.
+- **Manual checks:** Run `cargo run -p oatty-cli` (or `oatty` if installed) and verify focus, key handling, and styling in a small terminal. Use `OATTY_LOG=debug` to surface useful info.
 - **CI hygiene:** `cargo fmt --all`, `cargo clippy --workspace -- -D warnings`, and `cargo test --workspace` must be clean.
+- **Single test execution:** Use `cargo test --workspace <test_name>` to run specific tests during development.
 
 ## General Use Instructions for AI Assistants
 
@@ -158,6 +164,7 @@ Before submitting changes, ensure:
 - **Integration tests**: Ensure refactored code still works correctly in the broader system
 - **Manual testing**: Test UI changes manually to ensure behavior is preserved
 - **Performance**: Verify that refactoring doesn't introduce performance regressions
+- **Single test execution**: Use `cargo test --workspace <test_name>` to run specific tests during development
 
 ### Communication
 - **Explain changes**: Document why changes were made and what benefits they provide

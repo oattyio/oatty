@@ -9,6 +9,7 @@ use super::theme::theme_helpers as th;
 use super::utils::centered_rect;
 use crate::app::App;
 use crate::ui::components::common::ConfirmationModal;
+use crate::ui::components::common::manual_entry_modal::DefaultManualEntryComponent;
 use crate::ui::components::palette::PaletteComponent;
 use crate::ui::components::theme_picker::ThemePickerComponent;
 use crate::ui::components::workflows::{RunViewComponent, WorkflowInputsComponent};
@@ -165,6 +166,10 @@ impl MainView {
                         })),
                     )
                 }
+                Modal::ManualEntry => (
+                    Box::new(DefaultManualEntryComponent::default()),
+                    ModalLayout(Box::new(|rect| centered_rect(45, 35, rect))),
+                ),
             };
             self.modal_view = Some(modal_view);
             // save the current focus to restore when the modal is closed

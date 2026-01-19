@@ -55,3 +55,9 @@
 ## Safety
 - Auto-redact secret-like keys (`token`, `password`, `api_key`).
 - Consistent redaction in tables, details, and logs.
+
+## Source Alignment
+
+- **Rendering state**: `crates/tui/src/ui/components/table/state.rs` defines `ResultsTableState`, column configuration, and focus handling used by every table view mentioned here.
+- **Shared view code**: `crates/tui/src/ui/components/common/results_table_view.rs` encapsulates headers, zebra striping, selection, column pickers, and row expansion, so the usability rules above map directly to Ratatui widgets.
+- **Workflow + log integrations**: `crates/tui/src/ui/components/workflows/run/`, `workflows/collector/`, and `components/logs/log_details/` all embed `ResultsTableView`, providing concrete references for pagination, keybindings, and detail panes.
