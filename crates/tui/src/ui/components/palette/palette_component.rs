@@ -8,7 +8,7 @@ use std::hash::{DefaultHasher, Hasher};
 use std::vec;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use oatty_types::{Effect, ExecOutcome, ItemKind, Modal, Msg, Severity};
+use oatty_types::{Effect, ExecOutcome, ItemKind, MessageType, Modal, Msg};
 use rat_focus::{FocusFlag, HasFocus};
 use ratatui::{
     Frame,
@@ -19,9 +19,9 @@ use ratatui::{
 };
 
 use crate::app::App;
-use crate::ui::components::common::ConfirmationModalOpts;
 use crate::ui::components::common::text_input::cursor_index_for_column;
-use crate::ui::theme::theme_helpers::create_list_with_highlight;
+use crate::ui::components::common::{ConfirmationModalButton, ConfirmationModalOpts};
+use crate::ui::theme::theme_helpers::{ButtonType, create_list_with_highlight};
 use crate::ui::{
     components::component::Component,
     theme::{Theme, theme_helpers as th},
@@ -379,8 +379,8 @@ impl PaletteComponent {
 
     fn confirm_destructive_command(&mut self, app: &mut App) -> Vec<Effect> {
         let buttons = vec![
-            ("Cancel".to_string(), FocusFlag::new()),
-            ("Confirm".to_string(), self.confirm_button.clone()),
+            ConfirmationModalButton::new("Cancel", FocusFlag::new(), ButtonType::Secondary),
+            ConfirmationModalButton::new("Confirm", self.confirm_button.clone(), ButtonType::Destructive),
         ];
         let command = app.palette.input().to_string();
         let message = format!(
@@ -388,9 +388,9 @@ impl PaletteComponent {
             command
         );
         app.confirmation_modal_state.update_opts(ConfirmationModalOpts {
-            title: Some("Confirm Destructive Action".to_string()),
+            title: Some("Destructive Action".to_string()),
             message: Some(message),
-            severity: Some(Severity::Warning),
+            r#type: Some(MessageType::Warning),
             buttons,
         });
 

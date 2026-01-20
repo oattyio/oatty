@@ -30,26 +30,25 @@ use crate::provider_resolver::resolve_and_infer_providers;
 /// # Errors
 ///
 /// Returns an error if the document is not OpenAPI v3 or lacks required sections.
-pub fn derive_commands_from_openapi(document: &Value) -> Result<Vec<CommandSpec>> {
+pub fn derive_commands_from_openapi(document: &Value, vendor: &str) -> Result<Vec<CommandSpec>> {
     if !is_oas3(document) {
         return Err(anyhow!(
             "unsupported OpenAPI document: expected OpenAPI v3 (missing 'openapi' field)"
         ));
     }
 
-    let mut commands = derive_commands_from_oas3(document)?;
+    let mut commands = derive_commands_from_oas3(document, vendor)?;
     sort_and_dedup_commands(&mut commands);
     resolve_and_infer_providers(&mut commands);
     Ok(commands)
 }
 
-fn derive_commands_from_oas3(document: &Value) -> Result<Vec<CommandSpec>> {
+fn derive_commands_from_oas3(document: &Value, vendor: &str) -> Result<Vec<CommandSpec>> {
     let paths = document
         .get("paths")
         .and_then(Value::as_object)
         .ok_or_else(|| anyhow!("OpenAPI document missing paths"))?;
 
-    let vendor = derive_vendor_from_document(document);
     let mut commands = Vec::new();
     let mut command_names: HashSet<String> = HashSet::new();
 
@@ -67,7 +66,7 @@ fn derive_commands_from_oas3(document: &Value) -> Result<Vec<CommandSpec>> {
             };
 
             if let Some(command_spec) =
-                build_command_from_operation(document, &vendor, path, path_item, operation_object, method, &mut command_names)?
+                build_command_from_operation(document, vendor, path, path_item, operation_object, method, &mut command_names)?
             {
                 commands.push(command_spec);
             }
@@ -857,32 +856,8 @@ fn get_default(schema: &Value, root: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_base_urls_from_document, derive_commands_from_openapi};
+    use super::collect_base_urls_from_document;
     use serde_json::json;
-
-    #[test]
-    fn derives_vendor_group_from_first_resolvable_server() {
-        let document = json!({
-            "openapi": "3.0.0",
-            "servers": [
-                { "url": "https://{region}.1password.com" },
-                { "url": "https://api.example.com" }
-            ],
-            "paths": {
-                "/users/{id}/tokens": {
-                    "post": {
-                        "summary": "Create user token",
-                        "responses": { "200": { "description": "ok" } }
-                    }
-                }
-            }
-        });
-
-        let commands = derive_commands_from_openapi(&document).expect("derive commands");
-        let command = commands.first().expect("command exists");
-        assert_eq!(command.group, "example");
-        assert_eq!(command.name, "users:tokens:create");
-    }
 
     #[test]
     fn collects_base_urls_from_document_servers() {

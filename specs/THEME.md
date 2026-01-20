@@ -208,6 +208,12 @@ fn status_color(s: &str) -> Color {
 }
 ```
 
+## Source Alignment
+
+- **Theme constants** live in `crates/tui/src/ui/theme/mod.rs`, where Dracula, Nord, and Cyberpunk palettes are defined exactly as specified here.
+- **Theme helpers** such as `panel_style`, `selection_style`, and `block` reside in `crates/tui/src/ui/theme/theme_helpers.rs`, ensuring all components consume the same styling primitives.
+- **Component usage**: Palette, table, workflow, plugin, and modal components import the shared theme traits from `crates/tui/src/ui/theme`, so updates to the color contract propagate consistently across the UI.
+
 ---
 
 ## Cyberpunk Theme (experimental)

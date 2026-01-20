@@ -671,6 +671,14 @@ impl ValueProvider for AppsProvider {
 - Reverse history search;  
 - Passing golden ANSI snapshots.
 
+## 11) Source Alignment
+
+- **Palette UI** is implemented by `PaletteComponent` (`crates/tui/src/ui/components/palette/palette_component.rs`), which wires key handling, ghost text rendering, and suggestion popups exactly as outlined here.
+- **State management** (input buffer, cursor, ghost text, provider loading) lives in `crates/tui/src/ui/components/palette/state.rs`; history persistence flows through `PaletteState::push_history_if_needed` and the shared config directory.
+- **Suggestion orchestration** uses `crates/tui/src/ui/components/palette/suggestion_engine.rs`, which matches the lexer/phase model and ranking contract described in sections 4–8.
+- **Provider integration** leverages the runtime `ProviderRegistry` from `crates/registry/src/provider.rs`, so palette value suggestions share caching and bindings with the workflow collector.
+- **Text editing primitives** reuse `crates/tui/src/ui/components/common/text_input.rs`, ensuring Emacs-style navigation and Vi-mode toggles stay in sync with other inline editors.
+
 ---
 
 **Appendix: Minimal Milestones**

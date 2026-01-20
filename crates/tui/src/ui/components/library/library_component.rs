@@ -1,6 +1,8 @@
 use std::{
+    borrow::Cow,
     rc::Rc,
     sync::{Arc, Mutex},
+    time::Duration,
     vec,
 };
 
@@ -9,53 +11,69 @@ use crate::{
     ui::{
         components::{
             Component,
-            common::{ConfirmationModalOpts, key_value_editor::KeyValueEditorView},
-            library::CatalogProjection,
+            common::{
+                ConfirmationModalButton, ConfirmationModalOpts, TextInputState,
+                key_value_editor::KeyValueEditorView,
+                manual_entry_modal::state::{ManualEntryKind, ManualEntryState, ManualEntryValueState},
+            },
+            library::{CatalogProjection, state::LibraryEditorField, types::CatalogValidationError},
         },
         theme::{
             Theme,
             theme_helpers::{
-                self, ButtonRenderOptions, block, create_checkbox, create_list_with_highlight, create_radio_button, render_button,
+                self, ButtonRenderOptions, ButtonType, block, button_primary_style, button_secondary_style, create_checkbox,
+                create_list_with_highlight, create_radio_button, render_button,
             },
         },
     },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use oatty_registry::CommandRegistry;
-use oatty_types::{Effect, ExecOutcome, Modal, Msg, Severity};
-use oatty_util::line_clamp;
+use oatty_types::{Effect, ExecOutcome, MessageType, Modal, Msg, TransientMessage};
+use oatty_util::truncate_with_ellipsis;
 use rat_focus::{FocusFlag, HasFocus};
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Position, Rect},
     style::Modifier,
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Padding, Paragraph, Wrap},
+    widgets::{Block, Borders, List, ListItem, Padding, Paragraph},
 };
 use unicode_width::UnicodeWidthStr;
+use url::Url;
+
+const DESCRIPTION_LABEL: &str = "Description: ";
 
 #[derive(Debug, Default)]
 pub struct LibraryLayout {
-    pub import_button: Rect,
-    pub remove_button: Rect,
-    pub api_list_area: Rect,
-    pub errors_area: Rect,
-    pub details_area: Rect,
-    pub base_url_area: Rect,
-    pub kv_area: Rect,
+    pub import_catalog_button: Rect,
+    pub remove_catalog_button: Rect,
+    pub api_list: Rect,
+    pub message: Rect,
+    pub details: Rect,
+    pub description: Rect,
+    pub add_base_url_button: Rect,
+    pub remove_base_url_button: Rect,
+    pub base_url_radio_group: Rect,
+    pub kv_editor: Rect,
+    pub truncated_description: usize,
 }
 
 impl From<Vec<Rect>> for LibraryLayout {
     fn from(rects: Vec<Rect>) -> Self {
         Self {
-            import_button: rects[0],
-            remove_button: rects[1],
-            api_list_area: rects[2],
-            details_area: rects[3],
-            errors_area: rects[4],
+            import_catalog_button: rects[0],
+            remove_catalog_button: rects[1],
+            api_list: rects[2],
+            details: rects[3],
+            message: rects[4],
             // Dynamically calculated
-            base_url_area: Rect::default(),
-            kv_area: Rect::default(),
+            description: Rect::default(),
+            base_url_radio_group: Rect::default(),
+            kv_editor: Rect::default(),
+            add_base_url_button: Rect::default(),
+            remove_base_url_button: Rect::default(),
+            truncated_description: 0,
         }
     }
 }
@@ -64,10 +82,11 @@ impl From<Vec<Rect>> for LibraryLayout {
 pub struct LibraryComponent {
     layout: LibraryLayout,
     kv_view: KeyValueEditorView,
+    staged_catalog_contents: Option<String>,
 }
 
 impl LibraryComponent {
-    pub fn create_projections(command_registry: Arc<Mutex<CommandRegistry>>) -> Vec<CatalogProjection> {
+    fn create_projections(command_registry: Arc<Mutex<CommandRegistry>>) -> Vec<CatalogProjection> {
         let mut catalogs = Vec::with_capacity(2);
         let Ok(lock) = command_registry.try_lock() else {
             return catalogs;
@@ -81,32 +100,34 @@ impl LibraryComponent {
         catalogs
     }
     /// Renders the buttons for the library component.
-    fn render_buttons(&mut self, frame: &mut Frame, layout: (Rect, Rect), app: &App) {
+    fn render_buttons(&self, frame: &mut Frame, app: &App) {
         let theme = &*app.ctx.theme;
         let import_button_opts = ButtonRenderOptions {
             selected: false,
             focused: app.library.f_import_button.get(),
             borders: Borders::ALL,
             enabled: true,
-            is_primary: true,
+            button_type: ButtonType::Primary,
         };
 
-        render_button(frame, layout.0, "Import", theme, import_button_opts);
+        render_button(frame, self.layout.import_catalog_button, "Import", theme, import_button_opts);
         let maybe_selected_index = app.library.api_selected_index();
         let remove_button_opts = ButtonRenderOptions {
             selected: false,
             focused: app.library.f_remove_button.get(),
             borders: Borders::ALL,
             enabled: maybe_selected_index.is_some(),
-            is_primary: false,
+            button_type: ButtonType::Destructive,
         };
-        render_button(frame, layout.1, "Remove", theme, remove_button_opts);
+        render_button(frame, self.layout.remove_catalog_button, "Remove", theme, remove_button_opts);
     }
 
-    fn render_api_list(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
+    fn render_api_list(&mut self, frame: &mut Frame, app: &mut App) {
         let is_list_focused = app.library.f_api_list.get();
-        let list_block = block::<String>(&*app.ctx.theme, None, is_list_focused);
-        let list_inner = list_block.inner(area);
+        let list_block = block(&*app.ctx.theme, Some("Catalogs"), is_list_focused);
+        let list_inner = list_block.inner(self.layout.api_list);
+        frame.render_widget(list_block, self.layout.api_list);
+
         let list_items = self
             .build_api_list_items(app, list_inner.width as usize)
             .unwrap_or(vec![ListItem::new("Use Import to add new items")]);
@@ -115,80 +136,93 @@ impl LibraryComponent {
             app.library.set_api_selected_index(Some(0));
         }
 
-        let list = create_list_with_highlight(list_items, &*app.ctx.theme, is_list_focused, Some(list_block));
-        frame.render_stateful_widget(list, area, app.library.api_list_state_mut());
+        let list = create_list_with_highlight(list_items, &*app.ctx.theme, is_list_focused, None);
+        frame.render_stateful_widget(list, list_inner, app.library.api_list_state_mut());
     }
 
-    fn render_error(&self, frame: &mut Frame, area: Rect, app: &mut App) {
+    fn render_message(&self, frame: &mut Frame, app: &mut App) {
         let theme = &*app.ctx.theme;
-        if let Some(error_message) = app.library.error_message() {
-            let error_paragraph = Paragraph::new(error_message).style(theme.status_error());
-            frame.render_widget(error_paragraph, area);
+        if let Some(message) = app.library.message_ref()
+            && !message.is_expired()
+        {
+            let style = match message.r#type {
+                MessageType::Error => theme.status_error(),
+                MessageType::Warning => theme.status_warning(),
+                MessageType::Info => theme.status_info(),
+                MessageType::Success => theme.status_success(),
+            };
+            let message_paragraph = Paragraph::new(format!("{}", message)).style(style);
+            frame.render_widget(message_paragraph, self.layout.message);
         }
     }
 
-    fn render_details(&mut self, frame: &mut Frame, layout: &mut LibraryLayout, app: &mut App) {
-        let area = layout.details_area;
+    fn render_details(&mut self, frame: &mut Frame, app: &mut App) {
+        let area = self.layout.details;
         let Some(projection) = app.library.selected_projection() else {
             frame.render_widget(Paragraph::new("Select an item to configure"), area);
             return;
         };
-        let description = line_clamp(projection.description.as_ref(), 3, area.width.saturating_sub(2) as usize);
         let theme = &*app.ctx.theme;
         let (title_style, enabled_text) = if projection.is_enabled {
             (theme.status_success(), "enabled")
         } else {
             (theme.text_muted_style(), "disabled")
         };
+        let block = Block::new().padding(Padding::new(1, 1, 0, 1));
+        let inner = block.inner(area);
+        let truncated_description = truncate_with_ellipsis(
+            &projection.description,
+            (inner.width as usize).saturating_sub(DESCRIPTION_LABEL.width()),
+        );
+        self.layout.truncated_description = truncated_description.width();
+
         let summary_lines = vec![
             Line::from(vec![
                 Span::styled(projection.title.clone(), title_style.add_modifier(Modifier::BOLD)),
                 Span::styled(format!(" ({})", enabled_text), theme.text_muted_style()),
             ]),
             Line::from(vec![
-                Span::styled("Command Prefix: ", theme.text_primary_style()),
+                Span::styled("Command Prefix: ", theme.text_muted_style()),
                 Span::styled(projection.vendor.clone(), theme.syntax_type_style()),
             ]),
             Line::from(vec![
-                Span::styled("Endpoints: ", theme.text_primary_style()),
+                Span::styled("Endpoints: ", theme.text_muted_style()),
                 Span::styled(projection.command_count.to_string(), theme.syntax_number_style()),
             ]),
             Line::from(vec![
-                Span::styled("Workflows: ", theme.text_primary_style()),
+                Span::styled("Workflows: ", theme.text_muted_style()),
                 Span::styled(projection.workflow_count.to_string(), theme.syntax_number_style()),
             ]),
             Line::from(vec![
-                Span::styled("Value providers: ", theme.text_primary_style()),
+                Span::styled("Value providers: ", theme.text_muted_style()),
                 Span::styled(projection.provider_contract_count.to_string(), theme.syntax_number_style()),
             ]),
-            Line::from(""),
-            Line::from(vec![Span::styled(description, theme.syntax_type_style())]),
-            Line::from(""),
+            Line::from(vec![
+                Span::styled(DESCRIPTION_LABEL, theme.text_muted_style()),
+                Span::styled(truncated_description, theme.syntax_string_style()),
+            ]),
         ];
-        let block = Block::new().padding(Padding::horizontal(1));
-        let inner = block.inner(area);
-        let summary = Paragraph::new(summary_lines).wrap(Wrap { trim: true }).block(block);
+
+        let summary = Paragraph::new(summary_lines).block(block);
         let line_ct = summary.line_count(inner.width) as u16;
         frame.render_widget(summary, area);
-
-        // add / remove buttons
+        self.layout.description = Rect::new(inner.x + DESCRIPTION_LABEL.width() as u16, inner.y + 5, inner.width, 1);
         let mut remaining_area = area;
         remaining_area.y = area.y + line_ct;
         remaining_area.height = area.height.saturating_sub(line_ct);
 
         let remaining_area_layout = Layout::vertical([
-            Constraint::Length(projection.base_urls.len() as u16 + 2), // base url input
+            Constraint::Length(projection.base_urls.len() as u16 + 4), // base url radio group
             Constraint::Percentage(100),                               // kv editor
         ])
         .split(remaining_area);
 
-        layout.base_url_area = remaining_area_layout[0];
         self.render_base_url_radios(frame, remaining_area_layout[0], app);
 
-        layout.kv_area = remaining_area_layout[1];
+        self.layout.kv_editor = remaining_area_layout[1];
         let kv_state = app.library.kv_state_mut();
         self.kv_view
-            .render_with_state(frame, remaining_area_layout[1], &*app.ctx.theme, kv_state);
+            .render_with_state(frame, self.layout.kv_editor, &*app.ctx.theme, kv_state);
     }
 
     fn render_base_url_radios(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
@@ -204,19 +238,57 @@ impl LibraryComponent {
             let mut radio = create_radio_button(None, is_checked, is_focused, theme);
             let label_theme = if is_checked {
                 theme.status_success()
+            } else if Url::parse(url).is_err() {
+                theme.status_error()
             } else {
                 theme.text_muted_style()
             };
             radio.push_span(Span::styled(format!(" {}", url), label_theme));
             radio_group.push(ListItem::from(radio));
         }
-        let list = List::new(radio_group).highlight_style(theme.accent_primary_style()).block(block(
-            theme,
-            Some("Active base URL:"),
-            app.library.f_url_list.get(),
-        ));
+        let block = block(theme, Some("Active base URL"), app.library.f_url_list_container.get());
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
 
-        frame.render_stateful_widget(list, area, app.library.url_list_state_mut());
+        let layout = Layout::vertical([
+            Constraint::Length(1),       // Buttons
+            Constraint::Length(1),       // Spacer
+            Constraint::Percentage(100), // List
+        ])
+        .split(inner);
+
+        let buttons_layout = Layout::horizontal([
+            Constraint::Min(1),     // Error message
+            Constraint::Length(7),  // Add
+            Constraint::Length(1),  // spacer
+            Constraint::Length(10), // Remove
+        ])
+        .split(layout[0]);
+        if let Some(err) = app.library.base_url_err() {
+            let error_message = Line::from(vec![Span::styled(format!("✘ {}", err), theme.status_error())]);
+            frame.render_widget(error_message, buttons_layout[0]);
+        }
+
+        let add = Line::from(vec![
+            Span::styled(" + ", theme.status_success()),
+            Span::styled("Add ", theme.text_primary_style()),
+        ])
+        .style(button_primary_style(theme, true, app.library.f_add_url_button.get()));
+        frame.render_widget(add, buttons_layout[1]);
+        self.layout.add_base_url_button = buttons_layout[1];
+
+        let remove = Line::from(vec![
+            Span::styled(" − ", theme.status_error()),
+            Span::styled("Remove ", theme.text_secondary_style()),
+        ])
+        .style(button_secondary_style(theme, true, app.library.f_remove_url_button.get()));
+        frame.render_widget(remove, buttons_layout[3]);
+        self.layout.remove_base_url_button = buttons_layout[3];
+
+        let list = List::new(radio_group).highlight_style(app.ctx.theme.selection_style().add_modifier(Modifier::BOLD));
+
+        frame.render_stateful_widget(list, layout[2], app.library.url_list_state_mut());
+        self.layout.base_url_radio_group = layout[2];
     }
 
     /// Renders the list items for the library component.
@@ -269,15 +341,18 @@ impl LibraryComponent {
             return Vec::new();
         };
 
-        let message = format!("Are you sure you want to remove '{}'?", projection.title);
+        let message = format!(
+            "Are you sure you want to remove '{}'? \nThis action cannot be undone.",
+            projection.title
+        );
         let buttons = vec![
-            ("Yes".to_string(), app.library.f_modal_confirmation_button.clone()),
-            ("Cancel".to_string(), FocusFlag::default()),
+            ConfirmationModalButton::new("Cancel", FocusFlag::default(), ButtonType::Secondary),
+            ConfirmationModalButton::new("Confirm", app.library.f_modal_confirmation_button.clone(), ButtonType::Destructive),
         ];
         app.confirmation_modal_state.update_opts(ConfirmationModalOpts {
-            title: Some("Confirm Destructive Action".to_string()),
+            title: Some("Destructive Action".to_string()),
             message: Some(message),
-            severity: Some(Severity::Warning),
+            r#type: Some(MessageType::Warning),
             buttons,
         });
         vec![Effect::ShowModal(Modal::Confirmation)]
@@ -296,30 +371,55 @@ impl LibraryComponent {
     fn handle_exec_completed(&mut self, outcome: ExecOutcome, app: &mut App) -> Vec<Effect> {
         match outcome {
             ExecOutcome::FileContents(contents, _) | ExecOutcome::RemoteFileContents(contents, _) => {
-                app.library.set_error_message(None);
-                return vec![Effect::ImportRegistryCatalog(contents)];
+                self.staged_catalog_contents = Some(contents);
+                app.library.set_message(None);
+                app.manual_entry_state = Some(ManualEntryState {
+                    value: ManualEntryValueState::Text(TextInputState::new()),
+                    kind: ManualEntryKind::Text,
+                    title: "Command prefix".to_string(),
+                    label: Some("Specify a command prefix or press Enter to default to the vendor name".to_string()),
+                    placeholder: Some("e.g. 'oatty-'".to_string()),
+                    ..Default::default()
+                });
+                return vec![Effect::ShowModal(Modal::ManualEntry)];
             }
             ExecOutcome::RegistryCatalogGenerated(catalog) => {
-                app.library.set_error_message(None);
+                app.library.set_message(Some(TransientMessage::new(
+                    Cow::from("import successful"),
+                    MessageType::Success,
+                    Duration::from_millis(5000),
+                )));
                 app.library.push_projection(CatalogProjection::from(&catalog));
             }
 
-            ExecOutcome::RegistryCatalogGenerationError(message) => {
-                app.library.set_error_message(Some(message));
-            }
-
-            ExecOutcome::RegistryConfigSaveError(message) => {
-                app.library.set_error_message(Some(message));
+            ExecOutcome::RegistryCatalogGenerationError(message) | ExecOutcome::RegistryConfigSaveError(message) => {
+                app.library
+                    .set_message(Some(TransientMessage::new(Cow::from(message), MessageType::Error, Duration::MAX)));
                 app.library.clear_projections();
             }
 
             ExecOutcome::RegistryConfigSaved => {
-                app.library.set_error_message(None);
+                app.library.set_message(Some(TransientMessage::new(
+                    Cow::from("Registry configuration saved successfully"),
+                    MessageType::Success,
+                    Duration::from_millis(5000),
+                )));
                 app.library.clear_projections();
                 app.library.kv_state_mut().reset_dirty();
             }
 
             _ => {}
+        }
+        Vec::new()
+    }
+
+    fn handle_manual_entry_modal_closed(&mut self, app: &mut App) -> Vec<Effect> {
+        if let Some((contents, state)) = self.staged_catalog_contents.take().zip(app.manual_entry_state.take()) {
+            let maybe_command_prefix = state
+                .value
+                .text_buffer()
+                .and_then(|t| if t.is_empty() { None } else { Some(t.input().to_string()) });
+            return vec![Effect::ImportRegistryCatalog(contents, maybe_command_prefix)];
         }
         Vec::new()
     }
@@ -348,7 +448,7 @@ impl LibraryComponent {
         app.focus.focus(&app.library.f_api_list);
         // The click is within the area of where the checkboxes are
         if let Some(index) = maybe_list_idx
-            && (3..=5).contains(&pos.x.saturating_sub(self.layout.api_list_area.x))
+            && (3..=5).contains(&pos.x.saturating_sub(self.layout.api_list.x))
             && index < app.library.projections().len()
         {
             return Self::toggle_enabled(index, app);
@@ -360,12 +460,13 @@ impl LibraryComponent {
 
     fn handle_url_radio_mouse_down(&mut self, pos: Position, app: &mut App) -> Vec<Effect> {
         app.focus.focus(&app.library.f_url_list);
-        let idx = pos.y.saturating_sub(self.layout.base_url_area.y + 1) as usize + app.library.url_list_offset();
+        let idx = pos.y.saturating_sub(self.layout.base_url_radio_group.y) as usize + app.library.url_list_offset();
         // if we're over a radio button, click it without changing list selection
-        if (1..=3).contains(&pos.x.saturating_sub(self.layout.base_url_area.x)) {
+        if (1..=3).contains(&pos.x.saturating_sub(self.layout.base_url_radio_group.x)) {
             return Self::update_base_url(idx, app);
         } else {
             app.library.set_url_selected_index(Some(idx));
+            app.focus.focus(&app.library.f_base_url_input);
         }
         Vec::new()
     }
@@ -373,23 +474,107 @@ impl LibraryComponent {
     fn handle_import(&self) -> Vec<Effect> {
         vec![Effect::ShowModal(Modal::FilePicker(vec!["json", "yml", "yaml"]))]
     }
+
+    fn add_new_url_row(&mut self, app: &mut App) {
+        if !app.library.url_add_row() {
+            return;
+        }
+        app.focus.focus(&app.library.f_base_url_input);
+    }
+
+    fn position_cursor_for_focused_input(&self, frame: &mut Frame, app: &App) {
+        match app.library.active_input_field() {
+            Some(LibraryEditorField::Description) => {
+                let Rect { x, y, .. } = self.layout.description;
+                let cols = self
+                    .layout
+                    .truncated_description
+                    .min(app.library.description_text_input().cursor_columns());
+                let pos = Position::new(x + cols as u16, y);
+                frame.set_cursor_position(pos);
+            }
+            Some(LibraryEditorField::BaseUrl) => {
+                let Rect { x, y, .. } = self.layout.base_url_radio_group;
+                let prefix_width = 4;
+                let selected_index = app.library.url_selected_index().unwrap_or(0);
+                let input_y = selected_index + y as usize + app.library.api_list_offset();
+                let cols = app.library.url_text_input().cursor_columns();
+                let pos = Position::new(x + prefix_width + cols as u16, input_y as u16);
+                frame.set_cursor_position(pos);
+            }
+            None => {}
+        }
+    }
+
+    fn track_lost_kv_focus(&self, app: &App) -> Vec<Effect> {
+        // Losing focus will trigger an auto-save for headers if dirty
+        if app.library.kv_state().focus().lost()
+            && app.library.kv_state().is_dirty()
+            && let Some(projection) = app.library.selected_projection()
+        {
+            return vec![Effect::UpdateCatalogHeaders {
+                title: projection.title.clone(),
+                headers: app.library.kv_state().valid_rows(),
+            }];
+        }
+        Vec::new()
+    }
+
+    fn track_lost_input_focus(&self, app: &mut App) -> Vec<Effect> {
+        let (description_lost, base_url_input_lost) = (app.library.f_description_input.lost(), app.library.f_base_url_input.lost());
+        if (description_lost || base_url_input_lost) && app.library.is_dirty() {
+            app.library.set_base_url_err(None);
+            let Some(projection) = app.library.selected_projection() else {
+                return Vec::new();
+            };
+            match projection.validate() {
+                Ok(()) => {
+                    return if description_lost {
+                        vec![Effect::UpdateCatalogDescription {
+                            title: projection.title.clone(),
+                            description: projection.description.to_string(),
+                        }]
+                    } else {
+                        vec![Effect::UpdateCatalogBaseUrls {
+                            title: projection.title.clone(),
+                            base_urls: projection.base_urls.clone(),
+                        }]
+                    };
+                }
+
+                Err(CatalogValidationError::BaseUrlIndex(err)) | Err(CatalogValidationError::BaseUrls(err)) => {
+                    app.library.set_base_url_err(Some(Cow::from(err)));
+                }
+
+                Err(err) => {
+                    app.library.set_message(Some(TransientMessage::new(
+                        Cow::from(format!("{}", err)),
+                        MessageType::Error,
+                        Duration::MAX,
+                    )));
+                }
+            }
+        }
+
+        Vec::new()
+    }
 }
 
 impl Component for LibraryComponent {
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
-        let mut layout = LibraryLayout::from(self.get_preferred_layout(app, rect));
+        self.layout = LibraryLayout::from(self.get_preferred_layout(app, rect));
 
-        self.render_buttons(frame, (layout.import_button, layout.remove_button), app);
-        self.render_api_list(frame, layout.api_list_area, app);
-        self.render_error(frame, layout.errors_area, app);
-        self.render_details(frame, &mut layout, app);
-
-        self.layout = layout;
+        self.render_buttons(frame, app);
+        self.render_api_list(frame, app);
+        self.render_message(frame, app);
+        self.render_details(frame, app);
+        self.position_cursor_for_focused_input(frame, app);
     }
 
     fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
         match msg {
             Msg::ConfirmationModalButtonClicked(button_id) => self.handle_modal_button_click(button_id, app),
+            Msg::ManualEntryModalClosed => self.handle_manual_entry_modal_closed(app),
             Msg::ExecCompleted(outcome) => self.handle_exec_completed(*outcome, app),
             _ => Vec::new(),
         }
@@ -399,30 +584,30 @@ impl Component for LibraryComponent {
         if app.library.kv_state().is_focused() {
             self.kv_view
                 .handle_key_event(app.library.kv_state_mut(), key, Rc::clone(&app.focus));
-            // Losing focus will trigger an auto-save for headers if dirty
-            if app.library.kv_state().focus().lost()
-                && app.library.kv_state().is_dirty()
-                && let Some(projection) = app.library.selected_projection()
-            {
-                return vec![Effect::UpdateCatalogHeaders {
-                    title: projection.title.clone(),
-                    headers: app.library.kv_state().rows().clone(),
-                }];
-            }
-            return Vec::new();
+            return self.track_lost_kv_focus(app);
         }
 
         match key.code {
             KeyCode::Tab => {
                 app.focus.next();
+                return self.track_lost_input_focus(app);
             }
             KeyCode::BackTab => {
                 app.focus.prev();
+                return self.track_lost_input_focus(app);
             }
-            KeyCode::Enter | KeyCode::Char(' ') => {
+            KeyCode::Enter | KeyCode::Char(' ') if app.library.active_input_field().is_none() => {
                 // Import button
                 if app.library.f_import_button.get() {
                     return self.handle_import();
+                }
+                if app.library.f_add_url_button.get() {
+                    self.add_new_url_row(app);
+                    return Vec::new();
+                }
+                if app.library.f_remove_url_button.get() {
+                    app.library.remove_url_row();
+                    return Vec::new();
                 }
                 if let Some(idx) = app.library.api_selected_index() {
                     // Remove button
@@ -449,6 +634,15 @@ impl Component for LibraryComponent {
                     return self.prompt_remove_catalog(app, idx);
                 }
             }
+            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) && app.library.f_url_list_container.get() => {
+                app.library.url_add_row();
+            }
+            KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) && app.library.f_url_list_container.get() => {
+                app.library.remove_url_row();
+            }
+            KeyCode::Char(c) => {
+                app.library.insert_character_for_active_field(c);
+            }
             KeyCode::Up => {
                 if app.library.f_api_list.get() {
                     app.library.api_select_previous();
@@ -462,6 +656,18 @@ impl Component for LibraryComponent {
                 } else if app.library.f_url_list.get() {
                     app.library.url_select_next();
                 }
+            }
+            KeyCode::Right => {
+                app.library.move_cursor_right();
+            }
+            KeyCode::Left => {
+                app.library.move_cursor_left();
+            }
+            KeyCode::Backspace => {
+                app.library.delete_previous_character();
+            }
+            KeyCode::Delete => {
+                app.library.delete_next_character();
             }
             _ => {}
         }
@@ -510,7 +716,7 @@ impl Component for LibraryComponent {
             y: mouse.row,
         };
 
-        if self.layout.kv_area.contains(pos) {
+        if self.layout.kv_editor.contains(pos) {
             if let MouseEventKind::Down(MouseButton::Left) = mouse.kind
                 && !app.library.kv_state().is_focused()
             {
@@ -520,10 +726,9 @@ impl Component for LibraryComponent {
                 .handle_mouse_event(app.library.kv_state_mut(), mouse, Rc::clone(&app.focus));
             return Vec::new();
         }
-        let hit_test_api_list = self.layout.api_list_area.contains(pos);
-        let hit_test_url_radios = self.layout.base_url_area.contains(pos);
+        let hit_test_api_list = self.layout.api_list.contains(pos);
         let maybe_api_list_idx = if hit_test_api_list {
-            Some(pos.y.saturating_sub(self.layout.api_list_area.y + 1) as usize + app.library.api_list_offset())
+            Some(pos.y.saturating_sub(self.layout.api_list.y + 1) as usize + app.library.api_list_offset())
         } else {
             None
         };
@@ -534,26 +739,36 @@ impl Component for LibraryComponent {
                     _ if hit_test_api_list => {
                         return self.handle_api_list_mouse_down(pos, maybe_api_list_idx, app);
                     }
-                    _ if hit_test_url_radios => {
+                    _ if self.layout.base_url_radio_group.contains(pos) => {
                         return self.handle_url_radio_mouse_down(pos, app);
                     }
-                    _ if self.layout.import_button.contains(pos) => {
+                    _ if self.layout.description.contains(pos) => {
+                        app.focus.focus(&app.library.f_description_input);
+                    }
+                    _ if self.layout.add_base_url_button.contains(pos) => {
+                        app.focus.focus(&app.library.f_add_url_button);
+                        self.add_new_url_row(app);
+                    }
+                    _ if self.layout.import_catalog_button.contains(pos) => {
                         app.focus.focus(&app.library.f_import_button);
                         return self.handle_import();
                     }
+                    _ if self.layout.remove_catalog_button.contains(pos) => {
+                        app.focus.focus(&app.library.f_remove_button);
+                        let Some(idx) = app.library.api_selected_index() else {
+                            return Vec::new();
+                        };
+
+                        return self.prompt_remove_catalog(app, idx);
+                    }
+                    _ if self.layout.remove_base_url_button.contains(pos) => {
+                        app.library.remove_url_row();
+                    }
+                    // Autosave when focus is lost
+                    _ if app.library.kv_state().is_focused() => {
+                        return self.track_lost_kv_focus(app);
+                    }
                     () => {}
-                }
-
-                if let Some(idx) = app.library.api_selected_index()
-                    && self.layout.remove_button.contains(pos)
-                {
-                    app.focus.focus(&app.library.f_remove_button);
-                    return self.prompt_remove_catalog(app, idx);
-                }
-
-                if app.library.kv_state().is_focused() {
-                    self.kv_view
-                        .handle_mouse_event(app.library.kv_state_mut(), mouse, Rc::clone(&app.focus));
                 }
             }
             MouseEventKind::Moved | MouseEventKind::Up(MouseButton::Left) => {
@@ -566,33 +781,50 @@ impl Component for LibraryComponent {
     }
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
-        let mut hints = Vec::with_capacity(4);
-
-        if app.library.f_api_list.get() {
-            hints.push(("↑/↓", " Navigate "))
+        if app.library.kv_state().is_focused() {
+            let mut spans = Vec::new();
+            self.kv_view.add_table_hints(&mut spans, &*app.ctx.theme);
+            return spans;
         }
 
-        hints.push(("Ctrl+I", " Import "));
+        let mut hints = Vec::new();
+        if app.library.f_api_list.get() {
+            hints.push(("↑/↓", " Navigate catalogs "));
+        }
+        if app.library.f_url_list_container.get() {
+            hints.push(("↑/↓", " Navigate base URLs "));
+            hints.push(("Ctrl+N", " Add base URL "));
+            hints.push(("Ctrl+D", " Delete base URL "));
+        }
+        if app.library.f_add_url_button.get() {
+            hints.push(("Enter/Space", " Add base URL "));
+        }
+        if app.library.f_remove_url_button.get() && app.library.url_selected_index().is_some() {
+            hints.push(("Enter/Space", " Remove base URL "));
+        }
+        if app.library.f_import_button.get() {
+            hints.push(("Enter/Space", " Import catalog "));
+        }
+
+        hints.push(("Ctrl+I", " Import catalog "));
         if app.library.api_selected_index().is_some() {
-            hints.push(("Ctrl+R", " Remove "));
+            hints.push(("Ctrl+R", " Remove catalog "));
 
             if app.library.f_api_list.get() {
-                hints.push(("Enter/Space", " Toggle enabled "))
+                hints.push(("Enter/Space", " Toggle enabled "));
+            }
+            if app.library.f_remove_button.get() {
+                hints.push(("Enter/Space", " Remove catalog "));
             }
         }
 
-        if let (Some(projection), Some(idx)) = (app.library.selected_projection(), app.library.url_selected_index())
+        if app.library.f_url_list.get()
+            && let Some((projection, idx)) = app.library.selected_projection().zip(app.library.url_selected_index())
             && idx != projection.base_url_index
         {
-            hints.push(("Space/Enter", " select "));
+            hints.push(("Enter/Space", " Set active base URL "));
         }
 
-        let mut spans = theme_helpers::build_hint_spans(&*app.ctx.theme, &hints);
-
-        if app.library.kv_state().is_focused() {
-            self.kv_view.add_table_hints(&mut spans, &*app.ctx.theme);
-        }
-
-        spans
+        theme_helpers::build_hint_spans(&*app.ctx.theme, &hints)
     }
 }

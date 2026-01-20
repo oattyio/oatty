@@ -789,7 +789,12 @@ pub mod messaging {
         workflow::{WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest},
     };
     use serde_json::{Map as JsonMap, Value as JsonValue};
-    use std::{borrow::Cow, fmt::Display, path::PathBuf};
+    use std::{
+        borrow::Cow,
+        fmt::Display,
+        path::PathBuf,
+        time::{Duration, Instant},
+    };
     use url::Url;
     /// Navigation targets within the TUI.
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -829,22 +834,70 @@ pub mod messaging {
         ThemePicker,
         /// Confirmation modal prompting the user to confirm an action.
         Confirmation,
+        /// Manual entry modal for entering values.
+        ManualEntry,
     }
 
     #[derive(Default, Debug, Clone, PartialEq, Eq)]
-    pub enum Severity {
+    pub enum MessageType {
         #[default]
         Info,
+        Success,
         Warning,
         Error,
     }
 
-    impl Display for Severity {
+    impl Display for MessageType {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             match self {
-                Severity::Info => write!(f, "ⓘ Info"),
-                Severity::Warning => write!(f, "⚠ Warning"),
-                Severity::Error => write!(f, "X Error"),
+                MessageType::Info => write!(f, "ⓘ Info"),
+                MessageType::Success => write!(f, "✓ Success"),
+                MessageType::Warning => write!(f, "⚠ Warning"),
+                MessageType::Error => write!(f, "X Error"),
+            }
+        }
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct TransientMessage {
+        pub message: Cow<'static, str>,
+        pub r#type: MessageType,
+        duration: Duration,
+        timestamp: Instant,
+    }
+
+    impl TransientMessage {
+        pub fn new(message: Cow<'static, str>, severity: MessageType, duration: Duration) -> Self {
+            Self {
+                message,
+                r#type: severity,
+                duration,
+                timestamp: Instant::now(),
+            }
+        }
+
+        pub fn is_expired(&self) -> bool {
+            self.timestamp.elapsed() >= self.duration
+        }
+    }
+
+    impl Default for TransientMessage {
+        fn default() -> Self {
+            Self {
+                message: Cow::Borrowed(""),
+                r#type: MessageType::Info,
+                duration: Duration::from_millis(5000),
+                timestamp: Instant::now(),
+            }
+        }
+    }
+
+    impl Display for TransientMessage {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            if !self.is_expired() {
+                write!(f, "{}: {}", self.r#type, self.message)
+            } else {
+                write!(f, "")
             }
         }
     }
@@ -870,8 +923,9 @@ pub mod messaging {
         ReadRemoteFileContents(Url),
         /// List the contents of a directory.
         ListDirectoryContents(PathBuf),
-        /// Parse a RegistryCatalog from the given contents.
-        ImportRegistryCatalog(String),
+        /// Parse a RegistryCatalog from the given contents
+        ///  and optional command prefix override
+        ImportRegistryCatalog(String, Option<String>),
         /// Load MCP plugins from config into `PluginsState`.
         PluginsLoadRequested,
         /// Refresh plugin statuses and health.
@@ -925,6 +979,10 @@ pub mod messaging {
         UpdateCatalogEnabledState { is_enabled: bool, title: Cow<'static, str> },
         /// Update the base URL index of a catalog in the registry.
         UpdateCatalogBaseUrlIndex { base_url_index: usize, title: Cow<'static, str> },
+        /// Update the base URLs of a catalog in the registry.
+        UpdateCatalogBaseUrls { base_urls: Vec<String>, title: Cow<'static, str> },
+        /// Update the description of a catalog in the registry.
+        UpdateCatalogDescription { description: String, title: Cow<'static, str> },
         /// Updates the headers of a catalog in the registry.
         UpdateCatalogHeaders { headers: Vec<EnvRow>, title: Cow<'static, str> },
         /// Remove a catalog from the registry.
@@ -942,6 +1000,8 @@ pub mod messaging {
         ConfirmationModalButtonClicked(usize),
         /// The user has dismissed the confirmation modal
         ConfirmationModalClosed,
+        /// The user has confirmed the removal of a catalog
+        ManualEntryModalClosed,
         /// Copy the current command to the clipboard.
         CopyToClipboard(String),
         /// Periodic UI tick (for example, throbbers).

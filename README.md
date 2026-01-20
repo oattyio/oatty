@@ -1,13 +1,15 @@
 # Oatty CLI (Rust, Experimental)
 
-A schema-driven Oatty CLI with both non-interactive and interactive TUI modes. Commands, arguments, and flags are derived from a pre-built manifest generated at build time from OpenAPI documents.
+A schema-driven CLI + TUI for Oatty APIs. The command surface is loaded at runtime from registry “catalogs” (manifests generated from OpenAPI documents) and can be augmented by MCP plugins.
 
 ## Features
-- Dynamic command registry from a generated manifest (no static command tables at runtime).
-- CLI and TUI supported:
-  - TUI: modern dark theme, search + auto-scrolling command list, inputs with validation, enum cycling, boolean toggles, live Command preview, logs.
-- Auth: `OATTY_API_TOKEN` environment variable.
-- Redaction: Authorization and secret-like values are masked in output.
+- **Schema-driven commands**: command groups, arguments, and flags are derived from registry catalogs (OpenAPI → manifest).
+- **Two interfaces**:
+  - **CLI**: `oatty <group> <command> [flags]`
+  - **TUI**: interactive command palette/browser and result views (`cargo run -p oatty-cli`)
+- **Workflows**: `oatty workflow list|preview|run` (runs local YAML/JSON definitions or workflows bundled in catalogs).
+- **MCP plugins**: optional providers/tools (stdio or HTTP/SSE) that can inject additional commands at runtime.
+- **Security**: sensitive values are redacted in logs/output paths intended for display.
 
 ## Usage
 - Build: `cargo build --workspace`
@@ -15,43 +17,51 @@ A schema-driven Oatty CLI with both non-interactive and interactive TUI modes. C
 - CLI examples:
   - `cargo run -p oatty-cli -- apps list`
   - `cargo run -p oatty-cli -- apps info my-app`
-  - `cargo run -p oatty-cli -- apps create --name demo`
-  - `cargo run -p oatty-cli -- releases list my-app`
+  - `cargo run -p oatty-cli -- workflow list`
+  - `cargo run -p oatty-cli -- workflow preview --file workflows/create_app_and_db.yaml`
 
-### TUI Controls
-- Search: type to filter (Esc clears); cursor indicates where typing goes.
-- Commands: Up/Down selects; auto-scroll keeps selection visible; Enter focuses Inputs.
-- Inputs: required args first, then flags; cursor and subtle highlight mark the active field.
-  - Booleans: Space toggles [ ]/[x].
-  - Enums: Left/Right cycles allowed values; defaults applied from schema.
-- Run: Enter; Help: Ctrl+H; Tab/Shift-Tab cycles focus; Quit: Ctrl+C.
-  - Copy command to clipboard: Ctrl+Y.
+Note: available commands depend on which registry catalogs and MCP plugins are configured/enabled.
 
-## Architecture
-- Registry (manifest → commands): at build time, the schema is converted into a compact JSON manifest; at runtime, the registry deserializes this manifest to expose commands (e.g., `apps list`, `users apps:list`).
-- CLI: loads registry and builds Clap tree; parses inputs; builds and sends requests (or ``).
-- TUI: Ratatui + Crossterm; state (app.rs), rendering (ui.rs), CLI preview (preview.rs), theme (ui/theme).
-- API: minimal reqwest client with headers, timeouts, and auth precedence.
-- Util: redaction helpers.
+### First-time: import a registry catalog
+If you have no catalogs configured yet, the fastest way to get started is via the TUI:
 
-## Environment
-- `OATTY_API_TOKEN`: Bearer token for API requests.
-- `OATTY_LOG`: set log level for tracing output (`error`, `warn`, `info` [default], `debug`, `trace`).
+1. Run `cargo run -p oatty-cli`.
+2. In the Library view, import a local OpenAPI document (e.g., `schemas/samples/render-public-api.json`) or a URL.
+3. Accept the default command prefix (or enter your own).
+4. The registry configuration is saved to `~/.config/oatty/registry.json` and manifests are stored under `~/.config/oatty/catalogs/`.
+
+## Architecture (high level)
+- **Registry** (`crates/registry`): loads registry catalogs from `~/.config/oatty/registry.json` and reads per-catalog manifest files (typically `~/.config/oatty/catalogs/*.bin`).
+- **MCP** (`crates/mcp`): loads `~/.config/oatty/mcp.json`, manages plugin lifecycles, and can inject MCP tool commands into the registry at runtime.
+- **CLI** (`crates/cli`): builds a Clap tree from the registry, routes `workflow` commands, and executes HTTP/MCP commands.
+- **TUI** (`crates/tui`): interactive UI built on Ratatui/Crossterm; includes in-app help and log panes.
+- **Engine** (`crates/engine`): workflow parsing and execution utilities used by `oatty workflow ...`.
+
+## Environment & Config
+- `OATTY_API_TOKEN`: Bearer token for API requests (used by the HTTP client).
+- `OATTY_LOG`: tracing level for stderr logs in CLI mode (`error`, `warn`, `info` [default], `debug`, `trace`).
+- `TUI_THEME`: theme override for the TUI (`dracula`, `dracula_hc`, `nord`, `nord_hc`).
+- `MCP_CONFIG_PATH`: overrides MCP config path (default: `~/.config/oatty/mcp.json`).
+- `REGISTRY_CONFIG_PATH`: overrides registry config path (default: `~/.config/oatty/registry.json`).
+- `REGISTRY_CATALOGS_PATH`: overrides the directory where catalog manifest files are stored (default: `~/.config/oatty/catalogs`).
+- `INDEX_PATH`: overrides the local search index path (default: `~/.config/oatty/tools`).
 
 ### Logging behavior
-- When running the TUI (no subcommands), tracing output to stderr is silenced while the TUI is active to prevent overlaying the UI. Logs from MCP plugins and internal components are routed to in-app log panes instead.
-- When running in CLI mode (with subcommands), logs follow `OATTY_LOG` and are written to stderr as usual.
+- TUI mode silences tracing output to stderr while the UI is active to prevent overlaying the terminal UI; logs are routed into in-app panes where applicable.
+- CLI mode writes logs to stderr as usual.
 
 ## Development
-- Workspace: `cli`, `tui`, `registry`, `engine`, `api`, `util`, `registry-gen`.
-- Build all: `cargo build --workspace` (generates and embeds the manifest)
-- Test all: `cargo test --workspace`
-- Lint: `cargo clippy --workspace -- -D warnings`
-- Format: `cargo fmt --all`
-### Build-time manifest
-- Source schema: OpenAPI documents under `schemas/samples/`
-- Generator crate: `crates/registry-gen` (library)
-- Build script: `crates/registry/build.rs` writes `OUT_DIR/registry-manifest.json`
+- Toolchain: `rust-toolchain.toml` pins the project to Rust `stable`.
+- Workspace crates: `cli`, `tui`, `registry`, `registry-gen`, `engine`, `api`, `util`, `types`, `mcp`, `agent`.
+- Common commands:
+  - Build: `cargo build --workspace`
+  - Test: `cargo test --workspace`
+  - Lint: `cargo clippy --workspace -- -D warnings`
+  - Format: `cargo fmt --all`
+
+### Registry catalogs (manifests)
+- Generator crate: `crates/registry-gen` (`oatty-registry-gen`) can derive a manifest from OpenAPI documents.
+- At runtime, the registry reads catalog manifests from paths referenced in `~/.config/oatty/registry.json`.
 
 ## Registry Generator (Library)
 
@@ -77,9 +87,7 @@ fn main() -> anyhow::Result<()> {
     let workflows = Some(PathBuf::from("workflows"));
     let output = PathBuf::from("target/manifest.bin");
     write_manifest(
-        vec![ManifestInput {
-            input: schema,
-        }],
+        ManifestInput::new(Some(schema), None, None),
         workflows,
         output,
     )?;
@@ -98,9 +106,7 @@ fn main() -> anyhow::Result<()> {
     let workflows = Some(PathBuf::from("workflows"));
     let output = PathBuf::from("target/manifest.json");
     write_manifest_json(
-        vec![ManifestInput {
-            input: schema,
-        }],
+        ManifestInput::new(Some(schema), None, None),
         workflows,
         output,
     )?;
@@ -111,11 +117,12 @@ fn main() -> anyhow::Result<()> {
 Derive commands in-memory from an OpenAPI document:
 
 ```rust
-use oatty_registry_gen::openapi::derive_commands_from_openapi;
+use oatty_registry_gen::openapi::{derive_commands_from_openapi, derive_vendor_from_document};
 
 fn load_commands(openapi_json: &str) -> anyhow::Result<Vec<oatty_types::CommandSpec>> {
     let document: serde_json::Value = serde_json::from_str(openapi_json)?;
-    let cmds = derive_commands_from_openapi(&document)?;
+    let vendor = derive_vendor_from_document(&document);
+    let cmds = derive_commands_from_openapi(&document, &vendor)?;
     Ok(cmds)
 }
 ```
@@ -131,25 +138,25 @@ flowchart LR
   end
 
   subgraph Registry
-    S[OpenAPI Document] --> D[Derive Commands/Args/Flags]
-    D --> C[Clap Tree]
+    S[OpenAPI Document] --> D[Derive Manifest (registry-gen)]
+    D --> M[Catalog Manifest (.bin)]
+    M --> R[Registry Catalogs]
+    R --> C[Clap Tree]
   end
 
   TUI -->|Search/Select| C
-  TUI -->|Inputs| CMD_PREV[Live Command Preview]
-  TUI -->|Run| RUN[Run]
+  TUI -->|Compose| RUN[Execute]
   CLI -->|Match| C
-  CLI -->|Build Request| REQ[Build reqwest Request]
-  RUN --> REQ
+  CLI -->|Execute| RUN
 
-  REQ -->| or DEBUG| OUT1[Print structured request]
-  REQ -->|execute| HTTP[Oatty API]
+  RUN -->|HTTP| HTTP[Oatty API]
+  RUN -->|MCP| MCP[MCP Tool]
   HTTP --> OUT2[Status + Body]
+  MCP --> OUT2
 
   subgraph Policy
     R[Redact secrets in output]
   end
-  OUT1 --> R
   OUT2 --> R
   R --> LOGS[Logs Panel / stdout]
 ```
@@ -159,11 +166,11 @@ flowchart LR
 - Network calls go through reqwest with default timeouts.
 
 ## Status
-- Schema-driven registry, CLI router, and TUI are implemented. Engine (workflows) is a placeholder. Some HTTP client behaviors (retries/backoff) are minimal.
+- Schema-driven registry, CLI router, TUI, MCP plugin engine, and workflow support are implemented. Some HTTP client behaviors (retries/backoff) are minimal.
 
 ## Theme Architecture
 - Location: `crates/tui/src/ui/theme` (roles, helpers, Dracula/Nord themes)
-- Docs: `plans/THEME.md` (Dracula mapping, usage, and guidelines)
+- Docs: `specs/THEME.md` (theme mapping, usage, and guidelines)
 - Select theme via env var `TUI_THEME`:
   - `dracula` (default), `dracula_hc`
   - `nord`, `nord_hc`

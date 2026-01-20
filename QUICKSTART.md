@@ -4,7 +4,7 @@ Get up and running with the Oatty CLI (Rust) in 5 minutes.
 
 ## Prerequisites
 
-- **Rust** (nightly toolchain) - Install from [rustup.rs](https://rustup.rs/)
+- **Rust** (stable toolchain) - Install from [rustup.rs](https://rustup.rs/)
 - **Oatty API Token** - Obtain from your API provider's dashboard
 
 ## Setup (Automated)
@@ -29,7 +29,7 @@ If you prefer manual setup:
 
 ```bash
 # 1. Clone and navigate
-cd /Users/jwilaby/Documents/dev/next-gen-cli
+cd path/to/next-gen-cli
 
 # 2. Create environment file
 cp .env.example .env
@@ -51,6 +51,13 @@ Launch the Terminal UI:
 ```bash
 cargo run -p oatty-cli
 ```
+
+If no registry catalogs are configured yet, import one using the in-app Library:
+
+1. Open the Library view (look for “Import” in the UI hints).
+2. Import a local OpenAPI document (e.g., `schemas/samples/render-public-api.json`) or a URL.
+3. Accept the default command prefix (or enter your own).
+4. The TUI saves the registry configuration under `~/.config/oatty/registry.json`.
 
 **TUI Controls:**
 
@@ -218,7 +225,6 @@ OATTY_API_TOKEN=your-api-key-here
 # Optional
 OATTY_LOG=debug              # Log level
 TUI_THEME=dracula             # Theme
-DEBUG=1                       # Debug mode
 RUST_BACKTRACE=1              # Show backtraces
 ```
 
@@ -297,7 +303,7 @@ make pre-commit
 
 ### Build errors
 
-→ Make sure you're using Rust nightly: `rustup show`
+→ Make sure you're using the repo toolchain: `rustup show`
 
 ### Slow compilation
 

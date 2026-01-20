@@ -20,7 +20,6 @@ help: ## Show this help message
 	@echo "  OATTY_API_TOKEN  - Your API token (required for API calls)"
 	@echo "  OATTY_LOG       - Log level: error|warn|info|debug|trace (default: info)"
 	@echo "  TUI_THEME        - Theme: dracula|dracula_hc|nord|nord_hc (default: dracula)"
-	@echo "  DEBUG            - Enable debug mode: 1|0"
 
 setup: ## Run initial setup script
 	@echo "$(BLUE)==> Running development setup...$(NC)"

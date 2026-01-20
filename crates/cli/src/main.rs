@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use clap::ArgMatches;
+use indexmap::IndexSet;
 use oatty_agent::Indexer;
 use oatty_api::OattyClient;
 use oatty_engine::workflow::document::{build_runtime_catalog, runtime_workflow_from_definition};
@@ -17,16 +18,16 @@ use oatty_engine::{
 use oatty_mcp::{PluginEngine, config::load_config};
 use oatty_registry::{CommandRegistry, build_clap};
 use oatty_types::{
-    ExecOutcome, RuntimeWorkflow,
-    command::CommandExecution,
+    EnvVar, ExecOutcome, RuntimeWorkflow,
+    command::{CommandExecution, CommandFlag, CommandSpec},
     workflow::{WorkflowDefinition, validate_candidate_value},
 };
 use oatty_util::{
-    DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, has_meaningful_value, resolve_path,
+    DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, build_path, has_meaningful_value,
     value_contains_secret, workflow_input_uses_history,
 };
 use reqwest::Method;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Number, Value, json};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tracing::warn;
@@ -62,8 +63,7 @@ impl Write for GatedStderr {
 ///
 /// # Behavior
 /// - If no subcommands are provided, launches the TUI interface
-/// - If workflow subcommands are provided (when FEATURE_WORKFLOWS=1), handles
-///   workflow operations
+/// - If workflow subcommands are provided, handles workflow operations
 /// - Otherwise, executes the specified Oatty API command
 ///
 /// # Returns
@@ -414,8 +414,8 @@ fn format_step_status(status: StepStatus) -> &'static str {
 /// 2. Looks up the command specification in the registry
 /// 3. Collects positional arguments and flags from the command line
 /// 4. Builds the HTTP request body from flags
-/// 5. Constructs and executes the HTTP request to the Oatty API
-/// 7. Outputs the response to stdout
+/// 5. Constructs and executes the HTTP request or MCP tool invocation
+/// 7. Outputs the response to stdout (with JSON pretty-printing when requested)
 ///
 /// # Returns
 /// Returns `Result<()>` where `Ok(())` indicates successful command execution
@@ -432,55 +432,24 @@ fn format_step_status(status: StepStatus) -> &'static str {
 /// oatty config config:set KEY=value
 /// ```
 async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches, plugin_engine: Arc<PluginEngine>) -> Result<()> {
-    // format is <group> <qualified subcommand> e.g. apps app:create
-    let (group, sub) = matches.subcommand().context("expected a resource group subcommand")?;
-
-    let (cmd_name, cmd_matches) = sub.subcommand().context("expected a command under the group")?;
+    let (group, group_matches) = extract_group_and_matches(matches)?;
+    let (command_name, command_matches) = extract_command_and_matches(group_matches)?;
 
     if group == "workflow" {
-        return handle_workflow_command(Arc::clone(&registry), matches, cmd_name, cmd_matches);
+        return handle_workflow_command(Arc::clone(&registry), matches, command_name, command_matches);
     }
 
-    let (cmd_spec, base_url, headers) = {
-        let registry_lock = registry.lock().expect("could not obtain lock on registry");
-        let cmd_spec = registry_lock.find_by_group_and_cmd(group, cmd_name)?;
-        let base_url = registry_lock
-            .resolve_base_url_for_command(&cmd_spec)
-            .ok_or(anyhow!("base url not defined for this command"))?;
-        let headers = registry_lock
-            .resolve_headers_for_command(&cmd_spec)
-            .ok_or(anyhow!("headers not defined for this command"))?
-            .clone();
-        (cmd_spec, base_url, headers)
-    };
+    let (command_spec, base_url, headers) = resolve_command_context(&registry, group, command_name)?;
+    let positional_values = collect_positional_values(&command_spec, command_matches);
+    let request_body = collect_request_body(&command_spec, command_matches)?;
+    let body_value = (!request_body.is_empty()).then_some(Value::Object(request_body.clone()));
+    let json_output = matches.get_flag("json");
 
-    // Collect positional values
-    let mut pos_values: HashMap<String, String> = HashMap::new();
-    for pa in &cmd_spec.positional_args {
-        if let Some(val) = cmd_matches.get_one::<String>(&pa.name) {
-            pos_values.insert(pa.name.clone(), val.to_string());
-        }
-    }
-
-    // Collect flags as body fields
-    let mut body = Map::new();
-    for f in &cmd_spec.flags {
-        if f.r#type == "boolean" {
-            if cmd_matches.get_flag(&f.name) {
-                body.insert(f.name.clone(), Value::Bool(true));
-            }
-        } else if let Some(val) = cmd_matches.get_one::<String>(&f.name) {
-            body.insert(f.name.clone(), Value::String(val.to_string()));
-        }
-    }
-
-    let body_value = (!body.is_empty()).then_some(Value::Object(body.clone()));
-
-    match cmd_spec.execution() {
+    match command_spec.execution() {
         CommandExecution::Http(http) => {
             let client = OattyClient::new(&base_url, &headers)?;
             let method = Method::from_bytes(http.method.as_bytes())?;
-            let path = resolve_path(&http.path, &pos_values);
+            let path = build_request_path(&http.path, &positional_values);
             let mut builder = client.request(method, &path);
             if let Some(ref b) = body_value {
                 builder = builder.json(b);
@@ -489,18 +458,22 @@ async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches
             let resp = builder.send().await?;
             let status = resp.status();
             let text = resp.text().await.unwrap_or_default();
-            println!("{}\n{}", status, text);
+            if json_output {
+                output_json_or_text(&text)?;
+            } else {
+                println!("{}\n{}", status, text);
+            }
             Ok(())
         }
         CommandExecution::Mcp(_) => {
-            let mut arguments = body;
-            for pa in &cmd_spec.positional_args {
-                if let Some(value) = pos_values.get(&pa.name) {
-                    arguments.insert(pa.name.clone(), Value::String(value.clone()));
+            let mut arguments = request_body;
+            for positional_argument in &command_spec.positional_args {
+                if let Some(value) = positional_values.get(&positional_argument.name) {
+                    arguments.insert(positional_argument.name.clone(), Value::String(value.clone()));
                 }
             }
 
-            let outcome = plugin_engine.execute_tool(&cmd_spec, &arguments, 0).await?;
+            let outcome = plugin_engine.execute_tool(&command_spec, &arguments, 0).await?;
             match outcome {
                 ExecOutcome::Mcp { log_entry, .. } => println!("{}", log_entry),
                 ExecOutcome::Log(log) => println!("{}", log),
@@ -509,6 +482,122 @@ async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches
             Ok(())
         }
     }
+}
+
+/// Extract the CLI group and its matches from the parsed arguments.
+fn extract_group_and_matches(matches: &ArgMatches) -> Result<(&str, &ArgMatches)> {
+    matches.subcommand().context("expected a resource group subcommand")
+}
+
+/// Extract the command name and its matches from a group-level `ArgMatches`.
+fn extract_command_and_matches(group_matches: &ArgMatches) -> Result<(&str, &ArgMatches)> {
+    group_matches.subcommand().context("expected a command under the group")
+}
+
+/// Resolve the command specification and HTTP metadata for the requested command.
+fn resolve_command_context(
+    registry: &Arc<Mutex<CommandRegistry>>,
+    group: &str,
+    command_name: &str,
+) -> Result<(CommandSpec, String, IndexSet<EnvVar>)> {
+    let registry_lock = registry.lock().expect("could not obtain lock on registry");
+    let command_spec = registry_lock.find_by_group_and_cmd(group, command_name)?;
+    let base_url = registry_lock
+        .resolve_base_url_for_command(&command_spec)
+        .ok_or(anyhow!("base url not defined for this command"))?;
+    let headers = registry_lock
+        .resolve_headers_for_command(&command_spec)
+        .ok_or(anyhow!("headers not defined for this command"))?
+        .clone();
+    Ok((command_spec, base_url, headers))
+}
+
+/// Collect positional argument values from the parsed command matches.
+fn collect_positional_values(command_spec: &CommandSpec, command_matches: &ArgMatches) -> HashMap<String, String> {
+    let mut positional_values: HashMap<String, String> = HashMap::new();
+    for positional_argument in &command_spec.positional_args {
+        if let Some(value) = command_matches.get_one::<String>(&positional_argument.name) {
+            positional_values.insert(positional_argument.name.clone(), value.to_string());
+        }
+    }
+    positional_values
+}
+
+/// Collect request body fields from the parsed command matches.
+fn collect_request_body(command_spec: &CommandSpec, command_matches: &ArgMatches) -> Result<Map<String, Value>> {
+    let mut request_body = Map::new();
+    for flag in &command_spec.flags {
+        if flag.r#type == "boolean" {
+            if command_matches.get_flag(&flag.name) {
+                request_body.insert(flag.name.clone(), Value::Bool(true));
+            }
+        } else if let Some(raw_value) = command_matches.get_one::<String>(&flag.name) {
+            let parsed_value = parse_flag_value(flag, raw_value)?;
+            request_body.insert(flag.name.clone(), parsed_value);
+        }
+    }
+    Ok(request_body)
+}
+
+/// Parse a flag value into the appropriate JSON type based on its schema metadata.
+fn parse_flag_value(flag: &CommandFlag, raw_value: &str) -> Result<Value> {
+    match flag.r#type.as_str() {
+        "integer" => {
+            let parsed = raw_value
+                .parse::<i64>()
+                .with_context(|| format!("invalid integer value for --{}", flag.name))?;
+            Ok(Value::Number(Number::from(parsed)))
+        }
+        "number" => {
+            let parsed = raw_value
+                .parse::<f64>()
+                .with_context(|| format!("invalid number value for --{}", flag.name))?;
+            Number::from_f64(parsed)
+                .map(Value::Number)
+                .ok_or_else(|| anyhow!("invalid number value for --{}", flag.name))
+        }
+        "boolean" => {
+            let parsed = raw_value
+                .parse::<bool>()
+                .with_context(|| format!("invalid boolean value for --{}", flag.name))?;
+            Ok(Value::Bool(parsed))
+        }
+        "object" => {
+            let parsed: Value = serde_json::from_str(raw_value).with_context(|| format!("invalid JSON object for --{}", flag.name))?;
+            if parsed.is_object() {
+                Ok(parsed)
+            } else {
+                Err(anyhow!("expected JSON object for --{}", flag.name))
+            }
+        }
+        "array" => {
+            let parsed: Value = serde_json::from_str(raw_value).with_context(|| format!("invalid JSON array for --{}", flag.name))?;
+            if parsed.is_array() {
+                Ok(parsed)
+            } else {
+                Err(anyhow!("expected JSON array for --{}", flag.name))
+            }
+        }
+        _ => Ok(Value::String(raw_value.to_string())),
+    }
+}
+
+/// Build a percent-encoded request path for positional arguments.
+fn build_request_path(template: &str, positional_values: &HashMap<String, String>) -> String {
+    let mut variables = Map::new();
+    for (key, value) in positional_values {
+        variables.insert(key.clone(), Value::String(value.clone()));
+    }
+    build_path(template, &variables)
+}
+
+/// Print a JSON response body when possible, falling back to raw text.
+fn output_json_or_text(text: &str) -> Result<()> {
+    match serde_json::from_str::<Value>(text) {
+        Ok(value) => println!("{}", serde_json::to_string_pretty(&value)?),
+        Err(_) => println!("{}", text),
+    }
+    Ok(())
 }
 
 fn handle_workflow_command(
@@ -653,9 +742,11 @@ fn run_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, matche
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indexmap::IndexMap;
     use oatty_engine::{
         ArgumentPrompt, BindingFailure, BindingSource, MissingReason, ProviderResolutionEvent, ProviderResolutionSource, SkipDecision,
     };
+    use oatty_types::workflow::{RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault, WorkflowInputDefinition};
     use serde_json::json;
 
     fn missing_reason(message: &str, path: Option<&str>) -> MissingReason {
@@ -778,5 +869,68 @@ mod tests {
         assert_eq!(format_step_status(StepStatus::Succeeded), "succeeded");
         assert_eq!(format_step_status(StepStatus::Failed), "failed");
         assert_eq!(format_step_status(StepStatus::Skipped), "skipped");
+    }
+
+    fn history_enabled_run_state() -> WorkflowRunState {
+        let mut inputs = IndexMap::new();
+        inputs.insert(
+            "region".into(),
+            WorkflowInputDefinition {
+                default: Some(WorkflowInputDefault {
+                    from: WorkflowDefaultSource::History,
+                    value: None,
+                }),
+                ..Default::default()
+            },
+        );
+        let workflow = RuntimeWorkflow {
+            identifier: "deploy-app".into(),
+            title: None,
+            description: None,
+            inputs,
+            steps: Vec::new(),
+        };
+        WorkflowRunState::new(workflow)
+    }
+
+    fn history_key_for(state: &WorkflowRunState) -> HistoryKey {
+        HistoryKey::workflow_input(DEFAULT_HISTORY_PROFILE, state.workflow.identifier.clone(), "region")
+    }
+
+    #[test]
+    fn seed_history_defaults_for_cli_populates_run_context() {
+        let mut run_state = history_enabled_run_state();
+        let store = InMemoryHistoryStore::new();
+        let key = history_key_for(&run_state);
+        store.insert_value(key, json!("iad")).unwrap();
+
+        assert!(run_state.run_context.inputs.get("region").is_none());
+        seed_history_defaults_for_cli(&mut run_state, &store);
+        assert_eq!(run_state.run_context.inputs.get("region"), Some(&json!("iad")));
+    }
+
+    #[test]
+    fn persist_history_after_cli_run_saves_non_secret_values() {
+        let store = InMemoryHistoryStore::new();
+        let mut run_state = history_enabled_run_state();
+        run_state.run_context.inputs.insert("region".into(), json!("iad"));
+
+        persist_history_after_cli_run(&run_state, &store);
+        let key = history_key_for(&run_state);
+        let stored = store.get_latest_value(&key).unwrap().expect("value persisted");
+        assert_eq!(stored.value, json!("iad"));
+    }
+
+    #[test]
+    fn persist_history_after_cli_run_skips_secret_values() {
+        let store = InMemoryHistoryStore::new();
+        let mut run_state = history_enabled_run_state();
+        let secret = json!("-----BEGIN PRIVATE KEY----- sensitive");
+        assert!(value_contains_secret(&secret));
+        run_state.run_context.inputs.insert("region".into(), secret);
+
+        persist_history_after_cli_run(&run_state, &store);
+        let key = history_key_for(&run_state);
+        assert!(store.get_latest_value(&key).unwrap().is_none());
     }
 }

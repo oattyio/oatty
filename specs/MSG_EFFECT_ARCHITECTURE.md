@@ -198,6 +198,13 @@ pub enum Cmd {
 Because modal routing mutates the app inside `run_from_effects`, the doc strings
 for these effects should note that they do not produce commands.
 
+## Source Alignment
+
+- **Message/Effect models** are defined in `crates/types/src/lib.rs`, so the enums shown above mirror the exact data structures used across the workspace.
+- **App::update and component handlers** live in `crates/tui/src/app.rs` and the various `crates/tui/src/ui/components/*` modules; they follow the local-first, effect-returning patterns described in this spec.
+- **Command runner** and side-effect orchestration happen inside `crates/tui/src/cmd.rs`, where `run_from_effects` and `run_cmds` convert intents into I/O.
+- **Runtime loop** (`crates/tui/src/ui/runtime.rs`) polls input, timers, and pending command handles, then feeds results back through `App::update`, completing the flow documented here.
+
 ## Intentional Deviations
 
 ### Palette execution

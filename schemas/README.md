@@ -3,7 +3,10 @@
 This folder holds OpenAPI documents used for command generation.
 
 Sample OpenAPI specs live under `schemas/samples/` and are used by the registry
-build script during development. Drop additional `.json`, `.yaml`, or `.yml`
-files into that directory to include them in the manifest build.
+generation pipeline during development.
+
+Ways to turn schemas into CLI commands:
+- Import an OpenAPI document from the TUI Library view; it generates and saves a registry catalog.
+- Programmatically generate a catalog/manifest using the `oatty-registry-gen` crate.
 
 Legacy Heroku schemas have been moved to `legacy/`.

@@ -8,7 +8,7 @@ use crate::ui::components::workflows::input::state::{InputStatus, WorkflowInputR
 use crate::ui::components::workflows::view_utils::style_for_role;
 use crate::ui::theme::{
     roles::Theme,
-    theme_helpers::{self as th, ButtonRenderOptions},
+    theme_helpers::{self as th, ButtonRenderOptions, ButtonType},
 };
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use oatty_engine::WorkflowRunState;
@@ -651,10 +651,10 @@ fn render_footer(frame: &mut Frame, layout: WorkflowInputLayout, app: &App) {
         .map(|state| (state.f_cancel_button.get(), state.f_run_button.get()))
         .unwrap_or((false, false));
 
-    let cancel_options = ButtonRenderOptions::new(true, cancel_focused, cancel_focused, Borders::ALL, false);
+    let cancel_options = ButtonRenderOptions::new(true, cancel_focused, cancel_focused, Borders::ALL, ButtonType::Secondary);
     th::render_button(frame, layout.cancel_button_area, "Cancel", theme, cancel_options);
 
-    let run_options = ButtonRenderOptions::new(run_enabled, run_focused, run_focused, Borders::ALL, true);
+    let run_options = ButtonRenderOptions::new(run_enabled, run_focused, run_focused, Borders::ALL, ButtonType::Primary);
     th::render_button(frame, layout.run_button_area, "Run", theme, run_options);
 
     let unresolved = app.workflows.unresolved_item_count();

@@ -9,10 +9,9 @@ Complete this checklist to get your development environment ready.
   - If not: Install from [rustup.rs](https://rustup.rs/)
   - Run: `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 
-- [ ] **Nightly toolchain** - Run `rustup show` to verify
+- [ ] **Rust toolchain** - Run `rustup show` to verify
 
-  - If not installed: Run `rustup toolchain install nightly`
-  - The project will auto-select nightly via `rust-toolchain.toml`
+  - The project will auto-select the toolchain via `rust-toolchain.toml`
 
 - [ ] **VS Code or Cursor installed**
   - Download VS Code: https://code.visualstudio.com/
@@ -371,7 +370,7 @@ make help
 
 ### Tests fail
 
-→ Check that you're using nightly: `rustup show`
+→ Check that you're using the repo toolchain: `rustup show`
 
 ---
 

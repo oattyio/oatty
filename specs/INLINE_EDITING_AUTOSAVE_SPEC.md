@@ -164,3 +164,9 @@ Rationale: prevent visual churn during operational tasks while preserving inspec
 - **Autosave is default, explicit cancel is required**
 
 This contract must remain consistent across all screens to preserve user trust and muscle memory.
+
+## Source Alignment
+
+- **Inline editors** reuse the shared key/value editor modules in `crates/tui/src/ui/components/common/key_value_editor/`, which already implement the Tab/Shift+Tab commit semantics, inline validation, and optimistic autosave patterns described above.
+- **Text editing primitives** come from `crates/tui/src/ui/components/common/text_input.rs`, ensuring caret management, selection behavior, and cursor movement match the guidance for both navigation and edit modes.
+- **Library details and other master–detail panes** integrate these editors via `crates/tui/src/ui/components/library/`, so the copy in this document maps directly to the existing focus handling (`state.rs`) and event routing (`library_component.rs`).

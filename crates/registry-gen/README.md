@@ -28,16 +28,15 @@ The primary functions, `write_manifest` and `write_manifest_json`, read OpenAPI
 documents, generate command specifications, and write them to a manifest file.
 
 ```rust
-use oatty_registry_gen::{io::ManifestInput, write_manifest};
 use std::path::PathBuf;
+use oatty_registry_gen::{io::ManifestInput, write_manifest};
 
 fn main() -> anyhow::Result<()> {
-    let input = ManifestInput {
-        input: PathBuf::from("schemas/samples/render-public-api.json"),
-    };
+    let schema = PathBuf::from("schemas/samples/render-public-api.json");
+    let input = ManifestInput::new(Some(schema), None, None);
     let workflows = Some(PathBuf::from("workflows"));
     let output = PathBuf::from("commands.bin");
-    write_manifest(vec![input], workflows, output)?;
+    write_manifest(input, workflows, output)?;
     Ok(())
 }
 ```
@@ -45,8 +44,8 @@ fn main() -> anyhow::Result<()> {
 This will:
 1. Read the OpenAPI document from `schemas/samples/render-public-api.json`.
 2. Parse it to generate `CommandSpec` entries.
-3. Add synthetic workflow commands if `FEATURE_WORKFLOWS` is enabled.
-4. Serialize the commands to `commands.bin` using `postcard`.
+3. Load workflows from the optional workflow root directory (YAML/JSON) and embed them into the manifest.
+4. Serialize the manifest to `commands.bin` using `postcard`.
 5. Create parent directories for the output file if they don't exist.
 
 ### Command Specification Structure

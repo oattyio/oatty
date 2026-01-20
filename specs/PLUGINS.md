@@ -199,6 +199,13 @@ experience. The specification reflects the multi-crate implementation that ships
 - **Logs Drawer:** `PluginsLogsComponent` displays live ring-buffer entries with follow mode,
   search, OSC52 copy helpers, and export options.
 
+## Source Alignment
+
+- **Configuration loader**: `crates/mcp/src/config/` handles interpolation, validation, and persistence of `mcp.json`, exactly matching the schema described above.
+- **Plugin runtime**: `crates/mcp/src/plugin/engine.rs`, `lifecycle.rs`, and `registry.rs` implement autostart, health checks, registry injection, and log/audit pipelines; `crates/mcp/src/logging/` writes the rotating JSONL audit file.
+- **Provider bridge**: `crates/mcp/src/provider/` adapts MCP tools to the shared `ValueProvider` trait so workflows and the palette can call plugins without bespoke glue.
+- **TUI components**: Search, table, details, logs, and editor views live under `crates/tui/src/ui/components/plugins/`, ensuring the keyboard/visual patterns in this spec match the shipping UI.
+
   ```text
   ┌ Logs — github        [f] follow  [/] search  [Y] all ┐
   │ [12:41:03] info handshake ok (180ms)                 │

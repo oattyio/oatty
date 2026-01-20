@@ -1,6 +1,6 @@
 use crate::ui::components::common::TextInputState;
+use crate::ui::components::common::manual_entry_modal::state::ManualEntryState;
 use crate::ui::components::table::ResultsTableState;
-use crate::ui::components::workflows::collector::manual_entry::ManualEntryState;
 use crate::ui::components::workflows::collector::{CollectorViewState, SelectorStatus, WorkflowSelectorFieldMetadata};
 use crate::ui::components::workflows::input::WorkflowInputViewState;
 use crate::ui::components::workflows::list::WorkflowListState;

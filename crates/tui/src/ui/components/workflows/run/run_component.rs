@@ -13,7 +13,7 @@ use crate::ui::components::{
 };
 use crate::ui::theme::{
     Theme,
-    theme_helpers::{self as th, ButtonRenderOptions, build_hint_spans},
+    theme_helpers::{self as th, ButtonRenderOptions, ButtonType, build_hint_spans},
 };
 use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
@@ -374,12 +374,24 @@ impl RunViewComponent {
         frame.render_widget(footer_block, layout.footer_block_area);
 
         let cancel_enabled = cancel_enabled(run_state.status());
-        let cancel_options = ButtonRenderOptions::new(cancel_enabled, run_state.cancel_button_focus.get(), false, Borders::ALL, false);
+        let cancel_options = ButtonRenderOptions::new(
+            cancel_enabled,
+            run_state.cancel_button_focus.get(),
+            false,
+            Borders::ALL,
+            ButtonType::Secondary,
+        );
         th::render_button(frame, layout.cancel_button_area, "Cancel", theme, cancel_options);
 
         let pause_enabled = pause_command_for_status(run_state.status()).is_some();
         let pause_label = pause_button_label(run_state.status());
-        let pause_options = ButtonRenderOptions::new(pause_enabled, run_state.pause_button_focus.get(), false, Borders::ALL, true);
+        let pause_options = ButtonRenderOptions::new(
+            pause_enabled,
+            run_state.pause_button_focus.get(),
+            false,
+            Borders::ALL,
+            ButtonType::Primary,
+        );
         th::render_button(frame, layout.pause_button_area, pause_label, theme, pause_options);
 
         let view_details_enabled = run_state.steps_table.table_state.selected().is_some();
@@ -388,12 +400,18 @@ impl RunViewComponent {
             run_state.view_details_button_focus.get(),
             false,
             Borders::ALL,
-            false,
+            ButtonType::Secondary,
         );
         th::render_button(frame, layout.view_details_button_area, "View Details", theme, view_details_options);
 
         let done_enabled = run_state.status() == RunExecutionStatus::Succeeded;
-        let done_options = ButtonRenderOptions::new(done_enabled, run_state.done_button_focus.get(), false, Borders::ALL, false);
+        let done_options = ButtonRenderOptions::new(
+            done_enabled,
+            run_state.done_button_focus.get(),
+            false,
+            Borders::ALL,
+            ButtonType::Secondary,
+        );
         th::render_button(frame, layout.done_button_area, "Done", theme, done_options);
 
         let mut line = vec![Span::styled(

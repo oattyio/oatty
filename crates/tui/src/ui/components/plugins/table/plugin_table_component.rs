@@ -1,5 +1,5 @@
 use crate::ui::theme::Theme;
-use crate::ui::theme::theme_helpers::{ButtonRenderOptions, render_button};
+use crate::ui::theme::theme_helpers::{ButtonRenderOptions, ButtonType, render_button};
 use crate::ui::{
     components::plugins::{PluginsTableState, plugin_editor::state::PluginEditViewState},
     theme::theme_helpers,
@@ -203,12 +203,17 @@ impl PluginsTableComponent {
         ];
         for (button_flag, label, button_area, enabled) in &buttons {
             let focused = button_flag.get();
+            let button_type = if *label == "Delete" {
+                ButtonType::Destructive
+            } else {
+                ButtonType::Secondary
+            };
             let options = ButtonRenderOptions {
                 selected: false,
                 enabled: *enabled,
                 focused,
                 borders: Borders::ALL,
-                is_primary: false,
+                button_type,
             };
             render_button(frame, *button_area, label, theme, options);
         }

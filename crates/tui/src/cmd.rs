@@ -90,7 +90,7 @@ pub enum Cmd {
     ReadFileContents(PathBuf),
     ListDirectoryContents(PathBuf),
     ReadRemoteFileContents(Url),
-    ImportRegistryCatalog(String),
+    ImportRegistryCatalog(String, Option<String>),
     RemoveCatalog(Cow<'static, str>),
     UpdateCatalogEnabledState {
         is_enabled: bool,
@@ -103,6 +103,14 @@ pub enum Cmd {
     UpdateCatalogHeaders {
         title: Cow<'static, str>,
         headers: Vec<EnvRow>,
+    },
+    UpdateCatalogDescription {
+        description: String,
+        title: Cow<'static, str>,
+    },
+    UpdateCatalogBaseUrls {
+        base_urls: Vec<String>,
+        title: Cow<'static, str>,
     },
 }
 
@@ -173,11 +181,13 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
             Effect::ReadFileContents(path) => Some(vec![Cmd::ReadFileContents(path)]),
             Effect::ListDirectoryContents(path) => Some(vec![Cmd::ListDirectoryContents(path)]),
             Effect::ReadRemoteFileContents(url) => Some(vec![Cmd::ReadRemoteFileContents(url)]),
-            Effect::ImportRegistryCatalog(content) => Some(vec![Cmd::ImportRegistryCatalog(content)]),
+            Effect::ImportRegistryCatalog(content, maybe_prefix) => Some(vec![Cmd::ImportRegistryCatalog(content, maybe_prefix)]),
             Effect::UpdateCatalogEnabledState { title, is_enabled } => Some(vec![Cmd::UpdateCatalogEnabledState { title, is_enabled }]),
             Effect::UpdateCatalogBaseUrlIndex { base_url_index, title } => {
                 Some(vec![Cmd::UpdateCatalogBaseUrlIndex { base_url_index, title }])
             }
+            Effect::UpdateCatalogBaseUrls { base_urls, title } => Some(vec![Cmd::UpdateCatalogBaseUrls { base_urls, title }]),
+            Effect::UpdateCatalogDescription { description, title } => Some(vec![Cmd::UpdateCatalogDescription { description, title }]),
             Effect::UpdateCatalogHeaders { title, headers } => Some(vec![Cmd::UpdateCatalogHeaders { title, headers }]),
             Effect::RemoveCatalog(title) => Some(vec![Cmd::RemoveCatalog(title)]),
             Effect::Log(_) | Effect::SwitchTo(_) | Effect::ShowModal(_) | Effect::CloseModal => None,
@@ -234,12 +244,14 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
             Cmd::ReadFileContents(path) => (Some(read_file_contents(path)), None),
             Cmd::ListDirectoryContents(path) => (Some(list_dir_contents(path)), None),
             Cmd::ReadRemoteFileContents(url) => (None, Some(fetch_remote_file_contents(url))),
-            Cmd::ImportRegistryCatalog(inputs) => (Some(import_registry_catalog_from(app, inputs)), None),
+            Cmd::ImportRegistryCatalog(inputs, maybe_prefix) => (Some(import_registry_catalog_from(app, inputs, maybe_prefix)), None),
             Cmd::RemoveCatalog(title) => (Some(remove_catalog(title, app)), None),
             Cmd::UpdateCatalogEnabledState { title, is_enabled } => (Some(update_enabled_then_save(title, is_enabled, app)), None),
             Cmd::UpdateCatalogBaseUrlIndex { base_url_index, title } => {
                 (Some(update_base_url_index_then_save(base_url_index, title, app)), None)
             }
+            Cmd::UpdateCatalogDescription { description, title } => (Some(update_description_then_save(description, title, app)), None),
+            Cmd::UpdateCatalogBaseUrls { base_urls, title } => (Some(update_base_urls_then_save(base_urls, title, app)), None),
             Cmd::UpdateCatalogHeaders { title, headers } => (Some(update_headers_then_save(title, headers, app)), None),
         };
 
@@ -347,8 +359,8 @@ fn read_file_contents(path: PathBuf) -> ExecOutcome {
 }
 
 /// Generates a catalog from a given content.
-fn import_registry_catalog_from(app: &mut App, content: String) -> ExecOutcome {
-    let input = ManifestInput::new(None, Some(content));
+fn import_registry_catalog_from(app: &mut App, content: String, maybe_prefix: Option<String>) -> ExecOutcome {
+    let input = ManifestInput::new(None, Some(content), maybe_prefix);
     match generate_catalog(input) {
         Ok(mut catalog) => {
             catalog.is_enabled = true;
@@ -395,6 +407,26 @@ where
 {
     let Ok(()) = update_base_url_index(base_url_index, title.as_ref(), app) else {
         return ExecOutcome::RegistryConfigSaveError("Could not update base URL index".to_string());
+    };
+    save_registry_config(app)
+}
+
+fn update_description_then_save<T>(description: String, title: T, app: &mut App) -> ExecOutcome
+where
+    T: AsRef<str>,
+{
+    let Ok(()) = update_description(description, title.as_ref(), app) else {
+        return ExecOutcome::RegistryConfigSaveError("Could not update description".to_string());
+    };
+    save_registry_config(app)
+}
+
+fn update_base_urls_then_save<T>(base_urls: Vec<String>, title: T, app: &mut App) -> ExecOutcome
+where
+    T: AsRef<str>,
+{
+    let Ok(()) = update_base_urls(base_urls, title.as_ref(), app) else {
+        return ExecOutcome::RegistryConfigSaveError("Could not update base URLs".to_string());
     };
     save_registry_config(app)
 }
@@ -450,6 +482,26 @@ fn update_base_url_index(base_url_index: usize, title: &str, app: &mut App) -> R
         .map_err(|_| anyhow!("command registry lock failed"))?;
 
     lock.update_base_url_index(base_url_index, title)
+}
+
+fn update_description(description: String, title: &str, app: &mut App) -> Result<()> {
+    let mut lock = app
+        .ctx
+        .command_registry
+        .try_lock()
+        .map_err(|_| anyhow!("command registry lock failed"))?;
+
+    lock.update_description(description, title)
+}
+
+fn update_base_urls(base_urls: Vec<String>, title: &str, app: &mut App) -> Result<()> {
+    let mut lock = app
+        .ctx
+        .command_registry
+        .try_lock()
+        .map_err(|_| anyhow!("command registry lock failed"))?;
+
+    lock.update_base_urls(base_urls, title)
 }
 
 fn save_registry_config(app: &mut App) -> ExecOutcome {

@@ -8,23 +8,22 @@ The `oatty-registry` crate is designed to:
 - Load command definitions from registry manifests generated from OpenAPI specs.
 - Organize commands by resource groups (e.g., `apps`, `services`).
 - Generate a `clap`-based command tree for argument parsing and help generation.
-- Support feature flags, such as workflows, controlled via environment variables.
+- Include non-HTTP utility command trees, such as `workflow`, alongside schema-derived commands.
 
 The crate is built with extensibility in mind, allowing for easy integration of new commands and features while maintaining a robust and maintainable CLI structure.
 
 ## Benefits of Using a Precompiled Manifest
 
-The crate uses a precompiled JSON manifest (`registry-manifest.json`) instead of parsing remote data at runtime. This approach provides:
+The crate loads command definitions from precompiled catalog manifest files (typically `postcard`-encoded `.bin` files) instead of parsing OpenAPI at runtime. This approach provides:
 - **Improved Performance**: Startup avoids expensive OpenAPI parsing.
 - **Reduced Overhead**: Loading from a manifest is lighter than full schema traversal.
 - **Reliability**: The schema is validated and compiled during the build process, ensuring consistency.
 
 ## Features
 
-- **Manifest Loading**: Loads command specifications from a precompiled JSON manifest (`registry-manifest.json`) during the build process.
+- **Manifest Loading**: Loads command specifications from a precompiled catalog manifest file referenced by the registry config.
 - **Command Grouping**: Organizes commands by resource type (e.g., `apps:list`, `apps:create`) for intuitive CLI navigation.
 - **Clap Integration**: Builds a hierarchical `clap` command tree with support for global flags (`--json`, `--verbose`) and command-specific arguments.
-- **Feature Gating**: Supports enabling/disabling features like workflows via environment variables (e.g., `FEATURE_WORKFLOWS`).
 - **Provider Contracts**: Exposes argument and return metadata for provider commands so UIs and engines can drive auto-mapping heuristics.
 - **Error Handling**: Uses `anyhow` for robust error management during schema loading and command processing.
 
@@ -106,64 +105,31 @@ fn main() -> anyhow::Result<()> {
 
 This creates a command tree with global flags (`--json`, `--verbose`) and grouped subcommands (e.g., `example apps list`, `example services restart`).
 
-### Feature Gating
-
-Check if the workflows feature is enabled:
-
-```rust
-use oatty_registry::feature_workflows;
-
-fn main() {
-    if feature_workflows() {
-        println!("Workflows are enabled");
-    } else {
-        println!("Workflows are disabled");
-    }
-}
-```
-
-Set the `FEATURE_WORKFLOWS` environment variable to `"1"` or `"true"` to enable workflows.
-
 ## Project Structure
 
 The crate is organized into several modules:
 
 - **`models.rs`**: Defines the `CommandRegistry` struct and methods for loading and querying command specifications.
 - **`clap_builder.rs`**: Implements functions to build a `clap` command tree from the registry.
-- **`feat_gate.rs`**: Provides feature-gating functionality via environment variables.
 - **`lib.rs`**: Exports core functionality and includes tests for the registry.
-- **`build.rs`**: Handles the build process, generating the `registry-manifest.json` from the sample OpenAPI schemas.
+- **`config.rs`**: Loads/saves registry catalog configuration and persists catalog manifests.
 
-## Build Process
+## Build/Load Process
 
-The crate uses a custom build script (`build.rs`) to process OpenAPI documents (for example, `schemas/samples/render-public-api.json`) and generate a JSON manifest (`registry-manifest.json`). This manifest is loaded at runtime by `CommandRegistry::from_config`.
+The registry loads catalogs and their manifest files at runtime via `CommandRegistry::from_config`:
+- Catalog configuration: `~/.config/oatty/registry.json` (override with `REGISTRY_CONFIG_PATH`)
+- Catalog manifest storage: `~/.config/oatty/catalogs/*.bin` (override with `REGISTRY_CATALOGS_PATH`)
 
-To rebuild the manifest when the schema changes, the build script monitors the schema file:
-
-```rust
-println!("cargo:rerun-if-changed={}", schema_path.display());
-```
+Catalog manifests themselves are typically generated from OpenAPI documents using `oatty-registry-gen` or imported via the TUI.
 
 ## Testing
 
-The crate includes tests to ensure the embedded manifest is valid and contains unique command names:
-
-```rust
-#[test]
-fn manifest_non_empty_and_unique_names() {
-    let registry = CommandRegistry::from_config().expect("load registry from manifest");
-    assert!(!registry.commands.is_empty(), "registry commands should not be empty");
-    let mut seen = HashSet::new();
-    for c in &*registry.commands {
-        assert!(seen.insert(&c.name), "duplicate command name detected: {}", c.name);
-    }
-}
-```
+The crate includes unit tests to ensure manifests can be loaded from disk via a registry config and that command identifiers are unique.
 
 Run tests with:
 
 ```bash
-cargo test
+cargo test -p oatty-registry
 ```
 
 ## Contributing

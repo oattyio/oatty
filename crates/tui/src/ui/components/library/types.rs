@@ -1,8 +1,11 @@
 use std::borrow::Cow;
 
+use anyhow::Result;
 use indexmap::IndexSet;
 use oatty_mcp::EnvVar;
 use oatty_types::manifest::RegistryCatalog;
+use thiserror::Error;
+use url::Url;
 
 #[derive(Debug, Default)]
 pub struct CatalogProjection {
@@ -28,6 +31,26 @@ pub struct CatalogProjection {
     pub is_enabled: bool,
 }
 
+impl CatalogProjection {
+    pub fn validate(&self) -> Result<(), CatalogValidationError> {
+        for url in &self.base_urls {
+            Url::parse(url).map_err(|e| CatalogValidationError::BaseUrls(format!("{}", e)))?;
+        }
+        match () {
+            _ if self.headers.iter().any(|h| h.key.is_empty()) => {
+                Err(CatalogValidationError::Headers("Header key cannot be empty".to_string()))
+            }
+            _ if self.base_urls.is_empty() => Err(CatalogValidationError::BaseUrls("Base URLs cannot be empty".to_string())),
+            _ if self.base_url_index >= self.base_urls.len() => {
+                Err(CatalogValidationError::BaseUrlIndex("Invalid base URL index".to_string()))
+            }
+            _ if self.vendor.is_empty() => Err(CatalogValidationError::CommandPrefix("Command prefix cannot be empty".to_string())),
+
+            _ => Ok(()),
+        }
+    }
+}
+
 impl From<&RegistryCatalog> for CatalogProjection {
     fn from(value: &RegistryCatalog) -> Self {
         let mut projection = value
@@ -51,4 +74,16 @@ impl From<&RegistryCatalog> for CatalogProjection {
 
         projection
     }
+}
+
+#[derive(Debug, Error)]
+pub enum CatalogValidationError {
+    #[error("Headers error: {0}")]
+    Headers(String),
+    #[error("Base url error: {0}")]
+    BaseUrls(String),
+    #[error("Base url index error: {0}")]
+    BaseUrlIndex(String),
+    #[error("Command prefix error: {0}")]
+    CommandPrefix(String),
 }

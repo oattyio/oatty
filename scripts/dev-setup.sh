@@ -58,14 +58,19 @@ else
     print_success "Cargo found: $CARGO_VERSION"
 fi
 
-# Check for nightly toolchain
-print_status "Verifying nightly toolchain..."
-if rustup show | grep -q "nightly"; then
-    print_success "Nightly toolchain is active"
+# Ensure the toolchain specified by rust-toolchain.toml is installed
+print_status "Verifying Rust toolchain..."
+TOOLCHAIN_CHANNEL=$(sed -n 's/^channel = \"\\(.*\\)\"$/\\1/p' rust-toolchain.toml | head -n 1)
+if [ -z "$TOOLCHAIN_CHANNEL" ]; then
+    print_warning "Could not detect toolchain channel from rust-toolchain.toml; continuing with current toolchain"
 else
-    print_warning "Installing nightly toolchain..."
-    rustup toolchain install nightly
-    print_success "Nightly toolchain installed"
+    if rustup toolchain list | grep -q "^${TOOLCHAIN_CHANNEL}"; then
+        print_success "Toolchain installed: ${TOOLCHAIN_CHANNEL}"
+    else
+        print_warning "Installing toolchain: ${TOOLCHAIN_CHANNEL}..."
+        rustup toolchain install "${TOOLCHAIN_CHANNEL}"
+        print_success "Toolchain installed: ${TOOLCHAIN_CHANNEL}"
+    fi
 fi
 
 # Check for required components
@@ -138,6 +143,7 @@ echo "Next steps:"
 echo "  1. Edit .env with your Oatty API key"
 echo "  2. Run the TUI: cargo run -p oatty-cli"
 echo "  3. Or run CLI commands: cargo run -p oatty-cli -- apps list"
+echo "  4. If no commands appear, import a registry catalog from the TUI Library view (e.g., schemas/samples/render-public-api.json)"
 echo ""
 echo "Development commands:"
 echo "  - Build: cargo build --workspace"

@@ -43,11 +43,7 @@ impl RegistryConfig {
                 };
                 let file_name = format!("{}.bin", catalog.title.to_snake_case());
                 let file_path = &catalogs_path.join(file_name);
-                if let Ok(exists) = std::fs::exists(file_path)
-                    && !exists
-                {
-                    std::fs::write(file_path, bytes)?;
-                }
+                std::fs::write(file_path, bytes)?;
                 catalog.manifest_path = file_path.to_string_lossy().to_string();
             }
         }

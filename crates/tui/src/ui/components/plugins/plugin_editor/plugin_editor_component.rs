@@ -28,7 +28,7 @@ use crate::{
         components::{common::TextInputState, component::Component, find_target_index_by_mouse_position},
         theme::{
             Theme,
-            theme_helpers::{self, ButtonRenderOptions, create_radio_button, render_button},
+            theme_helpers::{self, ButtonRenderOptions, ButtonType, create_radio_button, render_button},
         },
     },
 };
@@ -594,21 +594,27 @@ fn render_action_buttons(frame: &mut Frame, area: Rect, theme: &dyn Theme, add_s
         button_columns[0],
         "Validate",
         theme,
-        ButtonRenderOptions::new(validate_enabled, add_state.f_btn_validate.get(), false, Borders::ALL, false),
+        ButtonRenderOptions::new(
+            validate_enabled,
+            add_state.f_btn_validate.get(),
+            false,
+            Borders::ALL,
+            ButtonType::Secondary,
+        ),
     );
     render_button(
         frame,
         button_columns[2],
         "Save",
         theme,
-        ButtonRenderOptions::new(save_enabled, add_state.f_btn_save.get(), false, Borders::ALL, true),
+        ButtonRenderOptions::new(save_enabled, add_state.f_btn_save.get(), false, Borders::ALL, ButtonType::Primary),
     );
     render_button(
         frame,
         button_columns[4],
         "Cancel",
         theme,
-        ButtonRenderOptions::new(true, add_state.f_btn_cancel.get(), false, Borders::ALL, false),
+        ButtonRenderOptions::new(true, add_state.f_btn_cancel.get(), false, Borders::ALL, ButtonType::Secondary),
     );
     ActionButtonLayout {
         btn_validate_area: button_columns[0],

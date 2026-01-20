@@ -96,6 +96,15 @@ impl OattyClient {
 }
 
 fn build_http_client(headers: &IndexSet<EnvVar>) -> Result<Client> {
+    let default_headers = build_default_headers(headers)?;
+    Client::builder()
+        .default_headers(default_headers)
+        .timeout(Duration::from_secs(30))
+        .build()
+        .context("build http client")
+}
+
+fn build_default_headers(headers: &IndexSet<EnvVar>) -> Result<header::HeaderMap> {
     let mut default_headers = header::HeaderMap::new();
     default_headers.insert(header::ACCEPT, header::HeaderValue::from_str(DEFAULT_ACCEPT_HEADER)?);
     for h in headers {
@@ -103,11 +112,7 @@ fn build_http_client(headers: &IndexSet<EnvVar>) -> Result<Client> {
         let header_value = header::HeaderValue::from_str(&h.value)?;
         default_headers.insert(header_name, header_value);
     }
-    Client::builder()
-        .default_headers(default_headers)
-        .timeout(Duration::from_secs(30))
-        .build()
-        .context("build http client")
+    Ok(default_headers)
 }
 
 /// Validate that a base URL is acceptable for use by the client.
@@ -135,4 +140,40 @@ fn validate_base_url(base: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oatty_types::EnvSource;
+
+    #[test]
+    fn validate_base_url_allows_localhost_without_https() {
+        assert!(validate_base_url("http://localhost:8080").is_ok());
+        assert!(validate_base_url("http://127.0.0.1:5000").is_ok());
+    }
+
+    #[test]
+    fn validate_base_url_rejects_insecure_remote_host() {
+        assert!(validate_base_url("http://api.example.com").is_err());
+        assert!(validate_base_url("https://api.example.com").is_ok());
+    }
+
+    #[test]
+    fn build_http_client_applies_headers_and_accept_defaults() {
+        let mut headers = IndexSet::new();
+        headers.insert(EnvVar::new("Authorization".into(), "Bearer secret".into(), EnvSource::Env));
+        headers.insert(EnvVar::new("X-Test".into(), "123".into(), EnvSource::File));
+
+        let default_headers = build_default_headers(&headers).expect("header map builds");
+        assert_eq!(
+            default_headers.get(header::ACCEPT).and_then(|value| value.to_str().ok()),
+            Some(DEFAULT_ACCEPT_HEADER)
+        );
+        assert_eq!(
+            default_headers.get("Authorization").and_then(|value| value.to_str().ok()),
+            Some("Bearer secret")
+        );
+        assert_eq!(default_headers.get("X-Test").and_then(|value| value.to_str().ok()), Some("123"));
+    }
 }
