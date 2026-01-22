@@ -171,6 +171,7 @@ impl McpClient {
         let call_future = service.call_tool(CallToolRequestParam {
             name: tool_name.to_string().into(),
             arguments: Some(arguments.clone()),
+            task: None,
         });
 
         match timeout(TOOL_INVOCATION_TIMEOUT, call_future).await {

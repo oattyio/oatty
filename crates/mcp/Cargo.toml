@@ -27,7 +27,13 @@ once_cell = { workspace = true }
 oatty-util = { path = "../util" }
 oatty-types = { path = "../types" }
 oatty-registry = { path = "../registry" }
-rmcp = { version = "0.12.0", features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "auth"] }
+rmcp = { version = "0.13.0", features = [
+  "client",
+  "transport-child-process",
+  "transport-streamable-http-client-reqwest",
+  "reqwest",
+  "auth",
+] }
 indexmap.workspace = true
 [features]
 default = []
