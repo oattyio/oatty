@@ -9,7 +9,6 @@ members = [
   "crates/util",
   "crates/types",
   "crates/mcp",
-  "crates/agent",
 ]
 resolver = "2"
 
@@ -23,7 +22,7 @@ repository = "https://example.com/oatty"
 
 [workspace.dependencies]
 anyhow = "1.0.100"
-thiserror = "2.0.17"
+thiserror = "2.0.18"
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = "1.0.149"
 serde_yaml = "0.9.34"

@@ -58,7 +58,7 @@ pub use executor::{
     CommandRunner, PreparedStep, RegistryCommandRunner, StepResult, StepStatus, execute_workflow, execute_workflow_with_runner,
 };
 pub use model::{InputSpec, StepSpec, WorkflowBundle, WorkflowSpec};
-pub use provider::{ProviderContract, ProviderValueResolver, ValueProvider};
+pub use provider::{ProviderValueResolver, ValueProvider};
 pub use resolve::RunContext;
 pub use workflow::bindings::{
     ArgumentPrompt, BindingFailure, BindingSource, MissingReason, ProviderArgumentResolver, ProviderBindingOutcome, SkipDecision,

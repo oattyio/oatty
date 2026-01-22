@@ -11,9 +11,8 @@ use crate::ui::theme::Theme;
 use crate::ui::theme::theme_helpers::{self as th, ButtonRenderOptions, ButtonType, build_hint_spans};
 use crate::ui::utils::render_value;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use oatty_engine::provider::ProviderRegistry;
-use oatty_engine::{ProviderValueResolver, resolve::select_path};
-use oatty_types::{Effect, WorkflowProviderErrorPolicy};
+use oatty_engine::resolve::select_path;
+use oatty_types::{Effect, ExecOutcome, Msg, WorkflowProviderErrorPolicy};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::Modifier;
@@ -70,6 +69,15 @@ pub struct WorkflowCollectorComponent {
     layout: WorkflowCollectorLayoutState,
 }
 impl Component for WorkflowCollectorComponent {
+    fn handle_message(&mut self, app: &mut App, message: Msg) -> Vec<Effect> {
+        if let Msg::ExecCompleted(outcome) = message
+            && let ExecOutcome::Log(log_message) = outcome.as_ref()
+        {
+            self.handle_provider_fetch_failure(app, log_message);
+        }
+        Vec::new()
+    }
+
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         let mut effects = Vec::new();
 
@@ -257,6 +265,32 @@ impl Component for WorkflowCollectorComponent {
 }
 
 impl WorkflowCollectorComponent {
+    fn handle_provider_fetch_failure(&self, app: &mut App, log_message: &str) {
+        if !log_message.starts_with("Provider fetch failed:") {
+            return;
+        }
+
+        let Some(collector) = app.workflows.collector_state_mut() else {
+            return;
+        };
+
+        let has_pending_fetch = collector.pending_cache_key.is_some() || matches!(collector.status, SelectorStatus::Loading);
+        if !has_pending_fetch {
+            return;
+        }
+
+        collector.status = SelectorStatus::Error;
+        collector.pending_cache_key = None;
+        collector.error_message = Some(
+            log_message
+                .strip_prefix("Provider fetch failed:")
+                .map(str::trim)
+                .filter(|detail| !detail.is_empty())
+                .map(|detail| format!("Provider selector failed: {detail}"))
+                .unwrap_or_else(|| "Provider selector failed.".to_string()),
+        );
+    }
+
     fn hit_test_results_table(&self, mouse_position: Position, offset: usize) -> usize {
         mouse_position.y.saturating_sub(1 + self.layout.table_area.y) as usize + offset
     }
@@ -288,22 +322,20 @@ impl WorkflowCollectorComponent {
     }
 
     fn handle_table_keys(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
+        if matches!(key.code, KeyCode::Char('r') | KeyCode::Char('R')) {
+            if let Some(collector) = app.workflows.collector_state_mut() {
+                collector.status = SelectorStatus::Loading;
+                collector.error_message = None;
+            }
+            return app.prepare_selector_fetch();
+        }
+
         let collector = app.workflows.collector_state_mut().expect("selector state");
         let row_len = collector.table.rows().map(|r| r.len()).unwrap_or_default();
         let selected = collector.table.table_state.selected().unwrap_or_default();
         let table_state = &mut collector.table.table_state;
 
         match key.code {
-            KeyCode::Char('r') | KeyCode::Char('R') => {
-                collector.status = SelectorStatus::Loading;
-                return self.refresh_selector_items(
-                    collector,
-                    &*app.ctx.theme,
-                    &app.ctx.provider_registry,
-                    collector.provider_id.clone(),
-                    collector.resolved_args.clone(),
-                );
-            }
             KeyCode::F(2) => {
                 app.workflows.open_manual_for_active_input();
             }
@@ -360,31 +392,6 @@ impl WorkflowCollectorComponent {
             self.apply_selection_to_run_state(app);
         }
         effects
-    }
-
-    fn refresh_selector_items(
-        &self,
-        selector: &mut CollectorViewState<'_>,
-        theme: &dyn Theme,
-        provider_registry: &ProviderRegistry,
-        provider_id: String,
-        resolved_args: serde_json::Map<String, Value>,
-    ) -> Vec<Effect> {
-        match provider_registry.fetch_values(&provider_id, &resolved_args) {
-            Ok(items_vec) => {
-                let json_value = Value::Array(items_vec.clone());
-                selector.set_items(items_vec);
-                selector.table.apply_result_json(Some(json_value), theme, false);
-                selector.status = SelectorStatus::Loaded;
-                selector.error_message = None;
-                self.apply_filter(selector, theme);
-            }
-            Err(error) => {
-                selector.status = SelectorStatus::Error;
-                selector.error_message = Some(format!("unable to refresh provider data: {error}"));
-            }
-        }
-        Vec::new()
     }
 
     fn stage_current_row(&self, collector: &mut CollectorViewState<'_>) -> Result<(), String> {

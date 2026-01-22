@@ -2034,7 +2034,6 @@ dependencies = [
  "anyhow",
  "clap",
  "indexmap",
- "oatty-agent",
  "oatty-api",
  "oatty-engine",
  "oatty-mcp",
@@ -2045,25 +2044,6 @@ dependencies = [
  "reqwest",
  "serde_json",
  "serde_yaml",
- "tokio",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "oatty-agent"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "dirs-next",
- "oatty-mcp",
- "oatty-registry",
- "oatty-util",
- "reqwest",
- "seekstorm",
- "serde",
- "serde_json",
- "thiserror 2.0.18",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -2119,6 +2099,7 @@ dependencies = [
  "regex",
  "reqwest",
  "rmcp",
+ "seekstorm",
  "serde",
  "serde_json",
  "temp-env",
@@ -2229,6 +2210,7 @@ dependencies = [
  "temp-env",
  "tempfile",
  "thiserror 2.0.18",
+ "tokio",
  "tracing",
  "unicode-width",
  "url",

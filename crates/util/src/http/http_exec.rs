@@ -15,7 +15,8 @@ use reqwest::{Client, Method, StatusCode};
 use serde_json::{Map, Number, Value};
 use std::collections::HashMap;
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+use tracing::{debug, warn};
 
 /// Fetches a static json or text resource using GET
 pub async fn fetch_static(url: &str) -> Result<(StatusCode, String), anyhow::Error> {
@@ -130,6 +131,104 @@ pub async fn exec_remote_for_provider(
     }
 }
 
+/// Execute a JSON-backed HTTP request and parse the response payload.
+///
+/// # Arguments
+/// - `client`: Preconfigured HTTP client with base URL and headers.
+/// - `method`: HTTP method to execute.
+/// - `request_path`: Path for the request, already resolved with any path variables.
+/// - `query_parameters`: Query parameters for GET/DELETE requests, or a body fallback for other methods.
+/// - `body_override`: Optional body that overrides `query_parameters` for non-GET/DELETE requests.
+///
+/// # Returns
+/// Returns the parsed JSON payload for a successful response, `Value::Null` for empty bodies,
+/// or an error if the HTTP request or JSON parsing fails.
+pub async fn execute_http_json_request(
+    client: &OattyClient,
+    method: Method,
+    request_path: &str,
+    query_parameters: Map<String, Value>,
+    body_override: Option<Value>,
+) -> anyhow::Result<Value> {
+    let start = Instant::now();
+    debug!(
+        method = %method,
+        path = %request_path,
+        query_parameter_count = query_parameters.len(),
+        has_body_override = body_override.is_some(),
+        "http request started"
+    );
+    let mut request_builder = client.request(method.clone(), request_path);
+
+    match method {
+        Method::GET | Method::DELETE => {
+            if !query_parameters.is_empty() {
+                let query_pairs = build_query_pairs(query_parameters);
+                request_builder = request_builder.query(&query_pairs);
+            }
+        }
+        _ => {
+            let request_body = build_request_body_override(body_override, query_parameters);
+            let body_field_count = request_body.len();
+            request_builder = request_builder.json(&Value::Object(request_body));
+            debug!(
+                method = %method,
+                path = %request_path,
+                body_field_count,
+                "http request body prepared"
+            );
+        }
+    }
+
+    let response = request_builder.send().await.map_err(|error| anyhow::anyhow!(error))?;
+    let status = response.status();
+    if let Err(error) = response.error_for_status_ref() {
+        warn!(
+            method = %method,
+            path = %request_path,
+            status = %status,
+            error = %error,
+            duration_ms = start.elapsed().as_millis(),
+            "http request failed"
+        );
+        return Err(anyhow::anyhow!(error));
+    }
+    let status = response.status();
+    let body_text = response.text().await.map_err(|error| anyhow::anyhow!(error))?;
+
+    if body_text.trim().is_empty() {
+        debug!(
+            method = %method,
+            path = %request_path,
+            status = %status,
+            duration_ms = start.elapsed().as_millis(),
+            "http request completed with empty response"
+        );
+        return Ok(Value::Null);
+    }
+
+    let parsed = http::parse_response_json_strict(&body_text, Some(status)).map_err(|error| {
+        warn!(
+            method = %method,
+            path = %request_path,
+            status = %status,
+            body_len = body_text.len(),
+            duration_ms = start.elapsed().as_millis(),
+            error = %error,
+            "http response JSON parse failed"
+        );
+        anyhow::anyhow!(error)
+    })?;
+    debug!(
+        method = %method,
+        path = %request_path,
+        status = %status,
+        duration_ms = start.elapsed().as_millis(),
+        "http request completed"
+    );
+    Ok(parsed)
+}
+
 async fn exec_remote_from_spec_inner(
     http: &HttpCommandSpec,
     base_url: &str,
@@ -172,6 +271,27 @@ async fn exec_remote_from_spec_inner(
     let text = resp.text().await.unwrap_or_default();
 
     Ok((status, headers, text))
+}
+
+fn build_query_pairs(query_parameters: Map<String, Value>) -> Vec<(String, String)> {
+    query_parameters
+        .into_iter()
+        .map(|(key, value)| {
+            let string_value = match value {
+                Value::String(text) => text,
+                other => other.to_string(),
+            };
+            (key, string_value)
+        })
+        .collect()
+}
+
+fn build_request_body_override(body_override: Option<Value>, query_parameters: Map<String, Value>) -> Map<String, Value> {
+    match body_override {
+        Some(Value::Object(map)) => map,
+        Some(other) => Map::from_iter([("value".into(), other)]),
+        None => query_parameters,
+    }
 }
 
 /// Builds a JSON request body from user-provided flags.

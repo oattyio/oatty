@@ -26,6 +26,7 @@
 //! ```
 
 // Internal modules
+pub mod async_runtime;
 pub mod command_vec_utils;
 pub mod date_handling;
 pub mod history_store;
@@ -37,6 +38,7 @@ pub mod schema;
 pub mod shell_lexing;
 pub mod text_processing;
 // Re-export commonly used items for convenience
+pub use async_runtime::*;
 pub use command_vec_utils::*;
 pub use date_handling::*;
 pub use history_store::*;
