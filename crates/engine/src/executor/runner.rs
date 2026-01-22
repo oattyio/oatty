@@ -2,13 +2,14 @@ use anyhow::{Result, anyhow};
 use reqwest::Method;
 use serde_json::Value;
 use std::str::FromStr;
-use tokio::{runtime::Handle, task};
+use tracing::{debug, warn};
 
+use crate::provider::ProviderIdentifier;
 use crate::resolve::RunContext;
 
 use oatty_api::OattyClient;
 use oatty_registry::CommandRegistry;
-use oatty_util::{build_path, http::parse_response_json_strict};
+use oatty_util::{block_on_future, build_path, http::execute_http_json_request};
 
 /// Execute a single command.
 ///
@@ -17,16 +18,16 @@ use oatty_util::{build_path, http::parse_response_json_strict};
 pub trait CommandRunner {
     /// Execute the given `run` command with optional named `with` parameters and JSON `body`.
     ///
-    /// Implementations may use the `ctx` for read-only access to inputs, env, or previous
+    /// Implementations may use the `run_context` for read-only access to inputs, env, or previous
     /// step outputs to influence execution.
-    fn run(&self, run: &str, with: Option<&Value>, body: Option<&Value>, ctx: &RunContext) -> Result<Value>;
+    fn run(&self, run: &str, with: Option<&Value>, body: Option<&Value>, run_context: &RunContext) -> Result<Value>;
 }
 
 /// A simple runner that returns a synthetic JSON payload. This allows tests and
 /// previews without external side effects.
 pub struct NoopRunner;
 impl CommandRunner for NoopRunner {
-    fn run(&self, run: &str, with: Option<&Value>, body: Option<&Value>, _ctx: &RunContext) -> Result<Value> {
+    fn run(&self, run: &str, with: Option<&Value>, body: Option<&Value>, _run_context: &RunContext) -> Result<Value> {
         let mut obj = serde_json::Map::new();
         obj.insert("run".into(), Value::String(run.to_string()));
         if let Some(w) = with {
@@ -53,109 +54,85 @@ impl RegistryCommandRunner {
 }
 
 impl CommandRunner for RegistryCommandRunner {
-    fn run(&self, run: &str, with: Option<&Value>, body: Option<&Value>, _ctx: &RunContext) -> Result<Value> {
-        // Parse run into group + name using the canonical whitespace-separated form ("group name").
-        let (group, name) = run
-            .split_once(char::is_whitespace)
-            .map(|(g, n)| (g.trim().to_string(), n.trim().to_string()))
-            .filter(|(g, n)| !g.is_empty() && !n.is_empty())
-            .ok_or_else(|| anyhow!("invalid run identifier: {run}"))?;
+    fn run(&self, run: &str, with: Option<&Value>, body: Option<&Value>, _run_context: &RunContext) -> Result<Value> {
+        debug!(
+            run = %run,
+            has_with = with.is_some(),
+            has_body = body.is_some(),
+            "registry runner executing command"
+        );
+        let identifier = parse_run_identifier(run)?;
+        let command_spec = self.registry.find_by_group_and_cmd(&identifier.group, &identifier.name)?;
 
-        let spec = self.registry.find_by_group_and_cmd(&group, &name)?;
-
-        if let Some(mcp) = spec.mcp() {
+        if let Some(mcp) = command_spec.mcp() {
+            warn!(
+                command = %command_spec.canonical_id(),
+                plugin = %mcp.plugin_name,
+                tool = %mcp.tool_name,
+                "command delegates to MCP tool; HTTP runner only"
+            );
             return Err(anyhow!(
                 "command '{}' delegates to MCP tool '{}:{}'; commands currently support HTTP only",
-                spec.name,
+                command_spec.name,
                 mcp.plugin_name,
                 mcp.tool_name
             ));
         }
-        let http = spec.http().ok_or_else(|| anyhow!("command '{}' is not HTTP-backed", spec.name))?;
-        let method = Method::from_str(&http.method).unwrap_or(Method::GET);
+        debug!(command = %command_spec.canonical_id(), "resolved command spec");
+        let http_spec = command_spec
+            .http()
+            .ok_or_else(|| anyhow!("command '{}' is not HTTP-backed", command_spec.name))?;
+        let method = Method::from_str(&http_spec.method).map_err(|error| anyhow!(error))?;
         let base_url = self
             .registry
-            .resolve_base_url_for_command(&spec)
+            .resolve_base_url_for_command(&command_spec)
             .ok_or_else(|| anyhow!("base url not configured"))?;
         let headers = self
             .registry
-            .resolve_headers_for_command(&spec)
-            .ok_or_else(|| anyhow!("could not determine headers for command: {}", spec.canonical_id()))?;
+            .resolve_headers_for_command(&command_spec)
+            .ok_or_else(|| anyhow!("could not determine headers for command: {}", command_spec.canonical_id()))?;
+        debug!(
+            command = %command_spec.canonical_id(),
+            base_url = %base_url,
+            header_count = headers.len(),
+            "resolved command HTTP settings"
+        );
         let client = OattyClient::new(base_url, headers).map_err(|error| anyhow!("could not create the HTTP client: {error}"))?;
 
-        // Inputs map from `with` if object
-        let mut with_map: serde_json::Map<String, Value> = match with {
-            Some(Value::Object(m)) => m.clone(),
-            _ => serde_json::Map::new(),
-        };
+        let mut input_map = extract_input_map(with);
+        let path_variables = extract_path_variables(&command_spec, &mut input_map);
 
-        // Build path variables from positional arg names, if present
-        let mut path_variables = serde_json::Map::new();
-        for pa in &spec.positional_args {
-            if let Some(val) = with_map.remove(&pa.name) {
-                path_variables.insert(pa.name.clone(), val);
-            }
-        }
+        let request_path = build_path(&http_spec.path, &path_variables);
+        let request_method = method.clone();
+        let request_body = body.cloned();
+        let request_future =
+            async move { execute_http_json_request(&client, request_method, &request_path, input_map, request_body).await };
+        let response_payload = block_on_future(request_future)?;
 
-        let path = build_path(&http.path, &path_variables);
-        let mut req = client.request(method.clone(), &path);
-
-        match method {
-            Method::GET | Method::DELETE => {
-                if !with_map.is_empty() {
-                    // Convert remaining entries to query params
-                    let query: Vec<(String, String)> = with_map
-                        .into_iter()
-                        .map(|(k, v)| {
-                            let s = match v {
-                                Value::String(s) => s,
-                                other => other.to_string(),
-                            };
-                            (k, s)
-                        })
-                        .collect();
-                    req = req.query(&query);
-                }
-            }
-            _ => {
-                // Prefer body if provided; otherwise, fall back to remaining `with` map as body
-                let body_obj: serde_json::Map<String, Value> = match body {
-                    Some(Value::Object(m)) => m.clone(),
-                    Some(other) => serde_json::Map::from_iter([("value".into(), other.clone())]),
-                    None => with_map,
-                };
-
-                req = req.json(&Value::Object(body_obj));
-            }
-        }
-
-        let fut = async move {
-            let response = req.send().await.map_err(|error| anyhow::anyhow!(error))?;
-            let response = response.error_for_status().map_err(|error| anyhow::anyhow!(error))?;
-            let status = response.status();
-            let body_text = response.text().await.map_err(|error| anyhow::anyhow!(error))?;
-
-            if body_text.trim().is_empty() {
-                return Ok::<Value, anyhow::Error>(Value::Null);
-            }
-
-            let parsed = parse_response_json_strict(&body_text, Some(status)).map_err(|error| anyhow::anyhow!(error))?;
-            // Return the raw JSON payload so downstream bindings can access fields directly
-            // via `steps.<id>.output.*` without an extra nesting layer.
-            Ok::<Value, anyhow::Error>(parsed)
-        };
-
-        // Execute request synchronously, reusing the current runtime when available.
-        let res = if let Ok(handle) = Handle::try_current() {
-            task::block_in_place(|| handle.block_on(fut))
-        } else {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .map_err(|e| anyhow::anyhow!(e))?
-                .block_on(fut)
-        }?;
-
-        Ok(res)
+        Ok(response_payload)
     }
+}
+
+fn parse_run_identifier(run: &str) -> Result<ProviderIdentifier> {
+    ProviderIdentifier::parse(run).ok_or_else(|| anyhow!("invalid run identifier: {run}"))
+}
+
+fn extract_input_map(with: Option<&Value>) -> serde_json::Map<String, Value> {
+    match with {
+        Some(Value::Object(map)) => map.clone(),
+        _ => serde_json::Map::new(),
+    }
+}
+
+fn extract_path_variables(
+    command_spec: &oatty_types::CommandSpec,
+    input_map: &mut serde_json::Map<String, Value>,
+) -> serde_json::Map<String, Value> {
+    let mut path_variables = serde_json::Map::new();
+    for positional_argument in &command_spec.positional_args {
+        if let Some(value) = input_map.remove(&positional_argument.name) {
+            path_variables.insert(positional_argument.name.clone(), value);
+        }
+    }
+    path_variables
 }

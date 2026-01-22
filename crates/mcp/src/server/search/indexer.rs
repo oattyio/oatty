@@ -1,12 +1,11 @@
 use std::{
     collections::HashMap,
-    env, mem,
+    env,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
 
 use dirs_next::config_dir;
-use oatty_mcp::client::ClientGatewayEvent;
 use oatty_registry::CommandRegistry;
 use oatty_util::expand_tilde;
 use seekstorm::{
@@ -19,6 +18,8 @@ use seekstorm::{
 use serde_json::Value;
 use thiserror::Error;
 use tokio::sync::broadcast::Receiver;
+
+use crate::client::ClientGatewayEvent;
 
 pub struct Indexer {
     command_registry: Arc<Mutex<CommandRegistry>>,
@@ -38,7 +39,7 @@ impl Indexer {
 
 impl Indexer {
     pub async fn start(&mut self) -> Result<(), IndexerError> {
-        let maybe_receiver = mem::take(&mut self.receiver);
+        let maybe_receiver = self.receiver.take();
         let Some(mut receiver) = maybe_receiver else {
             return Err(IndexerError::Receiver("Indexer is already active".to_string()));
         };

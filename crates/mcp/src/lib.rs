@@ -9,6 +9,7 @@ pub mod config;
 pub mod logging;
 pub mod plugin;
 pub mod provider;
+pub mod server;
 pub mod types;
 
 pub use config::{ConfigError, McpConfig, McpServer};

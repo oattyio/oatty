@@ -1,5 +1,5 @@
-use super::contract::ProviderContract;
 use crate::ProviderValueResolver;
+use oatty_types::ProviderContract;
 use serde_json::Value;
 
 pub struct NullProvider;

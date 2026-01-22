@@ -8,14 +8,13 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use clap::ArgMatches;
 use indexmap::IndexSet;
-use oatty_agent::Indexer;
 use oatty_api::OattyClient;
 use oatty_engine::workflow::document::{build_runtime_catalog, runtime_workflow_from_definition};
 use oatty_engine::{
     ProviderBindingOutcome, ProviderResolutionEvent, ProviderResolutionSource, RegistryCommandRunner, StepResult, StepStatus,
     WorkflowRunState,
 };
-use oatty_mcp::{PluginEngine, config::load_config};
+use oatty_mcp::{PluginEngine, config::load_config, server::Indexer};
 use oatty_registry::{CommandRegistry, build_clap};
 use oatty_types::{
     EnvVar, ExecOutcome, RuntimeWorkflow,

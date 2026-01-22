@@ -16,6 +16,7 @@ use anyhow::{Result, bail};
 use indexmap::IndexMap;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use tracing::{debug, info, warn};
 
 use crate::{
     model::{StepRepeat, StepSpec, WorkflowSpec},
@@ -247,8 +248,15 @@ where
         };
         skipped.status = StepStatus::Skipped;
         skipped.logs.push(format!("step '{}' skipped by condition", step.id));
+        info!(step_id = %step.id, "repeat step skipped by condition");
         return skipped;
     }
+
+    info!(
+        step_id = %step.id,
+        has_until = step.repeat.as_ref().is_some_and(|repeat| !repeat.until.trim().is_empty()),
+        "repeat step started"
+    );
 
     let max_attempts = MAX_REPEAT_ATTEMPTS;
     let sleep_dur = step
@@ -277,11 +285,24 @@ where
             sr.status = StepStatus::Failed;
             sr.logs.push(format!("repeat guard tripped at {} attempts; stopping", attempts));
             sr.attempts = attempts;
+            warn!(step_id = %step.id, attempts, "repeat guard tripped");
             break sr;
         }
 
         thread::sleep(sleep_dur);
     };
+
+    match result.status {
+        StepStatus::Succeeded => {
+            info!(step_id = %step.id, attempts = result.attempts, "repeat step succeeded");
+        }
+        StepStatus::Failed => {
+            warn!(step_id = %step.id, attempts = result.attempts, "repeat step failed");
+        }
+        StepStatus::Skipped => {
+            info!(step_id = %step.id, attempts = result.attempts, "repeat step skipped");
+        }
+    }
 
     result
 }
@@ -290,9 +311,8 @@ where
 ///
 /// Each step's output is persisted under `ctx.steps[step.id]` after it runs.
 pub fn execute_workflow(spec: &WorkflowSpec, ctx: &mut RunContext) -> Result<Vec<StepResult>> {
-    let ordered_steps = order_steps_for_execution(&spec.steps)?;
     let runner = NoopRunner;
-    Ok(execute_plan_steps(ordered_steps, ctx, &runner))
+    execute_workflow_with_runner(spec, ctx, &runner)
 }
 
 /// Execute all steps using a custom command runner.
@@ -300,7 +320,24 @@ pub fn execute_workflow(spec: &WorkflowSpec, ctx: &mut RunContext) -> Result<Vec
 /// Use this to run real commands via `RegistryCommandRunner` or a custom implementation.
 pub fn execute_workflow_with_runner(spec: &WorkflowSpec, ctx: &mut RunContext, runner: &dyn CommandRunner) -> Result<Vec<StepResult>> {
     let ordered_steps = order_steps_for_execution(&spec.steps)?;
-    Ok(execute_plan_steps(ordered_steps, ctx, runner))
+    info!(
+        workflow = spec.workflow.as_deref().unwrap_or("unnamed"),
+        workflow_name = spec.name.as_deref().unwrap_or("unnamed"),
+        step_count = ordered_steps.len(),
+        "workflow execution started"
+    );
+    let results = execute_plan_steps(ordered_steps, ctx, runner);
+    let summary = summarize_step_statuses(&results);
+    info!(
+        workflow = spec.workflow.as_deref().unwrap_or("unnamed"),
+        workflow_name = spec.name.as_deref().unwrap_or("unnamed"),
+        step_count = results.len(),
+        succeeded = summary.succeeded,
+        failed = summary.failed,
+        skipped = summary.skipped,
+        "workflow execution finished"
+    );
+    Ok(results)
 }
 
 fn execute_plan_steps(steps: Vec<&StepSpec>, ctx: &mut RunContext, runner: &dyn CommandRunner) -> Vec<StepResult> {
@@ -309,7 +346,13 @@ fn execute_plan_steps(steps: Vec<&StepSpec>, ctx: &mut RunContext, runner: &dyn 
 
     for step in steps.iter() {
         let prepared_step = prepare_step(step, ctx);
+        debug!(step_id = %step.id, run = %step.run, "step execution started");
         if let Some(blocked) = dependency_block(&prepared_step, &statuses) {
+            info!(
+                step_id = %step.id,
+                run = %step.run,
+                "step execution skipped due to dependency"
+            );
             statuses.insert(step.id.clone(), blocked.status);
             results.push(blocked);
             continue;
@@ -322,6 +365,17 @@ fn execute_plan_steps(steps: Vec<&StepSpec>, ctx: &mut RunContext, runner: &dyn 
             ctx.steps.insert(step.id.clone(), single.output.clone());
             single
         };
+        match result.status {
+            StepStatus::Succeeded => {
+                debug!(step_id = %step.id, attempts = result.attempts, "step execution succeeded");
+            }
+            StepStatus::Failed => {
+                warn!(step_id = %step.id, attempts = result.attempts, "step execution failed");
+            }
+            StepStatus::Skipped => {
+                info!(step_id = %step.id, attempts = result.attempts, "step execution skipped");
+            }
+        }
         statuses.insert(step.id.clone(), result.status);
         results.push(result);
     }
@@ -370,6 +424,28 @@ fn parse_every(s: &str) -> Option<Duration> {
     // No suffix: seconds
     let n: u64 = trimmed.parse().ok()?;
     Some(Duration::from_secs(n))
+}
+
+struct StepStatusSummary {
+    succeeded: usize,
+    failed: usize,
+    skipped: usize,
+}
+
+fn summarize_step_statuses(results: &[StepResult]) -> StepStatusSummary {
+    let mut summary = StepStatusSummary {
+        succeeded: 0,
+        failed: 0,
+        skipped: 0,
+    };
+    for result in results {
+        match result.status {
+            StepStatus::Succeeded => summary.succeeded += 1,
+            StepStatus::Failed => summary.failed += 1,
+            StepStatus::Skipped => summary.skipped += 1,
+        }
+    }
+    summary
 }
 
 #[cfg(test)]

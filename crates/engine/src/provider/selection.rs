@@ -1,7 +1,6 @@
+use oatty_types::ProviderContract;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-
-use super::contract::ProviderContract;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum SelectionSource {
@@ -59,23 +58,6 @@ impl Default for FieldSelection {
 /// - Fall back to common names: `id` for value, `name` for display.
 /// - Otherwise, choose first as value and second as display (if present), and require a choice.
 ///
-/// Examples
-/// ```rust
-/// use oatty_engine::provider::{ProviderContract, ProviderReturns, ReturnField, infer_selection};
-///
-/// let contract = ProviderContract {
-///     arguments: Vec::new(),
-///     returns: ProviderReturns {
-///         fields: vec![
-///             ReturnField { name: "uuid".into(), r#type: Some("string".into()), tags: vec!["identifier".into()] },
-///             ReturnField { name: "display".into(), r#type: Some("string".into()), tags: vec!["display".into()] },
-///         ],
-///     },
-/// };
-/// let sel = infer_selection(None, Some(&contract));
-/// assert_eq!(sel.value_field, "uuid");
-/// assert_eq!(sel.display_field, "display");
-/// ```
 pub fn infer_selection(explicit: Option<crate::model::SelectSpec>, contract: Option<&ProviderContract>) -> FieldSelection {
     if let Some(sel) = explicit {
         return FieldSelection::explicit(sel.value_field, sel.display_field, sel.id_field).with_source(SelectionSource::Explicit);

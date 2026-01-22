@@ -1,9 +1,8 @@
 use anyhow::anyhow;
 use indexmap::IndexSet;
 use oatty_registry::CommandSpec;
-use oatty_types::EnvVar;
-use oatty_util::fetch_json_array;
-use oatty_util::http_path_resolution::build_path;
+use oatty_types::{EnvVar, ExecOutcome};
+use oatty_util::{block_on_future, exec_remote_for_provider};
 use serde_json::{Map as JsonMap, Value};
 
 pub trait ProviderValueFetcher: Send + Sync {
@@ -21,25 +20,32 @@ pub struct DefaultHttpFetcher;
 impl ProviderValueFetcher for DefaultHttpFetcher {
     fn fetch_list(
         &self,
-        mut spec: CommandSpec,
+        spec: CommandSpec,
         args: &JsonMap<String, Value>,
         base_url: &str,
         headers: &IndexSet<EnvVar>,
     ) -> anyhow::Result<Vec<Value>> {
-        // Resolve path placeholders from args when present
         let spec_name = spec.name.clone();
-        let http = match spec.http_mut() {
-            Some(http) => http,
-            None => return Err(anyhow!("provider command '{}' is not HTTP-backed", spec_name)),
-        };
-        if !args.is_empty() {
-            let updated_path = build_path(&http.path, args);
-            http.path = updated_path;
+        if spec.http().is_none() {
+            return Err(anyhow!("provider command '{}' is not HTTP-backed", spec_name));
         }
-        let res = match tokio::runtime::Runtime::new() {
-            Ok(rt) => rt.block_on(async move { fetch_json_array(&spec, base_url, headers).await }),
-            Err(e) => Err(format!("runtime init failed: {}", e)),
-        };
-        res.map_err(anyhow::Error::msg)
+
+        let body = args.clone();
+        let base_url = base_url.to_string();
+        let headers = headers.clone();
+        let outcome = block_on_future(async move {
+            exec_remote_for_provider(&spec, &base_url, &headers, body, 0)
+                .await
+                .map_err(anyhow::Error::msg)
+        });
+
+        match outcome {
+            Ok(ExecOutcome::Http { payload, .. }) => match payload {
+                Value::Array(items) => Ok(items),
+                _ => Err(anyhow!("provider command '{}' returned non-array payload", spec_name)),
+            },
+            Ok(_) => Err(anyhow!("provider command '{}' returned non-http outcome", spec_name)),
+            Err(error) => Err(anyhow!(error)),
+        }
     }
 }

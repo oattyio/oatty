@@ -1,4 +1,5 @@
 use crate::ui::utils::normalize_result_payload;
+use oatty_mcp::LogLevel;
 use oatty_types::ExecOutcome;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
@@ -162,6 +163,12 @@ impl LogsState {
             | ExecOutcome::PluginsRefresh { message: text, .. }
             | ExecOutcome::PluginValidationOk { message: text } => {
                 self.append_text_entry(text.clone());
+            }
+            ExecOutcome::RegistryCatalogGenerated(cataglog) => {
+                self.append_text_entry(format!("The '{}' catalog was generated successfully", cataglog.title))
+            }
+            ExecOutcome::RegistryCatalogGenerationError(err) | ExecOutcome::RegistryConfigSaveError(err) => {
+                self.append_text_entry_with_level(Some(LogLevel::Error.to_string()), err.to_string())
             }
             _ => {}
         }

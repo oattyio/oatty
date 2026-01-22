@@ -16,7 +16,6 @@ tracing-subscriber = { workspace = true }
 tokio = { workspace = true }
 serde_json = { workspace = true }
 serde_yaml = { workspace = true }
-oatty-agent = { path = "../agent" }
 oatty-api = { path = "../api" }
 oatty-registry = { path = "../registry" }
 oatty-engine = { path = "../engine" }

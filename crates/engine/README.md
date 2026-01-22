@@ -120,7 +120,7 @@ let interpolated = interpolate_value(&value, &context);
 use oatty_engine::provider::{ProviderRegistry, NullProvider};
 
 let registry: Box<dyn ProviderRegistry> = Box::new(NullProvider);
-let values = registry.fetch_values("apps:list", &serde_json::Map::new())?;
+let values = registry.fetch_values("apps list", &serde_json::Map::new())?;
 ```
 
 ## Workflow Format
@@ -135,7 +135,7 @@ inputs:
   app_name:
     description: "Application to deploy"
     type: "string"
-    provider: "apps:list"
+    provider: "apps list"
 steps:
   - id: "deploy"
     run: "apps:deploy"
@@ -201,7 +201,7 @@ if: "inputs.permissions.includes(\"deploy\")"                       # array help
 Providers enable dynamic value resolution for workflow inputs:
 
 ### Built-in Providers
-- **`apps:list`**: List available applications
+- **`apps list`**: List available applications
 - **`teams:list`**: List team memberships
 - **`regions:list`**: List available regions
 
