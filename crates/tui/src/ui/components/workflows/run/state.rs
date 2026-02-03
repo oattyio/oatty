@@ -6,7 +6,7 @@
 //! while this module encapsulates state transitions that components mutate
 //! in response to engine events or user actions.
 
-use crate::ui::{components::table::state::ResultsTableState, theme::Theme};
+use crate::ui::{components::results::state::ResultsTableState, theme::Theme};
 use chrono::{DateTime, Duration, Utc};
 use oatty_types::workflow::{WorkflowRunControl, WorkflowRunStatus, WorkflowRunStepStatus, WorkflowStepDefinition};
 use oatty_util::format_duration_short;
@@ -330,7 +330,7 @@ impl RunViewState {
         self.started_at.map(|start| now - start)
     }
 
-    /// Provides mutable access to the step table state.
+    /// Provides mutable access to the step results state.
     pub fn steps_table_mut(&mut self) -> &mut ResultsTableState<'static> {
         &mut self.steps_table
     }

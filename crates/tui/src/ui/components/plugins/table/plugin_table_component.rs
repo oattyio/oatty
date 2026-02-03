@@ -20,17 +20,17 @@ use ratatui::{
     widgets::{Block, Borders, Row, Table},
 };
 
-/// Table column width constraints for the plugin table.
+/// Table column width constraints for the plugin results.
 const NAME_COLUMN_WIDTH: u16 = 18;
 const STATUS_COLUMN_WIDTH: u16 = 10;
 const COMMAND_COLUMN_PERCENTAGE: u16 = 50;
 const AUTH_COLUMN_WIDTH: u16 = 12;
 const TAGS_COLUMN_PERCENTAGE: u16 = 20;
 
-/// Table header labels for the plugin table.
+/// Table header labels for the plugin results.
 const TABLE_HEADERS: &[&str] = &["Name", "Status", "Command/BaseUrl", "Auth", "Tags"];
 
-/// The hit areas for the plugin table and their enabled state.
+/// The hit areas for the plugin results and their enabled state.
 #[derive(Debug, PartialEq)]
 enum PluginTableHitArea {
     Search(Rect, bool),
@@ -87,9 +87,9 @@ impl PluginTableHitArea {
     }
 }
 
-/// Component for rendering the plugin table with selection and navigation.
+/// Component for rendering the plugin results with selection and navigation.
 ///
-/// This component displays a table of MCP plugins with their status, authentication state,
+/// This component displays a results of MCP plugins with their status, authentication state,
 /// and other metadata. It supports keyboard navigation with up/down arrow keys and
 /// provides visual feedback for the currently selected row.
 #[derive(Debug, Default, PartialEq)]
@@ -99,9 +99,9 @@ pub struct PluginsTableComponent {
 }
 
 impl PluginsTableComponent {
-    /// Moves the table selection up by one row.
+    /// Moves the results selection up by one row.
     ///
-    /// If the table is empty or already at the top, this function has no effect.
+    /// If the results is empty or already at the top, this function has no effect.
     /// The selection is bounded by the number of filtered items.
     ///
     /// # Arguments
@@ -112,9 +112,9 @@ impl PluginsTableComponent {
         table_state.normalize_selection();
     }
 
-    /// Moves the table selection down by one row.
+    /// Moves the results selection down by one row.
     ///
-    /// If the table is empty or already at the bottom, this function has no effect.
+    /// If the results is empty or already at the bottom, this function has no effect.
     /// The selection is bounded by the number of filtered items.
     ///
     /// # Arguments
@@ -125,13 +125,13 @@ impl PluginsTableComponent {
         table_state.normalize_selection();
     }
 
-    /// Creates the table header row with styled column headers.
+    /// Creates the results header row with styled column headers.
     ///
     /// # Arguments
     /// * `theme` - The current theme for styling
     ///
     /// # Returns
-    /// A styled Row containing the table headers
+    /// A styled Row containing the results headers
     fn create_table_header(theme: &dyn Theme) -> Row<'static> {
         let header_cells = TABLE_HEADERS
             .iter()
@@ -140,7 +140,7 @@ impl PluginsTableComponent {
         Row::new(header_cells).style(theme_helpers::table_header_row_style(theme))
     }
 
-    /// Creates table rows for all filtered plugin items.
+    /// Creates results rows for all filtered plugin items.
     ///
     /// # Arguments
     /// * `state` - The plugins state containing items and selection
@@ -193,7 +193,7 @@ impl PluginsTableComponent {
         let selected_item = state.selected_item();
         let is_selected = selected_item.is_some();
         let is_running = selected_item.map(|item| item.status == PluginStatus::Running).unwrap_or(false);
-        let has_active_add = app.plugins.add.is_some();
+        let has_active_add = app.plugins.plugin_edit_state.is_some();
         let buttons = vec![
             (&state.f_add, "Add", button_columns[0], !is_selected && !has_active_add),
             (&state.f_start, "Start", button_columns[2], is_selected && !is_running),
@@ -226,7 +226,7 @@ impl PluginsTableComponent {
         ]
     }
 
-    /// Formats the tag list for display in the table.
+    /// Formats the tag list for display in the results.
     ///
     /// # Arguments
     /// * `tags` - The tags to format
@@ -237,7 +237,7 @@ impl PluginsTableComponent {
         if tags.is_empty() { String::new() } else { tags.join(",") }
     }
 
-    /// Creates the column width constraints for the table.
+    /// Creates the column width constraints for the results.
     ///
     /// # Returns
     /// An array of Constraint values defining column widths
@@ -340,26 +340,26 @@ impl PluginsTableComponent {
                 }
             }
             KeyCode::Char('a') if control_pressed => {
-                app.plugins.add = Some(PluginEditViewState::new());
+                app.plugins.plugin_edit_state = Some(PluginEditViewState::new());
             }
             KeyCode::Char('e') if control_pressed => {
                 if let Some(detail) = app.plugins.table.selected_item() {
-                    app.plugins.add = Some(PluginEditViewState::from_detail(detail.clone()));
+                    app.plugins.plugin_edit_state = Some(PluginEditViewState::from_detail(detail.clone()));
                 }
             }
             _ => {}
         };
         effects
     }
-    /// Handles search navigation for the plugin table.
+    /// Handles search navigation for the plugin results.
     ///
     /// When the search box has focus, printable characters update the filter and backspace removes
-    /// the previous character. Outside of search mode, arrow keys move the selected table row, and
+    /// the previous character. Outside of search mode, arrow keys move the selected results row, and
     /// `Ctrl+A` opens the add-plugin workflow.
     fn handle_search_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         match key.code {
             KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                app.plugins.add = Some(PluginEditViewState::new());
+                app.plugins.plugin_edit_state = Some(PluginEditViewState::new());
             }
             KeyCode::Backspace if app.plugins.table.f_search.get() => {
                 Self::remove_last_filter_character(app);
@@ -402,9 +402,9 @@ impl PluginsTableComponent {
 }
 
 impl Component for PluginsTableComponent {
-    /// Handles keyboard events for table navigation.
+    /// Handles keyboard events for results navigation.
     ///
-    /// Supports up/down arrow keys for row selection when the table is focused.
+    /// Supports up/down arrow keys for row selection when the results is focused.
     ///
     /// # Arguments
     /// * `app` - The application state
@@ -435,7 +435,7 @@ impl Component for PluginsTableComponent {
 
         effects
     }
-    /// Handles mouse events within the application, updating the plugins table state
+    /// Handles mouse events within the application, updating the plugins results state
     /// and potentially generating a set of effects based on the user's interaction.
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
         if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
@@ -468,10 +468,10 @@ impl Component for PluginsTableComponent {
         Vec::new()
     }
 
-    /// Renders the plugin table component.
+    /// Renders the plugin results component.
     ///
-    /// Creates and displays a table showing all filtered plugin items with their
-    /// status, authentication state, and metadata. The table supports keyboard
+    /// Creates and displays a results showing all filtered plugin items with their
+    /// status, authentication state, and metadata. The results supports keyboard
     /// navigation and visual selection feedback.
     ///
     /// # Arguments
@@ -484,7 +484,7 @@ impl Component for PluginsTableComponent {
         let theme = &*app.ctx.theme;
         let table_state = &mut app.plugins.table;
         let is_search_focused = table_state.f_search.get();
-        let header_block = theme_helpers::block(theme, Some("Search Extensions"), is_search_focused);
+        let header_block = theme_helpers::block(theme, Some("Search MCP Servers"), is_search_focused);
 
         // Search input
         let header_inner = header_block.inner(blocks[0]);
@@ -517,7 +517,7 @@ impl Component for PluginsTableComponent {
             );
         frame.render_stateful_widget(table_widget, blocks[1], &mut app.plugins.table.table_state);
 
-        // Calculated table area
+        // Calculated results area
         let mut table_area = blocks[1];
         table_area.height = table_area.height.saturating_sub(3); // remove header, border-top and border-bottom
         table_area.y = table_area.y.saturating_add(2); // the first row is 2 rows below the border
@@ -557,7 +557,7 @@ impl Component for PluginsTableComponent {
     fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
         Layout::vertical([
             Constraint::Length(3), // search bar
-            Constraint::Min(6),    // table
+            Constraint::Min(6),    // results
             Constraint::Length(3), // Action buttons
         ])
         .split(area)
@@ -565,7 +565,7 @@ impl Component for PluginsTableComponent {
     }
 }
 
-/// Formats authentication status for display in the table.
+/// Formats authentication status for display in the results.
 ///
 /// Converts the AuthStatus enum into user-friendly symbols for display.
 ///

@@ -1,6 +1,6 @@
 use crate::ui::components::common::TextInputState;
 use crate::ui::components::common::manual_entry_modal::state::ManualEntryState;
-use crate::ui::components::table::ResultsTableState;
+use crate::ui::components::results::ResultsTableState;
 use crate::ui::components::workflows::collector::{CollectorViewState, SelectorStatus, WorkflowSelectorFieldMetadata};
 use crate::ui::components::workflows::input::WorkflowInputViewState;
 use crate::ui::components::workflows::list::WorkflowListState;
@@ -526,14 +526,10 @@ fn resolve_selector_field_metadata(
         return IndexMap::new();
     };
 
-    let spec = {
-        let Ok(lock) = registry.lock() else {
-            return IndexMap::new();
-        };
-        lock.find_by_group_and_cmd(&group, &name).ok()
+    let Ok(lock) = registry.lock() else {
+        return IndexMap::new();
     };
-
-    let Some(spec) = spec else {
+    let Ok(spec) = lock.find_by_group_and_cmd_ref(&group, &name) else {
         return IndexMap::new();
     };
 

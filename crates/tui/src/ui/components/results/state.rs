@@ -1,5 +1,5 @@
 use crate::ui::theme::Theme;
-use crate::ui::utils::normalize_result_payload;
+use crate::ui::utils::normalize_result_payload_owned;
 use crate::ui::{
     theme::{
         roles::Theme as UiTheme,
@@ -21,17 +21,20 @@ use ratatui::{
     widgets::{Cell, Row},
 };
 use serde_json::Value;
+use std::borrow::Cow;
 
 #[derive(Debug, Default)]
 pub struct ResultsTableState<'a> {
     result_json: Option<Value>,
-    rows: Option<Vec<Row<'a>>>,
+    // Vec of rows by column value
+    row_cells: Option<Vec<Vec<Cell<'a>>>>,
     columns: Option<Vec<ColumnWithSize>>,
     column_constraints: Option<Vec<Constraint>>,
     headers: Option<Vec<Cell<'a>>>,
     kv_entries: Vec<KeyValueEntry>,
-    // table and list states are supplied here
-    // for use by the caller to render the table
+    truncated_col_idx: usize,
+    // results and list states are supplied here
+    // for use by the caller to render the results
     pub table_state: TableState,
     pub list_state: ListState,
     pub container_focus: FocusFlag,
@@ -39,12 +42,9 @@ pub struct ResultsTableState<'a> {
     pub mouse_over_idx: Option<usize>,
 }
 
-impl<'a> ResultsTableState<'_> {
+impl<'a> ResultsTableState<'a> {
     pub fn selected_result_json(&self) -> Option<&Value> {
         self.result_json.as_ref()
-    }
-    pub fn rows(&self) -> Option<&Vec<Row<'_>>> {
-        self.rows.as_ref()
     }
     pub fn column_constraints(&self) -> Option<&Vec<Constraint>> {
         self.column_constraints.as_ref()
@@ -78,20 +78,65 @@ impl<'a> ResultsTableState<'_> {
         self.result_json = value;
         let json_array = Self::array_from_json(self.result_json.as_ref());
         self.columns = self.create_columns(json_array, rerank_columns);
-        self.rows = self.create_rows(json_array, theme);
+        self.row_cells = self.create_row_cells(json_array, theme);
         self.headers = self.create_headers(theme);
         self.column_constraints = self.create_constraints();
         self.kv_entries = self.create_kv_entries(self.result_json.as_ref());
+        self.table_state = TableState::default();
+        self.truncated_col_idx = 0;
     }
 
-    fn create_rows(&self, maybe_value: Option<&[Value]>, theme: &dyn UiTheme) -> Option<Vec<Row<'a>>> {
+    pub fn move_right(&mut self) {
+        let max_col_idx = self.columns.as_ref().map(|cols| cols.len().saturating_sub(1)).unwrap_or(0);
+        let proposed_col_idx = self.truncated_col_idx.saturating_add(1);
+        if proposed_col_idx > max_col_idx {
+            return;
+        }
+        self.truncated_col_idx = proposed_col_idx;
+    }
+
+    pub fn move_left(&mut self) {
+        self.truncated_col_idx = self.truncated_col_idx.saturating_sub(1);
+    }
+
+    pub fn has_rows(&self) -> bool {
+        self.row_cells.as_ref().map(|row_cells| !row_cells.is_empty()).unwrap_or(false)
+    }
+
+    pub fn num_rows(&self) -> usize {
+        self.row_cells.as_ref().map(|row_cells| row_cells.len()).unwrap_or(0)
+    }
+
+    pub fn create_rows(&self, table_width: u16, theme: &dyn UiTheme) -> Option<(usize, Vec<Row<'a>>)> {
+        let cols = self.columns.as_ref()?;
+        let mut asked_width = cols.iter().fold(0, |acc, col| acc + col.max_len) as u16;
+        let mut truncate_idx = 0;
+        while asked_width > table_width && truncate_idx < self.truncated_col_idx {
+            asked_width = asked_width.saturating_sub(cols[truncate_idx].max_len as u16);
+            truncate_idx += 1;
+        }
+
+        let row_cells = self.row_cells.as_ref()?;
+        let mut rows = Vec::with_capacity(row_cells.len());
+        // iterate each row and trim columns after truncate_idx
+        for (idx, cells) in row_cells.iter().enumerate() {
+            let style = table_row_style(theme, idx);
+            let truncated_rows = &cells[truncate_idx..];
+
+            rows.push(Row::new(truncated_rows.to_vec()).style(style));
+        }
+
+        Some((truncate_idx, rows))
+    }
+
+    fn create_row_cells(&self, maybe_value: Option<&[Value]>, theme: &dyn UiTheme) -> Option<Vec<Vec<Cell<'a>>>> {
         if let Some(value) = maybe_value
             && self.columns.is_some()
         {
             let columns: &Vec<ColumnWithSize> = self.columns.as_ref().unwrap();
-            let mut rows: Vec<Row> = vec![];
-            for (idx, item) in value.iter().enumerate() {
-                let mut cells: Vec<Cell> = Vec::with_capacity(columns.len());
+            let mut rows: Vec<Vec<Cell>> = Vec::with_capacity(value.len());
+            for item in value.iter() {
+                let mut cells: Vec<Cell> = Vec::with_capacity(value.len());
                 for col in columns.iter() {
                     let key = &col.key;
                     let value = item.get(key).unwrap_or(&Value::Null);
@@ -101,14 +146,12 @@ impl<'a> ResultsTableState<'_> {
                     if is_status_like(key)
                         && let Some(color) = status_color_for_value(&display_text, theme)
                     {
-                        spans = vec![Span::styled(display_text.clone(), Style::default().fg(color))];
+                        spans = vec![Span::styled(Cow::from(display_text), Style::default().fg(color))];
                     }
                     let cell = Cell::from(Line::from(spans)).style(theme.text_primary_style());
                     cells.push(cell);
                 }
-                // Alternating row backgrounds using a theme helper.
-                let row_style = table_row_style(theme, idx);
-                rows.push(Row::new(cells).style(row_style));
+                rows.push(cells);
             }
             return Some(rows);
         }
@@ -180,7 +223,7 @@ impl<'a> ResultsTableState<'_> {
     /// Processes general command execution results (non-plugin specific).
     ///
     /// This method handles the standard processing of command results, including
-    /// logging, table updates, and pagination information.
+    /// logging, results updates, and pagination information.
     ///
     /// # Arguments
     ///
@@ -194,7 +237,7 @@ impl<'a> ResultsTableState<'_> {
         };
 
         if let Some(value) = maybe_value {
-            let normalized_value = normalize_result_payload(value);
+            let normalized_value = normalize_result_payload_owned(value);
             self.apply_result_json(Some(normalized_value), theme, true);
         }
     }
@@ -209,9 +252,8 @@ pub struct KeyValueEntry {
 }
 
 pub fn build_key_value_entries(value: &Value) -> Vec<KeyValueEntry> {
-    if let Value::Object(map) = value {
-        let keys = get_scored_keys(map);
-        return keys
+    match value {
+        Value::Object(map) => get_scored_keys(map)
             .into_iter()
             .take(24)
             .map(|key| {
@@ -224,10 +266,10 @@ pub fn build_key_value_entries(value: &Value) -> Vec<KeyValueEntry> {
                     raw_value,
                 }
             })
-            .collect();
+            .collect(),
+        Value::Array(array) if !array.is_empty() => build_key_value_entries(array.first().unwrap()),
+        _ => vec![],
     }
-
-    Vec::new()
 }
 
 impl HasFocus for ResultsTableState<'_> {

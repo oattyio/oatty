@@ -49,7 +49,7 @@ cargo test --workspace
 Launch the Terminal UI:
 
 ```bash
-cargo run -p oatty-cli
+cargo run -p oatty
 ```
 
 If no registry catalogs are configured yet, import one using the in-app Library:
@@ -78,16 +78,16 @@ Run commands directly:
 
 ```bash
 # List all apps
-cargo run -p oatty-cli -- apps list
+cargo run -p oatty -- apps list
 
 # Get info about an app
-cargo run -p oatty-cli -- apps info my-app
+cargo run -p oatty -- apps info my-app
 
 # Create a new app
-cargo run -p oatty-cli -- apps create --name demo-app
+cargo run -p oatty -- apps create --name demo-app
 
 # List releases
-cargo run -p oatty-cli -- releases list my-app
+cargo run -p oatty -- releases list my-app
 ```
 
 ## Development Workflow
@@ -134,7 +134,7 @@ cargo clippy --workspace -- -D warnings
 cargo fmt --all
 
 # Build optimized release binary
-cargo build --release -p oatty-cli
+cargo build --release -p oatty
 # Binary will be at: target/release/oatty
 ```
 
@@ -152,20 +152,20 @@ cargo build --release -p oatty-cli
 
 ```bash
 # Debug logging
-OATTY_LOG=debug cargo run -p oatty-cli
+OATTY_LOG=debug cargo run -p oatty
 
 # Trace logging (very verbose)
-OATTY_LOG=trace cargo run -p oatty-cli
+OATTY_LOG=trace cargo run -p oatty
 ```
 
 ### Change Theme
 
 ```bash
 # Use Nord theme
-TUI_THEME=nord cargo run -p oatty-cli
+TUI_THEME=nord cargo run -p oatty
 
 # Use high-contrast Dracula
-TUI_THEME=dracula_hc cargo run -p oatty-cli
+TUI_THEME=dracula_hc cargo run -p oatty
 ```
 
 ### Generate Command Manifest
@@ -234,10 +234,10 @@ RUST_BACKTRACE=1              # Show backtraces
 
 ```bash
 # Run with backtrace
-RUST_BACKTRACE=1 cargo run -p oatty-cli -- apps list
+RUST_BACKTRACE=1 cargo run -p oatty -- apps list
 
 # Full backtrace
-RUST_BACKTRACE=full cargo run -p oatty-cli
+RUST_BACKTRACE=full cargo run -p oatty
 ```
 
 ### VS Code / Cursor
@@ -256,7 +256,7 @@ RUST_BACKTRACE=full cargo run -p oatty-cli
 cargo test --workspace
 
 # Run tests for specific crate
-cargo test -p oatty-cli
+cargo test -p oatty
 
 # Run a specific test
 cargo test test_name -- --exact
@@ -317,8 +317,8 @@ make pre-commit
 
 1. ✅ **Read the docs**: [DEVELOPMENT.md](./DEVELOPMENT.md) has comprehensive info
 2. ✅ **Explore the code**: Start with `crates/cli/src/main.rs`
-3. ✅ **Try the TUI**: `cargo run -p oatty-cli`
-4. ✅ **Run some commands**: `cargo run -p oatty-cli -- apps list`
+3. ✅ **Try the TUI**: `cargo run -p oatty`
+4. ✅ **Run some commands**: `cargo run -p oatty -- apps list`
 5. ✅ **Set up your editor**: Install VS Code extensions
 6. ✅ **Pick a task**: Check issues or roadmap
 

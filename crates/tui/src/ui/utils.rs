@@ -4,12 +4,11 @@
 //! across the UI components. It includes layout utilities, string helpers,
 //! and other common functionality needed for UI rendering.
 
-use std::collections::{BTreeSet, HashMap};
-
 use heck::ToTitleCase;
 use oatty_util::{format_date_mmddyyyy, is_date_like_key, redact_json, redact_sensitive, truncate_with_ellipsis};
 use ratatui::prelude::*;
 use serde_json::{Map, Value};
+use std::collections::{BTreeSet, HashMap};
 use unicode_width::UnicodeWidthStr;
 
 use crate::{
@@ -195,12 +194,18 @@ pub fn status_color_for_value(value: &str, theme: &dyn UiTheme) -> Option<Color>
 
 pub fn base_key_score(key: &str) -> i32 {
     match key {
-        "human_name" => 120,
-        "name" | "description" | "app" | "dyno" | "addon" | "config_var" => 100,
-        "status" | "state" | "type" | "region" | "stack" => 80,
+        "human_name" | "title" => 120,
+        "name" | "description" | "config_var" => 100,
+        "app" | "status" | "state" | "type" | "region" | "stack" => 80,
         "owner" | "user" | "email" => 60,
         "id" => -100,
-        _ => 20,
+        _ => {
+            if key.len() < 2 {
+                -100
+            } else {
+                20
+            }
+        }
     }
 }
 /// Generates a sorted vector of keys from a given map, arranged in descending order of their computed scores.
@@ -263,7 +268,7 @@ fn property_frequency_boost(header: &str) -> i32 {
     let l = header.to_lowercase();
     match l.as_str() {
         // Very common, highly informative
-        "name" => 11,
+        "name" | "title" | "header" | "heading" => 11,
         // Timestamps
         "created_at" | "updated_at" => 8,
         // Common resource scoping/identity
@@ -294,7 +299,7 @@ pub enum ColumnFormatter {
 /// Column metadata with measured maximum string length for rendering.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ColumnWithSize {
-    /// Display name (header label), typically Title Case of the key.
+    /// Display name (header label), typically the Title Case of the key.
     pub name: String,
     /// JSON key to extract values from each row object.
     pub key: String,
@@ -540,7 +545,7 @@ fn ellipsize_middle_if_sha_like(s: &str, keep_total: usize) -> String {
 /// - **Single API entry with JSON**: Returns formatted JSON if pretty mode
 ///   enabled
 /// - **Single API entry without JSON**: Returns raw log content
-/// - **Multi-selection**: Returns concatenated log entries
+/// - **Single selection**: Returns the selected log entry
 ///
 /// All output is automatically redacted for security.
 ///
@@ -552,18 +557,17 @@ fn ellipsize_middle_if_sha_like(s: &str, keep_total: usize) -> String {
 ///
 /// A redacted string containing the selected log content
 pub fn build_copy_text(app: &app::App) -> String {
-    if app.logs.entries.is_empty() {
+    if app.logs.rich_entries.is_empty() {
         return String::new();
     }
-    let (start, end) = app.logs.selection.range();
-    if start >= app.logs.entries.len() {
+    let Some(selected_index) = app.logs.list_state.selected() else {
+        return String::new();
+    };
+    if selected_index >= app.logs.rich_entries.len() {
         return String::new();
     }
 
-    // Handle a single selection with special JSON formatting
-    if start == end
-        && let Some(LogEntry::Api { json, raw, .. }) = app.logs.rich_entries.get(start)
-    {
+    if let Some(LogEntry::Api { json, raw, .. } | LogEntry::Mcp { json, raw }) = app.logs.rich_entries.get(selected_index) {
         if let Some(j) = json
             && app.logs.pretty_json
         {
@@ -573,16 +577,14 @@ pub fn build_copy_text(app: &app::App) -> String {
         return redact_sensitive(raw);
     }
 
-    // Multi-select or text fallback: concatenate visible strings
-    let mut buf = String::new();
-    for i in start..=end.min(app.logs.entries.len() - 1) {
-        let line = app.logs.entries.get(i).cloned().unwrap_or_default();
-        if !buf.is_empty() {
-            buf.push('\n');
+    let line = {
+        match app.logs.rich_entries.get(selected_index) {
+            Some(LogEntry::Api { raw, .. }) | Some(LogEntry::Mcp { raw, .. }) => raw,
+            Some(LogEntry::Text { msg, .. }) => msg,
+            _ => return String::new(),
         }
-        buf.push_str(&line);
-    }
-    redact_sensitive(&buf)
+    };
+    redact_sensitive(line)
 }
 
 /// Normalize execution payloads to ensure single-key collections render in the results table.
@@ -590,18 +592,11 @@ pub fn build_copy_text(app: &app::App) -> String {
 /// Some APIs return objects shaped as `{ "items": [ ... ] }`. The table expects an array at
 /// the root level, so this helper unwraps objects that meet this pattern. All other payloads
 /// are returned unchanged.
-pub fn normalize_result_payload(value: Value) -> Value {
-    if !value.is_object()
-        || value
-            .as_object()
-            .is_some_and(|o| o.len() != 1 || !o.values().next().unwrap().is_array())
-    {
-        return value;
+pub fn normalize_result_payload_owned(value: Value) -> Value {
+    match value {
+        Value::Object(mut map) if map.get("items").is_some_and(|i| i.is_array()) => map.remove("items").unwrap(),
+        _ => value,
     }
-    let Value::Object(map) = value else {
-        return value;
-    };
-    map.into_values().next().unwrap()
 }
 
 pub fn span_display_width(span: &Span<'_>) -> u16 {

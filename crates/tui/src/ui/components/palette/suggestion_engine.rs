@@ -743,7 +743,7 @@ pub(crate) fn is_flag_value_complete(input: &str) -> bool {
 mod tests {
     use super::*;
     use oatty_engine::provider::{PendingProviderFetch, ProviderFetchPlan};
-    use oatty_registry::{CommandRegistry, RegistryConfig};
+    use oatty_registry::CommandRegistry;
     use oatty_types::{CommandExecution, CommandFlag, HttpCommandSpec, PositionalArgument};
 
     #[derive(Debug)]
@@ -795,12 +795,7 @@ mod tests {
     }
 
     fn registry_with(commands: Vec<CommandSpec>) -> CommandRegistry {
-        CommandRegistry {
-            commands,
-            workflows: vec![],
-            provider_contracts: Default::default(),
-            config: RegistryConfig { catalogs: None },
-        }
+        CommandRegistry::default().with_commands(commands)
     }
 
     #[test]

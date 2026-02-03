@@ -10,7 +10,7 @@ use ratatui::{
 /// Build comprehensive help text for a command specification.
 ///
 /// Produces a themed `Text` with sections: USAGE, DESCRIPTION, BACKEND, ARGUMENTS, OPTIONS.
-pub(crate) fn build_command_help_text<'a>(theme: &'a dyn Theme, spec: CommandSpec, product_name: &str) -> Text<'a> {
+pub(crate) fn build_command_help_text<'a>(theme: &'a dyn Theme, spec: &CommandSpec, product_name: &str) -> Text<'a> {
     let name = &spec.name;
     let group = &spec.group;
 

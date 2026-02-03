@@ -1,3 +1,2 @@
-pub mod search;
-
-pub use search::Indexer;
+mod core;
+mod http;

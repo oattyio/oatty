@@ -178,7 +178,7 @@ impl WorkflowRunState {
         });
     }
 
-    /// Applies a manual value to the `RunContext` inputs table.
+    /// Applies a manual value to the `RunContext` inputs results.
     pub fn set_input_value(&mut self, input_name: &str, value: Value) {
         self.run_context.inputs.insert(input_name.to_string(), value);
     }

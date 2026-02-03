@@ -14,7 +14,7 @@ use oatty_engine::{
     ProviderBindingOutcome, ProviderResolutionEvent, ProviderResolutionSource, RegistryCommandRunner, StepResult, StepStatus,
     WorkflowRunState,
 };
-use oatty_mcp::{PluginEngine, config::load_config, server::Indexer};
+use oatty_mcp::{PluginEngine, config::load_config};
 use oatty_registry::{CommandRegistry, build_clap};
 use oatty_types::{
     EnvVar, ExecOutcome, RuntimeWorkflow,
@@ -88,9 +88,6 @@ async fn main() -> Result<()> {
     let plugin_engine = Arc::new(PluginEngine::new(cfg, Arc::clone(&command_registry))?);
     plugin_engine.prepare_registry().await?;
     plugin_engine.start().await?;
-
-    let _indexer = Indexer::new(Arc::clone(&command_registry), plugin_engine.client_manager().subscribe());
-    // indexer.start().await?;
 
     let cli = build_clap(Arc::clone(&command_registry));
     let matches = cli.get_matches();
@@ -500,7 +497,7 @@ fn resolve_command_context(
     command_name: &str,
 ) -> Result<(CommandSpec, String, IndexSet<EnvVar>)> {
     let registry_lock = registry.lock().expect("could not obtain lock on registry");
-    let command_spec = registry_lock.find_by_group_and_cmd(group, command_name)?;
+    let command_spec = registry_lock.find_by_group_and_cmd_cloned(group, command_name)?;
     let base_url = registry_lock
         .resolve_base_url_for_command(&command_spec)
         .ok_or(anyhow!("base url not defined for this command"))?;

@@ -6,26 +6,26 @@ A schema-driven CLI + TUI for Oatty APIs. The command surface is loaded at runti
 - **Schema-driven commands**: command groups, arguments, and flags are derived from registry catalogs (OpenAPI → manifest).
 - **Two interfaces**:
   - **CLI**: `oatty <group> <command> [flags]`
-  - **TUI**: interactive command palette/browser and result views (`cargo run -p oatty-cli`)
+  - **TUI**: interactive command palette/browser and result views (`cargo run -p oatty`)
 - **Workflows**: `oatty workflow list|preview|run` (runs local YAML/JSON definitions or workflows bundled in catalogs).
 - **MCP plugins**: optional providers/tools (stdio or HTTP/SSE) that can inject additional commands at runtime.
 - **Security**: sensitive values are redacted in logs/output paths intended for display.
 
 ## Usage
 - Build: `cargo build --workspace`
-- Run TUI (no args): `cargo run -p oatty-cli` (or the installed binary `oatty`)
+- Run TUI (no args): `cargo run -p oatty` (or the installed binary `oatty`)
 - CLI examples:
-  - `cargo run -p oatty-cli -- apps list`
-  - `cargo run -p oatty-cli -- apps info my-app`
-  - `cargo run -p oatty-cli -- workflow list`
-  - `cargo run -p oatty-cli -- workflow preview --file workflows/create_app_and_db.yaml`
+  - `cargo run -p oatty -- apps list`
+  - `cargo run -p oatty -- apps info my-app`
+  - `cargo run -p oatty -- workflow list`
+  - `cargo run -p oatty -- workflow preview --file workflows/create_app_and_db.yaml`
 
 Note: available commands depend on which registry catalogs and MCP plugins are configured/enabled.
 
 ### First-time: import a registry catalog
 If you have no catalogs configured yet, the fastest way to get started is via the TUI:
 
-1. Run `cargo run -p oatty-cli`.
+1. Run `cargo run -p oatty`.
 2. In the Library view, import a local OpenAPI document (e.g., `schemas/samples/render-public-api.json`) or a URL.
 3. Accept the default command prefix (or enter your own).
 4. The registry configuration is saved to `~/.config/oatty/registry.json` and manifests are stored under `~/.config/oatty/catalogs/`.
@@ -52,7 +52,7 @@ If you have no catalogs configured yet, the fastest way to get started is via th
 
 ## Development
 - Toolchain: `rust-toolchain.toml` pins the project to Rust `stable`.
-- Workspace crates: `cli`, `tui`, `registry`, `registry-gen`, `engine`, `api`, `util`, `types`, `mcp`, `agent`.
+- Workspace crates: `cli`, `tui`, `registry`, `registry-gen`, `engine`, `api`, `util`, `types`, `mcp`.
 - Common commands:
   - Build: `cargo build --workspace`
   - Test: `cargo test --workspace`
@@ -138,10 +138,10 @@ flowchart LR
   end
 
   subgraph Registry
-    S[OpenAPI Document] --> D[Derive Manifest (registry-gen)]
-    D --> M[Catalog Manifest (.bin)]
-    M --> R[Registry Catalogs]
-    R --> C[Clap Tree]
+    S[OpenAPI Document] --> D["Derive Manifest (registry-gen)"]
+    D --> M["Catalog Manifest (.bin)"]
+    M --> RC[Registry Catalogs]
+    RC --> C[Clap Tree]
   end
 
   TUI -->|Search/Select| C
@@ -155,9 +155,9 @@ flowchart LR
   MCP --> OUT2
 
   subgraph Policy
-    R[Redact secrets in output]
+    REDACT[Redact secrets in output]
   end
-  OUT2 --> R
+  OUT2 --> REDACT
   R --> LOGS[Logs Panel / stdout]
 ```
 
@@ -174,7 +174,7 @@ flowchart LR
 - Select theme via env var `TUI_THEME`:
   - `dracula` (default), `dracula_hc`
   - `nord`, `nord_hc`
-  - Example: `TUI_THEME=dracula cargo run -p oatty-cli`
+  - Example: `TUI_THEME=dracula cargo run -p oatty`
 
 ## Code Signing (macOS)
 To avoid repeated Keychain prompts (the CLI uses the macOS Keychain via `keyring`), sign the binary with a stable identity. You can use a self-signed certificate for local development or a Developer ID for distribution.
@@ -184,7 +184,7 @@ To avoid repeated Keychain prompts (the CLI uses the macOS Keychain via `keyring
   - The script imports both the certificate and private key, updates the keychain partition list when `KEYCHAIN_PASSWORD` is provided, and prints the codesign identity string.
 
 - Build and sign the binary:
-  - `cargo build -p oatty-cli`
+  - `cargo build -p oatty`
   - `NEXTGEN_CODESIGN_ID="<identity name>" NEXTGEN_CODESIGN_BIN=target/debug/oatty scripts/macos/sign.sh`
     - Optional variables: `NEXTGEN_ENTITLEMENTS` to override the entitlements path, `NEXTGEN_CODESIGN_TIMESTAMP=true|false` to force timestamping, `NEXTGEN_CODESIGN_HARDENED=false` (or comment the option) if you need to skip hardened runtime temporarily.
 

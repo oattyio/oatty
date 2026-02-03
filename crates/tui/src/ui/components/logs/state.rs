@@ -1,4 +1,5 @@
-use crate::ui::utils::normalize_result_payload;
+use crate::ui::components::results::ResultsTableState;
+use crate::ui::utils::normalize_result_payload_owned;
 use oatty_mcp::LogLevel;
 use oatty_types::ExecOutcome;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
@@ -9,6 +10,7 @@ use ratatui::widgets::ListState;
 /// This struct serves as the central state container for the entire TUI
 /// application, managing user interactions, data flow, and UI state.
 use serde_json::Value;
+use std::fmt::{Display, Formatter};
 
 /// Structured log entry supporting API responses and plain text.
 #[derive(Debug, Clone)]
@@ -22,7 +24,7 @@ pub enum LogEntry {
     },
     /// Plain text log: optional level and message.
     Text {
-        level: Option<String>,
+        level: Option<LogLevel>,
         msg: String,
     },
 
@@ -32,51 +34,35 @@ pub enum LogEntry {
     },
 }
 
-/// Selection model for logs supporting single and range selection.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct Selection {
-    pub anchor: usize,
-    pub cursor: usize,
-}
-
-impl Selection {
-    pub fn is_single(&self) -> bool {
-        self.anchor == self.cursor
+impl Display for LogEntry {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        match self {
+            LogEntry::Text { level, msg } => {
+                if let Some(level) = level {
+                    write!(f, "[{}] {}", level, msg)
+                } else {
+                    write!(f, "{}", msg)
+                }
+            }
+            LogEntry::Api { status, raw, .. } => {
+                write!(f, "[{}] {}", status, raw)
+            }
+            LogEntry::Mcp { raw, .. } => {
+                write!(f, "{}", raw)
+            }
+        }
     }
-    pub fn range(&self) -> (usize, usize) {
-        let start = self.anchor.min(self.cursor);
-        let end = self.anchor.max(self.cursor);
-        (start, end)
-    }
-}
-
-/// Detail view mode for an opened log entry.
-#[derive(Debug, Clone, Copy)]
-pub enum LogDetailView {
-    /// Use table view for API responses with tabular JSON; carries scroll
-    /// offset.
-    Table { offset: usize },
-    /// Use a simple text viewer for plain or multi-line selections.
-    Text,
 }
 
 #[derive(Debug)]
 pub struct LogsState {
     pub list_state: ListState,
+    pub results_table: ResultsTableState<'static>,
     pub is_visible: bool,
     /// Structured entries for detail view and rich behavior.
     pub rich_entries: Vec<LogEntry>,
-    /// Existing flat string entries used by the current UI list.
-    pub entries: Vec<String>,
-    /// Current selection (single or range).
-    pub selection: Selection,
-    /// Optional detail view mode when open.
-    pub detail: Option<LogDetailView>,
-    /// Pretty-print toggle for single API JSON view/copy.
+    /// Pretty-print toggle for a single API JSON view /copy.
     pub pretty_json: bool,
-    /// Cached redacted JSON for currently opened single API detail (by index).
-    pub cached_detail_index: Option<usize>,
-    pub cached_redacted_json: Option<Value>,
     /// Focus flag for rat-focus integration
     pub container_focus: FocusFlag,
 }
@@ -102,8 +88,7 @@ impl LogsState {
     ///
     /// * `level` - Optional severity level (for example, `"warn"`).
     /// * `message` - The human-readable log message to append.
-    pub fn append_text_entry_with_level(&mut self, level: Option<String>, message: String) {
-        self.entries.push(message.clone());
+    pub fn append_text_entry_with_level(&mut self, level: Option<LogLevel>, message: String) {
         self.rich_entries.push(LogEntry::Text { level, msg: message });
     }
 
@@ -115,7 +100,6 @@ impl LogsState {
     /// * `raw` - Raw response text that should appear in the list view.
     /// * `json` - Parsed JSON payload, if available.
     pub fn append_api_entry(&mut self, status: u16, raw: String, json: Option<Value>) {
-        self.entries.push(raw.clone());
         self.rich_entries.push(LogEntry::Api { status, raw, json });
     }
 
@@ -126,7 +110,6 @@ impl LogsState {
     /// * `raw` - Raw MCP output for list display.
     /// * `json` - Parsed MCP payload, if available.
     pub fn append_mcp_entry(&mut self, raw: String, json: Option<Value>) {
-        self.entries.push(raw.clone());
         self.rich_entries.push(LogEntry::Mcp { raw, json });
     }
 
@@ -148,10 +131,14 @@ impl LogsState {
                 payload,
                 ..
             } => {
-                self.append_api_entry(*status_code, log_entry.clone(), Some(normalize_result_payload(payload.clone())));
+                self.append_api_entry(
+                    *status_code,
+                    log_entry.clone(),
+                    Some(normalize_result_payload_owned(payload.clone())),
+                );
             }
             ExecOutcome::Mcp { log_entry, payload, .. } => {
-                self.append_mcp_entry(log_entry.clone(), Some(normalize_result_payload(payload.clone())));
+                self.append_mcp_entry(log_entry.clone(), Some(normalize_result_payload_owned(payload.clone())));
             }
             ExecOutcome::PluginDetailLoad { plugin_name, .. } => {
                 let message = format!("Plugins: loading details for '{}'", plugin_name);
@@ -160,15 +147,14 @@ impl LogsState {
             ExecOutcome::Log(text)
             | ExecOutcome::PluginDetail { message: text, .. }
             | ExecOutcome::PluginValidationErr { message: text }
-            | ExecOutcome::PluginsRefresh { message: text, .. }
             | ExecOutcome::PluginValidationOk { message: text } => {
                 self.append_text_entry(text.clone());
             }
-            ExecOutcome::RegistryCatalogGenerated(cataglog) => {
-                self.append_text_entry(format!("The '{}' catalog was generated successfully", cataglog.title))
+            ExecOutcome::RegistryCatalogGenerated(catalog) => {
+                self.append_text_entry(format!("The '{}' catalog was generated successfully", catalog.title))
             }
             ExecOutcome::RegistryCatalogGenerationError(err) | ExecOutcome::RegistryConfigSaveError(err) => {
-                self.append_text_entry_with_level(Some(LogLevel::Error.to_string()), err.to_string())
+                self.append_text_entry_with_level(Some(LogLevel::Error), err.to_string())
             }
             _ => {}
         }
@@ -181,13 +167,9 @@ impl Default for LogsState {
             list_state: ListState::default(),
             is_visible: false,
             rich_entries: Vec::new(),
-            entries: Vec::new(),
-            selection: Selection::default(),
-            detail: None,
             pretty_json: true,
-            cached_detail_index: None,
-            cached_redacted_json: None,
             container_focus: FocusFlag::new().with_name("root.logs"),
+            results_table: ResultsTableState::default(),
         };
         state.append_text_entry("Welcome to Oatty TUI".to_string());
         state

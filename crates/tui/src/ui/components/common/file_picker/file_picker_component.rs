@@ -158,12 +158,18 @@ impl FilePickerModal {
             return None;
         };
         let line_indices = file_picker.line_indices();
-        let offset = file_picker.preview_scroll_offset() as usize;
-        let len = line_indices.len().min(offset + area.height as usize);
+        let slice = {
+            if line_indices.is_empty() {
+                file_contents
+            } else {
+                let offset = file_picker.preview_scroll_offset() as usize;
+                let len = line_indices.len().min(offset + area.height as usize);
 
-        let begin = line_indices[offset].0;
-        let end = line_indices[len - 1].1;
-        let slice = file_contents.get(begin..end)?;
+                let begin = line_indices[offset].0;
+                let end = line_indices[len - 1].1;
+                file_contents.get(begin..end)?
+            }
+        };
 
         let preview = Paragraph::new(slice).block(p_block).style(app.ctx.theme.text_primary_style());
         frame.render_widget(preview, area);

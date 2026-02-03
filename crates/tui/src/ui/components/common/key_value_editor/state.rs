@@ -15,7 +15,7 @@ pub enum KeyValueEditorField {
     Value,
 }
 
-/// State container for table-driven editing of key/value pairs.
+/// State container for results-driven editing of key/value pairs.
 #[derive(Debug, Default)]
 pub struct KeyValueEditorState {
     pub f_table: FocusFlag,

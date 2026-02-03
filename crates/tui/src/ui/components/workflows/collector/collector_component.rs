@@ -3,7 +3,7 @@ use std::cmp::min;
 use crate::app::App;
 use crate::ui::components::common::ResultsTableView;
 use crate::ui::components::component::Component;
-use crate::ui::components::table::state::KeyValueEntry;
+use crate::ui::components::results::state::KeyValueEntry;
 use crate::ui::components::workflows::collector::manual_entry::ManualEntryComponent;
 use crate::ui::components::workflows::collector::{CollectorStagedSelection, CollectorViewState, SelectorStatus};
 use crate::ui::components::workflows::view_utils::{classify_json_value, style_for_role};
@@ -29,7 +29,7 @@ struct WorkflowCollectorLayoutState {
     pub filter_inner_area: Rect,
     /// Rect covering the filter input at the top of the modal.
     pub status_area: Rect,
-    /// Rect covering the result table.
+    /// Rect covering the result results.
     pub table_area: Rect,
     /// Rect covering the detail pane.
     pub detail_area: Rect,
@@ -114,7 +114,7 @@ impl Component for WorkflowCollectorComponent {
         }
         let position = Position::new(mouse.column, mouse.row);
         // Scroll highlighting
-        let table = &mut app.workflows.collector_state_mut().expect("table state").table;
+        let table = &mut app.workflows.collector_state_mut().expect("results state").table;
         let offset = table.table_state.offset();
 
         match mouse.kind {
@@ -220,14 +220,14 @@ impl Component for WorkflowCollectorComponent {
         let layout_spec = if detail_required {
             vec![
                 Constraint::Length(4), // header
-                Constraint::Min(6),    // table
+                Constraint::Min(6),    // results
                 Constraint::Min(5),    // detail
                 Constraint::Length(3), // footer
             ]
         } else {
             vec![
                 Constraint::Length(4), // header
-                Constraint::Min(6),    // table
+                Constraint::Min(6),    // results
                 Constraint::Length(0), // empty
                 Constraint::Length(3), // footer
             ]
@@ -250,7 +250,7 @@ impl Component for WorkflowCollectorComponent {
         vec![
             header_layout[0], // filter panel
             header_layout[1], // status
-            table_area,       // table
+            table_area,       // results
             detail_layout[0], // details - empty when !detail_required
             detail_layout[1], // metadata - empty when !detail_required
             button_layout[0], // cancel button
@@ -331,7 +331,7 @@ impl WorkflowCollectorComponent {
         }
 
         let collector = app.workflows.collector_state_mut().expect("selector state");
-        let row_len = collector.table.rows().map(|r| r.len()).unwrap_or_default();
+        let row_len = collector.table.num_rows();
         let selected = collector.table.table_state.selected().unwrap_or_default();
         let table_state = &mut collector.table.table_state;
 
@@ -543,7 +543,7 @@ impl WorkflowCollectorComponent {
         let theme = &*app.ctx.theme;
         let collector = app.workflows.collector_state_mut().expect("selector state");
         let selected_idx = collector.table.table_state.selected();
-        if selected_idx.is_none() && collector.table.rows().is_some() {
+        if selected_idx.is_none() && collector.table.has_rows() {
             collector.table.table_state.select(Some(0));
         }
         collector.sync_stage_with_selection(selected_idx);
@@ -565,7 +565,7 @@ impl WorkflowCollectorComponent {
             let detail_inner = detail_block.inner(layout.detail_area);
             frame.render_widget(detail_block, layout.detail_area);
             self.detail_table_view
-                .render_kv_or_text(frame, detail_inner, &mut collector.table, &row_json, theme);
+                .render_key_value_or_text(frame, detail_inner, &mut collector.table, &row_json, theme);
             self.render_detail_metadata(frame, layout.metadata_area, collector, theme);
         }
         let cancel_options = ButtonRenderOptions::new(true, collector.f_cancel.get(), false, Borders::ALL, ButtonType::Secondary);
@@ -758,7 +758,7 @@ impl WorkflowCollectorComponent {
                 theme,
                 &[
                     ("Esc", " Clear filter  "),
-                    ("Enter", " Focus table  "),
+                    ("Enter", " Focus results  "),
                     ("Tab", " Next focus  "),
                     ("Shift+Tab", " Previous focus"),
                 ],
@@ -801,7 +801,7 @@ impl WorkflowCollectorComponent {
 mod tests {
     use super::*;
     use crate::ui::components::common::TextInputState;
-    use crate::ui::components::table::ResultsTableState;
+    use crate::ui::components::results::ResultsTableState;
     use indexmap::IndexMap;
     use serde_json::json;
 

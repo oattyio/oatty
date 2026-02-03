@@ -9,7 +9,6 @@ repository = { workspace = true }
 description = "Model Context Protocol (MCP) plugin infrastructure for Oatty CLI"
 
 [dependencies]
-seekstorm = "1.2.5"
 keyring = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }
@@ -27,7 +26,8 @@ once_cell = { workspace = true }
 oatty-util = { path = "../util" }
 oatty-types = { path = "../types" }
 oatty-registry = { path = "../registry" }
-rmcp = { version = "0.13.0", features = [
+rmcp = { version = "0.14.0", features = [
+  "server-side-http",
   "client",
   "transport-child-process",
   "transport-streamable-http-client-reqwest",

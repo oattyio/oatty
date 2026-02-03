@@ -49,8 +49,3 @@ pub use preferences::*;
 pub use schema::*;
 pub use shell_lexing::*;
 pub use text_processing::*;
-
-// Generated date fields from build-time schema processing
-pub mod generated_date_fields {
-    include!(concat!(env!("OUT_DIR"), "/date_fields.rs"));
-}

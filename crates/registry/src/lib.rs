@@ -6,6 +6,7 @@
 pub mod clap_builder;
 pub mod config;
 pub mod models;
+pub mod search;
 
 pub use clap_builder::build_clap;
 pub use config::*;
@@ -13,6 +14,8 @@ pub use models::CommandRegistry;
 pub use oatty_types::{
     CommandFlag, CommandSpec, ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract,
 };
+
+pub use search::{IndexerError, spawn_search_engine_thread};
 
 #[cfg(test)]
 mod tests {

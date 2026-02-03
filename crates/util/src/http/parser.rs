@@ -40,7 +40,7 @@ pub fn status_error_message(status_code: u16) -> Option<String> {
     }
 }
 
-/// Parse response text as JSON, returning the parsed value and a flag indicating table suitability.
+/// Parse response text as JSON, returning the parsed value and a flag indicating results suitability.
 ///
 /// This function attempts to parse HTTP response text as JSON and provides
 /// a boolean flag indicating whether the response is suitable for tabular display.
@@ -50,7 +50,7 @@ pub fn status_error_message(status_code: u16) -> Option<String> {
 ///
 /// # Returns
 /// A tuple of `(Option<Value>, bool)` where the first element is the parsed JSON
-/// (or `None` if parsing failed) and the second element indicates table suitability
+/// (or `None` if parsing failed) and the second element indicates results suitability
 ///
 /// # Example
 /// ```rust

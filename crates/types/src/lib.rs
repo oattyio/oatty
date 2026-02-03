@@ -327,7 +327,7 @@ pub mod command {
         /// The full command name in format "resource:action" (for example, "apps:list").
         #[serde(default)]
         pub name: String,
-        /// Catalog identifier derived from the cataglog index at the time of deserialization.
+        /// Catalog identifier derived from the catalog index at the time of deserialization.
         #[serde(default)]
         pub catalog_identifier: usize,
         /// Brief description of what the command does.
@@ -630,7 +630,7 @@ pub mod command {
         pub auth_summary: Option<String>,
         /// Optional JSON schema describing tool output, encoded as a string for transport.
         pub output_schema: Option<SchemaProperty>,
-        /// Optional hint indicating how the UI should render results (for example, "table").
+        /// Optional hint indicating how the UI should render results (for example, "results").
         #[serde(default)]
         pub render_hint: Option<String>,
     }
@@ -783,7 +783,7 @@ pub mod messaging {
     //! Application-level messages and side effects.
 
     use crate::{
-        command::CommandSpec,
+        CommandSpec,
         execution::ExecOutcome,
         value_objects::EnvRow,
         workflow::{WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest},
@@ -822,7 +822,7 @@ pub mod messaging {
         FilePicker(Vec<&'static str>),
         /// Help modal displaying shortcuts and usage tips.
         Help,
-        /// Results modal showing API responses in a table.
+        /// Results modal showing API responses in a results.
         Results(Box<ExecOutcome>),
         /// Log details modal revealing the full log entry.
         LogDetails,
@@ -1040,6 +1040,14 @@ pub mod messaging {
             /// Event payload describing the lifecycle change.
             event: WorkflowRunEvent,
         },
+        SearchResults(Vec<SearchResult>),
+    }
+
+    #[derive(Debug, Clone)]
+    pub struct SearchResult {
+        pub index: usize,
+        pub canonical_id: String,
+        pub summary: String,
     }
 }
 

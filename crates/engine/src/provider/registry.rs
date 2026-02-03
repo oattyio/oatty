@@ -98,7 +98,9 @@ fn fetch_and_cache(
 
     let (spec, base_url, headers) = {
         let registry_lock = registry.lock().map_err(|error| anyhow!(error.to_string()))?;
-        let spec = registry_lock.find_by_group_and_cmd(&identifier.group, &identifier.name)?.clone();
+        let spec = registry_lock
+            .find_by_group_and_cmd_cloned(&identifier.group, &identifier.name)?
+            .clone();
         let base_url = registry_lock
             .resolve_base_url_for_command(&spec)
             .ok_or_else(|| anyhow!("missing base URL for command '{}'", spec.name))?;
@@ -389,10 +391,7 @@ mod tests {
             flags: Vec::new(),
             execution: CommandExecution::default(),
         };
-        let mut registry = CommandRegistry {
-            commands: vec![command_spec],
-            ..Default::default()
-        };
+        let mut registry = CommandRegistry::default().with_commands(vec![command_spec]);
         registry.provider_contracts.insert(
             "apps list".into(),
             ProviderContract {
@@ -426,10 +425,7 @@ mod tests {
             flags: Vec::new(),
             execution: CommandExecution::default(),
         };
-        CommandRegistry {
-            commands: vec![command_spec],
-            ..Default::default()
-        }
+        CommandRegistry::default().with_commands(vec![command_spec])
     }
 
     #[test]

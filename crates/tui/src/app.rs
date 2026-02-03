@@ -14,9 +14,10 @@ use crate::ui::components::workflows::run::RunViewState;
 use crate::ui::components::{FilePickerState, common::ConfirmationModalState};
 use crate::ui::components::{LibraryState, nav_bar::VerticalNavBarState};
 use crate::ui::components::{common::manual_entry_modal::state::ManualEntryState, workflows::collector::SelectorStatus};
+use crate::ui::theme::Theme;
 use crate::ui::{
     components::{
-        browser::BrowserState, help::HelpState, logs::LogsState, palette::PaletteState, plugins::PluginsState, table::ResultsTableState,
+        browser::BrowserState, help::HelpState, logs::LogsState, palette::PaletteState, plugins::PluginsState, results::ResultsTableState,
         theme_picker::ThemePickerState, workflows::WorkflowState,
     },
     theme,
@@ -25,7 +26,7 @@ use oatty_engine::ValueProvider;
 use oatty_engine::provider::{CacheLookupOutcome, PendingProviderFetch, ProviderRegistry};
 use oatty_mcp::PluginEngine;
 use oatty_registry::CommandRegistry;
-use oatty_types::{Effect, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus, validate_candidate_value};
+use oatty_types::{Effect, LogLevel, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus, validate_candidate_value};
 use oatty_util::{
     DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, UserPreferences, has_meaningful_value,
     value_contains_secret, workflow_input_uses_history,
@@ -48,7 +49,7 @@ pub struct SharedCtx {
     /// Typed ProviderRegistry for provider-backed workflow selectors
     pub provider_registry: Arc<ProviderRegistry>,
     /// Active UI theme (Dracula by default) loaded from env
-    pub theme: Box<dyn theme::Theme>,
+    pub theme: Box<dyn Theme>,
     /// MCP plugin engine (None until initialized in main_component)
     pub plugin_engine: Arc<PluginEngine>,
     /// On-disk history store for workflow inputs and palette commands.
@@ -405,14 +406,9 @@ impl App<'_> {
     fn trim_logs_if_needed(&mut self) {
         const MAX_LOG_ENTRIES: usize = 500;
 
-        let log_length = self.logs.entries.len();
+        let log_length = self.logs.rich_entries.len();
         if log_length > MAX_LOG_ENTRIES {
-            let _ = self.logs.entries.drain(0..log_length - MAX_LOG_ENTRIES);
-        }
-
-        let rich_log_length = self.logs.rich_entries.len();
-        if rich_log_length > MAX_LOG_ENTRIES {
-            let _ = self.logs.rich_entries.drain(0..rich_log_length - MAX_LOG_ENTRIES);
+            let _ = self.logs.rich_entries.drain(0..log_length - MAX_LOG_ENTRIES);
         }
     }
 
@@ -438,7 +434,7 @@ impl App<'_> {
     ///
     /// * `level` - Optional severity level (for example, `"warn"`).
     /// * `message` - The human-readable message to append to the logs.
-    pub fn append_log_message_with_level(&mut self, level: Option<String>, message: impl Into<String>) {
+    pub fn append_log_message_with_level(&mut self, level: Option<LogLevel>, message: impl Into<String>) {
         let text = message.into();
         self.logs.append_text_entry_with_level(level, text);
         self.trim_logs_if_needed();
@@ -580,7 +576,7 @@ impl HasFocus for App<'_> {
                     builder.widget(&self.table);
                 }
                 Modal::LogDetails => {
-                    builder.widget(&self.logs);
+                    builder.widget(&self.logs.results_table);
                 }
                 Modal::WorkflowCollector => {
                     if let Some(state) = self.workflows.collector.as_ref() {

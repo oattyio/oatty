@@ -14,9 +14,8 @@ ratatui = { workspace = true }
 crossterm = { workspace = true }
 dirs-next = { workspace = true }
 tracing = { workspace = true }
-notify = "8.2.0"
 oatty-registry = { path = "../registry" }
-oatty-registry-gen = {path = "../registry-gen"}
+oatty-registry-gen = { path = "../registry-gen" }
 oatty-util = { path = "../util" }
 oatty-types = { path = "../types" }
 oatty-mcp = { path = "../mcp" }
@@ -38,6 +37,3 @@ thiserror.workspace = true
 
 [lib]
 doctest = false
-
-[build-dependencies]
-serde_json = { workspace = true }

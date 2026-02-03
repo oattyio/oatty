@@ -4,20 +4,20 @@ The Oatty Engine is a robust workflow execution engine that provides comprehensi
 
 ## Features
 
-### 🚀 **Core Workflow Engine**
+### **Core Workflow Engine**
 - **Multi-format Support**: Parse workflows from YAML and JSON with automatic format detection
 - **Template Interpolation**: Dynamic value substitution using `${{ ... }}` syntax
 - **Conditional Execution**: Step-level conditional logic with expression evaluation
 - **Input Validation**: Declarative input specifications with provider integration
 - **Legacy Compatibility**: Backward compatibility with older workflow formats
 
-### 🔧 **Provider System**
+### **Provider System**
 - **Dynamic Value Resolution**: Providers supply runtime values for workflow inputs
 - **Contract-based Design**: Metadata-driven provider interfaces for validation and UI generation
 - **Extensible Architecture**: Easy to implement custom providers for specific use cases
 - **Registry Pattern**: Centralized provider management and discovery
 
-### 📊 **Data Model**
+### **Data Model**
 - **Type-safe Structures**: Comprehensive data models with full serialization support
 - **Input Specifications**: Rich input definitions with validation rules and defaults
 - **Step Definitions**: Flexible step configuration with conditional execution

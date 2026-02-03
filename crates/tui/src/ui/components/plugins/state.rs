@@ -11,7 +11,7 @@ pub struct PluginsState {
     /// Table-specific state including filter, selection, and grid focus.
     pub table: PluginsTableState,
     /// Add a plugin view state
-    pub add: Option<PluginEditViewState>,
+    pub plugin_edit_state: Option<PluginEditViewState>,
     /// Plugin details modal state, if open
     pub details: Option<PluginDetailsModalState>,
 }
@@ -21,7 +21,7 @@ impl PluginsState {
         Self {
             container_focus: FocusFlag::new().with_name("plugins"),
             table: PluginsTableState::new(),
-            add: None,
+            plugin_edit_state: None,
             details: None,
         }
     }
@@ -123,7 +123,7 @@ impl HasFocus for PluginsState {
     fn build(&self, builder: &mut FocusBuilder) {
         let tag = builder.start(self);
         // Include add plugin view if visible
-        if let Some(add) = &self.add {
+        if let Some(add) = &self.plugin_edit_state {
             builder.widget(add);
         }
         // Header search input and main grid

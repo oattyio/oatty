@@ -2,7 +2,7 @@
 //!
 //! This component renders the workflow execution experience, displaying step
 //! progress, surfaced outputs, and control actions while reusing the shared
-//! result table utilities. Interaction handling covers keyboard and mouse
+//! result results utilities. Interaction handling covers keyboard and mouse
 //! paths, keeping behavior consistent with other workflow views.
 
 use crate::app::App;
@@ -216,7 +216,7 @@ impl Component for RunViewComponent {
         vec![
             area,              // entire render area
             main_regions[0],   // header
-            steps_area,        // steps table
+            steps_area,        // steps results
             cancel_area,       // cancel button
             pause_area,        // pause button
             status_area,       // status area

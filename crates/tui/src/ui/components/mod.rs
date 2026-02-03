@@ -7,7 +7,7 @@ pub mod logs;
 pub mod nav_bar;
 pub mod palette;
 pub mod plugins;
-pub mod table;
+pub mod results;
 pub mod theme_picker;
 pub mod workflows;
 
@@ -18,5 +18,5 @@ pub use help::HelpComponent;
 pub use library::{LibraryComponent, LibraryState};
 pub use logs::LogsComponent;
 pub use plugins::PluginsComponent;
-pub use table::TableComponent;
+pub use results::TableComponent;
 pub use workflows::WorkflowsComponent;

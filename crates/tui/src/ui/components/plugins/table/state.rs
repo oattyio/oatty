@@ -7,18 +7,18 @@ use ratatui::layout::Rect;
 use ratatui::widgets::TableState;
 use std::time::{Duration, Instant};
 
-/// State container for the MCP plugins table including filtering logic and
+/// State container for the MCP plugins results including filtering logic and
 /// selection metadata.
 ///
-/// The table owns the quick-search filter, the filtered selection index, and
+/// The results owns the quick-search filter, the filtered selection index, and
 /// the timing information that determines when the UI should poll for fresh
 /// plugin status updates.
 #[derive(Debug)]
 pub struct PluginsTableState {
     pub table_state: TableState,
-    /// Root focus scope for the plugins table cluster.
+    /// Root focus scope for the plugins results cluster.
     pub container_focus: FocusFlag,
-    /// Focus scopes for each of the table's sub-components.
+    /// Focus scopes for each of the results's sub-components.
     pub f_search: FocusFlag,
     pub f_grid: FocusFlag,
     pub f_add: FocusFlag,
@@ -32,16 +32,16 @@ pub struct PluginsTableState {
     pub items: Vec<PluginDetail>,
     /// the position of the cursor in the search input
     pub cursor_position: usize,
-    // the last time the table was refreshed, used to determine when to poll for updates
+    // the last time the results was refreshed, used to determine when to poll for updates
     last_refresh: Option<Instant>,
 }
 
 impl PluginsTableState {
-    /// Create a new table state with empty data and default focus flags.
+    /// Create a new results state with empty data and default focus flags.
     pub fn new() -> Self {
         Self {
             table_state: TableState::default(),
-            container_focus: FocusFlag::new().with_name("plugins.table"),
+            container_focus: FocusFlag::new().with_name("plugins.results"),
             f_search: FocusFlag::new().with_name("plugins.search"),
             f_grid: FocusFlag::new().with_name("plugins.grid"),
             f_add: FocusFlag::new().with_name("plugins.add"),
@@ -56,7 +56,7 @@ impl PluginsTableState {
         }
     }
 
-    /// Replace the table rows and normalize the current selection accordingly.
+    /// Replace the results rows and normalize the current selection accordingly.
     pub fn replace_items(&mut self, rows: Vec<PluginDetail>) {
         self.items = rows;
         self.normalize_selection();

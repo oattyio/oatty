@@ -1,4 +1,4 @@
-//! Combined key/value table and inline editor for the plugin add flow.
+//! Combined key/value results and inline editor for the plugin add flow.
 //!
 //! This component encapsulates the tabular display of key/value pairs and the
 //! inline editing experience that previously lived directly inside
@@ -64,12 +64,12 @@ impl KeyValueLayout {
 const TABLE_COLUMN_SPACING: u16 = 1;
 const SELECTION_PREFIX_WIDTH: u16 = 2;
 
-/// Returns the column constraints for the table.
+/// Returns the column constraints for the results.
 fn table_column_constraints() -> [Constraint; 2] {
     [Constraint::Percentage(35), Constraint::Percentage(65)]
 }
 
-/// Returns the column areas for the table.
+/// Returns the column areas for the results.
 fn column_areas(inner_area: Rect) -> Rc<[Rect]> {
     Layout::horizontal(table_column_constraints())
         .spacing(TABLE_COLUMN_SPACING)
@@ -91,7 +91,7 @@ pub struct KeyValueEditorView {
 }
 
 impl KeyValueEditorView {
-    /// Handle keyboard input for the inline table editor.
+    /// Handle keyboard input for the inline results editor.
     ///
     /// This method routes keyboard input for inline key/value editing,
     /// row navigation, and focus cycling between the key and value fields.
@@ -208,9 +208,9 @@ impl KeyValueEditorView {
         }
     }
 
-    /// Render the inline table editor.
+    /// Render the inline results editor.
     ///
-    /// This method renders the table and positions the cursor for the focused
+    /// This method renders the results and positions the cursor for the focused
     /// input field inside the selected row.
     ///
     /// # Arguments
@@ -264,7 +264,7 @@ impl KeyValueEditorView {
         frame.render_widget(add, buttons_layout[1]);
 
         let remove = Line::from(vec![
-            Span::styled(" − ", theme.status_error()),
+            Span::styled(" – ", theme.status_error()),
             Span::styled("Remove ", theme.text_secondary_style()),
         ])
         .style(button_secondary_style(theme, true, state.f_remove_button.get()));
@@ -284,15 +284,15 @@ impl KeyValueEditorView {
         self.position_cursor_for_focused_input(frame, state);
     }
 
-    /// Render the key/value table with proper styling and selection indicators.
+    /// Render the key/value results with proper styling and selection indicators.
     ///
-    /// This method renders the main table view showing all key/value pairs
+    /// This method renders the main results view showing all key/value pairs
     /// and applies styling based on selection and focus state.
     ///
     /// # Arguments
     ///
     /// * `frame` - The Ratatui frame for rendering
-    /// * `area` - The available rendering area for the table
+    /// * `area` - The available rendering area for the results
     /// * `theme` - The theme for styling
     /// * `state` - The key/value editor state
     fn render_table(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, state: &mut KeyValueEditorState) {
@@ -304,9 +304,9 @@ impl KeyValueEditorView {
         frame.render_stateful_widget(table, area, state.table_state_mut());
     }
 
-    /// Build the header row for the table.
+    /// Build the header row for the results.
     ///
-    /// This method creates the column headers for the key/value table
+    /// This method creates the column headers for the key/value results
     /// with appropriate styling.
     ///
     /// # Arguments
@@ -316,7 +316,7 @@ impl KeyValueEditorView {
     ///
     /// # Returns
     ///
-    /// A styled Row widget for the table header.
+    /// A styled Row widget for the results header.
     fn build_table_header<'a>(&self, state: &KeyValueEditorState, theme: &'a dyn Theme) -> Row<'a> {
         let style = theme_helpers::table_header_style(theme);
         Row::new(vec![
@@ -326,9 +326,9 @@ impl KeyValueEditorView {
         .style(theme_helpers::table_header_row_style(theme))
     }
 
-    /// Build the data rows for the table.
+    /// Build the data rows for the results.
     ///
-    /// This method creates all the data rows for the table and applies
+    /// This method creates all the data rows for the results and applies
     /// appropriate styling based on selection and focus state.
     ///
     /// # Arguments
@@ -338,7 +338,7 @@ impl KeyValueEditorView {
     ///
     /// # Returns
     ///
-    /// A vector of styled Row widgets for the table data.
+    /// A vector of styled Row widgets for the results data.
     fn build_table_rows<'a>(&self, state: &KeyValueEditorState, theme: &'a dyn Theme) -> Vec<Row<'a>> {
         let selected_row_index = state.selected_row();
         let is_editor_focused = state.is_focused();
@@ -442,7 +442,7 @@ impl KeyValueEditorView {
         !modifiers.contains(KeyModifiers::CONTROL) && !modifiers.contains(KeyModifiers::ALT)
     }
 
-    /// Add hints for inline table editing.
+    /// Add hints for inline results editing.
     ///
     /// This method adds keyboard shortcuts that are available while the
     /// key/value editor has focus.
@@ -465,7 +465,7 @@ impl KeyValueEditorView {
     }
 }
 
-/// Build the table cell for the key column, mixing the selection arrow and syntax colors.
+/// Build the results cell for the key column, mixing the selection arrow and syntax colors.
 fn build_table_key_cell<'a>(display_key: &str, arrow: &str, theme: &dyn Theme, focused: bool, is_error: bool) -> Cell<'a> {
     let arrow_style = if is_error {
         theme.status_error()
@@ -480,7 +480,7 @@ fn build_table_key_cell<'a>(display_key: &str, arrow: &str, theme: &dyn Theme, f
     Cell::from(Line::from(spans)).style(style)
 }
 
-/// Build the table cell for the value column using syntax colors.
+/// Build the results cell for the value column using syntax colors.
 fn build_table_value_cell<'a>(env_row: &EnvRow, theme: &dyn Theme, focused: bool, show_secrets: bool) -> Cell<'a> {
     let value_style = theme.syntax_string_style();
     let style = if focused { theme.selection_style() } else { Style::default() };

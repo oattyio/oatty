@@ -195,7 +195,7 @@ impl PaletteState {
         let group = parts.next().unwrap_or("");
         let name = parts.next().unwrap_or("");
 
-        let selected_command = lock.find_by_group_and_cmd(group, name).ok();
+        let selected_command = lock.find_by_group_and_cmd_cloned(group, name).ok();
         if self.is_suggestions_open && selected_command.is_some() {
             return selected_command;
         }
@@ -206,7 +206,7 @@ impl PaletteState {
         }
         let group = &tokens[0];
         let name = &tokens[1];
-        lock.find_by_group_and_cmd(group.as_str(), name.as_str()).ok()
+        lock.find_by_group_and_cmd_cloned(group.as_str(), name.as_str()).ok()
     }
 
     /// Get the current input text
@@ -349,7 +349,7 @@ impl PaletteState {
             let Ok(CommandSpec {
                 execution: CommandExecution::Http(execution),
                 ..
-            }) = lock.find_by_group_and_cmd(group, name)
+            }) = lock.find_by_group_and_cmd_ref(group, name)
             else {
                 return;
             };
@@ -881,15 +881,15 @@ impl PaletteState {
             if items.is_empty() && tokens.len() >= 2 {
                 let group = tokens[0].as_str();
                 let name = tokens[1].as_str();
-                if let Ok(spec) = lock.find_by_group_and_cmd(group, name) {
+                if let Ok(spec) = lock.find_by_group_and_cmd_ref(group, name) {
                     let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
-                    let (user_flags, user_args, _flag_values) = parse_user_flags_args(&spec, parts);
-                    if let Some(hint) = self.eol_flag_hint(&spec, &user_flags) {
+                    let (user_flags, user_args, _flag_values) = parse_user_flags_args(spec, parts);
+                    if let Some(hint) = self.eol_flag_hint(spec, &user_flags) {
                         items.push(hint);
                     } else {
                         // If command is complete (all positionals filled, no required flags), show run hint
                         let positionals_complete = user_args.len() >= spec.positional_args.len();
-                        let required_remaining = required_flags_remaining(&spec, &user_flags);
+                        let required_remaining = required_flags_remaining(spec, &user_flags);
                         if positionals_complete && !required_remaining {
                             self.ghost_text = Some(" press Enter to run".to_string());
                         }
@@ -904,19 +904,17 @@ impl PaletteState {
         if self.suggestions.is_empty() && self.ghost_text.is_none() && tokens.len() >= 2 {
             let group = tokens[0].clone();
             let name = tokens[1].clone();
-            let Some(spec) = self
-                .registry
-                .lock()
-                .ok()
-                .and_then(|lock| lock.find_by_group_and_cmd(group.as_str(), name.as_str()).ok())
-            else {
+            let Ok(lock) = self.registry.lock() else {
+                return pending_fetches;
+            };
+            let Ok(spec) = lock.find_by_group_and_cmd_ref(group.as_str(), name.as_str()) else {
                 return pending_fetches;
             };
 
             let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
-            let (user_flags, user_args, _flag_values) = parse_user_flags_args(&spec, parts);
+            let (user_flags, user_args, _flag_values) = parse_user_flags_args(spec, parts);
             let positionals_complete = user_args.len() >= spec.positional_args.len();
-            let required_remaining = required_flags_remaining(&spec, &user_flags);
+            let required_remaining = required_flags_remaining(spec, &user_flags);
             if positionals_complete && !required_remaining {
                 self.ghost_text = Some(" press Enter to run".to_string());
             }
@@ -1041,7 +1039,7 @@ impl PaletteState {
     /// Processes general command execution results (non-plugin specific).
     ///
     /// This method handles the standard processing of command results including
-    /// logging, table updates, and pagination information.
+    /// logging, results updates, and pagination information.
     ///
     /// # Arguments
     ///

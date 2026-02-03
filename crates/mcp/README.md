@@ -75,6 +75,7 @@ Notes:
 - HTTP/SSE requires `baseUrl` (and optional `headers`).
 - `${env:NAME}` pulls from the environment; `${secret:NAME}` resolves via OS keychain service `oatty-mcp`.
 - Server names must match `^[a-z0-9._-]+$`.
+- Oatty expects token-based auth (static bearer tokens, API keys, etc.) via `headers` or `${secret:...}`. OAuth/PKCE flows are not yet integrated; use an `Authorization` header or OpenAPI import instead.
 
 TUI Add Plugin view:
 - The Oatty TUI provides an Add Plugin panel with a transport radio selector: `Transport: [✓] Local   [ ] Remote`.

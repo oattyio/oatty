@@ -6,7 +6,7 @@
 //! and orchestrate user interactions.
 
 use crate::ui::components::common::TextInputState;
-use crate::ui::components::table::ResultsTableState;
+use crate::ui::components::results::ResultsTableState;
 use crate::ui::theme::Theme;
 use indexmap::IndexMap;
 use oatty_types::WorkflowProviderErrorPolicy;
@@ -69,7 +69,7 @@ pub struct CollectorViewState<'a> {
     pub provider_id: String,
     /// Arguments resolved for the provider (from prior inputs/steps).
     pub resolved_args: serde_json::Map<String, Value>,
-    /// Backing table state used for rendering results.
+    /// Backing results state used for rendering results.
     pub table: ResultsTableState<'a>,
     /// Optional value_field from `select` used to extract the workflow value.
     pub value_field: Option<String>,
@@ -109,7 +109,7 @@ impl<'a> CollectorViewState<'a> {
         self.clear_staged_selection();
     }
 
-    /// Applies the current filter and refreshes the backing table state.
+    /// Applies the current filter and refreshes the backing results state.
     pub fn refresh_table(&mut self, theme: &dyn Theme) {
         self.clear_staged_selection();
         let Some(items) = self.original_items.as_ref() else {

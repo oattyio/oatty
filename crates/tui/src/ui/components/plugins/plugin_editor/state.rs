@@ -49,9 +49,10 @@ impl PluginEditViewState {
             f_btn_validate: FocusFlag::new().with_name("plugins.add.btn.validate"),
             f_btn_save: FocusFlag::new().with_name("plugins.add.btn.save"),
             f_btn_cancel: FocusFlag::new().with_name("plugins.add.btn.cancel"),
+            kv_editor: KeyValueEditorState::new(Cow::from("Env Vars"), Cow::from("Key"), Cow::from("Value")),
             ..Default::default()
         };
-        // Set initial focus to transport selector instead of name field
+        // Set initial focus to transport selector instead of the name field
         instance.f_transport.set(true);
         instance
     }
@@ -95,7 +96,7 @@ impl PluginEditViewState {
     ///
     /// # Arguments
     ///
-    /// * `add_state` - Reference to the add plugin plugin state
+    /// * `add_state` - Reference to the "add plugin" state
     ///
     /// # Returns
     ///
@@ -116,7 +117,7 @@ impl PluginEditViewState {
         }
     }
 
-    /// Provides a transport-specific label for the key/value table.
+    /// Provides a transport-specific label for the key/value results.
     pub fn update_key_value_table_label(&mut self) {
         let label = match self.transport {
             PluginTransport::Local => Cow::from("Env Vars"),

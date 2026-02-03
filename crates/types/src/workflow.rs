@@ -498,7 +498,7 @@ pub enum WorkflowRunEvent {
         /// Duration of the step in milliseconds.
         duration_ms: u64,
     },
-    /// Streamed output to be surfaced in the aggregate outputs table.
+    /// Streamed output to be surfaced in the aggregate outputs results.
     RunOutputAccumulated {
         /// Key describing the output item.
         #[serde(default)]

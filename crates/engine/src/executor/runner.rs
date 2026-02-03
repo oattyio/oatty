@@ -62,7 +62,7 @@ impl CommandRunner for RegistryCommandRunner {
             "registry runner executing command"
         );
         let identifier = parse_run_identifier(run)?;
-        let command_spec = self.registry.find_by_group_and_cmd(&identifier.group, &identifier.name)?;
+        let command_spec = self.registry.find_by_group_and_cmd_cloned(&identifier.group, &identifier.name)?;
 
         if let Some(mcp) = command_spec.mcp() {
             warn!(
