@@ -51,7 +51,7 @@ cargo --version
 cargo build --workspace
 
 # Or build just the CLI
-cargo build -p oatty-cli
+cargo build -p oatty
 ```
 
 This will:
@@ -67,7 +67,7 @@ This will:
 cargo test --workspace
 
 # Run tests for a specific package
-cargo test -p oatty-cli
+cargo test -p oatty
 ```
 
 ### 5. Set Up Environment Variables
@@ -100,13 +100,13 @@ export REGISTRY_CATALOGS_PATH="$HOME/.config/oatty/catalogs"
 
 ```bash
 # Launch the TUI
-cargo run -p oatty-cli
+cargo run -p oatty
 
 # With debug logging
-OATTY_LOG=debug cargo run -p oatty-cli
+OATTY_LOG=debug cargo run -p oatty
 
 # With a specific theme
-TUI_THEME=nord cargo run -p oatty-cli
+TUI_THEME=nord cargo run -p oatty
 ```
 
 If no registry catalogs are configured yet, import one from the TUI Library view:
@@ -119,13 +119,13 @@ If no registry catalogs are configured yet, import one from the TUI Library view
 
 ```bash
 # List apps
-cargo run -p oatty-cli -- apps list
+cargo run -p oatty -- apps list
 
 # Get app info
-cargo run -p oatty-cli -- apps info my-app
+cargo run -p oatty -- apps info my-app
 
 # Create an app
-cargo run -p oatty-cli -- apps create --name demo
+cargo run -p oatty -- apps create --name demo
 ```
 
 ### Development Commands
@@ -191,10 +191,10 @@ To debug:
 
 ```bash
 # Run with backtrace
-RUST_BACKTRACE=1 cargo run -p oatty-cli
+RUST_BACKTRACE=1 cargo run -p oatty
 
 # Run with full backtrace
-RUST_BACKTRACE=full cargo run -p oatty-cli
+RUST_BACKTRACE=full cargo run -p oatty
 
 # Use LLDB directly
 rust-lldb target/debug/oatty
@@ -375,7 +375,7 @@ KEYCHAIN_PASSWORD='your-login-password' \
     scripts/macos/create-dev-cert.sh "next-gen-cli-dev (LOCAL)"
 
 # Build and sign
-cargo build -p oatty-cli
+cargo build -p oatty
 NEXTGEN_CODESIGN_ID="next-gen-cli-dev (LOCAL)" \
     NEXTGEN_CODESIGN_BIN=target/debug/oatty \
     scripts/macos/sign.sh
@@ -387,7 +387,7 @@ To test with a custom schema:
 
 1. Place your schema in `schemas/`
 2. Import it via the TUI Library view (generates and persists a registry catalog), or generate a manifest with `oatty-registry-gen` and reference it from `~/.config/oatty/registry.json`
-3. Rebuild/run: `cargo build -p oatty-cli && cargo run -p oatty-cli`
+3. Rebuild/run: `cargo build -p oatty && cargo run -p oatty`
 
 ### MCP Plugin Development
 

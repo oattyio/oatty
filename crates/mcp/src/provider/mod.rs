@@ -127,18 +127,13 @@ pub enum McpProviderError {
 mod tests {
     use super::*;
     use crate::config::McpConfig;
-    use oatty_registry::{CommandRegistry, RegistryConfig};
+    use oatty_registry::CommandRegistry;
     use std::sync::Mutex;
 
     #[tokio::test]
     async fn test_mcp_provider_registry() {
         let config = McpConfig::default();
-        let registry = Arc::new(Mutex::new(CommandRegistry {
-            commands: Vec::new(),
-            workflows: vec![],
-            provider_contracts: Default::default(),
-            config: RegistryConfig { catalogs: None },
-        }));
+        let registry = Arc::new(Mutex::new(CommandRegistry::default()));
         let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&registry)).unwrap());
         let registry = McpProviderRegistry::new(plugin_engine);
 

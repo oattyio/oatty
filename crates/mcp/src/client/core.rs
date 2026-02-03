@@ -5,7 +5,7 @@ use std::{process::Stdio, sync::Arc, time::Duration};
 use anyhow::Result;
 use rmcp::{
     RoleClient,
-    model::CallToolRequestParam,
+    model::CallToolRequestParams,
     service::{RunningService, ServiceExt as _},
     transport::{StreamableHttpClientTransport, TokioChildProcess, streamable_http_client::StreamableHttpClientTransportConfig},
 };
@@ -168,10 +168,11 @@ impl McpClient {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("plugin '{}' is not connected", self.name))?;
 
-        let call_future = service.call_tool(CallToolRequestParam {
+        let call_future = service.call_tool(CallToolRequestParams {
             name: tool_name.to_string().into(),
             arguments: Some(arguments.clone()),
             task: None,
+            meta: None,
         });
 
         match timeout(TOOL_INVOCATION_TIMEOUT, call_future).await {

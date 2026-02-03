@@ -31,11 +31,14 @@ use oatty_mcp::config::{
 };
 use oatty_mcp::{McpConfig, PluginEngine};
 
+use crate::ui::components::logs::state::LogEntry;
 use oatty_registry::{CommandRegistry, CommandSpec};
 use oatty_registry_gen::io::ManifestInput;
 use oatty_registry_gen::io::generate_catalog;
 use oatty_types::value_objects::EnvRow;
-use oatty_types::{DirectoryEntry, Effect, EnvVar, Msg, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus};
+use oatty_types::{
+    DirectoryEntry, Effect, EnvVar, LogLevel, Msg, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus,
+};
 use oatty_types::{ExecOutcome, command::CommandExecution};
 use oatty_util::build_request_body;
 use oatty_util::determine_env_source;
@@ -203,9 +206,7 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
 /// When pressing the Enter key in the browser, populate the palette with the
 /// constructed command and close the command browser.
 fn handle_send_to_palette(app: &mut App, command_spec: Box<CommandSpec>) -> Option<Vec<Cmd>> {
-    let CommandSpec { group, name, .. } = *command_spec;
-
-    app.palette.set_input(format!("{} {}", group, name));
+    app.palette.set_input(command_spec.canonical_id());
     app.palette.set_cursor(app.palette.input().len());
     Some(vec![])
 }
@@ -586,7 +587,7 @@ async fn execute_plugins_export_default(app: &mut App<'_>, name: String) -> Exec
 
 /// Validate Add Plugin view input and emit a preview payload.
 fn execute_plugins_validate(app: &mut App) -> ExecOutcome {
-    let Some(add_view_state) = &app.plugins.add else {
+    let Some(add_view_state) = &app.plugins.plugin_edit_state else {
         return ExecOutcome::default();
     };
     let name = add_view_state.name.trim();
@@ -654,7 +655,7 @@ fn execute_plugins_validate(app: &mut App) -> ExecOutcome {
 
 /// Apply Add Plugin view: write server to config and refresh plugins list.
 async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
-    let Some(add_view_state) = &app.plugins.add else {
+    let Some(add_view_state) = &app.plugins.plugin_edit_state else {
         return ExecOutcome::default();
     };
     let name = add_view_state.name.trim().to_string();
@@ -745,7 +746,7 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
     execute_load_plugins(app).await;
 
     // Dismiss Add view and select the newly added plugin if present
-    app.plugins.add = None;
+    app.plugins.plugin_edit_state = None;
     if let Some(index) = app.plugins.table.items.iter().position(|item| item.name == name) {
         app.plugins.table.table_state.select(Some(index));
     }
@@ -791,9 +792,10 @@ fn handle_workflow_run_requested(app: &mut App<'_>, request: WorkflowRunRequest)
     let registry_snapshot = match app.ctx.command_registry.lock() {
         Ok(guard) => guard.clone(),
         Err(_) => {
-            app.logs
-                .entries
-                .push("Failed to obtain command registry for workflow run.".to_string());
+            app.logs.rich_entries.push(LogEntry::Text {
+                level: Some(LogLevel::Error),
+                msg: "Failed to obtain command registry for workflow run.".to_string(),
+            });
             return;
         }
     };
@@ -830,15 +832,17 @@ fn handle_workflow_run_control(app: &mut App<'_>, run_id: &str, command: Workflo
     match app.workflows.run_control_sender(run_id) {
         Some(sender) => {
             if sender.send(command).is_err() {
-                app.logs
-                    .entries
-                    .push(format!("Workflow run '{}' is no longer accepting commands.", run_id));
+                app.logs.rich_entries.push(LogEntry::Text {
+                    level: Some(LogLevel::Error),
+                    msg: format!("Workflow run '{}' is no longer accepting commands.", run_id),
+                });
             }
         }
         None => {
-            app.logs
-                .entries
-                .push(format!("No active workflow run is available for '{}'.", run_id));
+            app.logs.rich_entries.push(LogEntry::Text {
+                level: Some(LogLevel::Error),
+                msg: format!("No active workflow run is available for '{}'.", run_id),
+            });
         }
     }
 }
@@ -966,7 +970,7 @@ fn run_command(app: &mut App, hydrated_command: String, request_id: u64) -> Opti
 
     match valid {
         Ok((command_spec, input)) => {
-            app.append_log_message_with_level(Some("info".to_string()), format!("Running: {}", &hydrated_command));
+            app.append_log_message_with_level(Some(LogLevel::Info), format!("Running: {}", &hydrated_command));
             execute_command(command_spec, input, request_id)
         }
         Err(error) => Some(vec![Cmd::ApplyPaletteError(error.to_string())]),
@@ -991,7 +995,7 @@ fn validate_command(app: &mut App, hydrated_command: &str, command_registry: Arc
     // Step 2: Find the command specification in the registry
     let command_spec = {
         let lock = command_registry.lock().map_err(|_| anyhow!("Could not obtain lock to registry"))?;
-        lock.find_by_group_and_cmd(tokens[0].as_str(), tokens[1].as_str())?
+        lock.find_by_group_and_cmd_cloned(tokens[0].as_str(), tokens[1].as_str())?
     };
     command_spec.parse_arguments(&tokens[2..])?;
     persist_execution_context(app, &command_spec, &input);

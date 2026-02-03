@@ -11,8 +11,75 @@ use ratatui::{
     widgets::{Block, BorderType, Borders, Padding, Paragraph, Tabs},
 };
 
+use once_cell::sync::Lazy;
+use regex::Regex;
 use std::borrow::Cow;
 
+/// Applies syntax highlighting to log lines for better readability.
+///
+/// This method identifies and styles different parts of log entries:
+///
+/// - **Timestamp**: Styled with secondary accent color
+/// - **UUIDs**: Styled with emphasis color for easy identification
+/// - **Hex IDs**: Styled with emphasis color for long hexadecimal strings
+/// - **Regular text**: Uses primary text color
+///
+/// # Arguments
+///
+/// * `theme` - The UI theme providing color schemes
+/// * `line` - The log line text to style
+///
+/// # Returns
+///
+/// A styled `Line` with the appropriate color coding
+pub fn styled_line(theme: &dyn crate::ui::theme::roles::Theme, line: &str) -> Line<'static> {
+    // Compiled regex patterns for performance
+    static TS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\[?\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?]?").unwrap());
+    static UUID_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b").unwrap());
+    static HEXID_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"\b[0-9a-fA-F]{12,}\b").unwrap());
+
+    let mut spans: Vec<Span> = Vec::new();
+    let mut i = 0usize;
+
+    // Style timestamp at the beginning of the line
+    if let Some(m) = TS_RE.find(line)
+        && m.start() == 0
+        && m.end() > 0
+    {
+        spans.push(Span::styled(
+            line[m.start()..m.end()].to_string(),
+            Style::default().fg(theme.roles().accent_secondary),
+        ));
+        i = m.end();
+    }
+
+    // Style remaining text with UUID/hex ID highlighting
+    let rest = &line[i..];
+    let mut matches: Vec<_> = UUID_RE.find_iter(rest).chain(HEXID_RE.find_iter(rest)).collect();
+    matches.sort_by_key(|m| m.start());
+
+    let mut last = 0usize;
+    for m in matches {
+        if m.start() < last {
+            continue; // Skip overlapping matches
+        }
+        // Add text before the match
+        if m.start() > last {
+            spans.push(Span::styled(rest[last..m.start()].to_string(), theme.text_primary_style()));
+        }
+        // Style the UUID/hex ID
+        spans.push(Span::styled(rest[m.start()..m.end()].to_string(), theme.accent_emphasis_style()));
+        last = m.end();
+    }
+
+    // Add remaining text
+    if last < rest.len() {
+        spans.push(Span::styled(rest[last..].to_string(), theme.text_primary_style()));
+    }
+
+    Line::from(spans)
+}
 /// Build a standard Block with theme surfaces and borders.
 pub fn block<'a, T>(theme: &dyn Theme, title: Option<T>, focused: bool) -> Block<'a>
 where
@@ -54,7 +121,7 @@ pub fn panel_style(theme: &dyn Theme) -> Style {
     Style::default().bg(surface).fg(text)
 }
 
-/// Style for table headers: bold snow text with a subtle surface background.
+/// Style for results headers: bold snow text with a subtle surface background.
 pub fn table_header_style(theme: &dyn Theme) -> Style {
     // Header text: secondary + bold
     theme.text_secondary_style().add_modifier(Modifier::BOLD)

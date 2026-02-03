@@ -56,7 +56,7 @@ impl MainView {
             content_view,
             modal_view: None,
             nav_bar_view: VerticalNavBarComponent::new(),
-            logs_view: LogsComponent,
+            logs_view: LogsComponent::default(),
             transient_focus_id: None,
         }
     }

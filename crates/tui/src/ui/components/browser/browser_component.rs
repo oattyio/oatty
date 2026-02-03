@@ -334,7 +334,7 @@ impl BrowserComponent {
     fn create_search_title(&self, app: &App) -> Line<'_> {
         let theme = &*app.ctx.theme;
         Line::from(Span::styled(
-            "Search Commands",
+            "Filter Commands",
             theme.text_secondary_style().add_modifier(Modifier::BOLD),
         ))
     }

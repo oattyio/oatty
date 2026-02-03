@@ -123,15 +123,15 @@ impl Component for HelpComponent {
     /// draw_help_modal(&mut frame, &app, area);
     /// ```
     fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
-        let spec = app.help.spec().or(app.browser.selected_command()).cloned();
+        let spec = app.help.spec().or(app.browser.selected_command());
         let theme = &*app.ctx.theme;
-        let help = &mut app.help;
         let (title, text) = self.resolve_title_and_text(spec, theme, &app.ctx.product_name);
         let block = th::block(theme, Some(&title), self.focused);
 
         frame.render_widget(block.clone(), rect);
         let inner = block.inner(rect);
 
+        let help = &mut app.help;
         help.update_viewport_height(inner.height);
         let mut paragraph = Paragraph::new(text).style(theme.text_primary_style()).wrap(Wrap { trim: false });
 
@@ -204,7 +204,7 @@ impl HelpComponent {
 
     fn resolve_title_and_text<'a>(
         &self,
-        command_spec: Option<CommandSpec>,
+        command_spec: Option<&CommandSpec>,
         theme: &'a dyn Theme,
         product_name: &str,
     ) -> (String, Text<'a>) {

@@ -1,4 +1,4 @@
-//! MCP Plugins UI components (list, details, add view, logs, env, search, table).
+//! MCP Plugins UI components (list, details, add view, logs, env, search, results).
 //!
 //! Re-exports core components and state needed by the TUI layer. These widgets
 //! follow the app's `Component` trait contract, and the theme helpers for a

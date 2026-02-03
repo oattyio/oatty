@@ -2,7 +2,7 @@
 //!
 //! This module houses the state and component responsible for rendering the
 //! workflow execution view. The run view presents step progress, surfaced
-//! outputs, and footer controls while reusing shared table rendering utilities.
+//! outputs, and footer controls while reusing shared results rendering utilities.
 
 mod run_component;
 pub mod state;

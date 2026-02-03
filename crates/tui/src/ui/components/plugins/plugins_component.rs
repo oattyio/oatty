@@ -1,4 +1,4 @@
-//! Top-level Plugins view: orchestrates search, table, add view, details,
+//! Top-level Plugins view: orchestrates search, results, add view, details,
 //! logs, and environment editor. Handles focus routing, shortcuts, and responsive
 //! layout whether shown fullscreen or as a centered overlay.
 //!
@@ -23,7 +23,7 @@ use ratatui::{
 /// Top-level Plugins view component that orchestrates all plugin-related UI elements.
 ///
 /// This component manages the display and interaction of various plugin management
-/// interfaces including the plugin list table, search functionality, add plugin,
+/// interfaces including the plugin list results, search functionality, add plugin,
 /// plugin details, logs viewer, and environment variable editor. It handles focus
 /// management, keyboard shortcuts, and responsive layout for both fullscreen and
 /// overlay display modes.
@@ -35,7 +35,7 @@ use ratatui::{
 /// ensuring proper encapsulation and separation of concerns.
 #[derive(Debug, Default)]
 pub struct PluginsComponent {
-    /// Child component for displaying the plugin list table
+    /// Child component for displaying the plugin list results
     table_component: PluginsTableComponent,
     /// Child component for the add plugin
     edit_component: PluginsEditComponent,
@@ -53,10 +53,9 @@ impl Component for PluginsComponent {
     /// Handles keyboard events for the plugins component and its children.
     ///
     /// This method implements a hierarchical event handling strategy:
-    /// 1. First, check if any overlay is open and delegate to it
-    /// 2. Handle focus cycling (Tab/BackTab), allowing inline editors to intercept
-    /// 3. Process Ctrl-based shortcuts for plugin operations
-    /// 4. Finally, delegate to child components for specific functionality
+    /// 1. Process Ctrl-based shortcuts for plugin operations
+    /// 2. Delegate to the focused child component when one exists
+    /// 3. Handle focus cycling (Tab/BackTab) when no child has focus
     ///
     /// # Arguments
     ///
@@ -67,15 +66,22 @@ impl Component for PluginsComponent {
     ///
     /// Returns a vector of effects that should be processed by the app
     fn handle_key_events(&mut self, app: &mut App, key_event: KeyEvent) -> Vec<Effect> {
-        let mut effects = self.delegate_to_open_overlays(app, key_event);
-        effects.extend(self.handle_control_shortcuts(app, key_event));
-        effects.extend(self.delegate_to_child_components(app, key_event));
+        let mut effects = self.handle_control_shortcuts(app, key_event);
+
+        if let Some(child_effects) = self.delegate_to_focused_child_component(app, key_event) {
+            effects.extend(child_effects);
+            return effects;
+        }
 
         match key_event.code {
-            KeyCode::BackTab => app.focus.prev(),
-            KeyCode::Tab => app.focus.next(),
-            _ => false,
-        };
+            KeyCode::BackTab => {
+                app.focus.prev();
+            }
+            KeyCode::Tab => {
+                app.focus.next();
+            }
+            _ => {}
+        }
 
         effects
     }
@@ -138,7 +144,7 @@ impl Component for PluginsComponent {
         let mut spans = Vec::new();
 
         // The add component is visible
-        if let Some(add_state) = app.plugins.add.as_ref() {
+        if let Some(add_state) = app.plugins.plugin_edit_state.as_ref() {
             // use the add component hints
             if add_state.container_focus.get() {
                 spans.extend(self.edit_component.get_hint_spans(app));
@@ -159,12 +165,11 @@ impl Component for PluginsComponent {
 }
 
 impl PluginsComponent {
-    /// Delegates keyboard events to open overlays if any are currently active.
+    /// Delegates keyboard events to the currently focused child component.
     ///
-    /// This method checks if any overlay (environment editor, logs viewer, or add plugin plugin)
-    /// is currently open and delegates the keyboard event to the appropriate component.
-    /// Tab/BackTab events are forwarded to the inline key/value editor when it
-    /// owns focus; otherwise they fall through to the global focus cycling logic.
+    /// This method prefers the add/edit view when it owns focus and otherwise
+    /// delegates to the results view. When no child is focused, the caller should
+    /// handle global focus cycling (Tab/BackTab) itself.
     ///
     /// # Arguments
     ///
@@ -173,28 +178,23 @@ impl PluginsComponent {
     ///
     /// # Returns
     ///
-    /// Returns `Some(Vec<Effect>)` if the event was handled by an overlay, or `None` if
-    /// no overlay is open or the event should be handled by the focus cycling system.
-    fn delegate_to_open_overlays(&mut self, app: &mut App, key_event: KeyEvent) -> Vec<Effect> {
-        // Forward Tab/BackTab to the inline editor when it owns focus; otherwise
-        // allow the focus cycling handler to manage them.
-        if matches!(key_event.code, KeyCode::Tab | KeyCode::BackTab) {
-            if app
-                .plugins
-                .add
-                .as_ref()
-                .is_some_and(|add_state| add_state.container_focus.get() && add_state.kv_editor.is_focused())
-            {
-                return self.edit_component.handle_key_events(app, key_event);
-            }
-            return vec![];
+    /// Returns `Some(Vec<Effect>)` if a focused child handled the event, or `None`
+    /// if no child component currently owns focus.
+    fn delegate_to_focused_child_component(&mut self, app: &mut App, key_event: KeyEvent) -> Option<Vec<Effect>> {
+        if app
+            .plugins
+            .plugin_edit_state
+            .as_ref()
+            .is_some_and(|add_state| add_state.container_focus.get())
+        {
+            return Some(self.edit_component.handle_key_events(app, key_event));
         }
 
-        if app.plugins.add.as_ref().is_some_and(|add_state| add_state.container_focus.get()) {
-            return self.edit_component.handle_key_events(app, key_event);
+        if app.plugins.table.container_focus.get() {
+            return Some(self.table_component.handle_key_events(app, key_event));
         }
 
-        vec![]
+        None
     }
 
     /// Handles top-level Ctrl-based shortcuts and returns any effects.
@@ -223,14 +223,14 @@ impl PluginsComponent {
                 self.handle_clear_filter_shortcut(app);
             }
 
-            KeyCode::Char('v') if control_pressed && app.plugins.add.is_some() => {
+            KeyCode::Char('v') if control_pressed && app.plugins.plugin_edit_state.is_some() => {
                 effects.push(Effect::PluginsValidateAdd);
             }
-            // Also available when the table component is focused
+            // Also available when the results component is focused
             KeyCode::Char('a') if control_pressed => {
                 let edit_view_state = PluginEditViewState::new();
                 app.focus.focus(&edit_view_state.f_transport);
-                app.plugins.add = Some(edit_view_state);
+                app.plugins.plugin_edit_state = Some(edit_view_state);
             }
             _ => {}
         }
@@ -250,34 +250,12 @@ impl PluginsComponent {
         }
     }
 
-    /// Delegates keyboard events to child components when appropriate.
-    ///
-    /// This method handles keyboard events that should be processed by specific
-    /// child components based on the current focus state. It delegates to the
-    /// search component when search is active, and to the table component when
-    /// the grid is focused.
-    ///
-    /// # Arguments
-    ///
-    /// * `app` - Mutable reference to the app state
-    /// * `key_event` - The keyboard event to process
-    ///
-    /// # Returns
-    ///
-    /// Returns a vector of effects generated by the child components.
-    fn delegate_to_child_components(&mut self, app: &mut App, key_event: KeyEvent) -> Vec<Effect> {
-        if app.plugins.table.container_focus.get() {
-            return self.table_component.handle_key_events(app, key_event);
-        }
-        vec![]
-    }
-
-    /// Renders the body area containing either the table or add view, or both side-by-side.
+    /// Renders the body area containing either the results or add view, or both side-by-side.
     ///
     /// This method determines the layout based on whether the add plugin plugin is open
     /// and the available width. If the add plugin is open and there's sufficient width,
-    /// it displays both the add plugin and table side-by-side. Otherwise, it shows
-    /// either the add plugin or table exclusively.
+    /// it displays both the add plugin and results side-by-side. Otherwise, it shows
+    /// either the add plugin or results exclusively.
     ///
     /// # Arguments
     ///
@@ -285,7 +263,7 @@ impl PluginsComponent {
     /// * `body_area` - The rectangular area allocated for the body content
     /// * `app` - Mutable reference to the app state
     fn render_body_section(&mut self, frame: &mut Frame, body_area: Rect, app: &mut App) {
-        let add_plugin_open = app.plugins.add.as_ref().map(|plugin| plugin.visible).unwrap_or(false);
+        let add_plugin_open = app.plugins.plugin_edit_state.as_ref().map(|plugin| plugin.visible).unwrap_or(false);
 
         if add_plugin_open && body_area.width >= 120 {
             // Side-by-side layout when there's sufficient width
@@ -296,7 +274,7 @@ impl PluginsComponent {
             // Full-width add plugin when space is limited
             self.edit_component.render(frame, body_area, app);
         } else {
-            // Default table view
+            // Default results view
             self.table_component.render(frame, body_area, app);
         }
     }

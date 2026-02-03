@@ -21,7 +21,7 @@ rustflags = [
 [term]
 # Useful color without forcing it in non-TTY contexts.
 color = "auto"
-# Show progress bars in interactive terminals only (newer Cargo expects a table here).
+# Show progress bars in interactive terminals only (newer Cargo expects a results here).
 progress = { when = "auto" }
 # Keep verbosity at Cargo’s default (set to true to see rustc commands).
 # verbose = false
@@ -31,3 +31,6 @@ progress = { when = "auto" }
 git-fetch-with-cli = true
 # Reasonable retry policy for flaky networks.
 retry = 3
+
+[package]
+rust-version = "1.93.0"

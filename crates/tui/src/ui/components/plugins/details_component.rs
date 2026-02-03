@@ -287,7 +287,7 @@ impl PluginsDetailsComponent {
         let Some(state) = details_state else {
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(
-                    "Open plugin details from the table to view information",
+                    "Open plugin details from the results to view information",
                     theme.text_muted_style(),
                 ))),
                 area,
@@ -324,7 +324,7 @@ impl PluginsDetailsComponent {
                         Constraint::Length(1), // hrule
                         Constraint::Length(3), // Health condensed
                         Constraint::Length(1), // hrule
-                        Constraint::Min(6),    // Env table
+                        Constraint::Min(6),    // Env results
                         Constraint::Length(1), // hrule
                         Constraint::Min(5),    // Logs (scrollable)
                     ])
@@ -484,7 +484,7 @@ impl PluginsDetailsComponent {
             return;
         }
 
-        // Split the area to render a heading and the table below
+        // Split the area to render a heading and the results below
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(1), Constraint::Min(1)])

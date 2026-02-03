@@ -1,5 +1,6 @@
 mod confirmation_modal;
 mod file_picker;
+mod table_input_actions;
 
 pub mod key_value_editor;
 pub mod manual_entry_modal;
@@ -10,4 +11,5 @@ pub use confirmation_modal::{ConfirmationModal, ConfirmationModalButton, Confirm
 pub use file_picker::{FilePickerModal, FilePickerState};
 pub use manual_entry_modal::ManualEntryView;
 pub use results_table_view::ResultsTableView;
+pub use table_input_actions::{handle_table_mouse_actions, handle_table_navigation_key};
 pub use text_input::TextInputState;

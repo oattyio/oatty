@@ -1,5 +1,6 @@
 //! Plugin engine implementation.
 
+use crate::McpServer;
 use crate::client::{ClientGatewayEvent, McpClientGateway};
 use crate::config::McpConfig;
 use crate::logging::{AuditEntry, AuditResult, LogManager};
@@ -81,28 +82,7 @@ impl PluginEngine {
 
         let config_snapshot = self.config.read().await.clone();
 
-        for (name, server) in &config_snapshot.mcp_servers {
-            let mut plugin_detail = PluginDetail::new(
-                name.clone(),
-                if server.is_stdio() {
-                    server.command.as_ref().unwrap().clone()
-                } else {
-                    server.base_url.as_ref().unwrap().to_string()
-                },
-                server.args.clone().map(|a| a.join(" ")),
-            );
-            plugin_detail.transport_type = server.transport_type().to_string();
-            plugin_detail.tags = server.tags.clone().unwrap_or_default();
-            plugin_detail.enabled = !server.is_disabled();
-            plugin_detail.env = if server.is_stdio() {
-                server.env.clone()
-            } else {
-                server.headers.clone()
-            };
-
-            registry.register_plugin(plugin_detail)?;
-            self.lifecycle_manager.register_plugin(name.clone()).await;
-        }
+        self.sync_registry(&mut registry, &config_snapshot.mcp_servers).await?;
 
         self.ensure_status_listener(registry.clone()).await;
         maybe_registry.replace(registry);
@@ -166,7 +146,7 @@ impl PluginEngine {
                                     }
                                 } else {
                                     let syn_arc: Arc<[CommandSpec]> = Arc::from(synthesized);
-                                    registry_lock.insert_commands(syn_arc.clone().as_ref());
+                                    registry_lock.insert_commands(syn_arc.clone());
                                     synthetic_specs_lock.insert(name.clone(), syn_arc);
                                 }
                             }
@@ -457,26 +437,10 @@ impl PluginEngine {
             *guard = config.clone();
         }
 
-        // Clear and rebuild registry
+        // Clear and rebuild the registry
         registry.clear()?;
 
-        for (name, server) in &config.mcp_servers {
-            let mut plugin_detail = PluginDetail::new(
-                name.clone(),
-                if server.is_stdio() {
-                    server.command.as_ref().unwrap().clone()
-                } else {
-                    server.base_url.as_ref().unwrap().to_string()
-                },
-                server.args.clone().map(|a| a.join(" ")),
-            );
-            plugin_detail.transport_type = server.transport_type().to_string();
-            plugin_detail.tags = server.tags.clone().unwrap_or_default();
-            plugin_detail.enabled = !server.is_disabled();
-
-            registry.register_plugin(plugin_detail)?;
-            self.lifecycle_manager.register_plugin(name.clone()).await;
-        }
+        self.sync_registry(&mut registry, &config.mcp_servers).await?;
 
         // Restart plugins that were previously running and still exist + enabled.
         for name in restart_candidates {
@@ -608,6 +572,32 @@ impl PluginEngine {
 
         specs.sort_by(|a, b| a.name.cmp(&b.name));
         specs
+    }
+
+    async fn sync_registry(&self, registry: &mut PluginRegistry, mcp_servers: &HashMap<String, McpServer>) -> Result<(), RegistryError> {
+        for (name, server) in mcp_servers {
+            let mut plugin_detail = PluginDetail::new(
+                name.clone(),
+                if server.is_stdio() {
+                    server.command.as_ref().unwrap().clone()
+                } else {
+                    server.base_url.as_ref().unwrap().to_string()
+                },
+                server.args.clone().map(|a| a.join(" ")),
+            );
+            plugin_detail.transport_type = server.transport_type().to_string();
+            plugin_detail.tags = server.tags.clone().unwrap_or_default();
+            plugin_detail.enabled = !server.is_disabled();
+            plugin_detail.env = if server.is_stdio() {
+                server.env.clone()
+            } else {
+                server.headers.clone()
+            };
+
+            registry.register_plugin(plugin_detail)?;
+            self.lifecycle_manager.register_plugin(name.clone()).await;
+        }
+        Ok(())
     }
 
     /// Determine whether all tools share the same prefix up to the first underscore.
@@ -903,7 +893,6 @@ mod tests {
     use super::*;
     use crate::McpServer;
     use crate::config::McpConfig;
-    use oatty_registry::RegistryConfig;
     use serde_json::{Value, json};
     use url::Url;
 
@@ -922,12 +911,7 @@ mod tests {
     #[tokio::test]
     async fn test_plugin_engine_creation() {
         let config = McpConfig::default();
-        let registry = Arc::new(Mutex::new(CommandRegistry {
-            commands: Vec::new(),
-            workflows: vec![],
-            provider_contracts: Default::default(),
-            config: RegistryConfig { catalogs: None },
-        }));
+        let registry = Arc::new(Mutex::new(CommandRegistry::default()));
         let engine = PluginEngine::new(config, Arc::clone(&registry)).unwrap();
 
         let plugins = engine.list_plugins().await;
@@ -937,12 +921,7 @@ mod tests {
     #[tokio::test]
     async fn test_plugin_engine_start_stop() {
         let config = McpConfig::default();
-        let registry = Arc::new(Mutex::new(CommandRegistry {
-            commands: Vec::new(),
-            workflows: vec![],
-            provider_contracts: Default::default(),
-            config: RegistryConfig { catalogs: None },
-        }));
+        let registry = Arc::new(Mutex::new(CommandRegistry::default()));
         let engine = PluginEngine::new(config, Arc::clone(&registry)).unwrap();
 
         engine.start().await.unwrap();
@@ -1270,12 +1249,7 @@ mod tests {
         };
         cfg.mcp_servers.insert("svc".into(), server);
 
-        let registry = Arc::new(Mutex::new(CommandRegistry {
-            commands: Vec::new(),
-            workflows: vec![],
-            provider_contracts: Default::default(),
-            config: RegistryConfig { catalogs: None },
-        }));
+        let registry = Arc::new(Mutex::new(CommandRegistry::default()));
         let engine = PluginEngine::new(cfg, Arc::clone(&registry)).unwrap();
         engine.start().await.unwrap();
 

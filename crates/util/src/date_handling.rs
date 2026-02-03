@@ -5,13 +5,24 @@
 
 use chrono::{DateTime, Datelike, NaiveDate};
 
-use crate::generated_date_fields;
+const EXACT_DATE_KEYS: [&str; 11] = [
+    "created",
+    "updated",
+    "released",
+    "deleted",
+    "published",
+    "archived",
+    "expires",
+    "started",
+    "ended",
+    "completed",
+    "due",
+];
 
 /// Returns true if a JSON key looks like a date field.
 ///
-/// Uses generated schema-derived keys with fallback heuristics.
-/// Checks for common date field patterns like suffixes (_at, _on, _date)
-/// and specific field names (created, updated, released).
+/// Uses a heuristic matcher for common date field patterns like suffixes
+/// (`_at`, `_on`, `_date`) and specific field names (created, updated, released).
 ///
 /// # Arguments
 /// * `key` - The JSON key to check
@@ -39,13 +50,10 @@ use crate::generated_date_fields;
 pub fn is_date_like_key(key: &str) -> bool {
     let normalized_key = normalize_date_key(key);
 
-    // Check against generated schema keys first
-    if generated_date_fields::DATE_FIELD_KEYS.contains(&normalized_key.as_str()) {
-        return true;
-    }
-
-    // Fallback to heuristic patterns
-    is_heuristic_date_key(&normalized_key)
+    normalized_key.ends_with("_at")
+        || normalized_key.ends_with("_on")
+        || normalized_key.ends_with("_date")
+        || EXACT_DATE_KEYS.contains(&normalized_key.as_str())
 }
 
 /// Normalizes a key for date field detection.
@@ -70,25 +78,6 @@ fn normalize_date_key(key: &str) -> String {
         .replace("createdat", "created_at")
         .replace("updatedat", "updated_at")
         .replace("releasedat", "released_at")
-}
-
-/// Applies heuristic rules to determine if a normalized key is date-like.
-///
-/// Checks for common date field patterns that aren't covered by the
-/// generated schema.
-///
-/// # Arguments
-/// * `normalized_key` - The normalized key string
-///
-/// # Returns
-/// True if the key matches date field heuristics
-fn is_heuristic_date_key(normalized_key: &str) -> bool {
-    normalized_key.ends_with("_at")
-        || normalized_key.ends_with("_on")
-        || normalized_key.ends_with("_date")
-        || normalized_key == "created"
-        || normalized_key == "updated"
-        || normalized_key == "released"
 }
 
 /// Formats common date strings into MM/DD/YYYY if parsable.
@@ -189,9 +178,6 @@ mod tests {
 
     #[test]
     fn test_date_key_detection() {
-        // Generated schema keys should work
-        // (This test may need adjustment based on actual generated content)
-
         // Heuristic patterns
         assert!(is_date_like_key("created_at"));
         assert!(is_date_like_key("updated_on"));

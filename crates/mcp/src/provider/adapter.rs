@@ -182,18 +182,13 @@ mod tests {
     use super::*;
     use crate::config::McpConfig;
     use crate::plugin::PluginEngine;
-    use oatty_registry::{CommandRegistry, RegistryConfig};
+    use oatty_registry::CommandRegistry;
     use std::sync::Mutex;
 
     #[test]
     fn test_mcp_provider_adapter_creation() {
         let config = McpConfig::default();
-        let command_registry = Arc::new(Mutex::new(CommandRegistry {
-            commands: Vec::new(),
-            workflows: vec![],
-            provider_contracts: Default::default(),
-            config: RegistryConfig { catalogs: None },
-        }));
+        let command_registry = Arc::new(Mutex::new(CommandRegistry::default()));
         let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&command_registry)).unwrap());
         let provider = Arc::new(McpProvider::new("test-plugin", "test-tool", plugin_engine).unwrap());
         let adapter = McpProviderAdapter::new(provider);
@@ -206,12 +201,7 @@ mod tests {
         let mut adapter_registry = McpProviderAdapterRegistry::new();
 
         let config = McpConfig::default();
-        let command_registry = Arc::new(Mutex::new(CommandRegistry {
-            commands: Vec::new(),
-            workflows: vec![],
-            provider_contracts: Default::default(),
-            config: RegistryConfig { catalogs: None },
-        }));
+        let command_registry = Arc::new(Mutex::new(CommandRegistry::default()));
         let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&command_registry)).unwrap());
         let provider = Arc::new(McpProvider::new("test-plugin", "test-tool", plugin_engine).unwrap());
         let adapter = Arc::new(McpProviderAdapter::new(provider));
@@ -233,12 +223,7 @@ mod tests {
     #[test]
     fn test_provider_registry_implementation() {
         let config = McpConfig::default();
-        let command_registry = Arc::new(Mutex::new(CommandRegistry {
-            commands: Vec::new(),
-            workflows: vec![],
-            provider_contracts: Default::default(),
-            config: RegistryConfig { catalogs: None },
-        }));
+        let command_registry = Arc::new(Mutex::new(CommandRegistry::default()));
         let plugin_engine = Arc::new(PluginEngine::new(config, Arc::clone(&command_registry)).unwrap());
         let provider = Arc::new(McpProvider::new("test-plugin", "test-tool", plugin_engine).unwrap());
         let adapter = McpProviderAdapter::new(provider);

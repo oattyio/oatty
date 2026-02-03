@@ -5,22 +5,8 @@
 //! form fields and validation. The component handles keyboard input, focus management,
 //! and rendering of the "edit plugin" interface.
 
-use anyhow::Result;
-use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use oatty_types::Effect;
-// Focus management uses FocusFlag booleans on state; no ring needed here
-use ratatui::{
-    Frame,
-    layout::{Constraint, Direction, Layout, Rect},
-    text::{Line, Span},
-    widgets::{Borders, Paragraph},
-};
-use std::collections::HashMap;
-
-use super::{
-    key_value_editor::KeyValueEditorComponent,
-    state::{PluginEditViewState, PluginTransport},
-};
+use super::state::{PluginEditViewState, PluginTransport};
+use crate::ui::components::common::key_value_editor::KeyValueEditorView;
 use crate::ui::theme::theme_helpers::create_labeled_input_field;
 use crate::{
     app::App,
@@ -32,6 +18,19 @@ use crate::{
         },
     },
 };
+use anyhow::Result;
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+use oatty_types::Effect;
+use ratatui::layout::Position;
+// Focus management uses FocusFlag booleans on state; no ring needed here
+use ratatui::{
+    Frame,
+    layout::{Constraint, Direction, Layout, Rect},
+    text::{Line, Span},
+    widgets::{Borders, Paragraph},
+};
+use std::collections::HashMap;
+use std::rc::Rc;
 
 struct EditPluginFormLayout {
     name_area: Rect,
@@ -60,6 +59,7 @@ struct PluginEditorLayout {
     command_area: Rect,
     args_area: Rect,
     base_url_area: Rect,
+    kv_editor_area: Rect,
     validate_button_area: Rect,
     save_button_area: Rect,
     cancel_button_area: Rect,
@@ -89,7 +89,7 @@ impl PluginEditorLayout {
 /// keyboard input, focus navigation, and rendering of the plugin interface.
 #[derive(Debug, Default)]
 pub struct PluginsEditComponent {
-    kv_component: KeyValueEditorComponent,
+    kv_component: KeyValueEditorView,
     // Map Focus widget IDs to persistent text input states for inline fields
     focus_id_to_input: HashMap<usize, TextInputState>,
     layout: PluginEditorLayout,
@@ -152,6 +152,15 @@ impl PluginsEditComponent {
         }
     }
 
+    fn handle_radio_button_click(&mut self, edit_state: &mut PluginEditViewState, position: Position) {
+        if self.layout.transport_local_area.contains(position) {
+            edit_state.transport = PluginTransport::Local;
+        } else if self.layout.transport_remote_area.contains(position) {
+            edit_state.transport = PluginTransport::Remote;
+        }
+        edit_state.update_key_value_table_label();
+    }
+
     fn input_start_column(area: Rect, label: &str) -> u16 {
         let label_width = label.chars().count() as u16;
         let prefix_width = 2 + label_width + 2; // focus indicator + label + ": "
@@ -162,7 +171,7 @@ impl PluginsEditComponent {
         let Some(widget_id) = app.focus.focused_widget_id() else {
             return false;
         };
-        let Some(add_state) = app.plugins.add.as_mut() else {
+        let Some(add_state) = app.plugins.plugin_edit_state.as_mut() else {
             return false;
         };
         self.ensure_inputs_initialized(add_state);
@@ -191,24 +200,26 @@ impl Component for PluginsEditComponent {
     ///
     /// Returns a vector of effects that should be processed by the app.
     fn handle_key_events(&mut self, app: &mut App, key_event: crossterm::event::KeyEvent) -> Vec<Effect> {
-        let Some(add_state) = app.plugins.add.as_mut() else {
+        let Some(edit_state) = app.plugins.plugin_edit_state.as_mut() else {
             return Vec::new();
         };
         // Use focus flags directly to avoid building a focus ring repeatedly
-        let is_transport_focused = add_state.f_transport.get();
-        if add_state.kv_editor.is_focused() {
-            return self.kv_component.handle_key_events(app, key_event);
+        let is_transport_focused = edit_state.f_transport.get();
+        if edit_state.kv_editor.is_focused() {
+            self.kv_component
+                .handle_key_event(&mut edit_state.kv_editor, key_event, Rc::clone(&app.focus));
+            return Vec::new();
         }
 
         match key_event.code {
             KeyCode::Esc => {
-                app.plugins.add = None;
+                app.plugins.plugin_edit_state = None;
             }
             KeyCode::Left if is_transport_focused => {
-                add_state.transport = PluginTransport::Local;
+                edit_state.transport = PluginTransport::Local;
             }
             KeyCode::Right if is_transport_focused => {
-                add_state.transport = PluginTransport::Remote;
+                edit_state.transport = PluginTransport::Remote;
             }
             KeyCode::Left => {
                 let _ = self.edit_focused_input(app, |ti| ti.move_left());
@@ -217,10 +228,11 @@ impl Component for PluginsEditComponent {
                 let _ = self.edit_focused_input(app, |ti| ti.move_right());
             }
             KeyCode::Char(' ') if is_transport_focused => {
-                add_state.transport = match add_state.transport {
+                edit_state.transport = match edit_state.transport {
                     PluginTransport::Local => PluginTransport::Remote,
                     PluginTransport::Remote => PluginTransport::Local,
                 };
+                edit_state.update_key_value_table_label();
             }
             KeyCode::Char('v') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 return vec![Effect::PluginsValidateAdd];
@@ -237,19 +249,31 @@ impl Component for PluginsEditComponent {
             KeyCode::Char(character) if !key_event.modifiers.contains(KeyModifiers::CONTROL) => {
                 self.edit_focused_input(app, |ti| ti.insert_char(character));
             }
+            KeyCode::Tab => {
+                app.focus.next();
+            }
+            KeyCode::BackTab => {
+                app.focus.prev();
+            }
             _ => {}
         }
         Vec::new()
     }
 
-    fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
-        if mouse.kind != MouseEventKind::Down(MouseButton::Left) || app.plugins.add.is_none() {
+    fn handle_mouse_events(&mut self, app: &mut App, mouse_event: MouseEvent) -> Vec<Effect> {
+        if mouse_event.kind != MouseEventKind::Down(MouseButton::Left) || app.plugins.plugin_edit_state.is_none() {
             return Vec::new();
         }
-        let edit_state = &mut app.plugins.add.as_mut().expect("add state should be something");
-        let MouseEvent { column, row, .. } = mouse;
+        let pos = Position::new(mouse_event.column, mouse_event.row);
+        let edit_state = &mut app.plugins.plugin_edit_state.as_mut().expect("add state should be something");
+        if self.layout.kv_editor_area.contains(pos) {
+            self.kv_component
+                .handle_mouse_event(&mut edit_state.kv_editor, mouse_event, Rc::clone(&app.focus));
+            return Vec::new();
+        }
+
         let focus_areas = self.layout.focus_areas();
-        if let Some(idx) = find_target_index_by_mouse_position(&self.layout.container_area, &focus_areas, column, row) {
+        if let Some(idx) = find_target_index_by_mouse_position(&self.layout.container_area, &focus_areas, pos.x, pos.y) {
             let focusables = [
                 &edit_state.f_transport,    // local transport radio
                 &edit_state.f_transport,    // remote transport radio
@@ -263,7 +287,8 @@ impl Component for PluginsEditComponent {
             ];
             app.focus.focus(focusables[idx]);
             match idx {
-                2 => self.set_cursor_for_input(edit_state, edit_state.f_name.widget_id(), self.layout.name_area, "Name", column),
+                0 | 1 => self.handle_radio_button_click(edit_state, pos),
+                2 => self.set_cursor_for_input(edit_state, edit_state.f_name.widget_id(), self.layout.name_area, "Name", pos.x),
                 3 => {
                     if matches!(edit_state.transport, PluginTransport::Local) {
                         self.set_cursor_for_input(
@@ -271,7 +296,7 @@ impl Component for PluginsEditComponent {
                             edit_state.f_command.widget_id(),
                             self.layout.command_area,
                             "Command",
-                            column,
+                            pos.x,
                         );
                     } else {
                         self.set_cursor_for_input(
@@ -279,13 +304,13 @@ impl Component for PluginsEditComponent {
                             edit_state.f_base_url.widget_id(),
                             self.layout.base_url_area,
                             "Base URL",
-                            column,
+                            pos.x,
                         );
                     }
                 }
                 4 => {
                     if matches!(edit_state.transport, PluginTransport::Local) {
-                        self.set_cursor_for_input(edit_state, edit_state.f_args.widget_id(), self.layout.args_area, "Args", column);
+                        self.set_cursor_for_input(edit_state, edit_state.f_args.widget_id(), self.layout.args_area, "Args", pos.x);
                     }
                 }
                 5 => {
@@ -295,13 +320,13 @@ impl Component for PluginsEditComponent {
                             edit_state.f_base_url.widget_id(),
                             self.layout.base_url_area,
                             "Base URL",
-                            column,
+                            pos.x,
                         );
                     }
                 }
                 _ => {}
             }
-            // normalize the index to the focusables array
+            // Buttons
             if (2..=8).contains(&idx) {
                 return handle_enter_key(app);
             }
@@ -328,11 +353,12 @@ impl Component for PluginsEditComponent {
             Constraint::Min(3),          // Action Buttons
         ])
         .split(area);
-
-        self.kv_component.render(frame, layout[2], app);
-
         let theme = &*app.ctx.theme;
-        let Some(add_state) = &mut app.plugins.add else { return };
+        let Some(add_state) = &mut app.plugins.plugin_edit_state else {
+            return;
+        };
+        self.kv_component
+            .render_with_state(frame, layout[2], theme, &mut add_state.kv_editor);
 
         let transport_layout = render_radio_buttons(frame, layout[0], theme, add_state);
         let form_layout = render_form_fields(frame, layout[1], theme, add_state);
@@ -348,6 +374,7 @@ impl Component for PluginsEditComponent {
             command_area: form_layout.command_area,
             args_area: form_layout.args_area,
             base_url_area: form_layout.base_url_area,
+            kv_editor_area: layout[2],
             validate_button_area: button_layout.btn_validate_area,
             save_button_area: button_layout.btn_save_area,
             cancel_button_area: button_layout.btn_cancel_area,
@@ -356,7 +383,7 @@ impl Component for PluginsEditComponent {
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        let add_state = app.plugins.add.as_ref().expect("add state should be something");
+        let add_state = app.plugins.plugin_edit_state.as_ref().expect("add state should be something");
         let mut spans = vec![];
 
         if add_state.f_transport.get() {
@@ -364,7 +391,7 @@ impl Component for PluginsEditComponent {
         }
 
         if add_state.kv_editor.is_focused() {
-            spans.extend(self.kv_component.get_hint_spans(app));
+            self.kv_component.add_table_hints(&mut spans, theme);
         } else {
             spans.extend(theme_helpers::build_hint_spans(theme, &[("Esc", " Cancel ")]));
             let (validate_enabled, save_enabled) = add_state.compute_button_enablement();
@@ -395,7 +422,7 @@ impl Component for PluginsEditComponent {
 ///
 /// Returns a vector of effects that should be processed by the app.
 fn handle_enter_key(app: &mut App) -> Vec<Effect> {
-    let Some(add_state) = &mut app.plugins.add else {
+    let Some(add_state) = &mut app.plugins.plugin_edit_state else {
         return vec![];
     };
     let (validate_enabled, save_enabled) = add_state.compute_button_enablement();
@@ -411,7 +438,7 @@ fn handle_enter_key(app: &mut App) -> Vec<Effect> {
         return vec![Effect::PluginsSave];
     }
     if add_state.f_btn_cancel.get() {
-        app.plugins.add = None;
+        app.plugins.plugin_edit_state = None;
         return vec![];
     }
     if add_state.f_transport.get() {

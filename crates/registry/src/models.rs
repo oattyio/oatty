@@ -6,7 +6,8 @@ use oatty_types::{
     workflow::WorkflowDefinition,
 };
 use oatty_util::{interpolate_string, sort_and_dedup_commands};
-use std::{collections::HashSet, convert::Infallible, path::Path};
+use std::{collections::HashSet, convert::Infallible, path::Path, sync::Arc};
+use tokio::sync::broadcast;
 
 use crate::RegistryConfig;
 
@@ -21,9 +22,26 @@ pub struct CommandRegistry {
     pub provider_contracts: IndexMap<String, ProviderContract>,
     /// Config used to identify locations of each command catalog
     pub config: RegistryConfig,
+    /// Broadcast sender for Command events (lazy)
+    #[serde(skip)]
+    event_tx: Option<broadcast::Sender<CommandRegistryEvent>>,
 }
 
 impl CommandRegistry {
+    pub fn with_commands(mut self, commands: Vec<CommandSpec>) -> Self {
+        self.commands = commands;
+        self
+    }
+
+    /// Subscribe to command registry events
+    pub fn subscribe(&mut self) -> broadcast::Receiver<CommandRegistryEvent> {
+        let tx = self.event_tx.get_or_insert_with(|| {
+            let (tx, _) = broadcast::channel(8);
+            tx
+        });
+
+        tx.subscribe()
+    }
     /// Creates a new Registry instance by loading command definitions from the
     /// embedded schema.
     ///
@@ -104,6 +122,7 @@ impl CommandRegistry {
             commands,
             workflows,
             provider_contracts,
+            event_tx: None,
         })
     }
 
@@ -143,11 +162,41 @@ impl CommandRegistry {
     ///
     /// - `Ok(&CommandSpec)` - The matching command specification
     /// - `Err` - If no command is found with the given group and command name
-    pub fn find_by_group_and_cmd(&self, group: &str, cmd: &str) -> Result<CommandSpec> {
+    pub fn find_by_group_and_cmd_cloned(&self, group: &str, cmd: &str) -> Result<CommandSpec> {
         self.commands
             .iter()
             .find(|c| c.group == group && c.name == cmd)
             .cloned()
+            .ok_or(anyhow!("{} {} command not found", group, cmd))
+    }
+
+    ///  Finds a command specification within the collection of commands, based on the provided group
+    ///  and command name.
+    ///
+    ///  # Parameters
+    ///  - `group`: A string slice that specifies the group name of the command.
+    ///  - `cmd`: A string slice that specifies the name of the command.
+    ///
+    ///  # Returns
+    ///  - `Ok(&CommandSpec)`: A reference to the `CommandSpec` if a matching command is found.
+    ///  - `Err(anyhow::Error)`: An error containing a descriptive message if no matching command is found.
+    ///
+    ///  # Errors
+    ///  Returns an error if no command in the collection matches the provided `group` and `cmd`.
+    ///
+    ///  # Example
+    ///  ```ignore
+    ///   let group = "admin";
+    ///   let cmd = "delete_user";
+    ///   match commands.find_by_group_and_cmd_ref(group, cmd) {
+    ///       Ok(command) => println!("Command found: {:?}", command),
+    ///       Err(e) => println!("Error: {}", e),
+    ///   }
+    ///  ```
+    pub fn find_by_group_and_cmd_ref(&self, group: &str, cmd: &str) -> Result<&CommandSpec> {
+        self.commands
+            .iter()
+            .find(|c| c.group == group && c.name == cmd)
             .ok_or(anyhow!("{} {} command not found", group, cmd))
     }
 
@@ -159,20 +208,36 @@ impl CommandRegistry {
 
     /// Inserts the synthetic commands from an MCP client's
     /// tool definitions and deduplicates them.
-    pub fn insert_commands(&mut self, commands: &[CommandSpec]) {
-        self.commands.extend_from_slice(commands);
+    pub fn insert_commands(&mut self, commands: Arc<[CommandSpec]>) {
+        self.commands.extend_from_slice(commands.as_ref());
         sort_and_dedup_commands(&mut self.commands);
+        if let Some(tx) = self.event_tx.as_ref() {
+            let _ = tx.send(CommandRegistryEvent::CommandsAdded(commands));
+        }
     }
 
     /// Removes the synthetic commands from the vec
     pub fn remove_commands(&mut self, command_ids: Vec<String>) {
         let set: HashSet<String> = command_ids.into_iter().collect();
-        self.commands.retain(|c| !set.contains(&c.canonical_id()));
+        let commands: Vec<_> = self.commands.extract_if(.., |c| set.contains(&c.canonical_id())).collect();
+        if let Some(tx) = self.event_tx.as_ref() {
+            let _ = tx.send(CommandRegistryEvent::CommandsRemoved(Arc::from(commands)));
+        }
     }
 
     pub fn remove_workflows(&mut self, workflow_ids: Vec<String>) {
         let set: HashSet<String> = workflow_ids.into_iter().collect();
-        self.workflows.retain(|w| !set.contains(&w.workflow));
+        let workflows: Vec<_> = self.workflows.extract_if(.., |w| set.contains(&w.workflow)).collect();
+        if let Some(tx) = self.event_tx.as_ref() {
+            let _ = tx.send(CommandRegistryEvent::WorkflowsRemoved(Arc::from(workflows)));
+        }
+    }
+
+    pub fn insert_workflows(&mut self, workflows: Arc<[WorkflowDefinition]>) {
+        self.workflows.extend_from_slice(workflows.as_ref());
+        if let Some(tx) = self.event_tx.as_ref() {
+            let _ = tx.send(CommandRegistryEvent::WorkflowsAdded(workflows));
+        }
     }
 
     /// Inserts a catalog into the registry
@@ -185,13 +250,17 @@ impl CommandRegistry {
         if catalog.is_enabled
             && let Some(manifest) = catalog.manifest.as_ref()
         {
-            self.commands.extend_from_slice(&manifest.commands);
-            self.workflows.extend_from_slice(&manifest.workflows);
+            self.insert_commands(Arc::from(manifest.commands.as_slice()));
+            self.insert_workflows(Arc::from(manifest.workflows.as_slice()));
             self.provider_contracts.extend(manifest.provider_contracts.clone());
             sort_and_dedup_commands(&mut self.commands);
         }
 
-        catalogs.push(catalog);
+        self.config
+            .catalogs
+            .as_mut()
+            .ok_or_else(|| anyhow!("expected a catalog to extend but found none"))?
+            .push(catalog);
         Ok(())
     }
 
@@ -297,16 +366,12 @@ impl CommandRegistry {
             Err(anyhow!("Catalog not found"))
         }
     }
+}
 
-    pub fn update_command_prefix(&mut self, title: &str, prefix: &str) -> Result<()> {
-        let catalogs = self.config.catalogs.as_mut().ok_or_else(|| anyhow!("No catalogs configured"))?;
-
-        if let Some(index) = catalogs.iter().position(|c| c.title == title) {
-            catalogs[index].title = prefix.to_string();
-
-            Ok(())
-        } else {
-            Err(anyhow!("Catalog not found"))
-        }
-    }
+#[derive(Debug, Clone)]
+pub enum CommandRegistryEvent {
+    CommandsAdded(Arc<[CommandSpec]>),
+    CommandsRemoved(Arc<[CommandSpec]>),
+    WorkflowsAdded(Arc<[WorkflowDefinition]>),
+    WorkflowsRemoved(Arc<[WorkflowDefinition]>),
 }
