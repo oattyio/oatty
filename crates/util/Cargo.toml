@@ -1,12 +1,11 @@
 [package]
 name = "oatty-util"
-version = "0.1.0"
-edition = "2024"
-rust-version = "1.89"
-description = "Oatty CLI utility functions and helpers"
-license = "MIT OR Apache-2.0"
-authors = ["Oatty CLI Team <devnull@example.com>"]
-repository = "https://example.com/oatty"
+version = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+license = { workspace = true }
+authors = { workspace = true }
+repository = { workspace = true }
 
 [dependencies]
 regex = { workspace = true }

@@ -13,7 +13,9 @@ use crate::ui::components::common::manual_entry_modal::DefaultManualEntryCompone
 use crate::ui::components::palette::PaletteComponent;
 use crate::ui::components::theme_picker::ThemePickerComponent;
 use crate::ui::components::workflows::{RunViewComponent, WorkflowInputsComponent};
-use crate::ui::components::{BrowserComponent, FilePickerModal, FilePickerState, LibraryComponent, PluginsComponent, WorkflowsComponent};
+use crate::ui::components::{
+    BrowserComponent, FilePickerModal, FilePickerState, LibraryComponent, McpHttpServerComponent, PluginsComponent, WorkflowsComponent,
+};
 use crate::ui::utils::centered_min_max;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use oatty_types::{Effect, Modal, Msg, Route};
@@ -100,6 +102,7 @@ impl MainView {
             Route::Browser => (Box::new(BrowserComponent::default()), Box::new(&app.browser)),
             Route::Palette => (Box::new(PaletteComponent::default()), Box::new(&app.palette)),
             Route::Plugins => (Box::new(PluginsComponent::default()), Box::new(&app.plugins)),
+            Route::McpHttpServer => (Box::new(McpHttpServerComponent::default()), Box::new(&app.mcp_http_server)),
             Route::WorkflowInputs => (Box::new(WorkflowInputsComponent::default()), Box::new(&app.workflows)),
             Route::Workflows => (Box::new(WorkflowsComponent::default()), Box::new(&app.workflows)),
             Route::WorkflowRun => (Box::new(RunViewComponent::default()), Box::new(&app.workflows)),

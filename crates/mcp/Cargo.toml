@@ -26,8 +26,12 @@ once_cell = { workspace = true }
 oatty-util = { path = "../util" }
 oatty-types = { path = "../types" }
 oatty-registry = { path = "../registry" }
+axum = "0.7.9"
+tokio-util = "0.7.16"
 rmcp = { version = "0.14.0", features = [
   "server-side-http",
+  "transport-streamable-http-server",
+  "transport-streamable-http-server-session",
   "client",
   "transport-child-process",
   "transport-streamable-http-client-reqwest",
@@ -35,6 +39,8 @@ rmcp = { version = "0.14.0", features = [
   "auth",
 ] }
 indexmap.workspace = true
+schemars = "1.2.1"
+
 [features]
 default = []
 

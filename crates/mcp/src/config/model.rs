@@ -15,6 +15,28 @@ pub struct McpConfig {
     /// Map of server names to server configurations.
     #[serde(rename = "mcpServers")]
     pub mcp_servers: HashMap<String, McpServer>,
+    /// Local MCP HTTP server settings for the in-app discovery endpoint.
+    #[serde(rename = "httpServer", default)]
+    pub http_server: McpHttpServerConfig,
+}
+
+/// Configuration for the local MCP HTTP server hosted by the TUI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct McpHttpServerConfig {
+    /// Whether the local MCP HTTP server should auto-start with the TUI.
+    pub auto_start: bool,
+    /// Optional bind address (for example, "127.0.0.1:0"). When omitted, a safe localhost default is used.
+    pub bind_address: Option<String>,
+}
+
+impl Default for McpHttpServerConfig {
+    fn default() -> Self {
+        Self {
+            auto_start: false,
+            bind_address: Some("127.0.0.1:62889".to_string()),
+        }
+    }
 }
 
 /// Configuration for a single MCP server.

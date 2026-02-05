@@ -29,7 +29,7 @@ use oatty_engine::{RegistryCommandRunner, drive_workflow_run, provider::Provider
 use oatty_mcp::config::{
     McpServer, default_config_path, load_config_from_path, save_config_to_path, validate_config, validate_server_name,
 };
-use oatty_mcp::{McpConfig, PluginEngine};
+use oatty_mcp::{McpConfig, McpHttpServer, PluginEngine, resolve_bind_address};
 
 use crate::ui::components::logs::state::LogEntry;
 use oatty_registry::{CommandRegistry, CommandSpec};
@@ -84,6 +84,11 @@ pub enum Cmd {
     PluginsStart(String),
     PluginsStop(String),
     PluginsRestart(String),
+    McpHttpServerStart,
+    McpHttpServerStop,
+    McpHttpServerSetAutostart {
+        auto_start: bool,
+    },
     PluginsLoadDetail(String),
     PluginsRefresh,
     PluginsExportLogsDefault(String),
@@ -145,6 +150,9 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
             Effect::PluginsStart(name) => Some(vec![Cmd::PluginsStart(name)]),
             Effect::PluginsStop(name) => Some(vec![Cmd::PluginsStop(name)]),
             Effect::PluginsRestart(name) => Some(vec![Cmd::PluginsRestart(name)]),
+            Effect::McpHttpServerStart => Some(vec![Cmd::McpHttpServerStart]),
+            Effect::McpHttpServerStop => Some(vec![Cmd::McpHttpServerStop]),
+            Effect::McpHttpServerSetAutostart { auto_start } => Some(vec![Cmd::McpHttpServerSetAutostart { auto_start }]),
             Effect::PluginsLoadDetail(name) => {
                 let state = app.plugins.ensure_details_state();
                 state.begin_load(name.clone());
@@ -235,6 +243,9 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
             Cmd::PluginsStart(name) => (None, Some(spawn_execute_plugin_action(app, PluginAction::Start, name))),
             Cmd::PluginsStop(name) => (None, Some(spawn_execute_plugin_action(app, PluginAction::Stop, name))),
             Cmd::PluginsRestart(name) => (None, Some(spawn_execute_plugin_action(app, PluginAction::Restart, name))),
+            Cmd::McpHttpServerStart => (Some(start_mcp_http_server(app).await), None),
+            Cmd::McpHttpServerStop => (Some(stop_mcp_http_server(app).await), None),
+            Cmd::McpHttpServerSetAutostart { auto_start } => (Some(update_mcp_http_autostart(app, auto_start)), None),
             Cmd::PluginsLoadDetail(name) => (None, Some(spawn_load_plugin_detail(app, name))),
             Cmd::LoadPlugins => (Some(execute_load_plugins(app).await), None),
             Cmd::PluginsRefresh => (Some(execute_plugins_refresh(app).await), None),
@@ -327,6 +338,76 @@ async fn execute_load_plugins(app: &mut App<'_>) -> ExecOutcome {
     app.plugins.table.replace_items(plugin_details);
 
     ExecOutcome::default()
+}
+
+async fn start_mcp_http_server(app: &mut App<'_>) -> ExecOutcome {
+    if app.mcp_http_server_runtime.is_some() {
+        return ExecOutcome::Log("MCP HTTP server is already running".to_string());
+    }
+
+    let configured_address = app.mcp_http_server.configured_bind_address.clone();
+    let bind_address = match resolve_bind_address(Some(&configured_address)) {
+        Ok(address) => address,
+        Err(error) => {
+            app.mcp_http_server.mark_error(error.to_string());
+            return ExecOutcome::Log(format!("MCP HTTP server failed to start: {error}"));
+        }
+    };
+
+    let (sender, receiver) = mpsc::unbounded_channel();
+    let server = McpHttpServer::new(
+        bind_address,
+        Arc::clone(&app.ctx.command_registry),
+        Arc::clone(&app.ctx.plugin_engine),
+    )
+    .with_log_sender(sender);
+    match server.start().await {
+        Ok(runtime) => {
+            let bound_address = runtime.bound_address().to_string();
+            app.mcp_http_server.mark_running(bound_address.clone());
+            app.mcp_http_server_runtime = Some(runtime);
+            app.register_mcp_http_log_stream(receiver);
+            ExecOutcome::Log(format!("MCP HTTP server started at http://{bound_address}/mcp"))
+        }
+        Err(error) => {
+            app.mcp_http_server.mark_error(error.to_string());
+            ExecOutcome::Log(format!("MCP HTTP server failed to start: {error}"))
+        }
+    }
+}
+
+async fn stop_mcp_http_server(app: &mut App<'_>) -> ExecOutcome {
+    let Some(runtime) = app.mcp_http_server_runtime.take() else {
+        app.mcp_http_server.mark_stopped();
+        return ExecOutcome::Log("MCP HTTP server is not running".to_string());
+    };
+
+    match runtime.stop().await {
+        Ok(()) => {
+            app.mcp_http_server.mark_stopped();
+            ExecOutcome::Log("MCP HTTP server stopped".to_string())
+        }
+        Err(error) => {
+            app.mcp_http_server.mark_error(error.to_string());
+            ExecOutcome::Log(format!("MCP HTTP server failed to stop: {error}"))
+        }
+    }
+}
+
+fn update_mcp_http_autostart(app: &mut App<'_>, auto_start: bool) -> ExecOutcome {
+    let path = default_config_path();
+    let mut cfg = if let Ok(text) = read_to_string(&path) {
+        from_str::<McpConfig>(&text).unwrap_or_default()
+    } else {
+        McpConfig::default()
+    };
+    cfg.http_server.auto_start = auto_start;
+
+    if let Err(error) = save_config_to_path(&mut cfg, &path) {
+        return ExecOutcome::Log(format!("Failed to save MCP HTTP auto-start setting: {error}"));
+    }
+    app.mcp_http_server.auto_start = auto_start;
+    ExecOutcome::Log(format!("MCP HTTP auto-start {}", if auto_start { "enabled" } else { "disabled" }))
 }
 
 #[derive(Clone, Copy)]
