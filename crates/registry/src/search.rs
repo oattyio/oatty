@@ -10,16 +10,21 @@ use std::{
     env,
     path::PathBuf,
     process,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
     thread,
 };
 use thiserror::Error;
 use tokio::sync::broadcast::error::RecvError;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 const CANONICAL_ID_FIELD: &str = "canonical_id";
 const SUMMARY_FIELD: &str = "summary";
 const SEARCH_CONTEXT_FIELD: &str = "search_context";
+const EXECUTION_TYPE_FIELD: &str = "execution_type";
+const HTTP_METHOD_FIELD: &str = "http_method";
 const INDEX_FIELD: &str = "index";
 
 use crate::{CommandRegistry, models::CommandRegistryEvent};
@@ -31,8 +36,13 @@ struct CommandSearchEngine {
 
 impl CommandSearchEngine {
     pub fn new(command_registry: Arc<Mutex<CommandRegistry>>) -> Self {
-        let fields: HashSet<String> =
-            HashSet::from_iter([INDEX_FIELD.to_string(), CANONICAL_ID_FIELD.to_string(), SUMMARY_FIELD.to_string()]);
+        let fields: HashSet<String> = HashSet::from_iter([
+            INDEX_FIELD.to_string(),
+            CANONICAL_ID_FIELD.to_string(),
+            SUMMARY_FIELD.to_string(),
+            EXECUTION_TYPE_FIELD.to_string(),
+            HTTP_METHOD_FIELD.to_string(),
+        ]);
         CommandSearchEngine {
             command_registry,
             index: None,
@@ -45,15 +55,10 @@ impl CommandSearchEngine {
     const DEFAULT_QUERY_OFFSET: usize = 0;
     const DEFAULT_RESULT_LENGTH: usize = 20;
 
-    async fn handle_search_event(
-        &self,
-        term: String,
-        index: &IndexArc,
-        query_sender: &mpsc::Sender<Vec<SearchResult>>,
-    ) -> Result<(), IndexerError> {
+    async fn handle_search_event(&self, request: SearchRequest, index: &IndexArc) -> Result<(), IndexerError> {
         let search_results = index
             .search(
-                term,
+                request.query,
                 QueryType::Union,
                 true,
                 Self::DEFAULT_QUERY_OFFSET,
@@ -102,23 +107,34 @@ impl CommandSearchEngine {
                         .and_then(|v| v.as_str())
                         .ok_or_else(|| IndexerError::Document("Summary missing or not string".into()))?
                         .to_string(),
+
+                    execution_type: doc
+                        .get(EXECUTION_TYPE_FIELD)
+                        .and_then(|v| v.as_str())
+                        .ok_or_else(|| IndexerError::Document("Execution type missing or not string".into()))?
+                        .to_string(),
+
+                    http_method: doc.get(HTTP_METHOD_FIELD).and_then(|v| v.as_str()).and_then(|value| {
+                        let trimmed = value.trim();
+                        if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
+                    }),
                 });
             }
 
             results
         };
-        query_sender
-            .send(results)
-            .await
-            .map_err(|error| IndexerError::Sender(error.to_string()))?;
+
+        request
+            .reply
+            .send(SearchResponse {
+                request_id: request.request_id,
+                results,
+            })
+            .map_err(|_| IndexerError::Sender("Search request reply channel closed".to_string()))?;
         Ok(())
     }
 
-    pub async fn start(
-        &mut self,
-        mut query_receiver: mpsc::Receiver<String>,
-        query_sender: mpsc::Sender<Vec<SearchResult>>,
-    ) -> Result<(), IndexerError> {
+    pub async fn start(&mut self, mut request_receiver: mpsc::Receiver<SearchRequest>) -> Result<(), IndexerError> {
         if self.index.is_some() {
             return Err(IndexerError::Receiver("Indexer is already active".to_string()));
         };
@@ -147,9 +163,9 @@ impl CommandSearchEngine {
                 event_result = receiver.recv() => {
                     self.handle_command_event(event_result).await?;
                 }
-                search_term = query_receiver.recv() => {
-                    match search_term {
-                        Some(term) => self.handle_search_event(term, &index, &query_sender).await?,
+                search_request = request_receiver.recv() => {
+                    match search_request {
+                        Some(request) => self.handle_search_event(request, &index).await?,
                         None => break,
                     }
                 }
@@ -286,17 +302,54 @@ fn schema() -> Vec<SchemaField> {
             false,
             false,
         ),
+        SchemaField::new(
+            EXECUTION_TYPE_FIELD.to_string(),
+            false,
+            false,
+            FieldType::Text,
+            false,
+            false,
+            1.0,
+            false,
+            false,
+        ),
+        SchemaField::new(
+            HTTP_METHOD_FIELD.to_string(),
+            false,
+            false,
+            FieldType::Text,
+            false,
+            false,
+            1.0,
+            false,
+            false,
+        ),
     ]
 }
 
-fn build_index_document(idx: usize, command: &CommandSpec) -> Document {
+fn build_index_document(index: usize, command: &CommandSpec) -> Document {
     let mut document_fields = Document::new();
 
-    document_fields.insert(INDEX_FIELD.to_string(), json!(idx as u64));
+    document_fields.insert(INDEX_FIELD.to_string(), json!(index as u64));
     document_fields.insert(CANONICAL_ID_FIELD.to_string(), Value::String(command.canonical_id()));
     document_fields.insert(SUMMARY_FIELD.to_string(), Value::String(command.summary.to_owned()));
+    document_fields.insert(EXECUTION_TYPE_FIELD.to_string(), Value::String(determine_execution_type(command)));
+    document_fields.insert(
+        HTTP_METHOD_FIELD.to_string(),
+        Value::String(command.http().map(|http| http.method.clone()).unwrap_or_default()),
+    );
     document_fields.insert(SEARCH_CONTEXT_FIELD.to_string(), Value::String(build_search_context(command)));
     document_fields
+}
+
+fn determine_execution_type(command: &CommandSpec) -> String {
+    if command.http().is_some() {
+        return "http".to_string();
+    }
+    if command.mcp().is_some() {
+        return "mcp".to_string();
+    }
+    "unknown".to_string()
 }
 
 fn build_search_context(command: &CommandSpec) -> String {
@@ -362,24 +415,70 @@ fn normalize_identifier(value: &str) -> Option<String> {
     if normalized == value { None } else { Some(normalized) }
 }
 
-pub fn spawn_search_engine_thread(
-    command_registry: Arc<Mutex<CommandRegistry>>,
-) -> (mpsc::Receiver<Vec<SearchResult>>, mpsc::Sender<String>) {
-    let (result_sender, result_receiver) = mpsc::channel::<Vec<SearchResult>>(100);
-    let (query_sender, query_receiver) = mpsc::channel::<String>(100);
+/// A correlated search request for the command search engine.
+#[derive(Debug)]
+pub struct SearchRequest {
+    /// Unique identifier used to correlate responses.
+    pub request_id: u64,
+    /// Query string to search.
+    pub query: String,
+    /// One-shot response channel for the search results.
+    pub reply: oneshot::Sender<SearchResponse>,
+}
+
+/// A correlated search response from the command search engine.
+#[derive(Debug)]
+pub struct SearchResponse {
+    /// Echoes the request identifier for observability.
+    pub request_id: u64,
+    /// The matching search results.
+    pub results: Vec<SearchResult>,
+}
+
+/// Handle for submitting correlated search requests.
+#[derive(Clone, Debug)]
+pub struct SearchHandle {
+    sender: mpsc::Sender<SearchRequest>,
+    next_request_id: Arc<AtomicU64>,
+}
+
+impl SearchHandle {
+    /// Submit a search query and await the results.
+    pub async fn search(&self, query: String) -> Result<Vec<SearchResult>, IndexerError> {
+        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
+        let (reply_sender, reply_receiver) = oneshot::channel();
+        let request = SearchRequest {
+            request_id,
+            query,
+            reply: reply_sender,
+        };
+        self.sender
+            .send(request)
+            .await
+            .map_err(|error| IndexerError::Sender(error.to_string()))?;
+        let response = reply_receiver.await.map_err(|error| IndexerError::Receiver(error.to_string()))?;
+        Ok(response.results)
+    }
+}
+
+pub fn spawn_search_engine_thread(command_registry: Arc<Mutex<CommandRegistry>>) -> SearchHandle {
+    let (request_sender, request_receiver) = mpsc::channel::<SearchRequest>(100);
 
     thread::spawn(move || {
         let rt = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
         let local = tokio::task::LocalSet::new();
         let mut engine = CommandSearchEngine::new(command_registry);
-        match rt.block_on(local.run_until(engine.start(query_receiver, result_sender))) {
+        match rt.block_on(local.run_until(engine.start(request_receiver))) {
             Ok(_) => {}
             Err(e) => {
                 tracing::error!("Command search engine error: {}", e);
             }
         }
     });
-    (result_receiver, query_sender)
+    SearchHandle {
+        sender: request_sender,
+        next_request_id: Arc::new(AtomicU64::new(1)),
+    }
 }
 
 #[derive(Debug, Error)]

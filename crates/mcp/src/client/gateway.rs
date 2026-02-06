@@ -6,6 +6,7 @@ use std::{
 };
 
 use anyhow::Result;
+use rmcp::model::InitializeResult;
 use serde_json::Map as JsonMap;
 use thiserror::Error;
 use tokio::{
@@ -159,7 +160,6 @@ impl McpClientGateway {
 
         let _ = self.event_tx.send(ClientGatewayEvent::Starting { name: plugin_name.clone() });
 
-        // Connect outside global locks
         let connect_result = async {
             let mut client = McpClient::new(plugin_name.clone(), server, self.log_manager.clone());
             client
@@ -170,7 +170,6 @@ impl McpClientGateway {
         }
         .await;
 
-        // Always clear reservation
         {
             let mut starting = self.starting.lock().await;
             starting.remove(name);
@@ -189,7 +188,6 @@ impl McpClientGateway {
                     tools,
                 });
 
-                // Audit start event (best-effort)
                 let _ = self
                     .log_manager
                     .log_audit(AuditEntry::plugin_start(plugin_name.clone(), serde_json::Map::new()))
@@ -291,9 +289,7 @@ impl McpClientGateway {
 
     /// Return the current health snapshot for a plugin if known.
     pub async fn get_plugin_health(&self, name: &str) -> Option<HealthStatus> {
-        let Ok(map) = self.active_clients.try_lock() else {
-            return None;
-        };
+        let map = self.active_clients.lock().await;
         let maybe_handle = map.get(name).cloned();
         drop(map);
         if let Some(handle) = maybe_handle {
@@ -314,6 +310,21 @@ impl McpClientGateway {
     pub async fn list_plugins(&self) -> Vec<String> {
         let map = self.active_clients.lock().await;
         map.keys().cloned().collect()
+    }
+
+    /// Get information about all currently active clients.
+    pub async fn get_active_client_infos(&self) -> Option<Vec<InitializeResult>> {
+        let map = self.active_clients.lock().await;
+        let mut results: Vec<InitializeResult> = Vec::new();
+        let values = map.values().cloned().collect::<Vec<_>>();
+        drop(map);
+        for handle in values {
+            let guard = handle.lock().await;
+            if let Some(result) = guard.get_info() {
+                results.push(result.clone());
+            }
+        }
+        Some(results)
     }
 
     /// Update configuration reference for future lifecycle operations.

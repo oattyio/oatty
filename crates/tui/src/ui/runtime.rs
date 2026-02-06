@@ -136,7 +136,7 @@ fn handle_input_event(app: &mut App<'_>, main_view: &mut MainView, input_event: 
 /// Entry point for the TUI runtime: sets up the terminal, spawns the event
 /// producer, runs the async event loop, and performs cleanup on exit.
 pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
-    let (mut result_receiver, _query_sender) = spawn_search_engine_thread(Arc::clone(&registry));
+    let _search_handle = spawn_search_engine_thread(Arc::clone(&registry));
 
     // Input comes from a dedicated blocking thread to ensure reliability.
     let mut input_receiver = spawn_input_thread().await;
@@ -150,7 +150,19 @@ pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<P
     // Defer plugin loading until the main loop runs, so secret interpolation
     // prompts cannot stall startup before the event loop is active.
     effects.push(Effect::PluginsLoadRequested);
+
+    let mcp_config = app.ctx.plugin_engine.config_snapshot().await;
+    if let Some(bind_address) = mcp_config.http_server.bind_address.as_ref() {
+        app.mcp_http_server.set_configured_bind_address(bind_address.clone());
+    }
+    app.mcp_http_server.auto_start = mcp_config.http_server.auto_start;
+    if app.mcp_http_server.auto_start {
+        app.mcp_http_server.mark_starting();
+        effects.push(Effect::McpHttpServerStart);
+    }
+
     let mut workflow_events: Option<WorkflowRunEventReceiver> = None;
+    let mut mcp_http_logs = app.take_pending_mcp_http_logs();
 
     // Ticking strategy: fast while animating, very slow when idle.
     let fast_interval = Duration::from_millis(100);
@@ -177,11 +189,21 @@ pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<P
         }
         let mut needs_render = false;
         tokio::select! {
-            maybe_result = result_receiver.recv() => {
-                if let Some(results) = maybe_result {
-                    effects.extend(main_view.handle_message(&mut app, Msg::SearchResults(results)));
+            maybe_log = async {
+                match mcp_http_logs.as_mut() {
+                    Some(receiver) => receiver.recv().await,
+                    None => None,
                 }
-                needs_render = true;
+            }, if mcp_http_logs.is_some() => {
+                match maybe_log {
+                    Some(entry) => {
+                        app.append_mcp_http_log_entry(entry);
+                        needs_render = true;
+                    }
+                    None => {
+                        mcp_http_logs = None;
+                    }
+                }
             }
             // Terminal input events
             maybe_event = input_receiver.recv() => {
@@ -254,6 +276,9 @@ pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<P
         if let Some(new_receiver) = app.take_pending_workflow_events() {
             workflow_events = Some(new_receiver);
         }
+        if let Some(new_receiver) = app.take_pending_mcp_http_logs() {
+            mcp_http_logs = Some(new_receiver);
+        }
 
         // Fallback: detect terminal size changes even if no explicit Resize
         // event was received. This handles terminals that miss SIGWINCH or
@@ -271,6 +296,11 @@ pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<P
         }
     }
 
+    if let Some(runtime) = app.mcp_http_server_runtime.take()
+        && let Err(error) = runtime.stop().await
+    {
+        tracing::warn!("Failed to stop MCP HTTP server during shutdown: {}", error);
+    }
     cleanup_terminal(&mut terminal)?;
     Ok(())
 }

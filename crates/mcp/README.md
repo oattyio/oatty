@@ -66,6 +66,10 @@ Default path: `~/.config/oatty/mcp.json` (override with `MCP_CONFIG_PATH`). Exam
       },
       "disabled": false
     }
+  },
+  "httpServer": {
+    "autoStart": false,
+    "bindAddress": "127.0.0.1:62889"
   }
 }
 ```
@@ -73,6 +77,8 @@ Default path: `~/.config/oatty/mcp.json` (override with `MCP_CONFIG_PATH`). Exam
 Notes:
 - Stdio requires `command` (and optional `args`, `env`, `cwd`).
 - HTTP/SSE requires `baseUrl` (and optional `headers`).
+- `httpServer.autoStart` enables the local MCP HTTP server on TUI startup.
+- `httpServer.bindAddress` defaults to `127.0.0.1:62889` and must be loopback-only.
 - `${env:NAME}` pulls from the environment; `${secret:NAME}` resolves via OS keychain service `oatty-mcp`.
 - Server names must match `^[a-z0-9._-]+$`.
 - Oatty expects token-based auth (static bearer tokens, API keys, etc.) via `headers` or `${secret:...}`. OAuth/PKCE flows are not yet integrated; use an `Authorization` header or OpenAPI import instead.

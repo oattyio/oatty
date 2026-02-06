@@ -3,6 +3,7 @@
 use std::{process::Stdio, sync::Arc, time::Duration};
 
 use anyhow::Result;
+use rmcp::model::InitializeResult;
 use rmcp::{
     RoleClient,
     model::CallToolRequestParams,
@@ -71,7 +72,6 @@ impl McpClient {
         } else {
             anyhow::bail!("unsupported transport for plugin '{}': must be stdio or http", self.name)
         };
-
         self.service = Some(service);
         let tools = self.refresh_tools().await?;
         self.status = PluginStatus::Running;
@@ -103,6 +103,11 @@ impl McpClient {
     /// Current health snapshot.
     pub fn health(&self) -> &HealthStatus {
         &self.health
+    }
+
+    /// Latest result of the Initialize handshake, if any.
+    pub fn get_info(&self) -> Option<&InitializeResult> {
+        self.service.as_ref().and_then(|service| service.peer_info())
     }
 
     /// Lightweight health probe used by the TUI refresh.
@@ -138,7 +143,7 @@ impl McpClient {
     }
 
     /// Fetch the current tool list from the active service and update the local snapshot.
-    pub async fn refresh_tools(&mut self) -> Result<Arc<Vec<McpToolMetadata>>> {
+    async fn refresh_tools(&mut self) -> Result<Arc<Vec<McpToolMetadata>>> {
         let service = self
             .service
             .as_ref()

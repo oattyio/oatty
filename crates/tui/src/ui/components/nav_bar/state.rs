@@ -96,6 +96,7 @@ impl VerticalNavBarState {
             NavItem::for_route("⌕ Fnd", "Find", Route::Browser),
             NavItem::for_route("↺ Wkf", "Workflows", Route::Workflows),
             NavItem::for_route("↯ MCP", "Model Context Protocol Servers", Route::Plugins),
+            NavItem::for_route("⇄ Srv", "MCP HTTP Server", Route::McpHttpServer),
         ];
 
         Self::new(items)

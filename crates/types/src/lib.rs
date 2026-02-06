@@ -788,6 +788,7 @@ pub mod messaging {
         value_objects::EnvRow,
         workflow::{WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest},
     };
+    use serde::{Deserialize, Serialize};
     use serde_json::{Map as JsonMap, Value as JsonValue};
     use std::{
         borrow::Cow,
@@ -805,6 +806,8 @@ pub mod messaging {
         Browser,
         /// Plugins view for managing MCP plugins.
         Plugins,
+        /// Local MCP HTTP server view for discovery and execution.
+        McpHttpServer,
         /// Settings view for configuring application preferences.
         Library,
         /// Workflows view for browsing workflow catalog.
@@ -936,6 +939,15 @@ pub mod messaging {
         PluginsStop(String),
         /// Restart the selected plugin.
         PluginsRestart(String),
+        /// Start the local MCP HTTP server.
+        McpHttpServerStart,
+        /// Stop the local MCP HTTP server.
+        McpHttpServerStop,
+        /// Update the local MCP HTTP server auto-start setting.
+        McpHttpServerSetAutostart {
+            /// Whether the server should auto-start with the TUI.
+            auto_start: bool,
+        },
         /// Export logs for a plugin to a default location (redacted).
         PluginsExportLogsDefault(String),
         /// Validate fields in the added plugin view.
@@ -1043,18 +1055,31 @@ pub mod messaging {
         SearchResults(Vec<SearchResult>),
     }
 
-    #[derive(Debug, Clone)]
+    /// Represents a single command search match enriched with execution metadata.
+    ///
+    /// Search results are used to drive tool discovery in both the CLI and MCP server. The
+    /// execution metadata helps callers determine whether the command should be routed through
+    /// an HTTP backend or delegated to an MCP plugin.
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct SearchResult {
+        /// Absolute position of the match in the search index.
         pub index: usize,
+        /// Canonical identifier in `group command` format.
         pub canonical_id: String,
+        /// Short summary of the command behavior.
         pub summary: String,
+        /// Execution backend classification (`http` or `mcp`).
+        pub execution_type: String,
+        /// Optional HTTP method when the command is HTTP-backed.
+        pub http_method: Option<String>,
     }
 }
 
 pub mod value_objects {
     use crate::EnvVar;
+    use serde::{Deserialize, Serialize};
 
-    #[derive(Debug, Clone)]
+    #[derive(Debug, Clone, Serialize, Deserialize)]
     pub struct EnvRow {
         pub key: String,
         pub value: String,

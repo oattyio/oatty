@@ -15,7 +15,7 @@ pub use oatty_types::{
     CommandFlag, CommandSpec, ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract,
 };
 
-pub use search::{IndexerError, spawn_search_engine_thread};
+pub use search::{IndexerError, SearchHandle, spawn_search_engine_thread};
 
 #[cfg(test)]
 mod tests {

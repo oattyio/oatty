@@ -31,6 +31,3 @@ progress = { when = "auto" }
 git-fetch-with-cli = true
 # Reasonable retry policy for flaky networks.
 retry = 3
-
-[package]
-rust-version = "1.93.0"

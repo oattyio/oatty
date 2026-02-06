@@ -17,14 +17,14 @@ use crate::ui::components::{common::manual_entry_modal::state::ManualEntryState,
 use crate::ui::theme::Theme;
 use crate::ui::{
     components::{
-        browser::BrowserState, help::HelpState, logs::LogsState, palette::PaletteState, plugins::PluginsState, results::ResultsTableState,
-        theme_picker::ThemePickerState, workflows::WorkflowState,
+        browser::BrowserState, help::HelpState, logs::LogsState, mcp_server::McpHttpServerState, palette::PaletteState,
+        plugins::PluginsState, results::ResultsTableState, theme_picker::ThemePickerState, workflows::WorkflowState,
     },
     theme,
 };
 use oatty_engine::ValueProvider;
 use oatty_engine::provider::{CacheLookupOutcome, PendingProviderFetch, ProviderRegistry};
-use oatty_mcp::PluginEngine;
+use oatty_mcp::{McpHttpLogEntry, PluginEngine, RunningMcpHttpServer};
 use oatty_registry::CommandRegistry;
 use oatty_types::{Effect, LogLevel, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus, validate_candidate_value};
 use oatty_util::{
@@ -151,6 +151,8 @@ pub struct App<'a> {
     pub library: LibraryState,
     /// Plugins state (MCP management)
     pub plugins: PluginsState,
+    /// MCP HTTP server state
+    pub mcp_http_server: McpHttpServerState,
     /// Workflow UI and execution state
     pub workflows: WorkflowState,
     /// Application logs and status messages
@@ -159,6 +161,10 @@ pub struct App<'a> {
     pub nav_bar: VerticalNavBarState,
     /// Theme picker / appearance state
     pub theme_picker: ThemePickerState,
+    /// Running MCP HTTP server instance
+    pub mcp_http_server_runtime: Option<RunningMcpHttpServer>,
+    /// Pending MCP HTTP log receiver awaiting runtime registration.
+    mcp_http_log_rx: Option<UnboundedReceiver<McpHttpLogEntry>>,
     /// Whether a command is currently executing
     pub executing: bool,
     /// Animation frame for the execution throbber
@@ -194,8 +200,8 @@ impl App<'_> {
     /// ```rust,ignore
     /// // Requires constructing a full Registry and App; ignored in doctests.
     /// ```
-    pub fn new(registry: Arc<Mutex<CommandRegistry>>, engine: Arc<PluginEngine>) -> Self {
-        let ctx = SharedCtx::new(Arc::clone(&registry), engine);
+    pub fn new(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Self {
+        let ctx = SharedCtx::new(Arc::clone(&registry), plugin_engine);
         let palette = PaletteState::new(
             Arc::clone(&registry),
             Arc::clone(&ctx.history_store),
@@ -210,6 +216,7 @@ impl App<'_> {
             logs: LogsState::default(),
             help: HelpState::default(),
             plugins: PluginsState::new(),
+            mcp_http_server: McpHttpServerState::default(),
             library: LibraryState::new(),
             workflows: WorkflowState::new(),
             table: ResultsTableState::default(),
@@ -225,6 +232,8 @@ impl App<'_> {
             open_modal_kind: None,
             workflow_event_rx: None,
             workflow_run_sequence: 0,
+            mcp_http_server_runtime: None,
+            mcp_http_log_rx: None,
         };
         app.browser.update_browser_filtered();
 
@@ -261,9 +270,19 @@ impl App<'_> {
         self.workflow_event_rx = Some(WorkflowRunEventReceiver::new(run_id, receiver));
     }
 
+    /// Registers the MCP HTTP server log stream for runtime consumption.
+    pub fn register_mcp_http_log_stream(&mut self, receiver: UnboundedReceiver<McpHttpLogEntry>) {
+        self.mcp_http_log_rx = Some(receiver);
+    }
+
     /// Extracts a pending workflow run event receiver for runtime registration.
     pub fn take_pending_workflow_events(&mut self) -> Option<WorkflowRunEventReceiver> {
         self.workflow_event_rx.take()
+    }
+
+    /// Extracts a pending MCP HTTP log receiver for runtime registration.
+    pub fn take_pending_mcp_http_logs(&mut self) -> Option<UnboundedReceiver<McpHttpLogEntry>> {
+        self.mcp_http_log_rx.take()
     }
 
     /// Updates the application state based on a message.
@@ -317,6 +336,10 @@ impl App<'_> {
         // Periodically refresh plugin statuses when the overlay is visible
         if self.plugins.table.should_refresh() {
             return vec![Effect::PluginsRefresh];
+        }
+
+        if let Some(runtime) = self.mcp_http_server_runtime.as_ref() {
+            self.mcp_http_server.update_connected_clients(runtime.connected_clients());
         }
 
         // If provider-backed suggestions are loading and the popup is open,
@@ -437,6 +460,12 @@ impl App<'_> {
     pub fn append_log_message_with_level(&mut self, level: Option<LogLevel>, message: impl Into<String>) {
         let text = message.into();
         self.logs.append_text_entry_with_level(level, text);
+        self.trim_logs_if_needed();
+    }
+
+    /// Appends an MCP HTTP log entry into the standard logs list.
+    pub fn append_mcp_http_log_entry(&mut self, entry: McpHttpLogEntry) {
+        self.logs.append_mcp_entry(entry.message, entry.payload);
         self.trim_logs_if_needed();
     }
 
@@ -614,6 +643,9 @@ impl HasFocus for App<'_> {
             }
             Route::Plugins => {
                 builder.widget(&self.plugins);
+            }
+            Route::McpHttpServer => {
+                builder.widget(&self.mcp_http_server);
             }
             Route::Workflows | Route::WorkflowInputs | Route::WorkflowRun => {
                 builder.widget(&self.workflows);

@@ -9,6 +9,7 @@ use crate::types::{AuthStatus, McpToolMetadata, PluginDetail, PluginStatus, Plug
 use oatty_registry::{CommandRegistry, CommandSpec};
 use oatty_types::{CommandFlag, ExecOutcome, McpCommandSpec, PositionalArgument};
 use oatty_util::resolve_output_schema;
+use rmcp::model::InitializeResult;
 use serde_json::Value;
 use std::sync::Mutex;
 use std::{
@@ -340,6 +341,10 @@ impl PluginEngine {
         Ok(plugin_detail)
     }
 
+    pub async fn get_active_client_infos(&self) -> Option<Vec<InitializeResult>> {
+        self.client_manager.get_active_client_infos().await
+    }
+
     /// List all plugins.
     pub async fn list_plugins(&self) -> Vec<PluginDetail> {
         let Ok(registry) = self.prepare_registry().await else {
@@ -387,6 +392,16 @@ impl PluginEngine {
     /// Get the plugin registry.
     pub fn registry(&self) -> &TokioMutex<Option<PluginRegistry>> {
         self.plugin_registry.as_ref()
+    }
+
+    /// Get the plugin registry Arc clone.
+    pub fn registry_clone(&self) -> Arc<TokioMutex<Option<PluginRegistry>>> {
+        self.plugin_registry.clone()
+    }
+
+    /// Return a cloned snapshot of the current MCP configuration.
+    pub async fn config_snapshot(&self) -> McpConfig {
+        self.config.read().await.clone()
     }
 
     /// Get the lifecycle manager.
