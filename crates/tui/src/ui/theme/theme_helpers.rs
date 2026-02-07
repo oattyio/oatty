@@ -32,7 +32,7 @@ use std::borrow::Cow;
 /// # Returns
 ///
 /// A styled `Line` with the appropriate color coding
-pub fn styled_line(theme: &dyn crate::ui::theme::roles::Theme, line: &str) -> Line<'static> {
+pub fn styled_line(theme: &dyn Theme, line: &str) -> Line<'static> {
     // Compiled regex patterns for performance
     static TS_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"^\[?\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:\.\d+)?Z?]?").unwrap());
     static UUID_RE: Lazy<Regex> =

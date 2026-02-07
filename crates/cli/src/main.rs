@@ -401,7 +401,7 @@ fn format_step_status(status: StepStatus) -> &'static str {
 /// # Command Structure
 /// Commands follow the format: `<group> <qualified_subcommand>` (e.g., `apps
 /// app:create`) where:
-/// - `group`: The resource group (e.g., "apps", "dynos", "config")
+/// - `group`: The resource group (e.g., "apps", "config")
 /// - `qualified_subcommand`: The specific command within the group (e.g.,
 ///   "app:create", "list")
 ///

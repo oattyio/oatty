@@ -26,8 +26,11 @@ once_cell = { workspace = true }
 oatty-util = { path = "../util" }
 oatty-types = { path = "../types" }
 oatty-registry = { path = "../registry" }
+oatty-registry-gen = { path = "../registry-gen" }
+oatty-engine = { path = "../engine" }
 axum = "0.7.9"
 tokio-util = "0.7.16"
+serde_yaml = { workspace = true }
 rmcp = { version = "0.14.0", features = [
   "server-side-http",
   "transport-streamable-http-server",
@@ -39,7 +42,13 @@ rmcp = { version = "0.14.0", features = [
   "auth",
 ] }
 indexmap.workspace = true
-schemars = "1.2.1"
+schemars = { workspace = true }
+
+[build-dependencies]
+anyhow = { workspace = true }
+oatty-types = { path = "../types" }
+schemars = { workspace = true }
+serde_json = { workspace = true }
 
 [features]
 default = []

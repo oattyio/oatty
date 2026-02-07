@@ -3,17 +3,13 @@ use anyhow::{Context, Result};
 use heck::ToSnakeCase;
 use indexmap::{IndexMap, map::Entry as IndexMapEntry};
 use postcard::to_stdvec;
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::{fs, path::PathBuf};
 
 use oatty_types::{
     CommandSpec,
     command::SchemaProperty,
     manifest::{RegistryCatalog, RegistryManifest},
     provider::{ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract},
-    workflow::WorkflowDefinition,
 };
 
 /// Input descriptor for a registry generation pass.
@@ -65,7 +61,6 @@ pub fn generate_catalog(mut input: ManifestInput) -> Result<RegistryCatalog> {
     let base_urls = collect_base_urls_from_document(&document);
     let manifest = RegistryManifest {
         commands,
-        workflows: Vec::new(),
         provider_contracts,
         vendor: name,
     };
@@ -111,7 +106,6 @@ pub fn generate_manifest(mut input: ManifestInput) -> Result<RegistryManifest> {
     let provider_contracts = build_provider_contracts(&commands);
     Ok(RegistryManifest {
         commands,
-        workflows: Vec::new(),
         provider_contracts,
         vendor,
     })
@@ -132,14 +126,13 @@ pub fn generate_manifest(mut input: ManifestInput) -> Result<RegistryManifest> {
 ///
 /// Returns an error if file reading, directory creation, command generation,
 /// encoding, or writing fails.
-pub fn write_manifest(input: ManifestInput, workflow_root: Option<PathBuf>, output: PathBuf) -> Result<()> {
-    let mut manifest = generate_manifest(input)?;
+pub fn write_manifest(input: ManifestInput, output: PathBuf) -> Result<()> {
+    let manifest = generate_manifest(input)?;
     if let Some(parent) = output.parent()
         && !parent.exists()
     {
         fs::create_dir_all(parent).with_context(|| format!("create dir {}", parent.display()))?;
     }
-    manifest.workflows = load_workflows(workflow_root.as_deref())?;
 
     let bytes = to_stdvec(&manifest)?;
     fs::write(&output, &bytes)?;
@@ -162,14 +155,13 @@ pub fn write_manifest(input: ManifestInput, workflow_root: Option<PathBuf>, outp
 ///
 /// Returns an error if file reading, directory creation, command generation,
 /// encoding, or writing fails.
-pub fn write_manifest_json(input: ManifestInput, workflow_root: Option<PathBuf>, output: PathBuf) -> Result<()> {
-    let mut manifest = generate_manifest(input)?;
+pub fn write_manifest_json(input: ManifestInput, output: PathBuf) -> Result<()> {
+    let manifest = generate_manifest(input)?;
     if let Some(parent) = output.parent()
         && !parent.exists()
     {
         fs::create_dir_all(parent).with_context(|| format!("create dir {}", parent.display()))?;
     }
-    manifest.workflows = load_workflows(workflow_root.as_deref())?;
     let json = serde_json::to_vec_pretty(&manifest).context("serialize manifest to json")?;
     fs::write(&output, &json)?;
     println!("wrote {} bytes (json) to {}", json.len(), output.display());
@@ -642,205 +634,9 @@ fn parse_openapi_document(input: ManifestInput) -> Result<serde_json::Value> {
         serde_json::from_str(&text).context("Unable to parse json. Invalid document format")
     }
 }
-/// Loads workflow definitions from the specified directory.
-///
-/// # Arguments
-///
-/// * `workflow_root` - An optional reference to a `Path` that specifies the root directory
-///   containing workflow definition files. It can be `None`, in which case an empty list
-///   of workflows is returned.
-///
-/// # Returns
-///
-/// A `Result` containing a vector of `WorkflowDefinition` objects if the operation succeeds.
-/// If the directory does not exist or is empty, an empty vector is returned. If any error
-/// occurs (e.g., reading files, parsing YAML/JSON), the function returns an error with an
-/// appropriate context.
-///
-/// # Workflow File Expectations
-///
-/// * The directory is expected to contain workflow definition files in either YAML or JSON format.
-/// * The function determines the format of the file based on its extension and parses
-///   it accordingly.
-/// * Files must be valid YAML or JSON and conform to the structure of `WorkflowDefinition`.
-///
-/// # Errors
-///
-/// This function returns an error if:
-/// * A file in the directory cannot be read.
-/// * A file fails to parse as either YAML or JSON.
-/// * Any other I/O-related issue occurs while processing the directory or its files.
-///
-/// # Example
-///
-/// ```ignore
-/// use std::path::Path;
-///
-/// let workflow_root = Some(Path::new("./workflows"));
-/// match load_workflows(workflow_root) {
-///     Ok(workflows) => {
-///         for workflow in workflows {
-///             println!("Loaded workflow: {:?}", workflow);
-///         }
-///     }
-///     Err(e) => eprintln!("Failed to load workflows: {}", e),
-/// }
-/// ```ignore
-///
-/// # Implementation Details
-///
-/// 1. If `workflow_root` is `None` or the directory does not exist, the function returns an empty `Vec<WorkflowDefinition>`.
-/// 2. Workflow files in the root directory are collected using `collect_workflow_files`.
-/// 3. The files are sorted to ensure deterministic order.
-/// 4. Each file's content is read, and its format is inferred based on the file extension:
-///    - `.yaml` or `.yml` files are parsed as YAML.
-///    - Other files (e.g., `.json`) are parsed as JSON.
-/// 5. The parsed workflows are sorted by the `workflow` field before being returned.
-///
-/// # Dependencies
-///
-/// This function relies on:
-/// * File I/O operations from `std::fs`.
-/// * Error handling using the `anyhow` crate for context and error propagation.
-/// * YAML and JSON parsing using the `serde_yaml` and `serde_json` crates, respectively.
-///
-/// # Notes
-///
-/// The function assumes that `collect_workflow_files` is a helper function that collects
-/// all relevant workflow files in the directory and appends their paths to the provided
-/// `files` vector.
-///
-fn load_workflows(workflow_root: Option<&Path>) -> Result<Vec<WorkflowDefinition>> {
-    let Some(root) = workflow_root else {
-        return Ok(Vec::new());
-    };
-    if !root.exists() {
-        return Ok(Vec::new());
-    }
-
-    let mut files = Vec::new();
-    collect_workflow_files(root, &mut files)?;
-
-    files.sort();
-
-    let mut workflows = Vec::with_capacity(files.len());
-    for path in files {
-        let content = fs::read_to_string(&path).with_context(|| format!("read workflow {}", path.display()))?;
-        let workflow =
-            serde_yaml::from_str::<WorkflowDefinition>(&content).with_context(|| format!("parse workflow yaml {}", path.display()))?;
-        workflows.push(workflow);
-    }
-
-    workflows.sort_by(|a, b| a.workflow.cmp(&b.workflow));
-    Ok(workflows)
-}
-/// Recursively collects workflow files from a given directory and its subdirectories.
-///
-/// This function traverses the directory tree starting at the specified root path,
-/// looking for files that satisfy the `should_ingest_workflow` condition. All such
-/// files are added to the provided vector, `files`. Errors encountered during
-/// directory traversal or file inspection are returned as error results with
-/// context information.
-///
-/// # Arguments
-///
-/// * `root` - A reference to the root path where the directory traversal will begin.
-/// * `files` - A mutable reference to a vector that will be populated with the paths
-///   of workflow files that satisfy the condition defined in `should_ingest_workflow`.
-///
-/// # Returns
-///
-/// A `Result` indicating success or failure:
-/// * On success, returns `Ok(())`.
-/// * On failure, returns a `Result::Err` with detailed context on the failure.
-///
-/// # Errors
-///
-/// This function may return errors in the following cases:
-/// * The root directory cannot be read due to insufficient permissions or other file
-///   system issues.
-/// * Encountering issues while reading or inspecting files in the directory, such as
-///   a failed call to retrieve metadata or traverse subdirectories.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use std::path::Path;
-/// use std::vec::Vec;
-///
-/// fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     let root = Path::new("/path/to/workflows");
-///     let mut workflow_files = Vec::new();
-///
-///     collect_workflow_files(&root, &mut workflow_files)?;
-///
-///     for file in workflow_files {
-///         println!("Workflow file found: {}", file.display());
-///     }
-///
-///     Ok(())
-/// }
-/// ```rust,ignore
-///
-/// # Note
-///
-/// The function assumes the existence of the helper function `should_ingest_workflow`,
-/// which determines whether a file should be included in the workflow files collection.
-fn collect_workflow_files(root: &Path, files: &mut Vec<PathBuf>) -> Result<()> {
-    for entry in fs::read_dir(root).with_context(|| format!("read workflow dir {}", root.display()))? {
-        let entry = entry.with_context(|| format!("walk {}", root.display()))?;
-        let path = entry.path();
-        if entry.file_type().with_context(|| format!("inspect {}", path.display()))?.is_dir() {
-            collect_workflow_files(&path, files)?;
-        } else if should_ingest_workflow(&path) {
-            files.push(path);
-        }
-    }
-    Ok(())
-}
-/// Determines whether a file at the given path should be ingested as a workflow.
-///
-/// # Arguments
-/// * `path` - A reference to a [`Path`] representing the file's path.
-///
-/// # Returns
-/// * `true` if the file extension matches "yaml", "yml", or "json".
-/// * `false` if the file has no extension or the extension does not match the accepted types.
-///
-/// # Examples
-/// ```rust,ignore
-/// use std::path::Path;
-///
-/// let workflow_path = Path::new("workflow.yaml");
-/// assert!(should_ingest_workflow(&workflow_path));
-///
-/// let invalid_path = Path::new("document.txt");
-/// assert!(!should_ingest_workflow(&invalid_path));
-///
-/// let no_extension_path = Path::new("README");
-/// assert!(!should_ingest_workflow(&no_extension_path));
-/// ```
-fn should_ingest_workflow(path: &Path) -> bool {
-    match path.extension().and_then(|s| s.to_str()) {
-        Some(ext) => matches!(ext, "yaml" | "yml" | "json"),
-        None => false,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    #[test]
-    fn should_ingest_workflow_recognizes_supported_extensions() {
-        assert!(should_ingest_workflow(Path::new("a.yaml")));
-        assert!(should_ingest_workflow(Path::new("a.yml")));
-        assert!(should_ingest_workflow(Path::new("a.json")));
-        assert!(!should_ingest_workflow(Path::new("a.txt")));
-        assert!(!should_ingest_workflow(Path::new("README")));
-    }
 
     #[test]
     fn extract_path_placeholders_happy_and_edge_cases() {
@@ -877,47 +673,5 @@ mod tests {
         let (accepts, prefer) = argument_accepts_and_preference("resource");
         assert_eq!(accepts, vec!["resource_id", "resource_name", "resource_slug"]);
         assert_eq!(prefer.as_deref(), Some("resource_id"));
-    }
-
-    fn create_temporary_dir() -> PathBuf {
-        let mut dir = std::env::temp_dir();
-        let nanos = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
-        dir.push(format!("io_rs_tests_{}", nanos));
-        fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    #[test]
-    fn load_workflows_reads_yaml_and_json_recursively_and_sorts() -> Result<()> {
-        let root = create_temporary_dir();
-
-        // Create nested directories
-        let nested = root.join("nested");
-        fs::create_dir_all(&nested)?;
-
-        // YAML workflow
-        let yaml_path = root.join("a_workflow.yaml");
-        let mut yaml_file = fs::File::create(&yaml_path)?;
-        writeln!(yaml_file, "workflow: app_with_db\ntitle: App with DB\n")?;
-
-        // JSON workflow
-        let json_path = nested.join("b_workflow.json");
-        let mut json_file = fs::File::create(&json_path)?;
-        write!(
-            json_file,
-            "{}",
-            serde_json::json!({
-                "workflow": "backup_db",
-                "steps": []
-            })
-        )?;
-
-        let mut workflows = load_workflows(Some(&root))?;
-        // Expect two workflows, sorted by `workflow` field
-        assert_eq!(workflows.len(), 2);
-        workflows.sort_by(|a, b| a.workflow.cmp(&b.workflow));
-        assert_eq!(workflows[0].workflow, "app_with_db");
-        assert_eq!(workflows[1].workflow, "backup_db");
-        Ok(())
     }
 }

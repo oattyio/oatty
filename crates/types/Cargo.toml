@@ -19,6 +19,7 @@ indexmap = { workspace = true }
 regex = { workspace = true }
 anyhow = { workspace = true }
 url = { workspace = true }
+schemars = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

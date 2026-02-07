@@ -10,6 +10,9 @@ use std::{collections::HashSet, convert::Infallible, path::Path, sync::Arc};
 use tokio::sync::broadcast;
 
 use crate::RegistryConfig;
+use crate::workflows::load_runtime_workflows;
+
+const REGISTRY_EVENT_CHANNEL_CAPACITY: usize = 64;
 
 /// The main registry containing all available Oatty CLI commands.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
@@ -36,7 +39,7 @@ impl CommandRegistry {
     /// Subscribe to command registry events
     pub fn subscribe(&mut self) -> broadcast::Receiver<CommandRegistryEvent> {
         let tx = self.event_tx.get_or_insert_with(|| {
-            let (tx, _) = broadcast::channel(8);
+            let (tx, _) = broadcast::channel(REGISTRY_EVENT_CHANNEL_CAPACITY);
             tx
         });
 
@@ -69,53 +72,51 @@ impl CommandRegistry {
 
     /// Creates a registry instance from the provided configuration.
     pub fn from_registry_config(mut config: RegistryConfig) -> Result<Self, Infallible> {
-        let Some(catalogs) = config.catalogs.as_mut() else {
-            return Ok(CommandRegistry {
-                config,
-                ..Default::default()
-            });
-        };
-
         let mut commands = Vec::new();
-        let mut workflows = Vec::new();
         let mut provider_contracts = IndexMap::new();
 
-        for i in (0..catalogs.len()).rev() {
-            let catalog = &mut catalogs[i];
-            let path = &catalog.manifest_path;
-            for j in 0..catalog.headers.len() {
-                let Some(EnvVar { value, .. }) = catalog.headers.get_index_mut2(j) else {
-                    continue;
-                };
-                let Ok(val) = interpolate_string(value) else {
-                    continue;
-                };
-                *value = val;
-            }
-
-            let Ok(manifest_bytes) = std::fs::read(path) else {
-                catalogs.swap_remove(i); // invalid - remove from registry
-                continue;
-            };
-            match RegistryManifest::try_from(manifest_bytes) {
-                Ok(mut manifest) => {
-                    for command in &mut manifest.commands {
-                        command.catalog_identifier = i;
-                    }
-                    if catalog.is_enabled {
-                        commands.append(&mut manifest.commands.clone());
-                        workflows.append(&mut manifest.workflows.clone());
-                        provider_contracts.append(&mut manifest.provider_contracts.clone());
-                    }
-                    catalog.manifest = Some(manifest);
+        if let Some(catalogs) = config.catalogs.as_mut() {
+            for i in (0..catalogs.len()).rev() {
+                let catalog = &mut catalogs[i];
+                let path = &catalog.manifest_path;
+                for j in 0..catalog.headers.len() {
+                    let Some(EnvVar { value, .. }) = catalog.headers.get_index_mut2(j) else {
+                        continue;
+                    };
+                    let Ok(val) = interpolate_string(value) else {
+                        continue;
+                    };
+                    *value = val;
                 }
-                // We need to handle the error case here
-                Err(_) => {
+
+                let Ok(manifest_bytes) = std::fs::read(path) else {
                     catalogs.swap_remove(i); // invalid - remove from registry
                     continue;
+                };
+                match RegistryManifest::try_from(manifest_bytes) {
+                    Ok(mut manifest) => {
+                        for command in &mut manifest.commands {
+                            command.catalog_identifier = i;
+                        }
+                        if catalog.is_enabled {
+                            commands.append(&mut manifest.commands.clone());
+                            provider_contracts.append(&mut manifest.provider_contracts.clone());
+                        }
+                        catalog.manifest = Some(manifest);
+                    }
+                    // We need to handle the error case here
+                    Err(_) => {
+                        catalogs.swap_remove(i); // invalid - remove from registry
+                        continue;
+                    }
                 }
             }
         }
+
+        let workflows = load_runtime_workflows().unwrap_or_else(|error| {
+            tracing::warn!(error = %error, "failed to load runtime workflows from filesystem");
+            Vec::new()
+        });
 
         Ok(CommandRegistry {
             config,
@@ -241,19 +242,29 @@ impl CommandRegistry {
     }
 
     /// Inserts a catalog into the registry
-    pub fn insert_catalog(&mut self, catalog: RegistryCatalog) -> Result<()> {
+    pub fn insert_catalog(&mut self, mut catalog: RegistryCatalog) -> Result<()> {
         let catalogs = self.config.catalogs.get_or_insert(Vec::with_capacity(1));
 
         if catalogs.iter().any(|c| c.title == catalog.title) {
             return Err(anyhow!("Catalog already exists"));
         }
+        let catalog_identifier = catalogs.len();
         if catalog.is_enabled
             && let Some(manifest) = catalog.manifest.as_ref()
         {
-            self.insert_commands(Arc::from(manifest.commands.as_slice()));
-            self.insert_workflows(Arc::from(manifest.workflows.as_slice()));
+            let mut commands = manifest.commands.clone();
+            for command in &mut commands {
+                command.catalog_identifier = catalog_identifier;
+            }
+            self.insert_commands(Arc::from(commands));
             self.provider_contracts.extend(manifest.provider_contracts.clone());
             sort_and_dedup_commands(&mut self.commands);
+        }
+
+        if let Some(manifest) = catalog.manifest.as_mut() {
+            for command in &mut manifest.commands {
+                command.catalog_identifier = catalog_identifier;
+            }
         }
 
         self.config
@@ -292,35 +303,45 @@ impl CommandRegistry {
         // Note that provider contracts are not removed when disabling a catalog.
         // This is intentional because the contracts are IndexMapped and never queried
         // after a catalog is disabled.
-        let (command_ids, workflow_ids) = catalogs[index]
+        let command_ids = catalogs[index]
             .manifest
             .as_ref()
             .map(|m| {
                 let command_ids: Vec<String> = m.commands.iter().map(|c| c.canonical_id()).collect();
-                let workflow_ids: Vec<String> = m.workflows.iter().map(|w| w.workflow.clone()).collect();
-                (command_ids, workflow_ids)
+                command_ids
             })
             .unwrap_or_default();
 
         self.remove_commands(command_ids);
-        self.remove_workflows(workflow_ids);
         Ok(())
     }
 
     pub fn enable_catalog(&mut self, catalog_identifier: &str) -> Result<()> {
-        let catalogs = self.config.catalogs.as_mut().ok_or_else(|| anyhow!("No catalogs configured"))?;
-
-        if let Some(index) = catalogs.iter().position(|c| c.title == catalog_identifier) {
+        let (commands_to_insert, provider_contracts_to_insert) = {
+            let catalogs = self.config.catalogs.as_mut().ok_or_else(|| anyhow!("No catalogs configured"))?;
+            let Some(index) = catalogs.iter().position(|catalog| catalog.title == catalog_identifier) else {
+                return Err(anyhow!("Catalog not found"));
+            };
             catalogs[index].is_enabled = true;
-            if let Some(manifest) = catalogs[index].manifest.as_ref() {
-                self.commands.extend_from_slice(&manifest.commands);
-                self.workflows.extend_from_slice(&manifest.workflows);
-                self.provider_contracts.extend(manifest.provider_contracts.clone());
-            }
-            Ok(())
-        } else {
-            Err(anyhow!("Catalog not found"))
+
+            let (commands, provider_contracts) = if let Some(manifest) = catalogs[index].manifest.as_ref() {
+                let mut commands = manifest.commands.clone();
+                for command in &mut commands {
+                    command.catalog_identifier = index;
+                }
+                (commands, manifest.provider_contracts.clone())
+            } else {
+                (Vec::new(), IndexMap::new())
+            };
+            (commands, provider_contracts)
+        };
+
+        if !commands_to_insert.is_empty() {
+            self.insert_commands(Arc::from(commands_to_insert));
+            self.provider_contracts.extend(provider_contracts_to_insert);
+            sort_and_dedup_commands(&mut self.commands);
         }
+        Ok(())
     }
 
     pub fn update_base_url_index(&mut self, base_url_index: usize, title: &str) -> Result<()> {

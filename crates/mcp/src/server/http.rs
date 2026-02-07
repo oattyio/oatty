@@ -17,7 +17,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::PluginEngine;
 use crate::server::core::{McpToolServices, OattyMcpCore};
-use oatty_registry::{CommandRegistry, spawn_search_engine_thread};
+use oatty_registry::{CommandRegistry, create_search_handle};
 use std::sync::Mutex;
 
 /// Log entry emitted by the local MCP HTTP server.
@@ -47,7 +47,7 @@ pub struct McpHttpServer {
 impl McpHttpServer {
     /// Create a new MCP HTTP server bound to the provided address.
     pub fn new(bind_address: SocketAddr, command_registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Self {
-        let search_handle = spawn_search_engine_thread(Arc::clone(&command_registry));
+        let search_handle = create_search_handle(Arc::clone(&command_registry));
         let services = Arc::new(McpToolServices::new(command_registry, plugin_engine, search_handle));
         Self {
             bind_address,

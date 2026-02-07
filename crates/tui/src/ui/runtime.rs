@@ -27,7 +27,7 @@ use crossterm::{
 };
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use oatty_mcp::PluginEngine;
-use oatty_registry::{CommandRegistry, spawn_search_engine_thread};
+use oatty_registry::CommandRegistry;
 use oatty_types::{Effect, ExecOutcome, Msg};
 use ratatui::{Terminal, prelude::*};
 use std::rc::Rc;
@@ -136,8 +136,6 @@ fn handle_input_event(app: &mut App<'_>, main_view: &mut MainView, input_event: 
 /// Entry point for the TUI runtime: sets up the terminal, spawns the event
 /// producer, runs the async event loop, and performs cleanup on exit.
 pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
-    let _search_handle = spawn_search_engine_thread(Arc::clone(&registry));
-
     // Input comes from a dedicated blocking thread to ensure reliability.
     let mut input_receiver = spawn_input_thread().await;
     let mut main_view = MainView::new(Some(Box::new(LibraryComponent::default())));
