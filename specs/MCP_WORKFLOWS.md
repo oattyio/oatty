@@ -152,7 +152,8 @@ The tool surface is grouped by safety level. Tool definitions must include
 
 - `workflow.resolve_inputs`
   - Parameters: manifest + partial inputs.
-  - Returns: defaults, resolved values, and validation status.
+  - Returns: defaults, resolved values, validation status, and `ready`.
+  - `ready` is true only when required inputs are present and provider resolutions have no `prompt`/`error` outcomes.
 
 - `workflow.run`
   - Parameters: `workflow_id` or manifest content, plus input values.
@@ -169,7 +170,7 @@ The tool surface is grouped by safety level. Tool definitions must include
   - Returns: deletion confirmation.
 
 - `workflow.cancel`
-  - Parameters: `run_id`.
+  - Parameters: `operation_id` (task operation identifier).
   - Returns: cancellation status.
 
 - `workflow.purge_history`

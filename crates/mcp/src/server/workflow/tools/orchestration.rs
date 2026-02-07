@@ -75,6 +75,56 @@ pub fn author_and_run(request: &WorkflowAuthorAndRunRequest, command_registry: &
         ));
     }
 
+    let ready = resolution.get("ready").and_then(Value::as_bool).unwrap_or(false);
+    if !ready {
+        let provider_violations = resolution
+            .get("provider_resolutions")
+            .and_then(Value::as_array)
+            .map(|resolutions| {
+                resolutions
+                    .iter()
+                    .filter_map(|resolution| {
+                        let outcome = resolution.get("outcome")?;
+                        let status = outcome.get("status").and_then(Value::as_str)?;
+                        if status != "prompt" && status != "error" {
+                            return None;
+                        }
+                        let input_name = resolution.get("input").and_then(Value::as_str).unwrap_or("unknown_input");
+                        let argument_name = resolution.get("argument").and_then(Value::as_str).unwrap_or("unknown_argument");
+                        let message = outcome
+                            .get("reason")
+                            .or_else(|| outcome.get("message"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("provider resolution requires attention");
+                        Some(serde_json::json!({
+                            "path": format!("provider_resolutions.{}.{}", input_name, argument_name),
+                            "rule": status,
+                            "message": message,
+                        }))
+                    })
+                    .collect::<Vec<Value>>()
+            })
+            .unwrap_or_default();
+
+        let violations = if provider_violations.is_empty() {
+            vec![serde_json::json!({
+                "path": "provider_resolutions",
+                "rule": "not_ready",
+                "message": "workflow inputs are not ready for execution",
+            })]
+        } else {
+            provider_violations
+        };
+
+        return Err(validation_error_with_violations(
+            "WORKFLOW_AUTHOR_RUN_INPUTS_NOT_READY",
+            "workflow inputs are not ready for execution",
+            serde_json::json!({ "workflow_id": workflow_identifier }),
+            "Resolve provider prompts/errors and retry workflow.author_and_run.",
+            violations,
+        ));
+    }
+
     let run_inputs = resolution
         .get("resolved_inputs")
         .and_then(Value::as_object)

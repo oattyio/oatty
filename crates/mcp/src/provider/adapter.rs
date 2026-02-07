@@ -1,9 +1,9 @@
 use crate::provider::{McpProvider, McpProviderError, McpProviderOps};
-use serde_json::{Map, Value};
-use std::sync::Arc;
 // Note: This would need to be implemented to integrate with the existing engine
 // For now, we'll create a local version
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
+use std::sync::Arc;
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ProviderContract {

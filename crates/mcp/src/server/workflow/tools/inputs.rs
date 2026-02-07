@@ -171,12 +171,18 @@ pub fn resolve_inputs(request: &WorkflowResolveInputsRequest) -> Result<Value, E
             })
         })
         .collect::<Vec<Value>>();
+    let has_blocking_provider_resolution = state
+        .telemetry()
+        .provider_resolution_events()
+        .iter()
+        .any(|event| matches!(event.outcome, ProviderBindingOutcome::Prompt(_) | ProviderBindingOutcome::Error(_)));
+    let ready = unresolved_required.is_empty() && !has_blocking_provider_resolution;
 
     Ok(serde_json::json!({
         "workflow_id": runtime_workflow.identifier,
         "resolved_inputs": state.run_context.inputs,
         "required_missing": unresolved_required,
-        "ready": unresolved_required.is_empty(),
+        "ready": ready,
         "provider_resolutions": provider_resolutions,
     }))
 }
@@ -257,5 +263,37 @@ steps:
                 .expect("region default should be applied"),
             "us"
         );
+    }
+
+    #[test]
+    fn resolve_inputs_marks_not_ready_when_provider_resolution_requires_prompt() {
+        let request = WorkflowResolveInputsRequest {
+            workflow_id: None,
+            manifest_content: Some(
+                r#"
+workflow: demo_provider_prompt
+inputs:
+  target:
+    optional: true
+    provider: apps:list
+    provider_args:
+      app:
+        from_input: source
+        path: name
+        required: false
+        on_missing: prompt
+steps:
+  - id: list_apps
+    run: apps:list
+"#
+                .to_string(),
+            ),
+            format: Some("yaml".to_string()),
+            partial_inputs: None,
+        };
+        let value = resolve_inputs(&request).expect("resolve inputs should succeed");
+        assert_eq!(value["required_missing"], serde_json::json!([]));
+        assert_eq!(value["ready"], false);
+        assert_eq!(value["provider_resolutions"][0]["outcome"]["status"], "prompt");
     }
 }

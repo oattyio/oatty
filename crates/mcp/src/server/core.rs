@@ -8,24 +8,25 @@ use crate::server::schemas::{
     CatalogImportOpenApiRequest, CatalogPreviewImportRequest, CatalogRemoveRequest, CatalogSetEnabledRequest,
     CatalogValidateOpenApiRequest, CommandSummariesRequest, RunCommandRequestParam, SearchInputsDetail, SearchRequestParam,
 };
-use crate::server::workflow::errors::{conflict_error, not_found_error};
-use crate::server::workflow::prompts::{get_prompt as get_workflow_prompt, list_prompts as list_workflow_prompts};
-use crate::server::workflow::resources::{
-    list_resource_templates as list_workflow_resource_templates, list_resources as list_workflow_resources,
-    read_resource as read_workflow_resource,
-};
-use crate::server::workflow::tools::execution::{preview_rendered, run_with_task_capability_guard, step_plan};
-use crate::server::workflow::tools::history::purge_workflow_history;
-use crate::server::workflow::tools::inputs::{preview_inputs, resolve_inputs};
-use crate::server::workflow::tools::manifest::{
-    delete_workflow, export_workflow, get_workflow, import_workflow, list_workflows, rename_workflow, save_workflow, validate_workflow,
-};
-use crate::server::workflow::tools::orchestration::{author_and_run, repair_and_rerun};
-use crate::server::workflow::tools::types::{
-    WorkflowAuthorAndRunRequest, WorkflowCancelRequest, WorkflowDeleteRequest, WorkflowExportRequest, WorkflowGetRequest,
-    WorkflowImportRequest, WorkflowPreviewInputsRequest, WorkflowPreviewRenderedRequest, WorkflowPurgeHistoryRequest,
-    WorkflowRenameRequest, WorkflowRepairAndRerunRequest, WorkflowResolveInputsRequest, WorkflowRunRequest, WorkflowSaveRequest,
-    WorkflowStepPlanRequest, WorkflowValidateRequest,
+use crate::server::workflow::{
+    errors::{conflict_error, not_found_error},
+    prompts::{get_prompt as get_workflow_prompt, list_prompts as list_workflow_prompts},
+    resources::{
+        list_resource_templates as list_workflow_resource_templates, list_resources as list_workflow_resources,
+        read_resource as read_workflow_resource,
+    },
+    tools::{
+        author_and_run, delete_workflow, export_workflow, get_workflow, import_workflow, list_workflows, preview_inputs, preview_rendered,
+        purge_workflow_history, rename_workflow, repair_and_rerun, resolve_inputs, run_with_task_capability_guard, save_workflow,
+        step_plan,
+        types::{
+            WorkflowAuthorAndRunRequest, WorkflowCancelRequest, WorkflowDeleteRequest, WorkflowExportRequest, WorkflowGetRequest,
+            WorkflowImportRequest, WorkflowPreviewInputsRequest, WorkflowPreviewRenderedRequest, WorkflowPurgeHistoryRequest,
+            WorkflowRenameRequest, WorkflowRepairAndRerunRequest, WorkflowResolveInputsRequest, WorkflowRunRequest, WorkflowSaveRequest,
+            WorkflowStepPlanRequest, WorkflowValidateRequest,
+        },
+        validate_workflow,
+    },
 };
 use anyhow::Result;
 use oatty_registry::{CommandRegistry, SearchHandle};
@@ -441,7 +442,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow.resolve_inputs",
         annotations(open_world_hint = true),
-        description = "Resolve defaults and provider bindings, then validate input values. Input: workflow_id or manifest_content, format?, partial_inputs?. Returns resolved_inputs, ready flag, required_missing, provider_resolutions. Use resolved_inputs as the source of truth for workflow.run."
+        description = "Resolve defaults and provider bindings, then validate input values. Input: workflow_id or manifest_content, format?, partial_inputs?. Returns resolved_inputs, ready flag, required_missing, provider_resolutions. ready=true only when required_missing is empty and provider resolutions have no prompt/error outcomes."
     )]
     async fn workflow_resolve_inputs(&self, param: Parameters<WorkflowResolveInputsRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = resolve_inputs(&param.0)?;
@@ -505,34 +506,34 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow.cancel",
         annotations(open_world_hint = true),
-        description = "Cancel a workflow execution by run identifier (task-backed runs only)."
+        description = "Cancel a task-backed workflow execution by task operation identifier."
     )]
     async fn workflow_cancel(&self, param: Parameters<WorkflowCancelRequest>) -> Result<CallToolResult, ErrorData> {
         let mut processor = self.task_processor.lock().await;
         processor.collect_completed_results();
 
-        let cancelled = processor.cancel_task(&param.0.run_id);
+        let cancelled = processor.cancel_task(&param.0.operation_id);
         let structured = if cancelled {
             serde_json::json!({
                 "cancelled": true,
-                "run_id": param.0.run_id,
+                "operation_id": param.0.operation_id,
             })
         } else if processor
             .peek_completed()
             .iter()
-            .any(|result| result.descriptor.operation_id == param.0.run_id)
+            .any(|result| result.descriptor.operation_id == param.0.operation_id)
         {
             return Err(conflict_error(
                 "WORKFLOW_CANCEL_CONFLICT",
-                format!("run '{}' is already completed and cannot be cancelled", param.0.run_id),
-                serde_json::json!({ "run_id": param.0.run_id }),
+                format!("operation '{}' is already completed and cannot be cancelled", param.0.operation_id),
+                serde_json::json!({ "operation_id": param.0.operation_id }),
                 "Inspect task result and start a new run if needed.",
             ));
         } else {
             return Err(not_found_error(
-                "WORKFLOW_RUN_NOT_FOUND",
-                format!("run '{}' was not found", param.0.run_id),
-                serde_json::json!({ "run_id": param.0.run_id }),
+                "WORKFLOW_OPERATION_NOT_FOUND",
+                format!("operation '{}' was not found", param.0.operation_id),
+                serde_json::json!({ "operation_id": param.0.operation_id }),
                 "Use tasks/list to inspect active task-backed workflow runs.",
             ));
         };

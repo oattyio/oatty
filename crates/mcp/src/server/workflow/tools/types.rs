@@ -62,8 +62,8 @@ pub struct WorkflowRenameRequest {
 
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct WorkflowCancelRequest {
-    #[schemars(description = "Workflow run identifier.")]
-    pub run_id: String,
+    #[schemars(description = "Task operation identifier returned for task-backed workflow execution.")]
+    pub operation_id: String,
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
