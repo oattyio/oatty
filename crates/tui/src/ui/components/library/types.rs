@@ -59,7 +59,7 @@ impl From<&RegistryCatalog> for CatalogProjection {
             .map(|m| CatalogProjection {
                 vendor: Cow::Owned(m.vendor.clone()),
                 command_count: m.commands.len(),
-                workflow_count: m.workflows.len(),
+                workflow_count: 0,
                 provider_contract_count: m.provider_contracts.len(),
                 ..Default::default()
             })

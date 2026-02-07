@@ -7,7 +7,9 @@
 use anyhow::{Result, anyhow};
 use heck::ToKebabCase;
 use oatty_types::{CommandFlag, CommandSpec, HttpCommandSpec, PositionalArgument};
-use oatty_util::{get_description, get_type, resolve_output_schema, sort_and_dedup_commands};
+use oatty_util::{
+    OpenApiValidationViolation, get_description, get_type, resolve_output_schema, sort_and_dedup_commands, validate_openapi_preflight,
+};
 use serde_json::{Map, Value};
 use std::collections::{HashMap, HashSet};
 use url::Url;
@@ -31,9 +33,10 @@ use crate::provider_resolver::resolve_and_infer_providers;
 ///
 /// Returns an error if the document is not OpenAPI v3 or lacks required sections.
 pub fn derive_commands_from_openapi(document: &Value, vendor: &str) -> Result<Vec<CommandSpec>> {
-    if !is_oas3(document) {
+    if let Err(violations) = validate_openapi_preflight(document) {
         return Err(anyhow!(
-            "unsupported OpenAPI document: expected OpenAPI v3 (missing 'openapi' field)"
+            "unsupported OpenAPI document: {}",
+            format_openapi_preflight_violations(&violations)
         ));
     }
 
@@ -516,8 +519,12 @@ fn is_supported_http_method(method: &str) -> bool {
     matches!(method, "get" | "post" | "put" | "patch" | "delete")
 }
 
-fn is_oas3(document: &Value) -> bool {
-    document.get("openapi").and_then(Value::as_str).is_some()
+fn format_openapi_preflight_violations(violations: &[OpenApiValidationViolation]) -> String {
+    violations
+        .iter()
+        .map(|violation| format!("{} [{}]: {}", violation.path, violation.rule, violation.message))
+        .collect::<Vec<String>>()
+        .join("; ")
 }
 
 fn resolve_local_ref(root: &Value, reference: &str) -> Option<Value> {

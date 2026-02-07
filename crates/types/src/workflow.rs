@@ -7,6 +7,7 @@
 
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::{borrow::Cow, collections::HashMap};
@@ -30,7 +31,7 @@ pub struct RuntimeWorkflow {
 }
 
 /// Describes a fully authored workflow, including metadata, inputs, and sequential steps.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
 pub struct WorkflowDefinition {
     /// Canonical workflow identifier (for example, `app_with_db`).
     #[serde(default)]
@@ -50,7 +51,7 @@ pub struct WorkflowDefinition {
 }
 
 /// Defines metadata for a single workflow input, including provider bindings and validation.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
 pub struct WorkflowInputDefinition {
     /// Descriptive text explaining the purpose of the input.
     #[serde(default)]
@@ -130,7 +131,7 @@ impl Default for WorkflowInputDefinition {
 }
 
 /// Selection metadata describing how to extract values from provider results.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema)]
 pub struct WorkflowProviderSelect {
     /// Field name inserted into flags or arguments when a value is chosen.
     #[serde(default)]
@@ -144,7 +145,7 @@ pub struct WorkflowProviderSelect {
 }
 
 /// Lists selection modes for provider-backed inputs.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowInputMode {
     /// A single value must be selected.
@@ -155,7 +156,7 @@ pub enum WorkflowInputMode {
 }
 
 /// Error handling policy applied when provider fetching fails.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowProviderErrorPolicy {
     /// Prompt the user to provide a manual value.
@@ -167,7 +168,7 @@ pub enum WorkflowProviderErrorPolicy {
 }
 
 /// Defines a provider configuration either by identifier or by an embedded object.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
 #[serde(untagged)]
 pub enum WorkflowValueProvider {
     /// Shorthand string identifier (for example, `apps:list`).
@@ -177,7 +178,7 @@ pub enum WorkflowValueProvider {
 }
 
 /// Structured provider configuration matching the richer syntax in the specs.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
 pub struct WorkflowValueProviderDetailed {
     /// Identifier of the provider (for example, `apps:list` or `workflow`).
     pub id: String,
@@ -187,7 +188,7 @@ pub struct WorkflowValueProviderDetailed {
 }
 
 /// Declares how default values are derived for a workflow input.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
 pub struct WorkflowInputDefault {
     /// Source describing where the default originates.
     pub from: WorkflowDefaultSource,
@@ -197,7 +198,7 @@ pub struct WorkflowInputDefault {
 }
 
 /// Enumerates supported default value sources.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowDefaultSource {
     /// Use command history for the user.
@@ -211,7 +212,7 @@ pub enum WorkflowDefaultSource {
 }
 
 /// Describes how multiple selected items should be concatenated into a single value.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
 pub struct WorkflowJoinConfiguration {
     /// Separator inserted between values.
     pub separator: String,
@@ -221,7 +222,7 @@ pub struct WorkflowJoinConfiguration {
 }
 
 /// Declarative validation settings attached to an input.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
 pub struct WorkflowInputValidation {
     /// Whether a value must be provided.
     #[serde(default)]
@@ -242,7 +243,7 @@ pub struct WorkflowInputValidation {
 }
 
 /// Value assigned to a provider argument, either as a literal or as a structured binding.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
 #[serde(untagged)]
 pub enum WorkflowProviderArgumentValue {
     /// Literal string or templated expression.
@@ -252,7 +253,7 @@ pub enum WorkflowProviderArgumentValue {
 }
 
 /// Structured provider argument binding following the dependent provider spec.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
 pub struct WorkflowProviderArgumentBinding {
     /// Step identifier referenced by the binding.
     #[serde(default)]
@@ -272,7 +273,7 @@ pub struct WorkflowProviderArgumentBinding {
 }
 
 /// Behavior applied when a dependent value cannot be resolved.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WorkflowMissingBehavior {
     /// Prompt the user to resolve the ambiguity via the field picker.
@@ -284,7 +285,7 @@ pub enum WorkflowMissingBehavior {
 }
 
 /// Describes a single step within a workflow.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
 pub struct WorkflowStepDefinition {
     /// Unique step identifier referenced by later bindings.
     pub id: String,
@@ -314,7 +315,7 @@ pub struct WorkflowStepDefinition {
 }
 
 /// Repeat configuration enabling polling until a condition is met.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
 pub struct WorkflowRepeat {
     /// Exit condition expressed as a templated expression.
     #[serde(default)]
@@ -331,7 +332,7 @@ pub struct WorkflowRepeat {
 }
 
 /// Output contract advertised by a workflow step for downstream consumers.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
 pub struct WorkflowOutputContract {
     /// Structured field descriptors annotated with semantic tags.
     #[serde(default)]
@@ -339,7 +340,7 @@ pub struct WorkflowOutputContract {
 }
 
 /// Describes a single field made available by a workflow step output.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
 pub struct WorkflowOutputField {
     /// Field name exposed from the output payload.
     pub name: String,

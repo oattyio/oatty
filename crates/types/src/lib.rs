@@ -122,7 +122,7 @@ pub mod manifest {
     use postcard::{from_bytes, to_stdvec};
     use serde::{Deserialize, Serialize};
 
-    use crate::{EnvVar, command::CommandSpec, provider::ProviderContract, workflow::WorkflowDefinition};
+    use crate::{EnvVar, command::CommandSpec, provider::ProviderContract};
 
     /// Registry catalog structure used by the registry, engine, and TUI layers.
     #[derive(Default, Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
@@ -159,9 +159,6 @@ pub mod manifest {
         /// All command specifications generated from the platform schemas.
         #[serde(default)]
         pub commands: Vec<CommandSpec>,
-        /// Workflow definitions bundled alongside the command registry.
-        #[serde(default)]
-        pub workflows: Vec<WorkflowDefinition>,
         /// Provider argument and return contracts keyed by command identifier.
         #[serde(default)]
         pub provider_contracts: IndexMap<String, ProviderContract>,

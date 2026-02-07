@@ -6,7 +6,9 @@
 pub mod clap_builder;
 pub mod config;
 pub mod models;
+pub mod openapi_import;
 pub mod search;
+pub mod workflows;
 
 pub use clap_builder::build_clap;
 pub use config::*;
@@ -14,8 +16,11 @@ pub use models::CommandRegistry;
 pub use oatty_types::{
     CommandFlag, CommandSpec, ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract,
 };
+pub use openapi_import::{
+    OpenApiCatalogImportError, OpenApiCatalogImportRequest, OpenApiCatalogImportResult, import_openapi_catalog_into_registry,
+};
 
-pub use search::{IndexerError, SearchHandle, spawn_search_engine_thread};
+pub use search::{SearchError, SearchHandle, create_search_handle};
 
 #[cfg(test)]
 mod tests {

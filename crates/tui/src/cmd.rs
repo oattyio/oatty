@@ -32,9 +32,9 @@ use oatty_mcp::config::{
 use oatty_mcp::{McpConfig, McpHttpServer, PluginEngine, resolve_bind_address};
 
 use crate::ui::components::logs::state::LogEntry;
-use oatty_registry::{CommandRegistry, CommandSpec};
-use oatty_registry_gen::io::ManifestInput;
-use oatty_registry_gen::io::generate_catalog;
+use oatty_registry::{
+    CommandRegistry, CommandSpec, OpenApiCatalogImportError, OpenApiCatalogImportRequest, import_openapi_catalog_into_registry,
+};
 use oatty_types::value_objects::EnvRow;
 use oatty_types::{
     DirectoryEntry, Effect, EnvVar, LogLevel, Msg, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus,
@@ -440,26 +440,38 @@ fn read_file_contents(path: PathBuf) -> ExecOutcome {
     }
 }
 
-/// Generates a catalog from a given content.
+/// Imports a catalog from OpenAPI content using the shared registry import service.
 fn import_registry_catalog_from(app: &mut App, content: String, maybe_prefix: Option<String>) -> ExecOutcome {
-    let input = ManifestInput::new(None, Some(content), maybe_prefix);
-    match generate_catalog(input) {
-        Ok(mut catalog) => {
-            catalog.is_enabled = true;
-            {
-                let Ok(mut lock) = app.ctx.command_registry.try_lock() else {
-                    return ExecOutcome::RegistryCatalogGenerationError("System busy".to_string());
-                };
-                let Ok(()) = lock.insert_catalog(catalog.clone()) else {
-                    return ExecOutcome::RegistryCatalogGenerationError("Could not insert catalog into command registry".to_string());
-                };
-                if let Err(e) = lock.config.save() {
-                    return ExecOutcome::RegistryCatalogGenerationError(format!("Could not save configuration: {}", e));
-                };
-            }
-            ExecOutcome::RegistryCatalogGenerated(catalog)
-        }
-        Err(e) => ExecOutcome::RegistryCatalogGenerationError(format!("{}", e)),
+    let Ok(mut registry_guard) = app.ctx.command_registry.try_lock() else {
+        return ExecOutcome::RegistryCatalogGenerationError("System busy".to_string());
+    };
+
+    let import_result = import_openapi_catalog_into_registry(
+        &mut registry_guard,
+        OpenApiCatalogImportRequest {
+            source_content: content,
+            catalog_title_override: None,
+            vendor_override: maybe_prefix,
+            base_url_override: None,
+            enabled: true,
+            overwrite: false,
+        },
+    );
+
+    match import_result {
+        Ok(result) => ExecOutcome::RegistryCatalogGenerated(result.catalog),
+        Err(error) => ExecOutcome::RegistryCatalogGenerationError(format_tui_openapi_import_error(error)),
+    }
+}
+
+fn format_tui_openapi_import_error(error: OpenApiCatalogImportError) -> String {
+    match error {
+        OpenApiCatalogImportError::PreflightValidation(violations) => violations
+            .iter()
+            .map(|violation| format!("{} [{}]: {}", violation.path, violation.rule, violation.message))
+            .collect::<Vec<String>>()
+            .join("; "),
+        other => other.to_string(),
     }
 }
 

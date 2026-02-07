@@ -92,3 +92,20 @@ pub fn default_catalogs_path() -> PathBuf {
 
     config_dir().unwrap_or_else(|| PathBuf::from(".")).join("oatty").join("catalogs")
 }
+
+/// Get the default path for workflow manifest files.
+///
+/// By default this resolves to `<registry-config-dir>/workflows`, where
+/// `<registry-config-dir>` is derived from [`default_config_path`]. You can
+/// override this location with `REGISTRY_WORKFLOWS_PATH`.
+pub fn default_workflows_path() -> PathBuf {
+    if let Ok(path) = env::var("REGISTRY_WORKFLOWS_PATH")
+        && !path.trim().is_empty()
+    {
+        return expand_tilde(&path);
+    }
+
+    let config_path = default_config_path();
+    let base_dir = config_path.parent().map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."));
+    base_dir.join("workflows")
+}

@@ -9,7 +9,7 @@ use crate::{
     app::App,
     ui::{
         components::{
-            common::{ResultsTableView, handle_table_navigation_key},
+            common::{ResultsTableView, handle_table_navigation_key, highlight_pretty_json_lines},
             component::Component,
             logs::state::LogEntry,
             results::build_key_value_entries,
@@ -24,9 +24,10 @@ use oatty_util::redact_sensitive;
 use ratatui::{
     Frame,
     layout::Rect,
-    text::Span,
+    text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
+use serde_json::Value;
 
 /// Renders and manages the log detail modal.
 #[derive(Debug, Default)]
@@ -59,6 +60,11 @@ impl LogDetailsComponent {
 
         if selected_index >= app.logs.rich_entries.len() {
             render_empty_detail_message(frame, area);
+            return;
+        }
+
+        if let Some(parsed_json) = selected_mcp_parsed_response_json(app, selected_index) {
+            render_parsed_response_json(frame, area, &*app.ctx.theme, parsed_json);
             return;
         }
 
@@ -140,6 +146,31 @@ fn render_empty_detail_message(frame: &mut Frame, area: Rect) {
 
 fn render_redacted_paragraph(frame: &mut Frame, area: Rect, theme: &dyn crate::ui::theme::roles::Theme, text: &str) {
     let paragraph = Paragraph::new(redact_sensitive(text))
+        .block(Block::default().borders(Borders::NONE))
+        .wrap(Wrap { trim: false })
+        .style(theme.text_primary_style());
+    frame.render_widget(paragraph, area);
+}
+
+fn selected_mcp_parsed_response_json<'application>(app: &'application App<'_>, selected_index: usize) -> Option<&'application Value> {
+    let entry = app.logs.rich_entries.get(selected_index)?;
+    let payload = match entry {
+        LogEntry::Mcp { json: Some(value), .. } => value,
+        _ => return None,
+    };
+    payload
+        .get("parsed_response_text")
+        .filter(|value| value.is_object() || value.is_array())
+}
+
+fn render_parsed_response_json(frame: &mut Frame, area: Rect, theme: &dyn crate::ui::theme::roles::Theme, json_value: &Value) {
+    let mut lines = Vec::new();
+    lines.push(Line::from(vec![Span::styled("parsed_response_text", theme.syntax_keyword_style())]));
+    lines.push(Line::from(Span::raw("")));
+    let formatted_json = serde_json::to_string_pretty(json_value).unwrap_or_else(|_| json_value.to_string());
+    lines.extend(highlight_pretty_json_lines(&formatted_json, theme));
+
+    let paragraph = Paragraph::new(lines)
         .block(Block::default().borders(Borders::NONE))
         .wrap(Wrap { trim: false })
         .style(theme.text_primary_style());
