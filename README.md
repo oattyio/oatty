@@ -167,6 +167,7 @@ Maintainers:
 
 - GitHub release assets are built/published via `.github/workflows/release.yml`.
 - npm publication is handled by `.github/workflows/npm-publish.yml` when a non-prerelease GitHub Release is published and npm Trusted Publishing is configured.
+- End-to-end operator steps: `RELEASE.md`.
 
 ### First-time: import a registry catalog
 
