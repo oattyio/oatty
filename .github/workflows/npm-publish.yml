@@ -1,0 +1,80 @@
+name: Publish NPM Package
+
+on:
+  release:
+    types:
+      - published
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  publish:
+    if: ${{ github.event.release.prerelease == false }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Validate release tag matches package version
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          EXPECTED_TAG="v${PACKAGE_VERSION}"
+          if [[ "${{ github.event.release.tag_name }}" != "${EXPECTED_TAG}" ]]; then
+            echo "Release tag does not match package.json version."
+            echo "tag=${{ github.event.release.tag_name }} expected=${EXPECTED_TAG}"
+            exit 1
+          fi
+
+      - name: Validate release assets required by npm installer
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_JSON=$(curl -fsSL \
+            -H "Accept: application/vnd.github+json" \
+            "${{ github.api_url }}/repos/${{ github.repository }}/releases/tags/${{ github.event.release.tag_name }}")
+
+          has_asset() {
+            local name="$1"
+            echo "$RELEASE_JSON" | node -e '
+              const fs = require("node:fs");
+              const payload = JSON.parse(fs.readFileSync(0, "utf8"));
+              const required = process.argv[1];
+              const found = (payload.assets || []).some((asset) => asset.name === required);
+              process.exit(found ? 0 : 1);
+            ' "$name"
+          }
+
+          has_asset "SHA256SUMS"
+          has_asset "oatty-${{ github.event.release.tag_name }}-x86_64-unknown-linux-gnu.tar.gz"
+          has_asset "oatty-${{ github.event.release.tag_name }}-x86_64-apple-darwin.zip"
+          has_asset "oatty-${{ github.event.release.tag_name }}-aarch64-apple-darwin.zip"
+          has_asset "oatty-${{ github.event.release.tag_name }}-x86_64-pc-windows-msvc.zip"
+
+      - name: Skip publish when version already exists
+        id: version_check
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGE_NAME=$(node -p "require('./package.json').name")
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          if npm view "${PACKAGE_NAME}@${PACKAGE_VERSION}" version >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish package to npm
+        if: ${{ steps.version_check.outputs.already_published == 'false' }}
+        run: npm publish --provenance --access public
