@@ -1,260 +1,75 @@
-# Message, Effect, and Command Architecture
+# MSG_EFFECT_ARCHITECTURE.md
 
-This document explains how the Oatty TUI routes user input, state changes, and
-side effects. The application is **TEA-inspired**: it keeps a single `App`
-model, distinguishes between incoming messages and outgoing effects, and runs
-side effects through a command runner. At the same time, it makes a few
-pragmatic deviations to keep component code ergonomic for a terminal UI. This
-page documents the intended patterns—including the exceptions—so future work can
-stay consistent.
+As-built specification for TUI state/event/effect flow.
 
-## High-Level Flow
+## Scope
 
-```mermaid
-graph TD
-    A[Input Event] --> B[Component.handle_*]
-    B --> C[Local state mutation]
-    B -- optional --> D[Msg]
-    B --> E[Vec<Effect>]
-    D --> F[App::update]
-    F --> C
-    F --> E
-    E --> G[run_from_effects]
-    G --> H{Immediate state tweak?}
-    H -- yes --> C
-    H -- no --> I[Cmd list]
-    I --> J[run_cmds]
-    J --> K[I/O, network, clipboard]
-    L[Async result / Tick / Resize] --> D
-```
+Primary implementation files:
+- `/Users/justinwilaby/Development/next-gen-cli/crates/tui/src/app.rs`
+- `/Users/justinwilaby/Development/next-gen-cli/crates/tui/src/cmd.rs`
+- `/Users/justinwilaby/Development/next-gen-cli/crates/tui/src/ui/runtime.rs`
+- `/Users/justinwilaby/Development/next-gen-cli/crates/types/src/lib.rs`
 
-Key ideas:
+## Runtime flow
 
-- **Local-first updates**: Components mutate the portion of `App` they own
-  directly (e.g., palette input buffers, table scroll offsets). Messages are
-  reserved for cross-component coordination or returning async results.
-- **Effects carry intents**: Components and `App::update` return `Vec<Effect>` for
-  actions that need to reach the runtime (clipboard writes, plugin lifecycle,
-  modal routing).
-- **Command runner**: `run_from_effects` converts effects into `Cmd`s and
-  executes them via `run_cmds`. Some effects short-circuit to local state updates
-  instead of producing commands—these intentional shortcuts are documented
-  below.
+1. Input events are dispatched to components.
+2. Components mutate local state and may return `Vec<Effect>`.
+3. `Msg` events are processed by `App::update` and component `handle_message` hooks.
+4. Effects are translated by `run_from_effects` into `Cmd` values (or local side operations).
+5. `run_cmds` executes command side effects (sync and async).
+6. Async completions are converted back to `Msg::ExecCompleted`/related messages.
 
-## Messages (`Msg`)
+## Message role
 
-Messages represent inbound events: timers, async completions, or user actions
-that must be visible outside the current component. They are handled in
-`App::update` and may return `Vec<Effect>`.
+`Msg` represents inbound events that require centralized handling, such as:
+- ticks
+- resize
+- async execution outcomes
+- higher-level UI control messages
 
-```rust
-#[derive(Debug, Clone)]
-pub enum Msg {
-    Run,
-    CopyToClipboard(String),
-    Tick,
-    Resize(u16, u16),
-    ExecCompleted(Box<ExecOutcome>),
-    LogsUp,
-    LogsDown,
-    LogsExtendUp,
-    LogsExtendDown,
-    LogsOpenDetail,
-    LogsCloseDetail,
-    LogsCopy,
-    LogsTogglePretty,
-}
-```
+`App::update` is the authoritative state reducer for these messages.
 
-**Usage guidelines**
+## Effect role
 
-- Prefer direct state mutation inside components when the change is local and
-  synchronous.
-- Emit a `Msg` when
-  - an async boundary will send a response later (`ExecCompleted`),
-  - multiple features must react to the same event (e.g., `Tick`), or
-  - a component needs `App`-level logic that returns additional effects (such as
-    `CopyToClipboard`).
-- `App::update` may call helpers that trigger commands immediately (see
-  [Palette execution](#palette-execution) for the notable exception).
+`Effect` represents intent to perform actions beyond local component mutation, including:
+- command execution
+- clipboard writes
+- routing/modal changes
+- plugin and workflow run controls
+- catalog/workflow operations
 
-## Effects (`Effect`)
+Effects are intentionally declarative; execution occurs in `cmd.rs`.
 
-Effects describe outgoing actions the runtime should perform. Most effects map
-1:1 to a command, but some also mutate UI state synchronously before (or instead
-of) producing `Cmd`s: `ShowModal`, `CloseModal`, and `SwitchTo` update the model
-without enqueuing additional work.
+## Command role
 
-```rust
-#[derive(Debug, Clone)]
-pub enum Effect {
-    Log(String),
-    Run {
-        hydrated_command: String,
-        range_override: Option<String>,
-        request_hash: u64,
-    },
-    CopyToClipboardRequested(String),
-    CopyLogsRequested(String),
-    ReadFileContents(PathBuf),
-    ReadRemoteFileContents(Url),
-    ListDirectoryContents(PathBuf),
-    GenerateManifest(String),
-    PluginsLoadRequested,
-    PluginsRefresh,
-    PluginsStart(String),
-    PluginsStop(String),
-    PluginsRestart(String),
-    PluginsExportLogsDefault(String),
-    PluginsValidateAdd,
-    PluginsSave,
-    PluginsLoadDetail(String),
-    SwitchTo(Route),
-    ShowModal(Modal),
-    CloseModal,
-    SendToPalette(Box<CommandSpec>),
-    ProviderFetchRequested {
-        provider_id: String,
-        cache_key: String,
-        args: JsonMap<String, JsonValue>,
-    },
-    WorkflowRunRequested {
-        request: Box<WorkflowRunRequest>,
-    },
-    WorkflowRunControl {
-        run_id: String,
-        command: WorkflowRunControl,
-    },
-    SendMsg(Msg),
-}
-```
+`Cmd` is the executable layer used by `run_cmds`.
+Implemented command categories include:
+- HTTP/MCP execution dispatch
+- provider fetch dispatch
+- registry/library mutation operations
+- plugin operations
+- workflow run control plumbing
 
-**Guidelines**
+## Architectural characteristics
 
-- Return effects for clipboard access, plugin lifecycle, pagination fetches, and
-  modal routing.
-- Keep vectors short—most key handlers return zero or one effect per event.
-- When new effects mutate `App` immediately, document that behavior next to the
-  handler to keep expectations clear.
-- File import flows should use the `ReadFileContents`, `ReadRemoteFileContents`,
-  and `ListDirectoryContents` effects so preview + manifest generation reuse the
-  centralized runtime helpers.
-- Provider-backed autocompletion must flow through `ProviderFetchRequested` to
-  ensure caching and error handling remain consistent; workflow execution hooks
-  should emit `WorkflowRunRequested`/`WorkflowRunControl`.
+- Local-first component mutation is used for many UI interactions.
+- Message/effect/command separation is used for cross-cutting or side-effecting operations.
+- Asynchronous work is routed through join handles and returns `ExecOutcome` values.
+- Logging is integrated at app level and side-effect boundaries.
 
-## Commands (`Cmd`)
+## Known pragmatic deviations
 
-Commands execute the imperative work. They live in `crates/tui/src/cmd.rs` and
-are the only place that performs I/O, network calls, or filesystem access.
+- Some effect handling performs immediate local state updates in addition to command translation.
+- Not all component interactions are pure TEA-style reducers; this is intentional for TUI ergonomics.
 
-```rust
-#[derive(Debug)]
-pub enum Cmd {
-    ApplyPaletteError(String),
-    ClipboardSet(String),
-    ExecuteHttp {
-        spec: CommandSpec,
-        input: String,
-        next_range_override: Option<String>,
-        request_id: u64,
-    },
-    FetchProviderValues {
-        provider_id: String,
-        cache_key: String,
-        args: Map<String, Value>,
-    },
-    ExecuteMcp(CommandSpec, Map<String, Value>, u64),
-    LoadPlugins,
-    PluginsStart(String),
-    PluginsStop(String),
-    PluginsRestart(String),
-    PluginsLoadDetail(String),
-    PluginsRefresh,
-    PluginsExportLogsDefault(String),
-    PluginsValidate,
-    PluginsSave,
-    SendMsg(Msg),
-    ReadFileContents(PathBuf),
-    ListDirectoryContents(PathBuf),
-    ReadRemoteFileContents(Url),
-    GenerateManifest(String),
-}
-```
+## Correctness notes
 
-### `run_from_effects`
+- This file is as-built. Update it when message enums, effect routing, or command execution topology changes.
+- Keep examples consistent with `types::Msg`, `types::Effect`, and `cmd.rs`.
 
-- Iterates through each effect.
-- Applies any immediate state transitions (`ShowModal`, `CloseModal`,
-  `SwitchTo`).
-- Converts the remaining effects into zero or more `Cmd`s.
-- Passes the command list to `run_cmds`, which returns a `CommandBatch` with
-  immediate `ExecOutcome`s plus any spawned `JoinHandle<ExecOutcome>` for
-  long-running work.
-- The runtime owns a `FuturesUnordered` queue of those pending handles and
-  polls them alongside input/tick events so animations keep updating while
-  commands execute.
 
-Because modal routing mutates the app inside `run_from_effects`, the doc strings
-for these effects should note that they do not produce commands.
+## Related specs
 
-## Source Alignment
-
-- **Message/Effect models** are defined in `crates/types/src/lib.rs`, so the enums shown above mirror the exact data structures used across the workspace.
-- **App::update and component handlers** live in `crates/tui/src/app.rs` and the various `crates/tui/src/ui/components/*` modules; they follow the local-first, effect-returning patterns described in this spec.
-- **Command runner** and side-effect orchestration happen inside `crates/tui/src/cmd.rs`, where `run_from_effects` and `run_cmds` convert intents into I/O.
-- **Runtime loop** (`crates/tui/src/ui/runtime.rs`) polls input, timers, and pending command handles, then feeds results back through `App::update`, completing the flow documented here.
-
-## Intentional Deviations
-
-### Palette execution
-
-`Msg::Run` delegates to `start_palette_execution`, which ultimately calls
-`run_cmds` directly instead of returning an `Effect`. This keeps the validation
-logic and HTTP kick-off in one place. The helper still records pagination
-context on `App` before triggering the command runner. When documenting new
-features, call out similar direct-command helpers so maintainers know where to
-look for side effects.
-
-### Local state mutation
-
-Handlers such as `PaletteComponent::handle_key_events`, `LogsComponent::handle_key_events`,
-and `PluginsSearchComponent::handle_key_events` mutate `app.palette`, `app.logs`,
-and `app.plugins` respectively without emitting messages. This is the standard
-pattern for focused UI components. Use `Msg` or `Effect` only when state outside
-the component’s slice must change or when you need to trigger I/O.
-
-### Synchronous effects
-
-`Effect::ShowModal`, `Effect::CloseModal`, and `Effect::SwitchTo` tweak the global
-view immediately and return no commands. They still travel through
-`run_from_effects` so that routing logic stays centralized. Any new synchronous
-effects should follow this pattern: mutate state in the translator, return
-`None`, and document the behavior.
-
-### Plugins coordinator shortcuts
-
-`PluginsComponent::handle_control_shortcuts` can emit multiple plugin-related
-effects (start, stop, open logs, etc.). The handler now propagates its collected
-effects so they reach the runtime. When adding new shortcuts, push the
-appropriate effect into the vector and return it; the runtime will batch the
-commands.
-
-## Practical Checklist
-
-When adding or updating behavior:
-
-1. **Component event**: Mutate local state directly. Emit `Effect`s only for
-   cross-feature work or I/O.
-2. **Message handling**: Use `Msg` when multiple features must respond or when an
-   async result arrives.
-3. **Effect translation**: Update `run_from_effects` if the effect needs special
-   handling or spawns new commands.
-4. **Command execution**: Keep side-effectful code in `cmd.rs` helpers. Log
-   outcomes and maintain pagination or plugin state as needed.
-5. **Documentation**: Note any synchronous state changes performed during effect
-   translation so the architecture remains predictable.
-
-By documenting both the TEA-inspired structure and the intentional deviations,
-this guide should match the current implementation and clarify where new code
-fits within the architecture.
+- `/Users/justinwilaby/Development/next-gen-cli/specs/FOCUS_MANAGEMENT.md`
+- `/Users/justinwilaby/Development/next-gen-cli/specs/UX_GUIDELINES.md`
+- `/Users/justinwilaby/Development/next-gen-cli/specs/WORKFLOW_TUI.md`

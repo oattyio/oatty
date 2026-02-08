@@ -8,7 +8,7 @@
 
 - Workspace crates: `crates/cli` (binary), `crates/tui`, `crates/registry`, `crates/engine`, `crates/api`,
   `crates/util`, `crates/mcp` (MCP plugin infrastructure).
-- Supporting assets: `schemas/` (schemas), `workflows/` (sample workflow YAML/JSON), `plans/` (design notes).
+- Supporting assets: `schemas/` (schemas), `workflows/` (sample workflow YAML/JSON), `specs/` (as-built product specs).
 - Example layout:
     - `crates/cli/src/main.rs` — CLI entrypoint
     - `crates/tui/` — Ratatui UI
@@ -19,14 +19,14 @@
 ## Build, Test, and Development Commands
 
 - Build all: `cargo build --workspace` — compiles every crate.
-- Run CLI: `cargo run -p oatty-cli -- <group> <command> [flags]`.
-- TUI mode: `cargo run -p oatty-cli` — launches Ratatui UI, or run installed binary `oatty`.
+- Run CLI: `cargo run -p oatty -- <group> <command> [flags]`.
+- TUI mode: `cargo run -p oatty` — launches Ratatui UI, or run installed binary `oatty`.
 - Tests: `cargo test --workspace` — run unit/integration tests.
 - Single test: `cargo test --workspace <test_name>` — run specific test function.
 - Single crate tests: `cargo test -p <crate_name>` — run tests for specific crate.
 - Lint: `cargo clippy --workspace -- -D warnings` — fail on warnings.
 - Format: `cargo fmt --all` — apply repo `rustfmt` settings.
-- Helpful env: `OATTY_LOG=debug` (stderr logs are silenced during TUI), `OATTY_API_TOKEN=…`,
+- Helpful env: `OATTY_LOG=debug` (stderr logs are silenced during TUI),
   `MCP_CONFIG_PATH=~/.config/oatty/mcp.json`.
 
 ## Coding Style & Naming Conventions
@@ -147,7 +147,7 @@ flow, TUI UX, and security/caching.
 
 - **Unit tests:** Co-locate simple reducers/selectors under `#[cfg(test)]` in `state.rs` or the component module. Favor
   pure functions for parsing/formatting.
-- **Manual checks:** Run `cargo run -p oatty-cli` (or `oatty` if installed) and verify focus, key handling, and styling
+- **Manual checks:** Run `cargo run -p oatty` (or `oatty` if installed) and verify focus, key handling, and styling
   in a small terminal. Use `OATTY_LOG=debug` to surface useful info.
 - **CI hygiene:** `cargo fmt --all`, `cargo clippy --workspace -- -D warnings`, and `cargo test --workspace` must be
   clean.
