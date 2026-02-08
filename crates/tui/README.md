@@ -29,7 +29,7 @@ Key Features
 - Safety: secret-like fields masked in tables; Authorization redacted in logs (via util).
 
 Execution
-- Live requests: via `oatty-api` with auth using `OATTY_API_TOKEN`.
+- Live requests: via `oatty-api` with auth configured per catalog in the Library component.
 - Errors: show inline with hints (auth/network/permissions), and also log.
 
 Keybindings
@@ -61,6 +61,16 @@ Dev Notes
   - `ui.rs`: layout, browser/help/table modals, styling.
   - `tables.rs`: array→table renderer and KV/scalar fallbacks.
   - `preview.rs`: request previews and CLI preview string.
+- Render performance patterns:
+  - See `specs/TUI_RENDER_PERFORMANCE.md` for the cache + borrowed rendering strategy used to avoid per-frame expensive transforms (for example, pretty-printed JSON in detail modals).
+- Persistent logs:
+  - TUI log entries are also written to a JSONL file for diagnostics.
+  - Writes are performed by a bounded background writer thread to avoid UI stalls.
+  - Default path: `<registry-config-dir>/logs/tui.jsonl` (derived from `oatty_registry::default_config_path()`).
+  - Override path with `OATTY_TUI_LOG_PATH`.
+  - Size-based rotation is enabled by default (`10 MiB`, 5 retained files).
+  - Override with `OATTY_TUI_LOG_MAX_BYTES` and `OATTY_TUI_LOG_MAX_FILES`.
+  - Flushes are batched (500 ms interval) rather than flushed per-entry.
 - Async execution:
   - Spawns a background thread and runs a Tokio runtime inside it to execute the HTTP request; communicates back via channel.
   - Spinner advances on ticks; input clears when finished.
@@ -68,12 +78,11 @@ Dev Notes
 Usage
 ```bash
 cargo run -p oatty-cli              # opens TUI
- OATTY_API_TOKEN=... cargo run -p oatty-cli
 ```
 
 Troubleshooting
 - “Unknown command …” — Use the `group sub` form (e.g., `apps info`); use Ctrl+H to see help.
-- 401 Unauthorized — Set `OATTY_API_TOKEN`.
+- 401 Unauthorized — Configure the catalog's authorization headers in the Library component.
 - 403 Forbidden — Check team/app access and role membership.
 - Network error — Check connectivity/proxy; `RUST_LOG=info` for more details.
 ### Provider-backed Suggestions

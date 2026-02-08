@@ -1,7 +1,9 @@
+use crate::ui::components::common::TextInputState;
 use crate::ui::components::results::ResultsTableState;
 use crate::ui::utils::normalize_result_payload_owned;
 use oatty_mcp::LogLevel;
 use oatty_types::ExecOutcome;
+use oatty_util::fuzzy_score;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
@@ -48,7 +50,7 @@ impl Display for LogEntry {
                 write!(f, "[{}] {}", status, raw)
             }
             LogEntry::Mcp { raw, .. } => {
-                write!(f, "{}", raw)
+                write!(f, "[MCP] {}", raw)
             }
         }
     }
@@ -65,6 +67,11 @@ pub struct LogsState {
     pub pretty_json: bool,
     /// Focus flag for rat-focus integration
     pub container_focus: FocusFlag,
+    /// Focus flag for the logs list viewport.
+    pub f_list: FocusFlag,
+    search_input: TextInputState,
+    filtered_indices: Vec<usize>,
+    search_active: bool,
 }
 
 impl LogsState {
@@ -90,6 +97,7 @@ impl LogsState {
     /// * `message` - The human-readable log message to append.
     pub fn append_text_entry_with_level(&mut self, level: Option<LogLevel>, message: String) {
         self.rich_entries.push(LogEntry::Text { level, msg: message });
+        self.update_filtered_entries();
     }
 
     /// Appends an API log entry preserving both raw and structured payloads.
@@ -101,6 +109,7 @@ impl LogsState {
     /// * `json` - Parsed JSON payload, if available.
     pub fn append_api_entry(&mut self, status: u16, raw: String, json: Option<Value>) {
         self.rich_entries.push(LogEntry::Api { status, raw, json });
+        self.update_filtered_entries();
     }
 
     /// Appends an MCP log entry with an optional structured payload.
@@ -111,11 +120,110 @@ impl LogsState {
     /// * `json` - Parsed MCP payload, if available.
     pub fn append_mcp_entry(&mut self, raw: String, json: Option<Value>) {
         self.rich_entries.push(LogEntry::Mcp { raw, json });
+        self.update_filtered_entries();
     }
 
     /// Toggles the visibility of the logs view.
     pub fn toggle_visible(&mut self) {
         self.is_visible = !self.is_visible;
+    }
+
+    pub fn activate_search(&mut self) {
+        self.search_active = true;
+    }
+
+    pub fn deactivate_search(&mut self) {
+        self.search_active = false;
+    }
+
+    pub fn is_search_active(&self) -> bool {
+        self.search_active
+    }
+
+    pub fn has_search_query(&self) -> bool {
+        !self.search_input.input().trim().is_empty()
+    }
+
+    pub fn search_query(&self) -> &str {
+        self.search_input.input()
+    }
+
+    pub fn search_cursor_columns(&self) -> usize {
+        self.search_input.cursor_columns()
+    }
+
+    pub fn set_search_cursor_from_column(&mut self, column: u16) {
+        let cursor = self.search_input.cursor_index_for_column(column);
+        self.search_input.set_cursor(cursor);
+    }
+
+    pub fn move_search_cursor_left(&mut self) {
+        self.search_input.move_left();
+    }
+
+    pub fn move_search_cursor_right(&mut self) {
+        self.search_input.move_right();
+    }
+
+    pub fn append_search_character(&mut self, character: char) {
+        self.search_input.insert_char(character);
+        self.update_filtered_entries();
+    }
+
+    pub fn remove_search_character(&mut self) {
+        self.search_input.backspace();
+        self.update_filtered_entries();
+    }
+
+    pub fn clear_search_query(&mut self) {
+        if self.search_input.input().is_empty() && self.search_input.cursor() == 0 {
+            return;
+        }
+        self.search_input.set_input("");
+        self.search_input.set_cursor(0);
+        self.update_filtered_entries();
+    }
+
+    pub fn filtered_indices(&self) -> &[usize] {
+        &self.filtered_indices
+    }
+
+    pub fn selected_rich_index(&self) -> Option<usize> {
+        let selected_filtered_index = self.list_state.selected()?;
+        self.filtered_indices.get(selected_filtered_index).copied()
+    }
+
+    fn update_filtered_entries(&mut self) {
+        let previous_selected = self.selected_rich_index();
+        let query = self.search_input.input();
+        self.list_state = self.list_state.with_offset(0);
+
+        if query.trim().is_empty() {
+            self.filtered_indices = (0..self.rich_entries.len()).collect();
+        } else {
+            let mut scored: Vec<(i64, usize)> = self
+                .rich_entries
+                .iter()
+                .enumerate()
+                .filter_map(|(index, entry)| fuzzy_score(&entry.to_string(), query).map(|score| (score, index)))
+                .collect();
+            scored.sort_by(|left, right| right.0.cmp(&left.0));
+            self.filtered_indices = scored.into_iter().map(|(_, index)| index).collect();
+        }
+
+        if self.filtered_indices.is_empty() {
+            self.list_state.select(None);
+            return;
+        }
+
+        if let Some(previous_selected_index) = previous_selected
+            && let Some(filtered_position) = self.filtered_indices.iter().position(|index| *index == previous_selected_index)
+        {
+            self.list_state.select(Some(filtered_position));
+            return;
+        }
+
+        self.list_state.select(Some(0));
     }
 
     /// Processes a general execution result and appends the appropriate log entry.
@@ -169,16 +277,23 @@ impl Default for LogsState {
             rich_entries: Vec::new(),
             pretty_json: true,
             container_focus: FocusFlag::new().with_name("root.logs"),
+            f_list: FocusFlag::new().with_name("root.logs.list"),
             results_table: ResultsTableState::default(),
+            search_input: TextInputState::new(),
+            filtered_indices: Vec::new(),
+            search_active: false,
         };
         state.append_text_entry("Welcome to Oatty TUI".to_string());
+        state.update_filtered_entries();
         state
     }
 }
 
 impl HasFocus for LogsState {
     fn build(&self, builder: &mut FocusBuilder) {
-        builder.leaf_widget(self);
+        let tag = builder.start(self);
+        builder.leaf_widget(&self.f_list);
+        builder.end(tag);
     }
 
     fn focus(&self) -> FocusFlag {

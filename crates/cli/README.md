@@ -16,8 +16,8 @@ Key Features
 - Workflows: `oatty workflow ...` commands are always available and operate on local files or workflows bundled in catalogs.
 
 Auth & Config
-- Auth (handled by `oatty-api`):
-  - `OATTY_API_TOKEN` environment variable.
+- Auth:
+  - Configure authorization headers per catalog (TUI Library component or registry config).
 - Base URL: derived from OpenAPI `servers` metadata in the registry.
 - Headers: `Accept: application/json`, plus a sensible `User-Agent`.
 
@@ -26,7 +26,6 @@ Usage
   - `cargo run -p oatty-cli` (or installed binary `oatty`)
 - Execute a command directly:
   - `cargo run -p oatty-cli -- apps info <app>`
-  - With auth: `OATTY_API_TOKEN=... cargo run -p oatty-cli -- apps info <app>`
 - Enable workflows:
   - `cargo run -p oatty-cli -- workflow preview --file workflows/create_app_and_db.yaml`
 
@@ -40,5 +39,5 @@ Development
 
 Troubleshooting
 - “Unknown command …” — Verify the group/sub form (e.g., `apps info`, not `apps:info`).
-- 401 Unauthorized — Set `OATTY_API_TOKEN`.
+- 401 Unauthorized — Configure the catalog's authorization headers.
 - Network errors — Check connectivity, proxies, and TLS; `RUST_LOG=info` for more detail.

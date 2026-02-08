@@ -22,6 +22,7 @@
 
 mod app;
 mod cmd;
+mod log_persistence;
 mod ui;
 
 use anyhow::Result;

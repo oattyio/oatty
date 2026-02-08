@@ -264,7 +264,7 @@ async fn exec_remote_from_spec_inner(
     let resp = builder
         .send()
         .await
-        .map_err(|e| format!("Network error: {}. Hint: check connection/proxy; ensure OATTY_API_TOKEN is set", e))?;
+        .map_err(|e| format!("Network error: {}. Hint: check connection/proxy and catalog configuration.", e))?;
 
     let status = resp.status();
     let headers = resp.headers().clone();
@@ -389,8 +389,7 @@ fn truncate_for_summary(text: &str, max_len: usize) -> String {
 ///
 /// # Errors
 /// - Returns an error if the [`CommandSpec`] is not associated with an HTTP-backed service.
-/// - Returns an error if authentication setup for the Oatty API client fails (e.g., missing
-///   `OATTY_API_TOKEN`).
+/// - Returns an error if catalog authentication or header configuration is invalid.
 /// - Returns an error if the HTTP request fails (e.g., network error, invalid proxy settings).
 /// - Returns an error if the response status code indicates failure (non-2xx status code).
 /// - Returns an error if the response body is not a valid JSON array or cannot be deserialized.
@@ -412,7 +411,7 @@ fn truncate_for_summary(text: &str, max_len: usize) -> String {
 /// # Dependencies
 /// - This function uses the `OattyClient` for API requests, and the `serde_json` crate
 ///   for parsing JSON responses.
-/// - Ensure the environment variable `OATTY_API_TOKEN` is set for authentication.
+/// - Ensure catalog authorization headers are configured when required.
 ///
 /// # Notes
 /// - The function unwraps the response body text (`text().await`) if reading the body fails,
@@ -434,7 +433,7 @@ pub async fn fetch_json_array(spec: &CommandSpec, base_url: &str, headers: &Inde
         .request(method, &http.path)
         .send()
         .await
-        .map_err(|e| format!("Network error: {}. Hint: check connection/proxy; ensure OATTY_API_TOKEN is set", e))?;
+        .map_err(|e| format!("Network error: {}. Hint: check connection/proxy and catalog configuration.", e))?;
 
     let status = resp.status();
     let text = resp.text().await.unwrap_or_else(|_| String::from("<no body>"));

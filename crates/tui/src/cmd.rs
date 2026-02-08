@@ -31,7 +31,6 @@ use oatty_mcp::config::{
 };
 use oatty_mcp::{McpConfig, McpHttpServer, PluginEngine, resolve_bind_address};
 
-use crate::ui::components::logs::state::LogEntry;
 use oatty_registry::{
     CommandRegistry, CommandSpec, OpenApiCatalogImportError, OpenApiCatalogImportRequest, import_openapi_catalog_into_registry,
 };
@@ -882,15 +881,10 @@ fn apply_plugin_name_change(config: &mut McpConfig, original_name: Option<&str>,
 fn handle_workflow_run_requested(app: &mut App<'_>, request: WorkflowRunRequest) {
     let run_id = request.run_id.clone();
 
-    let registry_snapshot = match app.ctx.command_registry.lock() {
-        Ok(guard) => guard.clone(),
-        Err(_) => {
-            app.logs.rich_entries.push(LogEntry::Text {
-                level: Some(LogLevel::Error),
-                msg: "Failed to obtain command registry for workflow run.".to_string(),
-            });
-            return;
-        }
+    let maybe_registry_snapshot = app.ctx.command_registry.lock().ok().map(|guard| guard.clone());
+    let Some(registry_snapshot) = maybe_registry_snapshot else {
+        app.append_log_message_with_level(Some(LogLevel::Error), "Failed to obtain command registry for workflow run.");
+        return;
     };
 
     let runner = Arc::new(RegistryCommandRunner::new(registry_snapshot));
@@ -925,17 +919,17 @@ fn handle_workflow_run_control(app: &mut App<'_>, run_id: &str, command: Workflo
     match app.workflows.run_control_sender(run_id) {
         Some(sender) => {
             if sender.send(command).is_err() {
-                app.logs.rich_entries.push(LogEntry::Text {
-                    level: Some(LogLevel::Error),
-                    msg: format!("Workflow run '{}' is no longer accepting commands.", run_id),
-                });
+                app.append_log_message_with_level(
+                    Some(LogLevel::Error),
+                    format!("Workflow run '{}' is no longer accepting commands.", run_id),
+                );
             }
         }
         None => {
-            app.logs.rich_entries.push(LogEntry::Text {
-                level: Some(LogLevel::Error),
-                msg: format!("No active workflow run is available for '{}'.", run_id),
-            });
+            app.append_log_message_with_level(
+                Some(LogLevel::Error),
+                format!("No active workflow run is available for '{}'.", run_id),
+            );
         }
     }
 }
