@@ -13,6 +13,7 @@ jobs:
   publish:
     if: ${{ github.event.release.prerelease == false }}
     runs-on: ubuntu-latest
+    environment: oatty
     steps:
       - name: Check out source
         uses: actions/checkout@v4

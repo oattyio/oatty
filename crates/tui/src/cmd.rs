@@ -51,7 +51,6 @@ use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::fs::read_dir;
 use std::fs::read_to_string;
-use std::os::unix::ffi::OsStrExt;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -281,7 +280,7 @@ fn list_dir_contents(path: PathBuf) -> ExecOutcome {
         Ok(entries) => {
             let mut entries: Vec<DirectoryEntry> = entries
                 .flatten()
-                .filter(|entry| entry.file_name().as_bytes().first() != Some(&b'.'))
+                .filter(|entry| entry.file_name().as_encoded_bytes().first() != Some(&b'.'))
                 .map(|entry| DirectoryEntry {
                     path: entry.path(),
                     is_directory: entry.metadata().is_ok_and(|f| f.is_dir()),
