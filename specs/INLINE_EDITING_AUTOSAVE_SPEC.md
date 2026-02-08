@@ -1,172 +1,71 @@
-# TUI Inline Editing & Autosave — UX Specification
+# INLINE_EDITING_AUTOSAVE_SPEC.md
+
+As-built specification for inline editing and autosave behavior in current TUI components.
 
 ## Scope
-This specification defines the interaction contract for **inline editable fields**, **checkbox toggles**, **row selection**, and **autosave behavior** in a keyboard-first Terminal User Interface (TUI) with a master–detail layout.
 
-The goal is to ensure:
-- Predictable keyboard behavior
-- Minimal cognitive load
-- No hidden or ambiguous state
-- Safe, reversible operations
+Primary implementation files:
+- `/Users/justinwilaby/Development/next-gen-cli/crates/tui/src/ui/components/common/key_value_editor/state.rs`
+- `/Users/justinwilaby/Development/next-gen-cli/crates/tui/src/ui/components/common/key_value_editor/key_value_view.rs`
+- `/Users/justinwilaby/Development/next-gen-cli/crates/tui/src/ui/components/library/library_component.rs`
 
----
+## Implemented model
 
-## Core Principles
+The key/value editor is a row-based inline editor with two field focuses:
+- key column
+- value column
 
-1. **Selection drives context**  
-   The selected row defines the active entity and (by default) the details panel content.
+State tracks:
+- selected row
+- active field
+- `is_dirty`
+- `show_secrets`
 
-2. **Navigation, mutation, and commitment are distinct intents**  
-   - Navigation = moving focus
-   - Mutation = changing state or text
-   - Commitment = persisting a change
+Edits mutate row values immediately in local state.
 
-3. **Autosave is implicit but never ambiguous**  
-   Users are never required to click "Save", but must always receive clear feedback.
+## Key interactions (key/value editor)
 
-4. **Destructive actions require explicit intent**  
-   Accidental input must never silently mutate persistent state.
+Implemented behavior includes:
+- Row navigation: `Up`, `Down`, `Home`, `End`
+- Field-level editing: character input, `Backspace`, `Delete`, `Left`, `Right`
+- Add row: `Ctrl+A` (after focused-row validation)
+- Delete row: `Ctrl+D`
+- Toggle secrets visibility: `Space` or `Enter` when secrets toggle is focused
+- Focus traversal: `Tab`, `BackTab` via global focus ring
+- Mouse row/column selection and add/remove/toggle controls
 
----
+## Validation and commit semantics
 
-## Interaction Modes
+- Focused row can be validated via state helpers (`validate_focused_row`, `validate_row`).
+- Key text is trimmed and validated at commit boundaries defined by host components.
+- Invalid rows surface inline error indicators in the key/value view.
+- Editor keeps user input on validation error.
 
-### 1. Navigation Mode (Default)
+## Autosave behavior in Library
 
-- Purpose: Browse and inspect
-- Active when no field is being edited
+Library component integrates autosave for catalog edits:
+- Header key/value changes are tracked as dirty.
+- Losing key/value editor focus triggers autosave effect generation when dirty.
+- Lost focus on active inline input fields similarly triggers save checks.
+- Save success/failure is surfaced through library/log messaging.
 
-**Allowed actions:**
-- Move selection
-- Toggle checkboxes
-- Trigger primary actions
+## Non-implemented / not universal
 
----
+The following are not global cross-app guarantees:
+- A single shared "edit mode" abstraction for all components
+- Uniform Enter=commit/Esc=cancel semantics across every editable widget
+- Per-keystroke persistence to disk
 
-### 2. Edit Mode (Inline Editing)
+Current behavior is component-specific, with the key/value editor and library panel being the primary inline-edit autosave implementation.
 
-- Purpose: Modify a single editable field
-- Explicitly entered
-- Visually distinct (caret visible, field styling changes)
+## Correctness notes
 
-**Rules:**
-- Text input mutates only while in edit mode
-- Exiting edit mode always results in either **commit** or **cancel**
+- This file is as-built. Update it when key/value editing semantics or autosave triggers change.
+- Planned UX harmonization across components should live in planning specs, not here.
 
----
 
-## Keybinding Contract
+## Related specs
 
-### While in Navigation Mode
-
-| Key | Behavior |
-|---|---|
-| ↑ / ↓ | Move selection; update details panel |
-| Mouse row click | Select row; update details panel |
-| Space | Toggle checkbox; select row; **do not update details panel** |
-| Mouse checkbox click | Select row + toggle; **do not update details panel** |
-| Enter | Invoke primary action (open, drill-in, expand) |
-| Tab / Shift+Tab | Move focus between editable fields (no mutation) |
-
----
-
-### While in Edit Mode
-
-| Key | Behavior |
-|---|---|
-| Enter | **Commit edit**, exit edit mode, stay on field |
-| Tab | **Commit edit**, exit edit mode, move to next editable field |
-| Shift+Tab (Backtab) | **Commit edit**, exit edit mode, move to previous editable field |
-| Esc | **Cancel edit**, revert value, exit edit mode |
-
-**Important:**
-- Tab / Backtab must *never* cancel edits
-- Cancel is explicit and bound only to Esc
-
----
-
-## Autosave Behavior
-
-### Checkboxes / Toggles
-
-- Persist immediately (optimistic update)
-- Must be reversible
-- On failure:
-  - Revert state
-  - Display error in status/footer
-  - Maintain selection
-
----
-
-### Editable Fields
-
-- Autosave occurs on **commit**, not per keystroke
-- Commit triggers:
-  - Enter
-  - Tab / Backtab
-  - Explicit navigation away *after* commit
-
-**Failure handling:**
-- Remain in edit mode
-- Preserve user input
-- Display inline error
-- Do not advance focus
-
----
-
-## Details Panel Update Rules
-
-| Action | Details Panel Updates |
-|---|---|
-| Selection via navigation | Yes |
-| Row click | Yes |
-| Checkbox toggle (keyboard or mouse) | No |
-| Edit commit | Yes |
-
-Rationale: prevent visual churn during operational tasks while preserving inspection flow.
-
----
-
-## Visual Requirements
-
-### Edit Mode Indicators
-- Visible text caret
-- Field-level style change (background, underline, or inverse)
-- Optional status hint:
-  ```
-  Editing — Enter save • Tab next • Esc cancel
-  ```
-
-### Save Feedback
-- Quiet, non-blocking acknowledgment
-- Examples:
-  - Status line message
-  - Brief checkmark indicator
-
----
-
-## Non-Goals
-
-- No global Save / Apply button
-- No autosave on/off toggle
-- No hidden dirty state
-- No multi-step commit flows
-
----
-
-## Summary Contract (Canonical)
-
-- **Selection = context**
-- **Space = toggle**
-- **Enter = commit or primary action**
-- **Tab = commit and move**
-- **Esc = cancel**
-- **Autosave is default, explicit cancel is required**
-
-This contract must remain consistent across all screens to preserve user trust and muscle memory.
-
-## Source Alignment
-
-- **Inline editors** reuse the shared key/value editor modules in `crates/tui/src/ui/components/common/key_value_editor/`, which already implement the Tab/Shift+Tab commit semantics, inline validation, and optimistic autosave patterns described above.
-- **Text editing primitives** come from `crates/tui/src/ui/components/common/text_input.rs`, ensuring caret management, selection behavior, and cursor movement match the guidance for both navigation and edit modes.
-- **Library details and other master–detail panes** integrate these editors via `crates/tui/src/ui/components/library/`, so the copy in this document maps directly to the existing focus handling (`state.rs`) and event routing (`library_component.rs`).
+- `/Users/justinwilaby/Development/next-gen-cli/specs/LIBRARY.md`
+- `/Users/justinwilaby/Development/next-gen-cli/specs/LIBRARY_DETAILS_TUI.md`
+- `/Users/justinwilaby/Development/next-gen-cli/specs/WORKFLOW_TUI.md`

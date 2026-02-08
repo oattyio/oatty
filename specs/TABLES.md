@@ -1,63 +1,49 @@
-# Oatty CLI — Table Rendering Design
+# Table Rendering (As-Built)
 
-## Default Behavior
-- **Array JSON responses** → tables by default.
-- `--json` → raw JSON, no table.
-- Objects containing arrays → render array.
+## Scope
+This spec documents table behavior currently implemented in:
+- `crates/tui/src/ui/components/common/results_table_view.rs`
+- `crates/tui/src/ui/components/results/state.rs`
+- table-using views (results modal, logs detail, workflow selector)
 
----
+## Rendering Model
+- Structured result payloads are normalized before rendering.
+- When array/object data is table-compatible, `ResultsTableView::render_results` renders:
+  - Header row
+  - Body rows
+  - Vertical scrollbar (when needed)
+- When table rendering is not possible:
+  - Object payloads fall back to key/value list rendering
+  - Primitive payloads fall back to paragraph text rendering
 
-## Column Selection
-1. **Schema hints** (preferred).
-2. **Built-in presets** for well-known resources:
-   - Apps, Releases, Addons, Dynos, Config vars.
-3. **Heuristic ranking** of fields:
-   - Prefer IDs, names, statuses, timestamps.
-   - Penalize long blobs or nested arrays.
+## Column and Row Behavior
+- Columns are inferred from JSON payload shape.
+- Column widths are derived from measured content length with guards.
+- Row styling uses theme-based zebra striping.
+- Status-like values use semantic color styling.
 
----
+## Interaction
+- Keyboard navigation routes through shared table navigation helpers.
+- Mouse hover/selection is supported in table-using components.
+- Selected row state is maintained in `TableState`.
 
-## Column Header Normalization
-- `snake_case` → `Title Case`.
-- `_id` → `ID`.
-- `_url` → `URL`.
-- Preserve acronyms (ID, URL, HTTP).
-
----
-
-## Value Rendering
-- Timestamps → relative + exact.
-- Durations → `3m 42s`.
-- States → color badges.
-- Booleans → ✓ / ✗.
-- Secrets → masked by default, reveal opt-in.
-- IDs/SHAs → ellipsized (`abcd…1234`).
-
----
-
-## Usability Features
-- `/` search.
-- `s` sort by column.
-- `c` column picker.
-- `Enter` row expand (detail drawer).
-- Copy cell or row JSON.
-- Presets saved to `~/.config/oatty/ui/presets.json`.
-
----
-
-## Performance
-- Virtualized scrolling for large datasets.
-- Lazy pagination (API-driven if supported).
-- Minimal redraws for smooth rendering.
-
----
-
-## Safety
-- Auto-redact secret-like keys (`token`, `password`, `api_key`).
-- Consistent redaction in tables, details, and logs.
+## Scrollbar Contract
+- Scrollbar range is offset-domain based:
+  - `max_scroll_offset = total_rows - viewport_rows`
+  - `ScrollbarState::new(max_scroll_offset)`
+  - `position = offset.min(max_scroll_offset)`
+- This matches the shared implementation and avoids thumb drift.
 
 ## Source Alignment
+- `crates/tui/src/ui/components/common/results_table_view.rs`
+- `crates/tui/src/ui/components/results/state.rs`
+- `crates/tui/src/ui/components/logs/log_details/log_details_component.rs`
+- `crates/tui/src/ui/components/workflows/collector/collector_component.rs`
 
-- **Rendering state**: `crates/tui/src/ui/components/table/state.rs` defines `ResultsTableState`, column configuration, and focus handling used by every table view mentioned here.
-- **Shared view code**: `crates/tui/src/ui/components/common/results_table_view.rs` encapsulates headers, zebra striping, selection, column pickers, and row expansion, so the usability rules above map directly to Ratatui widgets.
-- **Workflow + log integrations**: `crates/tui/src/ui/components/workflows/run/`, `workflows/collector/`, and `components/logs/log_details/` all embed `ResultsTableView`, providing concrete references for pagination, keybindings, and detail panes.
+
+## Related specs
+
+- `/Users/justinwilaby/Development/next-gen-cli/specs/TUI_RENDER_PERFORMANCE.md`
+- `/Users/justinwilaby/Development/next-gen-cli/specs/THEME.md`
+- `/Users/justinwilaby/Development/next-gen-cli/specs/LOGGING.md`
+- `/Users/justinwilaby/Development/next-gen-cli/specs/WORKFLOW_TUI.md`
