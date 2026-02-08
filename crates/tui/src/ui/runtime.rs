@@ -196,6 +196,15 @@ pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<P
                 match maybe_log {
                     Some(entry) => {
                         app.append_mcp_http_log_entry(entry);
+                        if let Some(receiver) = mcp_http_logs.as_mut() {
+                            // Coalesce bursts of MCP logs into a single render pass.
+                            for _ in 0..63 {
+                                match receiver.try_recv() {
+                                    Ok(buffered_entry) => app.append_mcp_http_log_entry(buffered_entry),
+                                    Err(_) => break,
+                                }
+                            }
+                        }
                         needs_render = true;
                     }
                     None => {

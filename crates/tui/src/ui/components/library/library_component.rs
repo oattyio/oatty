@@ -313,6 +313,41 @@ impl LibraryComponent {
         Some(list_items)
     }
 
+    fn refresh_projections_from_registry_if_safe(&mut self, app: &mut App) {
+        if app.library.is_dirty() || app.library.kv_state().is_dirty() || app.library.active_input_field().is_some() {
+            return;
+        }
+
+        let refreshed_projections = Self::create_projections(Arc::clone(&app.ctx.command_registry));
+        if self.projections_match_registry(app.library.projections(), &refreshed_projections) {
+            return;
+        }
+
+        let selected_title = app.library.selected_projection().map(|projection| projection.title.to_string());
+        app.library.set_projections(refreshed_projections);
+        if let Some(title) = selected_title
+            && let Some(index) = app.library.projections().iter().position(|projection| projection.title == title)
+        {
+            app.library.set_api_selected_index(Some(index));
+        }
+    }
+
+    fn projections_match_registry(&self, current: &[CatalogProjection], refreshed: &[CatalogProjection]) -> bool {
+        current.len() == refreshed.len()
+            && current.iter().zip(refreshed.iter()).all(|(left, right)| {
+                left.title == right.title
+                    && left.description == right.description
+                    && left.headers == right.headers
+                    && left.base_urls == right.base_urls
+                    && left.base_url_index == right.base_url_index
+                    && left.vendor == right.vendor
+                    && left.command_count == right.command_count
+                    && left.workflow_count == right.workflow_count
+                    && left.provider_contract_count == right.provider_contract_count
+                    && left.is_enabled == right.is_enabled
+            })
+    }
+
     /// Renders a single list item for the library component.
     fn build_api_list_item(
         &self,
@@ -573,6 +608,10 @@ impl Component for LibraryComponent {
 
     fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
         match msg {
+            Msg::Tick => {
+                self.refresh_projections_from_registry_if_safe(app);
+                Vec::new()
+            }
             Msg::ConfirmationModalButtonClicked(button_id) => self.handle_modal_button_click(button_id, app),
             Msg::ManualEntryModalClosed => self.handle_manual_entry_modal_closed(app),
             Msg::ExecCompleted(outcome) => self.handle_exec_completed(*outcome, app),

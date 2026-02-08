@@ -23,7 +23,7 @@ use thiserror::Error;
 /// use oatty_util::http::status_error_message;
 ///
 /// let error_401 = status_error_message(401).unwrap();
-/// assert!(error_401.contains("OATTY_API_TOKEN"));
+/// assert!(error_401.contains("catalog"));
 /// assert!(error_401.contains("Unauthorized"));
 ///
 /// let error_403 = status_error_message(403).unwrap();
@@ -34,7 +34,7 @@ use thiserror::Error;
 /// ```
 pub fn status_error_message(status_code: u16) -> Option<String> {
     match status_code {
-        401 => Some("Unauthorized (401). Hint: set OATTY_API_TOKEN=...".into()),
+        401 => Some("Unauthorized (401). Hint: configure catalog authorization headers in Library.".into()),
         403 => Some("Forbidden (403). Hint: check team/app access, permissions, and role membership".into()),
         _ => None,
     }

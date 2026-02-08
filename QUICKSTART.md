@@ -33,8 +33,6 @@ cd path/to/next-gen-cli
 
 # 2. Create environment file
 cp .env.example .env
-# Edit .env and add your OATTY_API_TOKEN
-
 # 3. Build
 cargo build --workspace
 
@@ -219,9 +217,6 @@ next-gen-cli/
 Create a `.env` file (see `.env.example`):
 
 ```bash
-# Required
-OATTY_API_TOKEN=your-api-key-here
-
 # Optional
 OATTY_LOG=debug              # Log level
 TUI_THEME=dracula             # Theme
@@ -245,9 +240,9 @@ RUST_BACKTRACE=full cargo run -p oatty
 1. Set breakpoints by clicking in the gutter
 2. Press `F5` to start debugging
 3. Choose a debug configuration:
-   - **Debug CLI - TUI Mode** - Debug the TUI
-   - **Debug CLI - Apps List** - Debug a specific command
-   - **Debug CLI - Custom Command** - Debug with any args
+    - **Debug CLI - TUI Mode** - Debug the TUI
+    - **Debug CLI - Apps List** - Debug a specific command
+    - **Debug CLI - Custom Command** - Debug with any args
 
 ## Testing
 

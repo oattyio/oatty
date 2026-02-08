@@ -560,7 +560,7 @@ pub fn build_copy_text(app: &app::App) -> String {
     if app.logs.rich_entries.is_empty() {
         return String::new();
     }
-    let Some(selected_index) = app.logs.list_state.selected() else {
+    let Some(selected_index) = app.logs.selected_rich_index() else {
         return String::new();
     };
     if selected_index >= app.logs.rich_entries.len() {

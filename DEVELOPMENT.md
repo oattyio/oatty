@@ -8,18 +8,18 @@ This guide will help you set up your local development environment for the Oatty
 
 1. **Rust Toolchain**
 
-   - Install via [rustup](https://rustup.rs/)
-   - This project uses Rust stable (specified in `rust-toolchain.toml`)
-   - The toolchain will be automatically selected when you work in this directory
+    - Install via [rustup](https://rustup.rs/)
+    - This project uses Rust stable (specified in `rust-toolchain.toml`)
+    - The toolchain will be automatically selected when you work in this directory
 
 2. **Build Dependencies**
 
-   - macOS: `xcode-select --install`
-   - Linux: `build-essential`, `pkg-config`, `libssl-dev`
+    - macOS: `xcode-select --install`
+    - Linux: `build-essential`, `pkg-config`, `libssl-dev`
 
 3. **VS Code / Cursor**
-   - Install [VS Code](https://code.visualstudio.com/) or [Cursor](https://cursor.sh/)
-   - Recommended extensions are listed in `.vscode/extensions.json`
+    - Install [VS Code](https://code.visualstudio.com/) or [Cursor](https://cursor.sh/)
+    - Recommended extensions are listed in `.vscode/extensions.json`
 
 ### Optional Tools
 
@@ -75,9 +75,6 @@ cargo test -p oatty
 Create a `.env` file in the project root (or set in your shell profile):
 
 ```bash
-# Required for API access
-export OATTY_API_TOKEN="your-api-token"
-
 # Optional: Set log level (error|warn|info|debug|trace)
 export OATTY_LOG="debug"
 
@@ -302,9 +299,9 @@ Or run the automated task:
 - **Indentation**: 4 spaces (configured in `.editorconfig` and `rustfmt.toml`)
 - **Line Length**: 100 characters max
 - **Naming**:
-  - `snake_case` for functions, variables, modules
-  - `PascalCase` for types, enums, traits
-  - `SCREAMING_SNAKE_CASE` for constants
+    - `snake_case` for functions, variables, modules
+    - `PascalCase` for types, enums, traits
+    - `SCREAMING_SNAKE_CASE` for constants
 - **Documentation**: Add doc comments (`///`) for public APIs
 - **Error Handling**: Use `anyhow::Result` in binaries, `thiserror` in libraries
 
@@ -337,10 +334,6 @@ test: add integration tests for registry generation
 - **Solution**: Install build dependencies: `sudo apt-get install build-essential pkg-config libssl-dev`
 
 ### Runtime Errors
-
-**Error**: `Oatty API authentication failed`
-
-- **Solution**: Set `OATTY_API_TOKEN` environment variable with a valid API key
 
 **Error**: TUI not rendering correctly
 
@@ -386,7 +379,8 @@ NEXTGEN_CODESIGN_ID="next-gen-cli-dev (LOCAL)" \
 To test with a custom schema:
 
 1. Place your schema in `schemas/`
-2. Import it via the TUI Library view (generates and persists a registry catalog), or generate a manifest with `oatty-registry-gen` and reference it from `~/.config/oatty/registry.json`
+2. Import it via the TUI Library view (generates and persists a registry catalog), or generate a manifest with
+   `oatty-registry-gen` and reference it from `~/.config/oatty/registry.json`
 3. Rebuild/run: `cargo build -p oatty && cargo run -p oatty`
 
 ### MCP Plugin Development

@@ -17,7 +17,6 @@ help: ## Show this help message
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  $(GREEN)%-20s$(NC) %s\n", $$1, $$2}'
 	@echo ""
 	@echo "$(YELLOW)Environment Variables:$(NC)"
-	@echo "  OATTY_API_TOKEN  - Your API token (required for API calls)"
 	@echo "  OATTY_LOG       - Log level: error|warn|info|debug|trace (default: info)"
 	@echo "  TUI_THEME        - Theme: dracula|dracula_hc|nord|nord_hc (default: dracula)"
 
