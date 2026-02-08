@@ -139,6 +139,35 @@ cargo run -p oatty -- workflow list
 
 Note: available commands depend on which registry catalogs and MCP plugins are configured/enabled.
 
+## NPM Distribution
+
+Oatty can be installed via npm and will download the matching prebuilt binary for your platform during `postinstall`.
+
+```bash
+npm i -g oatty
+oatty --help
+```
+
+How it works:
+
+- npm installs a small Node launcher package (`oatty`).
+- The installer detects your OS/arch and fetches the matching GitHub release asset for the npm package version.
+- The download is verified against the release `SHA256SUMS` before extraction.
+
+Currently mapped platforms:
+
+- macOS `x64` -> `x86_64-apple-darwin`
+- macOS `arm64` -> `aarch64-apple-darwin`
+- Linux `x64` -> `x86_64-unknown-linux-gnu`
+- Windows `x64` -> `x86_64-pc-windows-msvc`
+
+If your platform is not currently mapped, install from source (`cargo build --release`) or use a directly downloaded binary.
+
+Maintainers:
+
+- GitHub release assets are built/published via `.github/workflows/release.yml`.
+- npm publication is handled by `.github/workflows/npm-publish.yml` when a non-prerelease GitHub Release is published and npm Trusted Publishing is configured.
+
 ### First-time: import a registry catalog
 
 If you have no catalogs configured yet, the fastest way to get started is via the TUI:
@@ -286,6 +315,8 @@ flowchart LR
 
 - Secrets are redacted from output by default (headers/payload in output and logs).
 - Network calls go through reqwest with default timeouts.
+- Release artifact verification guide: `VERIFY.md`.
+- Release publish secrets setup: `RELEASE_SECRETS.md`.
 
 ## Status
 
@@ -303,47 +334,7 @@ flowchart LR
     - `ansi256`, `ansi256_hc`
     - Example: `TUI_THEME=dracula cargo run -p oatty`
 
-## Code Signing (macOS)
+## Release Trust
 
-To avoid repeated Keychain prompts (the CLI uses the macOS Keychain via `keyring`), sign the binary with a stable
-identity. You can use a self-signed certificate for local development or a Developer ID for distribution.
-
-- Create a self-signed identity (one-time):
-    - `KEYCHAIN_PASSWORD='<login password>' scripts/macos/create-dev-cert.sh "next-gen-cli-dev (LOCAL)"`
-    - The script imports both the certificate and private key, updates the keychain partition list when
-      `KEYCHAIN_PASSWORD` is provided, and prints the codesign identity string.
-
-- Build and sign the binary:
-    - `cargo build -p oatty`
-    - `NEXTGEN_CODESIGN_ID="<identity name>" NEXTGEN_CODESIGN_BIN=target/debug/oatty scripts/macos/sign.sh`
-        - Optional variables: `NEXTGEN_ENTITLEMENTS` to override the entitlements path,
-          `NEXTGEN_CODESIGN_TIMESTAMP=true|false` to force timestamping, `NEXTGEN_CODESIGN_HARDENED=false` (or comment
-          the option) if you need to skip hardened runtime temporarily.
-
-- After the first secrets access prompt, adjust Keychain Access Control to avoid future prompts:
-    - Open Keychain Access → search for the item (service usually `oatty`).
-    - Double-click → Access Control tab → either allow all apps signed by your certificate or add the binary path
-      explicitly.
-
-### Debugging signed binaries
-
-- Hardened runtime blocks debugger attachments unless `com.apple.security.get-task-allow` is present. For local
-  debugging, set this entitlement to `true` in `macos/entitlements.plist` before signing:
-
-  ```xml
-  <key>com.apple.security.get-task-allow</key>
-  <true/>
-  ```
-
-- Re-sign the binary after changing entitlements. For release builds, remove or disable this entitlement to keep
-  hardened runtime strict.
-
-- Gatekeeper (`spctl --assess`) will report self-signed binaries as “rejected”; the signing script already ignores that
-  result. Developer ID builds will pass the assessment.
-
-- If signing fails with “item not found,” ensure the identity exists via
-  `security find-identity -p codesigning -v ~/Library/Keychains/login.keychain-db` and that the keychain is unlocked and
-  in your `security list-keychains` output.
-
-- For CI or releases, use a Developer ID certificate or coordinate a Sigstore workflow; self-signed identities are only
-  intended for local development.
+- Artifact/user verification steps: `VERIFY.md`
+- CI publish setup (npm Trusted Publishing): `RELEASE_SECRETS.md`

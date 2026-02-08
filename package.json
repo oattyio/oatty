@@ -1,0 +1,40 @@
+{
+  "name": "oatty",
+  "version": "0.1.0-placeholder.0",
+  "description": "Schema-driven CLI + TUI + MCP runtime",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/oattyio/oatty.git"
+  },
+  "homepage": "https://github.com/oattyio/oatty",
+  "bugs": {
+    "url": "https://github.com/oattyio/oatty/issues"
+  },
+  "bin": {
+    "oatty": "npm/bin/oatty.js"
+  },
+  "files": [
+    "npm/bin",
+    "npm/scripts",
+    "README.md",
+    "LICENSE*"
+  ],
+  "scripts": {
+    "postinstall": "node npm/scripts/postinstall.js"
+  },
+  "keywords": [
+    "cli",
+    "tui",
+    "mcp",
+    "openapi",
+    "workflow"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "adm-zip": "^0.5.16",
+    "tar": "^7.4.3"
+  }
+}
