@@ -5,13 +5,13 @@
 ![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
 ![Status](https://img.shields.io/badge/status-experimental-yellow)
 
-# Oatty - Schema-driven CLI + TUI + MCP
+# Oatty - TUI-first Operations Surface (with CLI + MCP)
 
-A vendor-agnostic operations surface for teams that are tired of juggling near-identical CLIs, partial API coverage, and
-separate MCP servers with different constraints.
+A vendor-agnostic operations surface for teams that are tired of juggling near-identical CLIs, partial API coverage,
+and separate MCP servers with different constraints.
 
-Oatty turns OpenAPI documents into runnable commands, lets you execute them from one consistent CLI/TUI, and extends
-that surface with MCP tools and reusable workflows.
+Oatty turns OpenAPI documents into runnable commands and surfaces them in a searchable, keyboard-first TUI. The same
+command model is available through a secondary CLI interface and can be extended with MCP tools and reusable workflows.
 
 ## Why Oatty Exists
 
@@ -112,36 +112,47 @@ You get **one interface**, one mental model, and one place to operate.
 - Shareable, reviewable workflows instead of opaque scripts
 - A terminal UX that scales from quick commands to complex operations
 
-## Quick Example
+## Quick Start (TUI First)
 
-Use one interface for API-derived commands and workflow execution:
+Launch Oatty with no arguments to enter interactive mode:
 
 ```bash
-# Start interactive mode
 cargo run -p oatty
-
-# Execute a command from a loaded catalog
-cargo run -p oatty -- apps list
-
-# Run a workflow from runtime storage
-cargo run -p oatty -- workflow list
 ```
 
-## Usage
+If you have no catalogs configured yet, import one from the Library view:
+
+1. Run `cargo run -p oatty`.
+2. In the Library view, import a local OpenAPI document (for example, `schemas/samples/render-public-api.json`) or a URL.
+3. Accept the default command prefix (or enter your own).
+4. Registry configuration is saved to `~/.config/oatty/registry.json` and manifests are stored under `~/.config/oatty/catalogs/`.
+
+Once imported, browse commands, inspect arguments, execute actions, and monitor logs directly in the TUI.
+
+## CLI (Secondary Interface)
+
+The CLI uses the same runtime command catalog as the TUI and is optimized for scripting and automation.
+
+Build and run:
 
 - Build: `cargo build --workspace`
-- Run TUI (no args): `cargo run -p oatty` (or the installed binary `oatty`)
-- CLI examples:
-    - `cargo run -p oatty -- apps list`
-    - `cargo run -p oatty -- apps info my-app`
-    - `cargo run -p oatty -- workflow list`
-    - `cargo run -p oatty -- workflow preview --file workflows/create_app_and_db.yaml`
+- TUI mode: `cargo run -p oatty`
+- CLI mode: `cargo run -p oatty -- <group> <canonical_command_name> [flags]`
+
+Examples:
+
+- `cargo run -p oatty -- github advisories:list`
+- `cargo run -p oatty -- render services:list --limit 10`
+- `cargo run -p oatty -- workflow list`
+- `cargo run -p oatty -- workflow preview --file workflows/create_app_and_db.yaml`
+
+Use `oatty --help` to view available groups and command spec canonical IDs.
 
 Note: available commands depend on which registry catalogs and MCP plugins are configured/enabled.
 
 ## NPM Distribution
 
-Oatty can be installed via npm and will download the matching prebuilt binary for your platform during `postinstall`.
+Oatty can be installed via npm and downloads the matching prebuilt binary for your platform during `postinstall`.
 
 ```bash
 npm i -g oatty
@@ -169,25 +180,15 @@ Maintainers:
 - npm publication is handled by `.github/workflows/release.yml` using Trusted Publishing.
 - End-to-end operator steps: `RELEASE.md`.
 
-### First-time: import a registry catalog
-
-If you have no catalogs configured yet, the fastest way to get started is via the TUI:
-
-1. Run `cargo run -p oatty`.
-2. In the Library view, import a local OpenAPI document (e.g., `schemas/samples/render-public-api.json`) or a URL.
-3. Accept the default command prefix (or enter your own).
-4. The registry configuration is saved to `~/.config/oatty/registry.json` and manifests are stored under
-   `~/.config/oatty/catalogs/`.
-
 ## Architecture (high level)
 
+- **TUI** (`crates/tui`): interactive Ratatui/Crossterm interface for discovery, execution, help, and logs.
 - **Registry** (`crates/registry`): loads registry catalogs from `~/.config/oatty/registry.json` and reads per-catalog
   manifest files (typically `~/.config/oatty/catalogs/*.bin`).
 - **MCP** (`crates/mcp`): loads `~/.config/oatty/mcp.json`, manages plugin lifecycles, and can inject MCP tool commands
   into the registry at runtime.
 - **CLI** (`crates/cli`): builds a Clap tree from the registry, routes `workflow` commands, and executes HTTP/MCP
   commands.
-- **TUI** (`crates/tui`): interactive UI built on Ratatui/Crossterm; includes in-app help and log panes.
 - **Engine** (`crates/engine`): workflow parsing and execution utilities used by `oatty workflow ...`.
 
 ## Environment & Config
@@ -285,7 +286,7 @@ fn load_commands(openapi_json: &str) -> anyhow::Result<Vec<oatty_types::CommandS
 flowchart LR
   subgraph Runtime
     A[oatty no args] -->|Launch| TUI[TUI]
-    A2[oatty group cmd] -->|Parse| CLI[CLI Router]
+    A2["oatty <group> <command:name>"] -->|Parse| CLI[CLI Router]
   end
 
   subgraph Registry

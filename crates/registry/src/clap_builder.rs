@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     sync::{Arc, Mutex},
 };
 
@@ -43,7 +43,9 @@ pub fn build_clap(registry: Arc<Mutex<CommandRegistry>>) -> ClapCommand {
         return root;
     };
     let commands = &lock.commands;
+    let canonical_identifier_help = build_canonical_identifier_help(commands);
     let groups = group_commands_by_resource(commands);
+    root = root.after_help(canonical_identifier_help);
 
     for (group, cmds) in groups {
         let group_command = build_group_command(&group, cmds);
@@ -94,17 +96,34 @@ fn create_root_command(product_name: &str) -> ClapCommand {
         )
 }
 
-/// Groups commands by their resource prefix (before ':').
+/// Builds a canonical identifier section for root CLI help output.
 ///
-/// This function analyzes all commands in the registry and groups them by their
-/// resource type. For example, commands like "apps:list", "apps:create", and
-/// "apps:destroy" would all be grouped under "apps".
+/// This produces a deterministic, newline-delimited list of identifiers in
+/// `<group> <name>` format using each command specification's canonical ID.
+fn build_canonical_identifier_help(commands: &[CommandSpec]) -> String {
+    let mut canonical_identifiers = BTreeSet::new();
+    for command in commands {
+        canonical_identifiers.insert(command.canonical_id());
+    }
+
+    let mut help_lines = Vec::with_capacity(canonical_identifiers.len() + 2);
+    help_lines.push("Command Spec Canonical IDs:".to_string());
+    help_lines.push(String::new());
+    for canonical_identifier in canonical_identifiers {
+        help_lines.push(format!("  {canonical_identifier}"));
+    }
+
+    help_lines.join("\n")
+}
+
+/// Groups commands by their command specification group.
 ///
-/// Commands without a colon separator are grouped under "misc".
+/// This function analyzes all commands in the registry and groups them by the
+/// `group` field from each `CommandSpec`.
 ///
 /// # Arguments
 ///
-/// * `registry` - The registry containing all command specifications
+/// * `commands` - The command specifications to group
 ///
 /// # Returns
 ///
@@ -124,10 +143,8 @@ fn create_root_command(product_name: &str) -> ClapCommand {
 /// ```
 fn group_commands_by_resource(commands: &[CommandSpec]) -> BTreeMap<String, Vec<&CommandSpec>> {
     let mut groups: BTreeMap<String, Vec<&CommandSpec>> = BTreeMap::new();
-    for cmd in commands {
-        let mut parts = cmd.name.splitn(2, ':');
-        let group = parts.next().unwrap_or("misc").to_string();
-        groups.entry(group).or_default().push(cmd);
+    for command in commands {
+        groups.entry(command.group.clone()).or_default().push(command);
     }
 
     groups
@@ -232,9 +249,8 @@ fn build_workflow_root_command() -> ClapCommand {
 
 /// Builds a single subcommand with its arguments and flags.
 ///
-/// This function creates a complete subcommand (e.g., "list", "create") with
-/// all its associated arguments, flags, and help text. The subcommand name is
-/// extracted from the command specification by taking the part after the colon.
+/// This function creates a complete subcommand using the command
+/// specification's canonical command name (e.g., "apps:list").
 ///
 /// # Arguments
 ///
@@ -251,11 +267,10 @@ fn build_workflow_root_command() -> ClapCommand {
 /// use oatty_registry::clap_builder::build_subcommand;
 ///
 /// let subcmd = build_subcommand(&command_spec);
-/// // For a command named "apps:list", this creates a "list" subcommand
+/// // For a command named "apps:list", this creates an "apps:list" subcommand
 /// ```
 fn build_subcommand(cmd: &CommandSpec) -> ClapCommand {
-    let subname = cmd.name.split_once(':').map(|x| x.1).unwrap_or("run").to_string();
-    let static_sub_name: &'static str = Box::leak(subname.into_boxed_str());
+    let static_sub_name: &'static str = Box::leak(cmd.name.clone().into_boxed_str());
     let mut subcommand = ClapCommand::new(static_sub_name).about(&cmd.summary);
 
     // Add positional arguments
@@ -485,5 +500,50 @@ fn generate_help_text(flag: &CommandFlag) -> String {
         desc.clone()
     } else {
         format!("type: {}", flag.r#type)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use oatty_types::{CommandExecution, command::HttpCommandSpec};
+
+    use super::build_canonical_identifier_help;
+    use crate::CommandSpec;
+
+    #[test]
+    fn canonical_identifier_help_lists_sorted_unique_identifiers() {
+        let command_specs = vec![
+            CommandSpec {
+                group: "apps".to_string(),
+                name: "apps:list".to_string(),
+                summary: String::new(),
+                positional_args: Vec::new(),
+                flags: Vec::new(),
+                catalog_identifier: 0,
+                execution: CommandExecution::Http(HttpCommandSpec::new("GET", "/apps", None)),
+            },
+            CommandSpec {
+                group: "apps".to_string(),
+                name: "apps:list".to_string(),
+                summary: String::new(),
+                positional_args: Vec::new(),
+                flags: Vec::new(),
+                catalog_identifier: 0,
+                execution: CommandExecution::Http(HttpCommandSpec::new("GET", "/apps", None)),
+            },
+            CommandSpec {
+                group: "apps".to_string(),
+                name: "apps:create".to_string(),
+                summary: String::new(),
+                positional_args: Vec::new(),
+                flags: Vec::new(),
+                catalog_identifier: 0,
+                execution: CommandExecution::Http(HttpCommandSpec::new("POST", "/apps", None)),
+            },
+        ];
+
+        let output = build_canonical_identifier_help(&command_specs);
+        let expected = "Command Spec Canonical IDs:\n\n  apps apps:create\n  apps apps:list";
+        assert_eq!(output, expected);
     }
 }

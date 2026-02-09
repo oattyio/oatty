@@ -21,7 +21,7 @@
 use anyhow::Result;
 use crossterm::event::MouseEventKind;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEvent, KeyModifiers},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -133,6 +133,15 @@ fn handle_input_event(app: &mut App<'_>, main_view: &mut MainView, input_event: 
     }
 }
 
+/// Returns `true` when a key event represents a user interrupt (`Ctrl+C`).
+///
+/// Some terminals encode this as `Char('c')` with the Control modifier, while
+/// others emit ETX (`\u{3}`) directly.
+fn is_interrupt_key(key_event: &KeyEvent) -> bool {
+    (key_event.code == KeyCode::Char('c') && key_event.modifiers.contains(KeyModifiers::CONTROL))
+        || matches!(key_event.code, KeyCode::Char(character) if character == '\u{3}')
+}
+
 /// Entry point for the TUI runtime: sets up the terminal, spawns the event
 /// producer, runs the async event loop, and performs cleanup on exit.
 pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
@@ -216,7 +225,7 @@ pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<P
             maybe_event = input_receiver.recv() => {
                 if let Some(event) = maybe_event {
                     if let Event::Key(key_event) = event
-                        && key_event.code == KeyCode::Char('c') && key_event.modifiers.contains(KeyModifiers::CONTROL) {
+                        && is_interrupt_key(&key_event) {
                             break;
                         }
                     effects.extend(handle_input_event(&mut app, &mut main_view, event));

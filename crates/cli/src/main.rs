@@ -29,6 +29,8 @@ use reqwest::Method;
 use serde_json::{Map, Number, Value, json};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+use tokio::time::timeout;
 use tracing::warn;
 use tracing_subscriber::fmt;
 
@@ -98,13 +100,28 @@ async fn main() -> Result<()> {
         TUI_ACTIVE.store(true, Ordering::Relaxed);
         let tui_result = oatty_tui::run(Arc::clone(&command_registry), Arc::clone(&plugin_engine)).await;
         TUI_ACTIVE.store(false, Ordering::Relaxed);
-        plugin_engine.stop().await?;
+        stop_plugin_engine_with_timeout(&plugin_engine).await?;
         return tui_result;
     }
 
     let result = run_command(Arc::clone(&command_registry), &matches, Arc::clone(&plugin_engine)).await;
-    plugin_engine.stop().await?;
+    stop_plugin_engine_with_timeout(&plugin_engine).await?;
     result
+}
+
+/// Stop the plugin engine without allowing shutdown to block indefinitely.
+async fn stop_plugin_engine_with_timeout(plugin_engine: &Arc<PluginEngine>) -> Result<()> {
+    let shutdown_timeout = Duration::from_secs(2);
+    match timeout(shutdown_timeout, plugin_engine.stop()).await {
+        Ok(stop_result) => {
+            stop_result?;
+            Ok(())
+        }
+        Err(_) => {
+            warn!("plugin engine shutdown exceeded timeout; continuing process exit");
+            Ok(())
+        }
+    }
 }
 
 /// Initializes the tracing system for logging and diagnostics.
@@ -117,15 +134,14 @@ async fn main() -> Result<()> {
 /// - `OATTY_LOG`: Controls the logging level. Valid values are:
 ///   - `error`: Only error messages
 ///   - `warn`: Warning and error messages
-///   - `info`: Info, warning, and error messages (default)
+///   - `info`: Info, warning, and error messages
 ///   - `debug`: Debug, info, warning, and error messages
 ///   - `trace`: All log levels
 ///
 /// # Behavior
 /// - Reads the `OATTY_LOG` environment variable
-/// - Defaults to "info" level if not set or invalid
+/// - Defaults to "warn" level if not set
 /// - Configures the tracing subscriber with the specified filter
-/// - Sets maximum log level to `Level::INFO`
 ///
 /// # Examples
 /// ```bash
@@ -138,7 +154,7 @@ async fn main() -> Result<()> {
 fn init_tracing() {
     // Respect OATTY_LOG without imposing a lower max level ceiling.
     // Example: OATTY_LOG=debug will now allow `tracing::debug!` to emit.
-    let filter = std::env::var("OATTY_LOG").unwrap_or_else(|_| "info".into());
+    let filter = std::env::var("OATTY_LOG").unwrap_or_else(|_| "warn".into());
     let _ = fmt().with_env_filter(filter).with_writer(|| GatedStderr).try_init();
 }
 
