@@ -84,13 +84,13 @@ For tag `vX.Y.Z`, release must include:
 1. Verify npm dist tags:
 
 ```bash
-npm view @oattyio/oatty dist-tags
+npm view oatty dist-tags
 ```
 
 2. Verify fresh install:
 
 ```bash
-npm i -g @oattyio/oatty@X.Y.Z
+npm i -g oatty@X.Y.Z
 oatty --help
 ```
 
