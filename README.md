@@ -166,7 +166,7 @@ If your platform is not currently mapped, install from source (`cargo build --re
 Maintainers:
 
 - GitHub release assets are built/published via `.github/workflows/release.yml`.
-- npm publication is handled by `.github/workflows/npm-publish.yml` when a non-prerelease GitHub Release is published and npm Trusted Publishing is configured.
+- npm publication is handled by `.github/workflows/release.yml` using Trusted Publishing.
 - End-to-end operator steps: `RELEASE.md`.
 
 ### First-time: import a registry catalog

@@ -5,7 +5,37 @@ const path = require("node:path");
 const fs = require("node:fs");
 const { spawn } = require("node:child_process");
 
-const binaryPath = path.join(__dirname, process.platform === "win32" ? "oatty.exe" : "oatty");
+const expectedBinaryName = process.platform === "win32" ? "oatty.exe" : "oatty";
+const primaryBinaryPath = path.join(__dirname, expectedBinaryName);
+const nestedBinaryPath = path.join(primaryBinaryPath, expectedBinaryName);
+
+function resolveBinaryPath() {
+  if (fs.existsSync(primaryBinaryPath)) {
+    const stat = fs.statSync(primaryBinaryPath);
+    if (stat.isFile()) {
+      return primaryBinaryPath;
+    }
+  }
+
+  if (fs.existsSync(nestedBinaryPath)) {
+    const stat = fs.statSync(nestedBinaryPath);
+    if (stat.isFile()) {
+      return nestedBinaryPath;
+    }
+  }
+
+  return primaryBinaryPath;
+}
+
+const binaryPath = resolveBinaryPath();
+
+if (process.platform !== "win32" && fs.existsSync(binaryPath)) {
+  try {
+    fs.chmodSync(binaryPath, 0o755);
+  } catch {
+    // Best-effort permission fix for already-installed packages.
+  }
+}
 
 if (!fs.existsSync(binaryPath)) {
   process.stderr.write(

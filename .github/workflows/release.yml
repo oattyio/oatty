@@ -61,7 +61,7 @@ jobs:
           if [[ "${{ runner.os }}" == "macOS" ]]; then
             cp "$BIN_PATH" oatty
             chmod +x oatty
-            ditto -c -k --sequesterRsrc --keepParent oatty "dist/${ASSET_BASE}.zip"
+            ditto -c -k --sequesterRsrc oatty "dist/${ASSET_BASE}.zip"
             rm -f oatty
           else
             tar -C "target/${{ matrix.target }}/release" -czf "dist/${ASSET_BASE}.tar.gz" oatty

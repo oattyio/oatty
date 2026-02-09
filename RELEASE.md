@@ -13,7 +13,7 @@ This document describes the standard release process for Oatty.
 - npm Trusted Publisher configured for:
   - Package: `oatty`
   - Repository: `oattyio/oatty`
-  - Workflow: `.github/workflows/npm-publish.yml`
+  - Workflow: `.github/workflows/release.yml`
 - GitHub environment `oatty` configured (reviewers/restrictions as desired).
 - Clean working tree on `main`.
 
@@ -22,7 +22,7 @@ This document describes the standard release process for Oatty.
 - `package.json` version must match release tag exactly:
   - package version: `X.Y.Z`
   - git tag: `vX.Y.Z`
-- `npm-publish.yml` enforces this and fails on mismatch.
+- `release.yml` enforces this and fails on mismatch.
 
 ## One-time sanity checks
 
@@ -51,12 +51,7 @@ git tag vX.Y.Z
 git push origin vX.Y.Z
 ```
 
-3. Publish GitHub Release for `vX.Y.Z`.
-
-- Use GitHub UI (`Releases -> Draft a new release`) or CLI.
-- Ensure release is not marked as prerelease for stable publish.
-
-4. Wait for workflows:
+3. Wait for workflow:
 
 - `.github/workflows/release.yml`
   - Builds Linux/macOS/Windows artifacts.
@@ -64,9 +59,6 @@ git push origin vX.Y.Z
   - Produces GitHub build attestations.
   - Signs assets with keyless cosign.
   - Publishes release assets.
-- `.github/workflows/npm-publish.yml`
-  - Runs on release `published`.
-  - Verifies required assets exist.
   - Publishes npm package with provenance.
 
 ## Required release assets
