@@ -57,7 +57,8 @@ async function main() {
       extractZipArchive(archivePath, BIN_DIRECTORY);
     }
 
-    await ensureExecutablePermissions(OUTPUT_EXECUTABLE_PATH);
+    const installedBinaryPath = await resolveInstalledBinaryPath(OUTPUT_EXECUTABLE_PATH, platformTarget.binaryName);
+    await ensureExecutablePermissions(installedBinaryPath);
     await fsp.writeFile(OUTPUT_MARKER_PATH, packageVersion, "utf8");
   } catch (error) {
     emitWarning(`Failed to install oatty binary from ${assetUrl}. ${error.message}`);
@@ -70,7 +71,13 @@ async function main() {
 async function isAlreadyInstalled(packageVersion) {
   try {
     const version = (await fsp.readFile(OUTPUT_MARKER_PATH, "utf8")).trim();
-    const binaryExists = await fileExists(OUTPUT_EXECUTABLE_PATH);
+    const platformTarget = resolvePlatformTarget(process.platform, process.arch);
+    if (!platformTarget) {
+      return false;
+    }
+
+    const binaryPath = await resolveInstalledBinaryPath(OUTPUT_EXECUTABLE_PATH, platformTarget.binaryName);
+    const binaryExists = await fileExists(binaryPath);
     return version === packageVersion && binaryExists;
   } catch {
     return false;
@@ -161,13 +168,51 @@ async function ensureExecutablePermissions(binaryPath) {
     throw new Error(`Expected binary not found after extraction: ${binaryPath}`);
   }
 
+  const fileStat = await fsp.stat(binaryPath);
+  if (!fileStat.isFile()) {
+    throw new Error(`Expected installed binary at ${binaryPath}, but found a non-file entry.`);
+  }
+
   await fsp.chmod(binaryPath, 0o755);
+}
+
+async function resolveInstalledBinaryPath(primaryPath, expectedBinaryName) {
+  if (await isFile(primaryPath)) {
+    return primaryPath;
+  }
+
+  if (await isDirectory(primaryPath)) {
+    const nestedPath = path.join(primaryPath, expectedBinaryName);
+    if (await isFile(nestedPath)) {
+      return nestedPath;
+    }
+  }
+
+  return primaryPath;
 }
 
 async function fileExists(filePath) {
   try {
     await fsp.access(filePath);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+async function isFile(filePath) {
+  try {
+    const stat = await fsp.stat(filePath);
+    return stat.isFile();
+  } catch {
+    return false;
+  }
+}
+
+async function isDirectory(filePath) {
+  try {
+    const stat = await fsp.stat(filePath);
+    return stat.isDirectory();
   } catch {
     return false;
   }
