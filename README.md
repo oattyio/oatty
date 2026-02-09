@@ -144,13 +144,13 @@ Note: available commands depend on which registry catalogs and MCP plugins are c
 Oatty can be installed via npm and will download the matching prebuilt binary for your platform during `postinstall`.
 
 ```bash
-npm i -g oatty
+npm i -g @oattyio/oatty
 oatty --help
 ```
 
 How it works:
 
-- npm installs a small Node launcher package (`oatty`).
+- npm installs a small Node launcher package (`@oattyio/oatty`).
 - The installer detects your OS/arch and fetches the matching GitHub release asset for the npm package version.
 - The download is verified against the release `SHA256SUMS` before extraction.
 
@@ -316,8 +316,8 @@ flowchart LR
 
 - Secrets are redacted from output by default (headers/payload in output and logs).
 - Network calls go through reqwest with default timeouts.
-- Release artifact verification guide: `VERIFY.md`.
-- Release publish secrets setup: `RELEASE_SECRETS.md`.
+- Release artifact verification steps: `RELEASE.md`.
+- Release and publish runbook: `RELEASE.md`.
 
 ## Status
 
@@ -337,5 +337,4 @@ flowchart LR
 
 ## Release Trust
 
-- Artifact/user verification steps: `VERIFY.md`
-- CI publish setup (npm Trusted Publishing): `RELEASE_SECRETS.md`
+- Release and publish runbook: `RELEASE.md`

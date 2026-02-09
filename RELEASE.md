@@ -84,19 +84,20 @@ For tag `vX.Y.Z`, release must include:
 1. Verify npm dist tags:
 
 ```bash
-npm view oatty dist-tags
+npm view @oattyio/oatty dist-tags
 ```
 
 2. Verify fresh install:
 
 ```bash
-npm i -g oatty@X.Y.Z
+npm i -g @oattyio/oatty@X.Y.Z
 oatty --help
 ```
 
 3. Verify artifact trust signals:
 
-- Follow `VERIFY.md`.
+- Download `SHA256SUMS` and confirm each release asset checksum matches.
+- Verify `.sig` and `.cert` files with `cosign verify-blob` for at least one platform artifact.
 
 ## Rollback and recovery
 
