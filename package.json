@@ -1,5 +1,5 @@
 {
-  "name": "oatty",
+  "name": "@oattyio/oatty",
   "version": "0.1.2",
   "description": "Schema-driven CLI + TUI + MCP runtime",
   "license": "MIT OR Apache-2.0",
