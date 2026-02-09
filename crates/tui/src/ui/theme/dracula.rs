@@ -8,13 +8,13 @@ use super::{
     theme_helpers::{darken_rgb, lighten_rgb},
 };
 
-// Core backgrounds from the JetBrains Dracula theme.
-pub const PRIMARY_BACKGROUND: Color = Color::Rgb(0x41, 0x44, 0x50); // #414450
-pub const SECONDARY_BACKGROUND: Color = Color::Rgb(0x3A, 0x3D, 0x4C); // #3A3D4C
-pub const HOVER_BACKGROUND: Color = Color::Rgb(0x28, 0x2A, 0x36); // #282A36
+// Core backgrounds from the Dracula family, tuned for stronger terminal contrast.
+pub const PRIMARY_BACKGROUND: Color = Color::Rgb(0x28, 0x2A, 0x36); // #282A36
+pub const SECONDARY_BACKGROUND: Color = Color::Rgb(0x28, 0x2A, 0x36); // #282A36
+pub const HOVER_BACKGROUND: Color = Color::Rgb(0x21, 0x22, 0x2C); // #21222C
 pub const SELECTION_BACKGROUND: Color = Color::Rgb(0x62, 0x72, 0xA4); // #6272A4
 pub const SELECTION_INACTIVE_BACKGROUND: Color = Color::Rgb(0x4E, 0x5A, 0x82); // #4E5A82
-pub const BORDER_COLOR: Color = Color::Rgb(0x28, 0x2A, 0x36); // #282A36
+pub const BORDER_COLOR: Color = Color::Rgb(0x41, 0x44, 0x50); // #414450 (legacy base, improves border contrast)
 pub const SEPARATOR_COLOR: Color = Color::Rgb(0x5D, 0x5E, 0x66); // #5D5E66
 
 // Foregrounds.

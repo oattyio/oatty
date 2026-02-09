@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <!-- Primary Meta Tags -->
+    <title>Oatty | One CLI for Every API</title>
+    <meta name="title" content="Oatty | One CLI for Every API" />
+    <meta name="description" content="Schema-driven command discovery, interactive terminal UI, and extension via MCP. Stop juggling vendor CLIs with Oatty - one coherent operational surface for all your APIs." />
+    <meta name="keywords" content="CLI, TUI, OpenAPI, MCP, terminal, command line, API, schema-driven, developer tools, rust" />
+    <meta name="author" content="Oatty" />
+
+    <!-- Open Graph / Facebook -->
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://oatty.io/" />
+    <meta property="og:title" content="Oatty | One CLI for Every API" />
+    <meta property="og:description" content="Schema-driven command discovery, interactive terminal UI, and extension via MCP. Stop juggling vendor CLIs." />
+    <meta property="og:site_name" content="Oatty" />
+
+    <!-- Twitter -->
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:url" content="https://oatty.io/" />
+    <meta name="twitter:title" content="Oatty | One CLI for Every API" />
+    <meta name="twitter:description" content="Schema-driven command discovery, interactive terminal UI, and extension via MCP. Stop juggling vendor CLIs." />
+
+    <!-- Theme & Icons -->
+    <meta name="theme-color" content="#1a1f2e" />
+    <meta name="color-scheme" content="dark" />
+    <link rel="icon" type="image/png" href="/favicon.png" />
+    <link rel="icon" type="image/svg+xml" href="/logo-icon.svg" />
+
+    <!-- Preconnect for performance -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+
+    <style>
+      /* Global body styles before Web Component loads */
+      * {
+        box-sizing: border-box;
+        margin: 0;
+        padding: 0;
+      }
+
+      html {
+        color-scheme: dark;
+      }
+
+      body {
+        margin: 0;
+        padding: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+        background: linear-gradient(180deg, #1a1f2e 0%, #12161f 100%);
+        color: #eceff4;
+        min-height: 100vh;
+      }
+
+      oatty-site-app {
+        display: block;
+      }
+    </style>
+
+    <script>
+      // Initialize theme before page render to prevent flash
+      (() => {
+        const storageKey = 'oatty-theme-mode';
+        const persistedTheme = localStorage.getItem(storageKey);
+        const initialTheme = persistedTheme ?? 'dark';
+        document.documentElement.dataset.theme = initialTheme;
+      })();
+    </script>
+    <script type="module" crossorigin src="/assets/index-Bu925T-O.js"></script>
+  </head>
+  <body>
+    <oatty-site-app></oatty-site-app>
+  </body>
+</html>
