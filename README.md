@@ -144,13 +144,13 @@ Note: available commands depend on which registry catalogs and MCP plugins are c
 Oatty can be installed via npm and will download the matching prebuilt binary for your platform during `postinstall`.
 
 ```bash
-npm i -g @oattyio/oatty
+npm i -g oatty
 oatty --help
 ```
 
 How it works:
 
-- npm installs a small Node launcher package (`@oattyio/oatty`).
+- npm installs a small Node launcher package (`oatty`).
 - The installer detects your OS/arch and fetches the matching GitHub release asset for the npm package version.
 - The download is verified against the release `SHA256SUMS` before extraction.
 
