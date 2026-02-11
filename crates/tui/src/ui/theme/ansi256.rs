@@ -24,7 +24,7 @@ impl Ansi256Theme {
                 divider: Color::Indexed(239),
 
                 text: Color::Indexed(255),
-                text_secondary: Color::Indexed(250),
+                text_secondary: Color::Indexed(252),
                 text_muted: Color::Indexed(247),
 
                 accent_primary: Color::Indexed(212),
@@ -36,7 +36,7 @@ impl Ansi256Theme {
                 warning: Color::Indexed(215),
                 error: Color::Indexed(203),
 
-                selection_bg: Color::Indexed(239),
+                selection_bg: Color::Indexed(238),
                 selection_fg: Color::Indexed(255),
                 focus: Color::Indexed(117),
                 search_highlight: Color::Indexed(229),
@@ -79,7 +79,7 @@ impl Ansi256ThemeHighContrast {
                 divider: Color::Indexed(239),
 
                 text: Color::Indexed(255),
-                text_secondary: Color::Indexed(117),
+                text_secondary: Color::Indexed(159),
                 text_muted: Color::Indexed(61),
 
                 accent_primary: Color::Indexed(212),
@@ -91,7 +91,7 @@ impl Ansi256ThemeHighContrast {
                 warning: Color::Indexed(215),
                 error: Color::Indexed(203),
 
-                selection_bg: Color::Indexed(239),
+                selection_bg: Color::Indexed(238),
                 selection_fg: Color::Indexed(255),
                 focus: Color::Indexed(117),
                 search_highlight: Color::Indexed(229),

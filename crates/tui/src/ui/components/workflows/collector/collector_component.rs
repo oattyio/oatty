@@ -16,6 +16,7 @@ use oatty_types::{Effect, ExecOutcome, Msg, WorkflowProviderErrorPolicy};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::style::Modifier;
+use ratatui::symbols::merge::MergeStrategy;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Padding, Paragraph, Wrap};
 use serde_json::{Value as JsonValue, Value};
@@ -529,7 +530,9 @@ impl WorkflowCollectorComponent {
             return Rect::default();
         };
         let title = format!("Select one ({})", collector.provider_id);
-        let block = th::block(&*app.ctx.theme, Some(title.as_str()), false).padding(Padding::uniform(1));
+        let block = th::block(&*app.ctx.theme, Some(title.as_str()), false)
+            .merge_borders(MergeStrategy::Exact)
+            .padding(Padding::uniform(1));
         let inner = block.inner(rect);
         frame.render_widget(block, rect);
 
@@ -553,15 +556,18 @@ impl WorkflowCollectorComponent {
 
         let table_focused = collector.f_table.get();
 
+        let results_block = th::block(theme, Some("Results"), table_focused).merge_borders(MergeStrategy::Exact);
+        let results_inner = results_block.inner(layout.table_area);
+        frame.render_widget(results_block, layout.table_area);
         self.results_table_view
-            .render_results(frame, layout.table_area, &mut collector.table, table_focused, theme);
+            .render_results(frame, results_inner, &mut collector.table, table_focused, theme);
         // Manual selection of a json field value when one is not specified
         if collector.value_field.is_none() {
             let idx = collector.table.table_state.selected().unwrap_or(0);
             let row_json = collector.table.selected_data(idx).cloned().unwrap_or(Value::Null);
             let entries = collector.table.kv_entries();
             let (_detail_selection, _detail_offset) = self.detail_selection(entries, collector);
-            let detail_block = th::block(theme, Some("Details"), table_focused);
+            let detail_block = th::block(theme, Some("Details"), table_focused).merge_borders(MergeStrategy::Exact);
             let detail_inner = detail_block.inner(layout.detail_area);
             frame.render_widget(detail_block, layout.detail_area);
             self.detail_table_view
@@ -591,7 +597,7 @@ impl WorkflowCollectorComponent {
             theme.text_secondary_style().add_modifier(Modifier::BOLD),
         ));
         let is_focused = collector.f_filter.get();
-        let mut block = th::block::<String>(theme, None, is_focused);
+        let mut block = th::block::<String>(theme, None, is_focused).merge_borders(MergeStrategy::Exact);
         block = block.title(filter_block_title);
         let inner_area = block.inner(area);
         let filter_text = collector.filter.input();
@@ -758,6 +764,7 @@ impl WorkflowCollectorComponent {
                 theme,
                 &[
                     ("Esc", " Clear filter  "),
+                    ("Ctrl+U", " Clear line  "),
                     ("Enter", " Focus results  "),
                     ("Tab", " Next focus  "),
                     ("Shift+Tab", " Previous focus"),
@@ -786,7 +793,6 @@ impl WorkflowCollectorComponent {
                 theme,
                 &[
                     ("Esc", " Cancel  "),
-                    ("←/→", " Switch button  "),
                     ("Enter", " Activate  "),
                     ("Tab", " Next focus  "),
                     ("Shift+Tab", " Previous focus"),

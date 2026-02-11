@@ -40,6 +40,14 @@ Each step supports:
 - Registry loader reads recursive `yaml`/`yml`/`json` files from the runtime workflows directory.
 - Runtime workflows are normalized and validated into `RuntimeWorkflow` before execution.
 
+## Provider Dependency Validation (Hard Rule)
+- For provider-backed inputs (`provider` set), any `provider_args.<arg>` value that references upstream workflow context must have a matching `depends_on.<arg>` binding.
+- Upstream references include:
+  - structured bindings with `from_input` or `from_step`
+  - literal templates containing `${{ inputs.* }}` or `${{ steps.* }}`
+- Missing/mismatched `depends_on` for those arguments is a validation error during runtime normalization.
+- This rule prevents provider execution without explicitly declared upstream dependencies, reducing collector-time confusion.
+
 ## Execution Notes
 - Workflow execution is driven by engine workflow runtime/runner modules.
 - Input defaults are applied prior to execution.

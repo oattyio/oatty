@@ -26,9 +26,10 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent,
 use oatty_types::{Effect, Route};
 use ratatui::layout::Position;
 use ratatui::style::Modifier;
+use ratatui::symbols::merge::MergeStrategy;
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Layout, Rect, Spacing},
     text::{Line, Span},
     widgets::*,
 };
@@ -174,7 +175,16 @@ impl Component for BrowserComponent {
     /// * `app` - The application state containing theme information
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        th::build_hint_spans(theme, &[("Esc", " Clear "), ("Enter", " Send to palette  ")])
+        let mut hints = vec![("Esc", " Clear ")];
+        if app.browser.f_commands.get() {
+            hints.push(("↑/↓", " Move  "));
+            hints.push(("PgUp/PgDn", " Page  "));
+            hints.push(("Home/End", " Jump  "));
+            hints.push(("Enter", " Send to palette  "));
+        } else {
+            hints.push(("Enter", " Send to palette  "));
+        }
+        th::build_hint_spans(theme, &hints)
     }
 
     fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
@@ -184,6 +194,11 @@ impl Component for BrowserComponent {
         ])
         .split(area)
         .to_vec()
+    }
+
+    fn on_route_enter(&mut self, app: &mut App) -> Vec<Effect> {
+        app.browser.clear_search_query();
+        vec![]
     }
 }
 
@@ -262,6 +277,27 @@ impl BrowserComponent {
         match key.code {
             KeyCode::Down => app.browser.move_selection(CursorDirection::Down),
             KeyCode::Up => app.browser.move_selection(CursorDirection::Up),
+            KeyCode::PageUp => {
+                app.browser.list_state.scroll_up_by(10);
+                app.browser.commit_selection();
+            }
+            KeyCode::PageDown => {
+                app.browser.list_state.scroll_down_by(10);
+                app.browser.commit_selection();
+            }
+            KeyCode::Home => {
+                if !app.browser.filtered().is_empty() {
+                    app.browser.list_state.select(Some(0));
+                    app.browser.commit_selection();
+                }
+            }
+            KeyCode::End => {
+                let last_index = app.browser.filtered().len().saturating_sub(1);
+                if !app.browser.filtered().is_empty() {
+                    app.browser.list_state.select(Some(last_index));
+                    app.browser.commit_selection();
+                }
+            }
             KeyCode::Tab | KeyCode::BackTab => {
                 if key.code == KeyCode::Tab {
                     app.focus.next();
@@ -288,6 +324,7 @@ impl BrowserComponent {
             Constraint::Percentage(30), // Commands
             Constraint::Percentage(70), // Inline Help
         ])
+        .spacing(Spacing::Overlap(1))
         .split(area)
         .to_vec()
     }
@@ -380,7 +417,7 @@ impl BrowserComponent {
         let browser = &mut app.browser;
         let commands_title = format!("Commands ({})", browser.filtered().len());
         let is_focused = browser.f_commands.get();
-        let commands_block = th::block(&*app.ctx.theme, Some(&commands_title), is_focused);
+        let commands_block = th::block(&*app.ctx.theme, Some(&commands_title), is_focused).merge_borders(MergeStrategy::Exact);
         let inner_height = commands_block.inner(area).height as usize;
         browser.set_viewport_rows(inner_height);
         let selection_style = app.ctx.theme.selection_style().add_modifier(Modifier::BOLD);
@@ -452,6 +489,8 @@ impl BrowserComponent {
     /// * `area` - The area to render the help panel in
     fn render_inline_help_panel(&mut self, frame: &mut Frame, app: &mut App, area: Rect) {
         self.help_component.set_focused(app.browser.f_help.get());
+        self.help_component.set_merge_borders(true);
         self.help_component.render(frame, area, app);
+        self.help_component.set_merge_borders(false);
     }
 }

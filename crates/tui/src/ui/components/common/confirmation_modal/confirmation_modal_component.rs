@@ -102,7 +102,10 @@ impl Component for ConfirmationModal {
     }
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
-        build_hint_spans(&*app.ctx.theme, &[("Esc", " close/cancel")])
+        build_hint_spans(
+            &*app.ctx.theme,
+            &[("Tab/Shift+Tab", " Focus "), ("Enter", " Confirm "), ("Esc", " close/cancel")],
+        )
     }
 
     fn get_preferred_layout(&self, app: &App, area: Rect) -> Vec<Rect> {

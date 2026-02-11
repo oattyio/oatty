@@ -317,6 +317,7 @@ impl App<'_> {
         match message {
             Msg::Tick => self.handle_tick_message(),
             Msg::CopyToClipboard(text) => vec![Effect::CopyToClipboardRequested(text.clone())],
+            Msg::ExecCompleted(execution_outcome) => self.plugins.handle_execution_completion((**execution_outcome).clone()),
             Msg::ProviderValuesReady { provider_id, cache_key } => {
                 self.handle_provider_values_ready(provider_id.clone(), cache_key.clone())
             }

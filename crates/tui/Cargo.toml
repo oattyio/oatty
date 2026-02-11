@@ -28,6 +28,7 @@ regex = { workspace = true }
 once_cell = { workspace = true }
 rat-focus = { workspace = true }
 serde_json = { workspace = true }
+serde_yaml = { workspace = true }
 textwrap = { workspace = true }
 indexmap = { workspace = true }
 unicode-width = { workspace = true }

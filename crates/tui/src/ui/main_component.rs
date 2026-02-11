@@ -24,6 +24,7 @@ use ratatui::widgets::Clear;
 use ratatui::{
     prelude::*,
     style::Style,
+    symbols::merge::MergeStrategy,
     widgets::{Block, Paragraph},
 };
 
@@ -360,7 +361,7 @@ impl Component for MainView {
         let main_view_areas = if content_areas[0].width >= 141 {
             let constraints = if app.logs.is_visible {
                 [
-                    Constraint::Percentage(75), // Main view
+                    Constraint::Percentage(60), // Main view
                     Constraint::Fill(1),        // Logs
                 ]
             } else {
@@ -375,7 +376,7 @@ impl Component for MainView {
             // Smaller screens display 3 stacked rows.
             let constraints = if app.logs.is_visible {
                 [
-                    Constraint::Percentage(80), // Command palette area (+ suggestions)
+                    Constraint::Percentage(60), // Command palette area (+ suggestions)
                     Constraint::Fill(1),        // logs / output content
                 ]
             } else {
@@ -404,5 +405,11 @@ impl Component for MainView {
 /// * `f` - The frame to render to
 /// * `app` - The application state
 fn render_overlay(frame: &mut Frame, app: &mut App) {
-    frame.render_widget(Block::default().style(app.ctx.theme.modal_background_style()).dim(), frame.area());
+    frame.render_widget(
+        Block::default()
+            .merge_borders(MergeStrategy::Exact)
+            .style(app.ctx.theme.modal_background_style())
+            .dim(),
+        frame.area(),
+    );
 }

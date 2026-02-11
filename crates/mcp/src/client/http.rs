@@ -3,6 +3,7 @@
 use crate::config::McpServer;
 use anyhow::Result;
 use oatty_types::EnvVar;
+use oatty_util::{SecretsBackend, secrets_backend};
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 
 /// Resolve the fully-qualified endpoint used for Streamable HTTP transport.
@@ -22,13 +23,21 @@ pub(crate) async fn build_http_client_with_auth(server: &McpServer) -> Result<re
             headers.insert(name, value);
         }
     }
-    // OAuth bearer from keyring (or fallback to config token) if configured
+    // OAuth bearer from explicit auth token first, then keyring fallback.
     if let Some(auth) = &server.auth
         && (auth.scheme.eq_ignore_ascii_case("oauth") || auth.scheme.eq_ignore_ascii_case("oauth2"))
-        && let Some(token) = load_oauth_token_from_keyring(server).await?.or_else(|| auth.token.clone())
-        && let Ok(value) = HeaderValue::from_str(&format!("Bearer {}", token))
     {
-        headers.insert(AUTHORIZATION, value);
+        let oauth_token = if let Some(configured_token) = auth.token.clone() {
+            Some(configured_token)
+        } else {
+            load_oauth_token_from_keyring(server).await?
+        };
+
+        if let Some(token) = oauth_token
+            && let Ok(value) = HeaderValue::from_str(&format!("Bearer {}", token))
+        {
+            headers.insert(AUTHORIZATION, value);
+        }
     }
     let client = reqwest::Client::builder()
         .default_headers(headers)
@@ -39,6 +48,9 @@ pub(crate) async fn build_http_client_with_auth(server: &McpServer) -> Result<re
 
 /// Retrieve a bearer token from the OS keyring for the given server base URL.
 async fn load_oauth_token_from_keyring(server: &McpServer) -> Result<Option<String>> {
+    if secrets_backend() == SecretsBackend::Environment {
+        return Ok(None);
+    }
     // Compose a stable key based on base_url host + path
     let service = "oatty-mcp-oauth";
     let account = if let Some(url) = &server.base_url {

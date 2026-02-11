@@ -62,7 +62,7 @@ fn build_dracula_roles() -> ThemeRoles {
         border: UI_BORDER,
         divider: UI_DIVIDER,
         text: TEXT_PRIMARY,
-        text_secondary: TEXT_SECONDARY,
+        text_secondary: lighten_rgb(TEXT_SECONDARY, 0.18),
         text_muted: TEXT_MUTED,
         accent_primary: ACCENT_PRIMARY,
         accent_secondary: ACCENT_SECONDARY,
@@ -71,7 +71,7 @@ fn build_dracula_roles() -> ThemeRoles {
         success: STATUS_OK,
         warning: STATUS_WARN,
         error: STATUS_ERROR,
-        selection_bg: SELECTION_BACKGROUND,
+        selection_bg: darken_rgb(SELECTION_BACKGROUND, 0.85),
         selection_fg: TEXT_SELECTED,
         focus: ACCENT_SECONDARY, // Secondary accent for focus
         search_highlight: SEARCH_HIGHLIGHT,
@@ -96,7 +96,7 @@ fn build_dracula_high_contrast_roles() -> ThemeRoles {
     roles.text = TEXT_SELECTED;
     roles.text_secondary = TEXT_SELECTED;
     roles.text_muted = TEXT_SECONDARY;
-    roles.selection_bg = lighten_rgb(SELECTION_INACTIVE_BACKGROUND, 0.10);
+    roles.selection_bg = darken_rgb(lighten_rgb(SELECTION_INACTIVE_BACKGROUND, 0.10), 0.85);
     roles.focus = ACCENT_PRIMARY;
     roles.scrollbar_thumb = lighten_rgb(roles.scrollbar_thumb, 0.25);
     roles.table_row_even = darken_rgb(BG_PANEL, 0.45);

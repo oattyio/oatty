@@ -46,7 +46,7 @@ struct PaletteLayout {
 /// - Text input with cursor navigation
 /// - Real-time command suggestions
 /// - Suggestion acceptance and completion
-/// - Help integration (Ctrl+H)
+/// - Help integration (F1)
 /// - Error display and validation
 /// - Ghost text for completion hints
 ///
@@ -56,7 +56,7 @@ struct PaletteLayout {
 /// - **Backspace**: Remove character before cursor
 /// - **Arrow keys**: Navigate suggestions (Up/Down) or move cursor (Left/Right)
 /// - **Tab**: Trigger suggestions list
-/// - **Ctrl+H**: Open help for current command
+/// - **F1**: Open help for current command
 /// - **Ctrl+F**: Open command browser
 /// - **Enter**: Execute command or insert selected suggestion
 /// - **Escape**: Clear input and close suggestions
@@ -204,7 +204,7 @@ impl PaletteComponent {
         app.palette.apply_ghost_text();
     }
 
-    /// Handles the Ctrl+H key combination to open help for the current command.
+    /// Handles the F1 key to open help for the current command.
     ///
     /// This function ensures suggestions are up to date, retrieves the
     /// currently selected command specification, and opens the help modal
@@ -457,7 +457,7 @@ impl Component for PaletteComponent {
     /// - **Arrow keys**: Navigate through suggestions (Up/Down) or move cursor
     ///   (Left/Right)
     /// - **Tab**: Trigger the suggestions list
-    /// - **Ctrl+H**: Open help for the current command or top suggestion
+    /// - **F1**: Open help for the current command or top suggestion
     /// - **Ctrl+F**: Open the command browser
     /// - **Enter**: Execute the current command (if complete) or insert selected suggestion
     /// - **Escape**: Clear the palette input and close suggestions
@@ -473,7 +473,7 @@ impl Component for PaletteComponent {
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
                 self.handle_character_input(app, c);
             }
-            KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::F(1) => {
                 effects.extend(self.handle_help_request(app));
             }
             KeyCode::Backspace => {
@@ -636,7 +636,7 @@ impl Component for PaletteComponent {
                 ("Tab", " Completions "),
                 ("↑/↓", " Cycle  "),
                 ("Enter", " Accept  "),
-                ("Ctrl+H", " Help  "),
+                ("F1", " Help  "),
                 ("Esc", " Cancel"),
             ],
         )

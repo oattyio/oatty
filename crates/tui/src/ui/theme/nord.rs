@@ -35,7 +35,7 @@ pub const A_GREEN: Color = Color::Rgb(0xA3, 0xBE, 0x8C); // #A3BE8C
 
 // THEME.md authoritative aliases
 pub const BG_MAIN: Color = N0; // App/root background
-pub const BG_PANEL: Color = N1; // Secondary panels/cards/inputs
+pub const BG_PANEL: Color = N0; // Secondary panels/cards/inputs
 pub const BG_PANEL_MUTED: Color = N2; // Muted or inactive surfaces
 pub const BG_MODAL_OVERLAY: Color = Color::Rgb(0x1A, 0x1E, 0x28); // Darkened overlay for modals
 pub const UI_BORDER: Color = N1; // Borders/dividers
@@ -65,7 +65,7 @@ fn build_nord_roles() -> ThemeRoles {
         divider: UI_DIVIDER,
 
         text: TEXT_PRIMARY,
-        text_secondary: TEXT_SECONDARY,
+        text_secondary: lighten_rgb(TEXT_SECONDARY, 0.08),
         text_muted: TEXT_MUTED,
 
         accent_primary: ACCENT_TEAL,
@@ -77,7 +77,7 @@ fn build_nord_roles() -> ThemeRoles {
         warning: STATUS_WARN,
         error: STATUS_ERROR,
 
-        selection_bg: UI_DIVIDER,
+        selection_bg: darken_rgb(UI_DIVIDER, 0.85),
         selection_fg: TEXT_SELECTED,
         focus: ACCENT_TEAL,
         search_highlight: ACCENT_TEAL,
@@ -150,5 +150,23 @@ impl NordThemeHighContrast {
 impl Theme for NordThemeHighContrast {
     fn roles(&self) -> &ThemeRoles {
         &self.roles
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{NordTheme, NordThemeHighContrast};
+    use crate::ui::theme::roles::Theme;
+
+    #[test]
+    fn nord_surface_matches_background() {
+        let theme = NordTheme::new();
+        assert_eq!(theme.roles().surface, theme.roles().background);
+    }
+
+    #[test]
+    fn nord_high_contrast_surface_matches_background() {
+        let theme = NordThemeHighContrast::new();
+        assert_eq!(theme.roles().surface, theme.roles().background);
     }
 }

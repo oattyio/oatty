@@ -15,7 +15,11 @@ use oatty_engine::{
     WorkflowRunState,
 };
 use oatty_mcp::{PluginEngine, config::load_config};
-use oatty_registry::{CommandRegistry, build_clap};
+use oatty_registry::workflows::load_workflows_from_directory;
+use oatty_registry::{
+    CommandRegistry, OpenApiCatalogImportError, OpenApiCatalogImportRequest, build_clap, default_config_path, default_workflows_path,
+    import_openapi_catalog_into_registry,
+};
 use oatty_types::{
     EnvVar, ExecOutcome, RuntimeWorkflow,
     command::{CommandExecution, CommandFlag, CommandSpec},
@@ -25,7 +29,7 @@ use oatty_util::{
     DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, build_path, has_meaningful_value,
     value_contains_secret, workflow_input_uses_history,
 };
-use reqwest::Method;
+use reqwest::{Method, Url};
 use serde_json::{Map, Number, Value, json};
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -445,11 +449,14 @@ fn format_step_status(status: StepStatus) -> &'static str {
 /// ```
 async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches, plugin_engine: Arc<PluginEngine>) -> Result<()> {
     let (group, group_matches) = extract_group_and_matches(matches)?;
-    let (command_name, command_matches) = extract_command_and_matches(group_matches)?;
-
     if group == "workflow" {
-        return handle_workflow_command(Arc::clone(&registry), matches, command_name, command_matches);
+        let (subcommand, sub_matches) = extract_command_and_matches(group_matches)?;
+        return handle_workflow_command(Arc::clone(&registry), matches, subcommand, sub_matches);
     }
+    if group == "import" {
+        return handle_import_command(Arc::clone(&registry), matches, group_matches).await;
+    }
+    let (command_name, command_matches) = extract_command_and_matches(group_matches)?;
 
     let (command_spec, base_url, headers) = resolve_command_context(&registry, group, command_name)?;
     let positional_values = collect_positional_values(&command_spec, command_matches);
@@ -610,6 +617,303 @@ fn output_json_or_text(text: &str) -> Result<()> {
         Err(_) => println!("{}", text),
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImportKind {
+    Catalog,
+    Workflow,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ImportSourceType {
+    Path,
+    Url,
+}
+
+#[derive(Debug)]
+struct LoadedImportSource {
+    source: String,
+    source_content: String,
+    source_type: ImportSourceType,
+}
+
+async fn handle_import_command(
+    registry: Arc<Mutex<CommandRegistry>>,
+    root_matches: &ArgMatches,
+    import_matches: &ArgMatches,
+) -> Result<()> {
+    let source = import_matches
+        .get_one::<String>("source")
+        .cloned()
+        .context("import requires a source path or URL")?;
+    let source_type = parse_import_source_type(import_matches.get_one::<String>("source-type").map(String::as_str))?;
+    let import_kind_override = parse_import_kind(import_matches.get_one::<String>("kind").map(String::as_str))?;
+    let loaded_source = load_import_source(source, source_type).await?;
+    let detected_import_kind = detect_import_kind(&loaded_source.source_content);
+    let import_kind = resolve_import_kind(import_kind_override, detected_import_kind)?;
+
+    match import_kind {
+        ImportKind::Catalog => import_catalog_from_source(registry, root_matches, import_matches, loaded_source),
+        ImportKind::Workflow => import_workflow_from_source(registry, root_matches, import_matches, loaded_source),
+    }
+}
+
+async fn load_import_source(source: String, source_type: Option<ImportSourceType>) -> Result<LoadedImportSource> {
+    let resolved_source_type = source_type.unwrap_or_else(|| detect_source_type_from_input(&source));
+    match resolved_source_type {
+        ImportSourceType::Path => {
+            let source_path = oatty_util::expand_tilde(&source);
+            let source_content = fs::read_to_string(&source_path)
+                .with_context(|| format!("failed to read import source path '{}'", source_path.display()))?;
+            Ok(LoadedImportSource {
+                source,
+                source_content,
+                source_type: ImportSourceType::Path,
+            })
+        }
+        ImportSourceType::Url => {
+            let url = Url::parse(&source).with_context(|| format!("invalid import URL '{source}'"))?;
+            if !matches!(url.scheme(), "http" | "https") {
+                bail!(
+                    "unsupported import URL scheme '{}'; only http and https are supported",
+                    url.scheme()
+                );
+            }
+
+            let response = reqwest::get(url.clone())
+                .await
+                .with_context(|| format!("failed to fetch import URL '{url}'"))?;
+            let status = response.status();
+            if !status.is_success() {
+                bail!("import URL '{}' returned HTTP {}", url, status);
+            }
+            let source_content = response
+                .text()
+                .await
+                .with_context(|| format!("failed to read import URL response body for '{url}'"))?;
+            Ok(LoadedImportSource {
+                source,
+                source_content,
+                source_type: ImportSourceType::Url,
+            })
+        }
+    }
+}
+
+fn parse_import_source_type(value: Option<&str>) -> Result<Option<ImportSourceType>> {
+    match value {
+        Some("path") => Ok(Some(ImportSourceType::Path)),
+        Some("url") => Ok(Some(ImportSourceType::Url)),
+        Some(other) => bail!("unsupported --source-type '{other}', expected 'path' or 'url'"),
+        None => Ok(None),
+    }
+}
+
+fn parse_import_kind(value: Option<&str>) -> Result<Option<ImportKind>> {
+    match value {
+        Some("catalog") => Ok(Some(ImportKind::Catalog)),
+        Some("workflow") => Ok(Some(ImportKind::Workflow)),
+        Some(other) => bail!("unsupported --kind '{other}', expected 'catalog' or 'workflow'"),
+        None => Ok(None),
+    }
+}
+
+fn detect_source_type_from_input(source: &str) -> ImportSourceType {
+    if source.starts_with("http://") || source.starts_with("https://") {
+        ImportSourceType::Url
+    } else {
+        ImportSourceType::Path
+    }
+}
+
+fn detect_import_kind(source_content: &str) -> Option<ImportKind> {
+    let document_value = parse_document_value(source_content).ok()?;
+
+    if looks_like_catalog_document(&document_value) {
+        return Some(ImportKind::Catalog);
+    }
+
+    if parse_valid_workflow_definition(source_content).is_ok() {
+        return Some(ImportKind::Workflow);
+    }
+
+    None
+}
+
+fn parse_document_value(source_content: &str) -> Result<Value> {
+    serde_json::from_str::<Value>(source_content)
+        .or_else(|_| serde_yaml::from_str::<Value>(source_content))
+        .context("source content is not valid JSON or YAML")
+}
+
+fn looks_like_catalog_document(document: &Value) -> bool {
+    document
+        .as_object()
+        .is_some_and(|map| map.get("openapi").is_some() && map.get("paths").is_some_and(Value::is_object))
+}
+
+fn parse_valid_workflow_definition(source_content: &str) -> Result<WorkflowDefinition> {
+    let definition = serde_json::from_str::<WorkflowDefinition>(source_content)
+        .or_else(|_| serde_yaml::from_str::<WorkflowDefinition>(source_content))
+        .context("source content does not match workflow schema")?;
+    runtime_workflow_from_definition(&definition).context("workflow validation failed")?;
+    Ok(definition)
+}
+
+fn resolve_import_kind(import_kind_override: Option<ImportKind>, detected_import_kind: Option<ImportKind>) -> Result<ImportKind> {
+    if let Some(kind) = import_kind_override {
+        return Ok(kind);
+    }
+    if let Some(kind) = detected_import_kind {
+        return Ok(kind);
+    }
+
+    bail!("could not auto-detect import kind from source content. Re-run with '--kind catalog' or '--kind workflow'")
+}
+
+fn import_catalog_from_source(
+    registry: Arc<Mutex<CommandRegistry>>,
+    root_matches: &ArgMatches,
+    import_matches: &ArgMatches,
+    loaded_source: LoadedImportSource,
+) -> Result<()> {
+    let overwrite = import_matches.get_flag("overwrite");
+    let enabled = !import_matches.get_flag("disabled");
+
+    let mut registry_guard = registry.lock().expect("could not obtain lock on registry");
+    let import_result = import_openapi_catalog_into_registry(
+        &mut registry_guard,
+        OpenApiCatalogImportRequest {
+            source_content: loaded_source.source_content,
+            catalog_title_override: import_matches.get_one::<String>("catalog-title").cloned(),
+            vendor_override: import_matches.get_one::<String>("vendor").cloned(),
+            base_url_override: import_matches.get_one::<String>("base-url").cloned(),
+            enabled,
+            overwrite,
+        },
+    )
+    .map_err(format_catalog_import_error)?;
+
+    if root_matches.get_flag("json") {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "kind": "catalog",
+                "source": loaded_source.source,
+                "source_type": match loaded_source.source_type {
+                    ImportSourceType::Path => "path",
+                    ImportSourceType::Url => "url",
+                },
+                "catalog_id": import_result.catalog_id,
+                "catalog_path": default_config_path().to_string_lossy(),
+                "manifest_path": import_result.catalog.manifest_path,
+                "command_count": import_result.command_count,
+                "provider_contract_count": import_result.provider_contract_count,
+                "enabled": import_result.catalog.is_enabled,
+            }))?
+        );
+    } else {
+        println!("Imported catalog '{}'", import_result.catalog_id);
+        println!("  Source: {}", loaded_source.source);
+        println!("  Commands: {}", import_result.command_count);
+        println!("  Provider contracts: {}", import_result.provider_contract_count);
+        println!("  Enabled: {}", import_result.catalog.is_enabled);
+        println!("  Registry config: {}", default_config_path().display());
+        println!("  Manifest path: {}", import_result.catalog.manifest_path);
+    }
+
+    Ok(())
+}
+
+fn import_workflow_from_source(
+    registry: Arc<Mutex<CommandRegistry>>,
+    root_matches: &ArgMatches,
+    import_matches: &ArgMatches,
+    loaded_source: LoadedImportSource,
+) -> Result<()> {
+    let definition = parse_valid_workflow_definition(&loaded_source.source_content)?;
+    let workflow_identifier = definition.workflow.clone();
+    let overwrite = import_matches.get_flag("overwrite");
+    let workflows_path = default_workflows_path();
+    let workflow_file_path = workflows_path.join(format!("{}.yaml", sanitize_file_name(&workflow_identifier)));
+
+    if workflow_file_path.exists() && !overwrite {
+        bail!(
+            "workflow '{}' already exists at {}. Re-run with '--overwrite' to replace it.",
+            workflow_identifier,
+            workflow_file_path.display()
+        );
+    }
+
+    fs::create_dir_all(&workflows_path).with_context(|| format!("failed to create workflows directory '{}'", workflows_path.display()))?;
+    let workflow_content = serde_yaml::to_string(&definition).context("failed to serialize workflow for persistence")?;
+    fs::write(&workflow_file_path, workflow_content)
+        .with_context(|| format!("failed to persist workflow '{}'", workflow_file_path.display()))?;
+
+    {
+        let mut registry_guard = registry.lock().expect("could not obtain lock on registry");
+        registry_guard.workflows = load_workflows_from_directory(&workflows_path)
+            .with_context(|| format!("failed to refresh workflows from '{}'", workflows_path.display()))?;
+    }
+
+    if root_matches.get_flag("json") {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&json!({
+                "kind": "workflow",
+                "source": loaded_source.source,
+                "source_type": match loaded_source.source_type {
+                    ImportSourceType::Path => "path",
+                    ImportSourceType::Url => "url",
+                },
+                "workflow_id": workflow_identifier,
+                "path": workflow_file_path,
+                "overwritten": overwrite,
+            }))?
+        );
+    } else {
+        println!("Imported workflow '{}'", workflow_identifier);
+        println!("  Source: {}", loaded_source.source);
+        println!("  Path: {}", workflow_file_path.display());
+        println!("  Overwritten: {}", overwrite);
+    }
+
+    Ok(())
+}
+
+fn sanitize_file_name(raw_identifier: &str) -> String {
+    let mut output = String::with_capacity(raw_identifier.len());
+    for ch in raw_identifier.chars() {
+        if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {
+            output.push(ch);
+        } else {
+            output.push('_');
+        }
+    }
+    let trimmed = output.trim_matches('_');
+    if trimmed.is_empty() {
+        "workflow".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn format_catalog_import_error(error: OpenApiCatalogImportError) -> anyhow::Error {
+    match error {
+        OpenApiCatalogImportError::PreflightValidation(violations) => anyhow!(
+            "OpenAPI source failed preflight validation: {}",
+            violations
+                .iter()
+                .map(|violation| format!("{} [{}]: {}", violation.path, violation.rule, violation.message))
+                .collect::<Vec<String>>()
+                .join("; ")
+        ),
+        OpenApiCatalogImportError::CatalogConflict(catalog_id) => {
+            anyhow!("catalog '{}' already exists. Re-run with '--overwrite' to replace it.", catalog_id)
+        }
+        other => anyhow!(other.to_string()),
+    }
 }
 
 fn handle_workflow_command(
@@ -944,5 +1248,49 @@ mod tests {
         persist_history_after_cli_run(&run_state, &store);
         let key = history_key_for(&run_state);
         assert!(store.get_latest_value(&key).unwrap().is_none());
+    }
+
+    #[test]
+    fn detect_source_type_from_input_handles_urls_and_paths() {
+        assert_eq!(
+            detect_source_type_from_input("https://example.com/openapi.yaml"),
+            ImportSourceType::Url
+        );
+        assert_eq!(detect_source_type_from_input("/tmp/workflow.yaml"), ImportSourceType::Path);
+    }
+
+    #[test]
+    fn detect_import_kind_identifies_catalog_document() {
+        let source = r#"
+openapi: 3.0.0
+info:
+  title: Example
+  version: "1.0.0"
+paths:
+  /apps:
+    get:
+      operationId: listApps
+      responses:
+        "200":
+          description: ok
+"#;
+        assert_eq!(detect_import_kind(source), Some(ImportKind::Catalog));
+    }
+
+    #[test]
+    fn detect_import_kind_identifies_workflow_document() {
+        let source = r#"
+workflow: deploy_app
+steps:
+  - id: list_apps
+    run: apps list
+"#;
+        assert_eq!(detect_import_kind(source), Some(ImportKind::Workflow));
+    }
+
+    #[test]
+    fn sanitize_file_name_normalizes_unsafe_characters() {
+        assert_eq!(sanitize_file_name("deploy/app@prod"), "deploy_app_prod");
+        assert_eq!(sanitize_file_name("___"), "workflow");
     }
 }

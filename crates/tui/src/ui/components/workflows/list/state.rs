@@ -7,7 +7,7 @@ use crate::ui::components::common::TextInputState;
 use anyhow::{Result, anyhow};
 use oatty_engine::workflow::document::build_runtime_catalog;
 use oatty_registry::CommandRegistry;
-use oatty_types::workflow::RuntimeWorkflow;
+use oatty_types::workflow::{RuntimeWorkflow, WorkflowDefinition};
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::{layout::Rect, widgets::ListState};
 use std::sync::{Arc, Mutex};
@@ -19,6 +19,7 @@ pub struct WorkflowListState {
     pub f_list: FocusFlag,
 
     workflows: Vec<RuntimeWorkflow>,
+    cached_workflow_definitions: Option<Vec<WorkflowDefinition>>,
     filtered_indices: Vec<usize>,
     search_input: TextInputState,
     list_state: ListState,
@@ -30,6 +31,7 @@ impl WorkflowListState {
     pub fn new() -> Self {
         Self {
             workflows: Vec::new(),
+            cached_workflow_definitions: None,
             filtered_indices: Vec::new(),
             search_input: TextInputState::new(),
             selected: 0,
@@ -41,15 +43,30 @@ impl WorkflowListState {
 
     /// Loads workflow definitions from the registry when the feature flag is enabled.
     ///
-    /// The list is populated once, and later calls are inexpensive no-ops.
+    /// The list is loaded lazily and refreshed whenever the underlying
+    /// workflow definitions in the shared registry change.
     pub fn ensure_loaded(&mut self, registry: &Arc<Mutex<CommandRegistry>>) -> Result<()> {
-        if self.workflows.is_empty() {
-            let definitions = &registry.lock().map_err(|_| anyhow!("could not lock registry"))?.workflows;
+        let definitions_snapshot = {
+            let registry_guard = registry.lock().map_err(|_| anyhow!("could not lock registry"))?;
+            let definitions = &registry_guard.workflows;
 
-            let catalog = build_runtime_catalog(definitions)?;
-            self.workflows = catalog.into_values().collect();
-            self.rebuild_filter();
-        }
+            let definitions_changed = self
+                .cached_workflow_definitions
+                .as_ref()
+                .map(|cached| cached != definitions)
+                .unwrap_or(true);
+
+            if !definitions_changed && !self.workflows.is_empty() {
+                return Ok(());
+            }
+
+            definitions.clone()
+        };
+
+        let catalog = build_runtime_catalog(&definitions_snapshot)?;
+        self.workflows = catalog.into_values().collect();
+        self.cached_workflow_definitions = Some(definitions_snapshot);
+        self.rebuild_filter();
 
         Ok(())
     }
@@ -59,6 +76,11 @@ impl WorkflowListState {
         self.filtered_indices
             .get(self.selected)
             .and_then(|index| self.workflows.get(*index))
+    }
+
+    /// Returns the currently selected index in filtered-list coordinates.
+    pub fn selected_filtered_index(&self) -> Option<usize> {
+        self.list_state.selected()
     }
 
     pub fn set_selected_workflow(&mut self, index: usize) {
@@ -233,5 +255,53 @@ impl HasFocus for WorkflowListState {
 
     fn area(&self) -> Rect {
         Rect::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use indexmap::IndexMap;
+    use oatty_types::workflow::{WorkflowDefinition, WorkflowStepDefinition};
+
+    fn workflow_definition(identifier: &str, title: Option<&str>) -> WorkflowDefinition {
+        WorkflowDefinition {
+            workflow: identifier.to_string(),
+            title: title.map(str::to_string),
+            description: None,
+            inputs: IndexMap::new(),
+            steps: vec![WorkflowStepDefinition {
+                id: "step".to_string(),
+                run: "apps:list".to_string(),
+                description: None,
+                depends_on: Vec::new(),
+                r#if: None,
+                with: IndexMap::new(),
+                body: serde_json::Value::Null,
+                repeat: None,
+                output_contract: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn ensure_loaded_refreshes_when_registry_workflow_definition_changes() {
+        let mut registry_value = CommandRegistry::default();
+        registry_value.workflows = vec![workflow_definition("deploy", Some("Deploy v1"))];
+        let registry = Arc::new(Mutex::new(registry_value));
+
+        let mut state = WorkflowListState::new();
+        state.ensure_loaded(&registry).expect("initial load should succeed");
+        let initial_title = state.selected_workflow().and_then(|workflow| workflow.title.clone());
+        assert_eq!(initial_title.as_deref(), Some("Deploy v1"));
+
+        {
+            let mut registry_guard = registry.lock().expect("registry lock");
+            registry_guard.workflows = vec![workflow_definition("deploy", Some("Deploy v2"))];
+        }
+
+        state.ensure_loaded(&registry).expect("reload should succeed");
+        let refreshed_title = state.selected_workflow().and_then(|workflow| workflow.title.clone());
+        assert_eq!(refreshed_title.as_deref(), Some("Deploy v2"));
     }
 }

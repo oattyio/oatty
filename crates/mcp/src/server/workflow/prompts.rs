@@ -67,7 +67,7 @@ fn workflow_author_prompt(arguments: Option<&Map<String, Value>>) -> Result<GetP
         messages: vec![PromptMessage::new_text(
             PromptMessageRole::User,
             format!(
-                "Author a workflow manifest in YAML with these requirements:\n- Goal: {goal}\n- Constraints: {constraints}\n- Include inputs with validation where appropriate\n- Include deterministic step IDs and explicit run commands\n- Use `${{{{ inputs.name }}}}` interpolation syntax for step inputs"
+                "Author a workflow manifest in YAML with these requirements:\n- Goal: {goal}\n- Constraints: {constraints}\n- Include inputs with validation where appropriate\n- Prefer provider-backed inputs whenever a provider can supply valid choices\n- For provider-backed inputs, include `provider`, `select`, and `provider_args`/`depends_on` bindings to earlier inputs or steps when relevant\n- Avoid manual free-text inputs when a provider can discover the value\n- Include deterministic step IDs and explicit run commands\n- Use `${{{{ inputs.name }}}}` interpolation syntax for step inputs"
             ),
         )],
     })
@@ -82,7 +82,7 @@ fn workflow_extend_prompt(arguments: Option<&Map<String, Value>>) -> Result<GetP
         messages: vec![PromptMessage::new_text(
             PromptMessageRole::User,
             format!(
-                "Update this workflow manifest according to the change request.\n\nChange request:\n{change_request}\n\nManifest:\n{manifest}\n\nRules:\n- Preserve existing identifiers unless necessary\n- Keep schema validity\n- Avoid removing required inputs unless explicitly requested"
+                "Update this workflow manifest according to the change request.\n\nChange request:\n{change_request}\n\nManifest:\n{manifest}\n\nRules:\n- Preserve existing identifiers unless necessary\n- Keep schema validity\n- Preserve existing provider-backed inputs and bindings unless the change requires adjustment\n- Add provider-backed inputs when the change introduces values that can be discovered dynamically\n- Avoid removing required inputs unless explicitly requested"
             ),
         )],
     })
@@ -184,5 +184,20 @@ mod tests {
     fn get_prompt_requires_mandatory_arguments() {
         let error = get_prompt("workflow.author", None).expect_err("author prompt should reject missing goal");
         assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    }
+
+    #[test]
+    fn workflow_author_prompt_mentions_provider_guidance() {
+        let args = serde_json::json!({
+            "goal": "Create an app and attach an addon",
+            "constraints": "Use existing app names"
+        });
+        let object = args.as_object().expect("object args");
+        let prompt = get_prompt("workflow.author", Some(object)).expect("author prompt");
+        let rendered = format!("{:?}", prompt.messages);
+
+        assert!(rendered.contains("provider-backed inputs"));
+        assert!(rendered.contains("provider_args"));
+        assert!(rendered.contains("depends_on"));
     }
 }

@@ -20,6 +20,7 @@ use ratatui::{
     Frame,
     layout::Rect,
     style::{Modifier, Style},
+    symbols::merge::MergeStrategy,
     text::{Line, Text},
     widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
 };
@@ -40,7 +41,7 @@ use ratatui::{
 ///
 /// # Usage
 ///
-/// The help component is typically activated by pressing Ctrl+H in the
+/// The help component is typically activated by pressing F1 in the
 /// command palette or command browser. It displays help for the currently
 /// selected command or the command being typed.
 ///
@@ -56,6 +57,7 @@ use ratatui::{
 pub struct HelpComponent {
     focused: bool,
     render_area: Rect,
+    merge_borders: bool,
 }
 
 impl Component for HelpComponent {
@@ -126,7 +128,10 @@ impl Component for HelpComponent {
         let spec = app.help.spec().or(app.browser.selected_command());
         let theme = &*app.ctx.theme;
         let (title, text) = self.resolve_title_and_text(spec, theme, &app.ctx.product_name);
-        let block = th::block(theme, Some(&title), self.focused);
+        let mut block = th::block(theme, Some(&title), self.focused);
+        if self.merge_borders {
+            block = block.merge_borders(MergeStrategy::Exact);
+        }
 
         frame.render_widget(block.clone(), rect);
         let inner = block.inner(rect);
@@ -170,6 +175,10 @@ impl Component for HelpComponent {
 impl HelpComponent {
     pub fn set_focused(&mut self, focused: bool) {
         self.focused = focused;
+    }
+
+    pub fn set_merge_borders(&mut self, merge_borders: bool) {
+        self.merge_borders = merge_borders;
     }
 
     fn handle_scroll_key(app: &mut App, code: KeyCode) -> bool {

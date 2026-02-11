@@ -36,6 +36,9 @@ pub struct WorkflowState {
     /// The focus flags for the workflow view.
     pub container_focus: FocusFlag,
     pub f_search: FocusFlag,
+    pub f_import_button: FocusFlag,
+    pub f_remove_button: FocusFlag,
+    pub f_modal_confirmation_button: FocusFlag,
     pub active_run_state: Option<Rc<RefCell<WorkflowRunState>>>,
     input_view: Option<WorkflowInputViewState>,
     run_view: Option<RunViewState>,
@@ -55,6 +58,9 @@ impl WorkflowState {
             collector: None,
             container_focus: FocusFlag::new().with_name("workflow.container"),
             f_search: FocusFlag::new().with_name("workflow.search"),
+            f_import_button: FocusFlag::new().with_name("workflow.import"),
+            f_remove_button: FocusFlag::new().with_name("workflow.remove"),
+            f_modal_confirmation_button: FocusFlag::new().with_name("workflow.remove.confirm"),
             active_run_id: None,
             run_control: None,
         }
@@ -289,6 +295,8 @@ impl HasFocus for WorkflowState {
         } else {
             let tag = builder.start(self);
             builder.leaf_widget(&self.f_search);
+            builder.leaf_widget(&self.f_import_button);
+            builder.leaf_widget(&self.f_remove_button);
             builder.widget(&self.list);
             builder.end(tag);
         }
