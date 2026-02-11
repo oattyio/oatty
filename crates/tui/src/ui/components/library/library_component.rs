@@ -34,8 +34,9 @@ use oatty_util::truncate_with_ellipsis;
 use rat_focus::{FocusFlag, HasFocus};
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Position, Rect},
+    layout::{Constraint, Layout, Position, Rect, Spacing},
     style::Modifier,
+    symbols::merge::MergeStrategy,
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Padding, Paragraph},
 };
@@ -43,6 +44,7 @@ use unicode_width::UnicodeWidthStr;
 use url::Url;
 
 const DESCRIPTION_LABEL: &str = "Description: ";
+const PAGE_SCROLL_STEP: usize = 10;
 
 #[derive(Debug, Default)]
 pub struct LibraryLayout {
@@ -124,7 +126,7 @@ impl LibraryComponent {
 
     fn render_api_list(&mut self, frame: &mut Frame, app: &mut App) {
         let is_list_focused = app.library.f_api_list.get();
-        let list_block = block(&*app.ctx.theme, Some("Catalogs"), is_list_focused);
+        let list_block = block(&*app.ctx.theme, Some("Catalogs"), is_list_focused).merge_borders(MergeStrategy::Exact);
         let list_inner = list_block.inner(self.layout.api_list);
         frame.render_widget(list_block, self.layout.api_list);
 
@@ -151,25 +153,34 @@ impl LibraryComponent {
                 MessageType::Info => theme.status_info(),
                 MessageType::Success => theme.status_success(),
             };
-            let message_paragraph = Paragraph::new(format!("{}", message)).style(style);
+            let message_paragraph = Paragraph::new(format!("{}", message))
+                .style(style)
+                .wrap(ratatui::widgets::Wrap { trim: true });
             frame.render_widget(message_paragraph, self.layout.message);
         }
     }
 
     fn render_details(&mut self, frame: &mut Frame, app: &mut App) {
         let area = self.layout.details;
+        let theme = &*app.ctx.theme;
+        let details_block = block(theme, Some("Catalog Details"), false).merge_borders(MergeStrategy::Exact);
+        let details_inner = details_block.inner(area);
+        frame.render_widget(details_block, area);
+
         let Some(projection) = app.library.selected_projection() else {
-            frame.render_widget(Paragraph::new("Select an item to configure"), area);
+            frame.render_widget(
+                Paragraph::new("Select an item to configure").block(Block::new().padding(Padding::new(1, 1, 1, 1))),
+                details_inner,
+            );
             return;
         };
-        let theme = &*app.ctx.theme;
         let (title_style, enabled_text) = if projection.is_enabled {
             (theme.status_success(), "enabled")
         } else {
             (theme.text_muted_style(), "disabled")
         };
         let block = Block::new().padding(Padding::new(1, 1, 0, 1));
-        let inner = block.inner(area);
+        let inner = block.inner(details_inner);
         let truncated_description = truncate_with_ellipsis(
             &projection.description,
             (inner.width as usize).saturating_sub(DESCRIPTION_LABEL.width()),
@@ -205,14 +216,14 @@ impl LibraryComponent {
 
         let summary = Paragraph::new(summary_lines).block(block);
         let line_ct = summary.line_count(inner.width) as u16;
-        frame.render_widget(summary, area);
+        frame.render_widget(summary, details_inner);
         self.layout.description = Rect::new(inner.x + DESCRIPTION_LABEL.width() as u16, inner.y + 5, inner.width, 1);
-        let mut remaining_area = area;
-        remaining_area.y = area.y + line_ct;
-        remaining_area.height = area.height.saturating_sub(line_ct);
+        let mut remaining_area = details_inner;
+        remaining_area.y = details_inner.y + line_ct;
+        remaining_area.height = details_inner.height.saturating_sub(line_ct);
 
         let remaining_area_layout = Layout::vertical([
-            Constraint::Length(projection.base_urls.len() as u16 + 4), // base url radio group
+            Constraint::Length(projection.base_urls.len() as u16 + 5), // base url radio group
             Constraint::Percentage(100),                               // kv editor
         ])
         .split(remaining_area);
@@ -251,22 +262,22 @@ impl LibraryComponent {
         frame.render_widget(block, area);
 
         let layout = Layout::vertical([
+            Constraint::Length(1),       // Error message
             Constraint::Length(1),       // Buttons
-            Constraint::Length(1),       // Spacer
             Constraint::Percentage(100), // List
         ])
         .split(inner);
 
         let buttons_layout = Layout::horizontal([
-            Constraint::Min(1),     // Error message
+            Constraint::Min(0),     // Left spacer
             Constraint::Length(7),  // Add
             Constraint::Length(1),  // spacer
             Constraint::Length(10), // Remove
         ])
-        .split(layout[0]);
+        .split(layout[1]);
         if let Some(err) = app.library.base_url_err() {
             let error_message = Line::from(vec![Span::styled(format!("✘ {}", err), theme.status_error())]);
-            frame.render_widget(error_message, buttons_layout[0]);
+            frame.render_widget(error_message, layout[0]);
         }
 
         let add = Line::from(vec![
@@ -593,6 +604,86 @@ impl LibraryComponent {
 
         Vec::new()
     }
+
+    fn move_api_selection_to_first(&self, app: &mut App) {
+        if app.library.projections().is_empty() {
+            app.library.set_api_selected_index(None);
+            return;
+        }
+        app.library.set_api_selected_index(Some(0));
+    }
+
+    fn move_api_selection_to_last(&self, app: &mut App) {
+        let projection_count = app.library.projections().len();
+        if projection_count == 0 {
+            app.library.set_api_selected_index(None);
+            return;
+        }
+        app.library.set_api_selected_index(Some(projection_count.saturating_sub(1)));
+    }
+
+    fn move_api_selection_by_page(&self, app: &mut App, forward: bool) {
+        let projection_count = app.library.projections().len();
+        if projection_count == 0 {
+            app.library.set_api_selected_index(None);
+            return;
+        }
+        let current_index = app
+            .library
+            .api_selected_index()
+            .unwrap_or(0)
+            .min(projection_count.saturating_sub(1));
+        let next_index = if forward {
+            current_index
+                .saturating_add(PAGE_SCROLL_STEP)
+                .min(projection_count.saturating_sub(1))
+        } else {
+            current_index.saturating_sub(PAGE_SCROLL_STEP)
+        };
+        app.library.set_api_selected_index(Some(next_index));
+    }
+
+    fn move_url_selection_to_first(&self, app: &mut App) {
+        let Some(base_url_count) = app.library.selected_projection().map(|projection| projection.base_urls.len()) else {
+            app.library.set_url_selected_index(None);
+            return;
+        };
+        if base_url_count == 0 {
+            app.library.set_url_selected_index(None);
+            return;
+        }
+        app.library.set_url_selected_index(Some(0));
+    }
+
+    fn move_url_selection_to_last(&self, app: &mut App) {
+        let Some(base_url_count) = app.library.selected_projection().map(|projection| projection.base_urls.len()) else {
+            app.library.set_url_selected_index(None);
+            return;
+        };
+        if base_url_count == 0 {
+            app.library.set_url_selected_index(None);
+            return;
+        }
+        app.library.set_url_selected_index(Some(base_url_count.saturating_sub(1)));
+    }
+
+    fn move_url_selection_by_page(&self, app: &mut App, forward: bool) {
+        let Some(base_url_count) = app.library.selected_projection().map(|projection| projection.base_urls.len()) else {
+            app.library.set_url_selected_index(None);
+            return;
+        };
+        if base_url_count == 0 {
+            app.library.set_url_selected_index(None);
+            return;
+        }
+        let current_index = app.library.url_selected_index().unwrap_or(0).min(base_url_count.saturating_sub(1));
+        let next_index = if forward {
+            current_index.saturating_add(PAGE_SCROLL_STEP).min(base_url_count.saturating_sub(1))
+        } else {
+            current_index.saturating_sub(PAGE_SCROLL_STEP)
+        };
+        app.library.set_url_selected_index(Some(next_index));
+    }
 }
 
 impl Component for LibraryComponent {
@@ -665,7 +756,7 @@ impl Component for LibraryComponent {
                     }
                 }
             }
-            KeyCode::Char('i') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            KeyCode::Char('o') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                 return self.handle_import();
             }
             KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
@@ -696,6 +787,34 @@ impl Component for LibraryComponent {
                     app.library.url_select_next();
                 }
             }
+            KeyCode::PageUp => {
+                if app.library.f_api_list.get() {
+                    self.move_api_selection_by_page(app, false);
+                } else if app.library.f_url_list.get() {
+                    self.move_url_selection_by_page(app, false);
+                }
+            }
+            KeyCode::PageDown => {
+                if app.library.f_api_list.get() {
+                    self.move_api_selection_by_page(app, true);
+                } else if app.library.f_url_list.get() {
+                    self.move_url_selection_by_page(app, true);
+                }
+            }
+            KeyCode::Home => {
+                if app.library.f_api_list.get() {
+                    self.move_api_selection_to_first(app);
+                } else if app.library.f_url_list.get() {
+                    self.move_url_selection_to_first(app);
+                }
+            }
+            KeyCode::End => {
+                if app.library.f_api_list.get() {
+                    self.move_api_selection_to_last(app);
+                } else if app.library.f_url_list.get() {
+                    self.move_url_selection_to_last(app);
+                }
+            }
             KeyCode::Right => {
                 app.library.move_cursor_right();
             }
@@ -716,7 +835,7 @@ impl Component for LibraryComponent {
     fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
         let outter = Layout::vertical([
             Constraint::Percentage(100), // Content
-            Constraint::Length(1),       // status/error
+            Constraint::Length(2),       // status/error
         ])
         .split(area);
 
@@ -724,6 +843,7 @@ impl Component for LibraryComponent {
             Constraint::Percentage(30), // Left pane
             Constraint::Percentage(70), // Right pane
         ])
+        .spacing(Spacing::Overlap(1))
         .split(outter[0]);
 
         let left_pane = Layout::vertical([
@@ -737,6 +857,7 @@ impl Component for LibraryComponent {
             Constraint::Length(12), // Import button
             Constraint::Length(1),  // spacer
             Constraint::Length(12), // Remove button
+            Constraint::Length(1),  // spacer
         ])
         .split(left_pane[0]);
 
@@ -813,6 +934,18 @@ impl Component for LibraryComponent {
             MouseEventKind::Moved | MouseEventKind::Up(MouseButton::Left) => {
                 app.library.api_set_mouse_over_index(maybe_api_list_idx);
             }
+            MouseEventKind::ScrollDown if self.layout.api_list.contains(pos) => {
+                app.library.api_list_state_mut().scroll_down_by(1);
+            }
+            MouseEventKind::ScrollUp if self.layout.api_list.contains(pos) => {
+                app.library.api_list_state_mut().scroll_up_by(1);
+            }
+            MouseEventKind::ScrollDown if self.layout.base_url_radio_group.contains(pos) => {
+                app.library.url_list_state_mut().scroll_down_by(1);
+            }
+            MouseEventKind::ScrollUp if self.layout.base_url_radio_group.contains(pos) => {
+                app.library.url_list_state_mut().scroll_up_by(1);
+            }
             _ => {}
         }
 
@@ -829,9 +962,13 @@ impl Component for LibraryComponent {
         let mut hints = Vec::new();
         if app.library.f_api_list.get() {
             hints.push(("↑/↓", " Navigate catalogs "));
+            hints.push(("PgUp/PgDn", " Page catalogs "));
+            hints.push(("Home/End", " Jump catalogs "));
         }
         if app.library.f_url_list_container.get() {
             hints.push(("↑/↓", " Navigate base URLs "));
+            hints.push(("PgUp/PgDn", " Page base URLs "));
+            hints.push(("Home/End", " Jump base URLs "));
             hints.push(("Ctrl+N", " Add base URL "));
             hints.push(("Ctrl+D", " Delete base URL "));
         }
@@ -845,7 +982,7 @@ impl Component for LibraryComponent {
             hints.push(("Enter/Space", " Import catalog "));
         }
 
-        hints.push(("Ctrl+I", " Import catalog "));
+        hints.push(("Ctrl+O", " Import catalog "));
         if app.library.api_selected_index().is_some() {
             hints.push(("Ctrl+R", " Remove catalog "));
 

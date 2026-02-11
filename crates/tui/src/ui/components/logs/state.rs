@@ -264,6 +264,15 @@ impl LogsState {
             ExecOutcome::RegistryCatalogGenerationError(err) | ExecOutcome::RegistryConfigSaveError(err) => {
                 self.append_text_entry_with_level(Some(LogLevel::Error), err.to_string())
             }
+            ExecOutcome::WorkflowImported { workflow_id, path } => {
+                self.append_text_entry(format!("Workflow '{}' imported successfully at '{}'", workflow_id, path.display()));
+            }
+            ExecOutcome::WorkflowRemoved { workflow_id } => {
+                self.append_text_entry(format!("Workflow '{}' removed successfully", workflow_id));
+            }
+            ExecOutcome::WorkflowOperationError(error) => {
+                self.append_text_entry_with_level(Some(LogLevel::Error), error.clone());
+            }
             _ => {}
         }
     }

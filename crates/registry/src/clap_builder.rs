@@ -52,7 +52,8 @@ pub fn build_clap(registry: Arc<Mutex<CommandRegistry>>) -> ClapCommand {
         root = root.subcommand(group_command);
     }
 
-    root.subcommand(build_workflow_root_command())
+    root = root.subcommand(build_workflow_root_command());
+    root.subcommand(build_import_root_command())
 }
 
 /// Creates the root command with global flags.
@@ -245,6 +246,61 @@ fn build_workflow_root_command() -> ClapCommand {
         .subcommand(list_cmd)
         .subcommand(preview_cmd)
         .subcommand(run_cmd)
+}
+
+fn build_import_root_command() -> ClapCommand {
+    ClapCommand::new("import")
+        .about("Import a workflow or OpenAPI catalog from a file path or URL")
+        .arg(
+            Arg::new("source")
+                .value_name("SOURCE")
+                .required(true)
+                .help("Local file path or HTTP(S) URL to import"),
+        )
+        .arg(
+            Arg::new("kind")
+                .long("kind")
+                .value_name("KIND")
+                .value_parser(["catalog", "workflow"])
+                .help("Optional import kind override. Auto-detected when omitted."),
+        )
+        .arg(
+            Arg::new("source-type")
+                .long("source-type")
+                .value_name("SOURCE_TYPE")
+                .value_parser(["path", "url"])
+                .help("Optional source location type hint. Auto-detected when omitted."),
+        )
+        .arg(
+            Arg::new("catalog-title")
+                .long("catalog-title")
+                .value_name("TITLE")
+                .help("Override catalog title during OpenAPI import"),
+        )
+        .arg(
+            Arg::new("vendor")
+                .long("vendor")
+                .value_name("VENDOR")
+                .help("Override vendor/prefix used when generating catalog commands"),
+        )
+        .arg(
+            Arg::new("base-url")
+                .long("base-url")
+                .value_name("URL")
+                .help("Override base URL for imported OpenAPI catalog"),
+        )
+        .arg(
+            Arg::new("overwrite")
+                .long("overwrite")
+                .help("Replace existing catalog/workflow with the same identifier")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("disabled")
+                .long("disabled")
+                .help("Import catalog as disabled (catalog imports only)")
+                .action(ArgAction::SetTrue),
+        )
 }
 
 /// Builds a single subcommand with its arguments and flags.
@@ -507,7 +563,7 @@ fn generate_help_text(flag: &CommandFlag) -> String {
 mod tests {
     use oatty_types::{CommandExecution, command::HttpCommandSpec};
 
-    use super::build_canonical_identifier_help;
+    use super::{build_canonical_identifier_help, build_import_root_command};
     use crate::CommandSpec;
 
     #[test]
@@ -545,5 +601,20 @@ mod tests {
         let output = build_canonical_identifier_help(&command_specs);
         let expected = "Command Spec Canonical IDs:\n\n  apps apps:create\n  apps apps:list";
         assert_eq!(output, expected);
+    }
+
+    #[test]
+    fn import_command_supports_expected_arguments() {
+        let command = build_import_root_command();
+        let argument_ids: Vec<_> = command.get_arguments().map(|argument| argument.get_id().as_str()).collect();
+
+        assert!(argument_ids.contains(&"source"));
+        assert!(argument_ids.contains(&"kind"));
+        assert!(argument_ids.contains(&"source-type"));
+        assert!(argument_ids.contains(&"catalog-title"));
+        assert!(argument_ids.contains(&"vendor"));
+        assert!(argument_ids.contains(&"base-url"));
+        assert!(argument_ids.contains(&"overwrite"));
+        assert!(argument_ids.contains(&"disabled"));
     }
 }

@@ -14,6 +14,7 @@ Key Features
   - `--verbose`: more verbose logs (via `RUST_LOG`).
 - TUI handoff: Running `oatty` with no subcommands opens the TUI (`oatty-tui`).
 - Workflows: `oatty workflow ...` commands are always available and operate on local files or workflows bundled in catalogs.
+- Import command: `oatty import <path|url>` auto-detects and imports either OpenAPI catalogs or workflow manifests.
 
 Auth & Config
 - Auth:
@@ -28,6 +29,10 @@ Usage
   - `cargo run -p oatty-cli -- apps info <app>`
 - Enable workflows:
   - `cargo run -p oatty-cli -- workflow preview --file workflows/create_app_and_db.yaml`
+- Import a catalog from OpenAPI:
+  - `cargo run -p oatty-cli -- import schemas/samples/render-public-api.json --kind catalog`
+- Import a workflow manifest:
+  - `cargo run -p oatty-cli -- import workflows/create_app_and_db.yaml --kind workflow`
 
 Development
 - Built from `oatty_registry::Registry::from_embedded_schema()`, which walks the OpenAPI-derived manifest and produces `CommandSpec` entries.

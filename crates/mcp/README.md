@@ -2,7 +2,9 @@
 
 Model Context Protocol (MCP) plugin infrastructure for the Oatty CLI.
 
-This crate provides the core building blocks to discover, configure, start/stop, and interact with MCP-enabled plugins over stdio or HTTP/SSE transports. It includes a plugin engine, client/transport management, provider integration, configuration loading/validation, health monitoring, and logging/auditing with redaction.
+This crate provides the core building blocks to discover, configure, start/stop, and interact with MCP-enabled plugins
+over stdio or HTTP/SSE transports. It includes a plugin engine, client/transport management, provider integration,
+configuration loading/validation, health monitoring, and logging/auditing with redaction.
 
 ## Features
 
@@ -17,10 +19,10 @@ This crate provides the core building blocks to discover, configure, start/stop,
 
 - `lib.rs` — public API and re-exports
 - `client/` — transports, client wrapper, health monitor, client manager
-  - `stdio.rs` — spawn MCP servers as local processes (Tokio child)
-  - `http.rs` — HTTP/SSE transport implementation with reqwest client + SSE listener
-  - `manager.rs` — start/stop plugins, manage `McpClient`s
-  - `health.rs` — periodic health checks and aggregation
+    - `stdio.rs` — spawn MCP servers as local processes (Tokio child)
+    - `http.rs` — HTTP/SSE transport implementation with reqwest client + SSE listener
+    - `manager.rs` — start/stop plugins, manage `McpClient`s
+    - `health.rs` — periodic health checks and aggregation
 - `config/` — config models, interpolation, validation, file I/O
 - `plugin/` — `PluginEngine`, registry, and lifecycle coordination
 - `provider/` — `McpProvider` and `McpProviderAdapter` to map MCP tools to providers
@@ -29,17 +31,22 @@ This crate provides the core building blocks to discover, configure, start/stop,
 
 ## Concepts and data flow
 
-1. Configuration is loaded synchronously via `config::load_config()` from `MCP_CONFIG_PATH` or `~/.config/oatty/mcp.json`.
-   - `${env:FOO}` and `${secret:NAME}` are resolved via process env and OS keychain (`keyring-rs`).
-   - Config is validated (naming, transport presence, headers/env constraints).
+1. Configuration is loaded synchronously via `config::load_config()` from `MCP_CONFIG_PATH` or
+   `~/.config/oatty/mcp.json`.
+    - `${env:FOO}` and `${secret:NAME}` are resolved via process env and secrets backend.
+    - Secrets backend defaults to OS keychain (`keyring-rs`), and can be switched to environment mode via
+      `OATTY_SECRETS_BACKEND=env`.
+    - Config is validated (naming, transport presence, headers/env constraints).
 2. `PluginEngine::new(config)` wires together:
-   - `McpClientManager` (transports + connections)
-   - `PluginRegistry` (metadata, tags, status)
-   - `LifecycleManager` (start/stop/restart with timeouts/backoff)
-   - `LogManager` (log buffers + audit)
+    - `McpClientManager` (transports + connections)
+    - `PluginRegistry` (metadata, tags, status)
+    - `LifecycleManager` (start/stop/restart with timeouts/backoff)
+    - `LogManager` (log buffers + audit)
 3. `PluginEngine::start()` bootstraps the client manager and registers configured plugins.
-4. Starting a plugin creates a transport (`stdio` | `http`), establishes an MCP `service::Peer<RoleClient>`, and runs periodic health checks.
-5. The provider layer (`provider::McpProvider`) wraps a plugin tool, introspects its metadata (`list_tools`), builds a provider contract, and executes tool calls via `peer.call_tool`.
+4. Starting a plugin creates a transport (`stdio` | `http`), establishes an MCP `service::Peer<RoleClient>`, and runs
+   periodic health checks.
+5. The provider layer (`provider::McpProvider`) wraps a plugin tool, introspects its metadata (`list_tools`), builds a
+   provider contract, and executes tool calls via `peer.call_tool`.
 
 ## Configuration
 
@@ -50,14 +57,20 @@ Default path: `~/.config/oatty/mcp.json` (override with `MCP_CONFIG_PATH`). Exam
   "mcpServers": {
     "server-name": {
       "command": "node",
-      "args": ["-e", "require('@mcp/server').start()"],
+      "args": [
+        "-e",
+        "require('@mcp/server').start()"
+      ],
       "env": {
         "FOO": "bar",
         "OATTY_API_TOKEN": "${env:OATTY_API_TOKEN}"
       },
       "cwd": "/path/optional",
       "disabled": false,
-      "tags": ["code", "gh"]
+      "tags": [
+        "code",
+        "gh"
+      ]
     },
     "remote-example": {
       "baseUrl": "https://mcp.example.com",
@@ -75,40 +88,48 @@ Default path: `~/.config/oatty/mcp.json` (override with `MCP_CONFIG_PATH`). Exam
 ```
 
 Notes:
+
 - Stdio requires `command` (and optional `args`, `env`, `cwd`).
 - HTTP/SSE requires `baseUrl` (and optional `headers`).
 - `httpServer.autoStart` enables the local MCP HTTP server on TUI startup.
 - `httpServer.bindAddress` defaults to `127.0.0.1:62889` and must be loopback-only.
-- `${env:NAME}` pulls from the environment; `${secret:NAME}` resolves via OS keychain service `oatty-mcp`.
+- `${env:NAME}` pulls from the environment.
+- `${secret:NAME}` resolves via the configured secrets backend:
+    - default: OS keychain (`keyring-rs`)
+    - `OATTY_SECRETS_BACKEND=env`: process environment variable `NAME`
+- `${secret:NAME}` placeholders are preserved in config files; backend selection only changes runtime resolution.
 - Server names must match `^[a-z0-9._-]+$`.
-- Oatty expects token-based auth (static bearer tokens, API keys, etc.) via `headers` or `${secret:...}`. OAuth/PKCE flows are not yet integrated; use an `Authorization` header or OpenAPI import instead.
+- Oatty expects token-based auth (static bearer tokens, API keys, etc.) via `headers` or `${secret:...}`. OAuth/PKCE
+  flows are not yet integrated; use an `Authorization` header or OpenAPI import instead.
 
 TUI Add Plugin view:
+
 - The Oatty TUI provides an Add Plugin panel with a transport radio selector: `Transport: [✓] Local   [ ] Remote`.
 - Selecting Local exposes `command` and `args`; Remote exposes `baseUrl`.
 - Keyboard: when the radio is focused, use Left/Right to change and Space/Enter to toggle.
 
 Programmatic APIs:
+
 - `config::load_config()` reads, interpolates, and validates without requiring a Tokio runtime.
 - `config::save_config(&cfg)` writes back using pretty JSON.
 
 ## Public API highlights
 
 - `PluginEngine`
-  - `start()`, `stop()` — manage runtime
-  - `start_plugin(name)`, `stop_plugin(name)`, `restart_plugin(name)`
-  - `get_plugin_detail(name) -> PluginDetail`
-  - `list_plugins() -> Vec<PluginDetail>`
-  - `get_plugin_status(name) -> PluginStatus`
+    - `start()`, `stop()` — manage runtime
+    - `start_plugin(name)`, `stop_plugin(name)`, `restart_plugin(name)`
+    - `get_plugin_detail(name) -> PluginDetail`
+    - `list_plugins() -> Vec<PluginDetail>`
+    - `get_plugin_status(name) -> PluginStatus`
 - `client::McpClientManager`
-  - `start_plugin(name)`, `stop_plugin(name)`, `restart_plugin(name)`
-  - `get_client(name) -> Option<Arc<Mutex<McpClient>>>`
-  - `get_plugin_health(name) -> Option<HealthStatus>`
+    - `start_plugin(name)`, `stop_plugin(name)`, `restart_plugin(name)`
+    - `get_client(name) -> Option<Arc<Mutex<McpClient>>>`
+    - `get_plugin_health(name) -> Option<HealthStatus>`
 - `provider::McpProvider`
-  - `new(plugin, tool, engine)` -> `McpProvider`
-  - `initialize()` -> fetch tool metadata and build contract
-  - `fetch_values(arguments) -> Vec<Value>`
-  - `get_contract() -> ProviderContract`
+    - `new(plugin, tool, engine)` -> `McpProvider`
+    - `initialize()` -> fetch tool metadata and build contract
+    - `fetch_values(arguments) -> Vec<Value>`
+    - `get_contract() -> ProviderContract`
 
 Re-exports from `rmcp` allow calling tools and working with content types.
 
@@ -139,7 +160,7 @@ use oatty_mcp::{plugin::PluginEngine, provider::{McpProvider, McpProviderOps}};
 use serde_json::json;
 use std::sync::Arc;
 
-# async fn demo(engine: Arc<PluginEngine>) -> anyhow::Result<()> {
+async fn demo(engine: Arc<PluginEngine>) -> anyhow::Result<()> {
     // Ensure the plugin is running first (via engine/client manager)
     // engine.start_plugin("server-name").await?;
 
@@ -152,15 +173,18 @@ use std::sync::Arc;
 
     let items = provider.fetch_values(&args).await?;
     for item in items { println!("{}", item); }
-#   Ok(())
-# }
+    Ok(())
+}
 ```
 
 ## Logging and auditing
 
-- Logs are buffered per plugin using a ring buffer (`logging::LogRingBuffer`) and formatted with redaction (`logging::LogFormatter`).
-- Audit events (start, stop, restart, tool invoke, health checks) are written to `~/.config/oatty/mcp-audit.jsonl` by default.
-- Use `LogManager::export_logs(plugin, path)` to export with redaction, or `export_logs_with_redaction(..., false)` for raw logs.
+- Logs are buffered per plugin using a ring buffer (`logging::LogRingBuffer`) and formatted with redaction (
+  `logging::LogFormatter`).
+- Audit events (start, stop, restart, tool invoke, health checks) are written to `~/.config/oatty/mcp-audit.jsonl` by
+  default.
+- Use `LogManager::export_logs(plugin, path)` to export with redaction, or `export_logs_with_redaction(..., false)` for
+  raw logs.
 
 ## Health monitoring
 
@@ -173,12 +197,15 @@ use std::sync::Arc;
   constructs `SseClientTransport` handles.
 - OAuth-style tokens can be pulled from the OS keyring; Basic credentials support `${secret:}`
   interpolation before request execution.
+    - If `auth.token` is already configured/interpolated, it is used directly without keychain lookup.
 
 ## Environment
 
 Helpful env for development/integration:
+
 - `RUST_LOG=debug`
 - `MCP_CONFIG_PATH=~/.config/oatty/mcp.json`
+- `OATTY_SECRETS_BACKEND=keychain|env` (default: `keychain`)
 
 ## Error handling
 
@@ -193,12 +220,14 @@ Helpful env for development/integration:
 - Format: `cargo fmt --all`
 
 Code style:
+
 - Rust 2024, 4 spaces indent, width 100, consistent naming and error handling (`thiserror`).
 
 ## Security
 
 - Never log secrets. Redaction utilities are applied in formatters.
-- `${secret:NAME}` uses the OS keychain (`keyring-rs`) with the service name `oatty-mcp`.
+- `${secret:NAME}` resolves via OS keychain by default, or process environment variables when
+  `OATTY_SECRETS_BACKEND=env`.
 
 ## License
 

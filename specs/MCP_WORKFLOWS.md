@@ -66,6 +66,15 @@ Implemented workflow tool surface includes:
 - Readiness includes required input completeness and provider outcome status.
 - `workflow.run` rejects unresolved provider prompt/error situations with structured errors.
 
+## Manifest validation semantics
+
+- `workflow.validate` / `workflow.save` enforce a hard provider dependency rule from runtime normalization:
+  - For provider-backed inputs, any upstream-referencing `provider_args.<arg>` must declare a matching `depends_on.<arg>`.
+  - Upstream-referencing means:
+    - binding form with `from_input` or `from_step`
+    - literal template form with `${{ inputs.* }}` or `${{ steps.* }}`
+- Missing or invalid `depends_on` mappings are returned as validation failures.
+
 ## Execution behavior
 
 - `workflow.run` currently executes synchronously in tool implementation and returns run results/outputs.

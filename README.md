@@ -143,6 +143,7 @@ Examples:
 
 - `cargo run -p oatty -- github advisories:list`
 - `cargo run -p oatty -- render services:list --limit 10`
+- `cargo run -p oatty -- import schemas/samples/render-public-api.json`
 - `cargo run -p oatty -- workflow list`
 - `cargo run -p oatty -- workflow preview --file workflows/create_app_and_db.yaml`
 
@@ -194,13 +195,21 @@ Maintainers:
 ## Environment & Config
 
 - `OATTY_LOG`: tracing level for stderr logs in CLI mode (`error`, `warn`, `info` [default], `debug`, `trace`).
+- `OATTY_SECRETS_BACKEND`: secrets backend for `${secret:NAME}` interpolation (`keychain` [default], `env`).
 - `TUI_THEME`: theme override for the TUI (`dracula`, `dracula_hc`, `nord`, `nord_hc`, `cyberpunk`, `cyberpunk_hc`,
   `ansi256`, `ansi256_hc`).
+- `TUI_COLOR_MODE`: force color mode detection (`ansi16`, `ansi256`, `truecolor`) for the TUI renderer.
+- `TUI_FORCE_TRUECOLOR`: force truecolor rendering when set to a truthy value (`1`, `true`, `yes`, `on`).
 - `MCP_CONFIG_PATH`: overrides MCP config path (default: `~/.config/oatty/mcp.json`).
 - `REGISTRY_CONFIG_PATH`: overrides registry config path (default: `~/.config/oatty/registry.json`).
 - `REGISTRY_CATALOGS_PATH`: overrides the directory where catalog manifest files are stored (default:
   `~/.config/oatty/catalogs`).
 - `REGISTRY_WORKFLOWS_PATH`: overrides workflow manifest storage (default: `~/.config/oatty/workflows`).
+- `OATTY_HISTORY_PATH`: overrides history storage path.
+- `OATTY_PREFERENCES_PATH`: overrides preferences storage path.
+- `OATTY_TUI_LOG_PATH`: overrides persisted TUI log file path.
+- `OATTY_TUI_LOG_MAX_BYTES`: max bytes per persisted TUI log file before rotation (default: `10485760`).
+- `OATTY_TUI_LOG_MAX_FILES`: max rotated persisted TUI log files retained (default: `5`).
 
 Authentication headers/tokens are configured per catalog in the Library view (or persisted catalog configuration), not
 via a global API token environment variable.

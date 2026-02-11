@@ -23,8 +23,9 @@ use rat_focus::HasFocus;
 use ratatui::layout::Position;
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Layout, Rect, Spacing},
     style::Modifier,
+    symbols::merge::MergeStrategy,
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph, Wrap},
 };
@@ -57,6 +58,7 @@ pub struct RunViewLayout {
 
 impl From<Vec<Rect>> for RunViewLayout {
     fn from(areas: Vec<Rect>) -> Self {
+        let mouse_target_areas = vec![areas[2], areas[3], areas[4], areas[6], areas[7]];
         Self {
             container_area: areas[0],
             header_area: areas[1],
@@ -67,7 +69,7 @@ impl From<Vec<Rect>> for RunViewLayout {
             view_details_button_area: areas[6],
             done_button_area: areas[7],
             footer_block_area: areas[8],
-            mouse_target_areas: areas[3..7].to_vec(),
+            mouse_target_areas,
             mouse_target_roles: vec![
                 ActionRole::StepsTable,
                 ActionRole::CancelButton,
@@ -112,10 +114,8 @@ impl Component for RunViewComponent {
             _ if run_state.steps_table.focus().get() => self.handle_steps_table_keys(run_state, key.code),
             _ if run_state.cancel_button_focus.get() => Self::handle_cancel_button_keys(run_state, &run_id, key.code),
             _ if run_state.pause_button_focus.get() => Self::handle_pause_button_keys(run_state, &run_id, key.code),
-            _ if run_state.view_details_button_focus.get() => self.show_step_output(run_state),
-            _ if run_state.done_button_focus.get() && key.code == KeyCode::Enter => {
-                vec![Effect::SwitchTo(Route::Workflows)]
-            }
+            _ if run_state.view_details_button_focus.get() => self.handle_view_details_button_keys(run_state, key.code),
+            _ if run_state.done_button_focus.get() => Self::handle_done_button_keys(key.code),
             () => Vec::new(),
         }
     }
@@ -137,7 +137,8 @@ impl Component for RunViewComponent {
             .title(Span::styled("Workflow Run", theme.text_secondary_style()))
             .borders(Borders::ALL)
             .border_style(theme.border_style(true))
-            .style(th::panel_style(theme));
+            .style(th::panel_style(theme))
+            .merge_borders(MergeStrategy::Exact);
         let inner = block.inner(area);
         frame.render_widget(block, area);
 
@@ -161,15 +162,20 @@ impl Component for RunViewComponent {
         };
 
         if run_state.cancel_button_focus.get() {
-            return build_hint_spans(
-                theme,
-                &[(" ←/→", " Switch button "), (" Enter", " Cancel run "), (" Tab", " Cycle focus ")],
-            );
+            return build_hint_spans(theme, &[(" Enter", " Cancel run ")]);
         }
 
         if run_state.pause_button_focus.get() {
             let label = pause_button_label(run_state.status());
-            return build_hint_spans(theme, &[(" ←/→", " Switch button "), (" Enter", label), (" Tab", " Cycle focus ")]);
+            return build_hint_spans(theme, &[(" Enter/Space", label)]);
+        }
+
+        if run_state.view_details_button_focus.get() {
+            return build_hint_spans(theme, &[(" Enter/Space", " View detail ")]);
+        }
+
+        if run_state.done_button_focus.get() {
+            return build_hint_spans(theme, &[(" Enter/Space", " Close run ")]);
         }
 
         build_hint_spans(
@@ -179,7 +185,6 @@ impl Component for RunViewComponent {
                 (" ↑/↓", " Navigate "),
                 (" Enter", " View detail "),
                 (" L", " View logs "),
-                (" Tab", " Cycle focus "),
             ],
         )
     }
@@ -190,6 +195,7 @@ impl Component for RunViewComponent {
             Constraint::Min(6),    // body
             Constraint::Length(3), // footer
         ])
+        .spacing(Spacing::Overlap(1))
         .split(area);
         let steps_area = main_regions[1];
         let footer_block = get_footer_block(&*app.ctx.theme);
@@ -295,6 +301,20 @@ impl RunViewComponent {
             _ => {}
         }
         effects
+    }
+
+    fn handle_done_button_keys(code: KeyCode) -> Vec<Effect> {
+        match code {
+            KeyCode::Enter | KeyCode::Char(' ') => vec![Effect::SwitchTo(Route::Workflows)],
+            _ => Vec::new(),
+        }
+    }
+
+    fn handle_view_details_button_keys(&self, run_state: &RunViewState, code: KeyCode) -> Vec<Effect> {
+        match code {
+            KeyCode::Enter | KeyCode::Char(' ') => self.show_step_output(run_state),
+            _ => Vec::new(),
+        }
     }
 
     fn handle_mouse_target(&mut self, app: &mut App, target: ActionRole, pos: Position) -> Vec<Effect> {
@@ -467,7 +487,7 @@ fn render_header(frame: &mut Frame, area: Rect, theme: &dyn Theme, run_state: &R
 
 fn render_steps_table(frame: &mut Frame, area: Rect, theme: &dyn Theme, run_state: &mut RunViewState, view: &mut ResultsTableView) {
     let steps_focused = run_state.steps_table.focus().get();
-    let inner_block = th::block(theme, Some("Steps"), steps_focused).borders(Borders::NONE);
+    let inner_block = th::block(theme, Some("Steps"), steps_focused).merge_borders(MergeStrategy::Exact);
     let inner_area = inner_block.inner(area);
     frame.render_widget(inner_block, area);
 
@@ -476,7 +496,7 @@ fn render_steps_table(frame: &mut Frame, area: Rect, theme: &dyn Theme, run_stat
 }
 
 fn get_footer_block(theme: &dyn Theme) -> Block<'_> {
-    th::block::<String>(theme, None, false).borders(Borders::NONE)
+    th::block::<String>(theme, None, false).merge_borders(MergeStrategy::Exact)
 }
 
 fn format_status_label(status: RunExecutionStatus) -> &'static str {

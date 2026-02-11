@@ -16,7 +16,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use oatty_types::{Effect, Msg};
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Layout, Rect, Spacing},
     text::Span,
 };
 
@@ -42,11 +42,7 @@ pub struct PluginsComponent {
 }
 
 impl Component for PluginsComponent {
-    fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
-        if let Msg::ExecCompleted(outcome) = msg {
-            return app.plugins.handle_execution_completion(*outcome);
-        }
-
+    fn handle_message(&mut self, _app: &mut App, _msg: Msg) -> Vec<Effect> {
         Vec::new()
     }
 
@@ -141,7 +137,7 @@ impl Component for PluginsComponent {
     /// * `app` - Mutable reference to the app state
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        let mut spans = Vec::new();
+        let mut spans = build_hint_spans(theme, &[("Ctrl+F", " Search  "), ("Ctrl+A", " Add  ")]);
 
         // The add component is visible
         if let Some(add_state) = app.plugins.plugin_edit_state.as_ref() {
@@ -150,10 +146,10 @@ impl Component for PluginsComponent {
                 spans.extend(self.edit_component.get_hint_spans(app));
                 return spans;
             }
-            spans.extend(build_hint_spans(theme, &[("Esc", " Back  ")]));
+            spans.extend(build_hint_spans(theme, &[("Esc", " Back  "), ("Ctrl+V", " Validate  ")]));
         } else {
             // the add component is not visible
-            spans.extend(build_hint_spans(theme, &[("Esc", " Clear  "), ("Ctrl+A", " Add  ")]));
+            spans.extend(build_hint_spans(theme, &[("Esc", " Clear  ")]));
         }
         // the grid is focused
         if app.plugins.table.f_grid.get() {
@@ -239,8 +235,7 @@ impl PluginsComponent {
 
     /// Handles the search shortcut (Ctrl+F) which activates search in the appropriate context.
     fn handle_search_shortcut(&mut self, app: &mut App) {
-        app.plugins.table.f_search.set(true);
-        app.plugins.table.f_grid.set(false);
+        app.focus.focus(&app.plugins.table.f_search);
     }
 
     /// Handles the clear filter shortcut (Ctrl+K) which clears the search filter.
@@ -267,7 +262,9 @@ impl PluginsComponent {
 
         if add_plugin_open && body_area.width >= 120 {
             // Side-by-side layout when there's sufficient width
-            let columns = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).split(body_area);
+            let columns = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)])
+                .spacing(Spacing::Overlap(1))
+                .split(body_area);
             self.edit_component.render(frame, columns[0], app);
             self.table_component.render(frame, columns[1], app);
         } else if add_plugin_open {

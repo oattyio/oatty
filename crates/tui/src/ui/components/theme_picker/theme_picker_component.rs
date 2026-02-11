@@ -2,7 +2,7 @@ use crate::app::App;
 use crate::ui::components::Component;
 use crate::ui::theme::catalog::ThemeDefinition;
 use crate::ui::theme::theme_helpers as th;
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent};
 use oatty_types::Effect;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
@@ -84,9 +84,6 @@ impl Component for ThemePickerComponent {
             }
             KeyCode::Down | KeyCode::Char('j') => {
                 app.theme_picker.select_next();
-            }
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                return vec![Effect::CloseModal];
             }
             _ => {}
         }

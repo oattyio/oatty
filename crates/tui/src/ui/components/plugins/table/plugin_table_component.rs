@@ -26,6 +26,7 @@ const STATUS_COLUMN_WIDTH: u16 = 10;
 const COMMAND_COLUMN_PERCENTAGE: u16 = 50;
 const AUTH_COLUMN_WIDTH: u16 = 12;
 const TAGS_COLUMN_PERCENTAGE: u16 = 20;
+const PAGE_SCROLL_STEP: u16 = 10;
 
 /// Table header labels for the plugin results.
 const TABLE_HEADERS: &[&str] = &["Name", "Status", "Command/BaseUrl", "Auth", "Tags"];
@@ -125,6 +126,35 @@ impl PluginsTableComponent {
         table_state.normalize_selection();
     }
 
+    fn move_selection_by_page(app: &mut App, forward: bool) {
+        for _ in 0..PAGE_SCROLL_STEP {
+            if forward {
+                Self::move_selection_down(app);
+            } else {
+                Self::move_selection_up(app);
+            }
+        }
+    }
+
+    fn move_selection_to_first(app: &mut App) {
+        if app.plugins.table.filtered_indices().is_empty() {
+            app.plugins.table.set_selected_index(None);
+            return;
+        }
+        app.plugins.table.set_selected_index(Some(0));
+        app.plugins.table.normalize_selection();
+    }
+
+    fn move_selection_to_last(app: &mut App) {
+        let filtered_len = app.plugins.table.filtered_indices().len();
+        if filtered_len == 0 {
+            app.plugins.table.set_selected_index(None);
+            return;
+        }
+        app.plugins.table.set_selected_index(Some(filtered_len.saturating_sub(1)));
+        app.plugins.table.normalize_selection();
+    }
+
     /// Creates the results header row with styled column headers.
     ///
     /// # Arguments
@@ -195,7 +225,7 @@ impl PluginsTableComponent {
         let is_running = selected_item.map(|item| item.status == PluginStatus::Running).unwrap_or(false);
         let has_active_add = app.plugins.plugin_edit_state.is_some();
         let buttons = vec![
-            (&state.f_add, "Add", button_columns[0], !is_selected && !has_active_add),
+            (&state.f_add, "Add", button_columns[0], !has_active_add),
             (&state.f_start, "Start", button_columns[2], is_selected && !is_running),
             (&state.f_stop, "Stop", button_columns[4], is_selected && is_running),
             (&state.f_edit, "Edit", button_columns[6], is_selected && !has_active_add),
@@ -310,6 +340,18 @@ impl PluginsTableComponent {
             KeyCode::Down if app.plugins.table.f_grid.get() => {
                 Self::move_selection_down(app);
             }
+            KeyCode::PageUp if app.plugins.table.f_grid.get() => {
+                Self::move_selection_by_page(app, false);
+            }
+            KeyCode::PageDown if app.plugins.table.f_grid.get() => {
+                Self::move_selection_by_page(app, true);
+            }
+            KeyCode::Home if app.plugins.table.f_grid.get() => {
+                Self::move_selection_to_first(app);
+            }
+            KeyCode::End if app.plugins.table.f_grid.get() => {
+                Self::move_selection_to_last(app);
+            }
             KeyCode::Enter => {
                 effects.push(Effect::ShowModal(Modal::PluginDetails));
                 app.plugins.ensure_details_state();
@@ -317,7 +359,7 @@ impl PluginsTableComponent {
                     effects.push(Effect::PluginsLoadDetail(selected_item.name.clone()));
                 }
             }
-            KeyCode::Char('d') if control_pressed => {
+            KeyCode::Char('o') if control_pressed => {
                 app.plugins.ensure_details_state();
                 effects.push(Effect::ShowModal(Modal::PluginDetails));
                 if let Some(selected_item) = app.plugins.table.selected_item() {
@@ -395,6 +437,9 @@ impl PluginsTableComponent {
         let list_offset = app.plugins.table.table_state.offset();
         let idx = (mouse_position.y.saturating_sub(table_area.y)) as usize + list_offset;
         if app.plugins.table.filtered_indices().get(idx).is_some() {
+            if app.plugins.table.table_state.selected() == Some(idx) {
+                return self.handle_grid_key_events(app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            }
             app.plugins.table.set_selected_index(Some(idx));
         }
         Vec::new()
@@ -438,32 +483,41 @@ impl Component for PluginsTableComponent {
     /// Handles mouse events within the application, updating the plugins results state
     /// and potentially generating a set of effects based on the user's interaction.
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
-        if mouse.kind != MouseEventKind::Down(MouseButton::Left) {
-            return Vec::new();
-        }
         let position = Position {
             x: mouse.column,
             y: mouse.row,
         };
-        let maybe_focus_flag = self.hit_areas.iter().find_map(|h| {
-            let (rect, enabled) = h.info();
-            let hit = rect.contains(position);
-            if hit && enabled { Some((h.focus_flag(app), rect)) } else { None }
-        });
 
-        if let Some((flag, rect)) = maybe_focus_flag {
-            app.focus.focus(flag);
-            if flag == &app.plugins.table.f_search {
-                let relative_column = position.x.saturating_sub(self.layout.search_inner_area.x);
-                app.plugins.table.set_cursor_from_column(relative_column);
-                return Vec::new();
+        match mouse.kind {
+            MouseEventKind::Down(MouseButton::Left) => {
+                let maybe_focus_flag = self.hit_areas.iter().find_map(|h| {
+                    let (rect, enabled) = h.info();
+                    let hit = rect.contains(position);
+                    if hit && enabled { Some((h.focus_flag(app), rect)) } else { None }
+                });
+
+                if let Some((flag, rect)) = maybe_focus_flag {
+                    app.focus.focus(flag);
+                    if flag == &app.plugins.table.f_search {
+                        let relative_column = position.x.saturating_sub(self.layout.search_inner_area.x);
+                        app.plugins.table.set_cursor_from_column(relative_column);
+                        return Vec::new();
+                    }
+                    if flag == &app.plugins.table.f_grid {
+                        return self.hit_test_table(app, *rect, position);
+                    }
+                    // note that the Enter key is a no-op for the search input
+                    // if this changes, we may need to handle Enter differently here
+                    return self.handle_key_events(app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+                }
             }
-            if flag == &app.plugins.table.f_grid {
-                return self.hit_test_table(app, *rect, position);
+            MouseEventKind::ScrollDown if self.layout.table_area.contains(position) => {
+                app.plugins.table.table_state.scroll_down_by(1);
             }
-            // note that the Enter key is a no-op for the search input
-            // if this changes, we may need to handle Enter differently here
-            return self.handle_key_events(app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+            MouseEventKind::ScrollUp if self.layout.table_area.contains(position) => {
+                app.plugins.table.table_state.scroll_up_by(1);
+            }
+            _ => {}
         }
         Vec::new()
     }
@@ -536,14 +590,21 @@ impl Component for PluginsTableComponent {
     }
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        let mut spans = Vec::with_capacity(5);
+        let mut spans = Vec::with_capacity(8);
+
+        if app.plugins.table.f_grid.get() {
+            spans.extend(theme_helpers::build_hint_spans(
+                theme,
+                &[("↑/↓", " Move  "), ("PgUp/PgDn", " Page  "), ("Home/End", " Jump  ")],
+            ));
+        }
 
         if app.plugins.table.selected_item().is_some() {
             spans.extend(theme_helpers::build_hint_spans(
                 theme,
                 &[
                     ("Ctrl+E", " Edit  "),
-                    ("Enter/Ctrl+D", " Details  "),
+                    ("Enter/Ctrl+O", " Details  "),
                     ("Ctrl+S", " start  "),
                     ("Ctrl+T", " Stop  "),
                     ("Ctrl+R", " Restart  "),

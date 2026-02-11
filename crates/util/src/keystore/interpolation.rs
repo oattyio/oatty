@@ -9,8 +9,35 @@ use tracing::debug;
 use crate::is_secret;
 
 static SERVICE: &str = "oatty";
+/// Environment variable used to select the secret resolution backend.
+pub const SECRETS_BACKEND_ENV_VAR: &str = "OATTY_SECRETS_BACKEND";
+
+/// Secret resolution backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SecretsBackend {
+    /// Resolve `${secret:NAME}` values via OS keychain (`keyring-rs`).
+    Keychain,
+    /// Resolve `${secret:NAME}` values from process environment variable `NAME`.
+    Environment,
+}
+
+impl SecretsBackend {
+    fn from_env_var(raw: Option<String>) -> Self {
+        match raw.unwrap_or_default().trim().to_ascii_lowercase().as_str() {
+            "env" => Self::Environment,
+            _ => Self::Keychain,
+        }
+    }
+}
+
+/// Determine the currently configured secrets backend.
+pub fn secrets_backend() -> SecretsBackend {
+    let configured_value = std::env::var(SECRETS_BACKEND_ENV_VAR).ok();
+    SecretsBackend::from_env_var(configured_value)
+}
 
 pub fn tokenize_env(envs: &mut IndexSet<EnvVar>, name: &String) -> Result<(), InterpolationError> {
+    let configured_backend = secrets_backend();
     for i in 0..envs.len() {
         let Some(EnvVar { source, key, value, .. }) = envs.get_index_mut2(i) else {
             continue;
@@ -22,6 +49,11 @@ pub fn tokenize_env(envs: &mut IndexSet<EnvVar>, name: &String) -> Result<(), In
         // to store it in the keychain. This avoids storing
         // tokenized secret sources.
         if *source == EnvSource::Secret && is_secret(value) {
+            if configured_backend == SecretsBackend::Environment {
+                // In env backend mode, preserve inline values/placeholders and avoid
+                // keychain writes to keep local and CI usage keychain-free.
+                continue;
+            }
             let service = format!("{}-{}", name, key);
             store_secret(service.as_str(), value.as_str())?;
             *value = format!("${{secret:{}}}", service);
@@ -62,18 +94,26 @@ pub fn interpolate_string(value: &str) -> Result<String, InterpolationError> {
     Ok(result)
 }
 
-/// Resolve a secret from the OS keychain.
+/// Resolve a secret using the configured secrets backend.
 pub fn resolve_secret(name: &str) -> Result<String, InterpolationError> {
-    // Use keyring-rs to resolve secrets
-    let keyring = keyring::Entry::new(SERVICE, name).map_err(|e| InterpolationError::KeyringError {
-        name: name.to_string(),
-        error: e.to_string(),
-    })?;
+    match secrets_backend() {
+        SecretsBackend::Environment => std::env::var(name).map_err(|error| InterpolationError::MissingSecret {
+            name: name.to_string(),
+            error: error.to_string(),
+        }),
+        SecretsBackend::Keychain => {
+            // Use keyring-rs to resolve secrets
+            let keyring = keyring::Entry::new(SERVICE, name).map_err(|e| InterpolationError::KeyringError {
+                name: name.to_string(),
+                error: e.to_string(),
+            })?;
 
-    keyring.get_password().map_err(|e| InterpolationError::MissingSecret {
-        name: name.to_string(),
-        error: e.to_string(),
-    })
+            keyring.get_password().map_err(|e| InterpolationError::MissingSecret {
+                name: name.to_string(),
+                error: e.to_string(),
+            })
+        }
+    }
 }
 
 /// Determines the source of the env var by its value.
@@ -138,4 +178,37 @@ pub enum InterpolationError {
 
     #[error("Regex compilation error: {0}")]
     Regex(#[from] regex::Error),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secrets_backend_defaults_to_keychain_when_env_var_is_missing() {
+        temp_env::with_var(SECRETS_BACKEND_ENV_VAR, None::<&str>, || {
+            assert_eq!(secrets_backend(), SecretsBackend::Keychain);
+        });
+    }
+
+    #[test]
+    fn secrets_backend_uses_environment_when_configured() {
+        temp_env::with_var(SECRETS_BACKEND_ENV_VAR, Some("env"), || {
+            assert_eq!(secrets_backend(), SecretsBackend::Environment);
+        });
+    }
+
+    #[test]
+    fn resolve_secret_reads_process_environment_in_environment_mode() {
+        temp_env::with_vars(
+            [
+                (SECRETS_BACKEND_ENV_VAR, Some("env")),
+                ("INTERPOLATION_TEST_SECRET", Some("test-secret-value")),
+            ],
+            || {
+                let resolved = resolve_secret("INTERPOLATION_TEST_SECRET").expect("secret resolves from environment");
+                assert_eq!(resolved, "test-secret-value");
+            },
+        );
+    }
 }

@@ -681,6 +681,20 @@ pub mod execution {
         RegistryConfigSaved,
         /// Result from saving the registry configuration.
         RegistryConfigSaveError(String),
+        /// Result from importing a workflow manifest into runtime storage.
+        WorkflowImported {
+            /// Identifier for the imported workflow.
+            workflow_id: String,
+            /// Path of the persisted runtime workflow manifest.
+            path: PathBuf,
+        },
+        /// Result from removing a workflow manifest from runtime storage.
+        WorkflowRemoved {
+            /// Identifier for the removed workflow.
+            workflow_id: String,
+        },
+        /// Error from importing or removing a workflow manifest.
+        WorkflowOperationError(String),
         /// Result from executing a directory contents command containing a structured payload.
         DirectoryContents {
             /// Files and directories present in the requested location.
@@ -926,6 +940,8 @@ pub mod messaging {
         /// Parse a RegistryCatalog from the given contents
         ///  and optional command prefix override
         ImportRegistryCatalog(String, Option<String>),
+        /// Parse and persist a workflow manifest from the provided content.
+        ImportWorkflowManifest(String),
         /// Load MCP plugins from config into `PluginsState`.
         PluginsLoadRequested,
         /// Refresh plugin statuses and health.
@@ -996,6 +1012,8 @@ pub mod messaging {
         UpdateCatalogHeaders { headers: Vec<EnvRow>, title: Cow<'static, str> },
         /// Remove a catalog from the registry.
         RemoveCatalog(Cow<'static, str>),
+        /// Remove a workflow manifest from runtime storage by identifier.
+        RemoveWorkflow(Cow<'static, str>),
     }
 
     /// Messages that can be sent to update the application state.

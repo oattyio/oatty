@@ -282,6 +282,12 @@ inputs:
         path: name
         required: false
         on_missing: prompt
+    depends_on:
+      app:
+        from_input: source
+        path: name
+        required: false
+        on_missing: prompt
 steps:
   - id: list_apps
     run: apps:list

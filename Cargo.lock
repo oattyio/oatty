@@ -1930,6 +1930,7 @@ dependencies = [
  "ratatui",
  "regex",
  "serde_json",
+ "serde_yaml",
  "textwrap",
  "thiserror 2.0.18",
  "tokio",

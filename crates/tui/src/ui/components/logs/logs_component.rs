@@ -232,6 +232,7 @@ impl Component for LogsComponent {
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
         let pos = Position::new(mouse.column, mouse.row);
         if matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) && self.layout.search_area.contains(pos) {
+            app.focus.focus(&app.logs.f_list);
             app.logs.activate_search();
             let relative_column = mouse.column.saturating_sub(self.layout.search_inner_area.x);
             app.logs.set_search_cursor_from_column(relative_column);

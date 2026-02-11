@@ -34,7 +34,9 @@ use oatty_mcp::{McpConfig, McpHttpServer, PluginEngine, resolve_bind_address};
 use oatty_registry::{
     CommandRegistry, CommandSpec, OpenApiCatalogImportError, OpenApiCatalogImportRequest, import_openapi_catalog_into_registry,
 };
+use oatty_registry::{config::default_workflows_path, workflows::load_workflows_from_directory};
 use oatty_types::value_objects::EnvRow;
+use oatty_types::workflow::WorkflowDefinition;
 use oatty_types::{
     DirectoryEntry, Effect, EnvVar, LogLevel, Msg, WorkflowRunControl, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus,
 };
@@ -49,9 +51,8 @@ use serde_json::Value;
 use serde_json::from_str;
 use std::borrow::Cow;
 use std::collections::VecDeque;
-use std::fs::read_dir;
-use std::fs::read_to_string;
-use std::path::PathBuf;
+use std::fs::{create_dir_all, read_dir, read_to_string, remove_file, write};
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::vec;
@@ -97,7 +98,9 @@ pub enum Cmd {
     ListDirectoryContents(PathBuf),
     ReadRemoteFileContents(Url),
     ImportRegistryCatalog(String, Option<String>),
+    ImportWorkflowManifest(String),
     RemoveCatalog(Cow<'static, str>),
+    RemoveWorkflow(Cow<'static, str>),
     UpdateCatalogEnabledState {
         is_enabled: bool,
         title: Cow<'static, str>,
@@ -191,6 +194,7 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
             Effect::ListDirectoryContents(path) => Some(vec![Cmd::ListDirectoryContents(path)]),
             Effect::ReadRemoteFileContents(url) => Some(vec![Cmd::ReadRemoteFileContents(url)]),
             Effect::ImportRegistryCatalog(content, maybe_prefix) => Some(vec![Cmd::ImportRegistryCatalog(content, maybe_prefix)]),
+            Effect::ImportWorkflowManifest(content) => Some(vec![Cmd::ImportWorkflowManifest(content)]),
             Effect::UpdateCatalogEnabledState { title, is_enabled } => Some(vec![Cmd::UpdateCatalogEnabledState { title, is_enabled }]),
             Effect::UpdateCatalogBaseUrlIndex { base_url_index, title } => {
                 Some(vec![Cmd::UpdateCatalogBaseUrlIndex { base_url_index, title }])
@@ -199,6 +203,7 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
             Effect::UpdateCatalogDescription { description, title } => Some(vec![Cmd::UpdateCatalogDescription { description, title }]),
             Effect::UpdateCatalogHeaders { title, headers } => Some(vec![Cmd::UpdateCatalogHeaders { title, headers }]),
             Effect::RemoveCatalog(title) => Some(vec![Cmd::RemoveCatalog(title)]),
+            Effect::RemoveWorkflow(workflow_id) => Some(vec![Cmd::RemoveWorkflow(workflow_id)]),
             Effect::Log(_) | Effect::SwitchTo(_) | Effect::ShowModal(_) | Effect::CloseModal => None,
         };
         if let Some(cmds) = effect_commands {
@@ -255,7 +260,9 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
             Cmd::ListDirectoryContents(path) => (Some(list_dir_contents(path)), None),
             Cmd::ReadRemoteFileContents(url) => (None, Some(fetch_remote_file_contents(url))),
             Cmd::ImportRegistryCatalog(inputs, maybe_prefix) => (Some(import_registry_catalog_from(app, inputs, maybe_prefix)), None),
+            Cmd::ImportWorkflowManifest(content) => (Some(import_workflow_manifest(app, content)), None),
             Cmd::RemoveCatalog(title) => (Some(remove_catalog(title, app)), None),
+            Cmd::RemoveWorkflow(workflow_id) => (Some(remove_workflow(workflow_id, app)), None),
             Cmd::UpdateCatalogEnabledState { title, is_enabled } => (Some(update_enabled_then_save(title, is_enabled, app)), None),
             Cmd::UpdateCatalogBaseUrlIndex { base_url_index, title } => {
                 (Some(update_base_url_index_then_save(base_url_index, title, app)), None)
@@ -470,6 +477,191 @@ fn format_tui_openapi_import_error(error: OpenApiCatalogImportError) -> String {
             .collect::<Vec<String>>()
             .join("; "),
         other => other.to_string(),
+    }
+}
+
+/// Imports a workflow manifest into runtime workflow storage and refreshes registry workflow state.
+fn import_workflow_manifest(app: &mut App, content: String) -> ExecOutcome {
+    let definition = match parse_workflow_definition(&content) {
+        Ok(definition) => definition,
+        Err(error) => return ExecOutcome::WorkflowOperationError(format!("Invalid workflow manifest: {error}")),
+    };
+
+    let workflow_identifier = definition.workflow.clone();
+    let workflows_path = default_workflows_path();
+    let workflow_file_name = format!("{}.yaml", sanitize_workflow_file_name(&workflow_identifier));
+    let workflow_path = workflows_path.join(workflow_file_name);
+
+    if workflow_path.exists() {
+        return ExecOutcome::WorkflowOperationError(format!(
+            "Workflow '{}' already exists at {}.",
+            workflow_identifier,
+            workflow_path.display()
+        ));
+    }
+
+    if let Err(error) = create_dir_all(&workflows_path) {
+        return ExecOutcome::WorkflowOperationError(format!(
+            "Failed to create workflow directory '{}': {error}",
+            workflows_path.display()
+        ));
+    }
+
+    let serialized = match serde_yaml::to_string(&definition) {
+        Ok(serialized) => serialized,
+        Err(error) => {
+            return ExecOutcome::WorkflowOperationError(format!("Failed to serialize workflow '{}': {error}", workflow_identifier));
+        }
+    };
+
+    if let Err(error) = write(&workflow_path, serialized) {
+        return ExecOutcome::WorkflowOperationError(format!(
+            "Failed to persist workflow '{}' at '{}': {error}",
+            workflow_identifier,
+            workflow_path.display()
+        ));
+    }
+
+    if let Err(error) = refresh_workflows_in_registry(app) {
+        return ExecOutcome::WorkflowOperationError(format!(
+            "Workflow '{}' was saved but registry refresh failed: {error}",
+            workflow_identifier
+        ));
+    }
+
+    ExecOutcome::WorkflowImported {
+        workflow_id: workflow_identifier,
+        path: workflow_path,
+    }
+}
+
+/// Removes a workflow manifest from runtime workflow storage and refreshes registry workflow state.
+fn remove_workflow<T>(workflow_id: T, app: &mut App) -> ExecOutcome
+where
+    T: AsRef<str>,
+{
+    let workflow_id = workflow_id.as_ref();
+    let workflows_path = default_workflows_path();
+    let workflow_path = match find_workflow_manifest_path(&workflows_path, workflow_id) {
+        Ok(Some(path)) => path,
+        Ok(None) => {
+            return ExecOutcome::WorkflowOperationError(format!(
+                "Workflow '{}' could not be found in '{}'.",
+                workflow_id,
+                workflows_path.display()
+            ));
+        }
+        Err(error) => {
+            return ExecOutcome::WorkflowOperationError(format!("Failed to resolve workflow '{}' manifest path: {error}", workflow_id));
+        }
+    };
+
+    if let Err(error) = remove_file(&workflow_path) {
+        return ExecOutcome::WorkflowOperationError(format!(
+            "Failed to remove workflow '{}' at '{}': {error}",
+            workflow_id,
+            workflow_path.display()
+        ));
+    }
+
+    if let Err(error) = refresh_workflows_in_registry(app) {
+        return ExecOutcome::WorkflowOperationError(format!(
+            "Workflow '{}' was removed but registry refresh failed: {error}",
+            workflow_id
+        ));
+    }
+
+    ExecOutcome::WorkflowRemoved {
+        workflow_id: workflow_id.to_string(),
+    }
+}
+
+/// Parses a workflow definition from either JSON or YAML source content.
+fn parse_workflow_definition(content: &str) -> Result<WorkflowDefinition> {
+    serde_json::from_str::<WorkflowDefinition>(content).or_else(|json_error| {
+        serde_yaml::from_str::<WorkflowDefinition>(content)
+            .map_err(|yaml_error| anyhow!("json parse error: {json_error}; yaml parse error: {yaml_error}"))
+    })
+}
+
+/// Synchronizes registry workflow definitions from runtime workflow storage.
+fn refresh_workflows_in_registry(app: &mut App) -> Result<()> {
+    let workflows_path = default_workflows_path();
+    let workflows = load_workflows_from_directory(&workflows_path)?;
+    let mut registry_guard = app
+        .ctx
+        .command_registry
+        .try_lock()
+        .map_err(|_| anyhow!("could not acquire command registry lock"))?;
+    registry_guard.workflows = workflows;
+    Ok(())
+}
+
+/// Locates the on-disk manifest path for a workflow identifier.
+fn find_workflow_manifest_path(workflows_root: &Path, workflow_id: &str) -> Result<Option<PathBuf>> {
+    if !workflows_root.exists() {
+        return Ok(None);
+    }
+
+    let mut workflow_file_paths = Vec::new();
+    collect_workflow_file_paths(workflows_root, &mut workflow_file_paths)?;
+    workflow_file_paths.sort();
+
+    for path in workflow_file_paths {
+        let Ok(content) = read_to_string(&path) else {
+            continue;
+        };
+        let Ok(definition) = parse_workflow_definition(&content) else {
+            continue;
+        };
+        if definition.workflow == workflow_id {
+            return Ok(Some(path));
+        }
+    }
+
+    Ok(None)
+}
+
+/// Recursively collects workflow file paths from a directory tree.
+fn collect_workflow_file_paths(root: &Path, workflow_file_paths: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in read_dir(root)? {
+        let directory_entry = entry?;
+        let path = directory_entry.path();
+        let file_type = directory_entry.file_type()?;
+        if file_type.is_dir() {
+            collect_workflow_file_paths(&path, workflow_file_paths)?;
+            continue;
+        }
+        if should_include_workflow_path(&path) {
+            workflow_file_paths.push(path);
+        }
+    }
+    Ok(())
+}
+
+/// Returns true when a path extension maps to a supported workflow manifest format.
+fn should_include_workflow_path(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|extension| extension.to_str()),
+        Some("yaml" | "yml" | "json")
+    )
+}
+
+/// Sanitizes workflow identifiers into stable filename segments.
+fn sanitize_workflow_file_name(raw_identifier: &str) -> String {
+    let mut output = String::with_capacity(raw_identifier.len());
+    for character in raw_identifier.chars() {
+        if character.is_ascii_alphanumeric() || character == '-' || character == '_' {
+            output.push(character);
+        } else {
+            output.push('_');
+        }
+    }
+    let trimmed = output.trim_matches('_');
+    if trimmed.is_empty() {
+        "workflow".to_string()
+    } else {
+        trimmed.to_string()
     }
 }
 
@@ -1122,6 +1314,24 @@ fn execute_command(command_spec: CommandSpec, hydrated_shell_command: String, re
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sanitize_workflow_file_name_replaces_invalid_characters() {
+        assert_eq!(sanitize_workflow_file_name("my workflow/v1"), "my_workflow_v1");
+        assert_eq!(sanitize_workflow_file_name("___"), "workflow");
+    }
+
+    #[test]
+    fn parse_workflow_definition_supports_yaml_and_json() {
+        let yaml = "workflow: sample\nsteps: []\n";
+        let json = r#"{"workflow":"sample_json","steps":[]}"#;
+
+        let yaml_definition = parse_workflow_definition(yaml).expect("yaml parses");
+        let json_definition = parse_workflow_definition(json).expect("json parses");
+
+        assert_eq!(yaml_definition.workflow, "sample");
+        assert_eq!(json_definition.workflow, "sample_json");
+    }
 
     #[test]
     fn apply_plugin_name_change_removed_old_key() {

@@ -6,6 +6,7 @@ use crate::ui::components::component::Component;
 use crate::ui::components::workflows::WorkflowInputViewState;
 use crate::ui::components::workflows::input::state::{InputStatus, WorkflowInputRow};
 use crate::ui::components::workflows::view_utils::style_for_role;
+use crate::ui::theme::theme_helpers::create_list_with_highlight;
 use crate::ui::theme::{
     roles::Theme,
     theme_helpers::{self as th, ButtonRenderOptions, ButtonType},
@@ -15,13 +16,14 @@ use oatty_engine::WorkflowRunState;
 use oatty_types::{Effect, Modal, Route};
 use rat_focus::HasFocus;
 use ratatui::layout::Position;
+use ratatui::symbols::merge::MergeStrategy;
 use ratatui::widgets::Block;
 use ratatui::{
     Frame,
-    layout::{Constraint, Layout, Rect},
+    layout::{Constraint, Layout, Rect, Spacing},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Borders, List, ListItem, Paragraph, Wrap},
+    widgets::{Borders, ListItem, Paragraph, Wrap},
 };
 use std::cell::Ref;
 use unicode_width::UnicodeWidthStr;
@@ -168,26 +170,10 @@ impl Component for WorkflowInputsComponent {
         let theme = &*app.ctx.theme;
         if let Some(state) = app.workflows.input_view_state() {
             if state.f_run_button.get() {
-                return th::build_hint_spans(
-                    theme,
-                    &[
-                        ("Esc", " Cancel"),
-                        ("←/→", " Switch"),
-                        ("Enter", " Run workflow"),
-                        ("Tab", " Cycle focus"),
-                    ],
-                );
+                return th::build_hint_spans(theme, &[("Esc", " Cancel"), ("Enter", " Run workflow")]);
             }
             if state.f_cancel_button.get() {
-                return th::build_hint_spans(
-                    theme,
-                    &[
-                        ("Esc", " Cancel"),
-                        ("←/→", " Switch"),
-                        ("Enter", " Close inputs"),
-                        ("Tab", " Cycle focus"),
-                    ],
-                );
+                return th::build_hint_spans(theme, &[("Esc", " Cancel"), ("Enter", " Close inputs")]);
             }
         }
         th::build_hint_spans(
@@ -211,7 +197,9 @@ impl Component for WorkflowInputsComponent {
         ])
         .split(inner);
 
-        let content_layout = Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)]).split(main[1]);
+        let content_layout = Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
+            .spacing(Spacing::Overlap(1))
+            .split(main[1]);
         let layout_areas = Layout::horizontal([
             Constraint::Length(12), // cancel
             Constraint::Length(12), // run
@@ -234,6 +222,7 @@ impl Component for WorkflowInputsComponent {
         if let Some(state) = app.workflows.input_view_state_mut() {
             state.input_list_state.select(None);
         }
+        app.workflows.close_input_view();
         Vec::new()
     }
 }
@@ -323,16 +312,8 @@ fn handle_list_focused_key(app: &mut App, key_code: KeyCode) -> Vec<Effect> {
     }
 }
 
-fn handle_cancel_button_focused_key(app: &mut App, key_code: KeyCode) -> Vec<Effect> {
+fn handle_cancel_button_focused_key(_app: &mut App, key_code: KeyCode) -> Vec<Effect> {
     match key_code {
-        KeyCode::Left | KeyCode::Up => {
-            focus_input_list(app);
-            Vec::new()
-        }
-        KeyCode::Right => {
-            focus_run_button(app);
-            Vec::new()
-        }
         KeyCode::Enter | KeyCode::Char(' ') => vec![Effect::SwitchTo(Route::Workflows)],
         _ => Vec::new(),
     }
@@ -340,14 +321,6 @@ fn handle_cancel_button_focused_key(app: &mut App, key_code: KeyCode) -> Vec<Eff
 
 fn handle_run_button_focused_key(app: &mut App, key_code: KeyCode) -> Vec<Effect> {
     match key_code {
-        KeyCode::Left => {
-            focus_cancel_button(app);
-            Vec::new()
-        }
-        KeyCode::Right | KeyCode::Down => {
-            focus_input_list(app);
-            Vec::new()
-        }
         KeyCode::Enter | KeyCode::Char(' ') => app.run_active_workflow(),
         _ => Vec::new(),
     }
@@ -400,7 +373,7 @@ fn render_header(frame: &mut Frame, area: Rect, run_state: Ref<WorkflowRunState>
 fn render_inputs_list(frame: &mut Frame, area: Rect, input_view_state: &mut WorkflowInputViewState, theme: &dyn Theme) {
     let list_focused = input_view_state.f_list.is_focused();
     let rows = &input_view_state.input_rows;
-    let block = th::block(theme, Some("Inputs"), list_focused);
+    let block = th::block(theme, Some("Inputs"), list_focused).merge_borders(MergeStrategy::Exact);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -475,10 +448,7 @@ fn render_inputs_list(frame: &mut Frame, area: Rect, input_view_state: &mut Work
         input_view_state.input_list_state.select(first_enabled_index(rows));
     }
 
-    let list = List::new(items)
-        .style(theme.text_primary_style())
-        .highlight_style(highlight_style)
-        .highlight_symbol(if list_focused { "▸ " } else { "" });
+    let list = create_list_with_highlight(items, theme, list_focused, None);
 
     frame.render_stateful_widget(list, inner, &mut input_view_state.input_list_state.clone());
 }
@@ -503,7 +473,7 @@ fn get_message_style(status: &InputStatus, theme: &dyn Theme) -> Style {
 }
 
 fn render_input_details(frame: &mut Frame, area: Rect, input_view_state: &WorkflowInputViewState, theme: &dyn Theme) {
-    let block = th::block(theme, Some("Workflow Details"), false);
+    let block = th::block(theme, Some("Workflow Details"), false).merge_borders(MergeStrategy::Exact);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -704,22 +674,4 @@ fn current_row_block_reason(app: &App) -> Option<String> {
     let state = app.workflows.input_view_state()?;
     let selected_index = state.input_list_state.selected()?;
     state.input_rows.get(selected_index)?.blocked_reason.clone()
-}
-
-fn focus_input_list(app: &mut App) {
-    if let Some(state) = app.workflows.input_view_state() {
-        app.focus.focus(&state.f_list);
-    }
-}
-
-fn focus_cancel_button(app: &mut App) {
-    if let Some(state) = app.workflows.input_view_state() {
-        app.focus.focus(&state.f_cancel_button);
-    }
-}
-
-fn focus_run_button(app: &mut App) {
-    if let Some(state) = app.workflows.input_view_state() {
-        app.focus.focus(&state.f_run_button);
-    }
 }

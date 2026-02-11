@@ -12,7 +12,7 @@ use super::{
 
 // Surface colors sourced from the original theme.
 const GREY4: Color = Color::Rgb(0x21, 0x21, 0x21); // #212121
-const GREY5: Color = Color::Rgb(0x27, 0x27, 0x27); // #272727
+const GREY5: Color = Color::Rgb(0x2E, 0x2E, 0x2E); // #2E2E2E
 const GREY6: Color = Color::Rgb(0x2E, 0x2E, 0x2E); // #2E2E2E
 const GREY8: Color = Color::Rgb(0x3B, 0x3B, 0x3B); // #3B3B3B
 const GREY9: Color = Color::Rgb(0x42, 0x42, 0x42); // #424242
@@ -51,7 +51,7 @@ fn build_cyberpunk_roles() -> ThemeRoles {
         border: GREY4,
         divider: GREY9,
         text: TEXT_PRIMARY,
-        text_secondary: TEXT_SECONDARY,
+        text_secondary: lighten_rgb(TEXT_SECONDARY, 0.12),
         text_muted: TEXT_MUTED,
         accent_primary: ACCENT_PRIMARY,
         accent_secondary: ACCENT_SECONDARY,
@@ -60,7 +60,7 @@ fn build_cyberpunk_roles() -> ThemeRoles {
         success: STATUS_SUCCESS,
         warning: STATUS_WARNING,
         error: STATUS_ERROR,
-        selection_bg: SELECTION_BACKGROUND,
+        selection_bg: darken_rgb(SELECTION_BACKGROUND, 0.85),
         selection_fg: TEXT_SELECTED,
         focus: ACCENT_SECONDARY,
         search_highlight: STATUS_WARNING,
@@ -132,5 +132,23 @@ impl CyberpunkThemeHighContrast {
 impl Theme for CyberpunkThemeHighContrast {
     fn roles(&self) -> &ThemeRoles {
         &self.roles
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CyberpunkTheme, CyberpunkThemeHighContrast};
+    use crate::ui::theme::roles::Theme;
+
+    #[test]
+    fn cyberpunk_surface_matches_background() {
+        let theme = CyberpunkTheme::new();
+        assert_eq!(theme.roles().surface, theme.roles().background);
+    }
+
+    #[test]
+    fn cyberpunk_high_contrast_surface_matches_background() {
+        let theme = CyberpunkThemeHighContrast::new();
+        assert_eq!(theme.roles().surface, theme.roles().background);
     }
 }

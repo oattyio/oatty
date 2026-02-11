@@ -14,8 +14,9 @@ use oatty_mcp::{EnvVar, McpLogEntry, PluginDetail, PluginStatus};
 use oatty_types::Effect;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect, Spacing},
     style::{Modifier, Style},
+    symbols::merge::MergeStrategy,
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Wrap},
 };
@@ -106,23 +107,23 @@ impl Component for PluginsDetailsComponent {
                     }
                 }
             }
-            KeyCode::Char('r') if control_pressed => {
+            KeyCode::Char('r') if !control_pressed => {
                 if let Some(name) = details_state.selected_plugin().map(ToOwned::to_owned) {
                     details_state.begin_load(name.clone());
                     effects.push(Effect::PluginsLoadDetail(name));
                 }
             }
-            KeyCode::Char('r') => {
+            KeyCode::Char('r') if control_pressed => {
                 if let Some(name) = details_state.selected_plugin() {
                     effects.push(Effect::PluginsRestart(name.to_string()));
                 }
             }
-            KeyCode::Char('s') => {
+            KeyCode::Char('s') if control_pressed => {
                 if let Some(name) = details_state.selected_plugin() {
                     effects.push(Effect::PluginsStart(name.to_string()));
                 }
             }
-            KeyCode::Char('t') => {
+            KeyCode::Char('t') if control_pressed => {
                 if let Some(name) = details_state.selected_plugin() {
                     effects.push(Effect::PluginsStop(name.to_string()));
                 }
@@ -141,6 +142,7 @@ impl Component for PluginsDetailsComponent {
             .borders(Borders::ALL)
             .border_style(theme.border_style(true))
             .style(th::panel_style(theme))
+            .merge_borders(MergeStrategy::Exact)
             .title(Span::styled(title, theme.text_secondary_style().add_modifier(Modifier::BOLD)));
 
         let inner = block.inner(area);
@@ -152,12 +154,26 @@ impl Component for PluginsDetailsComponent {
             Constraint::Percentage(60), // main
             Constraint::Percentage(40), // tools
         ])
+        .spacing(Spacing::Overlap(1))
         .split(inner);
 
-        // Draw a full-height left border for the tools pane
-        let tools_border_block = Block::default().borders(Borders::LEFT).border_style(theme.border_style(true));
-        let tools_inner = tools_border_block.inner(cols[1]);
-        frame.render_widget(tools_border_block, cols[1]);
+        let left_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme.border_style(true))
+            .style(th::panel_style(theme))
+            .merge_borders(MergeStrategy::Exact)
+            .title(Span::styled("Details", theme.text_secondary_style().add_modifier(Modifier::BOLD)));
+        let left_inner = left_block.inner(cols[0]);
+        frame.render_widget(left_block, cols[0]);
+
+        let tools_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme.border_style(true))
+            .style(th::panel_style(theme))
+            .merge_borders(MergeStrategy::Exact)
+            .title(Span::styled("Tools", theme.text_secondary_style().add_modifier(Modifier::BOLD)));
+        let tools_inner = tools_block.inner(cols[1]);
+        frame.render_widget(tools_block, cols[1]);
 
         // Then, split only the left pane vertically for header/content/footer
         let left_layout = Layout::default()
@@ -166,7 +182,7 @@ impl Component for PluginsDetailsComponent {
                 Constraint::Length(3), // header
                 Constraint::Min(6),    // content
             ])
-            .split(cols[0]);
+            .split(left_inner);
 
         self.render_header(frame, left_layout[0], theme, app.plugins.details.as_ref());
         self.render_content(frame, left_layout[1], theme, app.plugins.details.as_ref());
@@ -234,14 +250,14 @@ impl Component for PluginsDetailsComponent {
     ///
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        let mut spans = th::build_hint_spans(theme, &[("Esc", " Close  "), ("↑/↓", " Scroll logs  "), ("Ctrl+R", " Refresh  ")]);
+        let mut spans = th::build_hint_spans(theme, &[("Esc", " Close  "), ("↑/↓", " Scroll logs  "), ("R", " Refresh  ")]);
 
         if let Some(details) = app.plugins.details.as_ref()
             && matches!(details.load_state(), PluginDetailsLoadState::Loaded(_))
         {
             spans.extend(th::build_hint_spans(
                 theme,
-                &[("R", " Restart  "), ("S", " Start  "), ("T", " Stop  ")],
+                &[("Ctrl+R", " Restart  "), ("Ctrl+S", " Start  "), ("Ctrl+T", " Stop  ")],
             ));
         }
 

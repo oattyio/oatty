@@ -1,14 +1,15 @@
 use crate::app::App;
+use crate::ui::components::common::{ConfirmationModalButton, ConfirmationModalOpts};
 use crate::ui::components::component::Component;
 use crate::ui::theme::theme_helpers as th;
+use crate::ui::theme::theme_helpers::ButtonType;
 use crate::ui::theme::theme_helpers::create_spans_with_match;
 use anyhow::{Result, anyhow};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use oatty_engine::WorkflowRunState;
 use oatty_types::workflow::RuntimeWorkflow;
-use oatty_types::{Effect, Route, validate_candidate_value};
+use oatty_types::{Effect, ExecOutcome, MessageType, Modal, Msg, Route, validate_candidate_value};
 use oatty_util::{HistoryKey, value_contains_secret, workflow_input_uses_history};
-use rat_focus::HasFocus;
 use ratatui::layout::Position;
 use ratatui::widgets::ListItem;
 use ratatui::{
@@ -16,7 +17,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::Modifier,
     text::{Line, Span},
-    widgets::{List, Paragraph, Wrap},
+    widgets::{Paragraph, Wrap},
 };
 use tracing::warn;
 
@@ -24,6 +25,8 @@ use tracing::warn;
 struct WorkflowsLayout {
     search_area: Rect,
     search_inner_area: Rect,
+    import_button_area: Rect,
+    remove_button_area: Rect,
     list_area: Rect,
 }
 
@@ -77,17 +80,53 @@ impl WorkflowsComponent {
         // and a list panel (with its own block and title)
         let layout = Layout::vertical([
             Constraint::Length(3), // Search panel area (title and borders)
+            Constraint::Length(3), // Action buttons
             Constraint::Min(1),    // List area
         ])
         .split(area);
 
         let search_inner_area = self.render_search_bar(frame, layout[0], app);
-        let list_area = self.render_workflow_list(frame, layout[1], app, &title);
+        let (import_button_area, remove_button_area) = self.render_action_buttons(frame, layout[1], app);
+        let list_area = self.render_workflow_list(frame, layout[2], app, &title);
         self.layout = WorkflowsLayout {
             search_area: layout[0],
             search_inner_area,
+            import_button_area,
+            remove_button_area,
             list_area,
         };
+    }
+
+    fn render_action_buttons(&self, frame: &mut Frame, area: Rect, app: &mut App) -> (Rect, Rect) {
+        let buttons = Layout::horizontal([
+            Constraint::Min(0),
+            Constraint::Length(12),
+            Constraint::Length(1),
+            Constraint::Length(12),
+        ])
+        .split(area);
+        let theme = &*app.ctx.theme;
+
+        let import_options = th::ButtonRenderOptions::new(
+            true,
+            app.workflows.f_import_button.get(),
+            false,
+            ratatui::widgets::Borders::ALL,
+            ButtonType::Primary,
+        );
+        th::render_button(frame, buttons[1], "Import", theme, import_options);
+
+        let remove_enabled = app.workflows.selected_workflow().is_some();
+        let remove_options = th::ButtonRenderOptions::new(
+            remove_enabled,
+            app.workflows.f_remove_button.get(),
+            false,
+            ratatui::widgets::Borders::ALL,
+            ButtonType::Destructive,
+        );
+        th::render_button(frame, buttons[3], "Remove", theme, remove_options);
+
+        (buttons[1], buttons[3])
     }
 
     fn render_search_bar(&mut self, frame: &mut Frame, area: Rect, app: &App) -> Rect {
@@ -137,7 +176,7 @@ impl WorkflowsComponent {
         let (items, filtered_count) = {
             let state = &app.workflows;
             let title_width = state.filtered_title_width().clamp(12, 40);
-            let available_summary_width = area.width.saturating_sub(title_width as u16).saturating_sub(4) as usize;
+            let available_summary_width = area.width.saturating_sub(title_width as u16 + 1).saturating_sub(4) as usize;
 
             let items: Vec<ListItem> = state
                 .filtered_indices()
@@ -180,9 +219,7 @@ impl WorkflowsComponent {
         if !is_list_focused {
             list_state.select(None);
         }
-        let list = List::new(items)
-            .highlight_style(theme.selection_style().add_modifier(Modifier::BOLD))
-            .highlight_symbol(if is_list_focused { "▸ " } else { "" });
+        let list = th::create_list_with_highlight(items, theme, is_list_focused, None);
 
         frame.render_stateful_widget(list, list_area, list_state);
         list_area
@@ -259,10 +296,70 @@ impl WorkflowsComponent {
         effects
     }
 
+    fn handle_import_workflow(&self) -> Vec<Effect> {
+        vec![Effect::ShowModal(Modal::FilePicker(vec!["yaml", "yml", "json"]))]
+    }
+
+    fn prompt_remove_workflow(&self, app: &mut App) -> Vec<Effect> {
+        let Some(workflow) = app.workflows.selected_workflow() else {
+            return Vec::new();
+        };
+
+        let workflow_label = workflow.title.clone().unwrap_or_else(|| workflow.identifier.clone());
+        let message = format!(
+            "Are you sure you want to remove '{}'? \nThis action cannot be undone.",
+            workflow_label
+        );
+        app.confirmation_modal_state.update_opts(ConfirmationModalOpts {
+            title: Some("Destructive Action".to_string()),
+            message: Some(message),
+            r#type: Some(MessageType::Warning),
+            buttons: vec![
+                ConfirmationModalButton::new("Cancel", rat_focus::FocusFlag::default(), ButtonType::Secondary),
+                ConfirmationModalButton::new(
+                    "Confirm",
+                    app.workflows.f_modal_confirmation_button.clone(),
+                    ButtonType::Destructive,
+                ),
+            ],
+        });
+        vec![Effect::ShowModal(Modal::Confirmation)]
+    }
+
+    fn handle_exec_completed(&mut self, outcome: ExecOutcome, app: &mut App) -> Vec<Effect> {
+        match outcome {
+            ExecOutcome::FileContents(contents, _) | ExecOutcome::RemoteFileContents(contents, _) => {
+                return vec![Effect::ImportWorkflowManifest(contents)];
+            }
+            ExecOutcome::WorkflowImported { .. } => {
+                let _ = app.workflows.ensure_loaded(&app.ctx.command_registry);
+            }
+            ExecOutcome::WorkflowRemoved { .. } => {
+                let _ = app.workflows.ensure_loaded(&app.ctx.command_registry);
+            }
+            ExecOutcome::WorkflowOperationError(_) => {}
+            _ => {}
+        }
+        Vec::new()
+    }
+
+    fn handle_modal_button_click(&self, button_id: usize, app: &mut App) -> Vec<Effect> {
+        if button_id != app.workflows.f_modal_confirmation_button.widget_id() {
+            return Vec::new();
+        }
+        let Some(workflow) = app.workflows.selected_workflow() else {
+            return Vec::new();
+        };
+        vec![Effect::RemoveWorkflow(workflow.identifier.clone().into())]
+    }
+
     fn hit_test_list(&mut self, app: &mut App, position: Position) -> Option<usize> {
+        if !self.layout.list_area.contains(position) {
+            return None;
+        }
         let offset = app.workflows.list.list_state().offset();
         let idx = (position.y as usize).saturating_sub(self.layout.list_area.y as usize) + offset;
-        if app.workflows.list.workflow_by_index(idx).is_some() {
+        if app.workflows.filtered_indices().get(idx).is_some() {
             Some(idx)
         } else {
             None
@@ -284,8 +381,24 @@ impl WorkflowsComponent {
 }
 
 impl Component for WorkflowsComponent {
+    fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
+        match msg {
+            Msg::ConfirmationModalButtonClicked(button_id) => self.handle_modal_button_click(button_id, app),
+            Msg::ExecCompleted(outcome) => self.handle_exec_completed(*outcome, app),
+            _ => Vec::new(),
+        }
+    }
+
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
-        // Handle tab/backtab to switch focus between the search field and the list
+        if key.modifiers.contains(KeyModifiers::CONTROL) {
+            match key.code {
+                KeyCode::Char('o') => return self.handle_import_workflow(),
+                KeyCode::Char('r') => return self.prompt_remove_workflow(app),
+                _ => {}
+            }
+        }
+
+        // Handle tab/backtab to switch focus between focusable fields.
         match key.code {
             KeyCode::Tab => {
                 app.focus.next();
@@ -300,23 +413,56 @@ impl Component for WorkflowsComponent {
             app.append_log_message(format!("Failed to load workflows: {error}"));
             return effects;
         }
-        // Defer to the search field if it's focused
-        let is_search_focused = app.workflows.f_search.get();
-        if is_search_focused {
+        // Defer to the search field if it's focused.
+        if app.workflows.f_search.get() {
             return self.handle_search_key(app, key);
         }
 
-        // Handle key events for the list
+        if app.workflows.f_import_button.get() {
+            if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
+                return self.handle_import_workflow();
+            }
+            return Vec::new();
+        }
+
+        if app.workflows.f_remove_button.get() {
+            if matches!(key.code, KeyCode::Enter | KeyCode::Char(' ')) {
+                return self.prompt_remove_workflow(app);
+            }
+            return Vec::new();
+        }
+
+        // Handle key events for the list.
         match key.code {
-            // Clear search on Esc (mirrors browser behavior)
             KeyCode::Esc => {
-                if !app.workflows.search_query().is_empty() || is_search_focused {
+                if !app.workflows.search_query().is_empty() {
                     app.workflows.clear_search();
-                    app.focus.focus(&app.workflows.f_search); // stay in search mode after clearing
+                    app.focus.focus(&app.workflows.f_search);
                 }
             }
             KeyCode::Down => app.workflows.select_next(),
             KeyCode::Up => app.workflows.select_prev(),
+            KeyCode::PageUp => {
+                app.workflows.list_state().scroll_up_by(10);
+            }
+            KeyCode::PageDown => {
+                app.workflows.list_state().scroll_down_by(10);
+            }
+            KeyCode::Home => {
+                app.workflows.list_state().scroll_up_by(u16::MAX);
+            }
+            KeyCode::End => {
+                app.workflows.list_state().scroll_down_by(u16::MAX);
+            }
+            KeyCode::Char(' ') => {
+                if app.workflows.selected_workflow().is_some() {
+                    if let Err(error) = self.open_workflow_inputs(app) {
+                        effects.push(Effect::Log(format!("Failed to open workflow inputs: {error}")));
+                    } else {
+                        effects.push(Effect::SwitchTo(Route::WorkflowInputs));
+                    }
+                }
+            }
             KeyCode::Enter => {
                 if app.workflows.selected_workflow().is_some() {
                     if let Err(error) = self.open_workflow_inputs(app) {
@@ -345,17 +491,39 @@ impl Component for WorkflowsComponent {
                 app.workflows.set_search_cursor_from_column(relative_column);
             }
 
+            if self.layout.import_button_area.contains(position) {
+                app.focus.focus(&app.workflows.f_import_button);
+                return self.handle_import_workflow();
+            }
+
+            if self.layout.remove_button_area.contains(position) {
+                app.focus.focus(&app.workflows.f_remove_button);
+                return self.prompt_remove_workflow(app);
+            }
+
             if self.layout.list_area.contains(position)
                 && let Some(idx) = self.hit_test_list(app, position)
             {
-                app.focus.focus(&app.workflows.list.focus());
+                app.focus.focus(&app.workflows.list.f_list);
+                let currently_selected = app.workflows.list.selected_filtered_index();
+                if currently_selected == Some(idx) {
+                    return self.handle_key_events(app, KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+                }
                 app.workflows.list.set_selected_workflow(idx);
-                return self.handle_key_events(app, KeyEvent::new(KeyCode::Enter, KeyModifiers::empty()));
+                return Vec::new();
             }
         }
 
         if mouse.kind == MouseEventKind::Moved || mouse.kind == MouseEventKind::Up(MouseButton::Left) {
             self.mouse_over_idx = self.hit_test_list(app, position);
+        }
+
+        if mouse.kind == MouseEventKind::ScrollDown && self.layout.list_area.contains(position) {
+            app.workflows.list_state().scroll_down_by(1);
+        }
+
+        if mouse.kind == MouseEventKind::ScrollUp && self.layout.list_area.contains(position) {
+            app.workflows.list_state().scroll_up_by(1);
         }
 
         Vec::new()
@@ -386,8 +554,22 @@ impl Component for WorkflowsComponent {
             hints.push(("Esc", " Clear filter  "));
         }
 
-        hints.push(("↑/↓", " Select  "));
-        hints.push(("Enter", " Open inputs"));
+        if app.workflows.f_import_button.get() {
+            hints.push(("Enter/Space", " Import workflow  "));
+        }
+        if app.workflows.f_remove_button.get() && app.workflows.selected_workflow().is_some() {
+            hints.push(("Enter/Space", " Remove workflow  "));
+        }
+        if app.workflows.list.f_list.get() {
+            hints.push(("↑/↓", " Select  "));
+            hints.push(("PgUp/PgDn", " Page  "));
+            hints.push(("Home/End", " Jump  "));
+            hints.push(("Enter", " Open inputs"));
+        }
+        hints.push(("Ctrl+O", " Import workflow  "));
+        if app.workflows.selected_workflow().is_some() {
+            hints.push(("Ctrl+R", " Remove workflow"));
+        }
 
         th::build_hint_spans(theme, &hints)
     }
