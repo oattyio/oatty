@@ -1,0 +1,75 @@
+:host {
+  display: block;
+  min-height: 100vh;
+  font-family: var(--font-sans);
+  background: var(--surface-glow);
+  color: var(--color-text-primary);
+  line-height: var(--line-height-normal);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:where(h1, h2, h3, h4, h5, h6) {
+  margin: 0;
+  font-weight: 700;
+  line-height: var(--line-height-tight);
+  color: var(--color-text-primary);
+}
+
+:where(p) {
+  margin: 0;
+  line-height: var(--line-height-relaxed);
+}
+
+:where(a) {
+  color: var(--color-accent);
+  text-decoration: none;
+  transition: color var(--transition-fast);
+}
+
+:where(a:hover) {
+  color: var(--color-accent-strong);
+}
+
+:where(button, select) {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: none;
+  cursor: pointer;
+}
+
+:where(button, a, select):focus-visible {
+  outline: 2px solid var(--color-focus);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+:where(ul, ol) {
+  list-style-position: inside;
+}
+
+:where(code) {
+  font-family: var(--font-mono);
+  font-size: 0.9em;
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 1ms !important;
+  }
+}
