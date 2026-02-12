@@ -54,9 +54,16 @@ pub(crate) async fn import_openapi_catalog(
 ) -> Result<Value, ErrorData> {
     let source_content = load_catalog_source_content(&request.source, request.source_type).await?;
 
-    let mut registry_guard = registry
-        .lock()
-        .map_err(|error| ErrorData::internal_error(format!("registry lock failed: {error}"), None))?;
+    let mut registry_guard = registry.lock().map_err(|error| {
+        internal_catalog_error(
+            format!("registry lock failed: {error}"),
+            serde_json::json!({
+                "catalog_title": request.catalog_title,
+                "source": request.source
+            }),
+            "Retry catalog import. If this persists, restart MCP server and retry.",
+        )
+    })?;
     let import_result = import_openapi_catalog_into_registry(
         &mut registry_guard,
         OpenApiCatalogImportRequest {
@@ -117,15 +124,32 @@ fn map_openapi_import_error_to_mcp(error: OpenApiCatalogImportError, request: &C
             }),
             "Set overwrite=true to replace the existing catalog.",
         ),
-        OpenApiCatalogImportError::CatalogGeneration(message) => {
-            ErrorData::invalid_params(format!("failed to derive catalog from OpenAPI source: {message}"), None)
-        }
+        OpenApiCatalogImportError::CatalogGeneration(message) => invalid_catalog_params_error(
+            format!("failed to derive catalog from OpenAPI source: {message}"),
+            serde_json::json!({
+                "catalog_title": request.catalog_title,
+                "vendor": request.vendor,
+                "source": request.source
+            }),
+            "Review the schema for unsupported operations or malformed operation metadata, then retry import.",
+        ),
         OpenApiCatalogImportError::ReplaceFailed { message, .. }
         | OpenApiCatalogImportError::InsertFailed(message)
-        | OpenApiCatalogImportError::SaveFailed(message) => ErrorData::internal_error(format!("catalog import failed: {message}"), None),
-        OpenApiCatalogImportError::PersistedCatalogUnavailable => ErrorData::internal_error(
+        | OpenApiCatalogImportError::SaveFailed(message) => internal_catalog_error(
+            format!("catalog import failed: {message}"),
+            serde_json::json!({
+                "catalog_title": request.catalog_title,
+                "source": request.source
+            }),
+            "Retry import. If this persists, verify runtime config write permissions.",
+        ),
+        OpenApiCatalogImportError::PersistedCatalogUnavailable => internal_catalog_error(
             "catalog import succeeded but persisted catalog metadata is unavailable".to_string(),
-            None,
+            serde_json::json!({
+                "catalog_title": request.catalog_title,
+                "source": request.source
+            }),
+            "Run catalog list to verify persisted state and retry import if needed.",
         ),
     }
 }
@@ -135,30 +159,39 @@ pub(crate) fn set_catalog_enabled_state(
     registry: &Arc<Mutex<CommandRegistry>>,
     request: &CatalogSetEnabledRequest,
 ) -> Result<Value, ErrorData> {
-    let mut registry_guard = registry
-        .lock()
-        .map_err(|error| ErrorData::internal_error(format!("registry lock failed: {error}"), None))?;
+    let mut registry_guard = registry.lock().map_err(|error| {
+        internal_catalog_error(
+            format!("registry lock failed: {error}"),
+            serde_json::json!({ "catalog_id": request.catalog_id }),
+            "Retry catalog enable/disable. If this persists, restart MCP server and retry.",
+        )
+    })?;
 
     if request.enabled {
         registry_guard.enable_catalog(&request.catalog_id).map_err(|error| {
-            ErrorData::invalid_params(
+            invalid_catalog_params_error(
                 format!("failed to enable catalog '{}': {error}", request.catalog_id),
-                Some(serde_json::json!({ "catalog_id": request.catalog_id })),
+                serde_json::json!({ "catalog_id": request.catalog_id }),
+                "Use list_command_topics to verify the catalog id, then retry enable.",
             )
         })?;
     } else {
         registry_guard.disable_catalog(&request.catalog_id).map_err(|error| {
-            ErrorData::invalid_params(
+            invalid_catalog_params_error(
                 format!("failed to disable catalog '{}': {error}", request.catalog_id),
-                Some(serde_json::json!({ "catalog_id": request.catalog_id })),
+                serde_json::json!({ "catalog_id": request.catalog_id }),
+                "Use list_command_topics to verify the catalog id, then retry disable.",
             )
         })?;
     }
 
-    registry_guard
-        .config
-        .save()
-        .map_err(|error| ErrorData::internal_error(format!("failed to persist catalog config: {error}"), None))?;
+    registry_guard.config.save().map_err(|error| {
+        internal_catalog_error(
+            format!("failed to persist catalog config: {error}"),
+            serde_json::json!({ "catalog_id": request.catalog_id }),
+            "Verify runtime config write permissions, then retry.",
+        )
+    })?;
 
     let command_count_after_toggle = get_catalog_by_title(&registry_guard, &request.catalog_id)
         .and_then(|catalog| catalog.manifest.as_ref().map(|manifest| manifest.commands.len()))
@@ -174,16 +207,23 @@ pub(crate) fn set_catalog_enabled_state(
 /// Removes an existing runtime catalog entry.
 pub(crate) fn remove_catalog_runtime(registry: &Arc<Mutex<CommandRegistry>>, request: &CatalogRemoveRequest) -> Result<Value, ErrorData> {
     let remove_manifest = request.remove_manifest.unwrap_or(false);
-    let mut registry_guard = registry
-        .lock()
-        .map_err(|error| ErrorData::internal_error(format!("registry lock failed: {error}"), None))?;
+    let mut registry_guard = registry.lock().map_err(|error| {
+        internal_catalog_error(
+            format!("registry lock failed: {error}"),
+            serde_json::json!({ "catalog_id": request.catalog_id }),
+            "Retry catalog removal. If this persists, restart MCP server and retry.",
+        )
+    })?;
 
     let removed = remove_catalog_internal(&mut registry_guard, &request.catalog_id, remove_manifest)?;
     let remaining_catalog_count = registry_guard.config.catalogs.as_ref().map(|catalogs| catalogs.len()).unwrap_or(0);
-    registry_guard
-        .config
-        .save()
-        .map_err(|error| ErrorData::internal_error(format!("failed to persist catalog config: {error}"), None))?;
+    registry_guard.config.save().map_err(|error| {
+        internal_catalog_error(
+            format!("failed to persist catalog config: {error}"),
+            serde_json::json!({ "catalog_id": request.catalog_id }),
+            "Verify runtime config write permissions, then retry.",
+        )
+    })?;
 
     Ok(serde_json::json!({
         "removed_catalog_id": removed.title,
@@ -240,6 +280,28 @@ fn resolve_catalog_source_type(source: &str, source_type: Option<CatalogSourceTy
     CatalogSourceType::Path
 }
 
+fn invalid_catalog_params_error(message: impl Into<String>, context: Value, suggested_action: &str) -> ErrorData {
+    let message = message.into();
+    ErrorData::invalid_params(
+        message,
+        Some(serde_json::json!({
+            "context": context,
+            "suggested_action": suggested_action
+        })),
+    )
+}
+
+fn internal_catalog_error(message: impl Into<String>, context: Value, suggested_action: &str) -> ErrorData {
+    let message = message.into();
+    ErrorData::internal_error(
+        message,
+        Some(serde_json::json!({
+            "context": context,
+            "suggested_action": suggested_action
+        })),
+    )
+}
+
 fn load_catalog_source_from_path(source: &str) -> Result<String, ErrorData> {
     let source_path = oatty_util::expand_tilde(source);
     std::fs::read_to_string(&source_path).map_err(|error| {
@@ -277,9 +339,13 @@ async fn load_catalog_source_from_url(source: &str) -> Result<String, ErrorData>
         ));
     }
 
-    let response = reqwest::get(url)
-        .await
-        .map_err(|error| ErrorData::internal_error(format!("failed to fetch OpenAPI source URL: {error}"), None))?;
+    let response = reqwest::get(url).await.map_err(|error| {
+        internal_catalog_error(
+            format!("failed to fetch OpenAPI source URL: {error}"),
+            serde_json::json!({ "source": source, "source_type": "url" }),
+            "Verify network connectivity and URL reachability, then retry.",
+        )
+    })?;
     let status = response.status();
     if !status.is_success() {
         return Err(ErrorData::invalid_params(
@@ -291,10 +357,13 @@ async fn load_catalog_source_from_url(source: &str) -> Result<String, ErrorData>
             })),
         ));
     }
-    response
-        .text()
-        .await
-        .map_err(|error| ErrorData::internal_error(format!("failed to read OpenAPI URL response body: {error}"), None))
+    response.text().await.map_err(|error| {
+        internal_catalog_error(
+            format!("failed to read OpenAPI URL response body: {error}"),
+            serde_json::json!({ "source": source, "source_type": "url" }),
+            "Retry fetch. If this persists, verify the source returns a readable text body.",
+        )
+    })
 }
 
 fn parse_openapi_document_value(source_content: &str) -> Result<Value, ErrorData> {
@@ -472,9 +541,13 @@ fn remove_catalog_internal(
     let manifest_path = PathBuf::from(removed_catalog.manifest_path.clone());
     let manifest_removed = if remove_manifest && manifest_path.exists() {
         std::fs::remove_file(&manifest_path).map(|_| true).map_err(|error| {
-            ErrorData::internal_error(
+            internal_catalog_error(
                 format!("failed to remove catalog manifest '{}': {error}", manifest_path.display()),
-                None,
+                serde_json::json!({
+                    "catalog_id": catalog_identifier,
+                    "manifest_path": manifest_path.to_string_lossy().to_string()
+                }),
+                "Verify file permissions and retry catalog removal.",
             )
         })?
     } else {

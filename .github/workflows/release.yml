@@ -132,7 +132,7 @@ jobs:
       - name: Install cosign
         uses: sigstore/cosign-installer@v3
         with:
-          cosign-release: "v2.5.2"
+          cosign-release: "v2.4.1"
 
       - name: Sign assets and checksums
         shell: bash
@@ -200,22 +200,8 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "25"
           registry-url: "https://registry.npmjs.org"
-
-      - name: Enforce Trusted Publishing auth (disable token auth)
-        shell: bash
-        run: |
-          set -euo pipefail
-          # Remove token-based npm auth so npm can use GitHub OIDC trusted publishing.
-          npm config delete //registry.npmjs.org/:_authToken || true
-          if [[ -n "${NPM_CONFIG_USERCONFIG:-}" && -f "${NPM_CONFIG_USERCONFIG}" ]]; then
-            sed -i '/registry\.npmjs\.org\/:_authToken/d' "${NPM_CONFIG_USERCONFIG}" || true
-          fi
-          {
-            echo "NODE_AUTH_TOKEN="
-            echo "NPM_TOKEN="
-          } >> "$GITHUB_ENV"
 
       - name: Validate release tag matches package version
         shell: bash
@@ -244,7 +230,4 @@ jobs:
 
       - name: Publish package to npm
         if: ${{ steps.version_check.outputs.already_published == 'false' }}
-        env:
-          NODE_AUTH_TOKEN: ""
-          NPM_TOKEN: ""
         run: npm publish --provenance --access public

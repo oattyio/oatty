@@ -2,7 +2,9 @@
 
 use crate::server::workflow::errors::{execution_error, internal_error, invalid_params_error};
 use crate::server::workflow::services::history::{WorkflowHistoryEntry, append_history_entry};
-use crate::server::workflow::tools::common::resolve_runtime_workflow;
+use crate::server::workflow::tools::common::{
+    build_preflight_validation_error, collect_workflow_preflight_violations, resolve_runtime_workflow,
+};
 use crate::server::workflow::tools::types::{
     WorkflowPreviewRenderedRequest, WorkflowRunExecutionMode, WorkflowRunRequest, WorkflowStepPlanRequest,
 };
@@ -92,6 +94,17 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
         })?
         .clone();
     let runner = RegistryCommandRunner::new(registry_snapshot);
+    let violations = collect_workflow_preflight_violations(&state.workflow, command_registry)?;
+    if let Some(error) = build_preflight_validation_error(
+        &state.workflow.identifier,
+        violations,
+        "WORKFLOW_RUN_PRECHECK_FAILED",
+        "workflow run blocked by command/catalog preflight validation",
+        "Fix listed step run identifiers and catalog configuration, then retry workflow.run.",
+    ) {
+        return Err(error);
+    }
+
     let results = state.execute_with_runner(&runner).map_err(|error| {
         execution_error(
             "WORKFLOW_RUN_FAILED",
@@ -110,6 +123,8 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
     let run_identifier = format!("run-{}-{}", state.workflow.identifier, chrono::Utc::now().timestamp_millis());
     let output_map = state.run_context.steps.clone();
     let input_map = state.run_context.inputs.clone();
+    let include_results = request.include_results.unwrap_or(true);
+    let include_outputs = request.include_outputs.unwrap_or(false);
     append_history_entry(&WorkflowHistoryEntry {
         workflow_id: state.workflow.identifier.clone(),
         run_id: run_identifier.clone(),
@@ -127,19 +142,30 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
         )
     })?;
 
-    Ok(serde_json::json!({
-        "run_id": run_identifier,
-        "workflow_id": state.workflow.identifier,
-        "status": run_status,
-        "execution_mode_requested": execution_mode_label(execution_mode),
-        "execution_mode_used": "sync",
-        "task_mode_supported": true,
-        "task_recommended": should_recommend_task_mode,
-        "task_recommendation_reason": task_recommendation_reason,
-        "inputs": input_map,
-        "results": results,
-        "outputs": output_map,
-    }))
+    let mut response = serde_json::Map::new();
+    response.insert("run_id".to_string(), serde_json::json!(run_identifier));
+    response.insert("workflow_id".to_string(), serde_json::json!(state.workflow.identifier));
+    response.insert("status".to_string(), serde_json::json!(run_status));
+    response.insert(
+        "execution_mode_requested".to_string(),
+        serde_json::json!(execution_mode_label(execution_mode)),
+    );
+    response.insert("execution_mode_used".to_string(), serde_json::json!("sync"));
+    response.insert("task_mode_supported".to_string(), serde_json::json!(true));
+    response.insert("task_recommended".to_string(), serde_json::json!(should_recommend_task_mode));
+    response.insert(
+        "task_recommendation_reason".to_string(),
+        serde_json::json!(task_recommendation_reason),
+    );
+    response.insert("inputs".to_string(), serde_json::json!(input_map));
+    if include_results {
+        response.insert("results".to_string(), serde_json::json!(results));
+    }
+    if include_outputs {
+        response.insert("outputs".to_string(), serde_json::json!(output_map));
+    }
+
+    Ok(Value::Object(response))
 }
 
 pub fn run_with_task_capability_guard(

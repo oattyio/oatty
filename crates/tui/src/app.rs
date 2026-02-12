@@ -23,8 +23,8 @@ use crate::ui::{
     },
     theme,
 };
-use oatty_engine::ValueProvider;
 use oatty_engine::provider::{CacheLookupOutcome, PendingProviderFetch, ProviderRegistry};
+use oatty_engine::{RegistryCommandRunner, ValueProvider};
 use oatty_mcp::{McpHttpLogEntry, PluginEngine, RunningMcpHttpServer};
 use oatty_registry::CommandRegistry;
 use oatty_types::{Effect, LogLevel, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus, validate_candidate_value};
@@ -608,6 +608,37 @@ impl App<'_> {
 
         let run_state_rc = self.workflows.active_run_state.clone().unwrap();
         let run_state = run_state_rc.borrow();
+
+        let registry_snapshot = self.ctx.command_registry.lock().ok().map(|registry_guard| registry_guard.clone());
+        let Some(registry_snapshot) = registry_snapshot else {
+            self.append_log_message_with_level(
+                Some(LogLevel::Error),
+                "Cannot run workflow: failed to access command registry for preflight validation.",
+            );
+            return Vec::new();
+        };
+        let runner = RegistryCommandRunner::new(registry_snapshot);
+        let preflight_violations = runner.validate_workflow_execution_readiness(&run_state.workflow);
+        if !preflight_violations.is_empty() {
+            self.append_log_message_with_level(
+                Some(LogLevel::Error),
+                format!(
+                    "Cannot run workflow '{}': preflight validation found {} issue(s).",
+                    run_state.workflow.identifier,
+                    preflight_violations.len()
+                ),
+            );
+            for violation in preflight_violations {
+                self.append_log_message_with_level(
+                    Some(LogLevel::Error),
+                    format!(
+                        "Step '{}' [{}]: {}. Next: {}",
+                        violation.step_id, violation.code, violation.message, violation.suggested_action
+                    ),
+                );
+            }
+            return Vec::new();
+        }
 
         let display_name = run_state
             .workflow

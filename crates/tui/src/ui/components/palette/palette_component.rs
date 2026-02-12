@@ -435,6 +435,7 @@ impl Component for PaletteComponent {
             _ => Vec::new(),
         }
     }
+
     /// Handle key events for the command palette when the builder is not open.
     ///
     /// This function processes keyboard input for the command palette, handling
@@ -523,7 +524,6 @@ impl Component for PaletteComponent {
         }
         effects
     }
-
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
         let PaletteLayout {
             suggestions_area,
@@ -654,5 +654,10 @@ impl Component for PaletteComponent {
 
         let block = Block::bordered();
         vec![outter_area[0], block.inner(outter_area[0]), outter_area[1], outter_area[2]]
+    }
+
+    fn on_route_enter(&mut self, app: &mut App) -> Vec<Effect> {
+        app.focus.focus(&app.palette.f_input);
+        Vec::new()
     }
 }

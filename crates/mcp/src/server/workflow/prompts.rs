@@ -67,7 +67,7 @@ fn workflow_author_prompt(arguments: Option<&Map<String, Value>>) -> Result<GetP
         messages: vec![PromptMessage::new_text(
             PromptMessageRole::User,
             format!(
-                "Author a workflow manifest in YAML with these requirements:\n- Goal: {goal}\n- Constraints: {constraints}\n- Include inputs with validation where appropriate\n- Prefer provider-backed inputs whenever a provider can supply valid choices\n- For provider-backed inputs, include `provider`, `select`, and `provider_args`/`depends_on` bindings to earlier inputs or steps when relevant\n- Avoid manual free-text inputs when a provider can discover the value\n- Include deterministic step IDs and explicit run commands\n- Use `${{{{ inputs.name }}}}` interpolation syntax for step inputs"
+                "Author a workflow manifest in YAML with these requirements:\n- Goal: {goal}\n- Constraints: {constraints}\n- Include inputs with validation where appropriate\n- Prefer provider-backed inputs whenever a provider can supply valid choices\n- Use provider-backed inputs for enumerable identifiers and list selections (for example owner_id, project_id, service_id, domain, env_group)\n- Keep manual inputs for transformation-heavy fields that require human mapping/decisions (for example serviceDetails/build/start/runtime/env transformations)\n- For provider-backed inputs, include `provider`, `select`, and `provider_args`/`depends_on` bindings to earlier inputs or steps when relevant\n- Avoid manual free-text inputs when a provider can discover the value\n- Include deterministic step IDs and explicit run commands\n- Use `${{{{ inputs.name }}}}` interpolation syntax for step inputs\n- Apply this preflight checklist before finalizing:\n  1) Required command catalogs exist and are enabled\n  2) Required HTTP commands are discoverable\n  3) If either check fails, import missing OpenAPI catalogs before authoring more steps"
             ),
         )],
     })
@@ -199,5 +199,8 @@ mod tests {
         assert!(rendered.contains("provider-backed inputs"));
         assert!(rendered.contains("provider_args"));
         assert!(rendered.contains("depends_on"));
+        assert!(rendered.contains("enumerable identifiers"));
+        assert!(rendered.contains("transformation-heavy fields"));
+        assert!(rendered.contains("preflight checklist"));
     }
 }

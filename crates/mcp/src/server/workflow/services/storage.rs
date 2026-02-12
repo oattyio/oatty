@@ -1,6 +1,6 @@
 //! Runtime filesystem-backed workflow storage adapter.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use oatty_registry::default_workflows_path;
 use oatty_types::workflow::WorkflowDefinition;
 use std::fs;
@@ -169,10 +169,112 @@ pub fn compute_version(content: &str) -> String {
 }
 
 fn parse_definition_with_format(content: &str, format: WorkflowManifestFormat) -> Result<WorkflowDefinition> {
+    let manifest_value = parse_manifest_value_with_format(content, format)?;
+    validate_manifest_shape(&manifest_value)?;
+
     match format {
-        WorkflowManifestFormat::Yaml => serde_yaml::from_str(content).context("parse yaml workflow"),
-        WorkflowManifestFormat::Json => serde_json::from_str(content).context("parse json workflow"),
+        WorkflowManifestFormat::Yaml => serde_yaml::from_str(content).map_err(|error| anyhow!(format_yaml_error(error))),
+        WorkflowManifestFormat::Json => serde_json::from_str(content).map_err(|error| anyhow!(format_json_error(error))),
     }
+}
+
+fn parse_manifest_value_with_format(content: &str, format: WorkflowManifestFormat) -> Result<serde_json::Value> {
+    match format {
+        WorkflowManifestFormat::Yaml => serde_yaml::from_str(content).map_err(|error| anyhow!(format_yaml_error(error))),
+        WorkflowManifestFormat::Json => serde_json::from_str(content).map_err(|error| anyhow!(format_json_error(error))),
+    }
+}
+
+fn validate_manifest_shape(manifest_value: &serde_json::Value) -> Result<()> {
+    let root_object = manifest_value
+        .as_object()
+        .ok_or_else(|| anyhow!("workflow manifest root must be an object"))?;
+
+    validate_input_defaults_shape(root_object)?;
+    validate_step_key_shape(root_object)?;
+
+    Ok(())
+}
+
+fn validate_input_defaults_shape(root_object: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
+    let Some(inputs_value) = root_object.get("inputs") else {
+        return Ok(());
+    };
+    let Some(inputs_object) = inputs_value.as_object() else {
+        return Ok(());
+    };
+
+    for (input_name, definition_value) in inputs_object {
+        let Some(definition_object) = definition_value.as_object() else {
+            continue;
+        };
+        let Some(default_value) = definition_object.get("default") else {
+            continue;
+        };
+        if default_value.is_null() {
+            continue;
+        }
+        let Some(default_object) = default_value.as_object() else {
+            bail!(
+                "workflow input '{}.default' must be an object like '{{ from: literal, value: ... }}'",
+                input_name
+            );
+        };
+        if !default_object.contains_key("from") {
+            bail!("workflow input '{}.default' must include a 'from' field", input_name);
+        }
+    }
+
+    Ok(())
+}
+
+fn validate_step_key_shape(root_object: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
+    let Some(steps_value) = root_object.get("steps") else {
+        return Ok(());
+    };
+    let Some(step_list) = steps_value.as_array() else {
+        return Ok(());
+    };
+
+    for (step_index, step_value) in step_list.iter().enumerate() {
+        let Some(step_object) = step_value.as_object() else {
+            continue;
+        };
+        let step_identifier = step_object.get("id").and_then(serde_json::Value::as_str).unwrap_or("<missing-id>");
+
+        if step_object.contains_key("flags") || step_object.contains_key("positional_args") {
+            bail!(
+                "workflow step '{}'(index {}) must place command arguments under 'with', not 'flags' or 'positional_args'",
+                step_identifier,
+                step_index
+            );
+        }
+        if step_object.contains_key("condition") {
+            bail!(
+                "workflow step '{}'(index {}) uses unsupported key 'condition'; use 'if' or 'when'",
+                step_identifier,
+                step_index
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn format_yaml_error(error: serde_yaml::Error) -> String {
+    if let Some(location) = error.location() {
+        return format!(
+            "parse yaml workflow at line {}, column {}: {}",
+            location.line(),
+            location.column(),
+            error
+        );
+    }
+    format!("parse yaml workflow: {error}")
+}
+
+fn format_json_error(error: serde_json::Error) -> String {
+    format!("parse json workflow at line {}, column {}: {}", error.line(), error.column(), error)
 }
 
 fn write_atomic(path: &Path, content: &str) -> Result<()> {
@@ -230,5 +332,37 @@ mod tests {
         let different = compute_version("workflow: demo_two\nsteps: []\n");
         assert_eq!(left, right);
         assert_ne!(left, different);
+    }
+
+    #[test]
+    fn rejects_scalar_input_default_shape() {
+        let content = r#"
+workflow: demo
+inputs:
+  environment:
+    type: string
+    default: production
+steps:
+  - id: one
+    run: apps list
+"#;
+
+        let error = parse_manifest_content(content, Some("yaml")).expect_err("expected scalar default rejection");
+        assert!(error.to_string().contains("default' must be an object"));
+    }
+
+    #[test]
+    fn rejects_step_flags_and_positional_args_keys() {
+        let content = r#"
+workflow: demo
+steps:
+  - id: one
+    run: apps list
+    positional_args:
+      - app
+"#;
+
+        let error = parse_manifest_content(content, Some("yaml")).expect_err("expected unsupported step key rejection");
+        assert!(error.to_string().contains("not 'flags' or 'positional_args'"));
     }
 }

@@ -60,6 +60,29 @@ Implemented workflow tool surface includes:
 - `workflow.author_and_run`
 - `workflow.repair_and_rerun`
 
+## Command discovery metadata for authoring
+
+- Workflow authoring flows rely on MCP command discovery via `search_commands`.
+- Recommended authoring sequence is:
+  1. `search_commands` for discovery.
+  2. `get_command` for exact single-command argument/flag/schema inspection.
+  3. Workflow drafting/validation once command IDs and schemas are confirmed.
+- `search_commands` supports `include_inputs` for metadata enrichment:
+  - `required_only`: includes required input metadata plus compact `output_fields`.
+  - `full`: includes positional/flag metadata, `output_schema`, and compact `output_fields`.
+- `output_fields`/`output_schema` are intended to help map upstream step outputs into downstream provider bindings and step inputs.
+
+## Workflow authoring policy (LLM-facing)
+
+- Provider-first for enumerable/list-selection fields:
+  - Use provider-backed inputs when values are discoverable and bounded (for example `owner_id`, `project_id`, `service_id`, `domain`, `env_group`).
+- Hybrid/manual policy for transformation-heavy fields:
+  - Keep manual inputs where user intent and cross-system mapping are required (for example build/runtime/service detail transformations).
+- Preflight requirement before full manifest drafting:
+  - Confirm required catalogs exist and are enabled.
+  - Confirm required HTTP commands are discoverable.
+  - If either check fails, run OpenAPI validation/import flow before continuing workflow authoring.
+
 ## Input resolution and readiness semantics
 
 - `workflow.resolve_inputs` applies defaults, evaluates provider bindings, validates values, and returns readiness metadata.

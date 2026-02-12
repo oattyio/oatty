@@ -94,7 +94,11 @@ Validation errors are surfaced back to palette as user-facing errors.
   - summary
   - positional/flag names and descriptions
   - catalog metadata (title/description/vendor) when available
-- Search results include canonical id, summary, execution type, and optional HTTP method.
+- Base search results include canonical id, summary, execution type, and optional HTTP method.
+- MCP `search_commands` can enrich result payloads with `include_inputs`:
+  - `required_only`: required input metadata and compact `output_fields`.
+  - `full`: full positional/flag metadata, `output_schema`, and compact `output_fields`.
+- `output_fields` provide a compact, chain-friendly list of top-level output keys for object and array-of-object schemas.
 
 ## TUI integration points
 

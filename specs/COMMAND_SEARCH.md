@@ -36,9 +36,23 @@ Search returns structured `SearchResult` entries including:
 - `execution_type`
 - `http_method` (if applicable)
 
+For MCP `search_commands`, optional metadata enrichment is supported through `include_inputs`:
+- `none` (default): no input/output metadata augmentation.
+- `required_only`: adds required input metadata and compact `output_fields` when output schema can be projected.
+- `full`: adds full positional/flag metadata, `output_schema`, and compact `output_fields`.
+
+`output_fields` are a compact projection intended for workflow chaining:
+- object outputs: top-level property keys.
+- array-of-object outputs: top-level keys prefixed as `[].<field>`.
+
 ## MCP tool exposure
 
 MCP `search_commands` delegates to the same search handle.
+
+Recommended MCP lookup pattern:
+- Use `search_commands` for candidate discovery.
+- Use `get_command` with a selected `canonical_id` for deterministic, exact schema/details.
+- Reserve `include_inputs=full` for cases that need complete argument/flag/output schema inspection.
 
 ## Correctness notes
 
