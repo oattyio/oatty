@@ -1,0 +1,7 @@
+.is-muted {
+  color: var(--color-text-secondary);
+}
+
+.is-hidden {
+  display: none !important;
+}

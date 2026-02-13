@@ -93,6 +93,7 @@ pub enum Cmd {
     PluginsExportLogsDefault(String),
     PluginsValidate,
     PluginsSave,
+    PluginsDelete(String),
     SendMsg(Msg),
     ReadFileContents(PathBuf),
     ListDirectoryContents(PathBuf),
@@ -163,6 +164,7 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
             Effect::PluginsExportLogsDefault(name) => Some(vec![Cmd::PluginsExportLogsDefault(name)]),
             Effect::PluginsValidateAdd => Some(vec![Cmd::PluginsValidate]),
             Effect::PluginsSave => Some(vec![Cmd::PluginsSave]),
+            Effect::PluginsDelete(name) => Some(vec![Cmd::PluginsDelete(name)]),
             Effect::SendToPalette(spec) => {
                 let result = handle_send_to_palette(app, spec);
                 effect_queue.extend(app.rebuild_palette_suggestions());
@@ -255,6 +257,7 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
             Cmd::PluginsExportLogsDefault(name) => (Some(execute_plugins_export_default(app, name).await), None),
             Cmd::PluginsValidate => (Some(execute_plugins_validate(app)), None),
             Cmd::PluginsSave => (Some(execute_plugins_save(app).await), None),
+            Cmd::PluginsDelete(name) => (Some(execute_plugins_delete(app, name).await), None),
             Cmd::SendMsg(msg) => (Some(ExecOutcome::Message(msg)), None),
             Cmd::ReadFileContents(path) => (Some(read_file_contents(path)), None),
             Cmd::ListDirectoryContents(path) => (Some(list_dir_contents(path)), None),
@@ -1034,6 +1037,44 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
         app.plugins.table.table_state.select(Some(index));
     }
     ExecOutcome::Log(format!("Plugins: added '{}'", name))
+}
+
+/// Remove an existing MCP plugin from config and refresh runtime state.
+async fn execute_plugins_delete(app: &mut App<'_>, plugin_name: String) -> ExecOutcome {
+    let path = default_config_path();
+    let mut configuration = if let Ok(text) = read_to_string(&path) {
+        from_str::<McpConfig>(&text).unwrap_or_default()
+    } else {
+        McpConfig::default()
+    };
+
+    if configuration.mcp_servers.remove(&plugin_name).is_none() {
+        return ExecOutcome::Log(format!("Plugins: '{}' was not found in config.", plugin_name));
+    }
+
+    if let Err(error) = save_config_to_path(&mut configuration, &path) {
+        return ExecOutcome::PluginValidationErr {
+            message: format!("Failed to save MCP configuration after delete: {error}"),
+        };
+    }
+
+    let runtime_configuration = match load_config_from_path(&path) {
+        Ok(config) => config,
+        Err(error) => {
+            return ExecOutcome::PluginValidationErr {
+                message: format!("Deleted plugin, but failed to reload configuration: {error}"),
+            };
+        }
+    };
+
+    if let Err(error) = app.ctx.plugin_engine.update_config(runtime_configuration).await {
+        return ExecOutcome::PluginValidationErr {
+            message: format!("Deleted plugin, but failed to refresh MCP engine: {error}"),
+        };
+    }
+
+    execute_load_plugins(app).await;
+    ExecOutcome::Log(format!("Plugins: removed '{}'.", plugin_name))
 }
 
 /// Strict validator for key/value rows captured in the KV editor.

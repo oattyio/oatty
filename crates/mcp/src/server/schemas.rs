@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SearchInputsDetail {
-    /// Return only base search metadata.
+    /// Return minimal discovery metadata (`canonical_id`, `execution_type`, `http_method`).
     #[default]
     None,
     /// Return only required input fields for minimal-token execution planning.
@@ -61,6 +61,14 @@ pub struct CommandSummariesRequest {
     /// Human-readable catalog title as returned by catalog listing tools.
     #[schemars(description = "Catalog title to inspect. Use list_command_topics output values.")]
     pub catalog_title: String,
+}
+
+/// Parameters for exact command lookup by canonical identifier.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CommandDetailRequest {
+    /// Canonical command identifier in `<group> <command>` format.
+    #[schemars(description = "Canonical command id in '<group> <command>' format, for example: 'apps apps:list'.")]
+    pub canonical_id: String,
 }
 
 /// How to interpret the catalog source location.

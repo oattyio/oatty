@@ -1040,6 +1040,21 @@ fn run_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, matche
     };
 
     let runner = RegistryCommandRunner::new(registry_snapshot);
+    let preflight_violations = runner.validate_workflow_execution_readiness(&state.workflow);
+    if !preflight_violations.is_empty() {
+        let details = preflight_violations
+            .iter()
+            .map(|violation| {
+                format!(
+                    "- step '{}' [{}]: {} (next: {})",
+                    violation.step_id, violation.code, violation.message, violation.suggested_action
+                )
+            })
+            .collect::<Vec<String>>()
+            .join("\n");
+        bail!("workflow run blocked by preflight validation:\n{details}");
+    }
+
     let results = state.execute_with_runner(&runner)?;
     let run_succeeded = results.iter().all(|result| result.status != StepStatus::Failed);
 

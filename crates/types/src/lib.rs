@@ -967,6 +967,8 @@ pub mod messaging {
         PluginsValidateAdd,
         /// Apply to add a plugin patch.
         PluginsSave,
+        /// Remove the selected plugin configuration entry.
+        PluginsDelete(String),
         /// Load detailed information for a plugin when opening the details modal.
         PluginsLoadDetail(String),
         /// Change the main view.

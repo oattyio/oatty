@@ -20,6 +20,10 @@ pub enum WorkflowRunExecutionMode {
 pub struct WorkflowGetRequest {
     #[schemars(description = "Canonical workflow identifier.")]
     pub workflow_id: String,
+    #[schemars(description = "Include manifest content text in the response. Defaults to true.")]
+    pub include_content: Option<bool>,
+    #[schemars(description = "Include parsed manifest JSON in the response. Defaults to false.")]
+    pub include_parsed: Option<bool>,
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -78,6 +82,10 @@ pub struct WorkflowRunRequest {
     pub inputs: Option<HashMap<String, Value>>,
     #[schemars(description = "Execution preference: sync, auto, or task.")]
     pub execution_mode: Option<WorkflowRunExecutionMode>,
+    #[schemars(description = "Include step result entries in the response. Defaults to true.")]
+    pub include_results: Option<bool>,
+    #[schemars(description = "Include aggregated step outputs in the response. Defaults to false.")]
+    pub include_outputs: Option<bool>,
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -90,6 +98,10 @@ pub struct WorkflowResolveInputsRequest {
     pub format: Option<String>,
     #[schemars(description = "Optional partial input values keyed by input name.")]
     pub partial_inputs: Option<HashMap<String, Value>>,
+    #[schemars(description = "Include resolved input values in the response. Defaults to false.")]
+    pub include_resolved_inputs: Option<bool>,
+    #[schemars(description = "Include provider resolution events in the response. Defaults to false.")]
+    pub include_provider_resolutions: Option<bool>,
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -102,6 +114,8 @@ pub struct WorkflowPreviewInputsRequest {
     pub format: Option<String>,
     #[schemars(description = "Optional partial input values keyed by input name.")]
     pub partial_inputs: Option<HashMap<String, Value>>,
+    #[schemars(description = "Include per-input detail rows in the response. Defaults to false.")]
+    pub include_inputs: Option<bool>,
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]

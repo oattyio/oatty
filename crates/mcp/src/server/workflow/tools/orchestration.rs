@@ -15,10 +15,13 @@ use std::sync::{Arc, Mutex};
 
 /// Save, resolve inputs, and execute a workflow from a draft manifest.
 pub fn author_and_run(request: &WorkflowAuthorAndRunRequest, command_registry: &Arc<Mutex<CommandRegistry>>) -> Result<Value, ErrorData> {
-    let validation = validate_workflow(&WorkflowValidateRequest {
-        manifest_content: request.manifest_content.clone(),
-        format: request.format.clone(),
-    })?;
+    let validation = validate_workflow(
+        &WorkflowValidateRequest {
+            manifest_content: request.manifest_content.clone(),
+            format: request.format.clone(),
+        },
+        command_registry,
+    )?;
 
     let save_summary = save_workflow(
         &WorkflowSaveRequest {
@@ -49,6 +52,8 @@ pub fn author_and_run(request: &WorkflowAuthorAndRunRequest, command_registry: &
         manifest_content: None,
         format: None,
         partial_inputs: request.inputs.clone(),
+        include_resolved_inputs: Some(true),
+        include_provider_resolutions: Some(true),
     })?;
 
     let missing = resolution
@@ -138,6 +143,8 @@ pub fn author_and_run(request: &WorkflowAuthorAndRunRequest, command_registry: &
             format: None,
             inputs: Some(run_inputs),
             execution_mode: None,
+            include_results: None,
+            include_outputs: None,
         },
         command_registry,
     )?;

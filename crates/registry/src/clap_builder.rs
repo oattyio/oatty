@@ -61,6 +61,8 @@ pub fn build_clap(registry: Arc<Mutex<CommandRegistry>>) -> ClapCommand {
 /// This function creates the main command with global flags that apply
 /// to all subcommands. The global flags include:
 ///
+/// - `--version`, `-V` - Displays the version information
+/// - `--help`, `-h` - Displays help information
 /// - `--json` - Enables JSON output format
 /// - `--verbose` - Enables verbose logging output
 ///
@@ -80,6 +82,7 @@ fn create_root_command(product_name: &str) -> ClapCommand {
     // Clap command names require a 'static lifetime, so we leak the computed name once.
     let static_product_name: &'static str = Box::leak(product_name.to_string().into_boxed_str());
     ClapCommand::new(static_product_name)
+        .version(env!("CARGO_PKG_VERSION"))
         .about(format!("{} CLI (powered by Oatty)", product_name))
         .arg(
             Arg::new("json")

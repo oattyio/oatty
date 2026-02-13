@@ -8,11 +8,13 @@ use crate::server::workflow::services::storage::{
     serialize_definition, write_manifest,
 };
 use crate::server::workflow::services::sync::synchronize_runtime_workflows;
+use crate::server::workflow::tools::common::{build_preflight_validation_error, collect_workflow_preflight_violations};
 use crate::server::workflow::tools::types::{
     WorkflowDeleteRequest, WorkflowExportRequest, WorkflowGetRequest, WorkflowImportRequest, WorkflowRenameRequest, WorkflowSaveRequest,
     WorkflowValidateRequest,
 };
 use oatty_registry::CommandRegistry;
+use oatty_types::workflow::RuntimeWorkflow;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -73,17 +75,24 @@ pub fn get_workflow(request: &WorkflowGetRequest) -> Result<Value, ErrorData> {
         ));
     };
 
-    Ok(serde_json::json!({
-        "workflow_id": record.definition.workflow,
-        "path": record.path.to_string_lossy().to_string(),
-        "format": record.format.as_str(),
-        "content": record.content,
-        "parsed": record.definition,
-        "version": record.version,
-    }))
+    let include_content = request.include_content.unwrap_or(true);
+    let include_parsed = request.include_parsed.unwrap_or(false);
+    let mut payload = serde_json::Map::new();
+    payload.insert("workflow_id".to_string(), serde_json::json!(record.definition.workflow));
+    payload.insert("path".to_string(), serde_json::json!(record.path.to_string_lossy().to_string()));
+    payload.insert("format".to_string(), serde_json::json!(record.format.as_str()));
+    payload.insert("version".to_string(), serde_json::json!(record.version));
+    if include_content {
+        payload.insert("content".to_string(), serde_json::json!(record.content));
+    }
+    if include_parsed {
+        payload.insert("parsed".to_string(), serde_json::json!(record.definition));
+    }
+
+    Ok(Value::Object(payload))
 }
 
-pub fn validate_workflow(request: &WorkflowValidateRequest) -> Result<Value, ErrorData> {
+pub fn validate_workflow(request: &WorkflowValidateRequest, command_registry: &Arc<Mutex<CommandRegistry>>) -> Result<Value, ErrorData> {
     let (definition, _) = parse_manifest_content(&request.manifest_content, request.format.as_deref()).map_err(|error| {
         validation_error_with_violations(
             "WORKFLOW_PARSE_FAILED",
@@ -113,6 +122,8 @@ pub fn validate_workflow(request: &WorkflowValidateRequest) -> Result<Value, Err
         )
     })?;
 
+    validate_workflow_command_readiness(&runtime, command_registry)?;
+
     Ok(serde_json::json!({
         "valid": true,
         "workflow_id": runtime.identifier,
@@ -137,7 +148,7 @@ pub fn save_workflow(request: &WorkflowSaveRequest, command_registry: &Arc<Mutex
     })?;
 
     let workflow_identifier = resolve_workflow_identifier(request, &mut definition)?;
-    let _runtime = oatty_engine::workflow::document::runtime_workflow_from_definition(&definition).map_err(|error| {
+    let runtime = oatty_engine::workflow::document::runtime_workflow_from_definition(&definition).map_err(|error| {
         validation_error_with_violations(
             "WORKFLOW_VALIDATION_FAILED",
             error.to_string(),
@@ -150,6 +161,7 @@ pub fn save_workflow(request: &WorkflowSaveRequest, command_registry: &Arc<Mutex
             })],
         )
     })?;
+    validate_workflow_command_readiness(&runtime, command_registry)?;
 
     let existing = find_manifest_record(&workflow_identifier).map_err(|error| {
         internal_error(
@@ -222,6 +234,23 @@ pub fn save_workflow(request: &WorkflowSaveRequest, command_registry: &Arc<Mutex
             "synthetic_command_count": sync_summary.synthetic_command_count,
         }
     }))
+}
+
+fn validate_workflow_command_readiness(
+    workflow: &RuntimeWorkflow,
+    command_registry: &Arc<Mutex<CommandRegistry>>,
+) -> Result<(), ErrorData> {
+    let violations = collect_workflow_preflight_violations(workflow, command_registry)?;
+    if let Some(error) = build_preflight_validation_error(
+        &workflow.identifier,
+        violations,
+        "WORKFLOW_COMMAND_VALIDATION_FAILED",
+        "workflow references commands or catalog configuration that are not ready",
+        "Fix listed command/catalog issues, then rerun workflow.validate.",
+    ) {
+        return Err(error);
+    }
+    Ok(())
 }
 
 pub fn delete_workflow(request: &WorkflowDeleteRequest, command_registry: &Arc<Mutex<CommandRegistry>>) -> Result<Value, ErrorData> {
@@ -643,7 +672,7 @@ inputs:
       required: true
 steps:
   - id: list_apps
-    run: apps:list
+    run: apps list
     with:
       app: "${{{{ inputs.app }}}}"
 "#
@@ -659,14 +688,10 @@ steps:
             || {
                 let registry = Arc::new(Mutex::new(CommandRegistry::default()));
 
-                let save_request = WorkflowSaveRequest {
-                    workflow_id: None,
-                    manifest_content: sample_manifest("source_workflow"),
-                    format: Some("yaml".to_string()),
-                    overwrite: Some(false),
-                    expected_version: None,
-                };
-                save_workflow(&save_request, &registry).expect("save source workflow");
+                let (definition, format) =
+                    parse_manifest_content(&sample_manifest("source_workflow"), Some("yaml")).expect("parse source manifest");
+                let serialized = serialize_definition(&definition, format).expect("serialize source manifest");
+                write_manifest("source_workflow", &serialized, format).expect("persist source manifest");
 
                 let rename_request = WorkflowRenameRequest {
                     workflow_id: "source_workflow".to_string(),

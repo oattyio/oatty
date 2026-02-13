@@ -307,7 +307,7 @@ impl PluginsTableComponent {
     ///
     /// - **Plugin Details:**
     ///   - `Enter`: Opens the plugin details modal and loads the selected plugin's details.
-    ///   - `Ctrl + D`: Same behavior as `Enter`.
+    ///   - `Ctrl + O`: Same behavior as `Enter`.
     ///
     /// - **Plugin Operations:**
     ///   - `Ctrl + S`: Starts the selected plugin.
@@ -320,6 +320,7 @@ impl PluginsTableComponent {
     /// - **Plugin Management:**
     ///   - `Ctrl + A`: Opens the add-plugin view if allowed.
     ///   - `Ctrl + E`: Opens the edit view with the currently selected plugin's details if allowed.
+    ///   - `Ctrl + D`: Deletes the selected plugin configuration entry.
     ///
     /// - **Ignored Inputs:**
     ///   - Any key events not specifically matched in the logic are ignored.
@@ -387,6 +388,11 @@ impl PluginsTableComponent {
             KeyCode::Char('e') if control_pressed => {
                 if let Some(detail) = app.plugins.table.selected_item() {
                     app.plugins.plugin_edit_state = Some(PluginEditViewState::from_detail(detail.clone()));
+                }
+            }
+            KeyCode::Char('d') if control_pressed => {
+                if let Some(selected_item) = app.plugins.table.selected_item() {
+                    effects.push(Effect::PluginsDelete(selected_item.name.clone()));
                 }
             }
             _ => {}
@@ -604,6 +610,7 @@ impl Component for PluginsTableComponent {
                 theme,
                 &[
                     ("Ctrl+E", " Edit  "),
+                    ("Ctrl+D", " Delete  "),
                     ("Enter/Ctrl+O", " Details  "),
                     ("Ctrl+S", " start  "),
                     ("Ctrl+T", " Stop  "),

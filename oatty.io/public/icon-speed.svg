@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Speed icon">
+  <!-- Lightning bolt for speed -->
+  <path d="M34 8 L22 32 L30 32 L26 56 L46 26 L36 26 Z" fill="#5DA3F4" opacity="0.95" stroke="#5DA3F4" stroke-width="1" stroke-linejoin="round"/>
+
+  <!-- Speed lines -->
+  <line x1="10" y1="20" x2="16" y2="20" stroke="#5DA3F4" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+  <line x1="8" y1="28" x2="16" y2="28" stroke="#5DA3F4" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+  <line x1="10" y1="36" x2="18" y2="36" stroke="#5DA3F4" stroke-width="2.5" stroke-linecap="round" opacity="0.4"/>
+
+  <line x1="48" y1="20" x2="54" y2="20" stroke="#5DA3F4" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+  <line x1="48" y1="28" x2="56" y2="28" stroke="#5DA3F4" stroke-width="2.5" stroke-linecap="round" opacity="0.5"/>
+</svg>

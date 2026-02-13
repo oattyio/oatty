@@ -33,6 +33,7 @@ pub fn preview_inputs(request: &WorkflowPreviewInputsRequest) -> Result<Value, E
         }
     }
     state.apply_input_defaults();
+    let include_inputs = request.include_inputs.unwrap_or(false);
 
     let input_summaries = runtime_workflow
         .inputs
@@ -72,11 +73,14 @@ pub fn preview_inputs(request: &WorkflowPreviewInputsRequest) -> Result<Value, E
         .map(|(name, _)| name.clone())
         .collect::<Vec<String>>();
 
-    Ok(serde_json::json!({
-        "workflow_id": runtime_workflow.identifier,
-        "inputs": input_summaries,
-        "required_missing": required_missing,
-    }))
+    let mut payload = serde_json::Map::new();
+    payload.insert("workflow_id".to_string(), serde_json::json!(runtime_workflow.identifier));
+    payload.insert("required_missing".to_string(), serde_json::json!(required_missing));
+    if include_inputs {
+        payload.insert("inputs".to_string(), serde_json::json!(input_summaries));
+    }
+
+    Ok(Value::Object(payload))
 }
 
 pub fn resolve_inputs(request: &WorkflowResolveInputsRequest) -> Result<Value, ErrorData> {
@@ -177,14 +181,21 @@ pub fn resolve_inputs(request: &WorkflowResolveInputsRequest) -> Result<Value, E
         .iter()
         .any(|event| matches!(event.outcome, ProviderBindingOutcome::Prompt(_) | ProviderBindingOutcome::Error(_)));
     let ready = unresolved_required.is_empty() && !has_blocking_provider_resolution;
+    let include_resolved_inputs = request.include_resolved_inputs.unwrap_or(false);
+    let include_provider_resolutions = request.include_provider_resolutions.unwrap_or(false);
 
-    Ok(serde_json::json!({
-        "workflow_id": runtime_workflow.identifier,
-        "resolved_inputs": state.run_context.inputs,
-        "required_missing": unresolved_required,
-        "ready": ready,
-        "provider_resolutions": provider_resolutions,
-    }))
+    let mut payload = serde_json::Map::new();
+    payload.insert("workflow_id".to_string(), serde_json::json!(runtime_workflow.identifier));
+    payload.insert("required_missing".to_string(), serde_json::json!(unresolved_required));
+    payload.insert("ready".to_string(), serde_json::json!(ready));
+    if include_resolved_inputs {
+        payload.insert("resolved_inputs".to_string(), serde_json::json!(state.run_context.inputs));
+    }
+    if include_provider_resolutions {
+        payload.insert("provider_resolutions".to_string(), serde_json::json!(provider_resolutions));
+    }
+
+    Ok(Value::Object(payload))
 }
 
 #[cfg(test)]
@@ -221,6 +232,7 @@ steps:
             manifest_content: Some(sample_manifest()),
             format: Some("yaml".to_string()),
             partial_inputs: None,
+            include_inputs: None,
         };
         let value = preview_inputs(&request).expect("preview inputs should succeed");
         let required_missing = value["required_missing"].as_array().expect("required_missing array");
@@ -237,6 +249,8 @@ steps:
             manifest_content: Some(sample_manifest()),
             format: Some("yaml".to_string()),
             partial_inputs: Some(partial_inputs),
+            include_resolved_inputs: None,
+            include_provider_resolutions: None,
         };
         let error = resolve_inputs(&request).expect_err("resolve inputs should fail validation");
         let data = error.data.expect("error data");
@@ -254,6 +268,8 @@ steps:
             manifest_content: Some(sample_manifest()),
             format: Some("yaml".to_string()),
             partial_inputs: Some(partial_inputs),
+            include_resolved_inputs: Some(true),
+            include_provider_resolutions: None,
         };
         let value = resolve_inputs(&request).expect("resolve inputs should succeed");
         assert_eq!(value["ready"], true);
@@ -296,6 +312,8 @@ steps:
             ),
             format: Some("yaml".to_string()),
             partial_inputs: None,
+            include_resolved_inputs: None,
+            include_provider_resolutions: Some(true),
         };
         let value = resolve_inputs(&request).expect("resolve inputs should succeed");
         assert_eq!(value["required_missing"], serde_json::json!([]));
