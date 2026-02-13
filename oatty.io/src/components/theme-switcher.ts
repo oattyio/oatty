@@ -4,6 +4,8 @@ import { applyThemeMode, getStoredThemeMode, type ThemeMode } from '../theme/the
 import { applyConstructibleStyles } from '../styles/sheets/constructible-style';
 import { baseStyle } from '../styles/sheets/base-sheet';
 import { moduleStyle } from '../styles/sheets/module-sheet';
+import { themeStyle } from '../styles/sheets/theme-sheet';
+import { utilsStyle } from '../styles/sheets/utils-sheet';
 
 export class ThemeSwitcher extends LitElement {
   private currentThemeMode: ThemeMode = getStoredThemeMode();
@@ -16,7 +18,7 @@ export class ThemeSwitcher extends LitElement {
     super.connectedCallback();
 
     if (this.shadowRoot) {
-      applyConstructibleStyles(this.shadowRoot, [baseStyle, moduleStyle]);
+      applyConstructibleStyles(this.shadowRoot, [baseStyle, themeStyle, utilsStyle, moduleStyle]);
     }
 
     applyThemeMode(this.currentThemeMode);

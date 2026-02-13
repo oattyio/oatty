@@ -1,13 +1,62 @@
 import { LitElement, html } from 'lit';
 
+import '../components/docs/docs-page-view';
+import { docsPages } from '../docs/pages';
+import type { DocsPage } from '../docs/types';
 import { applyConstructibleStyles } from '../styles/sheets/constructible-style';
 import { baseStyle } from '../styles/sheets/base-sheet';
+import { docsViewStyle } from '../styles/sheets/docs-view-sheet';
 import { layoutStyle } from '../styles/sheets/layout-sheet';
 import { moduleStyle } from '../styles/sheets/module-sheet';
 import { stateStyle } from '../styles/sheets/state-sheet';
 import { themeStyle } from '../styles/sheets/theme-sheet';
+import { utilsStyle } from '../styles/sheets/utils-sheet';
+
+type DocsPageViewElement = HTMLElement & {
+  scrollToSection?: (sectionId: string) => boolean;
+};
+
+const DOCS_NAV = [
+  {
+    section: 'Get Started',
+    links: [{ title: 'Quick Start', path: '/docs/quick-start' }],
+  },
+  {
+    section: 'Learn',
+    links: [
+      { title: 'How Oatty Executes Safely', path: '/docs/learn/how-oatty-executes-safely' },
+      { title: 'Getting Oriented', path: '/docs/learn/getting-oriented' },
+      { title: 'Search and Run Commands', path: '/docs/learn/search-and-run-commands' },
+      { title: 'Library and Catalogs', path: '/docs/learn/library-and-catalogs' },
+      { title: 'Workflows Basics', path: '/docs/learn/workflows-basics' },
+      { title: 'Plugins', path: '/docs/learn/plugins' },
+      { title: 'MCP HTTP Server', path: '/docs/learn/mcp-http-server' },
+    ],
+  },
+  {
+    section: 'Guides',
+    links: [
+      { title: 'Run First Workflow', path: '/docs/guides/run-first-workflow' },
+      { title: 'Provider-backed Inputs', path: '/docs/guides/provider-backed-inputs' },
+    ],
+  },
+  {
+    section: 'Reference',
+    links: [
+      { title: 'CLI Commands', path: '/docs/reference/cli-commands' },
+      { title: 'TUI Interactions', path: '/docs/reference/tui-interactions' },
+    ],
+  },
+];
 
 export class OattySiteApp extends LitElement {
+  private currentPath = this.normalizePath(window.location.pathname);
+
+  private readonly onPopState = () => {
+    this.currentPath = this.normalizePath(window.location.pathname);
+    this.requestUpdate();
+  };
+
   protected createRenderRoot(): ShadowRoot {
     return this.attachShadow({ mode: 'open' });
   }
@@ -16,8 +65,15 @@ export class OattySiteApp extends LitElement {
     super.connectedCallback();
 
     if (this.shadowRoot) {
-      applyConstructibleStyles(this.shadowRoot, [themeStyle, baseStyle, layoutStyle, moduleStyle, stateStyle]);
+      applyConstructibleStyles(this.shadowRoot, [baseStyle, themeStyle, utilsStyle, layoutStyle, moduleStyle, stateStyle, docsViewStyle]);
     }
+
+    window.addEventListener('popstate', this.onPopState);
+  }
+
+  disconnectedCallback(): void {
+    window.removeEventListener('popstate', this.onPopState);
+    super.disconnectedCallback();
   }
 
   private openLightbox(src: string, alt: string) {
@@ -37,15 +93,183 @@ export class OattySiteApp extends LitElement {
     }
   }
 
-  protected render() {
-    return html`
-      <a class="m-skip-link" href="#main-content">Skip to content</a>
+  private handleDocsOpenLightbox(event: CustomEvent<{ src: string; alt: string }>): void {
+    if (!event.detail?.src) {
+      return;
+    }
 
-      <!-- Lightbox for screenshots -->
+    this.openLightbox(event.detail.src, event.detail.alt ?? 'Screenshot');
+  }
+
+  private renderLightbox() {
+    return html`
       <div class="m-lightbox" @click="${this.closeLightbox}">
         <div class="m-lightbox__close" aria-label="Close lightbox">✕</div>
-        <img src="" alt="" @click="${(e: Event) => e.stopPropagation()}" />
+        <img src="" alt="" @click="${(event: Event) => event.stopPropagation()}" />
       </div>
+    `;
+  }
+
+  private normalizePath(pathname: string): string {
+    if (!pathname || pathname === '/') {
+      return '/';
+    }
+
+    const trimmed = pathname.replace(/\/+$/, '');
+    if (trimmed === '/docs') {
+      return '/docs/quick-start';
+    }
+
+    return trimmed;
+  }
+
+  private isDocsRoute(): boolean {
+    return this.currentPath.startsWith('/docs');
+  }
+
+  private navigate = (event: Event) => {
+    const anchor = event.currentTarget as HTMLAnchorElement | null;
+    const href = anchor?.getAttribute('href');
+    if (!href || href.startsWith('http') || href.startsWith('#')) {
+      return;
+    }
+
+    event.preventDefault();
+    history.pushState({}, '', href);
+    this.currentPath = this.normalizePath(window.location.pathname);
+    window.scrollTo({ top: 0 });
+    this.requestUpdate();
+  };
+
+  private handleTableOfContentsClick(event: Event, sectionId: string): void {
+    event.preventDefault();
+
+    const docsPageView = this.shadowRoot?.querySelector('docs-page-view') as DocsPageViewElement | null;
+    const sectionWasScrolled = docsPageView?.scrollToSection?.(sectionId) ?? false;
+    if (!sectionWasScrolled) {
+      return;
+    }
+
+    history.replaceState({}, '', `${this.currentPath}#${sectionId}`);
+  }
+
+  private currentDocsPage(): DocsPage | undefined {
+    return docsPages.find((page) => page.path === this.currentPath);
+  }
+
+  private docsNeighborPages() {
+    const index = docsPages.findIndex((page) => page.path === this.currentPath);
+    if (index < 0) {
+      return { previous: undefined, next: undefined };
+    }
+    return {
+      previous: docsPages[index - 1],
+      next: docsPages[index + 1],
+    };
+  }
+
+  private renderDocs() {
+    const page = this.currentDocsPage();
+    if (!page) {
+      return html`
+        <a class="m-skip-link" href="#main-content">Skip to content</a>
+        <header class="l-header">
+          <div class="l-shell l-header__inner">
+            <a href="/" @click="${this.navigate}" class="m-logo" aria-label="Oatty home">
+              <img src="/logo-icon.svg" alt="Oatty logo" style="width: 2rem; height: 2rem;" />
+              <span style="font-size: var(--font-size-lg); font-weight: 700; letter-spacing: 0.05em;">OATTY</span>
+            </a>
+            <div class="m-header-actions">
+              <a class="m-button" href="/" @click="${this.navigate}">Back to Home</a>
+            </div>
+          </div>
+        </header>
+        <main id="main-content" class="l-main">
+          <div class="l-shell">
+            <article class="m-card">
+              <h1 class="m-docs-title">Docs page not found</h1>
+              <p class="m-card__text">This docs route is not implemented yet.</p>
+              <a class="m-button m-button--primary" href="/docs/quick-start" @click="${this.navigate}">Go to Quick Start</a>
+            </article>
+          </div>
+        </main>
+      `;
+    }
+
+    const { previous, next } = this.docsNeighborPages();
+
+    return html`
+      <a class="m-skip-link" href="#main-content">Skip to content</a>
+      <header class="l-header">
+        <div class="l-shell l-header__inner">
+          <a href="/" @click="${this.navigate}" class="m-logo" aria-label="Oatty home">
+            <img src="/logo-icon.svg" alt="Oatty logo" style="width: 2rem; height: 2rem;" />
+            <span style="font-size: var(--font-size-lg); font-weight: 700; letter-spacing: 0.05em;">OATTY</span>
+          </a>
+          <nav class="m-nav" aria-label="Primary">
+            <a class="m-nav__link" href="/docs/quick-start" @click="${this.navigate}">Quick Start</a>
+            <a class="m-nav__link" href="/" @click="${this.navigate}">Home</a>
+            <a class="m-nav__link" href="https://github.com/oattyio/oatty" target="_blank" rel="noopener">GitHub</a>
+          </nav>
+        </div>
+      </header>
+
+      <main id="main-content" class="l-main">
+        <div class="l-shell l-docs-layout">
+          <aside class="m-docs-sidebar" aria-label="Docs navigation">
+            ${DOCS_NAV.map(
+              (group) => html`
+                <section class="m-docs-sidebar__group">
+                  <h2 class="m-docs-sidebar__title">${group.section}</h2>
+                  ${group.links.map((link) => {
+                    const active = link.path === this.currentPath;
+                    return html`<a class="m-docs-sidebar__link ${active ? 'is-active' : ''}" href="${link.path}" @click="${this.navigate}"
+                      >${link.title}</a
+                    >`;
+                  })}
+                </section>
+              `
+            )}
+          </aside>
+
+          <article class="l-docs-layout__content">
+            <docs-page-view .page=${page} @docs-open-lightbox=${this.handleDocsOpenLightbox}></docs-page-view>
+
+            <nav class="m-docs-pagination" aria-label="Page navigation">
+              ${previous
+                ? html`<a class="m-button" href="${previous.path}" @click="${this.navigate}">← ${previous.title}</a>`
+                : html`<span></span>`}
+              ${next ? html`<a class="m-button m-button--primary" href="${next.path}" @click="${this.navigate}">${next.title} →</a>` : html``}
+            </nav>
+          </article>
+
+          <aside class="m-toc" aria-label="On this page">
+            <p class="m-toc__title">On this page</p>
+            ${page.sections.map(
+              (section) =>
+                html`<a
+                  class="m-toc__link m-toc__link--level-${section.headingLevel ?? 2}"
+                  href="#${section.id}"
+                  @click="${(event: Event) => this.handleTableOfContentsClick(event, section.id)}"
+                  >${section.title}</a
+                >`
+            )}
+          </aside>
+        </div>
+      </main>
+    `;
+  }
+
+  protected render() {
+    const lightbox = this.renderLightbox();
+
+    if (this.isDocsRoute()) {
+      return html`${lightbox}${this.renderDocs()}`;
+    }
+
+    return html`
+      ${lightbox}
+      <a class="m-skip-link" href="#main-content">Skip to content</a>
 
       <header class="l-header">
         <div class="l-shell l-header__inner">
@@ -55,14 +279,12 @@ export class OattySiteApp extends LitElement {
           </a>
           <nav class="m-nav" aria-label="Primary">
             <a class="m-nav__link" href="#problem">Problem</a>
-            <a class="m-nav__link" href="#principles">Principles</a>
+            <a class="m-nav__link" href="#how-it-works">How It Works</a>
             <a class="m-nav__link" href="#features">Features</a>
             <a class="m-nav__link" href="#install">Install</a>
           </nav>
           <div class="m-header-actions">
-            <a class="m-button m-button--primary" href="https://github.com/oattyio/oatty" target="_blank" rel="noopener">
-              Get Started
-            </a>
+            <a class="m-button m-button--primary" href="/docs/quick-start" @click="${this.navigate}">Start Quick Start</a>
           </div>
         </div>
       </header>
@@ -74,24 +296,68 @@ export class OattySiteApp extends LitElement {
             <div class="l-hero__content">
               <img src="/logo-lockup.svg" alt="Oatty - Schema-driven CLI+TUI+MCP" style="width: min(600px, 90%); height: auto; margin: 0 auto var(--space-2xl); display: block; filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.3));" />
               <h1 style="font-size: var(--font-size-4xl); font-weight: 700; line-height: var(--line-height-tight); margin: 0; text-wrap: balance;">
-                Your Unified Command Surface
+                Natural language assistance for multi-vendor API operations, with safety built in
               </h1>
               <p style="font-size: var(--font-size-xl); color: var(--color-text-secondary); line-height: var(--line-height-relaxed); margin: var(--space-lg) 0;">
-                A beautiful TUI with schema-driven discovery, intelligent autocomplete, and workflow automation. Stop juggling a dozen vendor CLIs.
+                Import schemas from the services you use. Describe your goal. Oatty suggests commands and workflows, then you preview, validate, and confirm before anything runs.
               </p>
               <div class="l-flex" style="justify-content: center; margin-top: var(--space-xl);">
-                <a class="m-button m-button--primary" href="#install">Get Started</a>
+                <a class="m-button m-button--primary" href="#how-it-works">Watch Demo</a>
+                <a class="m-button" href="/docs/quick-start" @click="${this.navigate}">Start with Quick Start</a>
                 <a class="m-button" href="https://github.com/oattyio/oatty" target="_blank" rel="noopener">View on GitHub</a>
               </div>
+              <article class="m-card" style="max-width: 840px; margin: var(--space-2xl) auto 0; text-align: left; border: 1px dashed var(--color-accent); background: var(--color-background-alt);">
+                <h2 style="font-size: var(--font-size-lg); margin-bottom: var(--space-sm);">Hero Demo Placeholder</h2>
+                <p class="m-card__text" style="margin-bottom: var(--space-sm);">
+                  Replace this with a short looping demo: prompt → suggestions → preview/validation → confirmation → logs.
+                </p>
+                <p style="font-family: var(--font-mono); font-size: var(--font-size-sm); color: var(--color-text-secondary); margin: 0;">
+                  /public/demo-hero.mp4 (optional: /public/demo-hero.webm)
+                </p>
+              </article>
               <pre class="m-code m-code--hero" style="max-width: 600px; margin: var(--space-2xl) auto 0;"><code>npm install -g oatty
 
-# Launch interactive TUI (recommended)
+# Start in TUI (recommended)
 oatty
 
-# Or use CLI mode for scripting
-oatty apps create --name myapp
-oatty workflow run deploy --input env=prod</code></pre>
+# Use CLI fallback for automation
+oatty search "create app"
+oatty apps create --name demo-app</code></pre>
             </div>
+          </div>
+        </section>
+
+        <!-- How It Works -->
+        <section id="how-it-works" class="l-section">
+          <div class="l-shell">
+            <p style="font-size: var(--font-size-sm); text-transform: uppercase; letter-spacing: 0.1em; color: var(--color-accent); margin-bottom: var(--space-md); font-weight: 700;">How It Works</p>
+            <h2 style="font-size: var(--font-size-4xl); font-weight: 700; margin: 0 0 var(--space-2xl);">
+              Trust-first execution in three steps
+            </h2>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 280px), 1fr)); gap: var(--space-lg); margin-bottom: var(--space-2xl);">
+              <article class="m-card">
+                <h3 class="m-card__title">1. Connect Oatty to your AI assistant</h3>
+                <p class="m-card__text">Use Oatty MCP server tooling so your assistant can discover and call Oatty tools.</p>
+              </article>
+              <article class="m-card">
+                <h3 class="m-card__title">2. Describe your goal</h3>
+                <p class="m-card__text">Your assistant can import needed OpenAPI catalogs, discover commands, and draft a cross-vendor workflow.</p>
+              </article>
+              <article class="m-card">
+                <h3 class="m-card__title">3. Review, execute, and share</h3>
+                <p class="m-card__text">Validate the plan, confirm execution, then save and share workflows for teammates and CI usage.</p>
+              </article>
+            </div>
+            <article class="m-card" style="background: var(--gradient-brand-subtle); border: 1px solid var(--color-accent);">
+              <h3 style="font-size: var(--font-size-2xl); margin-bottom: var(--space-md);">Migration Walkthrough Placeholder</h3>
+              <p class="m-card__text" style="margin-bottom: var(--space-sm);">
+                Example storyline: "Move my Postgres database and app from Vercel to Render" with suggestion preview and user confirmation.
+              </p>
+              <p style="font-family: var(--font-mono); font-size: var(--font-size-sm); color: var(--color-text-secondary); margin: 0;">
+                Add <code>/public/demo-migration.mp4</code> or <code>/public/demo-migration-1.png</code> through
+                <code>/public/demo-migration-3.png</code>.
+              </p>
+            </article>
           </div>
         </section>
 
@@ -154,7 +420,7 @@ oatty workflow run deploy --input env=prod</code></pre>
                   One coherent operational surface
                 </h2>
                 <p style="font-size: var(--font-size-lg); color: var(--color-text-secondary); line-height: var(--line-height-relaxed); margin-bottom: var(--space-lg);">
-                  Oatty collapses this complexity. Turn OpenAPI documents into runnable commands, explore them in a beautiful TUI, and automate with workflows—all through one consistent interface.
+                  Import an OpenAPI document. Oatty generates a consistent command surface reused by TUI, workflows, CLI, and MCP tooling.
                 </p>
                 <div style="display: flex; gap: var(--space-xl); flex-wrap: wrap; color: var(--color-accent); font-weight: 600;">
                   <span>✓ One interface</span>
@@ -171,7 +437,7 @@ oatty workflow run deploy --input env=prod</code></pre>
           <div class="l-shell">
             <p style="font-size: var(--font-size-sm); text-transform: uppercase; letter-spacing: 0.1em; color: var(--color-accent); margin-bottom: var(--space-md); font-weight: 700;">Design Philosophy</p>
             <h2 style="font-size: var(--font-size-4xl); font-weight: 700; margin: 0 0 var(--space-2xl);">
-              Built for the terminal. Designed for humans.
+              Structured execution, without terminal friction
             </h2>
 
             <!-- 2x2 Grid with varying sizes -->
@@ -237,24 +503,24 @@ oatty workflow run deploy --input env=prod</code></pre>
           <div class="l-shell">
             <p style="font-size: var(--font-size-sm); text-transform: uppercase; letter-spacing: 0.1em; color: var(--color-accent); margin-bottom: var(--space-md); font-weight: 700;">What You Get</p>
             <h2 style="font-size: var(--font-size-4xl); font-weight: 700; margin: 0 0 var(--space-3xl);">
-              Everything vendor CLIs should have been
+              Core capabilities for daily operations
             </h2>
 
             <!-- Staggered feature cards -->
             <div style="display: flex; flex-direction: column; gap: var(--space-2xl);">
 
-              <!-- TUI First - Large hero with screenshot -->
+              <!-- Natural language assistance + safe execution -->
               <article class="m-card" style="background: var(--gradient-brand-subtle); padding: var(--space-3xl); border: 1px solid var(--color-accent); overflow: hidden;">
                 <div style="margin-bottom: var(--space-2xl);">
-                  <span style="font-size: var(--font-size-xs); text-transform: uppercase; letter-spacing: 0.1em; color: var(--color-accent); font-weight: 700;">The TUI Experience</span>
-                  <h3 style="font-size: var(--font-size-3xl); font-weight: 700; margin: var(--space-md) 0;">Interactive command palette with fuzzy search</h3>
+                  <span style="font-size: var(--font-size-xs); text-transform: uppercase; letter-spacing: 0.1em; color: var(--color-accent); font-weight: 700;">Natural language assistance + safe execution</span>
+                  <h3 style="font-size: var(--font-size-3xl); font-weight: 700; margin: var(--space-md) 0;">Describe the objective, then review before execution</h3>
                   <p style="font-size: var(--font-size-lg); color: var(--color-text-secondary); line-height: var(--line-height-relaxed); margin-bottom: var(--space-lg);">
-                    Launch <code style="font-family: var(--font-mono); background: var(--color-background-alt); padding: 0.25rem 0.5rem; border-radius: var(--radius-sm);">oatty</code> and start typing. Fuzzy search finds commands instantly. Tab for autocomplete with Value Providers that fetch live options from your APIs.
+                    Start in the TUI. Ask for what you want to accomplish, review suggested commands/workflow steps, validate inputs, and confirm before running.
                   </p>
                   <div style="display: flex; gap: var(--space-md); flex-wrap: wrap;">
-                    <span style="padding: 0.375rem 0.75rem; background: var(--color-elevated); border-radius: var(--radius-full); font-size: var(--font-size-sm);">Ctrl+F Browser</span>
-                    <span style="padding: 0.375rem 0.75rem; background: var(--color-elevated); border-radius: var(--radius-full); font-size: var(--font-size-sm);">Ctrl+L Logs</span>
-                    <span style="padding: 0.375rem 0.75rem; background: var(--color-elevated); border-radius: var(--radius-full); font-size: var(--font-size-sm);">Ctrl+T Themes</span>
+                    <span style="padding: 0.375rem 0.75rem; background: var(--color-elevated); border-radius: var(--radius-full); font-size: var(--font-size-sm);">Suggest</span>
+                    <span style="padding: 0.375rem 0.75rem; background: var(--color-elevated); border-radius: var(--radius-full); font-size: var(--font-size-sm);">Preview + Validate</span>
+                    <span style="padding: 0.375rem 0.75rem; background: var(--color-elevated); border-radius: var(--radius-full); font-size: var(--font-size-sm);">Confirm + Run</span>
                   </div>
                 </div>
                 <img src="/Oatty-finder.png" alt="Oatty command finder with fuzzy search" class="m-screenshot" style="width: 100%; height: auto; border-radius: var(--radius-lg); border: 1px solid var(--color-divider); box-shadow: var(--shadow-xl);" @click="${() => this.openLightbox('/Oatty-finder.png', 'Oatty command finder with fuzzy search')}" />
@@ -359,11 +625,11 @@ oatty workflow run deploy --input env=prod</code></pre>
                 <div style="max-width: 65ch;">
                   <h3 style="font-size: var(--font-size-2xl); font-weight: 700; margin-bottom: var(--space-md);">Schema-Driven Everything</h3>
                   <p style="font-size: var(--font-size-lg); color: var(--color-text-secondary); line-height: var(--line-height-relaxed); margin-bottom: var(--space-lg);">
-                    Commands are automatically derived from OpenAPI documents. Full API coverage without waiting for vendors. If it's in the spec, it's available immediately.
+                    Commands are derived from imported OpenAPI documents so your catalog stays aligned with the APIs you operate.
                   </p>
                   <div style="display: flex; gap: var(--space-xl); flex-wrap: wrap; color: var(--color-text-secondary); font-size: var(--font-size-sm);">
-                    <div><strong style="color: var(--color-accent);">✓</strong> Auto-sync with API changes</div>
-                    <div><strong style="color: var(--color-accent);">✓</strong> 100% coverage guaranteed</div>
+                    <div><strong style="color: var(--color-accent);">✓</strong> Consistent command generation from schema</div>
+                    <div><strong style="color: var(--color-accent);">✓</strong> Re-import when API contracts change</div>
                     <div><strong style="color: var(--color-accent);">✓</strong> MCP tool integration</div>
                   </div>
                 </div>
@@ -377,7 +643,7 @@ oatty workflow run deploy --input env=prod</code></pre>
         <section id="install" class="l-section" style="background: var(--gradient-brand-subtle); border-radius: var(--radius-xl); padding: var(--space-4xl) 0;">
           <div class="l-shell">
             <h2 style="font-size: var(--font-size-4xl); font-weight: 700; margin: 0 0 var(--space-xl); text-align: center;">
-              Getting Started
+              Install and verify
             </h2>
             <div class="l-grid l-grid--two">
               <div class="m-card">
@@ -403,7 +669,7 @@ oatty --help</code></pre>
 oatty
 
 # Import an OpenAPI catalog
-oatty catalog import ./schemas/your-api.json
+oatty import ./schemas/your-api.json --kind catalog
 
 # Search for commands
 oatty search "create order"
@@ -411,6 +677,7 @@ oatty search "create order"
 # Run a workflow
 oatty workflow list
 oatty workflow run deploy --input env=staging</code></pre>
+              <p class="m-card__text">Use the guided flow in <a href="/docs/quick-start" @click="${this.navigate}">Quick Start docs</a>.</p>
             </div>
           </div>
         </section>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Library management icon">
+  <rect x="10" y="14" width="10" height="36" rx="2" fill="none" stroke="#5DA3F4" stroke-width="3"/>
+  <rect x="24" y="12" width="12" height="38" rx="2" fill="none" stroke="#5DA3F4" stroke-width="3" opacity="0.9"/>
+  <rect x="40" y="16" width="14" height="34" rx="2" fill="none" stroke="#5DA3F4" stroke-width="3" opacity="0.75"/>
+  <line x1="29" y1="20" x2="31" y2="20" stroke="#e8edf7" stroke-width="2" stroke-linecap="round"/>
+</svg>
