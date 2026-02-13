@@ -1,0 +1,25 @@
+/* Utility classes intended to remain low-specificity and reusable across views. */
+
+.u-flow > * + * {
+  margin-top: var(--space-md);
+}
+
+.u-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+.u-text-muted {
+  color: var(--color-text-secondary);
+}
+
+.u-mono {
+  font-family: var(--font-mono);
+}

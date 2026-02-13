@@ -44,8 +44,8 @@ Deploy and validate a cloud service:
   Structured validation before run   No             No               No              Yes
   Clear error codes                  No             No               No              Yes
   Context-aware input resolution     No             No               LLM-dependent   Yes
-  Deterministic execution            Manual         CI-bound         LLM-dependent   Yes
-  Human confirmation support         No             No               No              Yes
+  Deterministic execution            Manual         CI-bound         LLM-dependent   Yes (resume gap)
+  Human confirmation support         No             No               No              Partial
 
 ------------------------------------------------------------------------
 

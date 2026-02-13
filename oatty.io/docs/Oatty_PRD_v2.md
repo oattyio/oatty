@@ -14,11 +14,11 @@ This is not a documentation refresh.
 
 This is a category education initiative designed to:
 
--   Reduce time‑to‑first‑workflow
--   Standardize operational patterns
--   Decrease bespoke script creation
--   Increase cross‑vendor consistency
--   Make automation approachable without sacrificing control
+- Reduce time‑to‑first‑workflow
+- Standardize operational patterns
+- Decrease custom script creation
+- Increase cross‑vendor consistency
+- Make automation approachable without sacrificing control
 
 Documentation is a primary product surface. Adoption depends on it.
 
@@ -28,10 +28,10 @@ Documentation is a primary product surface. Adoption depends on it.
 
 Modern vendor tooling suffers from:
 
--   Thin CLI wrappers over powerful APIs
--   Fragmented MCP integrations
--   Partial coverage of API surface area
--   Brittle automation scripts
+- Thin CLI wrappers over powerful APIs
+- Fragmented MCP integrations
+- Partial coverage of API surface area
+- Brittle automation scripts
 
 Oatty solves this by treating APIs as inputs, not boundaries.
 
@@ -46,10 +46,10 @@ Documentation must teach this mental model clearly and progressively.
 
 Users struggle with:
 
-1.  Memorization-heavy CLIs
-2.  Inconsistent vendor tooling
-3.  Script-based automation that is unreviewable and unsafe
-4.  Limited discoverability of available API capabilities
+1. Memorization-heavy CLIs
+2. Inconsistent vendor tooling
+3. Script-based automation that is unreviewable and unsafe
+4. Limited discoverability of available API capabilities
 
 The result: - Slower onboarding - Operational drift - Increased
 cognitive load - Duplicated tooling effort
@@ -60,10 +60,10 @@ cognitive load - Duplicated tooling effort
 
 ## Primary Goals
 
--   Reduce time-to-first-success to under 10 minutes.
--   Reduce multi-step manual CLI operations.
--   Increase workflow creation within first session.
--   Improve clarity of mental model.
+- Reduce time-to-first-success to under 10 minutes.
+- Reduce multi-step manual CLI operations.
+- Increase workflow creation within first session.
+- Improve clarity of mental model.
 
 ## Definition of First Success
 
@@ -142,19 +142,19 @@ Conference narrative
 
 ## In Scope
 
--   Quick start guide
--   Conceptual overview
--   Workflow tutorials
--   Provider examples
--   MCP extension overview
--   Troubleshooting section
+- Quick start guide
+- Conceptual overview
+- Workflow tutorials
+- Provider examples
+- MCP extension overview
+- Troubleshooting section
 
 ## Not in Scope (Phase 1)
 
--   Deep registry internals
--   Advanced MCP protocol mechanics
--   Low-level engine architecture
--   Plugin authoring deep dive
+- Deep registry internals
+- Advanced MCP protocol mechanics
+- Low-level engine architecture
+- Plugin authoring deep dive
 
 ------------------------------------------------------------------------
 

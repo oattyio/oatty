@@ -281,6 +281,21 @@ Event taxonomy (minimum required):
 5. `docs_search_query` and `docs_search_result_click`.
 6. `docs_feedback_submitted` (optional phase 1 if available).
 
+## Decision-Critical Evidence Gaps
+These items are required to validate competitive and adoption decisions with real usage data:
+1. Baseline user evidence:
+   - Capture current time-to-first-command, time-to-first-workflow, and first-session drop-off points.
+   - Identify top failure modes in onboarding and workflow authoring.
+2. Comparative proof artifacts:
+   - Produce repeatable side-by-side scenarios (Oatty vs shell/CI/MCP-only) with explicit task outcomes and effort comparison.
+   - Keep at least one multi-vendor scenario and one local-first workflow scenario current.
+3. Instrumentation-to-funnel linkage:
+   - Map each PRD outcome metric to concrete events, dashboard views, and owner review workflow.
+   - Define what constitutes activation and conversion in event terms, not only narrative terms.
+4. Operationalization status:
+   - Track implementation status (defined, instrumented, validated) for each required event.
+   - Block “evidence-backed” claims from publication when required evidence is missing.
+
 ## Risks and Mitigations
 1. Risk: docs drift from shipped behavior.
    - Mitigation: docs update checklist in PR template + ownership.

@@ -2,6 +2,8 @@
 
 ## The Hidden Cost of Operating Across Vendor Tooling
 
+> Canonical: this is the current coordination-cost narrative. Keep this file aligned with product capabilities and docs IA.
+
 ------------------------------------------------------------------------
 
 # The Overlooked Cost: Multi-Vendor Coordination
