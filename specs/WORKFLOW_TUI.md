@@ -20,12 +20,16 @@ This spec documents the currently implemented workflow UX in the TUI.
 - Search input with cursor-aware editing.
 - Filtered list with keyboard and mouse navigation.
 - Enter opens input session for selected workflow.
+- Workflow import checks `requires.catalogs[]` before persisting imported manifests.
+- When required catalogs are missing and importable metadata exists, a confirmation modal prompts to install dependencies first.
+- Confirmed installation stages catalog imports through existing catalog import effects, then proceeds with workflow import.
 
 ## Input Collection UX
 - Required/unresolved tracking based on run state.
 - Input defaults applied before selection (including history defaults where configured).
 - Provider-backed selection when provider metadata exists.
 - Manual entry path available for direct value entry.
+- Manual entry can surface per-input guidance (`hint`) and concrete sample values (`example`) when defined.
 
 ## Selector UX
 - Filterable selector table.

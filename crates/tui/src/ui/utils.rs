@@ -5,6 +5,7 @@
 //! and other common functionality needed for UI rendering.
 
 use heck::ToTitleCase;
+use oatty_util::http::extract_collection_items;
 use oatty_util::{format_date_mmddyyyy, is_date_like_key, redact_json, redact_sensitive, truncate_with_ellipsis};
 use ratatui::prelude::*;
 use serde_json::{Map, Value};
@@ -587,16 +588,15 @@ pub fn build_copy_text(app: &app::App) -> String {
     redact_sensitive(line)
 }
 
-/// Normalize execution payloads to ensure single-key collections render in the results table.
+/// Normalize execution payloads so list wrappers render in the results table.
 ///
-/// Some APIs return objects shaped as `{ "items": [ ... ] }`. The table expects an array at
-/// the root level, so this helper unwraps objects that meet this pattern. All other payloads
-/// are returned unchanged.
+/// This delegates to shared collection extraction heuristics used by provider fetch to keep
+/// behavior consistent across execution paths.
 pub fn normalize_result_payload_owned(value: Value) -> Value {
-    match value {
-        Value::Object(mut map) if map.get("items").is_some_and(|i| i.is_array()) => map.remove("items").unwrap(),
-        _ => value,
+    if let Some(items) = extract_collection_items(&value, None) {
+        return Value::Array(items);
     }
+    value
 }
 
 pub fn span_display_width(span: &Span<'_>) -> u16 {

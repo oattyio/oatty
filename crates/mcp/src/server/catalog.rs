@@ -71,6 +71,11 @@ pub(crate) async fn import_openapi_catalog(
             catalog_title_override: Some(request.catalog_title.clone()),
             vendor_override: request.vendor.clone(),
             base_url_override: request.base_url.clone(),
+            source: Some(request.source.clone()),
+            source_type: request.source_type.map(|source_type| match source_type {
+                CatalogSourceType::Path => "path".to_string(),
+                CatalogSourceType::Url => "url".to_string(),
+            }),
             enabled: request.enabled.unwrap_or(true),
             overwrite: request.overwrite.unwrap_or(false),
         },

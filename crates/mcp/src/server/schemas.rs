@@ -1,5 +1,6 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 /// Detail level for including command input metadata in search results.
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -11,6 +12,17 @@ pub enum SearchInputsDetail {
     /// Return only required input fields for minimal-token execution planning.
     RequiredOnly,
     /// Return full positional and flag schemas.
+    Full,
+}
+
+/// Detail level for including output schema payloads in command detail responses.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputSchemaDetail {
+    /// Return compact output field paths only (token-efficient default).
+    #[default]
+    Paths,
+    /// Return the full output schema object (with sparse-field pruning applied).
     Full,
 }
 
@@ -50,9 +62,9 @@ pub struct RunCommandRequestParam {
     ///
     /// Boolean flags are enabled by presence; their value element is ignored.
     #[schemars(
-        description = "Named flag/value pairs as [name, value]. For boolean flags, presence enables the flag and value is ignored."
+        description = "Named flag/value pairs as [name, value]. Value may be string/number/boolean/object/array. For boolean flags, presence enables the flag and value is ignored."
     )]
-    pub named_flags: Option<Vec<(String, String)>>,
+    pub named_flags: Option<Vec<(String, Value)>>,
 }
 
 /// Parameters for catalog-level summary lookups.
@@ -69,6 +81,9 @@ pub struct CommandDetailRequest {
     /// Canonical command identifier in `<group> <command>` format.
     #[schemars(description = "Canonical command id in '<group> <command>' format, for example: 'apps apps:list'.")]
     pub canonical_id: String,
+    /// Optional output schema detail level. Defaults to `paths`.
+    #[schemars(description = "Optional output schema detail: paths|full. Default is paths (output_fields only).")]
+    pub output_schema_detail: Option<OutputSchemaDetail>,
 }
 
 /// How to interpret the catalog source location.

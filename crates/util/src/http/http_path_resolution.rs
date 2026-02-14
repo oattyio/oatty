@@ -1,4 +1,3 @@
-use percent_encoding::{NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -55,8 +54,62 @@ pub fn build_path(template: &str, variables: &serde_json::Map<String, Value>) ->
             Value::String(s) => s.clone(),
             other => other.to_string(),
         };
-        let enc = utf8_percent_encode(&val, NON_ALPHANUMERIC).to_string();
+        let enc = encode_path_placeholder_value(val.as_str());
         path = path.replace(&format!("{{{}}}", k), &enc);
     }
     path
+}
+
+/// Percent-encodes a path placeholder value while preserving RFC3986 unreserved bytes.
+///
+/// Unreserved bytes (`A-Z`, `a-z`, `0-9`, `-`, `.`, `_`, `~`) are emitted as-is.
+/// All other bytes are percent-encoded using uppercase hex.
+fn encode_path_placeholder_value(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if is_unreserved_path_byte(byte) {
+            encoded.push(byte as char);
+        } else {
+            encoded.push('%');
+            encoded.push(to_upper_hex((byte >> 4) & 0x0f));
+            encoded.push(to_upper_hex(byte & 0x0f));
+        }
+    }
+    encoded
+}
+
+fn is_unreserved_path_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~')
+}
+
+fn to_upper_hex(nibble: u8) -> char {
+    match nibble {
+        0..=9 => (b'0' + nibble) as char,
+        10..=15 => (b'A' + (nibble - 10)) as char,
+        _ => unreachable!("nibble must be in [0, 15]"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::build_path;
+    use serde_json::{Map, Value};
+
+    #[test]
+    fn build_path_preserves_unreserved_identifier_bytes() {
+        let mut variables = Map::new();
+        variables.insert("service_id".to_string(), Value::String("srv-d5f6a7b8".to_string()));
+
+        let path = build_path("/v1/services/{service_id}", &variables);
+        assert_eq!(path, "/v1/services/srv-d5f6a7b8");
+    }
+
+    #[test]
+    fn build_path_encodes_reserved_bytes_for_placeholder_values() {
+        let mut variables = Map::new();
+        variables.insert("project".to_string(), Value::String("team/app name".to_string()));
+
+        let path = build_path("/v1/projects/{project}", &variables);
+        assert_eq!(path, "/v1/projects/team%2Fapp%20name");
+    }
 }

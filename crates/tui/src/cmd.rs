@@ -461,6 +461,8 @@ fn import_registry_catalog_from(app: &mut App, content: String, maybe_prefix: Op
             catalog_title_override: None,
             vendor_override: maybe_prefix,
             base_url_override: None,
+            source: None,
+            source_type: None,
             enabled: true,
             overwrite: false,
         },
@@ -580,7 +582,7 @@ where
 }
 
 /// Parses a workflow definition from either JSON or YAML source content.
-fn parse_workflow_definition(content: &str) -> Result<WorkflowDefinition> {
+pub(crate) fn parse_workflow_definition(content: &str) -> Result<WorkflowDefinition> {
     serde_json::from_str::<WorkflowDefinition>(content).or_else(|json_error| {
         serde_yaml::from_str::<WorkflowDefinition>(content)
             .map_err(|yaml_error| anyhow!("json parse error: {json_error}; yaml parse error: {yaml_error}"))

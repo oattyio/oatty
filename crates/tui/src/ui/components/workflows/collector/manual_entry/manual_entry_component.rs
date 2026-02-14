@@ -103,6 +103,7 @@ mod tests {
             description: None,
             inputs,
             steps: Vec::new(),
+            requires: None,
         };
         WorkflowRunState::new(workflow)
     }

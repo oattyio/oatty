@@ -628,6 +628,7 @@ mod workflow_run_tests {
                 repeat: None,
                 output_contract: None,
             }],
+            requires: None,
         }
     }
 
@@ -662,6 +663,7 @@ mod workflow_run_tests {
                 repeat: None,
                 output_contract: None,
             }],
+            requires: None,
         };
 
         let mut run_state = WorkflowRunState::new(workflow.clone());

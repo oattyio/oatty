@@ -34,6 +34,7 @@ pub fn runtime_workflow_from_definition(definition: &WorkflowDefinition) -> Resu
         description: definition.description.clone(),
         inputs,
         steps,
+        requires: definition.requires.clone(),
     })
 }
 
@@ -129,6 +130,7 @@ mod tests {
                 repeat: None,
                 output_contract: None,
             }],
+            requires: None,
         };
 
         let error = runtime_workflow_from_definition(&definition).expect_err("expected identifier error");
@@ -143,6 +145,7 @@ mod tests {
             description: None,
             inputs: IndexMap::new(),
             steps: Vec::new(),
+            requires: None,
         };
 
         let error = runtime_workflow_from_definition(&definition).expect_err("expected missing steps error");
@@ -181,6 +184,7 @@ mod tests {
                 repeat: None,
                 output_contract: None,
             }],
+            requires: None,
         };
 
         let error = runtime_workflow_from_definition(&definition).expect_err("expected depends_on error");
@@ -228,6 +232,7 @@ mod tests {
                 repeat: None,
                 output_contract: None,
             }],
+            requires: None,
         };
 
         let runtime = runtime_workflow_from_definition(&definition).expect("definition should be valid");

@@ -806,6 +806,7 @@ mod tests {
                     method: "GET".into(),
                     path: "/apps".into(),
                     output_schema: None,
+                    list_response_path: None,
                 }),
                 group: "apps".into(),
                 name: "list".into(),
@@ -819,6 +820,7 @@ mod tests {
                     method: "GET".into(),
                     path: "/apps/{app}".into(),
                     output_schema: None,
+                    list_response_path: None,
                 }),
                 group: "apps".into(),
                 name: "info".into(),
@@ -843,6 +845,7 @@ mod tests {
                 path: "/apps/{app}".into(),
                 // Provider is now embedded on the field; legacy vector removed
                 output_schema: None,
+                list_response_path: None,
             }),
             group: "apps".into(),
             name: "info".into(),
@@ -881,6 +884,7 @@ mod tests {
                     method: "GET".into(),
                     path: "/apps".into(),
                     output_schema: None,
+                    list_response_path: None,
                 }),
                 group: "apps".into(),
                 name: "list".into(),
@@ -923,6 +927,7 @@ mod tests {
                 path: "/addons/{addon}/config".into(),
                 // No legacy providers vector
                 output_schema: None,
+                list_response_path: None,
             }),
         };
         let reg = registry_with(vec![
@@ -937,6 +942,7 @@ mod tests {
                     method: "GET".into(),
                     path: "/addons".into(),
                     output_schema: None,
+                    list_response_path: None,
                 }),
             },
             spec,
@@ -975,6 +981,7 @@ mod tests {
                 method: "GET".into(),
                 path: "/apps/{app}".into(),
                 output_schema: None,
+                list_response_path: None,
             }),
         };
         let reg = registry_with(vec![
@@ -989,6 +996,7 @@ mod tests {
                     method: "GET".into(),
                     path: "/apps".into(),
                     output_schema: None,
+                    list_response_path: None,
                 }),
             },
             spec,
@@ -1024,6 +1032,7 @@ mod tests {
                 method: "GET".into(),
                 path: "/apps/{app}".into(),
                 output_schema: None,
+                list_response_path: None,
             }),
         };
         let reg = registry_with(vec![
@@ -1038,6 +1047,7 @@ mod tests {
                     method: "GET".into(),
                     path: "/apps".into(),
                     output_schema: None,
+                    list_response_path: None,
                 }),
             },
             spec,
@@ -1070,6 +1080,7 @@ mod tests {
                 path: "/apps/{app}".into(),
                 // No legacy providers vector
                 output_schema: None,
+                list_response_path: None,
             }),
         };
         let reg = registry_with(vec![
@@ -1084,6 +1095,7 @@ mod tests {
                     method: "GET".into(),
                     path: "/apps".into(),
                     output_schema: None,
+                    list_response_path: None,
                 }),
             },
             spec,
@@ -1127,6 +1139,7 @@ mod tests {
                 path: "/pipelines/{pipeline}/ci".into(),
                 // No legacy providers vector
                 output_schema: None,
+                list_response_path: None,
             }),
         };
         let reg = registry_with(vec![
@@ -1141,6 +1154,7 @@ mod tests {
                     method: "GET".into(),
                     path: "/pipelines".into(),
                     output_schema: None,
+                    list_response_path: None,
                 }),
             },
             CommandSpec {
@@ -1154,6 +1168,7 @@ mod tests {
                     method: "GET".into(),
                     path: "/branches".into(),
                     output_schema: None,
+                    list_response_path: None,
                 }),
             },
             spec,

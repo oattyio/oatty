@@ -579,7 +579,7 @@ mod tests {
                 positional_args: Vec::new(),
                 flags: Vec::new(),
                 catalog_identifier: 0,
-                execution: CommandExecution::Http(HttpCommandSpec::new("GET", "/apps", None)),
+                execution: CommandExecution::Http(HttpCommandSpec::new("GET", "/apps", None, None)),
             },
             CommandSpec {
                 group: "apps".to_string(),
@@ -588,7 +588,7 @@ mod tests {
                 positional_args: Vec::new(),
                 flags: Vec::new(),
                 catalog_identifier: 0,
-                execution: CommandExecution::Http(HttpCommandSpec::new("GET", "/apps", None)),
+                execution: CommandExecution::Http(HttpCommandSpec::new("GET", "/apps", None, None)),
             },
             CommandSpec {
                 group: "apps".to_string(),
@@ -597,7 +597,7 @@ mod tests {
                 positional_args: Vec::new(),
                 flags: Vec::new(),
                 catalog_identifier: 0,
-                execution: CommandExecution::Http(HttpCommandSpec::new("POST", "/apps", None)),
+                execution: CommandExecution::Http(HttpCommandSpec::new("POST", "/apps", None, None)),
             },
         ];
 

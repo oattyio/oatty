@@ -72,6 +72,29 @@ Implemented workflow tool surface includes:
   - `full`: includes positional/flag metadata, `output_schema`, and compact `output_fields`.
 - `output_fields`/`output_schema` are intended to help map upstream step outputs into downstream provider bindings and step inputs.
 
+### Typed `run_*` inputs for command execution
+
+- MCP `run_safe_command`, `run_command`, and `run_destructive_command` accept `named_flags` values as typed JSON:
+  - scalar values (string/number/boolean)
+  - arrays
+  - objects
+- This enables direct command execution for APIs that require structured payload fields.
+- Example:
+
+```json
+{
+  "canonical_id": "vercel projects:env:create",
+  "positional_args": ["my-project"],
+  "named_flags": [
+    ["upsert", "true"],
+    ["key", "DATABASE_URL"],
+    ["value", "postgres://..."],
+    ["type", "encrypted"],
+    ["target", ["production", "preview", "development"]]
+  ]
+}
+```
+
 ## Workflow authoring policy (LLM-facing)
 
 - Provider-first for enumerable/list-selection fields:
@@ -97,6 +120,9 @@ Implemented workflow tool surface includes:
     - binding form with `from_input` or `from_step`
     - literal template form with `${{ inputs.* }}` or `${{ steps.* }}`
 - Missing or invalid `depends_on` mappings are returned as validation failures.
+- Validation preflight also checks `requires.catalogs[]` against loaded registry catalogs.
+  - Missing catalog requirements are emitted as structured violations at `$.requires.catalogs[index]`.
+  - Violations include actionable install guidance and preserve requirement metadata (`vendor`, `title`, `source`, `source_type`).
 
 ## Execution behavior
 

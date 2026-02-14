@@ -78,6 +78,7 @@ pub fn generate_catalog(mut input: ManifestInput) -> Result<RegistryCatalog> {
     Ok(RegistryCatalog {
         title,
         description,
+        vendor: Some(manifest.vendor.clone()),
         base_urls,
         base_url_index: 0,
         manifest: Some(manifest),

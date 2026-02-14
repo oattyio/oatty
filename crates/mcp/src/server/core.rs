@@ -6,8 +6,8 @@ use crate::server::http::McpHttpLogEntry;
 use crate::server::log_payload::{build_log_payload, build_parsed_response_payload};
 use crate::server::schemas::{
     CatalogImportOpenApiRequest, CatalogPreviewImportRequest, CatalogRemoveRequest, CatalogSetEnabledRequest,
-    CatalogValidateOpenApiRequest, CommandDetailRequest, CommandSummariesRequest, RunCommandRequestParam, SearchInputsDetail,
-    SearchRequestParam,
+    CatalogValidateOpenApiRequest, CommandDetailRequest, CommandSummariesRequest, OutputSchemaDetail, RunCommandRequestParam,
+    SearchInputsDetail, SearchRequestParam,
 };
 use crate::server::workflow::{
     errors::{conflict_error, not_found_error},
@@ -32,7 +32,7 @@ use crate::server::workflow::{
 use anyhow::Result;
 use oatty_registry::{CommandRegistry, SearchHandle};
 use oatty_types::{CommandSpec, ExecOutcome, SearchResult};
-use oatty_util::http::exec_remote_from_shell_command;
+use oatty_util::http::exec_remote_for_provider;
 use reqwest::Method;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -108,14 +108,11 @@ impl OattyMcpCore {
 
     #[tool(
         annotations(read_only_hint = true),
-        description = "Find executable commands by intent. Use first before any run_* call. Use during workflow authoring to discover valid step `run` values (canonical command IDs in `<group> <command>` format, for example `apps apps:list`). Input: query, optional vendor, optional limit, optional include_inputs(none|required_only|full). include_inputs=none returns minimal discovery metadata (canonical_id, execution_type, http_method). include_inputs=required_only adds required input fields plus compact output_fields. include_inputs=full adds complete positional_args, flags, and output_schema. For exact single-command inspection after discovery, use get_command with canonical_id. Routing: GET -> run_safe_command, POST/PUT/PATCH -> run_command, DELETE -> run_destructive_command, MCP -> run_safe_command or run_command."
+        description = "Find executable commands by intent. Use first before any run_* call. Use during workflow authoring to discover valid step `run` values (canonical command IDs in `<group> <command>` format, for example `apps apps:list`). Input: query, optional vendor, optional limit, optional include_inputs(none|required_only|full). Canonical direct-hit queries return exactly one result when found. include_inputs=none returns minimal discovery metadata (canonical_id, execution_type, http_method). include_inputs=required_only adds required input fields plus compact output_fields. include_inputs=full adds complete positional_args, flags, and output_fields. For full nested output schema, call get_command with `output_schema_detail=full`. For exact single-command inspection after discovery, use get_command with canonical_id. Authoring decision rule: if required commands are still not discoverable after two focused searches, switch to catalog.validate_openapi -> catalog.preview_import -> catalog.import_openapi before drafting workflow steps. Efficiency rule: after candidate canonical IDs are found, stop fuzzy search and switch to get_command; use at most one include_inputs=full search per vendor/intent. Routing: GET -> run_safe_command, POST/PUT/PATCH -> run_command, DELETE -> run_destructive_command, MCP -> run_safe_command or run_command."
     )]
     async fn search_commands(&self, param: Parameters<SearchRequestParam>) -> Result<CallToolResult, ErrorData> {
-        let mut results = self
-            .services
-            .search_commands(param.0.query.clone(), param.0.vendor.as_deref())
-            .await
-            .map_err(|error| {
+        let direct_hit = {
+            let registry_guard = self.services.command_registry.lock().map_err(|error| {
                 internal_error_with_next_step(
                     error.to_string(),
                     serde_json::json!({
@@ -125,6 +122,26 @@ impl OattyMcpCore {
                     "Retry search_commands. If this persists, verify registry availability and MCP server health.",
                 )
             })?;
+            find_direct_search_hit(&registry_guard, param.0.query.as_str(), param.0.vendor.as_deref())
+        };
+
+        let mut results = if let Some(hit) = direct_hit {
+            vec![hit]
+        } else {
+            self.services
+                .search_commands(param.0.query.clone(), param.0.vendor.as_deref())
+                .await
+                .map_err(|error| {
+                    internal_error_with_next_step(
+                        error.to_string(),
+                        serde_json::json!({
+                            "query": param.0.query,
+                            "vendor": param.0.vendor
+                        }),
+                        "Retry search_commands. If this persists, verify registry availability and MCP server health.",
+                    )
+                })?
+        };
         if let Some(vendor_name) = param.0.vendor.as_deref()
             && results.is_empty()
             && !vendor_has_enabled_command_catalog(&self.services.command_registry, vendor_name).map_err(|error| {
@@ -177,11 +194,12 @@ impl OattyMcpCore {
 
     #[tool(
         annotations(read_only_hint = true),
-        description = "Get full details for one command by canonical_id. Use after search_commands to inspect exact positional args, flags, execution_type, http_method, output_fields, and output_schema."
+        description = "Get command details by canonical_id. Defaults to compact output fields (`output_fields`). Set `output_schema_detail=full` only when full nested output schema is required."
     )]
     async fn get_command(&self, param: Parameters<CommandDetailRequest>) -> Result<CallToolResult, ErrorData> {
         let command_spec = resolve_command_spec(&self.services.command_registry, &param.0.canonical_id)?;
-        let structured = build_full_command_summary(&command_spec);
+        let output_schema_detail = param.0.output_schema_detail.unwrap_or_default();
+        let structured = build_command_summary(&command_spec, output_schema_detail);
         let response = CallToolResult::structured(structured);
         self.emit_log(
             "get_command",
@@ -216,7 +234,7 @@ impl OattyMcpCore {
 
     #[tool(
         annotations(read_only_hint = true),
-        description = "Get command argument schema for one command catalog title (type='command'). Returns canonical_id, positional arg order, flags, execution_type, and http_method. Use to build valid run_* payloads."
+        description = "Get command argument schemas for a full command catalog (type='command'). High-token response intended for batch inspection only. Prefer search_commands -> get_command for normal workflow authoring and single-command lookup."
     )]
     async fn get_command_summaries_by_catalog(&self, param: Parameters<CommandSummariesRequest>) -> Result<CallToolResult, ErrorData> {
         let summaries =
@@ -238,7 +256,7 @@ impl OattyMcpCore {
 
     #[tool(
         annotations(read_only_hint = true, open_world_hint = true),
-        description = "Execute read-only commands. Use for HTTP GET or read-only MCP commands. Input: canonical_id, positional_args[], named_flags[[name,value]]. Rejects write/destructive HTTP methods."
+        description = "Execute read-only commands. Use for HTTP GET or read-only MCP commands. Input: canonical_id, positional_args[], named_flags[[name,value]]. named_flags values may be JSON scalars, arrays, or objects. Rejects write/destructive HTTP methods."
     )]
     async fn run_safe_command(&self, param: Parameters<RunCommandRequestParam>) -> Result<CallToolResult, ErrorData> {
         let response = self.execute_command_with_guard(&param.0, HttpMethodGuard::SafeGet).await?;
@@ -252,7 +270,7 @@ impl OattyMcpCore {
 
     #[tool(
         annotations(open_world_hint = true),
-        description = "Execute non-destructive write commands. Use for HTTP POST/PUT/PATCH or non-destructive MCP commands. Input: canonical_id, positional_args[], named_flags[[name,value]]. Rejects HTTP GET and DELETE."
+        description = "Execute non-destructive write commands. Use for HTTP POST/PUT/PATCH or non-destructive MCP commands. Input: canonical_id, positional_args[], named_flags[[name,value]]. named_flags values may be JSON scalars, arrays, or objects. Rejects HTTP GET and DELETE."
     )]
     async fn run_command(&self, param: Parameters<RunCommandRequestParam>) -> Result<CallToolResult, ErrorData> {
         let response = self.execute_command_with_guard(&param.0, HttpMethodGuard::Write).await?;
@@ -266,7 +284,7 @@ impl OattyMcpCore {
 
     #[tool(
         annotations(open_world_hint = true),
-        description = "Execute HTTP DELETE commands only. MCP commands are not allowed. Input: canonical_id, positional_args[], named_flags[[name,value]]."
+        description = "Execute HTTP DELETE commands only. MCP commands are not allowed. Input: canonical_id, positional_args[], named_flags[[name,value]]. named_flags values may be JSON scalars, arrays, or objects."
     )]
     async fn run_destructive_command(&self, param: Parameters<RunCommandRequestParam>) -> Result<CallToolResult, ErrorData> {
         let response = self
@@ -399,7 +417,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow.validate",
         annotations(read_only_hint = true),
-        description = "Validate inline workflow YAML/JSON without saving. Use before workflow.save. Includes schema checks and command/catalog preflight checks, and returns structured validation errors with violations[]."
+        description = "Validate inline workflow YAML/JSON without saving. Use before workflow.save. Includes schema checks and command/catalog preflight checks, and returns structured validation errors with violations[]. Authoring guidance: for manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata to improve collector UX."
     )]
     async fn workflow_validate(&self, param: Parameters<WorkflowValidateRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = validate_workflow(&param.0, &self.services.command_registry)?;
@@ -415,7 +433,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow.save",
         annotations(open_world_hint = true),
-        description = "Validate and persist workflow manifest to runtime filesystem storage. Input: workflow_id?, manifest_content, format?, overwrite?, expected_version?. Authoring sequence: search_commands -> workflow.validate -> workflow.save -> workflow.resolve_inputs -> workflow.run."
+        description = "Validate and persist workflow manifest to runtime filesystem storage. Input: workflow_id?, manifest_content, format?, overwrite?, expected_version?. Authoring sequence: search_commands -> workflow.validate -> workflow.save -> workflow.resolve_inputs -> workflow.run. For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata."
     )]
     async fn workflow_save(&self, param: Parameters<WorkflowSaveRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = save_workflow(&param.0, &self.services.command_registry)?;
@@ -634,7 +652,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow.author_and_run",
         annotations(open_world_hint = true),
-        description = "Orchestrate validate -> save -> resolve_inputs -> run for a draft workflow manifest."
+        description = "Orchestrate validate -> save -> resolve_inputs -> run for a draft workflow manifest. For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata."
     )]
     async fn workflow_author_and_run(&self, param: Parameters<WorkflowAuthorAndRunRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = author_and_run(&param.0, &self.services.command_registry)?;
@@ -682,8 +700,7 @@ impl OattyMcpCore {
             })?;
             method_guard.ensure_allowed(&method)?;
 
-            let hydrated_input = hydrate_shell_command(&command_spec, param)?;
-            let exec_outcome = execute_http_command(&self.services.command_registry, &command_spec, hydrated_input).await?;
+            let exec_outcome = execute_http_command(&self.services.command_registry, &command_spec, param).await?;
             let structured = exec_outcome_to_value(exec_outcome)?;
             return Ok(CallToolResult::structured(structured));
         }
@@ -792,7 +809,7 @@ impl ServerHandler for OattyMcpCore {
                 ..Default::default()
             },
             instructions: Some(
-                "LLM-ONLY SERVER INSTRUCTIONS.\nGENERAL FLOW:\n1) Call search_commands.\n2) Select canonical_id from results.\n3) Call get_command for exact single-command schema.\n4) Route by execution_type/http_method.\nCATALOG ONBOARDING:\n- If search_commands returns no relevant commands or required vendors are missing, validate/import catalogs first.\n- Use catalog.validate_openapi -> catalog.preview_import before catalog.import_openapi.\n- catalog.import_openapi mutates user configuration: request user confirmation before calling it.\n- If target APIs require auth, instruct user to configure catalog headers (for example Authorization) before running HTTP commands.\nROUTING:\n- http + GET => run_safe_command\n- http + POST|PUT|PATCH => run_command\n- http + DELETE => run_destructive_command\n- mcp + read-only => run_safe_command\n- mcp + non-destructive => run_command\n- mcp + destructive => unsupported\nSEARCH OPTIMIZATION:\n- Use search_commands limit (for example 5-10) to reduce token usage.\n- Use include_inputs=none for initial discovery.\n- Use include_inputs=required_only for low-token execution planning.\n- Use include_inputs=full only when complete flags/args and output_schema detail is required.\nARGUMENTS:\n- Prefer get_command for exact single-command args/flags.\n- If inspecting many commands in one catalog, use get_command_summaries_by_catalog (type='command' catalogs only).\n- Build positional_args in declared order.\n- Build named_flags as [name,value]; boolean flags use presence semantics.\nWORKFLOW AUTHORING FLOW:\n- Workflow steps execute HTTP-backed commands only.\n- Do not use MCP/plugin commands as workflow steps.\n- Use search_commands with vendor filters and prefer execution_type=http when building workflows.\n- Use search_commands to discover valid step `run` command IDs (`<group> <command>`, for example `apps apps:list`).\n- Step arguments belong under `with` using real command parameter names.\n- Use `if`/`when` for conditions (not `condition`).\n- Input defaults must be structured objects (`default: { from: literal|env|history|workflow_output, value: ... }`).\n- Provider-first rule: use providers for enumerable identifiers/list selections (for example owner_id, project_id, service_id, domain).\n- Hybrid rule: keep manual inputs for transformation-heavy fields requiring human mapping.\n- Use output_fields/output_schema to map step outputs into downstream provider_args and step inputs.\n- Use summary-first payloads by default; request detailed fields only when needed.\n- Preflight before drafting full manifests: required catalogs enabled, required HTTP commands discoverable; if not, import missing OpenAPI first.\n- Validate incrementally (minimal manifest first), then run workflow.validate -> workflow.save -> workflow.resolve_inputs -> workflow.run.".to_string()
+                "LLM-ONLY SERVER INSTRUCTIONS.\nGENERAL FLOW:\n1) Call search_commands.\n2) Select canonical_id from results.\n3) Call get_command for exact single-command schema.\n4) Route by execution_type/http_method.\nEXAMPLES:\n- User asks: 'list vercel projects' -> search_commands(query='list vercel projects', vendor='vercel', include_inputs='none') -> get_command(canonical_id) -> run_safe_command.\n- User asks: 'create render web service' -> search_commands(query='create render web service', vendor='render', include_inputs='required_only') -> get_command(canonical_id) -> run_command.\nCATALOG ONBOARDING:\n- If search_commands returns no relevant commands or required vendors are missing, validate/import catalogs first.\n- Use catalog.validate_openapi -> catalog.preview_import before catalog.import_openapi.\n- catalog.import_openapi mutates user configuration: request user confirmation before calling it.\n- If target APIs require auth, instruct user to configure catalog headers (for example Authorization) before running HTTP commands.\nROUTING:\n- http + GET => run_safe_command\n- http + POST|PUT|PATCH => run_command\n- http + DELETE => run_destructive_command\n- mcp + read-only => run_safe_command\n- mcp + non-destructive => run_command\n- mcp + destructive => unsupported\nSEARCH OPTIMIZATION:\n- Use search_commands limit (for example 5-10) to reduce token usage.\n- Use include_inputs=none for initial discovery.\n- Use include_inputs=required_only for low-token execution planning.\n- Use include_inputs=full only when complete flags/args and output_schema detail is required.\n- Canonical query form `<group> <command>` returns a single direct-hit result when found.\n- Do not call get_command_summaries_by_catalog for normal authoring; use it only for deliberate large batch inspection.\n- Use at most one include_inputs=full search per vendor/intent; then switch to get_command.\nDECISION RULES:\n- If required commands are not found after two focused searches, stop searching and switch to catalog.validate_openapi -> catalog.preview_import -> catalog.import_openapi.\n- Treat \"only unrelated catalogs found\" as a hard stop for direct workflow authoring until missing catalogs are imported.\n- After selecting candidate canonical_ids, stop fuzzy searching and switch to get_command for deterministic inspection.\n- Prefer the intended authoring order over hand-written fallback guessing.\nAUTHORING PRECHECK:\n- Confirm required command catalogs exist and are enabled.\n- Confirm required HTTP commands are discoverable.\n- Confirm provider-backed inputs are used for enumerable identifiers/list selections when provider contracts exist.\n- If any precheck fails, import missing catalogs or correct input/provider wiring before drafting more steps.\nARGUMENTS:\n- Prefer get_command for exact single-command args/flags.\n- Build positional_args in declared order.\n- Build named_flags as [name,value]; values may be JSON scalars, arrays, or objects; boolean flags use presence semantics.\nWORKFLOW AUTHORING FLOW:\n- Workflow steps execute HTTP-backed commands only.\n- Do not use MCP/plugin commands as workflow steps.\n- Use search_commands with vendor filters and prefer execution_type=http when building workflows.\n- Use search_commands to discover valid step `run` command IDs (`<group> <command>`, for example `apps apps:list`).\n- Step arguments belong under `with` using real command parameter names.\n- Use `if`/`when` for conditions (not `condition`).\n- Input defaults must be structured objects (`default: { from: literal|env|history|workflow_output, value: ... }`).\n- Provider-first rule: use providers for enumerable identifiers/list selections (for example owner_id, project_id, service_id, domain).\n- Hybrid rule: keep manual inputs for transformation-heavy fields requiring human mapping.\n- For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata to guide users in the collector modal.\n- Use output_fields/output_schema to map step outputs into downstream provider_args and step inputs.\n- Use summary-first payloads by default; request detailed fields only when needed.\n- Follow this sequence: search_commands -> get_command -> workflow.validate (minimal) -> expand manifest -> workflow.validate -> workflow.save -> workflow.resolve_inputs -> workflow.run.".to_string()
             ),
         }
     }
@@ -867,41 +884,57 @@ fn resolve_command_spec(registry: &Arc<Mutex<CommandRegistry>>, canonical_id: &s
         )
     })?;
     registry_guard.find_by_group_and_cmd_cloned(&group, &name).map_err(|error| {
+        let suggested_search_query = derive_search_query_from_canonical_id(canonical_id);
+        let next_step = format!(
+            "Use search_commands(query='{}', include_inputs='none') to discover valid canonical IDs, then call get_command and retry.",
+            suggested_search_query
+        );
         invalid_params_with_next_step(
             error.to_string(),
             serde_json::json!({
                 "canonical_id": canonical_id,
                 "group": group,
-                "command": name
+                "command": name,
+                "suggested_search_query": suggested_search_query
             }),
-            "Use search_commands to find a valid canonical_id, then retry.",
+            next_step.as_str(),
         )
     })
 }
 
 fn split_canonical_id(canonical_id: &str) -> Result<(String, String), ErrorData> {
-    let trimmed = canonical_id.trim();
-    let (group, name) = trimmed.split_once(' ').ok_or_else(|| {
+    parse_canonical_search_query(canonical_id).ok_or_else(|| {
+        let suggested_search_query = derive_search_query_from_canonical_id(canonical_id);
         ErrorData::invalid_params(
             "canonical_id must be in 'group command' format",
             Some(serde_json::json!({
                 "expected_format": "<group> <command>",
                 "example": "apps apps:list",
-                "next_step": "Use search_commands to copy an exact canonical_id."
+                "suggested_search_query": suggested_search_query,
+                "next_step": format!(
+                    "Do not use vendor CLI syntax directly. Call search_commands(query='{}', include_inputs='none') to discover a canonical_id first.",
+                    suggested_search_query
+                )
             })),
         )
-    })?;
-    if group.is_empty() || name.is_empty() {
-        return Err(ErrorData::invalid_params(
-            "canonical_id must include both group and command",
-            Some(serde_json::json!({
-                "expected_format": "<group> <command>",
-                "example": "apps apps:list",
-                "next_step": "Use search_commands to copy an exact canonical_id."
-            })),
-        ));
+    })
+}
+
+fn derive_search_query_from_canonical_id(canonical_id: &str) -> String {
+    let normalized = canonical_id.trim();
+    if normalized.is_empty() {
+        return "describe desired action in natural language".to_string();
     }
-    Ok((group.to_string(), name.to_string()))
+    normalized
+        .chars()
+        .map(|character| {
+            if matches!(character, ':' | '_' | '-' | '/') {
+                ' '
+            } else {
+                character
+            }
+        })
+        .collect::<String>()
 }
 
 async fn list_registry_catalogs(registry: &Arc<Mutex<CommandRegistry>>, plugin_engine: &Arc<PluginEngine>) -> Result<Vec<Value>> {
@@ -966,7 +999,7 @@ fn list_command_summaries_by_catalog(registry: &Arc<Mutex<CommandRegistry>>, cat
         .commands
         .iter()
         .filter(|command| command.catalog_identifier == catalog_index)
-        .map(build_full_command_summary)
+        .map(|command| build_command_summary(command, OutputSchemaDetail::Paths))
         .collect();
     Ok(summaries)
 }
@@ -974,15 +1007,7 @@ fn list_command_summaries_by_catalog(registry: &Arc<Mutex<CommandRegistry>>, cat
 fn minimal_search_results(results: &[SearchResult]) -> Value {
     let payload = results
         .iter()
-        .map(|result| {
-            let mut entry_object = Map::new();
-            entry_object.insert("canonical_id".to_string(), serde_json::json!(result.canonical_id));
-            entry_object.insert("execution_type".to_string(), serde_json::json!(result.execution_type));
-            if let Some(http_method) = result.http_method.as_ref() {
-                entry_object.insert("http_method".to_string(), serde_json::json!(http_method));
-            }
-            Value::Object(entry_object)
-        })
+        .map(|result| Value::Object(SearchResultProjection::from_search_result(result, false).into_value_map()))
         .collect::<Vec<Value>>();
     Value::Array(payload)
 }
@@ -996,23 +1021,15 @@ fn search_results_with_inputs(
     let enriched = results
         .iter()
         .map(|result| {
-            let mut entry_object = Map::new();
-            entry_object.insert("index".to_string(), serde_json::json!(result.index));
-            entry_object.insert("canonical_id".to_string(), serde_json::json!(result.canonical_id));
-            entry_object.insert("summary".to_string(), serde_json::json!(result.summary));
-            entry_object.insert("execution_type".to_string(), serde_json::json!(result.execution_type));
-            if let Some(http_method) = result.http_method.as_ref() {
-                entry_object.insert("http_method".to_string(), serde_json::json!(http_method));
-            }
+            let mut entry_object = SearchResultProjection::from_search_result(result, true).into_value_map();
 
             if let Some(command) = registry_guard
                 .commands
                 .iter()
                 .find(|command| command.canonical_id() == result.canonical_id)
             {
-                append_command_inputs_metadata(&mut entry_object, command, inputs_detail);
+                append_command_inputs_metadata(&mut entry_object, command, inputs_detail, OutputSchemaDetail::Paths);
             }
-
             Value::Object(entry_object)
         })
         .collect::<Vec<Value>>();
@@ -1020,19 +1037,69 @@ fn search_results_with_inputs(
     Ok(Value::Array(enriched))
 }
 
-fn build_full_command_summary(command: &CommandSpec) -> Value {
-    let mut summary = Map::new();
-    summary.insert("canonical_id".to_string(), serde_json::json!(command.canonical_id()));
-    summary.insert("summary".to_string(), serde_json::json!(command.summary));
-    summary.insert("execution_type".to_string(), serde_json::json!(command_execution_type(command)));
-    if let Some(http_method) = command.http().map(|http| http.method.clone()) {
-        summary.insert("http_method".to_string(), serde_json::json!(http_method));
-    }
-    append_command_inputs_metadata(&mut summary, command, SearchInputsDetail::Full);
+fn build_command_summary(command: &CommandSpec, output_schema_detail: OutputSchemaDetail) -> Value {
+    let mut summary = SearchResultProjection::from_command_spec(command, true).into_value_map();
+    append_command_inputs_metadata(&mut summary, command, SearchInputsDetail::Full, output_schema_detail);
     Value::Object(summary)
 }
 
-fn append_command_inputs_metadata(summary: &mut Map<String, Value>, command: &CommandSpec, inputs_detail: SearchInputsDetail) {
+/// Shared projection for search-oriented command summaries.
+///
+/// This keeps response-envelope shaping consistent between lightweight search
+/// results and full command summaries.
+#[derive(Debug, Clone)]
+struct SearchResultProjection {
+    canonical_id: String,
+    execution_type: String,
+    summary: Option<String>,
+    http_method: Option<String>,
+}
+
+impl SearchResultProjection {
+    fn from_search_result(search_result: &SearchResult, include_summary: bool) -> Self {
+        Self {
+            canonical_id: search_result.canonical_id.clone(),
+            execution_type: search_result.execution_type.clone(),
+            summary: include_summary.then(|| search_result.summary.clone()),
+            http_method: search_result.http_method.clone(),
+        }
+    }
+
+    fn from_command_spec(command_spec: &CommandSpec, include_summary: bool) -> Self {
+        Self {
+            canonical_id: command_spec.canonical_id(),
+            execution_type: command_execution_type(command_spec).to_string(),
+            summary: include_summary.then(|| command_spec.summary.clone()),
+            http_method: command_spec.http().map(|http_spec| http_spec.method.clone()),
+        }
+    }
+
+    fn into_value_map(self) -> Map<String, Value> {
+        let mut entry_object = Map::new();
+        entry_object.insert("canonical_id".to_string(), Value::String(self.canonical_id));
+        entry_object.insert("execution_type".to_string(), Value::String(self.execution_type));
+        if let Some(summary) = self.summary.as_deref() {
+            insert_non_empty_string(&mut entry_object, "summary", summary);
+        }
+        if let Some(http_method) = self.http_method.as_deref() {
+            insert_non_empty_string(&mut entry_object, "http_method", http_method);
+        }
+        entry_object
+    }
+}
+
+fn insert_non_empty_string(entry_object: &mut Map<String, Value>, key: &str, value: &str) {
+    if !value.trim().is_empty() {
+        entry_object.insert(key.to_string(), Value::String(value.to_string()));
+    }
+}
+
+fn append_command_inputs_metadata(
+    summary: &mut Map<String, Value>,
+    command: &CommandSpec,
+    inputs_detail: SearchInputsDetail,
+    output_schema_detail: OutputSchemaDetail,
+) {
     match inputs_detail {
         SearchInputsDetail::None => {}
         SearchInputsDetail::RequiredOnly => {
@@ -1071,12 +1138,7 @@ fn append_command_inputs_metadata(summary: &mut Map<String, Value>, command: &Co
             if !flags.is_empty() {
                 summary.insert("flags".to_string(), Value::Array(flags));
             }
-            if let Some(output_schema) = command_output_schema(command) {
-                summary.insert(
-                    "output_schema".to_string(),
-                    serde_json::to_value(output_schema).unwrap_or(Value::Null),
-                );
-            }
+            append_output_schema_metadata(summary, command, output_schema_detail);
             let output_fields = command_output_field_names(command);
             if !output_fields.is_empty() {
                 summary.insert(
@@ -1086,6 +1148,91 @@ fn append_command_inputs_metadata(summary: &mut Map<String, Value>, command: &Co
             }
         }
     }
+}
+
+fn append_output_schema_metadata(summary: &mut Map<String, Value>, command: &CommandSpec, output_schema_detail: OutputSchemaDetail) {
+    if output_schema_detail != OutputSchemaDetail::Full {
+        return;
+    }
+
+    let Some(output_schema) = command_output_schema(command) else {
+        return;
+    };
+    let Ok(serialized_output_schema) = serde_json::to_value(output_schema) else {
+        return;
+    };
+    let Some(pruned_output_schema) = prune_sparse_json(serialized_output_schema) else {
+        return;
+    };
+    summary.insert("output_schema".to_string(), pruned_output_schema);
+}
+
+fn prune_sparse_json(value: Value) -> Option<Value> {
+    match value {
+        Value::Null => None,
+        Value::String(text) => {
+            if text.trim().is_empty() {
+                None
+            } else {
+                Some(Value::String(text))
+            }
+        }
+        Value::Array(items) => {
+            let pruned_items = items.into_iter().filter_map(prune_sparse_json).collect::<Vec<Value>>();
+            if pruned_items.is_empty() {
+                None
+            } else {
+                Some(Value::Array(pruned_items))
+            }
+        }
+        Value::Object(entries) => {
+            let mut pruned_entries = Map::new();
+            for (key, entry_value) in entries {
+                if let Some(pruned_value) = prune_sparse_json(entry_value) {
+                    pruned_entries.insert(key, pruned_value);
+                }
+            }
+            if pruned_entries.is_empty() {
+                None
+            } else {
+                Some(Value::Object(pruned_entries))
+            }
+        }
+        scalar => Some(scalar),
+    }
+}
+
+fn parse_canonical_search_query(query: &str) -> Option<(String, String)> {
+    let trimmed = query.trim();
+    let (group, command_name) = trimmed.split_once(' ')?;
+    let normalized_group = group.trim();
+    let normalized_command_name = command_name.trim();
+    if normalized_group.is_empty() || normalized_command_name.is_empty() || normalized_command_name.contains(' ') {
+        return None;
+    }
+    Some((normalized_group.to_string(), normalized_command_name.to_string()))
+}
+
+fn find_direct_search_hit(registry: &CommandRegistry, query: &str, vendor: Option<&str>) -> Option<SearchResult> {
+    let (group, command_name) = parse_canonical_search_query(query)?;
+    let command = registry.find_by_group_and_cmd_ref(&group, &command_name).ok()?;
+    let index = registry
+        .commands
+        .iter()
+        .position(|candidate| candidate.group == group && candidate.name == command_name)?;
+    let hit = SearchResult {
+        index,
+        canonical_id: command.canonical_id(),
+        summary: command.summary.clone(),
+        execution_type: command_execution_type(command).to_string(),
+        http_method: command.http().map(|http_spec| http_spec.method.clone()),
+    };
+    if let Some(vendor_name) = vendor
+        && !vendor_matches(registry, &hit, vendor_name)
+    {
+        return None;
+    }
+    Some(hit)
 }
 
 fn command_output_schema(command: &CommandSpec) -> Option<&oatty_types::SchemaProperty> {
@@ -1190,42 +1337,7 @@ fn command_execution_type(command_spec: &CommandSpec) -> &'static str {
     "unknown"
 }
 
-fn hydrate_shell_command(command_spec: &CommandSpec, param: &RunCommandRequestParam) -> Result<String, ErrorData> {
-    let positional_args = param.positional_args.clone().unwrap_or_default();
-    let named_flags = param.named_flags.clone().unwrap_or_default();
-
-    let flag_map = build_flag_map(command_spec, &named_flags)?;
-    let positional_strings = positional_args.clone();
-    command_spec.validate_arguments(&flag_map, &positional_strings).map_err(|error| {
-        invalid_params_with_next_step(
-            error.to_string(),
-            serde_json::json!({
-                "canonical_id": command_spec.canonical_id(),
-                "provided_positional_args": positional_args,
-                "provided_named_flags": named_flags
-            }),
-            "Call get_command_summaries_by_catalog to verify required args/flags, then retry.",
-        )
-    })?;
-
-    let mut parts = Vec::new();
-    parts.push(command_spec.group.clone());
-    parts.push(command_spec.name.clone());
-    for arg in positional_args {
-        parts.push(format_shell_token(&arg));
-    }
-    for (name, value) in named_flags {
-        if is_boolean_flag(command_spec, &name) {
-            parts.push(format!("--{}", name));
-        } else {
-            parts.push(format!("--{}={}", name, format_shell_token(&value)));
-        }
-    }
-
-    Ok(parts.join(" "))
-}
-
-fn build_flag_map(command_spec: &CommandSpec, named_flags: &[(String, String)]) -> Result<HashMap<String, Option<String>>, ErrorData> {
+fn build_flag_map(command_spec: &CommandSpec, named_flags: &[(String, Value)]) -> Result<HashMap<String, Option<String>>, ErrorData> {
     let mut map = HashMap::new();
     for (name, value) in named_flags {
         let flag_spec = command_spec.flags.iter().find(|flag| flag.name == *name).ok_or_else(|| {
@@ -1241,7 +1353,7 @@ fn build_flag_map(command_spec: &CommandSpec, named_flags: &[(String, String)]) 
         if flag_spec.r#type == "boolean" {
             map.insert(name.clone(), None);
         } else {
-            map.insert(name.clone(), Some(value.clone()));
+            map.insert(name.clone(), Some(value_to_validation_string(value)));
         }
     }
     Ok(map)
@@ -1275,7 +1387,7 @@ fn build_mcp_arguments(command_spec: &CommandSpec, param: &RunCommandRequestPara
         if is_boolean_flag(command_spec, &name) {
             arguments.insert(name, Value::Bool(true));
         } else {
-            arguments.insert(name, Value::String(value));
+            arguments.insert(name, value);
         }
     }
 
@@ -1290,18 +1402,10 @@ fn is_boolean_flag(command_spec: &CommandSpec, name: &str) -> bool {
         .is_some_and(|flag| flag.r#type == "boolean")
 }
 
-fn format_shell_token(token: &str) -> String {
-    if token.chars().all(|ch| !ch.is_whitespace() && ch != '"' && ch != '\\') {
-        return token.to_string();
-    }
-    let escaped = token.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{}\"", escaped)
-}
-
 async fn execute_http_command(
     registry: &Arc<Mutex<CommandRegistry>>,
     command_spec: &CommandSpec,
-    hydrated_input: String,
+    param: &RunCommandRequestParam,
 ) -> Result<ExecOutcome, ErrorData> {
     let (base_url, headers) = {
         let registry_guard = registry.lock().map_err(|error| {
@@ -1331,15 +1435,123 @@ async fn execute_http_command(
         (base_url, headers)
     };
 
-    exec_remote_from_shell_command(command_spec, base_url, &headers, hydrated_input, 0)
+    let input_map = build_http_input_map(command_spec, param)?;
+    exec_remote_for_provider(command_spec, base_url.as_str(), &headers, input_map, 0)
         .await
         .map_err(|error| {
             internal_error_with_next_step(
-                error,
+                error.to_string(),
                 serde_json::json!({ "canonical_id": command_spec.canonical_id() }),
                 "Inspect the failing HTTP call details and retry with corrected inputs or configuration.",
             )
         })
+}
+
+fn build_http_input_map(command_spec: &CommandSpec, param: &RunCommandRequestParam) -> Result<Map<String, Value>, ErrorData> {
+    let positional_args = param.positional_args.clone().unwrap_or_default();
+    let named_flags = param.named_flags.clone().unwrap_or_default();
+
+    let flag_map = build_flag_map(command_spec, &named_flags)?;
+    let positional_strings = positional_args.clone();
+    command_spec.validate_arguments(&flag_map, &positional_strings).map_err(|error| {
+        invalid_params_with_next_step(
+            error.to_string(),
+            serde_json::json!({
+                "canonical_id": command_spec.canonical_id(),
+                "provided_positional_args": positional_args,
+                "provided_named_flags": named_flags
+            }),
+            "Call get_command or get_command_summaries_by_catalog to verify required args/flags, then retry.",
+        )
+    })?;
+
+    let mut input_map = Map::new();
+    for (spec, value) in command_spec.positional_args.iter().zip(positional_args.iter()) {
+        input_map.insert(spec.name.clone(), Value::String(value.clone()));
+    }
+
+    for (name, value) in named_flags {
+        let flag_spec = command_spec.flags.iter().find(|flag| flag.name == name).ok_or_else(|| {
+            ErrorData::invalid_params(
+                format!("unknown flag '--{}'", name),
+                Some(serde_json::json!({
+                    "unknown_flag": name,
+                    "known_flags": command_spec.flags.iter().map(|flag| flag.name.clone()).collect::<Vec<String>>(),
+                    "next_step": "Call get_command for valid flag names and types."
+                })),
+            )
+        })?;
+        let normalized_value = normalize_http_flag_value(flag_spec.r#type.as_str(), value, &name)?;
+        input_map.insert(name, normalized_value);
+    }
+
+    Ok(input_map)
+}
+
+fn normalize_http_flag_value(expected_type: &str, value: Value, flag_name: &str) -> Result<Value, ErrorData> {
+    if expected_type == "boolean" {
+        return Ok(Value::Bool(true));
+    }
+
+    match expected_type {
+        "number" | "integer" => match value {
+            Value::Number(_) => Ok(value),
+            Value::String(text) => serde_json::from_str::<Value>(&text).ok().filter(Value::is_number).ok_or_else(|| {
+                invalid_params_with_next_step(
+                    format!("flag '{}' expects a numeric value", flag_name),
+                    serde_json::json!({ "flag": flag_name, "provided_value": text }),
+                    "Provide a JSON number (or numeric string) for this flag.",
+                )
+            }),
+            other => Err(invalid_params_with_next_step(
+                format!("flag '{}' expects a numeric value", flag_name),
+                serde_json::json!({ "flag": flag_name, "provided_value": other }),
+                "Provide a JSON number (or numeric string) for this flag.",
+            )),
+        },
+        "array" => normalize_structured_value(value, flag_name, Value::is_array, "JSON array"),
+        "object" => normalize_structured_value(value, flag_name, Value::is_object, "JSON object"),
+        _ => Ok(value),
+    }
+}
+
+fn normalize_structured_value(value: Value, flag_name: &str, matcher: fn(&Value) -> bool, expected: &str) -> Result<Value, ErrorData> {
+    let next_step = format!("Provide {} value directly or as valid JSON text.", expected);
+
+    if matcher(&value) {
+        return Ok(value);
+    }
+
+    if let Value::String(text) = value {
+        let parsed = serde_json::from_str::<Value>(&text).map_err(|_| {
+            invalid_params_with_next_step(
+                format!("flag '{}' expects {}", flag_name, expected),
+                serde_json::json!({ "flag": flag_name, "provided_value": text }),
+                next_step.as_str(),
+            )
+        })?;
+        if matcher(&parsed) {
+            return Ok(parsed);
+        }
+        return Err(invalid_params_with_next_step(
+            format!("flag '{}' expects {}", flag_name, expected),
+            serde_json::json!({ "flag": flag_name, "provided_value": text }),
+            next_step.as_str(),
+        ));
+    }
+
+    Err(invalid_params_with_next_step(
+        format!("flag '{}' expects {}", flag_name, expected),
+        serde_json::json!({ "flag": flag_name, "provided_value": value }),
+        next_step.as_str(),
+    ))
+}
+
+fn value_to_validation_string(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => other.to_string(),
+    }
 }
 
 fn invalid_params_with_next_step(message: impl Into<String>, context: Value, next_step: &str) -> ErrorData {
@@ -1421,4 +1633,237 @@ fn vendor_has_enabled_command_catalog(registry: &Arc<Mutex<CommandRegistry>>, ve
         .filter(|catalog| catalog.is_enabled)
         .filter_map(|catalog| catalog.manifest.as_ref())
         .any(|manifest| manifest.vendor.eq_ignore_ascii_case(vendor_name)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oatty_registry::RegistryConfig;
+    use oatty_types::{CommandFlag, HttpCommandSpec, SchemaProperty};
+    use serde_json::json;
+    use std::sync::{Arc, Mutex};
+
+    fn build_http_spec_for_flag_tests(flags: Vec<CommandFlag>) -> CommandSpec {
+        CommandSpec::new_http(
+            "vendor".to_string(),
+            "resource:create".to_string(),
+            "Create a resource".to_string(),
+            Vec::new(),
+            flags,
+            HttpCommandSpec::new("POST", "/v1/resources", None, None),
+            1,
+        )
+    }
+
+    fn build_flag(name: &str, flag_type: &str) -> CommandFlag {
+        CommandFlag {
+            name: name.to_string(),
+            short_name: None,
+            required: false,
+            r#type: flag_type.to_string(),
+            enum_values: Vec::new(),
+            default_value: None,
+            description: None,
+            provider: None,
+        }
+    }
+
+    #[test]
+    fn build_http_input_map_preserves_object_and_array_flag_values() {
+        let command_spec = build_http_spec_for_flag_tests(vec![build_flag("project", "object"), build_flag("target", "array")]);
+        let param = RunCommandRequestParam {
+            canonical_id: command_spec.canonical_id(),
+            positional_args: None,
+            named_flags: Some(vec![
+                ("project".to_string(), json!({ "name": "demo" })),
+                ("target".to_string(), json!(["production", "preview"])),
+            ]),
+        };
+
+        let input_map = build_http_input_map(&command_spec, &param).expect("typed flags should build an HTTP input map");
+
+        assert_eq!(input_map.get("project"), Some(&json!({ "name": "demo" })));
+        assert_eq!(input_map.get("target"), Some(&json!(["production", "preview"])));
+    }
+
+    #[test]
+    fn build_http_input_map_accepts_json_string_for_structured_flags() {
+        let command_spec = build_http_spec_for_flag_tests(vec![build_flag("project", "object"), build_flag("target", "array")]);
+        let param = RunCommandRequestParam {
+            canonical_id: command_spec.canonical_id(),
+            positional_args: None,
+            named_flags: Some(vec![
+                ("project".to_string(), Value::String("{\"name\":\"demo\"}".to_string())),
+                ("target".to_string(), Value::String("[\"production\",\"preview\"]".to_string())),
+            ]),
+        };
+
+        let input_map = build_http_input_map(&command_spec, &param).expect("JSON text should parse for structured flags");
+
+        assert_eq!(input_map.get("project"), Some(&json!({ "name": "demo" })));
+        assert_eq!(input_map.get("target"), Some(&json!(["production", "preview"])));
+    }
+
+    #[test]
+    fn run_command_payload_deserialization_preserves_typed_named_flags() {
+        let command_spec = build_http_spec_for_flag_tests(vec![
+            build_flag("project", "object"),
+            build_flag("target", "array"),
+            build_flag("upsert", "string"),
+        ]);
+        let raw_payload = json!({
+            "canonical_id": command_spec.canonical_id(),
+            "named_flags": [
+                ["project", { "name": "starter-node" }],
+                ["target", ["production", "preview", "development"]],
+                ["upsert", "true"]
+            ]
+        });
+        let param: RunCommandRequestParam = serde_json::from_value(raw_payload).expect("MCP run_command payload should deserialize");
+
+        let input_map = build_http_input_map(&command_spec, &param).expect("deserialized flags should normalize");
+
+        assert_eq!(input_map.get("project"), Some(&json!({ "name": "starter-node" })));
+        assert_eq!(input_map.get("target"), Some(&json!(["production", "preview", "development"])));
+        assert_eq!(input_map.get("upsert"), Some(&json!("true")));
+    }
+
+    #[test]
+    fn parse_canonical_search_query_requires_group_and_command() {
+        assert_eq!(
+            parse_canonical_search_query("apps apps:list"),
+            Some(("apps".to_string(), "apps:list".to_string()))
+        );
+        assert_eq!(
+            parse_canonical_search_query("  apps   apps:list  "),
+            Some(("apps".to_string(), "apps:list".to_string()))
+        );
+        assert_eq!(parse_canonical_search_query("apps"), None);
+        assert_eq!(parse_canonical_search_query("apps apps:list extra"), None);
+    }
+
+    #[test]
+    fn derive_search_query_from_canonical_id_normalizes_vendor_cli_like_tokens() {
+        assert_eq!(
+            derive_search_query_from_canonical_id("vercel projects:env:list"),
+            "vercel projects env list".to_string()
+        );
+        assert_eq!(
+            derive_search_query_from_canonical_id("render/services:create"),
+            "render services create".to_string()
+        );
+    }
+
+    #[test]
+    fn find_direct_search_hit_returns_single_exact_match() {
+        let command = CommandSpec::new_http(
+            "apps".to_string(),
+            "apps:list".to_string(),
+            "List apps".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/apps", None, None),
+            0,
+        );
+        let mut registry = CommandRegistry::default().with_commands(vec![command]);
+        registry.config = RegistryConfig::default();
+
+        let hit = find_direct_search_hit(&registry, "apps apps:list", None).expect("direct hit should resolve");
+        assert_eq!(hit.canonical_id, "apps apps:list");
+        assert_eq!(hit.execution_type, "http");
+        assert_eq!(hit.http_method.as_deref(), Some("GET"));
+    }
+
+    #[test]
+    fn search_results_with_inputs_omits_index_field() {
+        let command = CommandSpec::new_http(
+            "apps".to_string(),
+            "apps:list".to_string(),
+            "List apps".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/apps", None, None),
+            0,
+        );
+        let mut command_registry = CommandRegistry::default().with_commands(vec![command]);
+        command_registry.config = RegistryConfig::default();
+        let registry = Arc::new(Mutex::new(command_registry));
+        let results = vec![SearchResult {
+            index: 0,
+            canonical_id: "apps apps:list".to_string(),
+            summary: "List apps".to_string(),
+            execution_type: "http".to_string(),
+            http_method: Some("GET".to_string()),
+        }];
+
+        let payload = search_results_with_inputs(&registry, &results, SearchInputsDetail::RequiredOnly).expect("payload should build");
+        let first = payload
+            .as_array()
+            .and_then(|array| array.first())
+            .and_then(Value::as_object)
+            .expect("first object payload");
+
+        assert!(!first.contains_key("index"));
+        assert_eq!(first.get("canonical_id"), Some(&Value::String("apps apps:list".to_string())));
+    }
+
+    #[test]
+    fn command_summary_paths_mode_omits_output_schema() {
+        let output_schema = SchemaProperty {
+            r#type: "object".to_string(),
+            description: String::new(),
+            properties: None,
+            required: Vec::new(),
+            items: None,
+            enum_values: Vec::new(),
+            format: None,
+            tags: Vec::new(),
+        };
+        let command_spec = CommandSpec::new_http(
+            "apps".to_string(),
+            "apps:list".to_string(),
+            "List apps".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/apps", Some(output_schema), None),
+            0,
+        );
+
+        let summary = build_command_summary(&command_spec, OutputSchemaDetail::Paths);
+        let object = summary.as_object().expect("command summary should be object");
+        assert!(!object.contains_key("output_schema"));
+    }
+
+    #[test]
+    fn command_summary_full_mode_prunes_sparse_schema_fields() {
+        let output_schema = SchemaProperty {
+            r#type: "object".to_string(),
+            description: String::new(),
+            properties: None,
+            required: Vec::new(),
+            items: None,
+            enum_values: Vec::new(),
+            format: None,
+            tags: Vec::new(),
+        };
+        let command_spec = CommandSpec::new_http(
+            "apps".to_string(),
+            "apps:list".to_string(),
+            "List apps".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/apps", Some(output_schema), None),
+            0,
+        );
+
+        let summary = build_command_summary(&command_spec, OutputSchemaDetail::Full);
+        let object = summary.as_object().expect("command summary should be object");
+        let schema = object
+            .get("output_schema")
+            .and_then(Value::as_object)
+            .expect("full mode should include output_schema");
+        assert_eq!(schema.get("type"), Some(&Value::String("object".to_string())));
+        assert!(!schema.contains_key("description"));
+        assert!(!schema.contains_key("required"));
+    }
 }

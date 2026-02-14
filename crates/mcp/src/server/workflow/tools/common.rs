@@ -5,7 +5,7 @@ use crate::server::workflow::services::storage::{find_manifest_record, parse_man
 use anyhow::Result;
 use oatty_engine::RegistryCommandRunner;
 use oatty_registry::CommandRegistry;
-use oatty_types::workflow::RuntimeWorkflow;
+use oatty_types::workflow::{RuntimeWorkflow, collect_missing_catalog_requirements};
 use rmcp::model::ErrorData;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -43,9 +43,10 @@ pub fn collect_workflow_preflight_violations(
             )
         })?
         .clone();
+    let available_catalogs = registry_snapshot.config.catalogs.clone().unwrap_or_default();
     let runner = RegistryCommandRunner::new(registry_snapshot);
 
-    let violations = runner
+    let violations: Vec<Value> = runner
         .validate_workflow_execution_readiness(workflow)
         .into_iter()
         .map(|violation| {
@@ -60,7 +61,55 @@ pub fn collect_workflow_preflight_violations(
         })
         .collect();
 
-    Ok(violations)
+    let missing_catalog_violations = collect_missing_catalog_requirements(workflow.requires.as_ref(), available_catalogs.as_slice())
+        .into_iter()
+        .map(|missing_requirement| {
+            let source_hint = missing_requirement.requirement.source.clone();
+            let source_type_hint = missing_requirement.requirement.source_type.map(|source_type| match source_type {
+                oatty_types::workflow::WorkflowCatalogRequirementSourceType::Path => "path".to_string(),
+                oatty_types::workflow::WorkflowCatalogRequirementSourceType::Url => "url".to_string(),
+            });
+            let next_step = if let Some(source) = source_hint.as_deref() {
+                format!(
+                    "Install required catalog '{}' (vendor '{}') from {}{} and retry.",
+                    missing_requirement.requirement.title.as_deref().unwrap_or("<untitled>"),
+                    missing_requirement.requirement.vendor,
+                    source,
+                    source_type_hint
+                        .as_deref()
+                        .map(|source_type| format!(" (source_type={source_type})"))
+                        .unwrap_or_default()
+                )
+            } else {
+                format!(
+                    "Install or enable a catalog for vendor '{}'{} and retry.",
+                    missing_requirement.requirement.vendor,
+                    missing_requirement
+                        .requirement
+                        .title
+                        .as_deref()
+                        .map(|title| format!(" with title '{}'", title))
+                        .unwrap_or_default()
+                )
+            };
+
+            serde_json::json!({
+                "path": format!("$.requires.catalogs[{}]", missing_requirement.index),
+                "rule": "catalog_requirement",
+                "message": missing_requirement.reason,
+                "vendor": missing_requirement.requirement.vendor,
+                "title": missing_requirement.requirement.title,
+                "source": source_hint,
+                "source_type": source_type_hint,
+                "next_step": next_step,
+            })
+        })
+        .collect::<Vec<Value>>();
+
+    let mut all_violations = violations;
+    all_violations.extend(missing_catalog_violations);
+
+    Ok(all_violations)
 }
 
 /// Builds a structured invalid-params error when preflight violations exist.

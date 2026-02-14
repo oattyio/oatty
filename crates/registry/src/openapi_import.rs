@@ -22,6 +22,10 @@ pub struct OpenApiCatalogImportRequest {
     pub vendor_override: Option<String>,
     /// Optional base URL override applied to the imported catalog.
     pub base_url_override: Option<String>,
+    /// Optional source string used for catalog provenance.
+    pub source: Option<String>,
+    /// Optional source type hint (`path` or `url`) used for catalog provenance.
+    pub source_type: Option<String>,
     /// Whether imported catalog should be enabled.
     pub enabled: bool,
     /// Whether existing catalog with same identifier should be replaced.
@@ -93,6 +97,8 @@ pub fn import_openapi_catalog_into_registry(
         request.catalog_title_override.as_deref(),
         request.vendor_override.as_deref(),
         request.base_url_override.as_deref(),
+        request.source.as_deref(),
+        request.source_type.as_deref(),
     );
     normalized_catalog.is_enabled = request.enabled;
 
@@ -146,6 +152,8 @@ fn apply_catalog_overrides(
     catalog_title_override: Option<&str>,
     vendor_override: Option<&str>,
     base_url_override: Option<&str>,
+    source: Option<&str>,
+    source_type: Option<&str>,
 ) -> RegistryCatalog {
     if let Some(catalog_title) = catalog_title_override {
         catalog.title = catalog_title.to_string();
@@ -158,6 +166,15 @@ fn apply_catalog_overrides(
         && let Some(manifest) = catalog.manifest.as_mut()
     {
         manifest.vendor = vendor.to_string();
+    }
+    if let Some(manifest) = catalog.manifest.as_ref() {
+        catalog.vendor = Some(manifest.vendor.clone());
+    }
+    if let Some(source) = source {
+        catalog.import_source = Some(source.to_string());
+    }
+    if let Some(source_type) = source_type {
+        catalog.import_source_type = Some(source_type.to_string());
     }
     catalog
 }

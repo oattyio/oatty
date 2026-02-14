@@ -191,6 +191,7 @@ fn validate_manifest_shape(manifest_value: &serde_json::Value) -> Result<()> {
         .ok_or_else(|| anyhow!("workflow manifest root must be an object"))?;
 
     validate_input_defaults_shape(root_object)?;
+    validate_input_metadata_keys(root_object)?;
     validate_step_key_shape(root_object)?;
 
     Ok(())
@@ -228,6 +229,38 @@ fn validate_input_defaults_shape(root_object: &serde_json::Map<String, serde_jso
     Ok(())
 }
 
+fn validate_input_metadata_keys(root_object: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
+    let Some(inputs_value) = root_object.get("inputs") else {
+        return Ok(());
+    };
+    let Some(inputs_object) = inputs_value.as_object() else {
+        return Ok(());
+    };
+
+    for (input_name, definition_value) in inputs_object {
+        let Some(definition_object) = definition_value.as_object() else {
+            continue;
+        };
+
+        if definition_object.contains_key("hints") {
+            bail!(
+                "workflow input '{}.hints' is unsupported; did you mean '{}.hint'?",
+                input_name,
+                input_name
+            );
+        }
+        if definition_object.contains_key("examples") {
+            bail!(
+                "workflow input '{}.examples' is unsupported; did you mean '{}.example'?",
+                input_name,
+                input_name
+            );
+        }
+    }
+
+    Ok(())
+}
+
 fn validate_step_key_shape(root_object: &serde_json::Map<String, serde_json::Value>) -> Result<()> {
     let Some(steps_value) = root_object.get("steps") else {
         return Ok(());
@@ -256,9 +289,41 @@ fn validate_step_key_shape(root_object: &serde_json::Map<String, serde_json::Val
                 step_index
             );
         }
+        if let Some(with_value) = step_object.get("with")
+            && let Some(invalid_path) = find_invalid_with_interpolation_path(with_value, "with")
+        {
+            bail!(
+                "workflow step '{}'(index {}) likely uses unsupported interpolation syntax '{{{{ ... }}}}' at '{}'; use '${{{{ ... }}}}'",
+                step_identifier,
+                step_index,
+                invalid_path
+            );
+        }
     }
 
     Ok(())
+}
+
+fn find_invalid_with_interpolation_path(value: &serde_json::Value, path: &str) -> Option<String> {
+    match value {
+        serde_json::Value::String(text) => {
+            let contains_template_reference = text.contains("inputs.") || text.contains("steps.");
+            let contains_unsupported_mustache = text.contains("{{") && !text.contains("${{");
+            if contains_template_reference && contains_unsupported_mustache {
+                Some(path.to_string())
+            } else {
+                None
+            }
+        }
+        serde_json::Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .find_map(|(index, item)| find_invalid_with_interpolation_path(item, format!("{path}[{index}]").as_str())),
+        serde_json::Value::Object(object) => object
+            .iter()
+            .find_map(|(key, nested)| find_invalid_with_interpolation_path(nested, format!("{path}.{key}").as_str())),
+        _ => None,
+    }
 }
 
 fn format_yaml_error(error: serde_yaml::Error) -> String {
@@ -364,5 +429,58 @@ steps:
 
         let error = parse_manifest_content(content, Some("yaml")).expect_err("expected unsupported step key rejection");
         assert!(error.to_string().contains("not 'flags' or 'positional_args'"));
+    }
+
+    #[test]
+    fn rejects_plural_hint_metadata_key_with_suggestion() {
+        let content = r#"
+workflow: demo
+inputs:
+  service_name:
+    type: string
+    hints: "lowercase slug"
+steps:
+  - id: one
+    run: apps list
+"#;
+
+        let error = parse_manifest_content(content, Some("yaml")).expect_err("expected unsupported plural hint key");
+        assert!(error.to_string().contains("did you mean 'service_name.hint'"));
+    }
+
+    #[test]
+    fn rejects_plural_example_metadata_key_with_suggestion() {
+        let content = r#"
+workflow: demo
+inputs:
+  service_name:
+    type: string
+    examples: "my-service"
+steps:
+  - id: one
+    run: apps list
+"#;
+
+        let error = parse_manifest_content(content, Some("yaml")).expect_err("expected unsupported plural example key");
+        assert!(error.to_string().contains("did you mean 'service_name.example'"));
+    }
+
+    #[test]
+    fn rejects_unsupported_with_interpolation_syntax() {
+        let content = r#"
+workflow: demo
+inputs:
+  owner_id:
+    type: string
+steps:
+  - id: one
+    run: owners info
+    with:
+      ownerId: "{{ inputs.owner_id }}"
+"#;
+
+        let error = parse_manifest_content(content, Some("yaml")).expect_err("expected unsupported interpolation syntax");
+        assert!(error.to_string().contains("unsupported interpolation syntax"));
+        assert!(error.to_string().contains("use '${{ ... }}'"));
     }
 }

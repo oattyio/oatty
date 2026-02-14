@@ -5,6 +5,7 @@
 //! `specs/WORKFLOW_VALUE_PROVIDERS_UX.md`. They intentionally preserve authoring order (via
 //! `IndexMap`) so the guided experience can render inputs and steps in a predictable sequence.
 
+use crate::manifest::RegistryCatalog;
 use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
 use schemars::JsonSchema;
@@ -28,6 +29,8 @@ pub struct RuntimeWorkflow {
     pub inputs: IndexMap<String, WorkflowInputDefinition>,
     /// Ordered execution steps.
     pub steps: Vec<WorkflowStepDefinition>,
+    /// Optional external catalog requirements needed before execution.
+    pub requires: Option<WorkflowRequirements>,
 }
 
 /// Describes a fully authored workflow, including metadata, inputs, and sequential steps.
@@ -48,6 +51,125 @@ pub struct WorkflowDefinition {
     /// Ordered list of workflow steps executed sequentially.
     #[serde(default)]
     pub steps: Vec<WorkflowStepDefinition>,
+    /// Optional external catalog requirements needed before execution.
+    #[serde(default)]
+    pub requires: Option<WorkflowRequirements>,
+}
+
+/// Optional workflow-level dependency requirements.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema, Default)]
+pub struct WorkflowRequirements {
+    /// Catalog dependencies required for this workflow.
+    #[serde(default)]
+    pub catalogs: Vec<WorkflowCatalogRequirement>,
+}
+
+/// Required catalog metadata used for portability and preflight checks.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
+pub struct WorkflowCatalogRequirement {
+    /// Stable provider/vendor identity (for example `vercel`, `render`).
+    pub vendor: String,
+    /// Optional human-friendly catalog title.
+    #[serde(default)]
+    pub title: Option<String>,
+    /// Optional source location used to install the catalog if missing.
+    #[serde(default)]
+    pub source: Option<String>,
+    /// Optional source type hint when `source` is provided.
+    #[serde(default)]
+    pub source_type: Option<WorkflowCatalogRequirementSourceType>,
+    /// Optional schema or catalog version/fingerprint hint.
+    #[serde(default)]
+    pub version: Option<String>,
+}
+
+/// Supported source location types for required workflow catalogs.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowCatalogRequirementSourceType {
+    /// Local filesystem path.
+    Path,
+    /// Remote HTTP(S) URL.
+    Url,
+}
+
+/// Structured violation emitted when a required catalog is missing.
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq, JsonSchema)]
+pub struct WorkflowMissingCatalogRequirement {
+    /// Requirement index from `requires.catalogs`.
+    pub index: usize,
+    /// Original requirement metadata.
+    pub requirement: WorkflowCatalogRequirement,
+    /// Human-readable reason for the mismatch.
+    pub reason: String,
+}
+
+/// Returns missing workflow catalog requirements using deterministic matching.
+///
+/// Matching precedence:
+/// 1. `vendor + title` when title is present in requirement
+/// 2. `vendor` fallback
+pub fn collect_missing_catalog_requirements(
+    requirements: Option<&WorkflowRequirements>,
+    available_catalogs: &[RegistryCatalog],
+) -> Vec<WorkflowMissingCatalogRequirement> {
+    let Some(requirements) = requirements else {
+        return Vec::new();
+    };
+
+    requirements
+        .catalogs
+        .iter()
+        .enumerate()
+        .filter_map(|(index, requirement)| {
+            if catalog_requirement_is_satisfied(requirement, available_catalogs) {
+                None
+            } else {
+                Some(WorkflowMissingCatalogRequirement {
+                    index,
+                    requirement: requirement.clone(),
+                    reason: build_missing_catalog_reason(requirement),
+                })
+            }
+        })
+        .collect()
+}
+
+fn catalog_requirement_is_satisfied(requirement: &WorkflowCatalogRequirement, available_catalogs: &[RegistryCatalog]) -> bool {
+    available_catalogs.iter().any(|catalog| {
+        if !catalog_vendor_matches(catalog, requirement.vendor.as_str()) {
+            return false;
+        }
+        if let Some(required_title) = requirement.title.as_deref() {
+            return catalog.title.eq_ignore_ascii_case(required_title);
+        }
+        true
+    })
+}
+
+fn catalog_vendor_matches(catalog: &RegistryCatalog, required_vendor: &str) -> bool {
+    let required_vendor = required_vendor.trim();
+    if required_vendor.is_empty() {
+        return false;
+    }
+    catalog_vendor_value(catalog).is_some_and(|catalog_vendor| catalog_vendor.eq_ignore_ascii_case(required_vendor))
+}
+
+fn catalog_vendor_value(catalog: &RegistryCatalog) -> Option<&str> {
+    catalog
+        .vendor
+        .as_deref()
+        .or_else(|| catalog.manifest.as_ref().map(|manifest| manifest.vendor.as_str()))
+}
+
+fn build_missing_catalog_reason(requirement: &WorkflowCatalogRequirement) -> String {
+    if let Some(title) = requirement.title.as_deref() {
+        return format!(
+            "missing required catalog with vendor '{}' and title '{}'",
+            requirement.vendor, title
+        );
+    }
+    format!("missing required catalog for vendor '{}'", requirement.vendor)
 }
 
 /// Defines metadata for a single workflow input, including provider bindings and validation.
@@ -101,6 +223,12 @@ pub struct WorkflowInputDefinition {
     /// Placeholder text rendered when no selection is made.
     #[serde(default)]
     pub placeholder: Option<String>,
+    /// Short guidance describing the expected format or constraints for manual entry.
+    #[serde(default)]
+    pub hint: Option<String>,
+    /// Concrete example value shown in manual entry to reduce ambiguity.
+    #[serde(default)]
+    pub example: Option<String>,
     /// Enumerated literals for manual authoring without providers.
     #[serde(rename = "enum")]
     #[serde(default)]
@@ -125,6 +253,8 @@ impl Default for WorkflowInputDefinition {
             optional: false,
             validate: None,
             placeholder: None,
+            hint: None,
+            example: None,
             enumerated_values: Vec::new(),
         }
     }
@@ -567,6 +697,8 @@ impl WorkflowInputDefinition {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::RegistryManifest;
+    use indexmap::IndexSet;
     #[test]
     fn deserializes_basic_workflow() {
         let yaml_text = r#"
@@ -641,5 +773,62 @@ steps:
 
         let label = definition.display_name("input_key");
         assert_eq!(label.as_ref(), "input_key");
+    }
+
+    fn catalog_with_vendor(catalog_vendor: Option<&str>, manifest_vendor: Option<&str>) -> RegistryCatalog {
+        RegistryCatalog {
+            title: "Demo Catalog".to_string(),
+            description: String::new(),
+            vendor: catalog_vendor.map(ToString::to_string),
+            manifest_path: "/tmp/demo.bin".to_string(),
+            import_source: None,
+            import_source_type: None,
+            headers: IndexSet::new(),
+            base_urls: Vec::new(),
+            base_url_index: 0,
+            manifest: manifest_vendor.map(|vendor| RegistryManifest {
+                commands: Vec::new(),
+                provider_contracts: IndexMap::new(),
+                vendor: vendor.to_string(),
+            }),
+            is_enabled: true,
+        }
+    }
+
+    #[test]
+    fn collect_missing_catalog_requirements_uses_manifest_vendor_when_top_level_vendor_is_absent() {
+        let requirements = WorkflowRequirements {
+            catalogs: vec![WorkflowCatalogRequirement {
+                vendor: "vercel".to_string(),
+                title: None,
+                source: None,
+                source_type: None,
+                version: None,
+            }],
+        };
+        let available_catalogs = vec![catalog_with_vendor(None, Some("vercel"))];
+
+        let missing = collect_missing_catalog_requirements(Some(&requirements), &available_catalogs);
+        assert!(
+            missing.is_empty(),
+            "manifest vendor should satisfy requirement when top-level vendor is absent"
+        );
+    }
+
+    #[test]
+    fn collect_missing_catalog_requirements_prefers_top_level_vendor_when_present() {
+        let requirements = WorkflowRequirements {
+            catalogs: vec![WorkflowCatalogRequirement {
+                vendor: "render".to_string(),
+                title: None,
+                source: None,
+                source_type: None,
+                version: None,
+            }],
+        };
+        let available_catalogs = vec![catalog_with_vendor(Some("render"), Some("vercel"))];
+
+        let missing = collect_missing_catalog_requirements(Some(&requirements), &available_catalogs);
+        assert!(missing.is_empty(), "top-level vendor should remain the first match source");
     }
 }
