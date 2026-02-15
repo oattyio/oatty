@@ -6,7 +6,7 @@
 
 use anyhow::{Result, anyhow};
 use heck::ToKebabCase;
-use oatty_types::{CommandFlag, CommandSpec, HttpCommandSpec, PositionalArgument};
+use oatty_types::{CommandFlag, CommandSpec, HttpCommandSpec, PositionalArgument, SchemaProperty};
 use oatty_util::{
     OpenApiValidationViolation, get_description, get_type, resolve_output_schema, sort_and_dedup_commands, validate_openapi_preflight,
 };
@@ -148,12 +148,78 @@ fn normalize_flags(flags: &mut [CommandFlag]) {
 fn build_http_command_spec(document: &Value, operation: &Map<String, Value>, method: String, path: String) -> Result<HttpCommandSpec> {
     let target_schema = build_target_schema_from_oas3(document, operation);
     let output_schema = resolve_output_schema(target_schema.as_ref(), document);
+    let list_response_path = derive_list_response_path(output_schema.as_ref());
 
     Ok(HttpCommandSpec {
         method,
         path,
         output_schema,
+        list_response_path,
     })
+}
+
+fn derive_list_response_path(output_schema: Option<&SchemaProperty>) -> Option<String> {
+    let root_schema = output_schema?;
+    if root_schema.r#type == "array" {
+        return Some(".".to_string());
+    }
+    if root_schema.r#type != "object" {
+        return None;
+    }
+
+    let properties = root_schema.properties.as_ref()?;
+    let priority_keys = [
+        "items",
+        "results",
+        "data",
+        "values",
+        "entries",
+        "list",
+        "projects",
+        "workflows",
+        "commands",
+        "catalogs",
+        "plugins",
+        "members",
+    ];
+
+    for key in priority_keys {
+        if let Some(property) = properties.get(key) {
+            if property.r#type == "array" {
+                return Some(key.to_string());
+            }
+            if property.r#type == "object"
+                && let Some(nested_path) = derive_single_array_path_from_object(property)
+            {
+                return Some(format!("{}.{}", key, nested_path));
+            }
+        }
+    }
+
+    let mut array_keys = properties
+        .iter()
+        .filter_map(|(key, property)| (property.r#type == "array").then_some(key.clone()))
+        .collect::<Vec<String>>();
+    if array_keys.len() == 1 {
+        return array_keys.pop();
+    }
+
+    None
+}
+
+fn derive_single_array_path_from_object(schema: &SchemaProperty) -> Option<String> {
+    if schema.r#type != "object" {
+        return None;
+    }
+    let properties = schema.properties.as_ref()?;
+    let mut array_keys = properties
+        .iter()
+        .filter_map(|(key, property)| (property.r#type == "array").then_some(key.clone()))
+        .collect::<Vec<String>>();
+    if array_keys.len() == 1 {
+        return array_keys.pop();
+    }
+    None
 }
 
 fn derive_unique_command_name(
@@ -863,8 +929,10 @@ fn get_default(schema: &Value, root: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::collect_base_urls_from_document;
+    use super::{collect_base_urls_from_document, derive_list_response_path};
+    use oatty_types::SchemaProperty;
     use serde_json::json;
+    use std::collections::HashMap;
 
     #[test]
     fn collects_base_urls_from_document_servers() {
@@ -879,5 +947,65 @@ mod tests {
 
         let base_urls = collect_base_urls_from_document(&document);
         assert_eq!(base_urls, vec!["https://api.example.com", "https://eu.example.com"]);
+    }
+
+    #[test]
+    fn derives_list_response_path_for_top_level_array() {
+        let schema = SchemaProperty {
+            r#type: "array".to_string(),
+            description: String::new(),
+            properties: None,
+            required: Vec::new(),
+            items: None,
+            enum_values: Vec::new(),
+            format: None,
+            tags: Vec::new(),
+        };
+
+        assert_eq!(derive_list_response_path(Some(&schema)).as_deref(), Some("."));
+    }
+
+    #[test]
+    fn derives_list_response_path_for_wrapped_projects_array() {
+        let mut properties = HashMap::new();
+        properties.insert(
+            "pagination".to_string(),
+            Box::new(SchemaProperty {
+                r#type: "object".to_string(),
+                description: String::new(),
+                properties: Some(HashMap::new()),
+                required: Vec::new(),
+                items: None,
+                enum_values: Vec::new(),
+                format: None,
+                tags: Vec::new(),
+            }),
+        );
+        properties.insert(
+            "projects".to_string(),
+            Box::new(SchemaProperty {
+                r#type: "array".to_string(),
+                description: String::new(),
+                properties: None,
+                required: Vec::new(),
+                items: None,
+                enum_values: Vec::new(),
+                format: None,
+                tags: Vec::new(),
+            }),
+        );
+
+        let schema = SchemaProperty {
+            r#type: "object".to_string(),
+            description: String::new(),
+            properties: Some(properties),
+            required: Vec::new(),
+            items: None,
+            enum_values: Vec::new(),
+            format: None,
+            tags: Vec::new(),
+        };
+
+        assert_eq!(derive_list_response_path(Some(&schema)).as_deref(), Some("projects"));
     }
 }

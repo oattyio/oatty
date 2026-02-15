@@ -67,7 +67,7 @@ fn workflow_author_prompt(arguments: Option<&Map<String, Value>>) -> Result<GetP
         messages: vec![PromptMessage::new_text(
             PromptMessageRole::User,
             format!(
-                "Author a workflow manifest in YAML with these requirements:\n- Goal: {goal}\n- Constraints: {constraints}\n- Include inputs with validation where appropriate\n- Prefer provider-backed inputs whenever a provider can supply valid choices\n- Use provider-backed inputs for enumerable identifiers and list selections (for example owner_id, project_id, service_id, domain, env_group)\n- Keep manual inputs for transformation-heavy fields that require human mapping/decisions (for example serviceDetails/build/start/runtime/env transformations)\n- For provider-backed inputs, include `provider`, `select`, and `provider_args`/`depends_on` bindings to earlier inputs or steps when relevant\n- Avoid manual free-text inputs when a provider can discover the value\n- Include deterministic step IDs and explicit run commands\n- Use `${{{{ inputs.name }}}}` interpolation syntax for step inputs\n- Apply this preflight checklist before finalizing:\n  1) Required command catalogs exist and are enabled\n  2) Required HTTP commands are discoverable\n  3) If either check fails, import missing OpenAPI catalogs before authoring more steps"
+                "Author a workflow manifest in YAML with these requirements:\n- Goal: {goal}\n- Constraints: {constraints}\n- Include inputs with validation where appropriate\n- Prefer provider-backed inputs whenever a provider can supply valid choices\n- Use provider-backed inputs for enumerable identifiers and list selections (for example owner_id, project_id, service_id, domain, env_group)\n- Keep manual inputs for transformation-heavy fields that require human mapping/decisions (for example serviceDetails/build/start/runtime/env transformations)\n- For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata so users understand expected values\n- For provider-backed inputs, include `provider`, `select`, and `provider_args`/`depends_on` bindings to earlier inputs or steps when relevant\n- Avoid manual free-text inputs when a provider can discover the value\n- Include deterministic step IDs and explicit run commands\n- Use `${{{{ inputs.name }}}}` interpolation syntax for step inputs\n- Use this authoring sequence:\n  1) search_commands (include_inputs=none, limit 5-10)\n  2) get_command for exact schema of selected canonical IDs\n  3) workflow.validate with a minimal manifest skeleton\n  4) expand manifest and validate again before saving\n- Apply this preflight checklist before finalizing:\n  1) Required command catalogs exist and are enabled\n  2) Required HTTP commands are discoverable\n  3) Provider-backed inputs are used for enumerable identifiers/list selections when provider contracts exist\n  4) If any check fails, import missing catalogs or fix provider wiring before authoring more steps\n- Decision rules:\n  1) If required commands are not found after two focused searches, stop and import missing OpenAPI catalogs\n  2) Treat unrelated catalogs as a hard stop for direct workflow authoring\n  3) After selecting candidate canonical IDs, stop fuzzy search and use get_command for deterministic inspection\n  4) Use at most one include_inputs=full search per vendor/intent; then switch to get_command\n  5) Do not hand-author fallback command guesses; discover/import first\n  6) Avoid get_command_summaries_by_catalog unless deliberate large batch inspection is required"
             ),
         )],
     })
@@ -82,7 +82,7 @@ fn workflow_extend_prompt(arguments: Option<&Map<String, Value>>) -> Result<GetP
         messages: vec![PromptMessage::new_text(
             PromptMessageRole::User,
             format!(
-                "Update this workflow manifest according to the change request.\n\nChange request:\n{change_request}\n\nManifest:\n{manifest}\n\nRules:\n- Preserve existing identifiers unless necessary\n- Keep schema validity\n- Preserve existing provider-backed inputs and bindings unless the change requires adjustment\n- Add provider-backed inputs when the change introduces values that can be discovered dynamically\n- Avoid removing required inputs unless explicitly requested"
+                "Update this workflow manifest according to the change request.\n\nChange request:\n{change_request}\n\nManifest:\n{manifest}\n\nRules:\n- Preserve existing identifiers unless necessary\n- Keep schema validity\n- Preserve existing provider-backed inputs and bindings unless the change requires adjustment\n- Add provider-backed inputs when the change introduces values that can be discovered dynamically\n- For manual/free-text inputs, preserve or add `placeholder`, `hint`, and `example` metadata when missing\n- Avoid removing required inputs unless explicitly requested"
             ),
         )],
     })
@@ -202,5 +202,11 @@ mod tests {
         assert!(rendered.contains("enumerable identifiers"));
         assert!(rendered.contains("transformation-heavy fields"));
         assert!(rendered.contains("preflight checklist"));
+        assert!(rendered.contains("authoring sequence"));
+        assert!(rendered.contains("two focused searches"));
+        assert!(rendered.contains("stop fuzzy search and use get_command"));
+        assert!(rendered.contains("Avoid get_command_summaries_by_catalog"));
+        assert!(rendered.contains("Provider-backed inputs are used"));
+        assert!(rendered.contains("at most one include_inputs=full search"));
     }
 }

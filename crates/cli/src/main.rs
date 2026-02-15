@@ -23,7 +23,7 @@ use oatty_registry::{
 use oatty_types::{
     EnvVar, ExecOutcome, RuntimeWorkflow,
     command::{CommandExecution, CommandFlag, CommandSpec},
-    workflow::{WorkflowDefinition, validate_candidate_value},
+    workflow::{WorkflowCatalogRequirementSourceType, WorkflowDefinition, collect_missing_catalog_requirements, validate_candidate_value},
 };
 use oatty_util::{
     DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, build_path, has_meaningful_value,
@@ -780,6 +780,11 @@ fn import_catalog_from_source(
 ) -> Result<()> {
     let overwrite = import_matches.get_flag("overwrite");
     let enabled = !import_matches.get_flag("disabled");
+    let source = loaded_source.source.clone();
+    let source_type = match loaded_source.source_type {
+        ImportSourceType::Path => "path".to_string(),
+        ImportSourceType::Url => "url".to_string(),
+    };
 
     let mut registry_guard = registry.lock().expect("could not obtain lock on registry");
     let import_result = import_openapi_catalog_into_registry(
@@ -789,6 +794,8 @@ fn import_catalog_from_source(
             catalog_title_override: import_matches.get_one::<String>("catalog-title").cloned(),
             vendor_override: import_matches.get_one::<String>("vendor").cloned(),
             base_url_override: import_matches.get_one::<String>("base-url").cloned(),
+            source: Some(source.clone()),
+            source_type: Some(source_type.clone()),
             enabled,
             overwrite,
         },
@@ -800,11 +807,8 @@ fn import_catalog_from_source(
             "{}",
             serde_json::to_string_pretty(&json!({
                 "kind": "catalog",
-                "source": loaded_source.source,
-                "source_type": match loaded_source.source_type {
-                    ImportSourceType::Path => "path",
-                    ImportSourceType::Url => "url",
-                },
+                "source": source,
+                "source_type": source_type,
                 "catalog_id": import_result.catalog_id,
                 "catalog_path": default_config_path().to_string_lossy(),
                 "manifest_path": import_result.catalog.manifest_path,
@@ -815,7 +819,7 @@ fn import_catalog_from_source(
         );
     } else {
         println!("Imported catalog '{}'", import_result.catalog_id);
-        println!("  Source: {}", loaded_source.source);
+        println!("  Source: {}", source);
         println!("  Commands: {}", import_result.command_count);
         println!("  Provider contracts: {}", import_result.provider_contract_count);
         println!("  Enabled: {}", import_result.catalog.is_enabled);
@@ -834,6 +838,7 @@ fn import_workflow_from_source(
 ) -> Result<()> {
     let definition = parse_valid_workflow_definition(&loaded_source.source_content)?;
     let workflow_identifier = definition.workflow.clone();
+    validate_required_workflow_catalogs(Arc::clone(&registry), &definition, &workflow_identifier)?;
     let overwrite = import_matches.get_flag("overwrite");
     let workflows_path = default_workflows_path();
     let workflow_file_path = workflows_path.join(format!("{}.yaml", sanitize_file_name(&workflow_identifier)));
@@ -880,6 +885,52 @@ fn import_workflow_from_source(
     }
 
     Ok(())
+}
+
+fn validate_required_workflow_catalogs(
+    registry: Arc<Mutex<CommandRegistry>>,
+    definition: &WorkflowDefinition,
+    workflow_identifier: &str,
+) -> Result<()> {
+    let missing_catalog_requirements = {
+        let registry_guard = registry.lock().expect("could not obtain lock on registry");
+        let available_catalogs = registry_guard.config.catalogs.as_deref().unwrap_or(&[]);
+        collect_missing_catalog_requirements(definition.requires.as_ref(), available_catalogs)
+    };
+
+    if missing_catalog_requirements.is_empty() {
+        return Ok(());
+    }
+
+    let requirement_messages = missing_catalog_requirements
+        .into_iter()
+        .map(|missing_requirement| {
+            let requirement = missing_requirement.requirement;
+            let mut message = if let Some(title) = requirement.title {
+                format!("vendor='{}' title='{}'", requirement.vendor, title)
+            } else {
+                format!("vendor='{}'", requirement.vendor)
+            };
+
+            if let Some(source) = requirement.source {
+                let source_type = match requirement.source_type {
+                    Some(WorkflowCatalogRequirementSourceType::Path) => "path",
+                    Some(WorkflowCatalogRequirementSourceType::Url) => "url",
+                    None => "source",
+                };
+                message.push_str(&format!(" | import hint: {}='{}'", source_type, source));
+            }
+
+            message
+        })
+        .collect::<Vec<String>>()
+        .join("\n  - ");
+
+    bail!(
+        "workflow '{}' declares missing required catalogs. Install requirements, then retry import:\n  - {}",
+        workflow_identifier,
+        requirement_messages
+    );
 }
 
 fn sanitize_file_name(raw_identifier: &str) -> String {
@@ -1220,6 +1271,7 @@ mod tests {
             description: None,
             inputs,
             steps: Vec::new(),
+            requires: None,
         };
         WorkflowRunState::new(workflow)
     }

@@ -131,8 +131,17 @@ pub mod manifest {
         pub title: String,
         /// Description of the registry. May be copied from the schema description.
         pub description: String,
+        /// Canonical vendor/provider identifier for this catalog.
+        #[serde(default)]
+        pub vendor: Option<String>,
         /// Path to the manifest file.
         pub manifest_path: String,
+        /// Original source used to import this catalog (path or URL), when known.
+        #[serde(default)]
+        pub import_source: Option<String>,
+        /// Source type hint for `import_source`.
+        #[serde(default)]
+        pub import_source_type: Option<String>,
         /// Headers to include when making requests to the API endpoints.
         pub headers: IndexSet<EnvVar>,
         /// Base URLs for the API endpoints.
@@ -282,7 +291,7 @@ pub mod command {
     /// ```rust
     /// use oatty_types::{CommandExecution, CommandSpec, HttpCommandSpec};
     ///
-    /// let http = HttpCommandSpec::new("GET", "/apps", None);
+    /// let http = HttpCommandSpec::new("GET", "/apps", None, None);
     /// let spec = CommandSpec::new_http(
     ///     "apps".into(),
     ///     "apps:list".into(),
@@ -586,6 +595,14 @@ pub mod command {
         pub path: String,
         // Schema expected from API
         pub output_schema: Option<SchemaProperty>,
+        /// Optional dotted path pointing to the primary list array in a wrapped response.
+        ///
+        /// Examples:
+        /// - `"."` for top-level arrays
+        /// - `"items"` for `{ "items": [...] }`
+        /// - `"data.items"` for nested wrappers
+        #[serde(default)]
+        pub list_response_path: Option<String>,
     }
 
     impl HttpCommandSpec {
@@ -602,11 +619,17 @@ pub mod command {
         /// # Returns
         ///
         /// A new [`HttpCommandSpec`] bound to the provided base URL.
-        pub fn new(method: impl Into<String>, path: impl Into<String>, output_schema: Option<SchemaProperty>) -> Self {
+        pub fn new(
+            method: impl Into<String>,
+            path: impl Into<String>,
+            output_schema: Option<SchemaProperty>,
+            list_response_path: Option<String>,
+        ) -> Self {
             Self {
                 method: method.into(),
                 path: path.into(),
                 output_schema,
+                list_response_path,
             }
         }
     }
@@ -1809,6 +1832,7 @@ mod tests {
                 method: "GET".into(),
                 path: "/apps".into(),
                 output_schema: None,
+                list_response_path: None,
             }),
         };
 

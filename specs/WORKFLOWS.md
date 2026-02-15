@@ -14,10 +14,23 @@ The schema is serialized/deserialized from YAML or JSON.
 - `description` (optional)
 - `inputs` (`IndexMap<String, WorkflowInputDefinition>`; order-preserving)
 - `steps` (`Vec<WorkflowStepDefinition>`; required non-empty)
+- `requires` (`WorkflowRequirements`; optional dependency metadata)
+
+## Catalog Requirements (Implemented)
+- `requires.catalogs[]` supports portable catalog dependency declarations:
+  - `vendor` (required)
+  - `title` (optional)
+  - `source` (optional)
+  - `source_type` (`path` | `url`, optional)
+  - `version` (optional hint)
+- Matching behavior for dependency checks:
+  1. match `vendor + title` when `title` is present
+  2. fallback to `vendor` match
+- Missing requirements are materialized as structured violations via `WorkflowMissingCatalogRequirement`.
 
 ## Input Definition (Implemented)
 Supported fields include:
-- metadata: `description`, `name`, `type`, `placeholder`
+- metadata: `description`, `name`, `type`, `placeholder`, `hint`, `example`
 - provider config: `provider`, `select`, `provider_args`, `depends_on`
 - selection behavior: `mode`, `join`
 - defaults: `default` (`history`, `literal`, `env`, `workflow_output`)
@@ -39,6 +52,15 @@ Each step supports:
 - Workflows are loaded from filesystem at runtime.
 - Registry loader reads recursive `yaml`/`yml`/`json` files from the runtime workflows directory.
 - Runtime workflows are normalized and validated into `RuntimeWorkflow` before execution.
+- `requires` metadata is preserved from authoring schema into runtime workflow.
+
+## Import-time Dependency Guardrails (Implemented)
+- CLI workflow import blocks persistence when `requires.catalogs[]` contains missing dependencies.
+  - Error includes per-requirement hints (including `source`/`source_type` when present).
+- TUI workflow import checks requirements before save.
+  - If requirements are missing and installable sources are present, user is prompted to install via confirmation modal.
+  - Existing catalog import code paths are reused for staged installation.
+- MCP workflow validation/preflight includes missing catalog violations at `$.requires.catalogs[index]`.
 
 ## Provider Dependency Validation (Hard Rule)
 - For provider-backed inputs (`provider` set), any `provider_args.<arg>` value that references upstream workflow context must have a matching `depends_on.<arg>` binding.

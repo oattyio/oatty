@@ -1,7 +1,7 @@
 //! HTTP execution helpers shared across TUI and Engine.
 //!
 //! This module centralizes remote execution of Oatty API requests based on
-//! `CommandSpec`, handling headers, pagination, and response parsing.
+//! `CommandSpec`, handling headers and response parsing.
 //! It also provides a convenient `fetch_json_array` helper for list endpoints.
 
 use crate::{build_path, http, resolve_path, shell_lexing};
@@ -17,6 +17,21 @@ use std::collections::HashMap;
 use std::str::FromStr;
 use std::time::{Duration, Instant};
 use tracing::{debug, warn};
+
+const RESPONSE_ARRAY_PRIORITY_KEYS: &[&str] = &[
+    "items",
+    "results",
+    "data",
+    "values",
+    "entries",
+    "list",
+    "projects",
+    "workflows",
+    "commands",
+    "catalogs",
+    "plugins",
+    "members",
+];
 
 /// Fetches a static json or text resource using GET
 pub async fn fetch_static(url: &str) -> Result<(StatusCode, String), anyhow::Error> {
@@ -77,7 +92,7 @@ pub async fn exec_remote_from_shell_command(
             let raw_log = format!("{}\n{}", status, text);
             let mut log = summarize_execution_outcome(&spec.canonical_id(), raw_log.as_str(), status);
             let result_json = match http::parse_response_json_strict(&text, Some(status)) {
-                Ok(value) => value,
+                Ok(value) => normalize_command_payload(value, spec.http().and_then(|http_spec| http_spec.list_response_path.as_deref())),
                 Err(error) => {
                     let error_message = error.to_string();
                     let sanitized_error = crate::redact_sensitive(&error_message);
@@ -94,6 +109,72 @@ pub async fn exec_remote_from_shell_command(
         }
         Err(e) => Err(e),
     }
+}
+
+/// Normalize command payloads for list-oriented consumers.
+///
+/// Normalization prefers returning a collection payload:
+/// 1. Use the explicit schema-derived list path when it resolves to an array.
+/// 2. Otherwise, attempt deterministic wrapper-key and single-array extraction heuristics.
+/// 3. If no list-like shape is found, preserve the original payload.
+pub fn normalize_command_payload(payload: Value, list_response_path: Option<&str>) -> Value {
+    if let Some(items) = extract_collection_items(&payload, list_response_path) {
+        return Value::Array(items);
+    }
+    payload
+}
+
+/// Extract list-like collection items from payloads.
+///
+/// Extraction order:
+/// 1. Use explicit schema-derived `list_response_path` if provided.
+/// 2. Use top-level array payload directly.
+/// 3. Apply deterministic wrapper-key heuristics.
+/// 4. Fallback to a single array-valued field in wrapper objects.
+pub fn extract_collection_items(payload: &Value, list_response_path: Option<&str>) -> Option<Vec<Value>> {
+    if let Some(path) = list_response_path
+        && let Some(items) = extract_array_at_path(payload, path)
+    {
+        return Some(items);
+    }
+
+    match payload {
+        Value::Array(items) => Some(items.clone()),
+        Value::Object(map) => {
+            for key in RESPONSE_ARRAY_PRIORITY_KEYS {
+                if let Some(Value::Array(items)) = map.get(*key) {
+                    return Some(items.clone());
+                }
+            }
+
+            let mut arrays = map.values().filter_map(|value| match value {
+                Value::Array(items) => Some(items.clone()),
+                _ => None,
+            });
+            let first = arrays.next()?;
+            if arrays.next().is_none() {
+                return Some(first);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn extract_array_at_path(payload: &Value, path: &str) -> Option<Vec<Value>> {
+    if path == "." || path.is_empty() {
+        return payload.as_array().cloned();
+    }
+
+    let mut current = payload;
+    for segment in path.split('.') {
+        if segment.is_empty() {
+            continue;
+        }
+        current = current.get(segment)?;
+    }
+
+    current.as_array().cloned()
 }
 
 /// Executes an HTTP-backed provider command with an optional base URL override.
@@ -245,16 +326,7 @@ async fn exec_remote_from_spec_inner(
     if !body.is_empty() {
         // For GET/DELETE, pass arguments as query parameters instead of a JSON body
         if method == Method::GET || method == Method::DELETE {
-            let query: Vec<(String, String)> = body
-                .into_iter()
-                .map(|(k, v)| {
-                    let s = match v {
-                        Value::String(s) => s,
-                        other => other.to_string(),
-                    };
-                    (k, s)
-                })
-                .collect();
+            let query = build_query_pairs(body);
             builder = builder.query(&query);
         } else {
             builder = builder.json(&Value::Object(body));
@@ -274,16 +346,25 @@ async fn exec_remote_from_spec_inner(
 }
 
 fn build_query_pairs(query_parameters: Map<String, Value>) -> Vec<(String, String)> {
-    query_parameters
-        .into_iter()
-        .map(|(key, value)| {
-            let string_value = match value {
-                Value::String(text) => text,
-                other => other.to_string(),
-            };
-            (key, string_value)
-        })
-        .collect()
+    let mut pairs = Vec::new();
+    for (key, value) in query_parameters {
+        match value {
+            Value::Array(items) => {
+                for item in items {
+                    pairs.push((key.clone(), query_value_to_string(item)));
+                }
+            }
+            other => pairs.push((key, query_value_to_string(other))),
+        }
+    }
+    pairs
+}
+
+fn query_value_to_string(value: Value) -> String {
+    match value {
+        Value::String(text) => text,
+        other => other.to_string(),
+    }
 }
 
 fn build_request_body_override(body_override: Option<Value>, query_parameters: Map<String, Value>) -> Map<String, Value> {
@@ -316,26 +397,28 @@ fn build_request_body_override(body_override: Option<Value>, query_parameters: M
 pub fn build_request_body(spec: &CommandSpec, user_flags: HashMap<String, Option<String>>) -> Map<String, Value> {
     let mut request_body = Map::new();
 
-    for (flag_name, flag_value) in user_flags.into_iter() {
+    for (flag_name, flag_value) in user_flags {
         if let Some(flag_spec) = spec.flags.iter().find(|f| f.name == flag_name) {
             if flag_spec.r#type == "boolean" {
                 request_body.insert(flag_name, Value::Bool(true));
-            } else if let Some(value) = flag_value {
-                match flag_spec.r#type.as_str() {
-                    "number" => {
-                        if let Ok(number) = Number::from_str(value.as_str()) {
-                            request_body.insert(flag_name, Value::Number(number));
-                        }
-                    }
-                    _ => {
-                        request_body.insert(flag_name, Value::String(value));
-                    }
-                };
+            } else if let Some(value) = flag_value
+                && let Some(parsed_value) = parse_flag_value(flag_spec.r#type.as_str(), value.as_str())
+            {
+                request_body.insert(flag_name, parsed_value);
             }
         }
     }
 
     request_body
+}
+
+fn parse_flag_value(flag_type: &str, raw_value: &str) -> Option<Value> {
+    match flag_type {
+        "number" | "integer" => Number::from_str(raw_value).ok().map(Value::Number),
+        "array" => serde_json::from_str::<Value>(raw_value).ok().filter(Value::is_array),
+        "object" => serde_json::from_str::<Value>(raw_value).ok().filter(Value::is_object),
+        _ => Some(Value::String(raw_value.to_string())),
+    }
 }
 
 fn summarize_execution_outcome(canonical_id: &str, raw_log: &str, status_code: StatusCode) -> String {
@@ -474,7 +557,7 @@ mod tests {
             "List apps".to_string(),
             Vec::new(),
             flags,
-            HttpCommandSpec::new("GET", "/apps", None),
+            HttpCommandSpec::new("GET", "/apps", None, None),
             1,
         )
     }
@@ -521,6 +604,37 @@ mod tests {
     }
 
     #[test]
+    fn build_request_body_parses_array_and_object_flags() {
+        let spec = build_test_spec(vec![flag("body", "array"), flag("project", "object"), flag("count", "integer")]);
+        let mut user_flags = HashMap::new();
+        user_flags.insert(
+            "body".to_string(),
+            Some(r#"[{"key":"DATABASE_URL","value":"postgres://demo"}]"#.to_string()),
+        );
+        user_flags.insert("project".to_string(), Some(r#"{"name":"starter-node"}"#.to_string()));
+        user_flags.insert("count".to_string(), Some("2".to_string()));
+
+        let body = build_request_body(&spec, user_flags);
+
+        assert_eq!(body.get("body"), Some(&json!([{"key":"DATABASE_URL","value":"postgres://demo"}])));
+        assert_eq!(body.get("project"), Some(&json!({"name":"starter-node"})));
+        assert_eq!(body.get("count"), Some(&json!(2)));
+    }
+
+    #[test]
+    fn build_request_body_skips_invalid_structured_json() {
+        let spec = build_test_spec(vec![flag("body", "array"), flag("project", "object")]);
+        let mut user_flags = HashMap::new();
+        user_flags.insert("body".to_string(), Some("not-json".to_string()));
+        user_flags.insert("project".to_string(), Some("[1,2,3]".to_string()));
+
+        let body = build_request_body(&spec, user_flags);
+
+        assert!(body.get("body").is_none());
+        assert!(body.get("project").is_none());
+    }
+
+    #[test]
     fn summarize_execution_outcome_reports_status() {
         let success = summarize_execution_outcome("apps list", "HTTP 200\n{}", StatusCode::OK);
         assert_eq!(success, "apps list • success");
@@ -548,5 +662,62 @@ mod tests {
 
         let long = truncate_for_summary("abcdefghij", 5);
         assert_eq!(long, "ab...");
+    }
+
+    #[test]
+    fn build_query_pairs_repeats_array_values() {
+        let query = Map::from_iter([
+            ("target".to_string(), json!(["production", "preview"])),
+            ("decrypt".to_string(), json!(true)),
+        ]);
+
+        let pairs = build_query_pairs(query);
+        let target_values = pairs
+            .iter()
+            .filter(|(key, _)| key == "target")
+            .map(|(_, value)| value.as_str())
+            .collect::<Vec<&str>>();
+        let decrypt_value = pairs
+            .iter()
+            .find(|(key, _)| key == "decrypt")
+            .map(|(_, value)| value.as_str())
+            .unwrap_or_default();
+
+        assert_eq!(target_values, vec!["production", "preview"]);
+        assert_eq!(decrypt_value, "true");
+    }
+
+    #[test]
+    fn extract_collection_items_uses_schema_derived_path() {
+        let payload = json!({
+            "meta": { "count": 2 },
+            "projects": [{ "id": "project-a" }, { "id": "project-b" }]
+        });
+
+        let items = extract_collection_items(&payload, Some("projects")).expect("projects path should extract");
+        assert_eq!(items.len(), 2);
+        assert_eq!(items[0]["id"], json!("project-a"));
+    }
+
+    #[test]
+    fn normalize_command_payload_uses_wrapper_array_when_path_missing() {
+        let payload = json!({
+            "meta": { "count": 1 },
+            "projects": [{ "id": "project-a" }]
+        });
+
+        let normalized = normalize_command_payload(payload.clone(), Some("data.items"));
+        assert_eq!(normalized, json!([{ "id": "project-a" }]));
+    }
+
+    #[test]
+    fn normalize_command_payload_preserves_original_when_no_list_shape_exists() {
+        let payload = json!({
+            "meta": { "count": 1 },
+            "project": { "id": "project-a" }
+        });
+
+        let normalized = normalize_command_payload(payload.clone(), Some("data.items"));
+        assert_eq!(normalized, payload);
     }
 }

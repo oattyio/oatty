@@ -1,4 +1,5 @@
 use crate::app::App;
+use crate::cmd::parse_workflow_definition;
 use crate::ui::components::common::{ConfirmationModalButton, ConfirmationModalOpts};
 use crate::ui::components::component::Component;
 use crate::ui::theme::theme_helpers as th;
@@ -7,9 +8,11 @@ use crate::ui::theme::theme_helpers::create_spans_with_match;
 use anyhow::{Result, anyhow};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use oatty_engine::WorkflowRunState;
-use oatty_types::workflow::RuntimeWorkflow;
+use oatty_types::workflow::{
+    RuntimeWorkflow, WorkflowCatalogRequirement, WorkflowCatalogRequirementSourceType, collect_missing_catalog_requirements,
+};
 use oatty_types::{Effect, ExecOutcome, MessageType, Modal, Msg, Route, validate_candidate_value};
-use oatty_util::{HistoryKey, value_contains_secret, workflow_input_uses_history};
+use oatty_util::{HistoryKey, expand_tilde, value_contains_secret, workflow_input_uses_history};
 use ratatui::layout::Position;
 use ratatui::widgets::ListItem;
 use ratatui::{
@@ -20,6 +23,7 @@ use ratatui::{
     widgets::{Paragraph, Wrap},
 };
 use tracing::warn;
+use url::Url;
 
 #[derive(Debug, Default, Clone, Copy)]
 struct WorkflowsLayout {
@@ -30,14 +34,44 @@ struct WorkflowsLayout {
     list_area: Rect,
 }
 
+#[derive(Debug, Clone)]
+enum WorkflowImportConfirmationAction {
+    RemoveWorkflow {
+        workflow_id: String,
+    },
+    InstallRequirementsAndImport {
+        workflow_content: String,
+        catalog_installs: Vec<PendingCatalogInstall>,
+        unresolved_requirements: Vec<String>,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct PendingCatalogInstall {
+    requirement: WorkflowCatalogRequirement,
+    source: String,
+    source_type: WorkflowCatalogRequirementSourceType,
+}
+
 /// Renders the workflow picker view, including search, filtered listing, and footer hints.
 #[derive(Debug, Default)]
 pub struct WorkflowsComponent {
     layout: WorkflowsLayout,
     mouse_over_idx: Option<usize>,
+    pending_confirmation_action: Option<WorkflowImportConfirmationAction>,
+    pending_catalog_install_queue: Vec<PendingCatalogInstall>,
+    active_catalog_install: Option<PendingCatalogInstall>,
+    pending_workflow_import_content: Option<String>,
 }
 
 impl WorkflowsComponent {
+    fn cancel_pending_catalog_install_sequence(&mut self) -> Option<String> {
+        let active_source = self.active_catalog_install.take().map(|install| install.source);
+        self.pending_catalog_install_queue.clear();
+        self.pending_workflow_import_content = None;
+        active_source
+    }
+
     fn handle_search_key(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         // Only handle here when the search field is active, mirroring browser behavior
         if !app.workflows.f_search.get() {
@@ -300,7 +334,7 @@ impl WorkflowsComponent {
         vec![Effect::ShowModal(Modal::FilePicker(vec!["yaml", "yml", "json"]))]
     }
 
-    fn prompt_remove_workflow(&self, app: &mut App) -> Vec<Effect> {
+    fn prompt_remove_workflow(&mut self, app: &mut App) -> Vec<Effect> {
         let Some(workflow) = app.workflows.selected_workflow() else {
             return Vec::new();
         };
@@ -323,13 +357,54 @@ impl WorkflowsComponent {
                 ),
             ],
         });
+        self.set_pending_confirmation_action(
+            app,
+            WorkflowImportConfirmationAction::RemoveWorkflow {
+                workflow_id: workflow.identifier.clone(),
+            },
+        );
         vec![Effect::ShowModal(Modal::Confirmation)]
     }
 
     fn handle_exec_completed(&mut self, outcome: ExecOutcome, app: &mut App) -> Vec<Effect> {
         match outcome {
             ExecOutcome::FileContents(contents, _) | ExecOutcome::RemoteFileContents(contents, _) => {
-                return vec![Effect::ImportWorkflowManifest(contents)];
+                if let Some(active_catalog_install) = self.active_catalog_install.take() {
+                    let maybe_prefix = active_catalog_install.requirement.vendor.trim();
+                    let maybe_prefix = (!maybe_prefix.is_empty()).then(|| maybe_prefix.to_string());
+                    return vec![Effect::ImportRegistryCatalog(contents, maybe_prefix)];
+                }
+
+                return self.prepare_workflow_import(contents, app);
+            }
+            ExecOutcome::RegistryCatalogGenerated(_) => {
+                if self.pending_workflow_import_content.is_some() || !self.pending_catalog_install_queue.is_empty() {
+                    return self.start_next_catalog_install_or_import_workflow(app);
+                }
+            }
+            ExecOutcome::RegistryCatalogGenerationError(error_message) => {
+                if self.pending_workflow_import_content.is_some() || self.active_catalog_install.is_some() {
+                    let active_source = self
+                        .cancel_pending_catalog_install_sequence()
+                        .unwrap_or_else(|| "<unknown source>".to_string());
+                    app.append_log_message(format!(
+                        "Catalog install from '{}' failed while importing workflow: {}. Workflow import was cancelled.",
+                        active_source, error_message
+                    ));
+                    return Vec::new();
+                }
+            }
+            ExecOutcome::Log(log_message) => {
+                if self.active_catalog_install.is_some() {
+                    let active_source = self
+                        .cancel_pending_catalog_install_sequence()
+                        .unwrap_or_else(|| "<unknown source>".to_string());
+                    app.append_log_message(format!(
+                        "Catalog source read failed for '{}' while importing workflow: {}. Workflow import was cancelled.",
+                        active_source, log_message
+                    ));
+                    return Vec::new();
+                }
             }
             ExecOutcome::WorkflowImported { .. } => {
                 let _ = app.workflows.ensure_loaded(&app.ctx.command_registry);
@@ -343,14 +418,191 @@ impl WorkflowsComponent {
         Vec::new()
     }
 
-    fn handle_modal_button_click(&self, button_id: usize, app: &mut App) -> Vec<Effect> {
+    fn set_pending_confirmation_action(&mut self, app: &mut App, action: WorkflowImportConfirmationAction) {
+        self.pending_confirmation_action = Some(action);
+        app.focus.focus(&app.workflows.f_modal_confirmation_button);
+    }
+
+    fn clear_pending_confirmation_action(&mut self) {
+        self.pending_confirmation_action = None;
+    }
+
+    fn build_missing_catalog_prompt(
+        &self,
+        workflow_id: &str,
+        catalog_installs: &[PendingCatalogInstall],
+        unresolved_requirements: &[String],
+    ) -> String {
+        let mut lines = Vec::new();
+        lines.push(format!(
+            "Workflow '{}' requires catalogs that are missing in this environment.",
+            workflow_id
+        ));
+        if !catalog_installs.is_empty() {
+            lines.push(String::new());
+            lines.push("Installable requirements:".to_string());
+            for install in catalog_installs {
+                let title = install.requirement.title.as_deref().unwrap_or("<untitled>");
+                lines.push(format!("- {} ({}, source: {})", title, install.requirement.vendor, install.source));
+            }
+        }
+        if !unresolved_requirements.is_empty() {
+            lines.push(String::new());
+            lines.push("Requirements without installable sources:".to_string());
+            for unresolved in unresolved_requirements {
+                lines.push(format!("- {}", unresolved));
+            }
+        }
+        lines.push(String::new());
+        lines.push("Install available catalogs now and continue with workflow import?".to_string());
+        lines.join("\n")
+    }
+
+    fn infer_catalog_source_type(requirement: &WorkflowCatalogRequirement) -> Option<WorkflowCatalogRequirementSourceType> {
+        if let Some(source_type) = requirement.source_type {
+            return Some(source_type);
+        }
+        let source = requirement.source.as_deref()?.trim();
+        if source.starts_with("http://") || source.starts_with("https://") {
+            return Some(WorkflowCatalogRequirementSourceType::Url);
+        }
+        Some(WorkflowCatalogRequirementSourceType::Path)
+    }
+
+    fn prepare_workflow_import(&mut self, content: String, app: &mut App) -> Vec<Effect> {
+        let definition = match parse_workflow_definition(&content) {
+            Ok(definition) => definition,
+            Err(error) => {
+                app.append_log_message(format!("Failed to parse workflow import content: {error}"));
+                return vec![Effect::ImportWorkflowManifest(content)];
+            }
+        };
+        let missing_requirements_result: Result<_, String> = (|| {
+            let registry_guard = app
+                .ctx
+                .command_registry
+                .lock()
+                .map_err(|error| format!("Failed to inspect catalog requirements during workflow import: {error}"))?;
+            Ok(collect_missing_catalog_requirements(
+                definition.requires.as_ref(),
+                registry_guard.config.catalogs.as_deref().unwrap_or(&[]),
+            ))
+        })();
+        let missing_requirements = match missing_requirements_result {
+            Ok(missing_requirements) => missing_requirements,
+            Err(message) => {
+                app.append_log_message(message);
+                return vec![Effect::ImportWorkflowManifest(content)];
+            }
+        };
+
+        if missing_requirements.is_empty() {
+            return vec![Effect::ImportWorkflowManifest(content)];
+        }
+
+        let mut catalog_installs = Vec::new();
+        let mut unresolved_requirements = Vec::new();
+        for missing_requirement in missing_requirements {
+            let requirement = missing_requirement.requirement;
+            let source = requirement.source.as_deref().map(str::trim).map(str::to_string).unwrap_or_default();
+            if source.is_empty() {
+                unresolved_requirements.push(missing_requirement.reason);
+                continue;
+            }
+            let Some(source_type) = Self::infer_catalog_source_type(&requirement) else {
+                unresolved_requirements.push(missing_requirement.reason);
+                continue;
+            };
+            catalog_installs.push(PendingCatalogInstall {
+                requirement,
+                source,
+                source_type,
+            });
+        }
+
+        let workflow_identifier = definition.workflow;
+        let prompt_message = self.build_missing_catalog_prompt(&workflow_identifier, &catalog_installs, &unresolved_requirements);
+
+        app.confirmation_modal_state.update_opts(ConfirmationModalOpts {
+            title: Some("Missing Catalog Requirements".to_string()),
+            message: Some(prompt_message),
+            r#type: Some(MessageType::Warning),
+            buttons: vec![
+                ConfirmationModalButton::new("Cancel", rat_focus::FocusFlag::default(), ButtonType::Secondary),
+                ConfirmationModalButton::new("Confirm", app.workflows.f_modal_confirmation_button.clone(), ButtonType::Primary),
+            ],
+        });
+        self.set_pending_confirmation_action(
+            app,
+            WorkflowImportConfirmationAction::InstallRequirementsAndImport {
+                workflow_content: content,
+                catalog_installs,
+                unresolved_requirements,
+            },
+        );
+        vec![Effect::ShowModal(Modal::Confirmation)]
+    }
+
+    fn start_next_catalog_install_or_import_workflow(&mut self, app: &mut App) -> Vec<Effect> {
+        while let Some(next_install) = self.pending_catalog_install_queue.first().cloned() {
+            self.pending_catalog_install_queue.remove(0);
+            return match next_install.source_type {
+                WorkflowCatalogRequirementSourceType::Path => {
+                    self.active_catalog_install = Some(next_install.clone());
+                    vec![Effect::ReadFileContents(expand_tilde(next_install.source.as_str()))]
+                }
+                WorkflowCatalogRequirementSourceType::Url => {
+                    let parsed_url = match Url::parse(next_install.source.as_str()) {
+                        Ok(parsed_url) => parsed_url,
+                        Err(error) => {
+                            app.append_log_message(format!(
+                                "Skipping catalog install from invalid URL '{}': {}",
+                                next_install.source, error
+                            ));
+                            continue;
+                        }
+                    };
+                    self.active_catalog_install = Some(next_install);
+                    vec![Effect::ReadRemoteFileContents(parsed_url)]
+                }
+            };
+        }
+
+        if let Some(workflow_content) = self.pending_workflow_import_content.take() {
+            return vec![Effect::ImportWorkflowManifest(workflow_content)];
+        }
+        Vec::new()
+    }
+
+    fn handle_modal_button_click(&mut self, button_id: usize, app: &mut App) -> Vec<Effect> {
         if button_id != app.workflows.f_modal_confirmation_button.widget_id() {
             return Vec::new();
         }
-        let Some(workflow) = app.workflows.selected_workflow() else {
+
+        let Some(action) = self.pending_confirmation_action.take() else {
             return Vec::new();
         };
-        vec![Effect::RemoveWorkflow(workflow.identifier.clone().into())]
+
+        match action {
+            WorkflowImportConfirmationAction::RemoveWorkflow { workflow_id } => vec![Effect::RemoveWorkflow(workflow_id.into())],
+            WorkflowImportConfirmationAction::InstallRequirementsAndImport {
+                workflow_content,
+                catalog_installs,
+                unresolved_requirements,
+            } => {
+                if !unresolved_requirements.is_empty() {
+                    for unresolved_requirement in unresolved_requirements {
+                        app.append_log_message(format!(
+                            "Catalog requirement still unresolved; import may fail until installed manually: {}",
+                            unresolved_requirement
+                        ));
+                    }
+                }
+                self.pending_workflow_import_content = Some(workflow_content);
+                self.pending_catalog_install_queue = catalog_installs;
+                self.start_next_catalog_install_or_import_workflow(app)
+            }
+        }
     }
 
     fn hit_test_list(&mut self, app: &mut App, position: Position) -> Option<usize> {
@@ -384,6 +636,10 @@ impl Component for WorkflowsComponent {
     fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
         match msg {
             Msg::ConfirmationModalButtonClicked(button_id) => self.handle_modal_button_click(button_id, app),
+            Msg::ConfirmationModalClosed => {
+                self.clear_pending_confirmation_action();
+                Vec::new()
+            }
             Msg::ExecCompleted(outcome) => self.handle_exec_completed(*outcome, app),
             _ => Vec::new(),
         }
@@ -454,16 +710,7 @@ impl Component for WorkflowsComponent {
             KeyCode::End => {
                 app.workflows.list_state().scroll_down_by(u16::MAX);
             }
-            KeyCode::Char(' ') => {
-                if app.workflows.selected_workflow().is_some() {
-                    if let Err(error) = self.open_workflow_inputs(app) {
-                        effects.push(Effect::Log(format!("Failed to open workflow inputs: {error}")));
-                    } else {
-                        effects.push(Effect::SwitchTo(Route::WorkflowInputs));
-                    }
-                }
-            }
-            KeyCode::Enter => {
+            KeyCode::Char(' ') | KeyCode::Enter => {
                 if app.workflows.selected_workflow().is_some() {
                     if let Err(error) = self.open_workflow_inputs(app) {
                         effects.push(Effect::Log(format!("Failed to open workflow inputs: {error}")));

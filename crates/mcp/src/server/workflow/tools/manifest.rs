@@ -94,15 +94,16 @@ pub fn get_workflow(request: &WorkflowGetRequest) -> Result<Value, ErrorData> {
 
 pub fn validate_workflow(request: &WorkflowValidateRequest, command_registry: &Arc<Mutex<CommandRegistry>>) -> Result<Value, ErrorData> {
     let (definition, _) = parse_manifest_content(&request.manifest_content, request.format.as_deref()).map_err(|error| {
+        let parse_message = error.to_string();
         validation_error_with_violations(
             "WORKFLOW_PARSE_FAILED",
-            error.to_string(),
+            parse_message.clone(),
             serde_json::json!({ "format": request.format }),
-            "Ensure the manifest content is valid YAML or JSON and retry.",
+            parse_failure_suggested_action(&parse_message).as_str(),
             vec![serde_json::json!({
                 "path": "$",
                 "rule": "parse",
-                "message": error.to_string(),
+                "message": parse_message,
                 "expected": request.format.clone().unwrap_or_else(|| "yaml|json".to_string()),
             })],
         )
@@ -133,15 +134,16 @@ pub fn validate_workflow(request: &WorkflowValidateRequest, command_registry: &A
 
 pub fn save_workflow(request: &WorkflowSaveRequest, command_registry: &Arc<Mutex<CommandRegistry>>) -> Result<Value, ErrorData> {
     let (mut definition, format) = parse_manifest_content(&request.manifest_content, request.format.as_deref()).map_err(|error| {
+        let parse_message = error.to_string();
         validation_error_with_violations(
             "WORKFLOW_PARSE_FAILED",
-            error.to_string(),
+            parse_message.clone(),
             serde_json::json!({ "format": request.format }),
-            "Ensure the manifest content is valid YAML or JSON and retry.",
+            parse_failure_suggested_action(&parse_message).as_str(),
             vec![serde_json::json!({
                 "path": "$",
                 "rule": "parse",
-                "message": error.to_string(),
+                "message": parse_message,
                 "expected": request.format.clone().unwrap_or_else(|| "yaml|json".to_string()),
             })],
         )
@@ -645,6 +647,23 @@ fn resolve_project_relative_path(project_relative_path: &str) -> Result<PathBuf,
     Ok(resolved_path)
 }
 
+fn parse_failure_suggested_action(parse_message: &str) -> String {
+    if parse_message.contains("must place command arguments under 'with'") {
+        return "Move step arguments under `with` using real parameter names (do not use `flags` or `positional_args`).".to_string();
+    }
+    if parse_message.contains(".default' must be an object like") {
+        return "Use structured defaults: `default: { from: literal, value: ... }`.".to_string();
+    }
+    if parse_message.contains("unsupported interpolation syntax") {
+        return "Use workflow interpolation syntax `${{ ... }}` (for example `${{ inputs.name }}` or `${{ steps.step_id.output.field }}`)."
+            .to_string();
+    }
+    if parse_message.contains("unsupported key 'condition'; use 'if' or 'when'") {
+        return "Replace `condition` with `if` or `when` in workflow steps.".to_string();
+    }
+    "Ensure the manifest content is valid YAML or JSON and retry.".to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -707,5 +726,12 @@ steps:
                 assert!(renamed.is_some());
             },
         );
+    }
+
+    #[test]
+    fn parse_failure_suggested_action_maps_common_workflow_errors() {
+        assert!(parse_failure_suggested_action("must place command arguments under 'with'").contains("under `with`"));
+        assert!(parse_failure_suggested_action("workflow input 'a.default' must be an object like").contains("structured defaults"));
+        assert!(parse_failure_suggested_action("unsupported interpolation syntax").contains("${{ ... }}"));
     }
 }

@@ -56,7 +56,7 @@ mod tests {
             "List applications".into(),
             Vec::new(),
             Vec::new(),
-            HttpCommandSpec::new("GET", "/apps", None),
+            HttpCommandSpec::new("GET", "/apps", None, None),
             0,
         );
         let mut provider_contracts = IndexMap::new();
@@ -85,7 +85,10 @@ mod tests {
         let catalog = RegistryCatalog {
             title: "Test Catalog".into(),
             description: "Generated for unit tests".into(),
+            vendor: Some("test".into()),
             manifest_path: manifest_path.to_string_lossy().to_string(),
+            import_source: None,
+            import_source_type: None,
             headers: IndexSet::<EnvVar>::new(),
             base_urls: vec!["https://api.example.com".into()],
             base_url_index: 0,

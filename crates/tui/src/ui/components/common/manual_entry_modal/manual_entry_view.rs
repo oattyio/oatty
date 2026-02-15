@@ -164,6 +164,11 @@ impl ManualEntryView {
                 Paragraph::new(error.clone()).style(theme.status_error()).wrap(Wrap { trim: true }),
                 layout.message_area,
             );
+        } else if let Some(message) = build_expected_value_message(state, theme) {
+            frame.render_widget(
+                Paragraph::new(message).style(theme.text_muted_style()).wrap(Wrap { trim: true }),
+                layout.message_area,
+            );
         } else if let Some(validation) = state.validation.as_ref()
             && validation.required
             && matches!(state.kind, ManualEntryKind::Enum)
@@ -200,7 +205,7 @@ impl ManualEntryView {
         let main_layout = Layout::vertical([
             Constraint::Length(1), // value label
             Constraint::Min(2),    // value
-            Constraint::Length(1), // error message
+            Constraint::Length(2), // error/help message
         ])
         .split(area)
         .to_vec();
@@ -316,8 +321,8 @@ fn render_text_value(frame: &mut Frame, area: Rect, state: &ManualEntryState, th
     let mut spans = Vec::new();
     spans.push(Span::styled("Value: ", theme.text_primary_style()));
     if buffer.input().is_empty() {
-        if let Some(placeholder) = state.placeholder.as_ref() {
-            spans.push(Span::styled(placeholder.clone(), theme.text_muted_style()));
+        if let Some(placeholder) = resolve_placeholder_text(state) {
+            spans.push(Span::styled(placeholder, theme.text_muted_style()));
         } else {
             spans.push(Span::styled("", theme.text_primary_style()));
         }
@@ -331,6 +336,13 @@ fn render_text_value(frame: &mut Frame, area: Rect, state: &ManualEntryState, th
     let cursor_offset = buffer.cursor_columns() as u16;
     let cursor_x = area.x + 7 + cursor_offset;
     frame.set_cursor_position((cursor_x, area.y));
+}
+
+fn resolve_placeholder_text(state: &ManualEntryState) -> Option<String> {
+    if let Some(placeholder) = state.placeholder.as_ref() {
+        return Some(placeholder.clone());
+    }
+    state.example.as_ref().map(|example| format!("e.g. {}", example))
 }
 
 fn render_boolean_value(frame: &mut Frame, layout: &ManualEntryLayoutState, state: &ManualEntryState, theme: &dyn Theme) {
@@ -372,6 +384,31 @@ fn build_value_label(state: &ManualEntryState, theme: &dyn Theme) -> Line<'stati
         ManualEntryKind::Enum => "Choose from the available options",
     };
     Line::from(Span::styled(prompt.to_string(), theme.text_secondary_style()))
+}
+
+fn build_expected_value_message(state: &ManualEntryState, theme: &dyn Theme) -> Option<Line<'static>> {
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut append_separator = false;
+
+    if let Some(hint) = state.hint.as_ref()
+        && !hint.trim().is_empty()
+    {
+        spans.push(Span::styled("Hint: ", theme.text_secondary_style()));
+        spans.push(Span::styled(hint.clone(), theme.text_muted_style()));
+        append_separator = true;
+    }
+
+    if let Some(example) = state.example.as_ref()
+        && !example.trim().is_empty()
+    {
+        if append_separator {
+            spans.push(Span::styled("  ", theme.text_muted_style()));
+        }
+        spans.push(Span::styled("Example: ", theme.text_secondary_style()));
+        spans.push(Span::styled(example.clone(), theme.text_muted_style()));
+    }
+
+    if spans.is_empty() { None } else { Some(Line::from(spans)) }
 }
 
 fn allow_numeric_char(buffer: &mut TextInputState, character: char, kind: ManualEntryKind) -> bool {
@@ -472,5 +509,16 @@ mod tests {
 
         let value = build_candidate_value(&state).expect("enum value");
         assert_eq!(value, json!("beta"));
+    }
+
+    #[test]
+    fn placeholder_falls_back_to_example_text() {
+        let state = ManualEntryState {
+            placeholder: None,
+            example: Some("acme-service".to_string()),
+            ..Default::default()
+        };
+
+        assert_eq!(resolve_placeholder_text(&state).as_deref(), Some("e.g. acme-service"));
     }
 }

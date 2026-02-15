@@ -137,6 +137,8 @@ pub struct ManualEntryState {
     pub title: String,
     pub label: Option<String>,
     pub placeholder: Option<String>,
+    pub hint: Option<String>,
+    pub example: Option<String>,
     pub error: Option<String>,
     pub validation: Option<WorkflowInputValidation>,
     pub kind: ManualEntryKind,
@@ -152,6 +154,8 @@ impl Default for ManualEntryState {
             title: String::new(),
             label: None,
             placeholder: None,
+            hint: None,
+            example: None,
             error: None,
             validation: None,
             kind: ManualEntryKind::Text,
@@ -184,6 +188,8 @@ impl ManualEntryState {
         let mut state = ManualEntryState {
             label: Some(label.to_string()),
             placeholder: definition.placeholder.clone(),
+            hint: definition.hint.clone(),
+            example: definition.example.clone(),
             validation: definition.validate.clone(),
             ..ManualEntryState::default()
         };
@@ -345,5 +351,20 @@ mod tests {
         assert!(matches!(state.kind, ManualEntryKind::Number));
         let buffer = state.value.text_buffer().expect("buffer present for number");
         assert_eq!(buffer.input(), "42.5");
+    }
+
+    #[test]
+    fn builder_carries_hint_and_example_metadata() {
+        let definition = WorkflowInputDefinition {
+            hint: Some("Use the full repo URL".to_string()),
+            example: Some("https://github.com/acme/service".to_string()),
+            placeholder: Some("owner/repo".to_string()),
+            ..Default::default()
+        };
+
+        let state = ManualEntryState::from_definition(&definition, "repo", None);
+        assert_eq!(state.hint.as_deref(), Some("Use the full repo URL"));
+        assert_eq!(state.example.as_deref(), Some("https://github.com/acme/service"));
+        assert_eq!(state.placeholder.as_deref(), Some("owner/repo"));
     }
 }

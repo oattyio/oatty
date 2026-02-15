@@ -117,11 +117,12 @@ impl Component for WorkflowCollectorComponent {
         // Scroll highlighting
         let table = &mut app.workflows.collector_state_mut().expect("results state").table;
         let offset = table.table_state.offset();
+        let row_count = table.num_rows();
 
         match mouse.kind {
             MouseEventKind::Moved | MouseEventKind::Up(MouseButton::Left) => {
                 table.mouse_over_idx = if self.layout.table_area.contains(position) {
-                    Some(self.hit_test_results_table(position, offset))
+                    self.hit_test_results_table(position, offset, row_count)
                 } else {
                     None
                 };
@@ -167,10 +168,11 @@ impl Component for WorkflowCollectorComponent {
 
         if self.layout.table_area.contains(position) {
             app.focus.focus(&collector.f_table);
-            let index = self.hit_test_results_table(position, offset);
-            collector.table.table_state.select(Some(index));
-            collector.sync_stage_with_selection(Some(index));
-            let _ = self.stage_current_row(collector);
+            if let Some(index) = self.hit_test_results_table(position, offset, collector.table.num_rows()) {
+                collector.table.table_state.select(Some(index));
+                collector.sync_stage_with_selection(Some(index));
+                let _ = self.stage_current_row(collector);
+            }
         }
 
         if apply_selection {
@@ -292,8 +294,11 @@ impl WorkflowCollectorComponent {
         );
     }
 
-    fn hit_test_results_table(&self, mouse_position: Position, offset: usize) -> usize {
-        mouse_position.y.saturating_sub(1 + self.layout.table_area.y) as usize + offset
+    fn hit_test_results_table(&self, mouse_position: Position, offset: usize, row_count: usize) -> Option<usize> {
+        // Results rows are rendered inside a bordered block and below the table header row.
+        let first_data_row_y = self.layout.table_area.y.saturating_add(2);
+        let row_index = mouse_position.y.saturating_sub(first_data_row_y) as usize + offset;
+        (row_index < row_count).then_some(row_index)
     }
     fn handle_filter_keys(&self, app: &mut App, key: KeyEvent) {
         let Some(collector) = app.workflows.collector_state_mut() else {

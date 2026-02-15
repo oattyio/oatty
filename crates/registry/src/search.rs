@@ -216,7 +216,7 @@ mod tests {
             "List projects".to_string(),
             Vec::new(),
             Vec::new(),
-            HttpCommandSpec::new("GET", "/projects", None),
+            HttpCommandSpec::new("GET", "/projects", None, None),
             0,
         );
 
@@ -226,7 +226,7 @@ mod tests {
             "List services".to_string(),
             Vec::new(),
             Vec::new(),
-            HttpCommandSpec::new("GET", "/services", None),
+            HttpCommandSpec::new("GET", "/services", None, None),
             1,
         );
 
@@ -245,7 +245,10 @@ mod tests {
         let vercel_catalog = RegistryCatalog {
             title: "Vercel".to_string(),
             description: "Vercel platform API".to_string(),
+            vendor: Some("vercel".to_string()),
             manifest_path: String::new(),
+            import_source: None,
+            import_source_type: None,
             headers: IndexSet::new(),
             base_urls: vec!["https://api.vercel.com".to_string()],
             base_url_index: 0,
@@ -256,7 +259,10 @@ mod tests {
         let render_catalog = RegistryCatalog {
             title: "Render".to_string(),
             description: "Render platform API".to_string(),
+            vendor: Some("render".to_string()),
             manifest_path: String::new(),
+            import_source: None,
+            import_source_type: None,
             headers: IndexSet::new(),
             base_urls: vec!["https://api.render.com".to_string()],
             base_url_index: 0,

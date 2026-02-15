@@ -148,7 +148,7 @@ impl MainView {
                 Modal::WorkflowCollector => {
                     let component: Box<dyn Component> = Box::new(WorkflowCollectorComponent::default());
                     let layout = if app.workflows.manual_entry_state().is_some() {
-                        ModalLayout(Box::new(|rect| centered_rect(45, 35, rect)))
+                        ModalLayout(Box::new(|rect| centered_rect(55, 45, rect)))
                     } else {
                         ModalLayout(Box::new(|rect| centered_rect(96, 90, rect)))
                     };
@@ -172,7 +172,7 @@ impl MainView {
                 }
                 Modal::ManualEntry => (
                     Box::new(DefaultManualEntryComponent::default()),
-                    ModalLayout(Box::new(|rect| centered_rect(45, 35, rect))),
+                    ModalLayout(Box::new(|rect| centered_rect(55, 45, rect))),
                 ),
             };
             self.modal_view = Some(modal_view);
@@ -358,34 +358,21 @@ impl Component for MainView {
         ])
         .split(outer_areas[1]);
 
-        let main_view_areas = if content_areas[0].width >= 141 {
-            let constraints = if app.logs.is_visible {
-                [
-                    Constraint::Percentage(60), // Main view
-                    Constraint::Fill(1),        // Logs
-                ]
-            } else {
-                [
-                    Constraint::Percentage(100), // Main view
-                    Constraint::Length(0),       // No logs shown
-                ]
-            };
+        let constraints = if app.logs.is_visible {
+            [
+                Constraint::Percentage(60), // Main view
+                Constraint::Fill(1),        // Logs
+            ]
+        } else {
+            [
+                Constraint::Percentage(100), // Main view
+                Constraint::Length(0),       // No logs shown
+            ]
+        };
 
+        let main_view_areas = if content_areas[0].width >= 141 {
             Layout::horizontal(constraints).split(content_areas[0])
         } else {
-            // Smaller screens display 3 stacked rows.
-            let constraints = if app.logs.is_visible {
-                [
-                    Constraint::Percentage(60), // Command palette area (+ suggestions)
-                    Constraint::Fill(1),        // logs / output content
-                ]
-            } else {
-                [
-                    Constraint::Percentage(100), // Command palette area (+ suggestions)
-                    Constraint::Length(0),       // logs / output content
-                ]
-            };
-
             Layout::vertical(constraints).split(content_areas[0])
         };
 

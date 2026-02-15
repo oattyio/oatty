@@ -337,6 +337,7 @@ mod tests {
                 repeat: None,
                 output_contract: None,
             }],
+            requires: None,
         }
     }
 

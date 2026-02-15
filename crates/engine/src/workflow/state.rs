@@ -373,6 +373,7 @@ mod tests {
                 repeat: None,
                 output_contract: None,
             }],
+            requires: None,
         }
     }
 
@@ -551,6 +552,7 @@ mod tests {
                 "addon".into() => addon_input,
             },
             steps: Vec::new(),
+            requires: None,
         };
 
         let mut state = WorkflowRunState::new(workflow);

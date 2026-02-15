@@ -129,6 +129,7 @@ mod tests {
             description: Some("Workflow demo".into()),
             inputs: IndexMap::new(),
             steps,
+            requires: None,
         }
     }
 
@@ -204,6 +205,7 @@ mod tests {
             description: None,
             inputs: IndexMap::new(),
             steps: vec![step],
+            requires: None,
         };
 
         let spec = workflow_spec_from_runtime(&runtime);
@@ -238,6 +240,7 @@ mod tests {
             description: None,
             inputs: IndexMap::new(),
             steps: vec![step],
+            requires: None,
         };
 
         let spec = workflow_spec_from_runtime(&runtime);
