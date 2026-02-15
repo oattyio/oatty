@@ -54,10 +54,17 @@ pub struct WorkflowInputViewState {
     pub input_list_state: ListState,
     /// Focus flag tracking list navigation state.
     pub f_list: FocusFlag,
+    /// Focus flag tracking the workflow details pane scroll area.
+    pub f_details: FocusFlag,
     /// Focus flag used for the cancel action button.
     pub f_cancel_button: FocusFlag,
+    /// Focus flag used for the plan action button.
+    pub f_plan_button: FocusFlag,
     /// Focus flag used for the run action button.
     pub f_run_button: FocusFlag,
+    details_scroll_offset: u16,
+    details_content_height: u16,
+    details_viewport_height: u16,
 }
 
 impl WorkflowInputViewState {
@@ -69,8 +76,13 @@ impl WorkflowInputViewState {
             input_list_state: ListState::default(),
             container_focus: FocusFlag::new().with_name("workflow.inputs"),
             f_list: FocusFlag::new().with_name("workflow.inputs.list"),
+            f_details: FocusFlag::new().with_name("workflow.inputs.details"),
             f_cancel_button: FocusFlag::new().with_name("workflow.inputs.actions.cancel"),
+            f_plan_button: FocusFlag::new().with_name("workflow.inputs.actions.plan"),
             f_run_button: FocusFlag::new().with_name("workflow.inputs.actions.run"),
+            details_scroll_offset: 0,
+            details_content_height: 0,
+            details_viewport_height: 0,
         }
     }
 
@@ -161,6 +173,83 @@ impl WorkflowInputViewState {
             current_value,
             blocked_reason,
         }
+    }
+
+    /// Returns the current details pane scroll offset.
+    pub fn details_scroll_offset(&self) -> u16 {
+        self.details_scroll_offset
+    }
+
+    /// Updates the details pane viewport height and clamps scroll state.
+    pub fn update_details_viewport_height(&mut self, height: u16) {
+        self.details_viewport_height = height;
+        self.clamp_details_scroll_offset();
+    }
+
+    /// Updates the details pane content height and clamps scroll state.
+    pub fn update_details_content_height(&mut self, height: u16) {
+        self.details_content_height = height;
+        self.clamp_details_scroll_offset();
+    }
+
+    /// Scrolls the details pane by line count.
+    pub fn scroll_details_lines(&mut self, delta: i16) {
+        if delta == 0 {
+            return;
+        }
+        self.apply_details_scroll_delta(delta as i32);
+    }
+
+    /// Scrolls the details pane by whole-page increments.
+    pub fn scroll_details_pages(&mut self, delta_pages: i16) {
+        if delta_pages == 0 || self.details_viewport_height == 0 {
+            return;
+        }
+        let delta = i32::from(self.details_viewport_height).saturating_mul(i32::from(delta_pages));
+        self.apply_details_scroll_delta(delta);
+    }
+
+    /// Scrolls the details pane to the top.
+    pub fn scroll_details_to_top(&mut self) {
+        self.details_scroll_offset = 0;
+    }
+
+    /// Scrolls the details pane to the bottom.
+    pub fn scroll_details_to_bottom(&mut self) {
+        self.details_scroll_offset = self.max_details_scroll_offset();
+    }
+
+    /// Returns whether the details pane content exceeds its viewport.
+    pub fn details_is_scrollable(&self) -> bool {
+        self.details_content_height > self.details_viewport_height && self.details_viewport_height > 0
+    }
+
+    /// Returns the measured details pane content height.
+    pub fn details_content_height(&self) -> u16 {
+        self.details_content_height
+    }
+
+    /// Returns the measured details pane viewport height.
+    pub fn details_viewport_height(&self) -> u16 {
+        self.details_viewport_height
+    }
+
+    fn apply_details_scroll_delta(&mut self, delta: i32) {
+        if delta == 0 || !self.details_is_scrollable() {
+            return;
+        }
+        let current = i32::from(self.details_scroll_offset);
+        let max = i32::from(self.max_details_scroll_offset());
+        let next = (current + delta).clamp(0, max);
+        self.details_scroll_offset = next as u16;
+    }
+
+    fn clamp_details_scroll_offset(&mut self) {
+        self.details_scroll_offset = self.details_scroll_offset.min(self.max_details_scroll_offset());
+    }
+
+    fn max_details_scroll_offset(&self) -> u16 {
+        self.details_content_height.saturating_sub(self.details_viewport_height)
     }
 }
 
@@ -256,7 +345,9 @@ impl HasFocus for WorkflowInputViewState {
     fn build(&self, builder: &mut FocusBuilder) {
         let tag = builder.start(self);
         builder.leaf_widget(&self.f_list);
+        builder.leaf_widget(&self.f_details);
         builder.leaf_widget(&self.f_cancel_button);
+        builder.leaf_widget(&self.f_plan_button);
         builder.leaf_widget(&self.f_run_button);
         builder.end(tag);
     }

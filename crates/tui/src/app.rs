@@ -14,7 +14,10 @@ use crate::log_persistence::PersistentLogWorker;
 use crate::ui::components::workflows::run::RunViewState;
 use crate::ui::components::{FilePickerState, common::ConfirmationModalState};
 use crate::ui::components::{LibraryState, nav_bar::VerticalNavBarState};
-use crate::ui::components::{common::manual_entry_modal::state::ManualEntryState, workflows::collector::SelectorStatus};
+use crate::ui::components::{
+    common::manual_entry_modal::state::ManualEntryState,
+    workflows::collector::{CollectorApplyTarget, CollectorSelectionSource, SelectorStatus},
+};
 use crate::ui::theme::Theme;
 use crate::ui::{
     components::{
@@ -379,23 +382,25 @@ impl App<'_> {
     }
 
     pub fn prepare_selector_fetch(&mut self) -> Vec<Effect> {
-        let Some(selector) = self.workflows.collector_state_mut() else {
+        let Some((provider_identifier, provider_arguments)) = self
+            .workflows
+            .collector_state()
+            .map(|selector| (selector.provider_id.clone(), selector.resolved_args.clone()))
+        else {
             return Vec::new();
         };
 
         match self
             .ctx
             .provider_registry
-            .cached_values_or_plan(&selector.provider_id, selector.resolved_args.clone())
+            .cached_values_or_plan(&provider_identifier, provider_arguments)
         {
-            CacheLookupOutcome::Hit(items) => {
-                selector.set_items(items);
-                selector.refresh_table(&*self.ctx.theme);
-                Vec::new()
-            }
+            CacheLookupOutcome::Hit(items) => self.apply_selector_items_or_fallback(&provider_identifier, items),
             CacheLookupOutcome::Pending(pending) => {
-                selector.pending_cache_key = Some(pending.plan.cache_key.clone());
-                selector.status = SelectorStatus::Loading;
+                if let Some(selector) = self.workflows.collector_state_mut() {
+                    selector.pending_cache_key = Some(pending.plan.cache_key.clone());
+                    selector.status = SelectorStatus::Loading;
+                }
                 self.effects_for_pending_fetches(vec![pending])
             }
         }
@@ -407,28 +412,96 @@ impl App<'_> {
             effects.extend(self.rebuild_palette_suggestions());
         }
 
-        if let Some(selector) = self.workflows.collector_state_mut() {
-            let matches_identifier = selector.provider_id == provider_id;
-            let matches_cache_key = selector.pending_cache_key.as_deref().is_none_or(|key| key == cache_key.as_str());
-            if matches_identifier && matches_cache_key {
-                match self
-                    .ctx
-                    .provider_registry
-                    .cached_values_or_plan(&selector.provider_id, selector.resolved_args.clone())
-                {
-                    CacheLookupOutcome::Hit(items) => {
-                        selector.set_items(items);
-                        selector.refresh_table(&*self.ctx.theme);
-                    }
-                    CacheLookupOutcome::Pending(pending) => {
-                        selector.pending_cache_key = Some(pending.plan.cache_key.clone());
-                        effects.extend(self.effects_for_pending_fetches(vec![pending]));
-                    }
+        let selector_snapshot = self.workflows.collector_state().map(|selector| {
+            (
+                selector.provider_id.clone(),
+                selector.resolved_args.clone(),
+                selector.pending_cache_key.clone(),
+            )
+        });
+        let Some((selector_provider_id, selector_arguments, pending_cache_key)) = selector_snapshot else {
+            return effects;
+        };
+        let matches_identifier = selector_provider_id == provider_id;
+        let matches_cache_key = pending_cache_key.as_deref().is_none_or(|key| key == cache_key.as_str());
+        if !matches_identifier || !matches_cache_key {
+            return effects;
+        }
+
+        match self
+            .ctx
+            .provider_registry
+            .cached_values_or_plan(&selector_provider_id, selector_arguments)
+        {
+            CacheLookupOutcome::Hit(items) => {
+                self.apply_selector_items_or_fallback(&provider_id, items);
+            }
+            CacheLookupOutcome::Pending(pending) => {
+                if let Some(selector) = self.workflows.collector_state_mut() {
+                    selector.pending_cache_key = Some(pending.plan.cache_key.clone());
                 }
+                effects.extend(self.effects_for_pending_fetches(vec![pending]));
             }
         }
 
         effects
+    }
+
+    fn apply_selector_items_or_fallback(&mut self, provider_identifier: &str, items: Vec<serde_json::Value>) -> Vec<Effect> {
+        if self.should_fallback_for_empty_workflow_selector(provider_identifier, &items) {
+            self.fallback_to_manual_entry_for_empty_workflow_selector(provider_identifier);
+            return Vec::new();
+        }
+
+        if let Some(selector) = self.workflows.collector_state_mut() {
+            selector.set_items(items);
+            selector.refresh_table(&*self.ctx.theme);
+        }
+        Vec::new()
+    }
+
+    fn should_fallback_for_empty_workflow_selector(&self, provider_identifier: &str, items: &[serde_json::Value]) -> bool {
+        if !items.is_empty() {
+            return false;
+        }
+
+        let Some(selector) = self.workflows.collector_state() else {
+            return false;
+        };
+        if selector.provider_id != provider_identifier {
+            return false;
+        }
+
+        matches!(selector.apply_target, CollectorApplyTarget::WorkflowInput)
+    }
+
+    fn fallback_to_manual_entry_for_empty_workflow_selector(&mut self, provider_identifier: &str) {
+        let should_focus_manual = {
+            let Some(selector) = self.workflows.collector_state_mut() else {
+                return;
+            };
+            if !matches!(selector.apply_target, CollectorApplyTarget::WorkflowInput) {
+                return;
+            }
+            let has_items = selector.original_items.as_ref().is_some_and(|items| !items.is_empty());
+            if has_items {
+                return;
+            }
+            selector.status = SelectorStatus::Error;
+            selector.error_message = Some("Provider returned no values. Enter a manual value below to continue.".to_string());
+            selector.set_selection_source(CollectorSelectionSource::Manual);
+            true
+        };
+
+        if should_focus_manual {
+            if let Some(selector) = self.workflows.collector_state() {
+                self.focus.focus(&selector.f_manual);
+            }
+            self.append_log_message_with_level(
+                Some(LogLevel::Info),
+                format!("Provider '{provider_identifier}' returned no selectable values. Use collector manual override."),
+            );
+        }
     }
 
     /// Appends a plain-text message to the log collections.

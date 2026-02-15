@@ -200,7 +200,7 @@ pub struct WorkflowExportRequest {
 
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct WorkflowImportRequest {
-    #[schemars(description = "Project-relative input path for the manifest to import.")]
+    #[schemars(description = "Absolute input path for the manifest to import.")]
     pub input_path: String,
     #[schemars(description = "Optional workflow identifier override.")]
     pub workflow_id: Option<String>,

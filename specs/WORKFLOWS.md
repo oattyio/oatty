@@ -37,6 +37,12 @@ Supported fields include:
 - validation: `validate` (`required`, enum, regex, length)
 - behavior: `optional`, `cache_ttl_sec`, `on_error`, `enum`
 
+## Input Collection UX Notes (TUI)
+- Provider-backed inputs open the workflow collector modal.
+- Collector supports both table-backed provider selection and inline manual override within the same modal.
+- Manual override accepts direct text/JSON literals and supports JSON file loading through the shared file picker (`Ctrl+O`).
+- If selected file contents are not valid JSON, collector shows inline validation messaging and keeps the user in manual override flow.
+
 ## Step Definition (Implemented)
 Each step supports:
 - `id`, `run`

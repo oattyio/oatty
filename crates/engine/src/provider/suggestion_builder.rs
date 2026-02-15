@@ -6,7 +6,9 @@
 use std::collections::HashMap;
 
 use oatty_registry::CommandSpec;
-use oatty_types::{Bind, ItemKind, SuggestionItem, ValueProvider as ProviderBinding};
+use oatty_types::{
+    Bind, ItemKind, ProviderSelectorActionPayload, SuggestionItem, ValueProvider as ProviderBinding, encode_provider_selector_action,
+};
 use oatty_util::fuzzy_score;
 use serde_json::{Map as JsonMap, Value};
 
@@ -70,9 +72,31 @@ impl ProviderSuggestionBuilder {
             }
         }
 
+        if !provider_required_inputs_satisfied(commands, &provider_identifier, &arguments) {
+            return ProviderSuggestionSet::default();
+        }
+
         match provider_registry.cached_values_or_plan(&provider_identifier, arguments) {
             CacheLookupOutcome::Hit(values) => {
                 let provider_meta = canonical_identifier(&provider_identifier).unwrap_or_else(|| provider_identifier.clone());
+                if provider_payload_is_ambiguous(&values) {
+                    let action_payload = ProviderSelectorActionPayload {
+                        provider_id: provider_identifier.clone(),
+                        command_key: command_key.to_string(),
+                        field: field.to_string(),
+                        positional: command_spec.positional_args.iter().any(|argument| argument.name == field),
+                    };
+                    let display = format!("Select value from {provider_meta}...");
+                    let score = fuzzy_score(&display, partial).unwrap_or(i64::MAX / 4);
+                    return ProviderSuggestionSet::ready(vec![SuggestionItem {
+                        display,
+                        insert_text: encode_provider_selector_action(&action_payload),
+                        kind: ItemKind::Value,
+                        meta: Some("selector".to_string()),
+                        score,
+                    }]);
+                }
+
                 let mut items = Vec::with_capacity(values.len());
                 for value in values {
                     let Some(label) = label_from_value(value) else {
@@ -97,6 +121,57 @@ impl ProviderSuggestionBuilder {
     }
 }
 
+fn provider_required_inputs_satisfied(commands: &[CommandSpec], provider_identifier: &str, arguments: &JsonMap<String, Value>) -> bool {
+    let Some(identifier) = ProviderIdentifier::parse(provider_identifier) else {
+        return false;
+    };
+    let Some(provider_command) = commands
+        .iter()
+        .find(|command| command.group == identifier.group && command.name == identifier.name)
+    else {
+        return false;
+    };
+
+    if provider_command
+        .positional_args
+        .iter()
+        .any(|positional_argument| !arguments.contains_key(&positional_argument.name))
+    {
+        return false;
+    }
+
+    if provider_command
+        .flags
+        .iter()
+        .filter(|flag| flag.required)
+        .any(|flag| !arguments.contains_key(&flag.name))
+    {
+        return false;
+    }
+
+    true
+}
+
+fn provider_payload_is_ambiguous(values: &[Value]) -> bool {
+    values.iter().any(value_requires_explicit_selector)
+}
+
+fn value_requires_explicit_selector(value: &Value) -> bool {
+    let Value::Object(entries) = value else {
+        return false;
+    };
+
+    if entries.contains_key("name") || entries.contains_key("id") || entries.contains_key("str") {
+        return false;
+    }
+
+    let scalar_field_count = entries
+        .values()
+        .filter(|entry| matches!(entry, Value::String(_) | Value::Number(_) | Value::Bool(_) | Value::Null))
+        .count();
+    scalar_field_count > 1
+}
+
 fn binding_for_field(command_spec: &CommandSpec, field: &str) -> Option<(String, Vec<Bind>)> {
     if let Some(flag) = command_spec.flags.iter().find(|flag| flag.name == field)
         && let Some(ProviderBinding::Command { command_id, binds }) = &flag.provider
@@ -109,4 +184,65 @@ fn binding_for_field(command_spec: &CommandSpec, field: &str) -> Option<(String,
         return Some((command_id.clone(), binds.clone()));
     }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{provider_payload_is_ambiguous, provider_required_inputs_satisfied, value_requires_explicit_selector};
+    use oatty_types::{CommandFlag, CommandSpec, HttpCommandSpec, PositionalArgument};
+    use serde_json::json;
+
+    #[test]
+    fn ambiguous_selector_required_for_multi_scalar_object_without_name_or_id() {
+        let value = json!({"slug":"app-a","region":"us-west-2"});
+        assert!(value_requires_explicit_selector(&value));
+    }
+
+    #[test]
+    fn selector_not_required_for_name_or_id_objects() {
+        assert!(!value_requires_explicit_selector(&json!({"id":"app-1","region":"us"})));
+        assert!(!value_requires_explicit_selector(&json!({"name":"app","region":"us"})));
+    }
+
+    #[test]
+    fn payload_ambiguity_detects_any_ambiguous_row() {
+        let values = vec![json!({"id":"app-1"}), json!({"slug":"app-a","region":"us-west-2"})];
+        assert!(provider_payload_is_ambiguous(&values));
+    }
+
+    #[test]
+    fn required_provider_inputs_must_be_bound_before_palette_suggests() {
+        let provider_command = CommandSpec::new_http(
+            "apps".to_string(),
+            "list".to_string(),
+            "List applications".to_string(),
+            vec![PositionalArgument {
+                name: "owner_id".to_string(),
+                help: None,
+                provider: None,
+            }],
+            vec![CommandFlag {
+                name: "region".to_string(),
+                short_name: Some("r".to_string()),
+                required: true,
+                r#type: "string".to_string(),
+                enum_values: Vec::new(),
+                default_value: None,
+                description: None,
+                provider: None,
+            }],
+            HttpCommandSpec::new("GET", "/apps", None, None),
+            0,
+        );
+        let commands = vec![provider_command];
+
+        let partial_bindings = serde_json::Map::from_iter([("owner_id".to_string(), json!("team-1"))]);
+        assert!(!provider_required_inputs_satisfied(&commands, "apps list", &partial_bindings));
+
+        let complete_bindings = serde_json::Map::from_iter([
+            ("owner_id".to_string(), json!("team-1")),
+            ("region".to_string(), json!("us-east-1")),
+        ]);
+        assert!(provider_required_inputs_satisfied(&commands, "apps list", &complete_bindings));
+    }
 }

@@ -12,7 +12,7 @@ This spec documents the currently implemented workflow UX in the TUI.
 ## Implemented Components
 - Workflow list: `workflows_component`
 - Input list/status: `input/input_component`
-- Provider selector + details: `collector/collector_component`
+- Provider selector + inline manual override: `collector/collector_component`
 - Manual entry modal: `collector/manual_entry/manual_entry_component`
 - Run timeline/status: `run/run_component`
 
@@ -34,8 +34,12 @@ This spec documents the currently implemented workflow UX in the TUI.
 ## Selector UX
 - Filterable selector table.
 - Selection staging and apply/cancel actions.
-- Detail pane for selected row data.
+- Inline manual override input is always available in selector mode.
+- Apply source is explicit (`table` vs `manual`) and follows last interaction.
+- Manual override value remains visible even after table selection; status line indicates what will be applied.
 - Refresh and provider error handling (`manual`/`cached`/`fail` behavior surfaced in state).
+- Empty provider result fallback for workflow inputs remains in collector and shifts focus to manual override.
+- Manual override supports JSON file selection (`Ctrl+O`) via shared file picker (`.json`) and returns to collector with loaded content.
 
 ## Run UX
 - Run session state and lifecycle updates are rendered in run view.

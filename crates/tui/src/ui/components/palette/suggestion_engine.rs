@@ -568,7 +568,7 @@ fn suggest_positionals(
     (items, pending_fetches, provider_loading)
 }
 
-fn build_inputs_map_for_positional(
+pub(crate) fn build_inputs_map_for_positional(
     spec: &CommandSpec,
     arg_count: usize,
     remaining_parts: &[String],
@@ -589,7 +589,7 @@ fn build_inputs_map_for_positional(
     map
 }
 
-fn build_inputs_map_for_flag(
+pub(crate) fn build_inputs_map_for_flag(
     spec: &CommandSpec,
     remaining_parts: &[String],
     current_flag: &str,

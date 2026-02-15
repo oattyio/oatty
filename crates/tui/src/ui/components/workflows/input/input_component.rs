@@ -11,9 +11,9 @@ use crate::ui::theme::{
     roles::Theme,
     theme_helpers::{self as th, ButtonRenderOptions, ButtonType},
 };
-use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use oatty_engine::WorkflowRunState;
-use oatty_types::{Effect, Modal, Route};
+use oatty_types::{Effect, ExecOutcome, Modal, Msg, Route};
 use rat_focus::HasFocus;
 use ratatui::layout::Position;
 use ratatui::symbols::merge::MergeStrategy;
@@ -23,8 +23,9 @@ use ratatui::{
     layout::{Constraint, Layout, Rect, Spacing},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Borders, ListItem, Paragraph, Wrap},
+    widgets::{Borders, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
 };
+use serde_json::{Value, json};
 use std::cell::Ref;
 use unicode_width::UnicodeWidthStr;
 
@@ -35,6 +36,7 @@ pub struct WorkflowInputLayout {
     pub inputs_list_area: Rect,
     pub details_area: Rect,
     pub cancel_button_area: Rect,
+    pub plan_button_area: Rect,
     pub run_button_area: Rect,
     pub status_line_area: Rect,
 }
@@ -45,8 +47,9 @@ impl From<Vec<Rect>> for WorkflowInputLayout {
             inputs_list_area: value[1],
             details_area: value[2],
             cancel_button_area: value[3],
-            run_button_area: value[4],
-            status_line_area: value[5],
+            plan_button_area: value[4],
+            run_button_area: value[5],
+            status_line_area: value[6],
         }
     }
 }
@@ -57,12 +60,19 @@ pub struct WorkflowInputsComponent {
 }
 
 impl Component for WorkflowInputsComponent {
+    fn handle_message(&mut self, app: &mut App, message: Msg) -> Vec<Effect> {
+        let Msg::ExecCompleted(outcome) = message else {
+            return Vec::new();
+        };
+        self.handle_manual_override_file_pick_result(app, *outcome)
+    }
+
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         if app.workflows.input_view_state().is_none() {
             return Vec::new();
         }
 
-        if let Some(effects) = handle_global_key_event(app, key.code) {
+        if let Some(effects) = handle_global_key_event(app, key) {
             return effects;
         }
 
@@ -72,8 +82,16 @@ impl Component for WorkflowInputsComponent {
             return handle_list_focused_key(app, key.code);
         }
 
+        if focus_snapshot.details_focused {
+            return handle_details_focused_key(app, key.code);
+        }
+
         if focus_snapshot.cancel_button_focused {
             return handle_cancel_button_focused_key(app, key.code);
+        }
+
+        if focus_snapshot.plan_button_focused {
+            return handle_plan_button_focused_key(app, key.code);
         }
 
         if focus_snapshot.run_button_focused {
@@ -106,6 +124,16 @@ impl Component for WorkflowInputsComponent {
                     None
                 }
             }
+            MouseEventKind::ScrollDown => {
+                if self.layout.details_area.contains(pos) {
+                    state.scroll_details_lines(1);
+                }
+            }
+            MouseEventKind::ScrollUp => {
+                if self.layout.details_area.contains(pos) {
+                    state.scroll_details_lines(-1);
+                }
+            }
             MouseEventKind::Down(MouseButton::Left) => {
                 if self.layout.inputs_list_area.contains(pos) {
                     app.focus.focus(&state.f_list);
@@ -121,9 +149,18 @@ impl Component for WorkflowInputsComponent {
                     }
                 }
 
+                if self.layout.details_area.contains(pos) {
+                    app.focus.focus(&state.f_details);
+                }
+
                 if self.layout.cancel_button_area.contains(pos) {
                     app.focus.focus(&state.f_cancel_button);
                     return vec![Effect::SwitchTo(Route::Workflows)];
+                }
+
+                if self.layout.plan_button_area.contains(pos) {
+                    app.focus.focus(&state.f_plan_button);
+                    return show_pre_run_step_plan(app);
                 }
 
                 if self.layout.run_button_area.contains(pos) {
@@ -175,6 +212,20 @@ impl Component for WorkflowInputsComponent {
             if state.f_cancel_button.get() {
                 return th::build_hint_spans(theme, &[("Esc", " Cancel"), ("Enter", " Close inputs")]);
             }
+            if state.f_plan_button.get() {
+                return th::build_hint_spans(theme, &[("Esc", " Cancel"), ("Enter", " View plan")]);
+            }
+            if state.f_details.get() {
+                return th::build_hint_spans(
+                    theme,
+                    &[
+                        ("Esc", " Cancel"),
+                        (" ↑/↓", " Scroll"),
+                        (" PgUp/PgDn", " Page"),
+                        (" Home/End", " Jump"),
+                    ],
+                );
+            }
         }
         th::build_hint_spans(
             theme,
@@ -183,6 +234,7 @@ impl Component for WorkflowInputsComponent {
                 (" ↑/↓", " Navigate"),
                 (" Enter", " Collect input"),
                 (" F2", " Manual entry"),
+                (" Ctrl+P", " View plan"),
             ],
         )
     }
@@ -202,6 +254,7 @@ impl Component for WorkflowInputsComponent {
             .split(main[1]);
         let layout_areas = Layout::horizontal([
             Constraint::Length(12), // cancel
+            Constraint::Length(14), // plan
             Constraint::Length(12), // run
             Constraint::Length(2),  // padding
             Constraint::Min(0),     // status line
@@ -213,8 +266,9 @@ impl Component for WorkflowInputsComponent {
             content_layout[0], // input list
             content_layout[1], // input details
             layout_areas[0],   // cancel button
-            layout_areas[1],   // run button
-            layout_areas[3],   // status line
+            layout_areas[1],   // plan button
+            layout_areas[2],   // run button
+            layout_areas[4],   // status line
         ]
     }
 
@@ -227,18 +281,67 @@ impl Component for WorkflowInputsComponent {
     }
 }
 
+impl WorkflowInputsComponent {
+    fn handle_manual_override_file_pick_result(&mut self, app: &mut App, outcome: ExecOutcome) -> Vec<Effect> {
+        let is_pending_manual_file_pick = app
+            .workflows
+            .collector_state()
+            .is_some_and(|collector| collector.pending_manual_file_pick);
+        if !is_pending_manual_file_pick {
+            return Vec::new();
+        }
+
+        let Some(collector) = app.workflows.collector_state_mut() else {
+            return Vec::new();
+        };
+        collector.pending_manual_file_pick = false;
+
+        match outcome {
+            ExecOutcome::FileContents(contents, _) | ExecOutcome::RemoteFileContents(contents, _) => {
+                self.apply_manual_override_contents(collector, &contents)
+            }
+            ExecOutcome::Log(log_message) => {
+                collector.error_message = Some(format!("Failed to read selected file: {log_message}"));
+                vec![Effect::ShowModal(Modal::WorkflowCollector)]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    fn apply_manual_override_contents(
+        &self,
+        collector: &mut crate::ui::components::workflows::collector::CollectorViewState<'static>,
+        contents: &str,
+    ) -> Vec<Effect> {
+        collector.manual_override.set_input(contents.to_string());
+        collector.manual_override.set_cursor(contents.len());
+        collector.set_selection_source(crate::ui::components::workflows::collector::CollectorSelectionSource::Manual);
+        collector.error_message = match serde_json::from_str::<serde_json::Value>(contents) {
+            Ok(_) => None,
+            Err(error) => Some(format!("Selected file is not valid JSON: {error}")),
+        };
+        vec![Effect::ShowModal(Modal::WorkflowCollector)]
+    }
+}
+
 #[derive(Default)]
 struct InputFocusSnapshot {
     list_focused: bool,
+    details_focused: bool,
     cancel_button_focused: bool,
+    plan_button_focused: bool,
     run_button_focused: bool,
 }
 fn get_block_container(app: &App) -> Block<'static> {
     let is_focused = app.workflows.input_view_state().map(|s| s.f_list.is_focused()).unwrap_or(false);
     th::block(&*app.ctx.theme, Some("Pre-run Input Viewer"), is_focused)
 }
-fn handle_global_key_event(app: &mut App, key_code: KeyCode) -> Option<Vec<Effect>> {
-    match key_code {
+fn handle_global_key_event(app: &mut App, key: KeyEvent) -> Option<Vec<Effect>> {
+    if key.modifiers.contains(KeyModifiers::CONTROL) && matches!(key.code, KeyCode::Char('p') | KeyCode::Char('P')) {
+        return Some(show_pre_run_step_plan(app));
+    }
+
+    match key.code {
         KeyCode::Tab => {
             app.focus.next();
             Some(Vec::new())
@@ -252,11 +355,62 @@ fn handle_global_key_event(app: &mut App, key_code: KeyCode) -> Option<Vec<Effec
     }
 }
 
+fn show_pre_run_step_plan(app: &App) -> Vec<Effect> {
+    let Some(run_state) = app.workflows.active_run_state.as_ref() else {
+        return Vec::new();
+    };
+    let run_state_ref = run_state.borrow();
+    let step_identifiers: std::collections::HashSet<&str> = run_state_ref.workflow.steps.iter().map(|step| step.id.as_str()).collect();
+
+    let rows: Vec<Value> = run_state_ref
+        .workflow
+        .steps
+        .iter()
+        .enumerate()
+        .map(|(index, step)| {
+            let missing_dependencies: Vec<&str> = step
+                .depends_on
+                .iter()
+                .map(String::as_str)
+                .filter(|dependency| !step_identifiers.contains(*dependency))
+                .collect();
+            let ready = if missing_dependencies.is_empty() {
+                "yes"
+            } else {
+                "invalid dependency"
+            };
+            let dependency_text = if step.depends_on.is_empty() {
+                "-".to_string()
+            } else {
+                step.depends_on.join(", ")
+            };
+            json!({
+                "#": index + 1,
+                "Step": step.id,
+                "Command": step.run,
+                "Ready": ready,
+                "Depends On": dependency_text,
+            })
+        })
+        .collect();
+
+    let payload = Value::Array(rows);
+    let outcome = ExecOutcome::Http {
+        status_code: 200,
+        log_entry: "Workflow execution plan".to_string(),
+        payload,
+        request_id: 0,
+    };
+    vec![Effect::ShowModal(Modal::Results(Box::new(outcome)))]
+}
+
 fn determine_input_focus(app: &App) -> InputFocusSnapshot {
     let mut snapshot = InputFocusSnapshot::default();
     if let Some(state) = app.workflows.input_view_state() {
         snapshot.list_focused = state.f_list.get();
+        snapshot.details_focused = state.f_details.get();
         snapshot.cancel_button_focused = state.f_cancel_button.get();
+        snapshot.plan_button_focused = state.f_plan_button.get();
         snapshot.run_button_focused = state.f_run_button.get();
     }
     snapshot
@@ -319,11 +473,34 @@ fn handle_cancel_button_focused_key(_app: &mut App, key_code: KeyCode) -> Vec<Ef
     }
 }
 
+fn handle_plan_button_focused_key(app: &App, key_code: KeyCode) -> Vec<Effect> {
+    match key_code {
+        KeyCode::Enter | KeyCode::Char(' ') => show_pre_run_step_plan(app),
+        _ => Vec::new(),
+    }
+}
+
 fn handle_run_button_focused_key(app: &mut App, key_code: KeyCode) -> Vec<Effect> {
     match key_code {
         KeyCode::Enter | KeyCode::Char(' ') => app.run_active_workflow(),
         _ => Vec::new(),
     }
+}
+
+fn handle_details_focused_key(app: &mut App, key_code: KeyCode) -> Vec<Effect> {
+    let Some(state) = app.workflows.input_view_state_mut() else {
+        return Vec::new();
+    };
+    match key_code {
+        KeyCode::Up => state.scroll_details_lines(-1),
+        KeyCode::Down => state.scroll_details_lines(1),
+        KeyCode::PageUp => state.scroll_details_pages(-1),
+        KeyCode::PageDown => state.scroll_details_pages(1),
+        KeyCode::Home => state.scroll_details_to_top(),
+        KeyCode::End => state.scroll_details_to_bottom(),
+        _ => {}
+    }
+    Vec::new()
 }
 
 fn render_empty(frame: &mut Frame, area: Rect, theme: &dyn Theme) {
@@ -472,8 +649,9 @@ fn get_message_style(status: &InputStatus, theme: &dyn Theme) -> Style {
     }
 }
 
-fn render_input_details(frame: &mut Frame, area: Rect, input_view_state: &WorkflowInputViewState, theme: &dyn Theme) {
-    let block = th::block(theme, Some("Workflow Details"), false).merge_borders(MergeStrategy::Exact);
+fn render_input_details(frame: &mut Frame, area: Rect, input_view_state: &mut WorkflowInputViewState, theme: &dyn Theme) {
+    let details_focused = input_view_state.f_details.is_focused();
+    let block = th::block(theme, Some("Workflow Details"), details_focused).merge_borders(MergeStrategy::Exact);
     let inner = block.inner(area);
     frame.render_widget(block, area);
 
@@ -501,8 +679,16 @@ fn render_input_details(frame: &mut Frame, area: Rect, input_view_state: &Workfl
     let error_notes = collect_error_notes(&input_view_state.input_rows);
     lines.extend(build_error_section(theme, &error_notes));
 
-    let paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
+    let mut paragraph = Paragraph::new(lines).wrap(Wrap { trim: true });
+    let line_count = paragraph.line_count(inner.width);
+    let capped_height = line_count.min(u16::MAX as usize) as u16;
+    input_view_state.update_details_viewport_height(inner.height);
+    input_view_state.update_details_content_height(capped_height);
+    paragraph = paragraph.scroll((input_view_state.details_scroll_offset(), 0));
     frame.render_widget(paragraph, inner);
+    if input_view_state.details_is_scrollable() {
+        render_details_scrollbar(frame, inner, theme, input_view_state);
+    }
 }
 
 fn find_next_action(rows: &[WorkflowInputRow]) -> Option<&str> {
@@ -615,14 +801,17 @@ fn build_error_section(theme: &dyn Theme, error_notes: &[String]) -> Vec<Line<'s
 fn render_footer(frame: &mut Frame, layout: WorkflowInputLayout, app: &App) {
     let run_enabled = app.workflows.unresolved_item_count() == 0;
     let theme = &*app.ctx.theme;
-    let (cancel_focused, run_focused) = app
+    let (cancel_focused, plan_focused, run_focused) = app
         .workflows
         .input_view_state()
-        .map(|state| (state.f_cancel_button.get(), state.f_run_button.get()))
-        .unwrap_or((false, false));
+        .map(|state| (state.f_cancel_button.get(), state.f_plan_button.get(), state.f_run_button.get()))
+        .unwrap_or((false, false, false));
 
     let cancel_options = ButtonRenderOptions::new(true, cancel_focused, cancel_focused, Borders::ALL, ButtonType::Secondary);
     th::render_button(frame, layout.cancel_button_area, "Cancel", theme, cancel_options);
+
+    let plan_options = ButtonRenderOptions::new(true, plan_focused, plan_focused, Borders::ALL, ButtonType::Secondary);
+    th::render_button(frame, layout.plan_button_area, "View Plan", theme, plan_options);
 
     let run_options = ButtonRenderOptions::new(run_enabled, run_focused, run_focused, Borders::ALL, ButtonType::Primary);
     th::render_button(frame, layout.run_button_area, "Run", theme, run_options);
@@ -639,6 +828,21 @@ fn render_footer(frame: &mut Frame, layout: WorkflowInputLayout, app: &App) {
     let mut status_layout = layout.status_line_area;
     status_layout.y += 1;
     frame.render_widget(Paragraph::new(Line::from(status_line)).wrap(Wrap { trim: true }), status_layout);
+}
+
+fn render_details_scrollbar(frame: &mut Frame, area: Rect, theme: &dyn Theme, input_view_state: &WorkflowInputViewState) {
+    let viewport_height = usize::from(input_view_state.details_viewport_height().max(1));
+    let max_scroll_offset = input_view_state
+        .details_content_height()
+        .saturating_sub(input_view_state.details_viewport_height());
+    let content_length = usize::from(max_scroll_offset.saturating_add(1));
+    let mut scrollbar_state = ScrollbarState::new(content_length)
+        .position(usize::from(input_view_state.details_scroll_offset()))
+        .viewport_content_length(viewport_height);
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .thumb_style(Style::default().fg(theme.roles().scrollbar_thumb))
+        .track_style(Style::default().fg(theme.roles().scrollbar_track));
+    frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
 }
 
 #[derive(Debug, Clone, Copy)]

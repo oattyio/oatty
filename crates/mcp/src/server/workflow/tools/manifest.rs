@@ -515,13 +515,13 @@ pub fn export_workflow(request: &WorkflowExportRequest) -> Result<Value, ErrorDa
 }
 
 pub fn import_workflow(request: &WorkflowImportRequest, command_registry: &Arc<Mutex<CommandRegistry>>) -> Result<Value, ErrorData> {
-    let input_path = resolve_project_relative_path(&request.input_path)?;
+    let input_path = resolve_absolute_input_path(&request.input_path)?;
     if !input_path.exists() {
         return Err(not_found_error(
             "WORKFLOW_IMPORT_PATH_NOT_FOUND",
             format!("input path '{}' does not exist", input_path.to_string_lossy()),
             serde_json::json!({ "input_path": request.input_path }),
-            "Provide a valid project-relative input path and retry.",
+            "Provide a valid absolute input path and retry.",
         ));
     }
 
@@ -647,6 +647,30 @@ fn resolve_project_relative_path(project_relative_path: &str) -> Result<PathBuf,
     Ok(resolved_path)
 }
 
+fn resolve_absolute_input_path(input_path: &str) -> Result<PathBuf, ErrorData> {
+    let trimmed = input_path.trim();
+    if trimmed.is_empty() {
+        return Err(invalid_params_error(
+            "WORKFLOW_PATH_INVALID",
+            "input path cannot be empty",
+            serde_json::json!({ "path": input_path }),
+            "Provide a non-empty absolute file path.",
+        ));
+    }
+
+    let absolute_path = Path::new(trimmed);
+    if !absolute_path.is_absolute() {
+        return Err(invalid_params_error(
+            "WORKFLOW_PATH_INVALID",
+            "workflow.import requires an absolute input path",
+            serde_json::json!({ "path": input_path }),
+            "Use an absolute file path (for example, /Users/me/project/workflows/my_workflow.yaml).",
+        ));
+    }
+
+    Ok(absolute_path.to_path_buf())
+}
+
 fn parse_failure_suggested_action(parse_message: &str) -> String {
     if parse_message.contains("must place command arguments under 'with'") {
         return "Move step arguments under `with` using real parameter names (do not use `flags` or `positional_args`).".to_string();
@@ -667,7 +691,10 @@ fn parse_failure_suggested_action(parse_message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use oatty_registry::CommandRegistry;
+    use indexmap::IndexSet;
+    use oatty_registry::{CommandRegistry, RegistryConfig};
+    use oatty_types::{CommandSpec, HttpCommandSpec, SchemaProperty, manifest::RegistryCatalog};
+    use std::collections::HashMap;
     use std::path::PathBuf;
     use std::sync::{Arc, Mutex};
 
@@ -733,5 +760,126 @@ steps:
         assert!(parse_failure_suggested_action("must place command arguments under 'with'").contains("under `with`"));
         assert!(parse_failure_suggested_action("workflow input 'a.default' must be an object like").contains("structured defaults"));
         assert!(parse_failure_suggested_action("unsupported interpolation syntax").contains("${{ ... }}"));
+    }
+
+    #[test]
+    fn validate_workflow_reports_provider_value_field_nested_path_violation() {
+        let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
+        let request = WorkflowValidateRequest {
+            manifest_content: r#"
+workflow: provider_value_field_check
+inputs:
+  owner_id:
+    provider: apps list
+    select:
+      value_field: id
+steps:
+  - id: list_apps
+    run: apps list
+"#
+            .to_string(),
+            format: Some("yaml".to_string()),
+        };
+
+        let error = validate_workflow(&request, &registry).expect_err("validation should fail for invalid provider value field");
+        let data = error.data.expect("error data");
+        let violations = data["violations"].as_array().expect("violations array");
+        let violation = violations
+            .iter()
+            .find(|candidate| candidate["rule"] == "provider_select_value_field_missing")
+            .expect("provider select value field violation");
+        assert_eq!(violation["path"], "$.inputs.owner_id.select.value_field");
+        assert_eq!(violation["value_field"], "id");
+        assert_eq!(violation["nested_candidates"], serde_json::json!(["owner.id"]));
+        assert!(violation["next_step"].as_str().expect("next_step text").contains("owner.id"));
+    }
+
+    fn build_provider_validation_registry() -> CommandRegistry {
+        let output_schema = provider_output_schema();
+        let command_specification = CommandSpec::new_http(
+            "apps".to_string(),
+            "list".to_string(),
+            "List apps".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/apps", Some(output_schema), None),
+            0,
+        );
+
+        let catalog = RegistryCatalog {
+            title: "Apps API".to_string(),
+            description: "Apps".to_string(),
+            vendor: Some("apps".to_string()),
+            manifest_path: String::new(),
+            import_source: None,
+            import_source_type: None,
+            headers: IndexSet::new(),
+            base_urls: vec!["https://api.example.com".to_string()],
+            base_url_index: 0,
+            manifest: None,
+            is_enabled: true,
+        };
+
+        let mut registry = CommandRegistry::default().with_commands(vec![command_specification]);
+        registry.config = RegistryConfig {
+            catalogs: Some(vec![catalog]),
+        };
+        registry
+    }
+
+    fn provider_output_schema() -> SchemaProperty {
+        let mut owner_fields = HashMap::new();
+        owner_fields.insert("id".to_string(), Box::new(schema_leaf("string")));
+
+        let mut item_fields = HashMap::new();
+        item_fields.insert(
+            "owner".to_string(),
+            Box::new(SchemaProperty {
+                r#type: "object".to_string(),
+                description: String::new(),
+                properties: Some(owner_fields),
+                required: Vec::new(),
+                items: None,
+                enum_values: Vec::new(),
+                format: None,
+                tags: Vec::new(),
+            }),
+        );
+        item_fields.insert("name".to_string(), Box::new(schema_leaf("string")));
+
+        let item_schema = SchemaProperty {
+            r#type: "object".to_string(),
+            description: String::new(),
+            properties: Some(item_fields),
+            required: Vec::new(),
+            items: None,
+            enum_values: Vec::new(),
+            format: None,
+            tags: Vec::new(),
+        };
+
+        SchemaProperty {
+            r#type: "array".to_string(),
+            description: String::new(),
+            properties: None,
+            required: Vec::new(),
+            items: Some(Box::new(item_schema)),
+            enum_values: Vec::new(),
+            format: None,
+            tags: Vec::new(),
+        }
+    }
+
+    fn schema_leaf(schema_type: &str) -> SchemaProperty {
+        SchemaProperty {
+            r#type: schema_type.to_string(),
+            description: String::new(),
+            properties: None,
+            required: Vec::new(),
+            items: None,
+            enum_values: Vec::new(),
+            format: None,
+            tags: Vec::new(),
+        }
     }
 }

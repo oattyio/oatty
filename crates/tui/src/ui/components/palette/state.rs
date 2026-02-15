@@ -943,12 +943,18 @@ impl PaletteState {
         self.suggestions.retain(|item| item.meta.as_deref() != Some("loading"));
         let loading_removed = previous_length != self.suggestions.len();
 
-        self.list_state.select_previous();
         if self.suggestions.is_empty() {
             self.rendered_suggestions.clear();
             self.is_suggestions_open = false;
             self.ghost_text = None;
+            self.list_state.select(None);
         } else if loading_removed {
+            let selected_index = self
+                .list_state
+                .selected()
+                .map(|index| index.min(self.suggestions.len().saturating_sub(1)))
+                .or(Some(0));
+            self.list_state.select(selected_index);
             self.refresh_rendered_suggestions(theme);
             self.apply_ghost_text();
         }

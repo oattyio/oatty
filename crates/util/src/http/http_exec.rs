@@ -80,12 +80,11 @@ pub async fn exec_remote_from_shell_command(
         Ok((status, _, text)) => {
             // Handle common error status codes
             // by returning an ExecOutcome with an error message
-            // and a null result JSON object
             if !status.is_success() {
                 return Ok(ExecOutcome::Http {
                     status_code: status.as_u16(),
                     log_entry: format!("HTTP {}: {}", status.as_u16(), text),
-                    payload: Value::Null,
+                    payload: serde_json::to_value(&text).unwrap_or(Value::Null),
                     request_id,
                 });
             }

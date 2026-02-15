@@ -46,6 +46,7 @@ pub struct RunViewLayout {
     container_area: Rect,
     header_area: Rect,
     steps_area: Rect,
+    steps_row_count: usize,
     cancel_button_area: Rect,
     pause_button_area: Rect,
     view_details_button_area: Rect,
@@ -63,6 +64,7 @@ impl From<Vec<Rect>> for RunViewLayout {
             container_area: areas[0],
             header_area: areas[1],
             steps_area: areas[2],
+            steps_row_count: 0,
             cancel_button_area: areas[3],
             pause_button_area: areas[4],
             status_area: areas[5],
@@ -147,11 +149,16 @@ impl Component for RunViewComponent {
             render_empty(frame, inner, theme);
             return;
         };
+        if run_state.steps_table.table_state.selected().is_none() && run_state.steps_table.has_rows() {
+            run_state.steps_table.table_state.select(Some(0));
+        }
 
         render_header(frame, layout.header_area, theme, run_state);
         render_steps_table(frame, layout.steps_area, theme, run_state, &mut self.steps_view);
         self.render_footer(frame, &layout, theme, run_state);
 
+        let mut layout = layout;
+        layout.steps_row_count = run_state.steps_table.num_rows();
         self.layout_state = layout;
     }
 
@@ -193,7 +200,7 @@ impl Component for RunViewComponent {
         let main_regions = Layout::vertical([
             Constraint::Length(3), // header
             Constraint::Min(6),    // body
-            Constraint::Length(3), // footer
+            Constraint::Length(5), // footer (3 rows for bordered buttons + block borders)
         ])
         .spacing(Spacing::Overlap(1))
         .split(area);
@@ -203,7 +210,7 @@ impl Component for RunViewComponent {
             Constraint::Length(12), // cancel button
             Constraint::Length(12), // pause button
             Constraint::Min(0),     // status area
-            Constraint::Length(12), // view details button
+            Constraint::Length(14), // view details button
             Constraint::Length(12), // Done button
         ])
         .split(footer_block.inner(main_regions[2]));
@@ -325,8 +332,12 @@ impl RunViewComponent {
         match target {
             ActionRole::StepsTable => {
                 let idx = self.hit_test_table(pos, run_state.steps_table.table_state.offset());
+                let already_selected = run_state.steps_table.table_state.selected();
                 run_state.steps_table.table_state.select(idx);
                 app.focus.focus(&run_state.steps_table.focus());
+                if idx.is_some() && idx == already_selected {
+                    effects.extend(self.show_step_output(run_state));
+                }
             }
             ActionRole::CancelButton => {
                 app.focus.focus(&run_state.cancel_button_focus);
@@ -386,7 +397,7 @@ impl RunViewComponent {
         }
         let table_area = self.layout_state.steps_area;
         let index = pos.y.saturating_sub(table_area.y + 2) as usize + offset; // +2 for the header row and block border
-        Some(index)
+        (index < self.layout_state.steps_row_count).then_some(index)
     }
 
     fn render_footer(&self, frame: &mut Frame, layout: &RunViewLayout, theme: &dyn Theme, run_state: &RunViewState) {

@@ -1,25 +1,22 @@
 use crate::ui::components::common::TextInputState;
 use crate::ui::components::common::manual_entry_modal::state::ManualEntryState;
 use crate::ui::components::results::ResultsTableState;
-use crate::ui::components::workflows::collector::{CollectorViewState, SelectorStatus, WorkflowSelectorFieldMetadata};
+use crate::ui::components::workflows::collector::{CollectorApplyTarget, CollectorSelectionSource, CollectorViewState, SelectorStatus};
 use crate::ui::components::workflows::input::WorkflowInputViewState;
 use crate::ui::components::workflows::list::WorkflowListState;
 use crate::ui::components::workflows::run::{RunViewState, StepFinishedData, WorkflowRunControlHandle};
 use crate::ui::theme::Theme;
 use anyhow::Result;
-use indexmap::IndexMap;
 use oatty_engine::{ProviderBindingOutcome, WorkflowRunState};
 use oatty_registry::CommandRegistry;
-use oatty_types::{
-    command::SchemaProperty,
-    workflow::{
-        RuntimeWorkflow, WorkflowInputDefinition, WorkflowRunControl, WorkflowRunEvent, WorkflowRunStatus, WorkflowRunStepStatus,
-        WorkflowValueProvider,
-    },
+use oatty_types::workflow::{
+    RuntimeWorkflow, WorkflowInputDefinition, WorkflowRunControl, WorkflowRunEvent, WorkflowRunStatus, WorkflowRunStepStatus,
+    WorkflowValueProvider,
 };
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
+use serde_json::Value;
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -472,14 +469,13 @@ impl WorkflowState {
     }
 
     /// Initializes the provider-backed selector for the currently active input.
-    pub fn open_selector_for_active_input(&mut self, registry: &Arc<Mutex<CommandRegistry>>) -> Option<bool> {
+    pub fn open_selector_for_active_input(&mut self, _registry: &Arc<Mutex<CommandRegistry>>) -> Option<bool> {
         let run_state = self.active_run_state.as_ref()?.borrow();
         let view = self.input_view_state()?;
         let idx = view.input_list_state.selected()?;
         let (name, def) = run_state.workflow.inputs.get_index(idx)?;
 
         let provider_id = provider_identifier(def)?;
-        let field_metadata = resolve_selector_field_metadata(registry, &provider_id);
 
         // Collect resolved provider args from the binding outcomes.
         let mut args = serde_json::Map::new();
@@ -507,8 +503,11 @@ impl WorkflowState {
             original_items: None,
             filter: TextInputState::new(),
             pending_cache_key: None,
-            field_metadata,
+            apply_target: CollectorApplyTarget::WorkflowInput,
             staged_selection: None,
+            manual_override: TextInputState::new(),
+            selection_source: CollectorSelectionSource::Table,
+            pending_manual_file_pick: false,
             ..Default::default()
         });
 
@@ -524,78 +523,37 @@ impl WorkflowState {
     pub fn collector_state_mut(&mut self) -> Option<&mut CollectorViewState<'static>> {
         self.collector.as_mut()
     }
-}
 
-fn resolve_selector_field_metadata(
-    registry: &Arc<Mutex<CommandRegistry>>,
-    provider_id: &str,
-) -> IndexMap<String, WorkflowSelectorFieldMetadata> {
-    let Some((group, name)) = split_provider_identifier(provider_id) else {
-        return IndexMap::new();
-    };
+    /// Initializes the provider selector for command-palette value disambiguation.
+    pub fn open_selector_for_palette_input(
+        &mut self,
+        _registry: &Arc<Mutex<CommandRegistry>>,
+        provider_id: String,
+        resolved_args: serde_json::Map<String, Value>,
+        positional: bool,
+    ) {
+        let table: ResultsTableState<'static> = Default::default();
 
-    let Ok(lock) = registry.lock() else {
-        return IndexMap::new();
-    };
-    let Ok(spec) = lock.find_by_group_and_cmd_ref(&group, &name) else {
-        return IndexMap::new();
-    };
-
-    spec.http()
-        .and_then(|http| http.output_schema.as_ref())
-        .map(build_field_metadata_from_schema)
-        .unwrap_or_default()
-}
-
-fn split_provider_identifier(provider_id: &str) -> Option<(String, String)> {
-    let (group, name) = provider_id.split_once(char::is_whitespace)?;
-    let group = group.trim();
-    let name = name.trim();
-    if group.is_empty() || name.is_empty() {
-        return None;
+        self.collector = Some(CollectorViewState {
+            provider_id,
+            resolved_args,
+            table,
+            value_field: None,
+            display_field: None,
+            on_error: None,
+            status: SelectorStatus::Loading,
+            error_message: None,
+            original_items: None,
+            pending_cache_key: None,
+            apply_target: CollectorApplyTarget::PaletteInput { positional },
+            filter: TextInputState::new(),
+            staged_selection: None,
+            manual_override: TextInputState::new(),
+            selection_source: CollectorSelectionSource::Table,
+            pending_manual_file_pick: false,
+            ..Default::default()
+        });
     }
-    Some((group.to_string(), name.to_string()))
-}
-
-fn build_field_metadata_from_schema(schema: &SchemaProperty) -> IndexMap<String, WorkflowSelectorFieldMetadata> {
-    match schema.r#type.as_str() {
-        "object" => collect_object_field_metadata(schema),
-        "array" => schema.items.as_deref().map(build_field_metadata_from_schema).unwrap_or_default(),
-        _ => IndexMap::new(),
-    }
-}
-
-fn collect_object_field_metadata(schema: &SchemaProperty) -> IndexMap<String, WorkflowSelectorFieldMetadata> {
-    let mut metadata = IndexMap::new();
-    let Some(properties) = &schema.properties else {
-        return metadata;
-    };
-
-    let mut keys: Vec<_> = properties.keys().cloned().collect();
-    keys.sort();
-
-    for key in keys {
-        let Some(property) = properties.get(&key) else {
-            continue;
-        };
-        let property = property.as_ref();
-        metadata.insert(
-            key.clone(),
-            WorkflowSelectorFieldMetadata {
-                json_type: sanitize_schema_type(&property.r#type),
-                tags: property.tags.clone(),
-                enum_values: property.enum_values.clone(),
-                required: schema.required.iter().any(|required| required == &key),
-            },
-        );
-    }
-
-    metadata
-}
-
-fn sanitize_schema_type(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() { None } else { Some(trimmed.to_string()) }
 }
 
 #[cfg(test)]

@@ -8,7 +8,12 @@ use std::hash::{DefaultHasher, Hasher};
 use std::vec;
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use oatty_types::{Effect, ExecOutcome, ItemKind, MessageType, Modal, Msg};
+use oatty_registry::CommandSpec;
+use oatty_types::{
+    Effect, ExecOutcome, ItemKind, MessageType, Modal, Msg, ProviderSelectorActionPayload, ValueProvider as ProviderBinding,
+    decode_provider_selector_action,
+};
+use oatty_util::lex_shell_like;
 use rat_focus::{FocusFlag, HasFocus};
 use ratatui::{
     Frame,
@@ -17,10 +22,12 @@ use ratatui::{
     text::{Line, Span},
     widgets::*,
 };
+use serde_json::{Map as JsonMap, Value as JsonValue};
 
 use crate::app::App;
 use crate::ui::components::common::text_input::cursor_index_for_column;
 use crate::ui::components::common::{ConfirmationModalButton, ConfirmationModalOpts};
+use crate::ui::components::palette::suggestion_engine::{build_inputs_map_for_flag, build_inputs_map_for_positional};
 use crate::ui::theme::theme_helpers::{ButtonType, create_list_with_highlight};
 use crate::ui::{
     components::component::Component,
@@ -325,6 +332,9 @@ impl PaletteComponent {
             return Vec::new();
         };
         let insert_text = item.insert_text.trim().to_string();
+        if let Some(action_payload) = decode_provider_selector_action(&insert_text) {
+            return self.open_provider_selector_from_palette_action(app, &action_payload);
+        }
 
         match item.kind {
             ItemKind::Command | ItemKind::MCP => {
@@ -347,6 +357,45 @@ impl PaletteComponent {
         app.palette.set_is_suggestions_open(false);
 
         Vec::new()
+    }
+
+    fn open_provider_selector_from_palette_action(&self, app: &mut App, action_payload: &ProviderSelectorActionPayload) -> Vec<Effect> {
+        let command_spec = match resolve_palette_command_spec(app, &action_payload.command_key) {
+            Some(command_spec) => command_spec,
+            None => {
+                app.palette
+                    .apply_error("Unable to resolve command context for provider selector.".to_string());
+                return Vec::new();
+            }
+        };
+
+        let tokens = lex_shell_like(app.palette.input());
+        let remaining_parts = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
+        let (provider_identifier, resolved_args) = match resolve_palette_provider_binding(
+            &command_spec,
+            action_payload.field.as_str(),
+            action_payload.positional,
+            remaining_parts,
+        ) {
+            Ok(binding) => binding,
+            Err(error) => {
+                app.palette.apply_error(error);
+                return Vec::new();
+            }
+        };
+
+        app.workflows.open_selector_for_palette_input(
+            &app.ctx.command_registry,
+            provider_identifier,
+            resolved_args,
+            action_payload.positional,
+        );
+        app.palette.set_is_suggestions_open(false);
+        app.palette.reduce_clear_suggestions();
+
+        let mut effects = app.prepare_selector_fetch();
+        effects.push(Effect::ShowModal(Modal::WorkflowCollector));
+        effects
     }
 
     /// Handles the Escape key to clear input and close suggestions.
@@ -411,6 +460,61 @@ impl PaletteComponent {
         }
         None
     }
+}
+
+fn resolve_palette_command_spec(app: &App, command_key: &str) -> Option<CommandSpec> {
+    let (group, name) = command_key.split_once(char::is_whitespace)?;
+    let lock = app.ctx.command_registry.lock().ok()?;
+    lock.find_by_group_and_cmd_cloned(group.trim(), name.trim()).ok()
+}
+
+fn resolve_palette_provider_binding(
+    command_spec: &CommandSpec,
+    field: &str,
+    positional: bool,
+    remaining_parts: &[String],
+) -> Result<(String, JsonMap<String, JsonValue>), String> {
+    let inputs_map = if positional {
+        let argument_index = command_spec
+            .positional_args
+            .iter()
+            .position(|argument| argument.name == field)
+            .ok_or_else(|| format!("Unable to locate positional field '{field}' for provider selector."))?;
+        build_inputs_map_for_positional(command_spec, argument_index, remaining_parts)
+    } else {
+        build_inputs_map_for_flag(command_spec, remaining_parts, field)
+    };
+
+    let provider_binding = if positional {
+        command_spec
+            .positional_args
+            .iter()
+            .find(|argument| argument.name == field)
+            .and_then(|argument| argument.provider.as_ref())
+    } else {
+        command_spec
+            .flags
+            .iter()
+            .find(|flag| flag.name == field)
+            .and_then(|flag| flag.provider.as_ref())
+    };
+
+    let Some(ProviderBinding::Command { command_id, binds }) = provider_binding else {
+        return Err(format!("No provider binding found for field '{field}'."));
+    };
+
+    let mut resolved_args = JsonMap::new();
+    for bind in binds {
+        let Some(value) = inputs_map.get(&bind.from) else {
+            return Err(format!(
+                "Missing bound input '{}' required by provider argument '{}'.",
+                bind.from, bind.provider_key
+            ));
+        };
+        resolved_args.insert(bind.provider_key.clone(), JsonValue::String(value.clone()));
+    }
+
+    Ok((command_id.clone(), resolved_args))
 }
 
 impl Component for PaletteComponent {
@@ -616,8 +720,7 @@ impl Component for PaletteComponent {
         }
 
         // Render suggestions popup
-        let should_show_suggestions =
-            app.palette.error_message().is_none() && app.palette.is_suggestions_open() && !app.palette.suggestions().is_empty();
+        let should_show_suggestions = app.palette.is_suggestions_open() && !app.palette.suggestions().is_empty();
 
         if should_show_suggestions {
             app.palette.update_suggestions_view_width(suggestions_area.width, theme);
