@@ -11,6 +11,15 @@ Oatty. Each claim includes:
 
 No hype. No hand-waving.
 
+## Evidence Anchors (Implementation)
+
+- Core command discovery + MCP search metadata: `/Users/justinwilaby/Development/next-gen-cli/specs/COMMAND_SEARCH.md`, `/Users/justinwilaby/Development/next-gen-cli/specs/COMMANDS.md`, `/Users/justinwilaby/Development/next-gen-cli/crates/mcp/src/server/core.rs`
+- Workflow model + validation semantics: `/Users/justinwilaby/Development/next-gen-cli/specs/WORKFLOWS.md`, `/Users/justinwilaby/Development/next-gen-cli/specs/MCP_WORKFLOWS.md`, `/Users/justinwilaby/Development/next-gen-cli/crates/engine/src/workflow/document.rs`
+- Workflow runtime + controls: `/Users/justinwilaby/Development/next-gen-cli/crates/engine/src/workflow/runner.rs`, `/Users/justinwilaby/Development/next-gen-cli/specs/WORKFLOW_TUI.md`
+- Provider-backed resolution behavior: `/Users/justinwilaby/Development/next-gen-cli/specs/VALUE_PROVIDERS.md`, `/Users/justinwilaby/Development/next-gen-cli/crates/engine/src/workflow/state.rs`
+- Structured workflow error contract: `/Users/justinwilaby/Development/next-gen-cli/crates/mcp/src/server/workflow/errors.rs`, `/Users/justinwilaby/Development/next-gen-cli/specs/MCP_WORKFLOWS.md`
+- Known gaps and tradeoffs: `/Users/justinwilaby/Development/next-gen-cli/specs/WORKFLOW_GAPS.md`
+
 ------------------------------------------------------------------------
 
 # 1. Explicit Dependency Enforcement (Not Implicit Guesswork)

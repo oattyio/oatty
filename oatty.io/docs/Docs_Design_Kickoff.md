@@ -22,6 +22,18 @@ This artifact defines the initial design plan for `oatty.io` documentation as an
 3. Preserve a dual path:
    - Learn path (guided progression).
    - Reference path (fast lookup).
+4. Keep TUI-first framing:
+   - Document TUI interaction paths before CLI fallback paths.
+   - Position CLI primarily as automation and non-interactive fallback.
+5. Enforce source-first authoring:
+   - Before drafting each page, audit relevant source files to confirm shipped behavior.
+   - Track foundational vs advanced findings in `/Users/justinwilaby/Development/next-gen-cli/oatty.io/docs/Docs_Source_Audit_TUI_First.md`.
+6. Plan screenshots before writing polish copy:
+   - Reserve screenshot affordances/capture targets for every page section.
+7. Apply voice and tone rules from `Voice_and_Tone_Guidelines.md` on every page update.
+   - Use action-first steps.
+   - Add expected-result and failure-recovery guidance for high-risk actions.
+   - Keep TUI path primary and CLI fallback explicit.
 
 ## MVP Information Architecture
 1. Quick Start
@@ -80,6 +92,7 @@ This artifact defines the initial design plan for `oatty.io` documentation as an
    - Linked terms where useful
 3. Apply this pattern to Quick Start, Learn, Guides, and Reference pages.
 4. Include a short "If this fails" block for high-risk tasks with direct recovery links.
+5. Include an "Expected result" block after each major action step.
 
 ## "What You'll Learn" Card Component Spec
 1. Required fields:
@@ -155,6 +168,20 @@ Completion definition (phase 1):
 1. Quick Start completion = telemetry automatically records all required step-complete events for Quick Start.
 2. Learn module completion = telemetry records module-end view plus next-step CTA view/click.
 
+## Evidence Backlog (Must-Track)
+1. Baseline capture for key adoption metrics:
+   - time-to-first-command
+   - time-to-first-workflow
+   - first-session drop-off points by page/step
+2. Comparative proof artifacts:
+   - maintain reproducible benchmark scenarios for shell, CI, and MCP-only alternatives.
+   - document assumptions and task boundaries for each comparison.
+3. Metric-to-event mapping worksheet:
+   - each PRD outcome metric must map to event(s), dashboard tile(s), and owner.
+4. Claim readiness gate:
+   - mark each major competitive claim as `assumption`, `directional`, or `evidence-backed`.
+   - only publish “evidence-backed” positioning when supporting telemetry/artifacts exist.
+
 ## Docs Quality Gates
 1. Add a docs lint/check rule that fails when pages are missing the "What you'll learn" card.
 2. Add a style check for 3-5 bullets in the card.
@@ -171,6 +198,7 @@ Completion definition (phase 1):
 3. Confirm search strategy for phase 1.
 4. Assign owner per phase-1 page.
 5. Start with Quick Start + first two Learn modules.
+6. Validate page language against `Voice_and_Tone_Guidelines.md` before merge.
 
 ## Content Ownership (RACI)
 1. Content authoring:
