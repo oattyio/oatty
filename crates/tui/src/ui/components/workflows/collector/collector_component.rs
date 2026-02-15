@@ -169,7 +169,17 @@ impl Component for WorkflowCollectorComponent {
         if self.layout.table_area.contains(position) {
             app.focus.focus(&collector.f_table);
             if let Some(index) = self.hit_test_results_table(position, offset, collector.table.num_rows()) {
-                collector.table.table_state.select(Some(index));
+                if collector.value_field.is_some() {
+                    collector.table.table_state.select(Some(index));
+                    collector.table.table_state.select_column(None);
+                } else {
+                    let relative_x = position.x.saturating_sub(self.layout.table_area.x);
+                    let selected_column = collector
+                        .table
+                        .hit_test_column(relative_x, self.layout.table_area.width)
+                        .unwrap_or_else(|| collector.table.table_state.selected_column().unwrap_or(0));
+                    collector.table.select_cell(index, selected_column, self.layout.table_area.width);
+                }
                 collector.sync_stage_with_selection(Some(index));
                 let _ = self.stage_current_row(collector);
             }
@@ -345,6 +355,22 @@ impl WorkflowCollectorComponent {
             KeyCode::F(2) => {
                 app.workflows.open_manual_for_active_input();
             }
+            KeyCode::Left => {
+                if collector.value_field.is_none() {
+                    collector.table.move_selected_column_left(self.layout.table_area.width);
+                    if let Err(message) = self.stage_current_row(collector) {
+                        collector.error_message = Some(message);
+                    }
+                }
+            }
+            KeyCode::Right => {
+                if collector.value_field.is_none() {
+                    collector.table.move_selected_column_right(self.layout.table_area.width);
+                    if let Err(message) = self.stage_current_row(collector) {
+                        collector.error_message = Some(message);
+                    }
+                }
+            }
             KeyCode::Up => table_state.select_previous(),
             KeyCode::Down => {
                 if selected < row_len {
@@ -426,7 +452,11 @@ impl WorkflowCollectorComponent {
             return false;
         };
         if let Some((staged, row)) = collector.staged_selection().zip(collector.table.selected_data(idx)) {
-            staged.row == *row
+            if collector.value_field.is_some() {
+                staged.row == *row
+            } else {
+                staged.row == *row && staged.source_field == self.current_selected_source_field(collector)
+            }
         } else {
             false
         }
@@ -509,6 +539,20 @@ impl WorkflowCollectorComponent {
                 _ => None,
             };
         }
+
+        if let Some(field_name) = self.current_selected_source_field(collector)
+            && let JsonValue::Object(map) = row
+        {
+            let value = map.get(field_name.as_str())?;
+            return match value {
+                JsonValue::String(text) => Some((JsonValue::String(text.clone()), Some(field_name))),
+                JsonValue::Number(number) => Some((JsonValue::Number(number.clone()), Some(field_name))),
+                JsonValue::Bool(boolean) => Some((JsonValue::Bool(*boolean), Some(field_name))),
+                JsonValue::Null => Some((JsonValue::Null, Some(field_name))),
+                _ => None,
+            };
+        }
+
         match row {
             JsonValue::Object(map) => {
                 for (key, value) in map {
@@ -528,6 +572,10 @@ impl WorkflowCollectorComponent {
             JsonValue::Null => Some((JsonValue::Null, None)),
             _ => None,
         }
+    }
+
+    fn current_selected_source_field(&self, collector: &CollectorViewState<'_>) -> Option<String> {
+        collector.table.selected_column_key()
     }
 
     fn render_block(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) -> Rect {
@@ -553,6 +601,12 @@ impl WorkflowCollectorComponent {
         let selected_idx = collector.table.table_state.selected();
         if selected_idx.is_none() && collector.table.has_rows() {
             collector.table.table_state.select(Some(0));
+        }
+        if collector.value_field.is_none() {
+            collector.table.ensure_column_selected();
+            collector.table.ensure_selected_column_visible(layout.table_area.width);
+        } else {
+            collector.table.table_state.select_column(None);
         }
         collector.sync_stage_with_selection(selected_idx);
 
@@ -593,6 +647,7 @@ impl WorkflowCollectorComponent {
 
         let mut layout = layout;
         layout.filter_inner_area = filter_inner_area;
+        layout.table_area = results_inner;
         self.layout = layout;
     }
 
@@ -778,19 +833,25 @@ impl WorkflowCollectorComponent {
         }
 
         if collector.f_table.get() {
-            return build_hint_spans(
-                theme,
-                &[
-                    ("Esc", " Cancel  "),
-                    ("↑/↓", " Move  "),
-                    ("Space", " Stage selection  "),
-                    ("Enter", " Apply/Stage  "),
-                    ("R", " Refresh  "),
-                    ("F2", " Manual entry  "),
-                    ("Tab", " Next focus  "),
-                    ("Shift+Tab", " Previous focus"),
-                ],
-            );
+            let cell_hint = if collector.value_field.is_none() {
+                vec![("←/→", " Cell  ")]
+            } else {
+                Vec::new()
+            };
+            let mut hint_items = vec![
+                ("Esc", " Cancel  "),
+                ("↑/↓", " Row  "),
+                ("Space", " Stage selection  "),
+                ("Enter", " Apply/Stage  "),
+                ("R", " Refresh  "),
+                ("F2", " Manual entry  "),
+                ("Tab", " Next focus  "),
+                ("Shift+Tab", " Previous focus"),
+            ];
+            if !cell_hint.is_empty() {
+                hint_items.splice(2..2, cell_hint);
+            }
+            return build_hint_spans(theme, &hint_items);
         }
 
         if collector.f_cancel.get() || collector.f_apply.get() {

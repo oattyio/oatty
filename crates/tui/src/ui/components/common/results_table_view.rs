@@ -99,6 +99,16 @@ impl ResultsTableView {
             } else {
                 Style::default()
             })
+            .column_highlight_style(if focused {
+                theme.selection_style().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            })
+            .cell_highlight_style(if focused {
+                theme.selection_style().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+            } else {
+                Style::default()
+            })
             .style(th::panel_style(theme));
 
         let mut cloned_state = state.table_state;

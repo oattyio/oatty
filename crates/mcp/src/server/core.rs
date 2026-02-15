@@ -6,8 +6,8 @@ use crate::server::http::McpHttpLogEntry;
 use crate::server::log_payload::{build_log_payload, build_parsed_response_payload};
 use crate::server::schemas::{
     CatalogImportOpenApiRequest, CatalogPreviewImportRequest, CatalogRemoveRequest, CatalogSetEnabledRequest,
-    CatalogValidateOpenApiRequest, CommandDetailRequest, CommandSummariesRequest, OutputSchemaDetail, RunCommandRequestParam,
-    SearchInputsDetail, SearchRequestParam,
+    CatalogValidateOpenApiRequest, CommandDetailRequest, CommandSummariesRequest, OutputSchemaDetail, ProviderMetadataDetail,
+    RunCommandRequestParam, SearchInputsDetail, SearchRequestParam,
 };
 use crate::server::workflow::{
     errors::{conflict_error, not_found_error},
@@ -194,12 +194,13 @@ impl OattyMcpCore {
 
     #[tool(
         annotations(read_only_hint = true),
-        description = "Get command details by canonical_id. Defaults to compact output fields (`output_fields`). Set `output_schema_detail=full` only when full nested output schema is required."
+        description = "Get command details by canonical_id. Defaults to compact output fields (`output_fields`) and no provider metadata. Set `output_schema_detail=full` only when full nested output schema is required. Set `include_providers=required_only|full` to include provider-backed input hints."
     )]
     async fn get_command(&self, param: Parameters<CommandDetailRequest>) -> Result<CallToolResult, ErrorData> {
         let command_spec = resolve_command_spec(&self.services.command_registry, &param.0.canonical_id)?;
         let output_schema_detail = param.0.output_schema_detail.unwrap_or_default();
-        let structured = build_command_summary(&command_spec, output_schema_detail);
+        let provider_metadata_detail = param.0.include_providers.unwrap_or_default();
+        let structured = build_command_summary(&command_spec, output_schema_detail, provider_metadata_detail);
         let response = CallToolResult::structured(structured);
         self.emit_log(
             "get_command",
@@ -809,7 +810,7 @@ impl ServerHandler for OattyMcpCore {
                 ..Default::default()
             },
             instructions: Some(
-                "LLM-ONLY SERVER INSTRUCTIONS.\nGENERAL FLOW:\n1) Call search_commands.\n2) Select canonical_id from results.\n3) Call get_command for exact single-command schema.\n4) Route by execution_type/http_method.\nEXAMPLES:\n- User asks: 'list vercel projects' -> search_commands(query='list vercel projects', vendor='vercel', include_inputs='none') -> get_command(canonical_id) -> run_safe_command.\n- User asks: 'create render web service' -> search_commands(query='create render web service', vendor='render', include_inputs='required_only') -> get_command(canonical_id) -> run_command.\nCATALOG ONBOARDING:\n- If search_commands returns no relevant commands or required vendors are missing, validate/import catalogs first.\n- Use catalog.validate_openapi -> catalog.preview_import before catalog.import_openapi.\n- catalog.import_openapi mutates user configuration: request user confirmation before calling it.\n- If target APIs require auth, instruct user to configure catalog headers (for example Authorization) before running HTTP commands.\nROUTING:\n- http + GET => run_safe_command\n- http + POST|PUT|PATCH => run_command\n- http + DELETE => run_destructive_command\n- mcp + read-only => run_safe_command\n- mcp + non-destructive => run_command\n- mcp + destructive => unsupported\nSEARCH OPTIMIZATION:\n- Use search_commands limit (for example 5-10) to reduce token usage.\n- Use include_inputs=none for initial discovery.\n- Use include_inputs=required_only for low-token execution planning.\n- Use include_inputs=full only when complete flags/args and output_schema detail is required.\n- Canonical query form `<group> <command>` returns a single direct-hit result when found.\n- Do not call get_command_summaries_by_catalog for normal authoring; use it only for deliberate large batch inspection.\n- Use at most one include_inputs=full search per vendor/intent; then switch to get_command.\nDECISION RULES:\n- If required commands are not found after two focused searches, stop searching and switch to catalog.validate_openapi -> catalog.preview_import -> catalog.import_openapi.\n- Treat \"only unrelated catalogs found\" as a hard stop for direct workflow authoring until missing catalogs are imported.\n- After selecting candidate canonical_ids, stop fuzzy searching and switch to get_command for deterministic inspection.\n- Prefer the intended authoring order over hand-written fallback guessing.\nAUTHORING PRECHECK:\n- Confirm required command catalogs exist and are enabled.\n- Confirm required HTTP commands are discoverable.\n- Confirm provider-backed inputs are used for enumerable identifiers/list selections when provider contracts exist.\n- If any precheck fails, import missing catalogs or correct input/provider wiring before drafting more steps.\nARGUMENTS:\n- Prefer get_command for exact single-command args/flags.\n- Build positional_args in declared order.\n- Build named_flags as [name,value]; values may be JSON scalars, arrays, or objects; boolean flags use presence semantics.\nWORKFLOW AUTHORING FLOW:\n- Workflow steps execute HTTP-backed commands only.\n- Do not use MCP/plugin commands as workflow steps.\n- Use search_commands with vendor filters and prefer execution_type=http when building workflows.\n- Use search_commands to discover valid step `run` command IDs (`<group> <command>`, for example `apps apps:list`).\n- Step arguments belong under `with` using real command parameter names.\n- Use `if`/`when` for conditions (not `condition`).\n- Input defaults must be structured objects (`default: { from: literal|env|history|workflow_output, value: ... }`).\n- Provider-first rule: use providers for enumerable identifiers/list selections (for example owner_id, project_id, service_id, domain).\n- Hybrid rule: keep manual inputs for transformation-heavy fields requiring human mapping.\n- For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata to guide users in the collector modal.\n- Use output_fields/output_schema to map step outputs into downstream provider_args and step inputs.\n- Use summary-first payloads by default; request detailed fields only when needed.\n- Follow this sequence: search_commands -> get_command -> workflow.validate (minimal) -> expand manifest -> workflow.validate -> workflow.save -> workflow.resolve_inputs -> workflow.run.".to_string()
+                "LLM-ONLY SERVER INSTRUCTIONS.\nGENERAL FLOW:\n1) Call search_commands.\n2) Select canonical_id from results.\n3) Call get_command for exact single-command schema.\n4) Route by execution_type/http_method.\nEXAMPLES:\n- User asks: 'list vercel projects' -> search_commands(query='list vercel projects', vendor='vercel', include_inputs='none') -> get_command(canonical_id) -> run_safe_command.\n- User asks: 'create render web service' -> search_commands(query='create render web service', vendor='render', include_inputs='required_only') -> get_command(canonical_id) -> run_command.\nCATALOG ONBOARDING:\n- If search_commands returns no relevant commands or required vendors are missing, validate/import catalogs first.\n- Use catalog.validate_openapi -> catalog.preview_import before catalog.import_openapi.\n- catalog.import_openapi mutates user configuration: request user confirmation before calling it.\n- If target APIs require auth, instruct user to configure catalog headers (for example Authorization) before running HTTP commands.\nROUTING:\n- http + GET => run_safe_command\n- http + POST|PUT|PATCH => run_command\n- http + DELETE => run_destructive_command\n- mcp + read-only => run_safe_command\n- mcp + non-destructive => run_command\n- mcp + destructive => unsupported\nSEARCH OPTIMIZATION:\n- Use search_commands limit (for example 5-10) to reduce token usage.\n- Use include_inputs=none for initial discovery.\n- Use include_inputs=required_only for low-token execution planning.\n- Use include_inputs=full only when complete flags/args and output_schema detail is required.\n- Canonical query form `<group> <command>` returns a single direct-hit result when found.\n- Do not call get_command_summaries_by_catalog for normal authoring; use it only for deliberate large batch inspection.\n- Use at most one include_inputs=full search per vendor/intent; then switch to get_command.\nDECISION RULES:\n- If required commands are not found after two focused searches, stop searching and switch to catalog.validate_openapi -> catalog.preview_import -> catalog.import_openapi.\n- Treat \"only unrelated catalogs found\" as a hard stop for direct workflow authoring until missing catalogs are imported.\n- After selecting candidate canonical_ids, stop fuzzy searching and switch to get_command for deterministic inspection.\n- Prefer the intended authoring order over hand-written fallback guessing.\nAUTHORING PRECHECK:\n- Confirm required command catalogs exist and are enabled.\n- Confirm required HTTP commands are discoverable.\n- Confirm provider-backed inputs are used for enumerable identifiers/list selections when provider contracts exist.\n- If any precheck fails, import missing catalogs or correct input/provider wiring before drafting more steps.\nARGUMENTS:\n- Prefer get_command for exact single-command args/flags.\n- For provider-backed workflow inputs, call get_command with include_providers=required_only (or full when binds are needed).\n- Build positional_args in declared order.\n- Build named_flags as [name,value]; values may be JSON scalars, arrays, or objects; boolean flags use presence semantics.\nWORKFLOW AUTHORING FLOW:\n- Workflow steps execute HTTP-backed commands only.\n- Do not use MCP/plugin commands as workflow steps.\n- Use search_commands with vendor filters and prefer execution_type=http when building workflows.\n- Use search_commands to discover valid step `run` command IDs (`<group> <command>`, for example `apps apps:list`).\n- Step arguments belong under `with` using real command parameter names.\n- Use `if`/`when` for conditions (not `condition`).\n- Input defaults must be structured objects (`default: { from: literal|env|history|workflow_output, value: ... }`).\n- Provider-first rule: use providers for enumerable identifiers/list selections (for example owner_id, project_id, service_id, domain).\n- Hybrid rule: keep manual inputs for transformation-heavy fields requiring human mapping.\n- For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata to guide users in the collector modal.\n- Use output_fields/output_schema to map step outputs into downstream provider_args and step inputs.\n- Use summary-first payloads by default; request detailed fields only when needed.\n- Follow this sequence: search_commands -> get_command -> workflow.validate (minimal) -> expand manifest -> workflow.validate -> workflow.save -> workflow.resolve_inputs -> workflow.run.".to_string()
             ),
         }
     }
@@ -999,7 +1000,7 @@ fn list_command_summaries_by_catalog(registry: &Arc<Mutex<CommandRegistry>>, cat
         .commands
         .iter()
         .filter(|command| command.catalog_identifier == catalog_index)
-        .map(|command| build_command_summary(command, OutputSchemaDetail::Paths))
+        .map(|command| build_command_summary(command, OutputSchemaDetail::Paths, ProviderMetadataDetail::None))
         .collect();
     Ok(summaries)
 }
@@ -1028,7 +1029,13 @@ fn search_results_with_inputs(
                 .iter()
                 .find(|command| command.canonical_id() == result.canonical_id)
             {
-                append_command_inputs_metadata(&mut entry_object, command, inputs_detail, OutputSchemaDetail::Paths);
+                append_command_inputs_metadata(
+                    &mut entry_object,
+                    command,
+                    inputs_detail,
+                    OutputSchemaDetail::Paths,
+                    ProviderMetadataDetail::None,
+                );
             }
             Value::Object(entry_object)
         })
@@ -1037,9 +1044,19 @@ fn search_results_with_inputs(
     Ok(Value::Array(enriched))
 }
 
-fn build_command_summary(command: &CommandSpec, output_schema_detail: OutputSchemaDetail) -> Value {
+fn build_command_summary(
+    command: &CommandSpec,
+    output_schema_detail: OutputSchemaDetail,
+    provider_metadata_detail: ProviderMetadataDetail,
+) -> Value {
     let mut summary = SearchResultProjection::from_command_spec(command, true).into_value_map();
-    append_command_inputs_metadata(&mut summary, command, SearchInputsDetail::Full, output_schema_detail);
+    append_command_inputs_metadata(
+        &mut summary,
+        command,
+        SearchInputsDetail::Full,
+        output_schema_detail,
+        provider_metadata_detail,
+    );
     Value::Object(summary)
 }
 
@@ -1099,6 +1116,7 @@ fn append_command_inputs_metadata(
     command: &CommandSpec,
     inputs_detail: SearchInputsDetail,
     output_schema_detail: OutputSchemaDetail,
+    provider_metadata_detail: ProviderMetadataDetail,
 ) {
     match inputs_detail {
         SearchInputsDetail::None => {}
@@ -1131,7 +1149,7 @@ fn append_command_inputs_metadata(
             }
         }
         SearchInputsDetail::Full => {
-            let (positional_args, flags) = command_input_metadata(command);
+            let (positional_args, flags) = command_input_metadata(command, provider_metadata_detail);
             if !positional_args.is_empty() {
                 summary.insert("positional_args".to_string(), Value::Array(positional_args));
             }
@@ -1272,19 +1290,26 @@ fn collect_compact_output_fields(schema: &oatty_types::SchemaProperty) -> Vec<St
     Vec::new()
 }
 
-fn command_input_metadata(command: &CommandSpec) -> (Vec<Value>, Vec<Value>) {
+fn command_input_metadata(command: &CommandSpec, provider_metadata_detail: ProviderMetadataDetail) -> (Vec<Value>, Vec<Value>) {
     let positional_args = command
         .positional_args
         .iter()
-        .map(compose_positional_argument_metadata)
+        .map(|positional_argument| compose_positional_argument_metadata(positional_argument, provider_metadata_detail))
         .collect::<Vec<Value>>();
 
-    let flags = command.flags.iter().map(compose_flag_metadata).collect::<Vec<Value>>();
+    let flags = command
+        .flags
+        .iter()
+        .map(|flag| compose_flag_metadata(flag, provider_metadata_detail))
+        .collect::<Vec<Value>>();
 
     (positional_args, flags)
 }
 
-fn compose_positional_argument_metadata(positional_argument: &oatty_types::PositionalArgument) -> Value {
+fn compose_positional_argument_metadata(
+    positional_argument: &oatty_types::PositionalArgument,
+    provider_metadata_detail: ProviderMetadataDetail,
+) -> Value {
     let mut value = Map::new();
     value.insert("name".to_string(), Value::String(positional_argument.name.clone()));
     value.insert("required".to_string(), Value::Bool(true));
@@ -1293,10 +1318,11 @@ fn compose_positional_argument_metadata(positional_argument: &oatty_types::Posit
     {
         value.insert("help".to_string(), Value::String(help.clone()));
     }
+    append_provider_metadata(&mut value, positional_argument.provider.as_ref(), true, provider_metadata_detail);
     Value::Object(value)
 }
 
-fn compose_flag_metadata(flag: &oatty_types::CommandFlag) -> Value {
+fn compose_flag_metadata(flag: &oatty_types::CommandFlag, provider_metadata_detail: ProviderMetadataDetail) -> Value {
     let mut value = Map::new();
     value.insert("name".to_string(), Value::String(flag.name.clone()));
     value.insert("required".to_string(), Value::Bool(flag.required));
@@ -1323,8 +1349,58 @@ fn compose_flag_metadata(flag: &oatty_types::CommandFlag) -> Value {
     {
         value.insert("description".to_string(), Value::String(description.clone()));
     }
+    append_provider_metadata(&mut value, flag.provider.as_ref(), flag.required, provider_metadata_detail);
 
     Value::Object(value)
+}
+
+fn append_provider_metadata(
+    metadata: &mut Map<String, Value>,
+    provider: Option<&oatty_types::ValueProvider>,
+    required: bool,
+    provider_metadata_detail: ProviderMetadataDetail,
+) {
+    match provider_metadata_detail {
+        ProviderMetadataDetail::None => {}
+        ProviderMetadataDetail::RequiredOnly => {
+            if !required {
+                return;
+            }
+            if let Some(provider_value) = provider_compact_value(provider, false) {
+                metadata.insert("provider".to_string(), provider_value);
+            }
+        }
+        ProviderMetadataDetail::Full => {
+            if let Some(provider_value) = provider_compact_value(provider, true) {
+                metadata.insert("provider".to_string(), provider_value);
+            }
+        }
+    }
+}
+
+fn provider_compact_value(provider: Option<&oatty_types::ValueProvider>, include_binds: bool) -> Option<Value> {
+    match provider {
+        Some(oatty_types::ValueProvider::Command { command_id, binds }) => {
+            let mut provider_value = Map::new();
+            provider_value.insert("source".to_string(), Value::String(command_id.clone()));
+
+            if include_binds && !binds.is_empty() {
+                let bind_values = binds
+                    .iter()
+                    .map(|bind| {
+                        serde_json::json!({
+                            "provider_key": bind.provider_key,
+                            "from": bind.from,
+                        })
+                    })
+                    .collect::<Vec<Value>>();
+                provider_value.insert("binds".to_string(), Value::Array(bind_values));
+            }
+
+            Some(Value::Object(provider_value))
+        }
+        None => None,
+    }
 }
 
 fn command_execution_type(command_spec: &CommandSpec) -> &'static str {
@@ -1829,7 +1905,7 @@ mod tests {
             0,
         );
 
-        let summary = build_command_summary(&command_spec, OutputSchemaDetail::Paths);
+        let summary = build_command_summary(&command_spec, OutputSchemaDetail::Paths, ProviderMetadataDetail::None);
         let object = summary.as_object().expect("command summary should be object");
         assert!(!object.contains_key("output_schema"));
     }
@@ -1856,7 +1932,7 @@ mod tests {
             0,
         );
 
-        let summary = build_command_summary(&command_spec, OutputSchemaDetail::Full);
+        let summary = build_command_summary(&command_spec, OutputSchemaDetail::Full, ProviderMetadataDetail::None);
         let object = summary.as_object().expect("command summary should be object");
         let schema = object
             .get("output_schema")
@@ -1865,5 +1941,156 @@ mod tests {
         assert_eq!(schema.get("type"), Some(&Value::String("object".to_string())));
         assert!(!schema.contains_key("description"));
         assert!(!schema.contains_key("required"));
+    }
+
+    #[test]
+    fn command_summary_default_omits_provider_metadata() {
+        let command_spec = CommandSpec::new_http(
+            "apps".to_string(),
+            "apps:list".to_string(),
+            "List apps".to_string(),
+            vec![oatty_types::PositionalArgument {
+                name: "owner_id".to_string(),
+                help: None,
+                provider: Some(oatty_types::ValueProvider::Command {
+                    command_id: "teams:list".to_string(),
+                    binds: Vec::new(),
+                }),
+            }],
+            vec![oatty_types::CommandFlag {
+                name: "project_id".to_string(),
+                short_name: Some("p".to_string()),
+                required: true,
+                r#type: "string".to_string(),
+                enum_values: Vec::new(),
+                default_value: None,
+                description: None,
+                provider: Some(oatty_types::ValueProvider::Command {
+                    command_id: "projects:list".to_string(),
+                    binds: Vec::new(),
+                }),
+            }],
+            HttpCommandSpec::new("GET", "/apps", None, None),
+            0,
+        );
+
+        let summary = build_command_summary(&command_spec, OutputSchemaDetail::Paths, ProviderMetadataDetail::None);
+        let object = summary.as_object().expect("command summary should be object");
+        let positional = object
+            .get("positional_args")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(Value::as_object)
+            .expect("positional arg metadata");
+        assert!(!positional.contains_key("provider"));
+
+        let flag = object
+            .get("flags")
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(Value::as_object)
+            .expect("flag metadata");
+        assert!(!flag.contains_key("provider"));
+    }
+
+    #[test]
+    fn command_summary_required_provider_mode_only_includes_required_provider_hints() {
+        let command_spec = CommandSpec::new_http(
+            "apps".to_string(),
+            "apps:create".to_string(),
+            "Create app".to_string(),
+            Vec::new(),
+            vec![
+                oatty_types::CommandFlag {
+                    name: "team_id".to_string(),
+                    short_name: Some("t".to_string()),
+                    required: true,
+                    r#type: "string".to_string(),
+                    enum_values: Vec::new(),
+                    default_value: None,
+                    description: None,
+                    provider: Some(oatty_types::ValueProvider::Command {
+                        command_id: "teams:list".to_string(),
+                        binds: Vec::new(),
+                    }),
+                },
+                oatty_types::CommandFlag {
+                    name: "region".to_string(),
+                    short_name: Some("r".to_string()),
+                    required: false,
+                    r#type: "string".to_string(),
+                    enum_values: Vec::new(),
+                    default_value: None,
+                    description: None,
+                    provider: Some(oatty_types::ValueProvider::Command {
+                        command_id: "regions:list".to_string(),
+                        binds: Vec::new(),
+                    }),
+                },
+            ],
+            HttpCommandSpec::new("POST", "/apps", None, None),
+            0,
+        );
+
+        let summary = build_command_summary(&command_spec, OutputSchemaDetail::Paths, ProviderMetadataDetail::RequiredOnly);
+        let flags = summary
+            .as_object()
+            .and_then(|object| object.get("flags"))
+            .and_then(Value::as_array)
+            .expect("flag metadata");
+
+        let required_flag = flags
+            .iter()
+            .find(|item| item.get("name") == Some(&Value::String("team_id".to_string())))
+            .and_then(Value::as_object)
+            .expect("required flag metadata");
+        assert_eq!(required_flag.get("provider"), Some(&serde_json::json!({ "source": "teams:list" })));
+
+        let optional_flag = flags
+            .iter()
+            .find(|item| item.get("name") == Some(&Value::String("region".to_string())))
+            .and_then(Value::as_object)
+            .expect("optional flag metadata");
+        assert!(!optional_flag.contains_key("provider"));
+    }
+
+    #[test]
+    fn command_summary_full_provider_mode_includes_binds() {
+        let command_spec = CommandSpec::new_http(
+            "apps".to_string(),
+            "apps:create".to_string(),
+            "Create app".to_string(),
+            vec![oatty_types::PositionalArgument {
+                name: "project_id".to_string(),
+                help: None,
+                provider: Some(oatty_types::ValueProvider::Command {
+                    command_id: "projects:list".to_string(),
+                    binds: vec![oatty_types::Bind {
+                        provider_key: "teamId".to_string(),
+                        from: "team_id".to_string(),
+                    }],
+                }),
+            }],
+            Vec::new(),
+            HttpCommandSpec::new("POST", "/apps", None, None),
+            0,
+        );
+
+        let summary = build_command_summary(&command_spec, OutputSchemaDetail::Paths, ProviderMetadataDetail::Full);
+        let positional = summary
+            .as_object()
+            .and_then(|object| object.get("positional_args"))
+            .and_then(Value::as_array)
+            .and_then(|items| items.first())
+            .and_then(Value::as_object)
+            .expect("positional metadata");
+
+        assert_eq!(
+            positional.get("provider"),
+            Some(&serde_json::json!({
+                "source": "projects:list",
+                "binds": [{ "provider_key": "teamId", "from": "team_id" }]
+            }))
+        );
     }
 }

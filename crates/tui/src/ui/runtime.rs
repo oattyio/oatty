@@ -57,13 +57,17 @@ use rat_focus::FocusBuilder;
 /// Keeping `poll()` and `read()` on the same OS thread avoids lost or delayed
 /// events in some terminals. We call `read()` directly and never use `poll()`
 /// here — the blocking behavior is isolated to this thread.
-async fn spawn_input_thread() -> mpsc::Receiver<Event> {
+async fn spawn_input_thread() -> (mpsc::Receiver<Event>, tokio::sync::watch::Sender<bool>, JoinHandle<()>) {
     let (sender, receiver) = mpsc::channel(500);
+    let (shutdown_sender, shutdown_receiver) = tokio::sync::watch::channel(false);
     let mut las_mouse_event: Option<Instant> = Some(Instant::now());
 
-    tokio::spawn(async move {
+    let input_task = tokio::spawn(async move {
         let sixteen_ms = Duration::from_millis(16);
         loop {
+            if *shutdown_receiver.borrow() {
+                break;
+            }
             if event::poll(sixteen_ms).is_ok() {
                 match event::read() {
                     Ok(event) => {
@@ -74,8 +78,7 @@ async fn spawn_input_thread() -> mpsc::Receiver<Event> {
                             las_mouse_event = Some(Instant::now());
                         }
 
-                        if should_send && let Err(e) = sender.send(event).await {
-                            tracing::warn!("Failed to send event: {}", e);
+                        if should_send && sender.send(event).await.is_err() {
                             break;
                         }
                     }
@@ -87,7 +90,7 @@ async fn spawn_input_thread() -> mpsc::Receiver<Event> {
             }
         }
     });
-    receiver
+    (receiver, shutdown_sender, input_task)
 }
 /// Put the terminal into raw mode and enter the alternate screen.
 ///
@@ -146,7 +149,7 @@ fn is_interrupt_key(key_event: &KeyEvent) -> bool {
 /// producer, runs the async event loop, and performs cleanup on exit.
 pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<PluginEngine>) -> Result<()> {
     // Input comes from a dedicated blocking thread to ensure reliability.
-    let mut input_receiver = spawn_input_thread().await;
+    let (mut input_receiver, input_shutdown_sender, input_task) = spawn_input_thread().await;
     let mut main_view = MainView::new(Some(Box::new(LibraryComponent::default())));
 
     let mut app = App::new(registry, plugin_engine);
@@ -178,13 +181,16 @@ pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<P
     let mut ticker = time::interval(current_interval);
     ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
 
-    render(&mut terminal, &mut app, &mut main_view)?;
+    let mut loop_error: Option<anyhow::Error> = None;
+    if let Err(error) = render(&mut terminal, &mut app, &mut main_view) {
+        loop_error = Some(error);
+    }
 
     // Track the last known terminal size to synthesize Resize messages when
     // some terminals fail to emit them reliably (e.g., certain iTerm2 setups).
     let mut last_size: Option<(u16, u16)> = crossterm::terminal::size().ok();
 
-    loop {
+    while loop_error.is_none() {
         // Determine if we need animation ticks and adjust the ticker dynamically.
         // note this is a candidate for optimization; it does not scale well.
         let needs_animation = app.executing || !effects.is_empty() || app.palette.is_provider_loading() || app.workflows.is_running();
@@ -307,8 +313,9 @@ pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<P
         }
 
         // Render if dirty
-        if needs_render {
-            render(&mut terminal, &mut app, &mut main_view)?;
+        if needs_render && let Err(error) = render(&mut terminal, &mut app, &mut main_view) {
+            loop_error = Some(error);
+            break;
         }
     }
 
@@ -317,7 +324,17 @@ pub async fn run_app(registry: Arc<Mutex<CommandRegistry>>, plugin_engine: Arc<P
     {
         tracing::warn!("Failed to stop MCP HTTP server during shutdown: {}", error);
     }
-    cleanup_terminal(&mut terminal)?;
+    let _ = input_shutdown_sender.send(true);
+    let _ = tokio::time::timeout(Duration::from_millis(500), input_task).await;
+
+    let cleanup_result = cleanup_terminal(&mut terminal);
+    if let Some(error) = loop_error {
+        if let Err(cleanup_error) = cleanup_result {
+            tracing::warn!("Terminal cleanup failed after runtime error: {}", cleanup_error);
+        }
+        return Err(error);
+    }
+    cleanup_result?;
     Ok(())
 }
 

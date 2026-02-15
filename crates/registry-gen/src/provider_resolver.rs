@@ -15,7 +15,6 @@
 //! # Key Concepts
 //!
 //! - **Command Index**: A mapping of `<group> <name>` to command presence for verification
-//! - **List Groups**: Groups that have a corresponding `list` command for value provision
 //! - **Provider Bindings**: Mappings from consumer inputs to provider parameters
 //! - **Placeholder Resolution**: Matching path placeholders to available consumer inputs
 
@@ -51,12 +50,11 @@ enum BindingOutcome {
 /// * `commands` - Mutable slice of command specifications to process
 pub fn resolve_and_infer_providers(commands: &mut [CommandSpec]) {
     let (command_index, _command_id_to_index) = build_command_index(commands);
-    let list_groups = find_groups_with_list_commands(&command_index);
 
     let provider_metadata = precompute_provider_metadata(commands);
 
     for command_spec in commands.iter_mut() {
-        apply_flag_providers(&mut command_spec.flags, &list_groups, &command_index);
+        apply_flag_providers(command_spec.group.as_str(), &mut command_spec.flags, &command_index);
         apply_positional_providers(
             command_spec,
             &command_index,
@@ -126,44 +124,70 @@ fn precompute_provider_metadata(commands: &[CommandSpec]) -> ProviderMetadata {
     }
 }
 
-/// Find groups that have a corresponding `list` command defined.
-///
-/// This function identifies which groups can provide value lists for autocompletion
-/// by looking for commands with the name "list" in each group.
-fn find_groups_with_list_commands(command_index: &HashSet<String>) -> HashSet<String> {
-    command_index
-        .iter()
-        .filter_map(|command_id| command_id.split_once(' '))
-        .filter(|(_, command_name)| *command_name == "list")
-        .map(|(group_name, _)| group_name.to_string())
-        .collect()
-}
-
 /// Apply verified flag providers to command flags.
 ///
 /// This function examines each flag and assigns a value provider if:
-/// 1. The flag name maps to a group via conservative pluralization
-/// 2. The group has a corresponding `list` command
-/// 3. The `list` command exists in the command index
+/// 1. The flag name maps to a candidate resource group via conservative normalization/pluralization.
+/// 2. A corresponding list command exists in the command index.
 ///
 /// # Arguments
 ///
+/// * `command_group` - Group name for the command currently being processed (for example, vendor).
 /// * `flags` - Mutable slice of command flags to process
-/// * `list_groups` - Set of groups that have `list` commands
 /// * `command_index` - Set of all available command identifiers
-fn apply_flag_providers(flags: &mut [CommandFlag], list_groups: &HashSet<String>, command_index: &HashSet<String>) {
+fn apply_flag_providers(command_group: &str, flags: &mut [CommandFlag], command_index: &HashSet<String>) {
     for flag in flags.iter_mut() {
-        if let Some(group_name) = map_flag_name_to_group(&flag.name) {
-            let list_provider_id = format!("{} {}", group_name, "list");
+        let Some(group_name) = map_flag_name_to_group(&flag.name) else {
+            continue;
+        };
+        let Some(list_provider_id) = resolve_flag_list_provider_id(command_group, group_name.as_str(), command_index) else {
+            continue;
+        };
 
-            if list_groups.contains(&group_name) && command_index.contains(&list_provider_id) {
-                flag.provider = Some(ValueProvider::Command {
-                    command_id: list_provider_id,
-                    binds: vec![],
-                });
-            }
+        flag.provider = Some(ValueProvider::Command {
+            command_id: list_provider_id,
+            binds: vec![],
+        });
+    }
+}
+
+/// Resolve the best list-provider command identifier for a flag-derived resource group.
+///
+/// Candidate order:
+/// 1. Scoped OpenAPI-style provider: `<command_group> <resource_group>:list`
+/// 2. Legacy unscoped provider: `<resource_group> list`
+fn resolve_flag_list_provider_id(command_group: &str, resource_group: &str, command_index: &HashSet<String>) -> Option<String> {
+    let scoped_identifier = format!("{} {}:list", command_group, resource_group);
+    if command_index.contains(scoped_identifier.as_str()) {
+        return Some(scoped_identifier);
+    }
+
+    let unscoped_identifier = format!("{} list", resource_group);
+    if command_index.contains(unscoped_identifier.as_str()) {
+        return Some(unscoped_identifier);
+    }
+
+    None
+}
+
+/// Normalize a flag name for group inference by trimming common identifier suffixes.
+fn normalize_flag_name_for_group_inference(flag_name: &str) -> Option<String> {
+    let mut normalized = flag_name.trim().to_lowercase();
+    if normalized.is_empty() {
+        return None;
+    }
+
+    for suffix in ["_ids", "-ids", "ids", "_id", "-id", "id"] {
+        if normalized.len() > suffix.len() && normalized.ends_with(suffix) {
+            normalized.truncate(normalized.len() - suffix.len());
+            break;
         }
     }
+
+    if normalized.is_empty() {
+        return None;
+    }
+    Some(normalized)
 }
 
 /// Apply verified positional providers to command positional arguments.
@@ -265,9 +289,15 @@ fn find_provider_candidates(
 ) -> Vec<String> {
     let mut candidates = Vec::new();
 
+    // Prefer the current command group (typically vendor) for scoped OpenAPI-style list commands.
+    let command_group_scoped_provider = format!("{} {}:list", command_spec.group, normalized_group);
+    if command_index.contains(command_group_scoped_provider.as_str()) {
+        candidates.push(command_group_scoped_provider);
+    }
+
     // First, try the simple unscoped provider
     let simple_provider = format!("{} {}", normalized_group, "list");
-    if command_index.contains(&simple_provider) {
+    if command_index.contains(simple_provider.as_str()) {
         candidates.push(simple_provider);
     }
 
@@ -298,7 +328,7 @@ fn find_provider_candidates(
             // Don't use the last segment (it's the target group)
             // Try using this segment as a group name with "<target_group>:list" as the command name
             let scoped_provider = format!("{} {}:{}", segment, normalized_group, "list");
-            if command_index.contains(&scoped_provider) {
+            if command_index.contains(scoped_provider.as_str()) {
                 candidates.push(scoped_provider);
             }
         }
@@ -561,7 +591,7 @@ fn is_version_segment(segment: &str) -> bool {
 /// * `Some(group_name)` if a mapping is found
 /// * `None` if no mapping can be determined
 fn map_flag_name_to_group(flag_name: &str) -> Option<String> {
-    let normalized_flag_name = flag_name.to_lowercase();
+    let normalized_flag_name = normalize_flag_name_for_group_inference(flag_name)?;
 
     apply_conservative_pluralization(&normalized_flag_name)
 }
@@ -608,4 +638,89 @@ fn apply_conservative_pluralization(singular_name: &str) -> Option<String> {
     }
 
     Some(format!("{}s", singular_name))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use oatty_types::{HttpCommandSpec, PositionalArgument};
+
+    fn build_http_command(group: &str, name: &str, flags: Vec<CommandFlag>) -> CommandSpec {
+        CommandSpec::new_http(
+            group.to_string(),
+            name.to_string(),
+            "summary".to_string(),
+            Vec::new(),
+            flags,
+            HttpCommandSpec::new("GET", "/v1/resources", None, None),
+            0,
+        )
+    }
+
+    fn build_flag(name: &str) -> CommandFlag {
+        CommandFlag {
+            name: name.to_string(),
+            short_name: None,
+            required: false,
+            r#type: "string".to_string(),
+            enum_values: Vec::new(),
+            default_value: None,
+            description: None,
+            provider: None,
+        }
+    }
+
+    #[test]
+    fn resolve_and_infer_providers_assigns_scoped_list_provider_for_openapi_style_flags() {
+        let mut commands = vec![
+            build_http_command("vercel", "projects:list", Vec::new()),
+            build_http_command("vercel", "projects:info", vec![build_flag("projectId")]),
+        ];
+
+        resolve_and_infer_providers(&mut commands);
+
+        let provider = commands[1].flags[0].provider.as_ref();
+        match provider {
+            Some(ValueProvider::Command { command_id, .. }) => assert_eq!(command_id, "vercel projects:list"),
+            _ => panic!("expected command provider to be assigned"),
+        }
+    }
+
+    #[test]
+    fn normalize_flag_name_for_group_inference_strips_identifier_suffixes() {
+        assert_eq!(normalize_flag_name_for_group_inference("projectId").as_deref(), Some("project"));
+        assert_eq!(normalize_flag_name_for_group_inference("owner_id").as_deref(), Some("owner"));
+        assert_eq!(normalize_flag_name_for_group_inference("service-ids").as_deref(), Some("service"));
+    }
+
+    #[test]
+    fn resolve_and_infer_providers_assigns_positional_provider_for_scoped_openapi_list_commands() {
+        let mut commands = vec![
+            build_http_command("vercel", "projects:list", Vec::new()),
+            CommandSpec::new_http(
+                "vercel".to_string(),
+                "projects:info".to_string(),
+                "Project details".to_string(),
+                vec![PositionalArgument {
+                    name: "idOrName".to_string(),
+                    help: None,
+                    provider: None,
+                }],
+                Vec::new(),
+                HttpCommandSpec::new("GET", "/v9/projects/{idOrName}", None, None),
+                0,
+            ),
+        ];
+
+        resolve_and_infer_providers(&mut commands);
+
+        let provider = commands[1].positional_args[0].provider.as_ref();
+        match provider {
+            Some(ValueProvider::Command { command_id, binds }) => {
+                assert_eq!(command_id, "vercel projects:list");
+                assert!(binds.is_empty());
+            }
+            _ => panic!("expected positional provider to be assigned"),
+        }
+    }
 }

@@ -16,7 +16,7 @@ use ratatui::layout::Rect;
 use ratatui::prelude::{Line, Span};
 use ratatui::widgets::{ListState, TableState};
 use ratatui::{
-    layout::Constraint,
+    layout::{Constraint, Layout},
     style::Style,
     widgets::{Cell, Row},
 };
@@ -57,6 +57,22 @@ impl<'a> ResultsTableState<'a> {
             return json_array.get(idx);
         }
         None
+    }
+
+    pub fn column_count(&self) -> usize {
+        self.columns.as_ref().map_or(0, Vec::len)
+    }
+
+    pub fn selected_column_key(&self) -> Option<String> {
+        let selected_column = self.table_state.selected_column()?;
+        let columns = self.columns.as_ref()?;
+        columns.get(selected_column).map(|column| column.key.clone())
+    }
+
+    pub fn ensure_column_selected(&mut self) {
+        if self.table_state.selected_column().is_none() && self.column_count() > 0 {
+            self.table_state.select_column(Some(0));
+        }
     }
 
     pub fn kv_entries(&self) -> &[KeyValueEntry] {
@@ -107,14 +123,93 @@ impl<'a> ResultsTableState<'a> {
         self.row_cells.as_ref().map(|row_cells| row_cells.len()).unwrap_or(0)
     }
 
+    pub fn move_selected_column_right(&mut self, table_width: u16) {
+        if self.column_count() == 0 {
+            return;
+        }
+        let max_column_index = self.column_count().saturating_sub(1);
+        let selected_column = self.table_state.selected_column().unwrap_or(0);
+        let next_column = selected_column.saturating_add(1).min(max_column_index);
+        self.table_state.select_column(Some(next_column));
+        self.ensure_selected_column_visible(table_width);
+    }
+
+    pub fn move_selected_column_left(&mut self, table_width: u16) {
+        if self.column_count() == 0 {
+            return;
+        }
+        let selected_column = self.table_state.selected_column().unwrap_or(0);
+        let next_column = selected_column.saturating_sub(1);
+        self.table_state.select_column(Some(next_column));
+        self.ensure_selected_column_visible(table_width);
+    }
+
+    pub fn ensure_selected_column_visible(&mut self, table_width: u16) {
+        if self.column_count() == 0 {
+            self.truncated_col_idx = 0;
+            return;
+        }
+        let selected_column = self.table_state.selected_column().unwrap_or(0);
+        let max_column_index = self.column_count().saturating_sub(1);
+        let selected_column = selected_column.min(max_column_index);
+        self.table_state.select_column(Some(selected_column));
+
+        if selected_column < self.truncated_col_idx {
+            self.truncated_col_idx = selected_column;
+        }
+
+        loop {
+            let visible_window = self.visible_column_window(table_width);
+            let Some((window_start, window_end)) = visible_window else {
+                self.truncated_col_idx = 0;
+                break;
+            };
+            if selected_column < window_start {
+                self.truncated_col_idx = selected_column;
+                continue;
+            }
+            if selected_column >= window_end {
+                self.truncated_col_idx = self.truncated_col_idx.saturating_add(1).min(max_column_index);
+                continue;
+            }
+            break;
+        }
+    }
+
+    pub fn hit_test_column(&self, relative_x: u16, table_width: u16) -> Option<usize> {
+        let (window_start, window_end) = self.visible_column_window(table_width)?;
+        let visible_columns = window_end.saturating_sub(window_start);
+        if visible_columns == 0 {
+            return None;
+        }
+        let widths = self.column_constraints.as_ref()?;
+        let visible_constraints = widths.get(window_start..window_end)?;
+        let layout_area = Rect {
+            x: 0,
+            y: 0,
+            width: table_width,
+            height: 1,
+        };
+        let column_areas = Layout::horizontal(visible_constraints.to_vec()).split(layout_area);
+        column_areas
+            .iter()
+            .enumerate()
+            .find(|(_, column_area)| relative_x >= column_area.x && relative_x < column_area.x.saturating_add(column_area.width))
+            .map(|(visible_index, _)| window_start + visible_index)
+    }
+
+    pub fn select_cell(&mut self, row: usize, column: usize, table_width: u16) {
+        self.table_state.select(Some(row));
+        self.table_state.select_column(Some(column));
+        self.ensure_selected_column_visible(table_width);
+    }
+
     pub fn create_rows(&self, table_width: u16, theme: &dyn UiTheme) -> Option<(usize, Vec<Row<'a>>)> {
         let cols = self.columns.as_ref()?;
-        let mut asked_width = cols.iter().fold(0, |acc, col| acc + col.max_len) as u16;
-        let mut truncate_idx = 0;
-        while asked_width > table_width && truncate_idx < self.truncated_col_idx {
-            asked_width = asked_width.saturating_sub(cols[truncate_idx].max_len as u16);
-            truncate_idx += 1;
-        }
+        let truncate_idx = self
+            .visible_column_window(table_width)
+            .map(|(window_start, _)| window_start)
+            .unwrap_or_else(|| self.truncated_col_idx.min(cols.len().saturating_sub(1)));
 
         let row_cells = self.row_cells.as_ref()?;
         let mut rows = Vec::with_capacity(row_cells.len());
@@ -188,6 +283,41 @@ impl<'a> ResultsTableState<'a> {
             return Some(widths);
         }
         None
+    }
+
+    fn visible_column_window(&self, table_width: u16) -> Option<(usize, usize)> {
+        let columns = self.columns.as_ref()?;
+        if columns.is_empty() {
+            return Some((0, 0));
+        }
+
+        let max_column_index = columns.len().saturating_sub(1);
+        let window_start = self.truncated_col_idx.min(max_column_index);
+        let constraints = self.column_constraints.as_ref()?;
+        let visible_constraints = constraints.get(window_start..)?;
+        if visible_constraints.is_empty() {
+            return Some((window_start, window_start));
+        }
+
+        let layout_area = Rect {
+            x: 0,
+            y: 0,
+            width: table_width,
+            height: 1,
+        };
+        let column_areas = Layout::horizontal(visible_constraints.to_vec()).split(layout_area);
+        let mut visible_count = 0usize;
+        for column_area in column_areas.iter() {
+            if column_area.width == 0 {
+                break;
+            }
+            visible_count = visible_count.saturating_add(1);
+        }
+        if visible_count == 0 {
+            visible_count = 1;
+        }
+        let window_end = (window_start + visible_count).min(columns.len());
+        Some((window_start, window_end))
     }
 
     fn create_headers(&self, theme: &dyn UiTheme) -> Option<Vec<Cell<'a>>> {
