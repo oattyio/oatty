@@ -18,6 +18,7 @@ use serde_json::Value;
 use crate::ui::{
     components::results::state::ResultsTableState,
     theme::{roles::Theme as UiTheme, theme_helpers as th},
+    utils::render_value,
 };
 
 /// Stateful ratatui widgets used to render results tables.
@@ -134,11 +135,20 @@ impl ResultsTableView {
                     .kv_entries()
                     .iter()
                     .map(|entry| {
-                        ListItem::new(Line::from(vec![
-                            Span::styled(entry.display_key.clone(), theme.text_secondary_style().add_modifier(Modifier::BOLD)),
-                            Span::raw(": "),
-                            Span::styled(entry.display_value.clone(), theme.text_primary_style()),
-                        ]))
+                        let value_spans = render_value(&entry.key, &entry.raw_value, Some(theme)).into_spans();
+                        let mut spans = Vec::with_capacity(value_spans.len() + 2);
+                        if matches!(entry.raw_value, Value::Object(_) | Value::Array(_)) {
+                            spans.push(Span::styled("› ", theme.syntax_type_style().add_modifier(Modifier::BOLD)));
+                        } else {
+                            spans.push(Span::styled("  ", theme.text_muted_style()));
+                        }
+                        spans.push(Span::styled(
+                            entry.display_key.clone(),
+                            theme.syntax_function_style().add_modifier(Modifier::BOLD),
+                        ));
+                        spans.push(Span::styled(": ", theme.text_muted_style()));
+                        spans.extend(value_spans);
+                        ListItem::new(Line::from(spans)).style(th::panel_style(theme))
                     })
                     .collect();
 
@@ -147,6 +157,9 @@ impl ResultsTableView {
                     .style(th::panel_style(theme));
 
                 frame.render_stateful_widget(list, area, &mut state.list_state);
+                let visible_rows = area.height as usize;
+                let total_rows = state.kv_entries().len();
+                self.render_scrollbar(frame, area, total_rows, visible_rows, state.list_state.offset(), theme);
             }
             other => {
                 let display = match other {
@@ -154,8 +167,15 @@ impl ResultsTableView {
                     _ => other.to_string(),
                 };
 
-                let paragraph = Paragraph::new(display).wrap(Wrap { trim: false }).style(theme.text_primary_style());
+                let mut paragraph = Paragraph::new(display).wrap(Wrap { trim: false }).style(theme.text_primary_style());
+                let line_count = paragraph.line_count(area.width) as usize;
+                let visible_rows = area.height as usize;
+                let max_offset = line_count.saturating_sub(visible_rows.max(1));
+                let offset = state.list_state.offset().min(max_offset);
+                state.list_state = state.list_state.with_offset(offset);
+                paragraph = paragraph.scroll((offset as u16, 0));
                 frame.render_widget(paragraph, area);
+                self.render_scrollbar(frame, area, line_count, visible_rows, offset, theme);
             }
         }
     }

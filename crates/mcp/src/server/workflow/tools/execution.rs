@@ -10,7 +10,7 @@ use crate::server::workflow::tools::types::{
 };
 use oatty_engine::{
     ProviderBindingOutcome, RegistryCommandRunner, StepStatus, WorkflowRunState, executor::order_steps_for_execution,
-    workflow::runtime::workflow_spec_from_runtime,
+    resolve::interpolate_value, workflow::runtime::workflow_spec_from_runtime,
 };
 use oatty_registry::CommandRegistry;
 use std::sync::{Arc, Mutex};
@@ -164,6 +164,9 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
     if include_outputs {
         response.insert("outputs".to_string(), serde_json::json!(output_map));
     }
+    if let Some(final_output) = render_workflow_final_output(&state) {
+        response.insert("final_output".to_string(), final_output);
+    }
 
     Ok(Value::Object(response))
 }
@@ -299,10 +302,21 @@ pub fn preview_rendered(request: &WorkflowPreviewRenderedRequest) -> Result<Valu
         })
         .collect::<Vec<Value>>();
 
+    let rendered_final_output = render_workflow_final_output(&state);
+
     Ok(serde_json::json!({
         "workflow_id": runtime_workflow.identifier,
         "rendered_steps": rendered,
+        "rendered_final_output": rendered_final_output,
     }))
+}
+
+fn render_workflow_final_output(state: &WorkflowRunState) -> Option<Value> {
+    state
+        .workflow
+        .final_output
+        .as_ref()
+        .map(|final_output| interpolate_value(final_output, &state.run_context))
 }
 
 #[cfg(test)]
@@ -334,6 +348,10 @@ steps:
     depends_on: [create_app]
     with:
       app: "${{ inputs.app }}"
+final_output:
+  app: "${{ inputs.app }}"
+  region: "${{ inputs.region }}"
+  created: "${{ steps.create_app.output.ok }}"
 "#
         .to_string()
     }
@@ -372,5 +390,7 @@ steps:
         assert_eq!(rendered_steps[0]["with"]["app"], "demo");
         assert_eq!(rendered_steps[0]["with"]["region"], "us");
         assert_eq!(rendered_steps[0]["body"]["app"], "demo");
+        assert_eq!(value["rendered_final_output"]["app"], "demo");
+        assert_eq!(value["rendered_final_output"]["region"], "us");
     }
 }

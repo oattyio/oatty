@@ -15,6 +15,8 @@ use serde_json::{Map as JsonMap, Value};
 use super::identifier::{ProviderIdentifier, canonical_identifier};
 use super::registry::ProviderRegistry;
 use super::{CacheLookupOutcome, ProviderSuggestionSet, label_from_value};
+use crate::provider::SelectionSource;
+use crate::resolve::select_path;
 
 /// Helper for building provider-backed suggestions for CLI inputs.
 ///
@@ -79,7 +81,8 @@ impl ProviderSuggestionBuilder {
         match provider_registry.cached_values_or_plan(&provider_identifier, arguments) {
             CacheLookupOutcome::Hit(values) => {
                 let provider_meta = canonical_identifier(&provider_identifier).unwrap_or_else(|| provider_identifier.clone());
-                if provider_payload_is_ambiguous(&values) {
+                let selection = provider_registry.resolved_selection_for_provider(&provider_identifier);
+                if provider_payload_is_ambiguous(&values, &selection) {
                     let action_payload = ProviderSelectorActionPayload {
                         provider_id: provider_identifier.clone(),
                         command_key: command_key.to_string(),
@@ -99,15 +102,15 @@ impl ProviderSuggestionBuilder {
 
                 let mut items = Vec::with_capacity(values.len());
                 for value in values {
-                    let Some(label) = label_from_value(value) else {
+                    let Some((insert_text, display)) = provider_row_suggestion_value(&value, &selection) else {
                         continue;
                     };
-                    let Some(score) = fuzzy_score(&label, partial) else {
+                    let Some(score) = fuzzy_score(&display, partial) else {
                         continue;
                     };
                     items.push(SuggestionItem {
-                        display: label.clone(),
-                        insert_text: label,
+                        display,
+                        insert_text,
                         kind: ItemKind::Value,
                         meta: Some(provider_meta.clone()),
                         score,
@@ -152,24 +155,49 @@ fn provider_required_inputs_satisfied(commands: &[CommandSpec], provider_identif
     true
 }
 
-fn provider_payload_is_ambiguous(values: &[Value]) -> bool {
-    values.iter().any(value_requires_explicit_selector)
-}
-
-fn value_requires_explicit_selector(value: &Value) -> bool {
-    let Value::Object(entries) = value else {
-        return false;
-    };
-
-    if entries.contains_key("name") || entries.contains_key("id") || entries.contains_key("str") {
-        return false;
+fn provider_payload_is_ambiguous(values: &[Value], selection: &crate::provider::FieldSelection) -> bool {
+    if matches!(selection.source, SelectionSource::RequiresChoice) {
+        return true;
     }
 
-    let scalar_field_count = entries
-        .values()
-        .filter(|entry| matches!(entry, Value::String(_) | Value::Number(_) | Value::Bool(_) | Value::Null))
-        .count();
-    scalar_field_count > 1
+    values.iter().any(|value| !provider_row_is_selectable(value, selection))
+}
+
+fn provider_row_is_selectable(value: &Value, selection: &crate::provider::FieldSelection) -> bool {
+    match select_path(value, Some(&selection.value_field)) {
+        Some(selected_value) => is_scalar_json_value(&selected_value),
+        None => false,
+    }
+}
+
+fn provider_row_suggestion_value(value: &Value, selection: &crate::provider::FieldSelection) -> Option<(String, String)> {
+    let selected_value = select_path(value, Some(&selection.value_field))?;
+    if !is_scalar_json_value(&selected_value) {
+        return None;
+    }
+    let insert_text = scalar_value_to_string(selected_value);
+
+    let display = select_path(value, Some(&selection.display_field))
+        .filter(is_scalar_json_value)
+        .map(scalar_value_to_string)
+        .or_else(|| label_from_value(value.clone()))
+        .unwrap_or_else(|| insert_text.clone());
+
+    Some((insert_text, display))
+}
+
+fn is_scalar_json_value(value: &Value) -> bool {
+    matches!(value, Value::String(_) | Value::Number(_) | Value::Bool(_) | Value::Null)
+}
+
+fn scalar_value_to_string(value: Value) -> String {
+    match value {
+        Value::String(value) => value,
+        Value::Number(value) => value.to_string(),
+        Value::Bool(value) => value.to_string(),
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
 }
 
 fn binding_for_field(command_spec: &CommandSpec, field: &str) -> Option<(String, Vec<Bind>)> {
@@ -188,26 +216,21 @@ fn binding_for_field(command_spec: &CommandSpec, field: &str) -> Option<(String,
 
 #[cfg(test)]
 mod tests {
-    use super::{provider_payload_is_ambiguous, provider_required_inputs_satisfied, value_requires_explicit_selector};
+    use super::{provider_payload_is_ambiguous, provider_required_inputs_satisfied, provider_row_suggestion_value};
+    use crate::provider::{FieldSelection, SelectionSource};
     use oatty_types::{CommandFlag, CommandSpec, HttpCommandSpec, PositionalArgument};
     use serde_json::json;
 
     #[test]
-    fn ambiguous_selector_required_for_multi_scalar_object_without_name_or_id() {
-        let value = json!({"slug":"app-a","region":"us-west-2"});
-        assert!(value_requires_explicit_selector(&value));
-    }
-
-    #[test]
-    fn selector_not_required_for_name_or_id_objects() {
-        assert!(!value_requires_explicit_selector(&json!({"id":"app-1","region":"us"})));
-        assert!(!value_requires_explicit_selector(&json!({"name":"app","region":"us"})));
-    }
-
-    #[test]
     fn payload_ambiguity_detects_any_ambiguous_row() {
         let values = vec![json!({"id":"app-1"}), json!({"slug":"app-a","region":"us-west-2"})];
-        assert!(provider_payload_is_ambiguous(&values));
+        let selection = FieldSelection {
+            value_field: "id".into(),
+            display_field: "name".into(),
+            id_field: Some("id".into()),
+            source: SelectionSource::ByNames,
+        };
+        assert!(provider_payload_is_ambiguous(&values, &selection));
     }
 
     #[test]
@@ -244,5 +267,33 @@ mod tests {
             ("region".to_string(), json!("us-east-1")),
         ]);
         assert!(provider_required_inputs_satisfied(&commands, "apps list", &complete_bindings));
+    }
+
+    #[test]
+    fn payload_is_not_ambiguous_when_nested_selection_is_deterministic() {
+        let values = vec![json!({"cursor":"a","item":{"id":"project-a","name":"Project A"}})];
+        let selection = FieldSelection {
+            value_field: "item.id".into(),
+            display_field: "item.name".into(),
+            id_field: Some("item.id".into()),
+            source: SelectionSource::ByNames,
+        };
+
+        assert!(!provider_payload_is_ambiguous(&values, &selection));
+    }
+
+    #[test]
+    fn suggestion_uses_nested_value_and_display_fields() {
+        let value = json!({"cursor":"a","item":{"id":"project-a","name":"Project A"}});
+        let selection = FieldSelection {
+            value_field: "item.id".into(),
+            display_field: "item.name".into(),
+            id_field: Some("item.id".into()),
+            source: SelectionSource::ByNames,
+        };
+
+        let suggestion = provider_row_suggestion_value(&value, &selection).expect("expected suggestion values");
+        assert_eq!(suggestion.0, "project-a");
+        assert_eq!(suggestion.1, "Project A");
     }
 }

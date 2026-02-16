@@ -281,6 +281,7 @@ mod tests {
                 repeat: None,
                 output_contract: None,
             }],
+            final_output: None,
             requires: None,
         }
     }

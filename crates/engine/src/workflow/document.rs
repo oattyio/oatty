@@ -34,6 +34,7 @@ pub fn runtime_workflow_from_definition(definition: &WorkflowDefinition) -> Resu
         description: definition.description.clone(),
         inputs,
         steps,
+        final_output: definition.final_output.clone(),
         requires: definition.requires.clone(),
     })
 }
@@ -130,6 +131,7 @@ mod tests {
                 repeat: None,
                 output_contract: None,
             }],
+            final_output: None,
             requires: None,
         };
 
@@ -145,6 +147,7 @@ mod tests {
             description: None,
             inputs: IndexMap::new(),
             steps: Vec::new(),
+            final_output: None,
             requires: None,
         };
 
@@ -184,6 +187,7 @@ mod tests {
                 repeat: None,
                 output_contract: None,
             }],
+            final_output: None,
             requires: None,
         };
 
@@ -232,6 +236,7 @@ mod tests {
                 repeat: None,
                 output_contract: None,
             }],
+            final_output: None,
             requires: None,
         };
 

@@ -373,6 +373,7 @@ mod tests {
                 repeat: None,
                 output_contract: None,
             }],
+            final_output: None,
             requires: None,
         }
     }
@@ -552,6 +553,7 @@ mod tests {
                 "addon".into() => addon_input,
             },
             steps: Vec::new(),
+            final_output: None,
             requires: None,
         };
 

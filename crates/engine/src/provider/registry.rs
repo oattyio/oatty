@@ -16,7 +16,7 @@ use super::{
     contract_store::ProviderContractStore,
     fetch::ProviderValueFetcher,
     identifier::{ProviderIdentifier, cache_key_for_canonical_identifier, cache_key_for_identifier, canonical_identifier},
-    selection::FieldSelection,
+    selection::{FieldSelection, infer_selection},
     suggestion_builder::ProviderSuggestionBuilder,
 };
 
@@ -205,6 +205,15 @@ impl ProviderRegistry {
     }
     pub fn choice_for(&self, provider_id: &str) -> Option<FieldSelection> {
         self.choices.lock().expect("choices lock").get(provider_id).cloned()
+    }
+
+    pub(crate) fn resolved_selection_for_provider(&self, provider_id: &str) -> FieldSelection {
+        if let Some(selection) = self.choice_for(provider_id) {
+            return selection;
+        }
+
+        let contract = self.contract_store.resolve_contract(provider_id);
+        infer_selection(None, contract.as_ref())
     }
 
     pub fn cached_values_or_plan(&self, provider_id: &str, args: JsonMap<String, Value>) -> CacheLookupOutcome {

@@ -17,6 +17,10 @@ use std::collections::HashMap;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::time::Instant;
 
+const FINAL_OUTPUT_INTERNAL_STEP_ID: &str = "__oatty_workflow_final_output__";
+const FINAL_OUTPUT_DISPLAY_STEP_LABEL: &str = "workflow.final_output";
+const INTERNAL_STEP_ID_COLUMN: &str = "_internal_step_id";
+
 /// High-level execution status for a workflow run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RunExecutionStatus {
@@ -112,9 +116,44 @@ impl RunViewState {
         self.outputs.insert(key.to_string(), value);
     }
 
+    /// Upserts a pseudo step row representing the workflow-level final output.
+    pub fn upsert_final_output_row(&mut self, final_output: Value, theme: &dyn Theme) {
+        self.outputs.insert(FINAL_OUTPUT_INTERNAL_STEP_ID.to_string(), final_output.clone());
+
+        let mut row = JsonMap::new();
+        row.insert("Step".into(), Value::String(FINAL_OUTPUT_DISPLAY_STEP_LABEL.to_string()));
+        row.insert(
+            INTERNAL_STEP_ID_COLUMN.into(),
+            Value::String(FINAL_OUTPUT_INTERNAL_STEP_ID.to_string()),
+        );
+        row.insert("Status".into(), Value::String("summary".into()));
+        row.insert("Details".into(), Value::String("Workflow final output".into()));
+        row.insert("Description".into(), Value::String("Aggregated workflow output".into()));
+        row.insert("Output".into(), final_output);
+
+        if let Some(index) = self.step_indices.get(FINAL_OUTPUT_INTERNAL_STEP_ID).copied() {
+            self.step_rows[index] = Value::Object(row);
+        } else {
+            let index = self.step_rows.len();
+            self.step_rows.push(Value::Object(row));
+            self.step_indices.insert(FINAL_OUTPUT_INTERNAL_STEP_ID.to_string(), index);
+            self.step_descriptions.insert(
+                FINAL_OUTPUT_INTERNAL_STEP_ID.to_string(),
+                Some("Aggregated workflow output".to_string()),
+            );
+        }
+
+        self.rebuild_steps_table(theme);
+    }
+
     pub fn output_by_index(&self, index: usize) -> Option<Value> {
         let row = self.step_rows.get(index)?;
-        let step_id = row.get("Step").and_then(Value::as_str).unwrap_or_default().to_string();
+        let step_id = row
+            .get(INTERNAL_STEP_ID_COLUMN)
+            .or_else(|| row.get("Step"))
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
         self.outputs.get(&step_id).cloned().or_else(|| row.get("Output").cloned())
     }
 
@@ -395,7 +434,7 @@ fn step_summary(status: WorkflowRunStepStatus, attempts: u32, duration_ms: u64) 
     }
 }
 
-const RUNNING_SPINNER_FRAMES: [&str; 3] = [".", "..", "..."];
+const RUNNING_SPINNER_FRAMES: [&str; 3] = [".  ", ".. ", "..."];
 
 #[derive(Debug, Clone)]
 struct RepeatAnimationState {
@@ -428,7 +467,6 @@ impl RepeatAnimationState {
     fn describe(&self, limit: Option<u32>) -> String {
         let frame = RUNNING_SPINNER_FRAMES[self.spinner_index];
         let limit_label = limit.map(|value| value.to_string()).unwrap_or_else(|| "∞".to_string());
-        // No fixed padding to avoid trailing spaces in tests/UI
         format!("Running{} (attempt {}/{})", frame, self.attempt, limit_label)
     }
 }
@@ -509,14 +547,49 @@ mod tests {
 
         state.mark_step_running(0, "alpha", &theme);
         let row = state.steps_table.selected_data(0).cloned().expect("row exists");
-        assert_eq!(row["Details"], Value::String("Running. (attempt 1/∞)".into()));
+        assert_eq!(row["Details"], Value::String("Running.   (attempt 1/∞)".into()));
 
         state.update_repeat_attempt("alpha", 3, Some(5), &theme);
         let row = state.steps_table.selected_data(0).cloned().expect("row exists");
-        assert_eq!(row["Details"], Value::String("Running. (attempt 3/5)".into()));
+        assert_eq!(row["Details"], Value::String("Running.   (attempt 3/5)".into()));
 
         state.advance_repeat_animations(&theme);
         let row = state.steps_table.selected_data(0).cloned().expect("row exists");
-        assert_eq!(row["Details"], Value::String("Running.. (attempt 3/5)".into()));
+        assert_eq!(row["Details"], Value::String("Running..  (attempt 3/5)".into()));
+    }
+
+    #[test]
+    fn final_output_row_does_not_overwrite_real_step_with_same_identifier() {
+        let theme = DraculaTheme::new();
+        let mut state = RunViewState::new("run-1".into(), "workflow".into(), None);
+        state.initialize_steps(&[make_step("final_output", None)], &theme);
+        state.mark_step_finished(
+            "final_output",
+            StepFinishedData {
+                status: WorkflowRunStepStatus::Succeeded,
+                attempts: 1,
+                duration_ms: 10,
+                output: json!({"real": true}),
+                logs: vec!["ok".into()],
+            },
+            &theme,
+        );
+
+        state.upsert_final_output_row(json!({"summary": true}), &theme);
+
+        assert_eq!(state.steps_table.num_rows(), 2);
+        let real_step_index = state
+            .step_rows
+            .iter()
+            .position(|row| row["Step"] == Value::String("final_output".into()))
+            .expect("real step row present");
+        let summary_index = state
+            .step_rows
+            .iter()
+            .position(|row| row["Step"] == Value::String("workflow.final_output".into()))
+            .expect("summary row present");
+
+        assert_eq!(state.output_by_index(real_step_index), Some(json!({"real": true})));
+        assert_eq!(state.output_by_index(summary_index), Some(json!({"summary": true})));
     }
 }

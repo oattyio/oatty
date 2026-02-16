@@ -23,9 +23,16 @@ use ratatui::{
 use serde_json::Value;
 use std::borrow::Cow;
 
+#[derive(Debug, Clone)]
+pub struct DrillFrame {
+    pub label: String,
+    pub value: Value,
+}
+
 #[derive(Debug, Default)]
 pub struct ResultsTableState<'a> {
     result_json: Option<Value>,
+    drill_stack: Vec<DrillFrame>,
     // Vec of rows by column value
     row_cells: Option<Vec<Vec<Cell<'a>>>>,
     columns: Option<Vec<ColumnWithSize>>,
@@ -43,8 +50,54 @@ pub struct ResultsTableState<'a> {
 }
 
 impl<'a> ResultsTableState<'a> {
+    pub fn is_in_drill_mode(&self) -> bool {
+        !self.drill_stack.is_empty()
+    }
+
+    pub fn breadcrumbs(&self) -> Vec<String> {
+        let mut breadcrumbs = vec!["Root".to_string()];
+        breadcrumbs.extend(self.drill_stack.iter().map(|frame| frame.label.clone()));
+        breadcrumbs
+    }
+
+    pub fn drill_up(&mut self, theme: &dyn UiTheme) -> bool {
+        if self.drill_stack.pop().is_none() {
+            return false;
+        }
+        self.reset_render_cache(theme);
+        true
+    }
+
+    pub fn drill_to_breadcrumb(&mut self, breadcrumb_index: usize, theme: &dyn UiTheme) -> bool {
+        if breadcrumb_index == 0 {
+            if self.drill_stack.is_empty() {
+                return false;
+            }
+            self.drill_stack.clear();
+            self.reset_render_cache(theme);
+            return true;
+        }
+
+        let stack_index = breadcrumb_index.saturating_sub(1);
+        if stack_index >= self.drill_stack.len() {
+            return false;
+        }
+        self.drill_stack.truncate(stack_index + 1);
+        self.reset_render_cache(theme);
+        true
+    }
+
+    pub fn drill_into_selection(&mut self, theme: &dyn UiTheme) -> bool {
+        if let Some((label, value)) = self.selected_container_value_for_drill() {
+            self.drill_stack.push(DrillFrame { label, value });
+            self.reset_render_cache(theme);
+            return true;
+        }
+        false
+    }
+
     pub fn selected_result_json(&self) -> Option<&Value> {
-        self.result_json.as_ref()
+        self.current_result_json()
     }
     pub fn column_constraints(&self) -> Option<&Vec<Constraint>> {
         self.column_constraints.as_ref()
@@ -53,7 +106,7 @@ impl<'a> ResultsTableState<'a> {
         self.headers.as_ref()
     }
     pub fn selected_data(&self, idx: usize) -> Option<&Value> {
-        if let Some(json_array) = Self::array_from_json(self.result_json.as_ref()) {
+        if let Some(json_array) = Self::array_from_json(self.current_result_json()) {
             return json_array.get(idx);
         }
         None
@@ -92,7 +145,8 @@ impl<'a> ResultsTableState<'a> {
 
     pub fn apply_result_json(&mut self, value: Option<Value>, theme: &dyn UiTheme, rerank_columns: bool) {
         self.result_json = value;
-        let json_array = Self::array_from_json(self.result_json.as_ref());
+        self.drill_stack.clear();
+        let json_array = Self::array_from_json(self.current_result_json());
         self.columns = self.create_columns(json_array, rerank_columns);
         self.reset_render_cache(theme);
     }
@@ -107,9 +161,10 @@ impl<'a> ResultsTableState<'a> {
             return;
         }
         let selected_column_key = self.selected_column_key();
-        let Some(rows) = Self::array_from_json(self.result_json.as_ref()) else {
+        let Some(rows) = Self::array_from_json(self.current_result_json()) else {
             return;
         };
+        let row_snapshot = rows.to_vec();
         let Some(current_columns) = self.columns.take() else {
             return;
         };
@@ -122,7 +177,7 @@ impl<'a> ResultsTableState<'a> {
                 ordered_columns.push(remaining_columns.remove(existing_index));
                 continue;
             }
-            if let Some(derived_column) = Self::derive_column_for_key(rows, &key) {
+            if let Some(derived_column) = Self::derive_column_for_key(&row_snapshot, &key) {
                 ordered_columns.push(derived_column);
             }
         }
@@ -279,8 +334,14 @@ impl<'a> ResultsTableState<'a> {
                     let key = &col.key;
                     let value = item.get(key).unwrap_or(&Value::Null);
                     let rendered_value = render_value(key, value, Some(theme));
-                    let display_text = rendered_value.plain_text().to_owned();
+                    let mut display_text = rendered_value.plain_text().to_owned();
                     let mut spans = rendered_value.into_spans();
+                    if let Some(prefix) = container_preview_prefix(value) {
+                        display_text = format!("{prefix} {display_text}");
+                        let mut prefixed_spans = vec![Span::styled(format!("{prefix} "), theme.syntax_type_style())];
+                        prefixed_spans.extend(spans);
+                        spans = prefixed_spans;
+                    }
                     if is_status_like(key)
                         && let Some(color) = status_color_for_value(&display_text, theme)
                     {
@@ -394,13 +455,17 @@ impl<'a> ResultsTableState<'a> {
     }
 
     fn reset_render_cache(&mut self, theme: &dyn UiTheme) {
-        let json_array = Self::array_from_json(self.result_json.as_ref());
+        let json_array = Self::array_from_json(self.current_result_json());
         self.row_cells = self.create_row_cells(json_array, theme);
         self.headers = self.create_headers(theme);
         self.column_constraints = self.create_constraints();
-        self.kv_entries = self.create_kv_entries(self.result_json.as_ref());
+        self.kv_entries = self.create_kv_entries(self.current_result_json());
         self.table_state = TableState::default();
+        self.list_state = ListState::default();
         self.truncated_col_idx = 0;
+        if !self.kv_entries.is_empty() {
+            self.list_state.select(Some(0));
+        }
     }
 
     fn normalize_prioritized_keys(prioritized_keys: &[String]) -> Vec<String> {
@@ -431,7 +496,10 @@ impl<'a> ResultsTableState<'a> {
                 continue;
             };
             found = true;
-            let rendered = render_value(key, raw_value, None).into_plain_text();
+            let mut rendered = render_value(key, raw_value, None).into_plain_text();
+            if let Some(prefix) = container_preview_prefix(raw_value) {
+                rendered = format!("{prefix} {rendered}");
+            }
             max_len = max_len.max(rendered.len());
         }
 
@@ -467,13 +535,65 @@ impl<'a> ResultsTableState<'a> {
             self.apply_result_json(Some(normalized_value), theme, true);
         }
     }
+
+    fn current_result_json(&self) -> Option<&Value> {
+        if let Some(frame) = self.drill_stack.last() {
+            return Some(&frame.value);
+        }
+        self.result_json.as_ref()
+    }
+
+    fn selected_container_value_for_drill(&self) -> Option<(String, Value)> {
+        if self.has_rows() {
+            return self.selected_table_container_for_drill();
+        }
+        self.selected_kv_container_for_drill()
+    }
+
+    fn selected_table_container_for_drill(&self) -> Option<(String, Value)> {
+        let row_index = self.table_state.selected()?;
+        let row = self.selected_data(row_index)?;
+        let Value::Object(map) = row else {
+            return None;
+        };
+
+        if let Some(column_key) = self.selected_column_key()
+            && let Some(value) = map.get(column_key.as_str())
+            && matches!(value, Value::Array(_) | Value::Object(_))
+        {
+            return Some((column_key, value.clone()));
+        }
+
+        let key = get_scored_keys(map).into_iter().find(|candidate| {
+            map.get(candidate)
+                .is_some_and(|value| matches!(value, Value::Array(_) | Value::Object(_)))
+        })?;
+        let value = map.get(key.as_str())?.clone();
+        Some((key, value))
+    }
+
+    fn selected_kv_container_for_drill(&self) -> Option<(String, Value)> {
+        let entry_index = self.list_state.selected()?;
+        let entry = self.selected_kv_entry(entry_index)?;
+        if !matches!(entry.raw_value, Value::Array(_) | Value::Object(_)) {
+            return None;
+        }
+        Some((entry.key.clone(), entry.raw_value.clone()))
+    }
+}
+
+fn container_preview_prefix(value: &Value) -> Option<&'static str> {
+    match value {
+        Value::Object(_) => Some("{}"),
+        Value::Array(_) => Some("[]"),
+        _ => None,
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct KeyValueEntry {
     pub key: String,
     pub display_key: String,
-    pub display_value: String,
     pub raw_value: Value,
 }
 
@@ -484,11 +604,9 @@ pub fn build_key_value_entries(value: &Value) -> Vec<KeyValueEntry> {
             .take(24)
             .map(|key| {
                 let raw_value = map.get(&key).cloned().unwrap_or(Value::Null);
-                let display_value = render_value(&key, &raw_value, None).into_plain_text();
                 KeyValueEntry {
                     key: key.clone(),
                     display_key: normalize_header(&key),
-                    display_value,
                     raw_value,
                 }
             })
@@ -541,5 +659,35 @@ mod tests {
 
         let after = table.columns.as_ref().expect("columns");
         assert_eq!(after.first().map(|column| column.key.as_str()), Some("id"));
+    }
+
+    #[test]
+    fn drill_into_selection_and_up_round_trip() {
+        let mut table = ResultsTableState::default();
+        let theme = DraculaTheme::new();
+        table.apply_result_json(
+            Some(json!([
+                {"service": {"id": "srv-1", "name": "api"}, "status": "ok"}
+            ])),
+            &theme,
+            true,
+        );
+        table.table_state.select(Some(0));
+        table.table_state.select_column(Some(0));
+        assert!(table.drill_into_selection(&theme));
+        assert!(table.is_in_drill_mode());
+        assert!(table.drill_up(&theme));
+        assert!(!table.is_in_drill_mode());
+    }
+
+    #[test]
+    fn breadcrumbs_include_root_and_nested_labels() {
+        let mut table = ResultsTableState::default();
+        let theme = DraculaTheme::new();
+        table.apply_result_json(Some(json!([{"service": {"id": "srv-1"}}])), &theme, true);
+        table.table_state.select(Some(0));
+        table.table_state.select_column(Some(0));
+        assert!(table.drill_into_selection(&theme));
+        assert_eq!(table.breadcrumbs(), vec!["Root".to_string(), "service".to_string()]);
     }
 }

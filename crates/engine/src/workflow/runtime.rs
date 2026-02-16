@@ -129,6 +129,7 @@ mod tests {
             description: Some("Workflow demo".into()),
             inputs: IndexMap::new(),
             steps,
+            final_output: None,
             requires: None,
         }
     }
@@ -205,6 +206,7 @@ mod tests {
             description: None,
             inputs: IndexMap::new(),
             steps: vec![step],
+            final_output: None,
             requires: None,
         };
 
@@ -240,6 +242,7 @@ mod tests {
             description: None,
             inputs: IndexMap::new(),
             steps: vec![step],
+            final_output: None,
             requires: None,
         };
 
