@@ -2,7 +2,7 @@ use anyhow::anyhow;
 use indexmap::IndexSet;
 use oatty_registry::CommandSpec;
 use oatty_types::{EnvVar, ExecOutcome};
-use oatty_util::{block_on_future, exec_remote_for_provider, http::extract_collection_items};
+use oatty_util::{block_on_future, exec_remote_for_provider, http::extract_provider_collection_items};
 use serde_json::{Map as JsonMap, Value};
 
 pub trait ProviderValueFetcher: Send + Sync {
@@ -50,7 +50,7 @@ impl ProviderValueFetcher for DefaultHttpFetcher {
 }
 
 fn extract_provider_items(payload: Value, list_response_path: Option<&str>) -> Option<Vec<Value>> {
-    extract_collection_items(&payload, list_response_path)
+    extract_provider_collection_items(&payload, list_response_path)
 }
 
 #[cfg(test)]
@@ -137,5 +137,26 @@ mod tests {
 
         let items = extract_provider_items(payload, list_response_path_for_spec(&command_spec));
         assert!(items.is_none(), "ambiguous wrappers without list path should fail");
+    }
+
+    #[test]
+    fn extract_provider_items_extracts_single_object_with_scalar_metadata() {
+        let command_spec = CommandSpec::new_http(
+            "vendor".to_string(),
+            "item:info".to_string(),
+            "Get item".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/item", None, None),
+            1,
+        );
+        let payload = json!({
+            "cursor": "abcd",
+            "item": { "id": "item-1", "name": "alpha" }
+        });
+
+        let items = extract_provider_items(payload, list_response_path_for_spec(&command_spec))
+            .expect("single object wrapper should be extracted for providers");
+        assert_eq!(items, vec![json!({ "id": "item-1", "name": "alpha" })]);
     }
 }

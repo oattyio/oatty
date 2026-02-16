@@ -181,22 +181,27 @@ fn scan_contract_for_candidates(contract: &ProviderContract) -> (Option<String>,
     let mut display_candidate: Option<String> = None;
     let mut display_from_tags = false;
     for field in &contract.returns.fields {
+        let leaf_name = field_leaf_name(&field.name);
         if field.tags.iter().any(|t| t == "id" || t == "identifier") && id_candidate.is_none() {
             id_candidate = Some(field.name.clone());
             id_from_tags = true;
         }
-        if field.name == "id" && id_candidate.is_none() {
-            id_candidate = Some("id".to_string());
+        if leaf_name == "id" && id_candidate.is_none() {
+            id_candidate = Some(field.name.clone());
         }
         if field.tags.iter().any(|t| t == "display") && display_candidate.is_none() {
             display_candidate = Some(field.name.clone());
             display_from_tags = true;
         }
-        if field.name == "name" && display_candidate.is_none() {
-            display_candidate = Some("name".to_string());
+        if leaf_name == "name" && display_candidate.is_none() {
+            display_candidate = Some(field.name.clone());
         }
     }
     (id_candidate, id_from_tags, display_candidate, display_from_tags)
+}
+
+fn field_leaf_name(path: &str) -> &str {
+    path.rsplit('.').next().unwrap_or(path)
 }
 /// Coerces a JSON [`Value`] into the desired target type after optionally extracting a field from
 /// an object.
@@ -250,7 +255,7 @@ fn scan_contract_for_candidates(contract: &ProviderContract) -> (Option<String>,
 /// ```
 pub fn coerce_value(value: &Value, target_type: Option<&str>, selection: Option<&FieldSelection>) -> Value {
     let base = match (value, selection) {
-        (Value::Object(map), Some(sel)) => map.get(&sel.value_field).cloned().unwrap_or(Value::Null),
+        (_, Some(sel)) => crate::resolve::select_path(value, Some(&sel.value_field)).unwrap_or(Value::Null),
         _ => value.clone(),
     };
     match target_type.unwrap_or("string") {
@@ -282,6 +287,7 @@ pub fn coerce_value(value: &Value, target_type: Option<&str>, selection: Option<
 #[cfg(test)]
 mod doctests_like {
     use super::*;
+    use oatty_types::{ProviderContract, ProviderFieldContract, ProviderReturnContract};
     use serde_json::json;
 
     #[test]
@@ -292,5 +298,48 @@ mod doctests_like {
         assert_eq!(coerce_value(&json!(0), Some("boolean"), None), json!(false));
         assert_eq!(coerce_value(&json!(1), Some("boolean"), None), json!(true));
         assert_eq!(coerce_value(&json!("yes"), Some("boolean"), None), json!(true));
+    }
+
+    #[test]
+    fn coerce_uses_nested_value_field_path() {
+        let selection = FieldSelection::explicit("owner.id".into(), "owner.name".into(), Some("owner.id".into()));
+        let row = json!({
+            "cursor": "abc",
+            "owner": {
+                "id": "owner-1"
+            }
+        });
+        assert_eq!(coerce_value(&row, Some("string"), Some(&selection)), json!("owner-1"));
+    }
+
+    #[test]
+    fn infer_selection_uses_nested_leaf_candidates() {
+        let contract = ProviderContract {
+            arguments: Vec::new(),
+            returns: ProviderReturnContract {
+                fields: vec![
+                    ProviderFieldContract {
+                        name: "cursor".into(),
+                        r#type: Some("string".into()),
+                        tags: Vec::new(),
+                    },
+                    ProviderFieldContract {
+                        name: "item.id".into(),
+                        r#type: Some("string".into()),
+                        tags: Vec::new(),
+                    },
+                    ProviderFieldContract {
+                        name: "item.name".into(),
+                        r#type: Some("string".into()),
+                        tags: Vec::new(),
+                    },
+                ],
+            },
+        };
+
+        let selection = infer_selection(None, Some(&contract));
+        assert_eq!(selection.value_field, "item.id");
+        assert_eq!(selection.display_field, "item.name");
+        assert_eq!(selection.source, SelectionSource::ByNames);
     }
 }

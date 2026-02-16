@@ -7,7 +7,7 @@ use crate::ui::components::workflows::list::WorkflowListState;
 use crate::ui::components::workflows::run::{RunViewState, StepFinishedData, WorkflowRunControlHandle};
 use crate::ui::theme::Theme;
 use anyhow::Result;
-use oatty_engine::{ProviderBindingOutcome, WorkflowRunState};
+use oatty_engine::{ProviderBindingOutcome, WorkflowRunState, resolve::interpolate_value};
 use oatty_registry::CommandRegistry;
 use oatty_types::workflow::{
     RuntimeWorkflow, WorkflowInputDefinition, WorkflowRunControl, WorkflowRunEvent, WorkflowRunStatus, WorkflowRunStepStatus,
@@ -384,6 +384,7 @@ impl WorkflowState {
             return Vec::new();
         }
 
+        let rendered_final_output = self.render_final_output_for_completed_event(&event);
         let mut log_messages = Vec::new();
         let Some(run_view) = self.run_view.as_mut() else {
             return Vec::new();
@@ -446,6 +447,9 @@ impl WorkflowState {
                 error,
             } => {
                 run_view.handle_run_completed(status, finished_at, error.clone());
+                if let Some(final_output) = rendered_final_output {
+                    run_view.upsert_final_output_row(final_output, theme);
+                }
                 self.run_control = None;
                 if let Some(text) = error {
                     log_messages.push(text);
@@ -459,6 +463,15 @@ impl WorkflowState {
         }
 
         log_messages
+    }
+
+    fn render_final_output_for_completed_event(&self, event: &WorkflowRunEvent) -> Option<Value> {
+        if !matches!(event, WorkflowRunEvent::RunCompleted { .. }) {
+            return None;
+        }
+        let run_state = self.active_run_state.as_ref()?.borrow();
+        let template = run_state.workflow.final_output.as_ref()?;
+        Some(interpolate_value(template, &run_state.run_context))
     }
 
     /// Returns the currently active input name, if any.
@@ -586,6 +599,9 @@ mod workflow_run_tests {
                 repeat: None,
                 output_contract: None,
             }],
+            final_output: Some(json!({
+                "step_ok": "${{ steps.first.ok }}"
+            })),
             requires: None,
         }
     }
@@ -621,6 +637,7 @@ mod workflow_run_tests {
                 repeat: None,
                 output_contract: None,
             }],
+            final_output: None,
             requires: None,
         };
 
@@ -679,5 +696,23 @@ mod workflow_run_tests {
         assert!(logs.iter().any(|entry| entry.contains("Step 'first'")));
         let row = state.run_view_state().unwrap().steps_table.selected_data(0).cloned().expect("row");
         assert_eq!(row["Status"], Value::String("succeeded".into()));
+
+        let _ = state.apply_run_event(
+            &run_id,
+            WorkflowRunEvent::RunCompleted {
+                status: WorkflowRunStatus::Succeeded,
+                finished_at: Utc::now(),
+                error: None,
+            },
+            &theme,
+        );
+
+        let view = state.run_view_state().expect("run view");
+        let final_output_row = (0..view.steps_table.num_rows())
+            .filter_map(|index| view.steps_table.selected_data(index))
+            .find(|row| row["Step"] == Value::String("workflow.final_output".into()))
+            .cloned()
+            .expect("final output row present");
+        assert_eq!(final_output_row["Output"]["step_ok"], Value::String("true".into()));
     }
 }

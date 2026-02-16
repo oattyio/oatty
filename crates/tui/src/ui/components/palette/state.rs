@@ -854,13 +854,14 @@ impl PaletteState {
         self.reduce_clear_error();
         let tokens: Vec<String> = lex_shell_like(&self.input);
         let mut pending_fetches = Vec::new();
-        let mut items = {
+        let commands_snapshot = {
             let Some(lock) = self.registry.lock().ok() else {
                 return pending_fetches;
             };
-            let commands = &lock.commands;
-
-            let result = SuggestionEngine::build(commands, providers, &self.input);
+            lock.commands.clone()
+        };
+        let mut items = {
+            let result = SuggestionEngine::build(&commands_snapshot, providers, &self.input);
             let mut items = result.items;
             pending_fetches = result.pending_fetches;
             self.provider_loading = result.provider_loading || !pending_fetches.is_empty();
@@ -881,7 +882,10 @@ impl PaletteState {
             if items.is_empty() && tokens.len() >= 2 {
                 let group = tokens[0].as_str();
                 let name = tokens[1].as_str();
-                if let Ok(spec) = lock.find_by_group_and_cmd_ref(group, name) {
+                if let Some(spec) = commands_snapshot
+                    .iter()
+                    .find(|command| command.group == group && command.name == name)
+                {
                     let parts: &[String] = if tokens.len() >= 2 { &tokens[2..] } else { &tokens[0..0] };
                     let (user_flags, user_args, _flag_values) = parse_user_flags_args(spec, parts);
                     if let Some(hint) = self.eol_flag_hint(spec, &user_flags) {
@@ -904,10 +908,10 @@ impl PaletteState {
         if self.suggestions.is_empty() && self.ghost_text.is_none() && tokens.len() >= 2 {
             let group = tokens[0].clone();
             let name = tokens[1].clone();
-            let Ok(lock) = self.registry.lock() else {
-                return pending_fetches;
-            };
-            let Ok(spec) = lock.find_by_group_and_cmd_ref(group.as_str(), name.as_str()) else {
+            let Some(spec) = commands_snapshot
+                .iter()
+                .find(|command| command.group == group && command.name == name)
+            else {
                 return pending_fetches;
             };
 

@@ -9,7 +9,7 @@ use crate::ui::components::workflows::collector::{
 use crate::ui::components::workflows::view_utils::{classify_json_value, style_for_role};
 use crate::ui::theme::Theme;
 use crate::ui::theme::theme_helpers::{self as th, ButtonRenderOptions, ButtonType, build_hint_spans};
-use crate::ui::utils::render_value;
+use crate::ui::utils::{get_scored_keys, render_value};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use oatty_engine::field_paths::{missing_details_from_json_row, nested_scalar_leaf_candidates_from_json, non_scalar_runtime_message};
 use oatty_engine::resolve::select_path;
@@ -124,25 +124,45 @@ impl Component for WorkflowCollectorComponent {
 
         let position = Position::new(mouse.column, mouse.row);
         let table = &mut app.workflows.collector_state_mut().expect("selector state").table;
-        let offset = table.table_state.offset();
-        let row_count = table.num_rows();
+        let offset = if table.has_rows() {
+            table.table_state.offset()
+        } else {
+            table.list_state.offset()
+        };
+        let row_count = if table.has_rows() {
+            table.num_rows()
+        } else {
+            table.kv_entries().len()
+        };
 
         match mouse.kind {
             MouseEventKind::Moved | MouseEventKind::Up(MouseButton::Left) => {
                 table.mouse_over_idx = if self.layout.table_area.contains(position) {
-                    self.hit_test_results_table(position, offset, row_count)
+                    if table.has_rows() {
+                        self.hit_test_results_table(position, offset, row_count)
+                    } else {
+                        self.hit_test_key_value_rows(position, offset, row_count)
+                    }
                 } else {
                     None
                 };
             }
             MouseEventKind::ScrollDown => {
                 if self.layout.table_area.contains(position) {
-                    table.table_state.scroll_down_by(1);
+                    if table.has_rows() {
+                        table.table_state.scroll_down_by(1);
+                    } else {
+                        table.list_state.scroll_down_by(1);
+                    }
                 }
             }
             MouseEventKind::ScrollUp => {
                 if self.layout.table_area.contains(position) {
-                    table.table_state.scroll_up_by(1);
+                    if table.has_rows() {
+                        table.table_state.scroll_up_by(1);
+                    } else {
+                        table.list_state.scroll_up_by(1);
+                    }
                 }
             }
             _ => {}
@@ -185,8 +205,15 @@ impl Component for WorkflowCollectorComponent {
 
         if self.layout.table_area.contains(position) {
             app.focus.focus(&collector.f_table);
-            if let Some(index) = self.hit_test_results_table(position, offset, collector.table.num_rows()) {
-                self.select_table_cell_from_mouse(collector, index, position);
+            if collector.table.has_rows() {
+                if let Some(index) = self.hit_test_results_table(position, offset, collector.table.num_rows()) {
+                    self.select_table_cell_from_mouse(collector, index, position);
+                    if let Err(message) = self.stage_current_row(collector) {
+                        collector.error_message = Some(message);
+                    }
+                }
+            } else if let Some(index) = self.hit_test_key_value_rows(position, offset, collector.table.kv_entries().len()) {
+                collector.table.list_state.select(Some(index));
                 if let Err(message) = self.stage_current_row(collector) {
                     collector.error_message = Some(message);
                 }
@@ -261,6 +288,8 @@ impl Component for WorkflowCollectorComponent {
 }
 
 impl WorkflowCollectorComponent {
+    const MAX_CELL_SCALAR_DEPTH: usize = 3;
+
     fn apply_text_input_key(buffer: &mut TextInputState, key: KeyEvent) -> bool {
         match key.code {
             KeyCode::Left => {
@@ -367,14 +396,13 @@ impl WorkflowCollectorComponent {
         (row_index < row_count).then_some(row_index)
     }
 
-    fn select_table_cell_from_mouse(&self, collector: &mut CollectorViewState<'_>, row_index: usize, mouse_position: Position) {
-        if collector.value_field.is_some() {
-            collector.table.table_state.select(Some(row_index));
-            collector.table.table_state.select_column(None);
-            collector.set_selection_source(CollectorSelectionSource::Table);
-            return;
-        }
+    fn hit_test_key_value_rows(&self, mouse_position: Position, offset: usize, row_count: usize) -> Option<usize> {
+        let first_data_row_y = self.layout.table_area.y;
+        let row_index = mouse_position.y.saturating_sub(first_data_row_y) as usize + offset;
+        (row_index < row_count).then_some(row_index)
+    }
 
+    fn select_table_cell_from_mouse(&self, collector: &mut CollectorViewState<'_>, row_index: usize, mouse_position: Position) {
         let relative_x = mouse_position.x.saturating_sub(self.layout.table_area.x);
         let selected_column = collector
             .table
@@ -416,25 +444,54 @@ impl WorkflowCollectorComponent {
         }
 
         let collector = app.workflows.collector_state_mut().expect("selector state");
+        if !collector.table.has_rows() {
+            let list_state = &mut collector.table.list_state;
+            match key.code {
+                KeyCode::Up => list_state.scroll_up_by(1),
+                KeyCode::Down => list_state.scroll_down_by(1),
+                KeyCode::PageUp => list_state.scroll_up_by(10),
+                KeyCode::PageDown => list_state.scroll_down_by(10),
+                KeyCode::Home => list_state.scroll_up_by(u16::MAX),
+                KeyCode::End => list_state.scroll_down_by(u16::MAX),
+                KeyCode::Enter => {
+                    if matches!(collector.status, SelectorStatus::Error)
+                        && matches!(collector.on_error, Some(WorkflowProviderErrorPolicy::Fail))
+                    {
+                        collector.error_message = Some("provider error: cannot apply (policy: fail)".into());
+                    } else if collector.table.drill_into_selection(&*app.ctx.theme) {
+                        collector.clear_staged_selection();
+                        collector.error_message = None;
+                    } else if let Err(message) = self.stage_current_row(collector) {
+                        collector.error_message = Some(message);
+                    } else {
+                        return self.apply_selection_to_run_state(app);
+                    }
+                }
+                KeyCode::Char(' ') => {
+                    if let Err(message) = self.stage_current_row(collector) {
+                        collector.error_message = Some(message);
+                    }
+                }
+                _ => {}
+            }
+            return Vec::new();
+        }
+
         let row_len = collector.table.num_rows();
         let selected = collector.table.table_state.selected().unwrap_or_default();
         let table_state = &mut collector.table.table_state;
 
         match key.code {
             KeyCode::Left => {
-                if collector.value_field.is_none() {
-                    collector.table.move_selected_column_left(self.layout.table_area.width);
-                    if let Err(message) = self.stage_current_row(collector) {
-                        collector.error_message = Some(message);
-                    }
+                collector.table.move_selected_column_left(self.layout.table_area.width);
+                if let Err(message) = self.stage_current_row(collector) {
+                    collector.error_message = Some(message);
                 }
             }
             KeyCode::Right => {
-                if collector.value_field.is_none() {
-                    collector.table.move_selected_column_right(self.layout.table_area.width);
-                    if let Err(message) = self.stage_current_row(collector) {
-                        collector.error_message = Some(message);
-                    }
+                collector.table.move_selected_column_right(self.layout.table_area.width);
+                if let Err(message) = self.stage_current_row(collector) {
+                    collector.error_message = Some(message);
                 }
             }
             KeyCode::Up => table_state.select_previous(),
@@ -452,6 +509,9 @@ impl WorkflowCollectorComponent {
                     && matches!(collector.on_error, Some(WorkflowProviderErrorPolicy::Fail))
                 {
                     collector.error_message = Some("provider error: cannot apply (policy: fail)".into());
+                } else if collector.table.drill_into_selection(&*app.ctx.theme) {
+                    collector.clear_staged_selection();
+                    collector.error_message = None;
                 } else if self.current_row_is_staged(collector) {
                     return self.apply_selection_to_run_state(app);
                 } else if let Err(message) = self.stage_current_row(collector) {
@@ -491,16 +551,29 @@ impl WorkflowCollectorComponent {
 
     fn stage_current_row(&self, collector: &mut CollectorViewState<'_>) -> Result<(), String> {
         let (value, source_field) = self.extract_selected_value(collector)?;
-        let index = collector
-            .table
-            .table_state
-            .selected()
-            .ok_or_else(|| "no row selected".to_string())?;
-        let row = collector
-            .table
-            .selected_data(index)
-            .cloned()
-            .ok_or_else(|| "no provider row selected".to_string())?;
+        let row = if collector.table.has_rows() {
+            let index = collector
+                .table
+                .table_state
+                .selected()
+                .ok_or_else(|| "no row selected".to_string())?;
+            collector
+                .table
+                .selected_data(index)
+                .cloned()
+                .ok_or_else(|| "no provider row selected".to_string())?
+        } else {
+            let index = collector
+                .table
+                .list_state
+                .selected()
+                .ok_or_else(|| "no key/value row selected".to_string())?;
+            collector
+                .table
+                .selected_kv_entry(index)
+                .map(|entry| entry.raw_value.clone())
+                .ok_or_else(|| "no key/value entry selected".to_string())?
+        };
         let display_key = source_field.clone().unwrap_or_else(|| "value".to_string());
         let display_value = render_value(&display_key, &value, None).into_plain_text();
         collector.set_staged_selection(Some(CollectorStagedSelection::new(value, display_value, source_field, row)));
@@ -510,6 +583,16 @@ impl WorkflowCollectorComponent {
     }
 
     fn current_row_is_staged(&self, collector: &CollectorViewState<'_>) -> bool {
+        if !collector.table.has_rows() {
+            let Some(index) = collector.table.list_state.selected() else {
+                return false;
+            };
+            let Some((staged, entry)) = collector.staged_selection().zip(collector.table.selected_kv_entry(index)) else {
+                return false;
+            };
+            return staged.row == entry.raw_value && staged.source_field == Some(entry.key.clone());
+        }
+
         let Some(index) = collector.table.table_state.selected() else {
             return false;
         };
@@ -634,6 +717,10 @@ impl WorkflowCollectorComponent {
         };
 
         if key.code == KeyCode::Esc {
+            if collector.table.drill_up(&*app.ctx.theme) {
+                collector.error_message = None;
+                return effects;
+            }
             if collector.f_filter.get() && !collector.filter.is_empty() {
                 collector.filter.clear();
                 self.apply_filter(collector, &*app.ctx.theme);
@@ -652,6 +739,19 @@ impl WorkflowCollectorComponent {
     }
 
     fn extract_selected_value(&self, collector: &CollectorViewState<'_>) -> Result<(JsonValue, Option<String>), String> {
+        if !collector.table.has_rows() {
+            let index = collector
+                .table
+                .list_state
+                .selected()
+                .ok_or_else(|| "no key/value row selected".to_string())?;
+            let entry = collector
+                .table
+                .selected_kv_entry(index)
+                .ok_or_else(|| "no key/value entry selected".to_string())?;
+            return self.scalar_value_from_json(&entry.raw_value, Some(entry.key.clone()), &entry.key);
+        }
+
         let index = collector
             .table
             .table_state
@@ -661,6 +761,21 @@ impl WorkflowCollectorComponent {
             .table
             .selected_data(index)
             .ok_or_else(|| "no provider row selected".to_string())?;
+
+        if let Some(field_name) = self.current_selected_source_field(collector)
+            && let JsonValue::Object(map) = row
+        {
+            let value = map
+                .get(field_name.as_str())
+                .ok_or_else(|| format!("selected field '{field_name}' missing from provider row"))?;
+            if let Ok(scalar) = self.scalar_value_from_json(value, Some(field_name.clone()), &field_name) {
+                return Ok(scalar);
+            }
+            if let Some((scalar, source_path)) = self.resolve_display_scalar_value(value, &field_name, 0) {
+                return Ok((scalar, Some(source_path)));
+            }
+            return Err(non_scalar_runtime_message(&field_name));
+        }
 
         if let Some(path) = collector.value_field.as_deref() {
             let leaf = path.split('.').next_back().unwrap_or(path);
@@ -695,15 +810,6 @@ impl WorkflowCollectorComponent {
             return Err(missing_details.runtime_message());
         }
 
-        if let Some(field_name) = self.current_selected_source_field(collector)
-            && let JsonValue::Object(map) = row
-        {
-            let value = map
-                .get(field_name.as_str())
-                .ok_or_else(|| format!("selected field '{field_name}' missing from provider row"))?;
-            return self.scalar_value_from_json(value, Some(field_name.clone()), &field_name);
-        }
-
         match row {
             JsonValue::Object(map) => {
                 for (key, value) in map {
@@ -732,6 +838,31 @@ impl WorkflowCollectorComponent {
             JsonValue::Bool(boolean) => Ok((JsonValue::Bool(*boolean), source_field)),
             JsonValue::Null => Ok((JsonValue::Null, source_field)),
             JsonValue::Array(_) | JsonValue::Object(_) => Err(non_scalar_runtime_message(source_path)),
+        }
+    }
+
+    fn resolve_display_scalar_value(&self, value: &JsonValue, path_prefix: &str, depth: usize) -> Option<(JsonValue, String)> {
+        if depth >= Self::MAX_CELL_SCALAR_DEPTH {
+            return None;
+        }
+
+        match value {
+            JsonValue::String(_) | JsonValue::Number(_) | JsonValue::Bool(_) | JsonValue::Null => {
+                Some((value.clone(), path_prefix.to_string()))
+            }
+            JsonValue::Object(map) => {
+                let best_key = get_scored_keys(map).first()?.clone();
+                let nested_value = map.get(&best_key)?;
+                let next_path = format!("{path_prefix}.{best_key}");
+                self.resolve_display_scalar_value(nested_value, &next_path, depth + 1)
+            }
+            JsonValue::Array(values) => values.iter().enumerate().find_map(|(index, entry)| match entry {
+                JsonValue::Object(_) | JsonValue::Array(_) => None,
+                _ => {
+                    let next_path = format!("{path_prefix}[{index}]");
+                    self.resolve_display_scalar_value(entry, &next_path, depth + 1)
+                }
+            }),
         }
     }
 
@@ -765,8 +896,6 @@ impl WorkflowCollectorComponent {
         if collector.value_field.is_none() {
             collector.table.ensure_column_selected();
             collector.table.ensure_selected_column_visible(layout.table_area.width);
-        } else {
-            collector.table.table_state.select_column(None);
         }
         collector.sync_stage_with_selection(selected_index);
 
@@ -1032,6 +1161,56 @@ mod tests {
         assert!(message.contains("multiple nested 'id' candidates"));
         assert!(message.contains("owner.id"));
         assert!(message.contains("team.id"));
+    }
+
+    #[test]
+    fn extract_selected_value_prefers_explicit_cell_selection_over_value_field_path() {
+        let mut selector = base_selector();
+        selector.value_field = Some("service".into());
+        selector.table.apply_result_json(
+            Some(json!([{ "id": "srv-1", "service": { "id": "srv-1", "name": "api" } }])),
+            &crate::ui::theme::dracula::DraculaTheme::new(),
+            true,
+        );
+        selector.table.table_state.select(Some(0));
+        let id_column_index = (0..selector.table.column_count())
+            .find(|index| {
+                selector.table.table_state.select_column(Some(*index));
+                selector.table.selected_column_key().as_deref() == Some("id")
+            })
+            .expect("id column present");
+        selector.table.table_state.select_column(Some(id_column_index));
+
+        let component = WorkflowCollectorComponent::default();
+        let (value, source_field) = component.extract_selected_value(&selector).expect("cell selection should win");
+        assert_eq!(value, json!("srv-1"));
+        assert_eq!(source_field.as_deref(), Some("id"));
+    }
+
+    #[test]
+    fn extract_selected_value_uses_display_scalar_for_selected_object_cell() {
+        let mut selector = base_selector();
+        selector.table.apply_result_json(
+            Some(json!([{ "service": { "id": "srv-1", "name": "api-service" } }])),
+            &crate::ui::theme::dracula::DraculaTheme::new(),
+            true,
+        );
+        selector.table.table_state.select(Some(0));
+
+        let service_column_index = (0..selector.table.column_count())
+            .find(|index| {
+                selector.table.table_state.select_column(Some(*index));
+                selector.table.selected_column_key().as_deref() == Some("service")
+            })
+            .expect("service column present");
+        selector.table.table_state.select_column(Some(service_column_index));
+
+        let component = WorkflowCollectorComponent::default();
+        let (value, source_field) = component
+            .extract_selected_value(&selector)
+            .expect("selected object cell should resolve to displayed scalar");
+        assert_eq!(value, json!("api-service"));
+        assert_eq!(source_field.as_deref(), Some("service.name"));
     }
 
     #[test]

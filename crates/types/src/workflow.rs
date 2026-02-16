@@ -29,6 +29,9 @@ pub struct RuntimeWorkflow {
     pub inputs: IndexMap<String, WorkflowInputDefinition>,
     /// Ordered execution steps.
     pub steps: Vec<WorkflowStepDefinition>,
+    /// Optional workflow-level final output template rendered from run context.
+    #[serde(default)]
+    pub final_output: Option<JsonValue>,
     /// Optional external catalog requirements needed before execution.
     pub requires: Option<WorkflowRequirements>,
 }
@@ -51,6 +54,9 @@ pub struct WorkflowDefinition {
     /// Ordered list of workflow steps executed sequentially.
     #[serde(default)]
     pub steps: Vec<WorkflowStepDefinition>,
+    /// Optional workflow-level final output template rendered from run context.
+    #[serde(default)]
+    pub final_output: Option<JsonValue>,
     /// Optional external catalog requirements needed before execution.
     #[serde(default)]
     pub requires: Option<WorkflowRequirements>,

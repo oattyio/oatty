@@ -131,6 +131,26 @@ pub fn normalize_command_payload(payload: Value, list_response_path: Option<&str
 /// 3. Apply deterministic wrapper-key heuristics.
 /// 4. Fallback to a single array-valued field in wrapper objects.
 pub fn extract_collection_items(payload: &Value, list_response_path: Option<&str>) -> Option<Vec<Value>> {
+    extract_collection_items_internal(payload, list_response_path, false)
+}
+
+/// Extract collection items for provider selection contexts.
+///
+/// This variant retains the standard extraction order used by
+/// [`extract_collection_items`], but adds one extra fallback:
+///
+/// - If wrapper objects contain exactly one non-scalar field and scalar
+///   metadata only, extract the non-scalar field (`object` is wrapped as a
+///   single-item list).
+pub fn extract_provider_collection_items(payload: &Value, list_response_path: Option<&str>) -> Option<Vec<Value>> {
+    extract_collection_items_internal(payload, list_response_path, true)
+}
+
+fn extract_collection_items_internal(
+    payload: &Value,
+    list_response_path: Option<&str>,
+    allow_single_non_scalar_object_fallback: bool,
+) -> Option<Vec<Value>> {
     if let Some(path) = list_response_path
         && let Some(items) = extract_array_at_path(payload, path)
     {
@@ -150,12 +170,44 @@ pub fn extract_collection_items(payload: &Value, list_response_path: Option<&str
                 Value::Array(items) => Some(items.clone()),
                 _ => None,
             });
-            let first = arrays.next()?;
-            if arrays.next().is_none() {
+            if let Some(first) = arrays.next()
+                && arrays.next().is_none()
+            {
                 return Some(first);
+            }
+            if allow_single_non_scalar_object_fallback {
+                return extract_single_non_scalar_wrapper_value(map);
             }
             None
         }
+        _ => None,
+    }
+}
+
+fn extract_single_non_scalar_wrapper_value(map: &Map<String, Value>) -> Option<Vec<Value>> {
+    let mut scalar_field_count = 0usize;
+    let mut non_scalar_value: Option<&Value> = None;
+    for value in map.values() {
+        match value {
+            Value::Array(_) | Value::Object(_) => {
+                if non_scalar_value.is_some() {
+                    return None;
+                }
+                non_scalar_value = Some(value);
+            }
+            Value::String(_) | Value::Number(_) | Value::Bool(_) | Value::Null => {
+                scalar_field_count = scalar_field_count.saturating_add(1);
+            }
+        }
+    }
+
+    if scalar_field_count == 0 {
+        return None;
+    }
+
+    match non_scalar_value? {
+        Value::Array(items) => Some(items.clone()),
+        Value::Object(object) => Some(vec![Value::Object(object.clone())]),
         _ => None,
     }
 }
@@ -718,5 +770,33 @@ mod tests {
 
         let normalized = normalize_command_payload(payload.clone(), Some("data.items"));
         assert_eq!(normalized, payload);
+    }
+
+    #[test]
+    fn normalize_command_payload_preserves_object_wrapper_with_scalar_metadata() {
+        let payload = json!({
+            "cursor": "abcd",
+            "item": { "id": "project-a" }
+        });
+
+        let normalized = normalize_command_payload(payload, Some("data.items"));
+        assert_eq!(
+            normalized,
+            json!({
+                "cursor": "abcd",
+                "item": { "id": "project-a" }
+            })
+        );
+    }
+
+    #[test]
+    fn extract_provider_collection_items_extracts_single_object_with_scalar_metadata() {
+        let payload = json!({
+            "cursor": "abcd",
+            "item": { "id": "project-a" }
+        });
+
+        let items = extract_provider_collection_items(&payload, None).expect("provider wrapper object should be extracted");
+        assert_eq!(items, vec![json!({ "id": "project-a" })]);
     }
 }

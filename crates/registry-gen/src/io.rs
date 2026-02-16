@@ -518,37 +518,51 @@ fn build_return_contract(command: &CommandSpec, contract: &mut ProviderContract)
 /// - Requires the resulting `ProviderFieldContract` names and types
 ///   to match the schema field definitions.
 fn convert_schema_to_return_contract(schema: Option<&SchemaProperty>) -> ProviderReturnContract {
-    let mut return_contract = ProviderReturnContract::default();
     let Some(root) = schema else {
-        return return_contract;
+        return ProviderReturnContract::default();
     };
 
-    match root.r#type.as_str() {
+    let mut fields = Vec::new();
+    collect_return_fields(root, "", &mut fields);
+    fields.sort_by(|left, right| left.name.cmp(&right.name));
+
+    ProviderReturnContract { fields }
+}
+
+fn collect_return_fields(schema: &SchemaProperty, prefix: &str, output: &mut Vec<ProviderFieldContract>) {
+    match schema.r#type.as_str() {
         "object" => {
-            if let Some(properties) = &root.properties {
-                let mut entries: Vec<_> = properties.iter().map(|(name, property)| (name, property.as_ref())).collect();
-                entries.sort_by(|(lhs, _), (rhs, _)| lhs.cmp(rhs));
-                for (name, property) in entries {
-                    return_contract.fields.push(ProviderFieldContract {
-                        name: name.clone(),
-                        r#type: Some(property.r#type.clone()),
-                        tags: property.tags.clone(),
-                    });
-                }
+            let Some(properties) = &schema.properties else {
+                return;
+            };
+            let mut entries = properties.iter().collect::<Vec<_>>();
+            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            for (property_name, property_schema) in entries {
+                let path = if prefix.is_empty() {
+                    property_name.clone()
+                } else {
+                    format!("{prefix}.{property_name}")
+                };
+                collect_return_fields(property_schema.as_ref(), &path, output);
             }
         }
         "array" => {
-            if let Some(item_schema) = root.items.as_deref() {
-                let nested = convert_schema_to_return_contract(Some(item_schema));
-                if !nested.fields.is_empty() {
-                    return_contract = nested;
-                }
-            }
+            let Some(item_schema) = schema.items.as_deref() else {
+                return;
+            };
+            collect_return_fields(item_schema, prefix, output);
         }
-        _ => {}
+        _ => {
+            if prefix.is_empty() {
+                return;
+            }
+            output.push(ProviderFieldContract {
+                name: prefix.to_string(),
+                r#type: Some(schema.r#type.clone()),
+                tags: schema.tags.clone(),
+            });
+        }
     }
-
-    return_contract
 }
 /// Extracts and returns a list of placeholders from a given URL path.
 ///
@@ -638,6 +652,7 @@ fn parse_openapi_document(input: ManifestInput) -> Result<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
 
     #[test]
     fn extract_path_placeholders_happy_and_edge_cases() {
@@ -674,5 +689,50 @@ mod tests {
         let (accepts, prefer) = argument_accepts_and_preference("resource");
         assert_eq!(accepts, vec!["resource_id", "resource_name", "resource_slug"]);
         assert_eq!(prefer.as_deref(), Some("resource_id"));
+    }
+
+    fn schema(ty: &str) -> SchemaProperty {
+        SchemaProperty {
+            r#type: ty.to_string(),
+            description: String::new(),
+            properties: None,
+            required: Vec::new(),
+            items: None,
+            enum_values: Vec::new(),
+            format: None,
+            tags: Vec::new(),
+        }
+    }
+
+    fn object_schema(properties: Vec<(&str, SchemaProperty)>) -> SchemaProperty {
+        let mut map = HashMap::new();
+        for (name, property) in properties {
+            map.insert(name.to_string(), Box::new(property));
+        }
+        let mut root = schema("object");
+        root.properties = Some(map);
+        root
+    }
+
+    #[test]
+    fn convert_schema_to_return_contract_flattens_nested_scalar_paths() {
+        let schema = object_schema(vec![
+            ("cursor", schema("string")),
+            (
+                "item",
+                object_schema(vec![
+                    ("id", schema("string")),
+                    ("name", schema("string")),
+                    ("owner", object_schema(vec![("id", schema("string")), ("slug", schema("string"))])),
+                ]),
+            ),
+        ]);
+
+        let contract = convert_schema_to_return_contract(Some(&schema));
+        let field_names = contract.fields.into_iter().map(|field| field.name).collect::<Vec<_>>();
+        assert_eq!(
+            field_names,
+            vec!["cursor", "item.id", "item.name", "item.owner.id", "item.owner.slug"]
+        );
     }
 }

@@ -258,7 +258,12 @@ where
         "repeat step started"
     );
 
-    let max_attempts = MAX_REPEAT_ATTEMPTS;
+    let max_attempts = step
+        .repeat
+        .as_ref()
+        .and_then(|repeat| repeat.max_attempts)
+        .unwrap_or(MAX_REPEAT_ATTEMPTS)
+        .clamp(1, MAX_REPEAT_ATTEMPTS);
     let sleep_dur = step
         .repeat
         .as_ref()
@@ -552,6 +557,31 @@ mod tests {
         assert_eq!(res.status, StepStatus::Succeeded);
         assert!(ctx.steps.contains_key("s1"));
         assert!(res.attempts >= 1);
+    }
+
+    #[test]
+    fn repeat_respects_configured_max_attempts() {
+        let step = PreparedStep {
+            id: "s1".into(),
+            depends_on: vec![],
+            run: "echo".into(),
+            with: None,
+            body: None,
+            r#if: None,
+            repeat: Some(StepRepeat {
+                // Never becomes true for EchoRunner payload.
+                until: "steps.s1.status == \"ready\"".into(),
+                every: "1s".into(),
+                max_attempts: Some(2),
+                ..Default::default()
+            }),
+        };
+        let runner = EchoRunner;
+        let mut ctx = RunContext::default();
+        let res = run_step_repeating_with(&step, &mut ctx, &runner);
+        assert_eq!(res.status, StepStatus::Failed);
+        assert_eq!(res.attempts, 2);
+        assert!(res.logs.iter().any(|line| line.contains("repeat guard tripped")));
     }
 
     #[test]
