@@ -115,7 +115,7 @@ impl RunViewState {
     pub fn output_by_index(&self, index: usize) -> Option<Value> {
         let row = self.step_rows.get(index)?;
         let step_id = row.get("Step").and_then(Value::as_str).unwrap_or_default().to_string();
-        self.outputs.get(&step_id).cloned()
+        self.outputs.get(&step_id).cloned().or_else(|| row.get("Output").cloned())
     }
 
     /// Computes a display name favoring the title over the identifier.
@@ -490,6 +490,7 @@ mod tests {
         let summary = row["Details"].as_str().expect("summary");
         assert!(summary.contains("succeeded"));
         assert_eq!(row["Output"], json!({"result": "ok"}));
+        assert_eq!(state.output_by_index(0), Some(json!({"result": "ok"})));
     }
 
     #[test]

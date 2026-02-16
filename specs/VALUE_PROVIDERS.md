@@ -22,6 +22,12 @@ Implemented value-provider behavior across:
 - Palette suggestions (`suggestion_engine`)
 - Workflow collector/provider selector flow
 
+## Workflow Collector Behavior (Current)
+- Provider-backed input selection and manual override share the same collector modal.
+- Empty provider result sets for workflow inputs do not force a separate modal; collector remains open and focuses manual override.
+- When provider mappings are ambiguous or value extraction fails, users can manually override directly in collector.
+- Manual override supports JSON file loading through the shared file picker (`Ctrl+O`, `.json`) and resumes collector flow with parsed content/error messaging.
+
 ## Current Constraints
 - Provider behavior is driven by inferred metadata and available contracts; no separate external provider registry file is required.
 - Advanced provider chaining semantics beyond current binding resolution are not separately implemented.

@@ -22,6 +22,7 @@ mod value_provider;
 use anyhow::Result;
 pub use fetch::ProviderValueFetcher;
 pub(crate) use identifier::ProviderIdentifier;
+pub use identifier::parse_provider_group_and_command;
 pub use null::NullProvider;
 use oatty_types::ProviderContract;
 pub use registry::{CacheLookupOutcome, ProviderRegistry};

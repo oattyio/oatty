@@ -16,7 +16,7 @@ use ratatui::layout::Rect;
 use ratatui::prelude::{Line, Span};
 use ratatui::widgets::{ListState, TableState};
 use ratatui::{
-    layout::Constraint,
+    layout::{Constraint, Layout},
     style::Style,
     widgets::{Cell, Row},
 };
@@ -59,6 +59,22 @@ impl<'a> ResultsTableState<'a> {
         None
     }
 
+    pub fn column_count(&self) -> usize {
+        self.columns.as_ref().map_or(0, Vec::len)
+    }
+
+    pub fn selected_column_key(&self) -> Option<String> {
+        let selected_column = self.table_state.selected_column()?;
+        let columns = self.columns.as_ref()?;
+        columns.get(selected_column).map(|column| column.key.clone())
+    }
+
+    pub fn ensure_column_selected(&mut self) {
+        if self.table_state.selected_column().is_none() && self.column_count() > 0 {
+            self.table_state.select_column(Some(0));
+        }
+    }
+
     pub fn kv_entries(&self) -> &[KeyValueEntry] {
         &self.kv_entries
     }
@@ -78,12 +94,55 @@ impl<'a> ResultsTableState<'a> {
         self.result_json = value;
         let json_array = Self::array_from_json(self.result_json.as_ref());
         self.columns = self.create_columns(json_array, rerank_columns);
-        self.row_cells = self.create_row_cells(json_array, theme);
-        self.headers = self.create_headers(theme);
-        self.column_constraints = self.create_constraints();
-        self.kv_entries = self.create_kv_entries(self.result_json.as_ref());
-        self.table_state = TableState::default();
-        self.truncated_col_idx = 0;
+        self.reset_render_cache(theme);
+    }
+
+    /// Reorders visible columns so prioritized keys appear first.
+    ///
+    /// This is used by provider-backed selectors where the chosen `value_field`
+    /// or `display_field` can otherwise be omitted by generic column ranking.
+    pub fn prioritize_columns(&mut self, prioritized_keys: &[String], theme: &dyn UiTheme) {
+        let normalized_keys = Self::normalize_prioritized_keys(prioritized_keys);
+        if normalized_keys.is_empty() {
+            return;
+        }
+        let selected_column_key = self.selected_column_key();
+        let Some(rows) = Self::array_from_json(self.result_json.as_ref()) else {
+            return;
+        };
+        let Some(current_columns) = self.columns.take() else {
+            return;
+        };
+
+        let mut ordered_columns = Vec::with_capacity(current_columns.len() + normalized_keys.len());
+        let mut remaining_columns = current_columns;
+
+        for key in normalized_keys {
+            if let Some(existing_index) = remaining_columns.iter().position(|column| column.key == key) {
+                ordered_columns.push(remaining_columns.remove(existing_index));
+                continue;
+            }
+            if let Some(derived_column) = Self::derive_column_for_key(rows, &key) {
+                ordered_columns.push(derived_column);
+            }
+        }
+
+        if ordered_columns.is_empty() {
+            self.columns = Some(remaining_columns);
+            return;
+        }
+
+        ordered_columns.extend(remaining_columns);
+        self.columns = Some(ordered_columns);
+        self.reset_render_cache(theme);
+        if let Some(selected_key) = selected_column_key
+            && let Some(index) = self
+                .columns
+                .as_ref()
+                .and_then(|columns| columns.iter().position(|column| column.key == selected_key))
+        {
+            self.table_state.select_column(Some(index));
+        }
     }
 
     pub fn move_right(&mut self) {
@@ -107,14 +166,93 @@ impl<'a> ResultsTableState<'a> {
         self.row_cells.as_ref().map(|row_cells| row_cells.len()).unwrap_or(0)
     }
 
+    pub fn move_selected_column_right(&mut self, table_width: u16) {
+        if self.column_count() == 0 {
+            return;
+        }
+        let max_column_index = self.column_count().saturating_sub(1);
+        let selected_column = self.table_state.selected_column().unwrap_or(0);
+        let next_column = selected_column.saturating_add(1).min(max_column_index);
+        self.table_state.select_column(Some(next_column));
+        self.ensure_selected_column_visible(table_width);
+    }
+
+    pub fn move_selected_column_left(&mut self, table_width: u16) {
+        if self.column_count() == 0 {
+            return;
+        }
+        let selected_column = self.table_state.selected_column().unwrap_or(0);
+        let next_column = selected_column.saturating_sub(1);
+        self.table_state.select_column(Some(next_column));
+        self.ensure_selected_column_visible(table_width);
+    }
+
+    pub fn ensure_selected_column_visible(&mut self, table_width: u16) {
+        if self.column_count() == 0 {
+            self.truncated_col_idx = 0;
+            return;
+        }
+        let selected_column = self.table_state.selected_column().unwrap_or(0);
+        let max_column_index = self.column_count().saturating_sub(1);
+        let selected_column = selected_column.min(max_column_index);
+        self.table_state.select_column(Some(selected_column));
+
+        if selected_column < self.truncated_col_idx {
+            self.truncated_col_idx = selected_column;
+        }
+
+        loop {
+            let visible_window = self.visible_column_window(table_width);
+            let Some((window_start, window_end)) = visible_window else {
+                self.truncated_col_idx = 0;
+                break;
+            };
+            if selected_column < window_start {
+                self.truncated_col_idx = selected_column;
+                continue;
+            }
+            if selected_column >= window_end {
+                self.truncated_col_idx = self.truncated_col_idx.saturating_add(1).min(max_column_index);
+                continue;
+            }
+            break;
+        }
+    }
+
+    pub fn hit_test_column(&self, relative_x: u16, table_width: u16) -> Option<usize> {
+        let (window_start, window_end) = self.visible_column_window(table_width)?;
+        let visible_columns = window_end.saturating_sub(window_start);
+        if visible_columns == 0 {
+            return None;
+        }
+        let widths = self.column_constraints.as_ref()?;
+        let visible_constraints = widths.get(window_start..window_end)?;
+        let layout_area = Rect {
+            x: 0,
+            y: 0,
+            width: table_width,
+            height: 1,
+        };
+        let column_areas = Layout::horizontal(visible_constraints.to_vec()).split(layout_area);
+        column_areas
+            .iter()
+            .enumerate()
+            .find(|(_, column_area)| relative_x >= column_area.x && relative_x < column_area.x.saturating_add(column_area.width))
+            .map(|(visible_index, _)| window_start + visible_index)
+    }
+
+    pub fn select_cell(&mut self, row: usize, column: usize, table_width: u16) {
+        self.table_state.select(Some(row));
+        self.table_state.select_column(Some(column));
+        self.ensure_selected_column_visible(table_width);
+    }
+
     pub fn create_rows(&self, table_width: u16, theme: &dyn UiTheme) -> Option<(usize, Vec<Row<'a>>)> {
         let cols = self.columns.as_ref()?;
-        let mut asked_width = cols.iter().fold(0, |acc, col| acc + col.max_len) as u16;
-        let mut truncate_idx = 0;
-        while asked_width > table_width && truncate_idx < self.truncated_col_idx {
-            asked_width = asked_width.saturating_sub(cols[truncate_idx].max_len as u16);
-            truncate_idx += 1;
-        }
+        let truncate_idx = self
+            .visible_column_window(table_width)
+            .map(|(window_start, _)| window_start)
+            .unwrap_or_else(|| self.truncated_col_idx.min(cols.len().saturating_sub(1)));
 
         let row_cells = self.row_cells.as_ref()?;
         let mut rows = Vec::with_capacity(row_cells.len());
@@ -190,6 +328,41 @@ impl<'a> ResultsTableState<'a> {
         None
     }
 
+    fn visible_column_window(&self, table_width: u16) -> Option<(usize, usize)> {
+        let columns = self.columns.as_ref()?;
+        if columns.is_empty() {
+            return Some((0, 0));
+        }
+
+        let max_column_index = columns.len().saturating_sub(1);
+        let window_start = self.truncated_col_idx.min(max_column_index);
+        let constraints = self.column_constraints.as_ref()?;
+        let visible_constraints = constraints.get(window_start..)?;
+        if visible_constraints.is_empty() {
+            return Some((window_start, window_start));
+        }
+
+        let layout_area = Rect {
+            x: 0,
+            y: 0,
+            width: table_width,
+            height: 1,
+        };
+        let column_areas = Layout::horizontal(visible_constraints.to_vec()).split(layout_area);
+        let mut visible_count = 0usize;
+        for column_area in column_areas.iter() {
+            if column_area.width == 0 {
+                break;
+            }
+            visible_count = visible_count.saturating_add(1);
+        }
+        if visible_count == 0 {
+            visible_count = 1;
+        }
+        let window_end = (window_start + visible_count).min(columns.len());
+        Some((window_start, window_end))
+    }
+
     fn create_headers(&self, theme: &dyn UiTheme) -> Option<Vec<Cell<'a>>> {
         if let Some(columns) = self.columns.as_ref() {
             let headers: Vec<Cell> = columns
@@ -218,6 +391,59 @@ impl<'a> ResultsTableState<'a> {
             return arr_opt;
         }
         None
+    }
+
+    fn reset_render_cache(&mut self, theme: &dyn UiTheme) {
+        let json_array = Self::array_from_json(self.result_json.as_ref());
+        self.row_cells = self.create_row_cells(json_array, theme);
+        self.headers = self.create_headers(theme);
+        self.column_constraints = self.create_constraints();
+        self.kv_entries = self.create_kv_entries(self.result_json.as_ref());
+        self.table_state = TableState::default();
+        self.truncated_col_idx = 0;
+    }
+
+    fn normalize_prioritized_keys(prioritized_keys: &[String]) -> Vec<String> {
+        let mut unique = Vec::new();
+        for key in prioritized_keys {
+            let trimmed = key.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if unique.iter().any(|candidate: &String| candidate == trimmed) {
+                continue;
+            }
+            unique.push(trimmed.to_string());
+        }
+        unique
+    }
+
+    fn derive_column_for_key(rows: &[Value], key: &str) -> Option<ColumnWithSize> {
+        let header = normalize_header(key);
+        let mut max_len = header.len();
+        let mut found = false;
+
+        for row in rows.iter().take(200) {
+            let Value::Object(map) = row else {
+                continue;
+            };
+            let Some(raw_value) = map.get(key) else {
+                continue;
+            };
+            found = true;
+            let rendered = render_value(key, raw_value, None).into_plain_text();
+            max_len = max_len.max(rendered.len());
+        }
+
+        if !found {
+            return None;
+        }
+
+        Some(ColumnWithSize {
+            name: header,
+            key: key.to_string(),
+            max_len,
+        })
     }
 
     /// Processes general command execution results (non-plugin specific).
@@ -286,5 +512,34 @@ impl HasFocus for ResultsTableState<'_> {
 
     fn area(&self) -> Rect {
         Rect::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ResultsTableState;
+    use crate::ui::theme::dracula::DraculaTheme;
+    use serde_json::json;
+
+    #[test]
+    fn prioritize_columns_promotes_requested_keys() {
+        let mut table = ResultsTableState::default();
+        let theme = DraculaTheme::new();
+        table.apply_result_json(
+            Some(json!([
+                {"name": "alpha", "id": "app-1", "status": "ok"},
+                {"name": "beta", "id": "app-2", "status": "ok"}
+            ])),
+            &theme,
+            true,
+        );
+
+        let before = table.columns.as_ref().expect("columns");
+        assert_ne!(before.first().map(|column| column.key.as_str()), Some("id"));
+
+        table.prioritize_columns(&["id".to_string()], &theme);
+
+        let after = table.columns.as_ref().expect("columns");
+        assert_eq!(after.first().map(|column| column.key.as_str()), Some("id"));
     }
 }

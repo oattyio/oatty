@@ -48,6 +48,7 @@ use anyhow::{Context, Result};
 use serde::Deserialize;
 
 pub mod executor;
+pub mod field_paths;
 pub mod model;
 pub mod provider;
 pub mod resolve;

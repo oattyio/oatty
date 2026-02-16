@@ -6,6 +6,8 @@
 
 pub mod suggestion {
     //! Suggestion metadata used by palette and autocompletion UIs.
+    use serde::{Deserialize, Serialize};
+
     /// Identifies the kind of suggestion item presented to the user.
     #[derive(Clone, Debug, PartialEq)]
     pub enum ItemKind {
@@ -19,6 +21,34 @@ pub mod suggestion {
         Value,
         /// A positional argument (for example, an app name or dyno name).
         Positional,
+    }
+
+    /// Prefix used to identify encoded provider-selector action suggestions.
+    pub const PROVIDER_SELECTOR_ACTION_PREFIX: &str = "__oatty_provider_select__";
+
+    /// Structured payload describing a provider-selector action emitted via suggestions.
+    #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+    pub struct ProviderSelectorActionPayload {
+        /// Provider command identifier (`<group> <command>`).
+        pub provider_id: String,
+        /// Active command key where completion is being resolved (`<group> <command>`).
+        pub command_key: String,
+        /// Input field requesting the provider-backed value.
+        pub field: String,
+        /// Indicates whether the target field is positional (`true`) or a named flag (`false`).
+        pub positional: bool,
+    }
+
+    /// Encodes a provider-selector action payload into a suggestion insert string.
+    pub fn encode_provider_selector_action(payload: &ProviderSelectorActionPayload) -> String {
+        let serialized = serde_json::to_string(payload).unwrap_or_else(|_| "{}".to_string());
+        format!("{PROVIDER_SELECTOR_ACTION_PREFIX}{serialized}")
+    }
+
+    /// Decodes an encoded provider-selector action payload from a suggestion insert string.
+    pub fn decode_provider_selector_action(insert_text: &str) -> Option<ProviderSelectorActionPayload> {
+        let encoded_payload = insert_text.strip_prefix(PROVIDER_SELECTOR_ACTION_PREFIX)?;
+        serde_json::from_str(encoded_payload).ok()
     }
 
     /// High-level metadata for an autocompletion or palette suggestion.

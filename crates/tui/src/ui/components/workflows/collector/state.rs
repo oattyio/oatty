@@ -8,25 +8,11 @@
 use crate::ui::components::common::TextInputState;
 use crate::ui::components::results::ResultsTableState;
 use crate::ui::theme::Theme;
-use indexmap::IndexMap;
 use oatty_types::WorkflowProviderErrorPolicy;
 use oatty_util::fuzzy_score;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use serde_json::Value;
-
-/// Enriched schema metadata used to annotate selector rows and detail entries.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct WorkflowSelectorFieldMetadata {
-    /// JSON type hint reported by the upstream schema.
-    pub json_type: Option<String>,
-    /// Semantic tags associated with the field (for example, `app_id`).
-    pub tags: Vec<String>,
-    /// Enumerated literals declared for the field, when available.
-    pub enum_values: Vec<String>,
-    /// Indicates whether the field is required for the provider payload.
-    pub required: bool,
-}
 
 /// A staged workflow selector choice that is ready to be applied.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -62,6 +48,29 @@ pub enum SelectorStatus {
     Error,
 }
 
+/// Destination for applying a staged selector value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CollectorApplyTarget {
+    /// Apply selection to the currently active workflow input.
+    #[default]
+    WorkflowInput,
+    /// Apply selection back into the command palette input.
+    PaletteInput {
+        /// Whether the target in palette input is positional (`true`) or flag value (`false`).
+        positional: bool,
+    },
+}
+
+/// Source currently selected for the Apply action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CollectorSelectionSource {
+    /// Apply the row/table-backed value.
+    #[default]
+    Table,
+    /// Apply the manual override value.
+    Manual,
+}
+
 /// Top-level view state for the workflow selector.
 #[derive(Debug, Default)]
 pub struct CollectorViewState<'a> {
@@ -85,16 +94,23 @@ pub struct CollectorViewState<'a> {
     pub original_items: Option<Vec<Value>>,
     /// Cache key currently awaiting asynchronous fetch completion.
     pub pending_cache_key: Option<String>,
+    /// Destination for applying staged selector values.
+    pub apply_target: CollectorApplyTarget,
     /// Lightweight inline filter buffer.
     pub filter: TextInputState,
-    /// Cached metadata derived from the provider schema.
-    pub field_metadata: IndexMap<String, WorkflowSelectorFieldMetadata>,
     /// Currently staged selection awaiting confirmation.
     pub staged_selection: Option<CollectorStagedSelection>,
+    /// Inline manual override text entered by the user.
+    pub manual_override: TextInputState,
+    /// Last interaction source used to determine what Apply will commit.
+    pub selection_source: CollectorSelectionSource,
+    /// Indicates the collector requested a file selection for manual override.
+    pub pending_manual_file_pick: bool,
     /// Container and child widget focus flags
     pub container_focus: FocusFlag,
     pub f_table: FocusFlag,
     pub f_filter: FocusFlag,
+    pub f_manual: FocusFlag,
     pub f_apply: FocusFlag,
     pub f_cancel: FocusFlag,
 }
@@ -120,6 +136,7 @@ impl<'a> CollectorViewState<'a> {
 
         if query.is_empty() {
             self.table.apply_result_json(Some(Value::Array(items.clone())), theme, true);
+            self.prioritize_selector_columns(theme);
             return;
         }
         let mut scores: Vec<(i64, usize)> = items
@@ -143,6 +160,7 @@ impl<'a> CollectorViewState<'a> {
 
         let json = Value::Array(dataset);
         self.table.apply_result_json(Some(json), theme, true);
+        self.prioritize_selector_columns(theme);
     }
 
     /// Clears any staged selection currently pending confirmation.
@@ -153,6 +171,9 @@ impl<'a> CollectorViewState<'a> {
     /// Replaces the staged selection.
     pub fn set_staged_selection(&mut self, selection: Option<CollectorStagedSelection>) {
         self.staged_selection = selection;
+        if self.staged_selection.is_some() {
+            self.selection_source = CollectorSelectionSource::Table;
+        }
     }
 
     /// Returns the current staged selection, when present.
@@ -172,7 +193,15 @@ impl<'a> CollectorViewState<'a> {
 
     /// Indicates whether the Apply button should be enabled.
     pub fn apply_enabled(&self) -> bool {
-        self.staged_selection.is_some()
+        match self.selection_source {
+            CollectorSelectionSource::Table => self.staged_selection.is_some(),
+            CollectorSelectionSource::Manual => !self.manual_override.is_empty(),
+        }
+    }
+
+    /// Switches the active apply source.
+    pub fn set_selection_source(&mut self, selection_source: CollectorSelectionSource) {
+        self.selection_source = selection_source;
     }
 
     /// Drops the staged selection when it no longer matches the visible row.
@@ -189,6 +218,17 @@ impl<'a> CollectorViewState<'a> {
             self.clear_staged_selection();
         }
     }
+
+    fn prioritize_selector_columns(&mut self, theme: &dyn Theme) {
+        let mut prioritized_keys = Vec::new();
+        if let Some(value_field) = self.value_field.as_deref() {
+            prioritized_keys.push(value_field.split('.').next_back().unwrap_or(value_field).to_string());
+        }
+        if let Some(display_field) = self.display_field.as_deref() {
+            prioritized_keys.push(display_field.split('.').next_back().unwrap_or(display_field).to_string());
+        }
+        self.table.prioritize_columns(&prioritized_keys, theme);
+    }
 }
 
 impl HasFocus for CollectorViewState<'_> {
@@ -196,6 +236,7 @@ impl HasFocus for CollectorViewState<'_> {
         let start = builder.start(self);
         builder.leaf_widget(&self.f_filter);
         builder.leaf_widget(&self.f_table);
+        builder.leaf_widget(&self.f_manual);
         builder.leaf_widget(&self.f_apply);
         builder.leaf_widget(&self.f_cancel);
 

@@ -4,8 +4,14 @@ use crate::server::workflow::errors::{internal_error, validation_error_with_viol
 use crate::server::workflow::services::storage::{find_manifest_record, parse_manifest_content};
 use anyhow::Result;
 use oatty_engine::RegistryCommandRunner;
+use oatty_engine::field_paths::{
+    is_non_scalar_schema_type, missing_details_from_schema, non_scalar_suggested_next_step, non_scalar_validation_message,
+    resolve_schema_path,
+};
+use oatty_engine::provider::parse_provider_group_and_command;
 use oatty_registry::CommandRegistry;
-use oatty_types::workflow::{RuntimeWorkflow, collect_missing_catalog_requirements};
+use oatty_types::workflow::{RuntimeWorkflow, WorkflowInputDefinition, WorkflowValueProvider, collect_missing_catalog_requirements};
+use oatty_types::{CommandSpec, SchemaProperty};
 use rmcp::model::ErrorData;
 use serde_json::Value;
 use std::sync::{Arc, Mutex};
@@ -44,7 +50,7 @@ pub fn collect_workflow_preflight_violations(
         })?
         .clone();
     let available_catalogs = registry_snapshot.config.catalogs.clone().unwrap_or_default();
-    let runner = RegistryCommandRunner::new(registry_snapshot);
+    let runner = RegistryCommandRunner::new(registry_snapshot.clone());
 
     let violations: Vec<Value> = runner
         .validate_workflow_execution_readiness(workflow)
@@ -108,6 +114,7 @@ pub fn collect_workflow_preflight_violations(
 
     let mut all_violations = violations;
     all_violations.extend(missing_catalog_violations);
+    all_violations.extend(collect_provider_select_value_field_violations(workflow, &registry_snapshot));
 
     Ok(all_violations)
 }
@@ -134,4 +141,197 @@ pub fn build_preflight_validation_error(
         suggested_action,
         violations,
     ))
+}
+
+fn collect_provider_select_value_field_violations(workflow: &RuntimeWorkflow, registry: &CommandRegistry) -> Vec<Value> {
+    workflow
+        .inputs
+        .iter()
+        .filter_map(|(input_name, definition)| {
+            let value_field = definition.select.as_ref().and_then(|select| select.value_field.as_deref())?;
+            let value_field = value_field.trim();
+            if value_field.is_empty() {
+                return None;
+            }
+
+            let provider_identifier = provider_identifier(definition)?;
+            let (group, command_name) = parse_provider_group_and_command(provider_identifier.as_str())?;
+            let command_spec = registry.find_by_group_and_cmd_cloned(&group, &command_name).ok()?;
+            let item_schema = provider_item_schema(&command_spec)?;
+
+            match validate_select_value_field(item_schema, value_field) {
+                SelectValueFieldValidation::Valid => None,
+                SelectValueFieldValidation::NonScalar { resolved_type } => Some(serde_json::json!({
+                    "path": format!("$.inputs.{}.select.value_field", input_name),
+                    "rule": "provider_select_value_field_non_scalar",
+                    "message": non_scalar_validation_message(input_name, value_field, &resolved_type),
+                    "input": input_name,
+                    "provider": provider_identifier,
+                    "value_field": value_field,
+                    "next_step": non_scalar_suggested_next_step(),
+                })),
+                SelectValueFieldValidation::Missing { details } => Some(serde_json::json!({
+                    "path": format!("$.inputs.{}.select.value_field", input_name),
+                    "rule": "provider_select_value_field_missing",
+                    "message": details.validation_message(input_name),
+                    "input": input_name,
+                    "provider": provider_identifier,
+                    "value_field": value_field,
+                    "nested_candidates": details.nested_candidates,
+                    "available_fields": details.available_fields,
+                    "next_step": details.suggested_next_step(),
+                })),
+            }
+        })
+        .collect()
+}
+
+pub fn provider_identifier(definition: &WorkflowInputDefinition) -> Option<String> {
+    definition.provider.as_ref().map(|provider| match provider {
+        WorkflowValueProvider::Id(identifier) => identifier.clone(),
+        WorkflowValueProvider::Detailed(detailed) => detailed.id.clone(),
+    })
+}
+
+fn provider_item_schema(command_spec: &CommandSpec) -> Option<&SchemaProperty> {
+    let http_spec = command_spec.http()?;
+    let output_schema = http_spec.output_schema.as_ref()?;
+
+    if let Some(list_response_path) = http_spec.list_response_path.as_deref()
+        && let Some(list_schema) = resolve_schema_path(output_schema, list_response_path)
+    {
+        return Some(coerce_item_schema(list_schema));
+    }
+
+    if output_schema.r#type == "array" {
+        return output_schema.items.as_deref();
+    }
+
+    if output_schema.r#type == "object"
+        && let Some(properties) = output_schema.properties.as_ref()
+    {
+        let mut array_candidates = properties.values().filter_map(|property| {
+            let property = property.as_ref();
+            if property.r#type == "array" {
+                property.items.as_deref()
+            } else {
+                None
+            }
+        });
+        if let Some(single_candidate) = array_candidates.next()
+            && array_candidates.next().is_none()
+        {
+            return Some(single_candidate);
+        }
+    }
+
+    Some(output_schema)
+}
+
+fn coerce_item_schema(schema: &SchemaProperty) -> &SchemaProperty {
+    if schema.r#type == "array"
+        && let Some(items) = schema.items.as_deref()
+    {
+        return items;
+    }
+    schema
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+enum SelectValueFieldValidation {
+    Valid,
+    Missing {
+        details: oatty_engine::field_paths::SelectValueFieldMissingDetails,
+    },
+    NonScalar {
+        resolved_type: String,
+    },
+}
+
+fn validate_select_value_field(item_schema: &SchemaProperty, value_field: &str) -> SelectValueFieldValidation {
+    if let Some(resolved_schema) = resolve_schema_path(item_schema, value_field) {
+        if is_non_scalar_schema_type(resolved_schema) {
+            return SelectValueFieldValidation::NonScalar {
+                resolved_type: resolved_schema.r#type.clone(),
+            };
+        }
+        return SelectValueFieldValidation::Valid;
+    }
+
+    let details = missing_details_from_schema(item_schema, value_field);
+    SelectValueFieldValidation::Missing { details }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{SelectValueFieldValidation, validate_select_value_field};
+    use oatty_types::SchemaProperty;
+    use std::collections::HashMap;
+
+    fn schema(ty: &str) -> SchemaProperty {
+        SchemaProperty {
+            r#type: ty.to_string(),
+            description: String::new(),
+            properties: None,
+            required: Vec::new(),
+            items: None,
+            enum_values: Vec::new(),
+            format: None,
+            tags: Vec::new(),
+        }
+    }
+
+    fn object_schema(properties: Vec<(&str, SchemaProperty)>) -> SchemaProperty {
+        let mut map = HashMap::new();
+        for (name, property) in properties {
+            map.insert(name.to_string(), Box::new(property));
+        }
+        let mut root = schema("object");
+        root.properties = Some(map);
+        root
+    }
+
+    #[test]
+    fn value_field_validation_accepts_exact_scalar_path() {
+        let schema = object_schema(vec![("owner", object_schema(vec![("id", schema("string"))]))]);
+        let validation = validate_select_value_field(&schema, "owner.id");
+        assert!(matches!(validation, SelectValueFieldValidation::Valid));
+    }
+
+    #[test]
+    fn value_field_validation_reports_nested_candidate_for_missing_root_leaf() {
+        let schema = object_schema(vec![
+            ("owner", object_schema(vec![("id", schema("string"))])),
+            ("name", schema("string")),
+        ]);
+        let validation = validate_select_value_field(&schema, "id");
+        match validation {
+            SelectValueFieldValidation::Missing { details } => {
+                assert_eq!(details.nested_candidates, vec!["owner.id".to_string()])
+            }
+            _ => panic!("expected missing validation"),
+        }
+    }
+
+    #[test]
+    fn value_field_validation_reports_ambiguous_nested_candidates() {
+        let schema = object_schema(vec![
+            ("owner", object_schema(vec![("id", schema("string"))])),
+            ("team", object_schema(vec![("id", schema("string"))])),
+        ]);
+        let validation = validate_select_value_field(&schema, "id");
+        match validation {
+            SelectValueFieldValidation::Missing { details } => {
+                assert_eq!(details.nested_candidates, vec!["owner.id".to_string(), "team.id".to_string()])
+            }
+            _ => panic!("expected missing validation"),
+        }
+    }
+
+    #[test]
+    fn value_field_validation_rejects_non_scalar_path() {
+        let schema = object_schema(vec![("owner", object_schema(vec![("id", schema("string"))]))]);
+        let validation = validate_select_value_field(&schema, "owner");
+        assert!(matches!(validation, SelectValueFieldValidation::NonScalar { .. }));
+    }
 }

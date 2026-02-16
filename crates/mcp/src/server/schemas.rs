@@ -26,6 +26,19 @@ pub enum OutputSchemaDetail {
     Full,
 }
 
+/// Detail level for including value-provider metadata in command detail responses.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderMetadataDetail {
+    /// Omit provider metadata to keep responses token-efficient.
+    #[default]
+    None,
+    /// Include provider source command identifiers for required inputs.
+    RequiredOnly,
+    /// Include provider source identifiers and binding metadata for all provider-backed inputs.
+    Full,
+}
+
 /// Parameters for command discovery.
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct SearchRequestParam {
@@ -84,6 +97,9 @@ pub struct CommandDetailRequest {
     /// Optional output schema detail level. Defaults to `paths`.
     #[schemars(description = "Optional output schema detail: paths|full. Default is paths (output_fields only).")]
     pub output_schema_detail: Option<OutputSchemaDetail>,
+    /// Optional provider metadata detail level. Defaults to `none`.
+    #[schemars(description = "Optional provider metadata detail: none|required_only|full. Default is none.")]
+    pub include_providers: Option<ProviderMetadataDetail>,
 }
 
 /// How to interpret the catalog source location.

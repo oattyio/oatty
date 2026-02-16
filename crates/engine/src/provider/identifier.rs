@@ -105,3 +105,11 @@ pub(crate) fn cache_key_for_identifier(identifier: &str, arguments: &JsonMap<Str
     let canonical = canonical_identifier(identifier).unwrap_or_else(|| identifier.to_string());
     cache_key_for_canonical_identifier(&canonical, arguments)
 }
+
+/// Parses a provider identifier into `(group, command_name)` for command lookups.
+///
+/// Accepted format:
+/// - Canonical whitespace form: `<group> <command>`
+pub fn parse_provider_group_and_command(identifier: &str) -> Option<(String, String)> {
+    ProviderIdentifier::parse(identifier).map(|parsed| (parsed.group, parsed.name))
+}
