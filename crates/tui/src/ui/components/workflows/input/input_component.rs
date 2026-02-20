@@ -36,6 +36,8 @@ pub struct WorkflowInputLayout {
     pub inputs_list_area: Rect,
     pub details_area: Rect,
     pub cancel_button_area: Rect,
+    pub reset_field_button_area: Rect,
+    pub reset_all_button_area: Rect,
     pub plan_button_area: Rect,
     pub run_button_area: Rect,
     pub status_line_area: Rect,
@@ -47,9 +49,11 @@ impl From<Vec<Rect>> for WorkflowInputLayout {
             inputs_list_area: value[1],
             details_area: value[2],
             cancel_button_area: value[3],
-            plan_button_area: value[4],
-            run_button_area: value[5],
-            status_line_area: value[6],
+            reset_field_button_area: value[4],
+            reset_all_button_area: value[5],
+            plan_button_area: value[6],
+            run_button_area: value[7],
+            status_line_area: value[8],
         }
     }
 }
@@ -86,25 +90,21 @@ impl Component for WorkflowInputsComponent {
             return handle_details_focused_key(app, key.code);
         }
 
-        if focus_snapshot.cancel_button_focused {
-            return handle_cancel_button_focused_key(app, key.code);
-        }
-
-        if focus_snapshot.plan_button_focused {
-            return handle_plan_button_focused_key(app, key.code);
-        }
-
-        if focus_snapshot.run_button_focused {
-            return handle_run_button_focused_key(app, key.code);
+        if let Some(action) = resolve_focused_footer_action(&focus_snapshot) {
+            return if is_activation_key(key.code) {
+                handle_footer_action(app, action)
+            } else {
+                Vec::new()
+            };
         }
 
         Vec::new()
     }
 
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
-        let Some(state) = app.workflows.input_view_state_mut() else {
+        if app.workflows.input_view_state_mut().is_none() {
             return Vec::new();
-        };
+        }
 
         let pos = Position {
             x: mouse.column,
@@ -113,6 +113,9 @@ impl Component for WorkflowInputsComponent {
 
         match mouse.kind {
             MouseEventKind::Moved | MouseEventKind::Up(MouseButton::Left) => {
+                let Some(state) = app.workflows.input_view_state_mut() else {
+                    return Vec::new();
+                };
                 state.mouse_over_idx = if self.layout.inputs_list_area.contains(pos) {
                     hit_test_list(
                         pos,
@@ -125,17 +128,26 @@ impl Component for WorkflowInputsComponent {
                 }
             }
             MouseEventKind::ScrollDown => {
+                let Some(state) = app.workflows.input_view_state_mut() else {
+                    return Vec::new();
+                };
                 if self.layout.details_area.contains(pos) {
                     state.scroll_details_lines(1);
                 }
             }
             MouseEventKind::ScrollUp => {
+                let Some(state) = app.workflows.input_view_state_mut() else {
+                    return Vec::new();
+                };
                 if self.layout.details_area.contains(pos) {
                     state.scroll_details_lines(-1);
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
                 if self.layout.inputs_list_area.contains(pos) {
+                    let Some(state) = app.workflows.input_view_state_mut() else {
+                        return Vec::new();
+                    };
                     app.focus.focus(&state.f_list);
                     let idx = hit_test_list(
                         pos,
@@ -150,22 +162,15 @@ impl Component for WorkflowInputsComponent {
                 }
 
                 if self.layout.details_area.contains(pos) {
+                    let Some(state) = app.workflows.input_view_state_mut() else {
+                        return Vec::new();
+                    };
                     app.focus.focus(&state.f_details);
                 }
 
-                if self.layout.cancel_button_area.contains(pos) {
-                    app.focus.focus(&state.f_cancel_button);
-                    return vec![Effect::SwitchTo(Route::Workflows)];
-                }
-
-                if self.layout.plan_button_area.contains(pos) {
-                    app.focus.focus(&state.f_plan_button);
-                    return show_pre_run_step_plan(app);
-                }
-
-                if self.layout.run_button_area.contains(pos) {
-                    app.focus.focus(&state.f_run_button);
-                    return app.run_active_workflow();
+                if let Some(action) = resolve_footer_action_for_click(&self.layout, pos) {
+                    focus_footer_action(app, action);
+                    return handle_footer_action(app, action);
                 }
             }
             _ => {}
@@ -212,6 +217,12 @@ impl Component for WorkflowInputsComponent {
             if state.f_cancel_button.get() {
                 return th::build_hint_spans(theme, &[("Esc", " Cancel"), ("Enter", " Close inputs")]);
             }
+            if state.f_reset_field_button.get() {
+                return th::build_hint_spans(theme, &[("Esc", " Cancel"), ("Enter", " Reset selected input")]);
+            }
+            if state.f_reset_all_button.get() {
+                return th::build_hint_spans(theme, &[("Esc", " Cancel"), ("Enter", " Reset all inputs")]);
+            }
             if state.f_plan_button.get() {
                 return th::build_hint_spans(theme, &[("Esc", " Cancel"), ("Enter", " View plan")]);
             }
@@ -254,6 +265,8 @@ impl Component for WorkflowInputsComponent {
             .split(main[1]);
         let layout_areas = Layout::horizontal([
             Constraint::Length(12), // cancel
+            Constraint::Length(14), // reset field
+            Constraint::Length(12), // reset all
             Constraint::Length(14), // plan
             Constraint::Length(12), // run
             Constraint::Length(2),  // padding
@@ -266,9 +279,11 @@ impl Component for WorkflowInputsComponent {
             content_layout[0], // input list
             content_layout[1], // input details
             layout_areas[0],   // cancel button
-            layout_areas[1],   // plan button
-            layout_areas[2],   // run button
-            layout_areas[4],   // status line
+            layout_areas[1],   // reset field button
+            layout_areas[2],   // reset all button
+            layout_areas[3],   // plan button
+            layout_areas[4],   // run button
+            layout_areas[6],   // status line
         ]
     }
 
@@ -316,7 +331,7 @@ impl WorkflowInputsComponent {
         collector.manual_override.set_input(contents.to_string());
         collector.manual_override.set_cursor(contents.len());
         collector.set_selection_source(crate::ui::components::workflows::collector::CollectorSelectionSource::Manual);
-        collector.error_message = match serde_json::from_str::<serde_json::Value>(contents) {
+        collector.error_message = match serde_json::from_str::<Value>(contents) {
             Ok(_) => None,
             Err(error) => Some(format!("Selected file is not valid JSON: {error}")),
         };
@@ -329,9 +344,21 @@ struct InputFocusSnapshot {
     list_focused: bool,
     details_focused: bool,
     cancel_button_focused: bool,
+    reset_field_button_focused: bool,
+    reset_all_button_focused: bool,
     plan_button_focused: bool,
     run_button_focused: bool,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputFooterAction {
+    Cancel,
+    ResetField,
+    ResetAll,
+    ViewPlan,
+    Run,
+}
+
 fn get_block_container(app: &App) -> Block<'static> {
     let is_focused = app.workflows.input_view_state().map(|s| s.f_list.is_focused()).unwrap_or(false);
     th::block(&*app.ctx.theme, Some("Pre-run Input Viewer"), is_focused)
@@ -410,10 +437,99 @@ fn determine_input_focus(app: &App) -> InputFocusSnapshot {
         snapshot.list_focused = state.f_list.get();
         snapshot.details_focused = state.f_details.get();
         snapshot.cancel_button_focused = state.f_cancel_button.get();
+        snapshot.reset_field_button_focused = state.f_reset_field_button.get();
+        snapshot.reset_all_button_focused = state.f_reset_all_button.get();
         snapshot.plan_button_focused = state.f_plan_button.get();
         snapshot.run_button_focused = state.f_run_button.get();
     }
     snapshot
+}
+
+fn resolve_focused_footer_action(focus_snapshot: &InputFocusSnapshot) -> Option<InputFooterAction> {
+    if focus_snapshot.cancel_button_focused {
+        return Some(InputFooterAction::Cancel);
+    }
+    if focus_snapshot.reset_field_button_focused {
+        return Some(InputFooterAction::ResetField);
+    }
+    if focus_snapshot.reset_all_button_focused {
+        return Some(InputFooterAction::ResetAll);
+    }
+    if focus_snapshot.plan_button_focused {
+        return Some(InputFooterAction::ViewPlan);
+    }
+    if focus_snapshot.run_button_focused {
+        return Some(InputFooterAction::Run);
+    }
+    None
+}
+
+fn resolve_footer_action_for_click(layout: &WorkflowInputLayout, position: Position) -> Option<InputFooterAction> {
+    if layout.cancel_button_area.contains(position) {
+        return Some(InputFooterAction::Cancel);
+    }
+    if layout.reset_field_button_area.contains(position) {
+        return Some(InputFooterAction::ResetField);
+    }
+    if layout.reset_all_button_area.contains(position) {
+        return Some(InputFooterAction::ResetAll);
+    }
+    if layout.plan_button_area.contains(position) {
+        return Some(InputFooterAction::ViewPlan);
+    }
+    if layout.run_button_area.contains(position) {
+        return Some(InputFooterAction::Run);
+    }
+    None
+}
+
+fn focus_footer_action(app: &mut App, action: InputFooterAction) {
+    let Some(state) = app.workflows.input_view_state_mut() else {
+        return;
+    };
+    match action {
+        InputFooterAction::Cancel => app.focus.focus(&state.f_cancel_button),
+        InputFooterAction::ResetField => app.focus.focus(&state.f_reset_field_button),
+        InputFooterAction::ResetAll => app.focus.focus(&state.f_reset_all_button),
+        InputFooterAction::ViewPlan => app.focus.focus(&state.f_plan_button),
+        InputFooterAction::Run => app.focus.focus(&state.f_run_button),
+    }
+}
+
+fn handle_footer_action(app: &mut App, action: InputFooterAction) -> Vec<Effect> {
+    let (reset_field_enabled, reset_all_enabled) = app
+        .workflows
+        .input_view_state()
+        .map(|state| (state.selected_input_has_changes(), state.has_any_input_changes()))
+        .unwrap_or((false, false));
+
+    match action {
+        InputFooterAction::Cancel => vec![Effect::SwitchTo(Route::Workflows)],
+        InputFooterAction::ResetField => {
+            if !reset_field_enabled {
+                return Vec::new();
+            }
+            if let Some(state) = app.workflows.input_view_state_mut() {
+                state.reset_selected_input_to_session();
+            }
+            Vec::new()
+        }
+        InputFooterAction::ResetAll => {
+            if !reset_all_enabled {
+                return Vec::new();
+            }
+            if let Some(state) = app.workflows.input_view_state_mut() {
+                state.reset_all_inputs_to_session();
+            }
+            Vec::new()
+        }
+        InputFooterAction::ViewPlan => show_pre_run_step_plan(app),
+        InputFooterAction::Run => app.run_active_workflow(),
+    }
+}
+
+fn is_activation_key(code: KeyCode) -> bool {
+    matches!(code, KeyCode::Enter | KeyCode::Char(' '))
 }
 
 fn handle_list_focused_key(app: &mut App, key_code: KeyCode) -> Vec<Effect> {
@@ -462,27 +578,6 @@ fn handle_list_focused_key(app: &mut App, key_code: KeyCode) -> Vec<Effect> {
             effects.push(Effect::ShowModal(Modal::WorkflowCollector));
             effects
         }
-        _ => Vec::new(),
-    }
-}
-
-fn handle_cancel_button_focused_key(_app: &mut App, key_code: KeyCode) -> Vec<Effect> {
-    match key_code {
-        KeyCode::Enter | KeyCode::Char(' ') => vec![Effect::SwitchTo(Route::Workflows)],
-        _ => Vec::new(),
-    }
-}
-
-fn handle_plan_button_focused_key(app: &App, key_code: KeyCode) -> Vec<Effect> {
-    match key_code {
-        KeyCode::Enter | KeyCode::Char(' ') => show_pre_run_step_plan(app),
-        _ => Vec::new(),
-    }
-}
-
-fn handle_run_button_focused_key(app: &mut App, key_code: KeyCode) -> Vec<Effect> {
-    match key_code {
-        KeyCode::Enter | KeyCode::Char(' ') => app.run_active_workflow(),
         _ => Vec::new(),
     }
 }
@@ -801,14 +896,42 @@ fn build_error_section(theme: &dyn Theme, error_notes: &[String]) -> Vec<Line<'s
 fn render_footer(frame: &mut Frame, layout: WorkflowInputLayout, app: &App) {
     let run_enabled = app.workflows.unresolved_item_count() == 0;
     let theme = &*app.ctx.theme;
-    let (cancel_focused, plan_focused, run_focused) = app
+    let (cancel_focused, reset_field_focused, reset_all_focused, plan_focused, run_focused, reset_field_enabled, reset_all_enabled) = app
         .workflows
         .input_view_state()
-        .map(|state| (state.f_cancel_button.get(), state.f_plan_button.get(), state.f_run_button.get()))
-        .unwrap_or((false, false, false));
+        .map(|state| {
+            (
+                state.f_cancel_button.get(),
+                state.f_reset_field_button.get(),
+                state.f_reset_all_button.get(),
+                state.f_plan_button.get(),
+                state.f_run_button.get(),
+                state.selected_input_has_changes(),
+                state.has_any_input_changes(),
+            )
+        })
+        .unwrap_or((false, false, false, false, false, false, false));
 
     let cancel_options = ButtonRenderOptions::new(true, cancel_focused, cancel_focused, Borders::ALL, ButtonType::Secondary);
     th::render_button(frame, layout.cancel_button_area, "Cancel", theme, cancel_options);
+
+    let reset_field_options = ButtonRenderOptions::new(
+        reset_field_enabled,
+        reset_field_focused,
+        reset_field_focused,
+        Borders::ALL,
+        ButtonType::Secondary,
+    );
+    th::render_button(frame, layout.reset_field_button_area, "Reset Field", theme, reset_field_options);
+
+    let reset_all_options = ButtonRenderOptions::new(
+        reset_all_enabled,
+        reset_all_focused,
+        reset_all_focused,
+        Borders::ALL,
+        ButtonType::Secondary,
+    );
+    th::render_button(frame, layout.reset_all_button_area, "Reset All", theme, reset_all_options);
 
     let plan_options = ButtonRenderOptions::new(true, plan_focused, plan_focused, Borders::ALL, ButtonType::Secondary);
     th::render_button(frame, layout.plan_button_area, "View Plan", theme, plan_options);

@@ -1849,7 +1849,6 @@ name = "oatty-api"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "dirs-next",
  "indexmap",
  "oatty-types",
  "reqwest",
@@ -1961,7 +1960,6 @@ dependencies = [
  "oatty-engine",
  "oatty-mcp",
  "oatty-registry",
- "oatty-registry-gen",
  "oatty-types",
  "oatty-util",
  "once_cell",
@@ -2000,14 +1998,12 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "clap",
  "dirs-next",
  "indexmap",
  "keyring",
  "oatty-api",
  "oatty-types",
  "once_cell",
- "percent-encoding",
  "regex",
  "reqwest",
  "serde",
@@ -2017,8 +2013,6 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "tracing",
- "unicode-width",
- "url",
 ]
 
 [[package]]

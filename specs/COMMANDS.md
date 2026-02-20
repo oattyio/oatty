@@ -7,6 +7,7 @@ This document describes currently implemented behavior only.
 ## Scope
 
 Primary implementation files:
+
 - `/Users/justinwilaby/Development/next-gen-cli/crates/types/src/lib.rs`
 - `/Users/justinwilaby/Development/next-gen-cli/crates/registry/src/models.rs`
 - `/Users/justinwilaby/Development/next-gen-cli/crates/registry/src/search.rs`
@@ -18,14 +19,15 @@ Primary implementation files:
 ## Command identity
 
 - Canonical user-facing command form is two tokens:
-  - `<group> <name>`
+    - `<group> <name>`
 - The `name` token may contain `:` for nested actions.
-  - Example: `apps addons:list`
+    - Example: `apps addons:list`
 - Palette and command execution resolve a command from the first two shell-like tokens.
 
 ## Command model
 
 Commands are represented by `CommandSpec` and include:
+
 - `group`
 - `name`
 - `summary`
@@ -34,6 +36,7 @@ Commands are represented by `CommandSpec` and include:
 - `execution` (`HTTP` or `MCP`)
 
 Execution variants:
+
 - HTTP: method/path/base URL metadata and optional output schema.
 - MCP: plugin/tool execution metadata and optional output schema/render hints.
 
@@ -42,18 +45,21 @@ Execution variants:
 - Runtime commands are held in `CommandRegistry`.
 - Catalog manifests are loaded from registry config.
 - MCP tool-derived commands are merged into the same registry model.
-- OpenAPI imports use shared service logic in `openapi_import.rs` and persist into registry config + catalog manifest storage.
+- OpenAPI imports use shared service logic in `openapi_import.rs` and persist into registry config + catalog manifest
+  storage.
 
 ## Palette autocomplete integration
 
 `SuggestionEngine` + `PaletteState` implement command-time suggestion behavior:
+
 - unresolved command fuzzy suggestions
-- flag suggestions (required surfaced before optional)
+- flag suggestions (required to be surfaced before optional)
 - positional suggestions
 - enum and provider-backed value suggestions
 - provider loading sentinel (`loading more…`) and failure handling
 
 Accepted suggestions update input contextually:
+
 - command suggestions set/replace command portion
 - flag/value suggestions replace or append based on token context
 - positional suggestions replace current positional token or append in positional slot
@@ -61,6 +67,7 @@ Accepted suggestions update input contextually:
 ## Parsing and validation path
 
 On run (`Effect::Run`), `cmd.rs` executes:
+
 1. tokenize shell-like input
 2. require at least two tokens (`group` + `name`)
 3. resolve command via registry lookup
@@ -90,15 +97,16 @@ Validation errors are surfaced back to palette as user-facing errors.
 - Command search is in-memory (no external index dependency).
 - Implemented by `SearchHandle` in `/Users/justinwilaby/Development/next-gen-cli/crates/registry/src/search.rs`.
 - Uses `oatty_util::fuzzy_score` over a synthesized haystack containing:
-  - canonical id
-  - summary
-  - positional/flag names and descriptions
-  - catalog metadata (title/description/vendor) when available
+    - canonical id
+    - summary
+    - positional/flag names and descriptions
+    - catalog metadata (title/description/vendor) when available
 - Base search results include canonical id, summary, execution type, and optional HTTP method.
 - MCP `search_commands` can enrich result payloads with `include_inputs`:
-  - `required_only`: required input metadata and compact `output_fields`.
-  - `full`: full positional/flag metadata, `output_schema`, and compact `output_fields`.
-- `output_fields` provide a compact, chain-friendly list of top-level output keys for object and array-of-object schemas.
+    - `required_only`: required input metadata and compact `output_fields`.
+    - `full`: full positional/flag metadata, `output_schema`, and compact `output_fields`.
+- `output_fields` provide a compact, chain-friendly list of top-level output keys for object and array-of-object
+  schemas.
 
 ## TUI integration points
 
@@ -117,7 +125,6 @@ Validation errors are surfaced back to palette as user-facing errors.
 
 - This file is as-built. Update it in the same PR when command model or execution behavior changes.
 - Keep planned/future command features in separate planning specs, not here.
-
 
 ## Related specs
 

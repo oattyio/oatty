@@ -127,6 +127,84 @@ pub fn interpolate_value(value: &Value, context: &RunContext) -> Value {
     }
 }
 
+/// Resolves a template expression into a JSON value using the run context.
+///
+/// This helper accepts expressions that appear inside `${{ ... }}` templates, including:
+/// `env.*`, `inputs.*`, and `steps.*` (with optional `.output`).
+pub fn resolve_template_expression_value(expression: &str, context: &RunContext) -> Option<Value> {
+    let trimmed = expression.trim();
+    if let Some(variable_name) = trimmed.strip_prefix("env.") {
+        return context.environment_variables.get(variable_name).cloned().map(Value::String);
+    }
+
+    if let Some(remaining_expression) = trimmed.strip_prefix("inputs.") {
+        let mut segments = remaining_expression.split('.');
+        let input_name = segments.next()?.trim();
+        let input_value = context.inputs.get(input_name)?;
+        let remaining_path = segments.collect::<Vec<&str>>().join(".");
+        return resolve_strict_json_path(input_value, remaining_path.as_str());
+    }
+
+    if let Some(remaining_expression) = trimmed.strip_prefix("steps.") {
+        let mut segments = remaining_expression.split('.');
+        let step_identifier = segments.next()?.trim();
+        let step_output = context.steps.get(step_identifier)?;
+        let mut remaining_segments = segments.collect::<Vec<&str>>();
+        if remaining_segments.first().copied() == Some("output") {
+            remaining_segments.remove(0);
+        }
+        let remaining_path = remaining_segments.join(".");
+        return resolve_strict_json_path(step_output, remaining_path.as_str());
+    }
+
+    None
+}
+
+fn resolve_strict_json_path(value: &Value, path: &str) -> Option<Value> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return Some(value.clone());
+    }
+
+    let mut current = value;
+    for segment in trimmed.split('.').filter(|segment| !segment.is_empty()) {
+        let (key, indices) = split_indices(segment);
+
+        if !key.is_empty() {
+            current = match current {
+                Value::Object(map) => map.get(key)?,
+                Value::Array(array_values) => {
+                    let array_index = key.parse::<usize>().ok()?;
+                    array_values.get(array_index)?
+                }
+                _ => return None,
+            };
+        }
+
+        for index in indices {
+            let Value::Array(array_values) = current else {
+                return None;
+            };
+            current = array_values.get(index)?;
+        }
+    }
+
+    Some(current.clone())
+}
+
+/// Finds unresolved context references (`env.*`, `inputs.*`, `steps.*`) inside a condition expression.
+pub fn find_unresolved_references_in_condition(expression: &str, context: &RunContext) -> Vec<String> {
+    let mut unresolved = Vec::new();
+    for token in extract_reference_tokens(expression) {
+        if resolve_template_expression_value(token.as_str(), context).is_none() {
+            unresolved.push(token);
+        }
+    }
+    unresolved.sort();
+    unresolved.dedup();
+    unresolved
+}
+
 /// Evaluates a conditional expression against the execution context.
 ///
 /// This function supports simple conditional logic including equality
@@ -352,13 +430,7 @@ fn find_top_level_operator(expression: &str, operator: &str) -> Option<usize> {
 fn resolve_value_or_literal(expression: &str, context: &RunContext) -> Option<Value> {
     let trimmed = expression.trim();
     // JSON literal detection
-    if (trimmed.starts_with('[')
-        || trimmed.starts_with('{')
-        || trimmed.starts_with('"')
-        || trimmed == "null"
-        || trimmed == "true"
-        || trimmed == "false"
-        || trimmed.chars().all(|c| c.is_ascii_digit()))
+    if looks_like_json_literal(trimmed)
         && let Ok(v) = serde_json::from_str::<Value>(trimmed)
     {
         return Some(v);
@@ -367,8 +439,85 @@ fn resolve_value_or_literal(expression: &str, context: &RunContext) -> Option<Va
     if let Some(v) = resolve_value(trimmed, context) {
         return Some(v);
     }
+    if trimmed.starts_with("env.") || trimmed.starts_with("inputs.") || trimmed.starts_with("steps.") {
+        return Some(Value::Null);
+    }
     // Fallback: use stringy resolution
     resolve_expression(trimmed, context).map(Value::String)
+}
+
+fn extract_reference_tokens(expression: &str) -> Vec<String> {
+    let chars: Vec<char> = expression.chars().collect();
+    let mut tokens = Vec::new();
+    let mut index = 0usize;
+    let mut in_single_quote = false;
+    let mut in_double_quote = false;
+
+    while index < chars.len() {
+        let character = chars[index];
+        if character == '"' && !in_single_quote {
+            in_double_quote = !in_double_quote;
+            index += 1;
+            continue;
+        }
+        if character == '\'' && !in_double_quote {
+            in_single_quote = !in_single_quote;
+            index += 1;
+            continue;
+        }
+        if in_single_quote || in_double_quote {
+            index += 1;
+            continue;
+        }
+
+        let remainder = &expression[char_to_byte_index(&chars, index)..];
+        let prefix = if remainder.starts_with("steps.") {
+            Some("steps.")
+        } else if remainder.starts_with("inputs.") {
+            Some("inputs.")
+        } else if remainder.starts_with("env.") {
+            Some("env.")
+        } else {
+            None
+        };
+
+        let Some(prefix_value) = prefix else {
+            index += 1;
+            continue;
+        };
+
+        let start = index;
+        index += prefix_value.chars().count();
+        while index < chars.len() {
+            let character = chars[index];
+            if character.is_ascii_alphanumeric() || matches!(character, '_' | '-' | '.' | '[' | ']') {
+                index += 1;
+            } else {
+                break;
+            }
+        }
+        if index > start {
+            let start_byte = char_to_byte_index(&chars, start);
+            let end_byte = char_to_byte_index(&chars, index);
+            let mut token = expression[start_byte..end_byte].to_string();
+            if index < chars.len() && chars[index] == '(' {
+                token = strip_condition_method_suffix(token.as_str()).to_string();
+            }
+            if !token.is_empty() {
+                tokens.push(token);
+            }
+        }
+    }
+
+    tokens
+}
+
+fn strip_condition_method_suffix(token: &str) -> &str {
+    token.strip_suffix(".includes").unwrap_or(token)
+}
+
+fn char_to_byte_index(characters: &[char], character_index: usize) -> usize {
+    characters.iter().take(character_index).map(|character| character.len_utf8()).sum()
 }
 
 /// Resolves a template-like expression into a raw JSON value when possible.
@@ -379,50 +528,60 @@ fn resolve_value(expression: &str, context: &RunContext) -> Option<Value> {
     }
     // inputs.* path
     if let Some(rest) = expression.strip_prefix("inputs.") {
-        let mut iter = rest.split('.');
-        let key = iter.next()?;
-        let mut current = context.inputs.get(key)?;
-        for part in iter {
-            match current {
-                Value::Object(map) => current = map.get(part).unwrap_or(&Value::Null),
-                Value::Array(arr) => {
-                    if let Ok(i) = part.parse::<usize>() {
-                        current = arr.get(i).unwrap_or(&Value::Null);
-                    } else {
-                        return None;
-                    }
-                }
-                _ => return Some(current.clone()),
-            }
-        }
-        return Some(current.clone());
+        let (first_segment, remainder) = split_first_path_segment(rest);
+        let (input_name, leading_indices) = split_indices(first_segment);
+        let input_value = context.inputs.get(input_name)?;
+        let combined_path = combine_indices_and_path(&leading_indices, remainder);
+        return resolve_strict_json_path(input_value, combined_path.as_str());
     }
     // steps.* path with optional .output
     if let Some(rest) = expression.strip_prefix("steps.") {
-        let mut iter = rest.split('.');
-        let step_id = iter.next()?;
-        let mut current = context.steps.get(step_id)?;
-        let parts: Vec<&str> = iter.collect();
-        let mut idx = 0usize;
-        if parts.first().copied() == Some("output") {
-            idx = 1;
-        }
-        for part in &parts[idx..] {
-            match current {
-                Value::Object(map) => current = map.get(*part).unwrap_or(&Value::Null),
-                Value::Array(arr) => {
-                    if let Ok(i) = part.parse::<usize>() {
-                        current = arr.get(i).unwrap_or(&Value::Null);
-                    } else {
-                        return None;
-                    }
-                }
-                _ => return Some(current.clone()),
-            }
-        }
-        return Some(current.clone());
+        let (first_segment, remainder) = split_first_path_segment(rest);
+        let (step_id, leading_indices) = split_indices(first_segment);
+        let step_value = context.steps.get(step_id)?;
+        let remainder = remainder.strip_prefix("output.").unwrap_or(remainder);
+        let remainder = if remainder == "output" { "" } else { remainder };
+        let combined_path = combine_indices_and_path(&leading_indices, remainder);
+        return resolve_strict_json_path(step_value, combined_path.as_str());
     }
     None
+}
+
+fn looks_like_json_literal(expression: &str) -> bool {
+    let starts_like_number = expression
+        .chars()
+        .next()
+        .map(|character| character == '-' || character.is_ascii_digit())
+        .unwrap_or(false);
+    expression.starts_with('[')
+        || expression.starts_with('{')
+        || expression.starts_with('"')
+        || expression == "null"
+        || expression == "true"
+        || expression == "false"
+        || starts_like_number
+}
+
+fn split_first_path_segment(path: &str) -> (&str, &str) {
+    let mut parts = path.splitn(2, '.');
+    let first_segment = parts.next().unwrap_or("");
+    let remainder = parts.next().unwrap_or("");
+    (first_segment, remainder)
+}
+
+fn combine_indices_and_path(indices: &[usize], remainder: &str) -> String {
+    let mut path = String::new();
+    for index in indices {
+        path.push_str(format!("[{index}]").as_str());
+    }
+    let trimmed_remainder = remainder.trim();
+    if !trimmed_remainder.is_empty() {
+        if !path.is_empty() {
+            path.push('.');
+        }
+        path.push_str(trimmed_remainder);
+    }
+    path
 }
 
 /// Interpolates template expressions in a string using the provided context.
@@ -503,39 +662,7 @@ fn interpolate_string(input_string: &str, context: &RunContext) -> String {
 /// Array access is supported using numeric indices. The function gracefully
 /// handles missing paths by returning `None`.
 fn resolve_expression(expression: &str, context: &RunContext) -> Option<String> {
-    // Handle environment variable lookups
-    if let Some(variable_name) = expression.strip_prefix("env.") {
-        return context.environment_variables.get(variable_name).cloned();
-    }
-
-    // Handle workflow input lookups
-    if let Some(remaining_expression) = expression.strip_prefix("inputs.") {
-        let mut expression_parts = remaining_expression.split('.');
-        let input_name = expression_parts.next()?;
-        let input_value = context.inputs.get(input_name)?;
-        let remaining_parts: Vec<&str> = expression_parts.collect();
-
-        return Some(navigate_json_path(input_value, &remaining_parts));
-    }
-
-    // Handle step output lookups
-    if let Some(remaining_expression) = expression.strip_prefix("steps.") {
-        let mut expression_parts = remaining_expression.split('.');
-        let step_id = expression_parts.next()?;
-        let step_value = context.steps.get(step_id)?;
-        let remaining_parts: Vec<&str> = expression_parts.collect();
-
-        // Allow optional "output" segment for clarity
-        let path_parts = if matches!(remaining_parts.first().copied(), Some("output")) {
-            &remaining_parts[1..]
-        } else {
-            &remaining_parts[..]
-        };
-
-        return Some(navigate_json_path(step_value, path_parts));
-    }
-
-    None
+    resolve_value(expression, context).map(|value| format_json_value(&value))
 }
 
 /// Navigates through a JSON value using a path of field names and array indices.
@@ -564,6 +691,7 @@ fn resolve_expression(expression: &str, context: &RunContext) -> Option<String> 
 ///
 /// - `["user", "profile", "name"]` → `root.user.profile.name`
 /// - `["items", "0", "id"]` → `root.items[0].id`
+#[cfg(test)]
 fn navigate_json_path(root_value: &Value, path_parts: &[&str]) -> String {
     let mut current_value = root_value;
 
@@ -712,6 +840,73 @@ mod tests {
         assert_eq!(result["region"], "us");
         assert_eq!(result["ref1"], "app-123");
         assert_eq!(result["ref2"], "myapp");
+    }
+
+    #[test]
+    fn resolve_template_expression_value_returns_none_for_missing_step_path() {
+        let mut context = RunContext::default();
+        context.steps.insert("fetch".into(), json!([]));
+        let resolved = resolve_template_expression_value("steps.fetch.value", &context);
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    fn unresolved_condition_references_are_detected() {
+        let mut context = RunContext::default();
+        context.steps.insert("fetch".into(), json!([]));
+        let unresolved = find_unresolved_references_in_condition("steps.fetch.value != null", &context);
+        assert_eq!(unresolved, vec!["steps.fetch.value".to_string()]);
+    }
+
+    #[test]
+    fn resolve_template_expression_value_supports_dot_index_array_paths() {
+        let mut context = RunContext::default();
+        context.steps.insert(
+            "find".into(),
+            json!([{
+                "service": { "id": "srv-123" }
+            }]),
+        );
+        let resolved = resolve_template_expression_value("steps.find.0.service.id", &context).expect("resolved");
+        assert_eq!(resolved, json!("srv-123"));
+    }
+
+    #[test]
+    fn unresolved_condition_references_ignore_valid_dot_index_array_paths() {
+        let mut context = RunContext::default();
+        context.steps.insert(
+            "find".into(),
+            json!([{
+                "service": { "id": "srv-123" }
+            }]),
+        );
+        let unresolved = find_unresolved_references_in_condition("steps.find.0.service.id != null", &context);
+        assert!(unresolved.is_empty());
+    }
+
+    #[test]
+    fn unresolved_condition_references_support_hyphenated_step_ids() {
+        let mut context = RunContext::default();
+        context
+            .steps
+            .insert("find-render-service".into(), json!([{ "service": { "id": "srv-123" } }]));
+        let unresolved = find_unresolved_references_in_condition("steps.find-render-service.0.service.id != null", &context);
+        assert!(unresolved.is_empty());
+    }
+
+    #[test]
+    fn unresolved_condition_references_ignore_string_literals() {
+        let context = RunContext::default();
+        let unresolved = find_unresolved_references_in_condition("\"steps.fake.path\" == \"steps.other.path\"", &context);
+        assert!(unresolved.is_empty());
+    }
+
+    #[test]
+    fn unresolved_condition_references_ignore_includes_method_suffix() {
+        let mut context = RunContext::default();
+        context.inputs.insert("tags".into(), json!(["prod", "staging"]));
+        let unresolved = find_unresolved_references_in_condition("inputs.tags.includes(\"prod\")", &context);
+        assert!(unresolved.is_empty());
     }
 
     #[test]
@@ -868,5 +1063,32 @@ mod tests {
         context.inputs.insert("perms".into(), json!(["view", "deploy"]));
         assert!(eval_condition("inputs.perms.includes(\"deploy\")", &context));
         assert!(!eval_condition("inputs.perms.includes(\"manage\")", &context));
+    }
+
+    #[test]
+    fn test_eval_condition_supports_signed_and_decimal_literals() {
+        let mut context = RunContext::default();
+        context.inputs.insert("delta".into(), json!(-1));
+        context.inputs.insert("ratio".into(), json!(1.5));
+
+        assert!(eval_condition("inputs.delta == -1", &context));
+        assert!(eval_condition("inputs.ratio == 1.5", &context));
+        assert!(eval_condition("inputs.ratio != 2.0", &context));
+    }
+
+    #[test]
+    fn test_eval_condition_supports_bracket_index_paths() {
+        let mut context = RunContext::default();
+        context.steps.insert(
+            "fetch".into(),
+            json!({
+                "items": [
+                    { "id": "service-123" }
+                ]
+            }),
+        );
+
+        assert!(eval_condition("steps.fetch.items[0].id == \"service-123\"", &context));
+        assert!(eval_condition("steps.fetch.items[0].id", &context));
     }
 }

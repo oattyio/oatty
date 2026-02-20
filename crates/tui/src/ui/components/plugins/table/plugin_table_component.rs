@@ -441,7 +441,7 @@ impl PluginsTableComponent {
 
     fn hit_test_table(&mut self, app: &mut App, table_area: Rect, mouse_position: Position) -> Vec<Effect> {
         let list_offset = app.plugins.table.table_state.offset();
-        let idx = (mouse_position.y.saturating_sub(table_area.y)) as usize + list_offset;
+        let idx = mouse_position.y.saturating_sub(table_area.y) as usize + list_offset;
         if app.plugins.table.filtered_indices().get(idx).is_some() {
             if app.plugins.table.table_state.selected() == Some(idx) {
                 return self.handle_grid_key_events(app, KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));

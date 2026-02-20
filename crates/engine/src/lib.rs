@@ -52,6 +52,7 @@ pub mod field_paths;
 pub mod model;
 pub mod provider;
 pub mod resolve;
+pub mod templates;
 pub mod workflow;
 
 // Re-export commonly used types for convenience

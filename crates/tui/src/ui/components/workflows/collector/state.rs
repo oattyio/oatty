@@ -8,6 +8,7 @@
 use crate::ui::components::common::TextInputState;
 use crate::ui::components::results::ResultsTableState;
 use crate::ui::theme::Theme;
+use crate::ui::utils::KeyScoreContext;
 use oatty_types::WorkflowProviderErrorPolicy;
 use oatty_util::fuzzy_score;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
@@ -128,6 +129,7 @@ impl<'a> CollectorViewState<'a> {
     /// Applies the current filter and refreshes the backing results state.
     pub fn refresh_table(&mut self, theme: &dyn Theme) {
         self.clear_staged_selection();
+        self.table.set_key_score_context(KeyScoreContext::ValueSelection, theme);
         let Some(items) = self.original_items.as_ref() else {
             return;
         };
@@ -210,11 +212,23 @@ impl<'a> CollectorViewState<'a> {
             return;
         };
         let idx = maybe_idx.unwrap_or(0);
-        let Some(current_row) = self.table.selected_data(idx) else {
+        if self.table.has_rows() {
+            let Some(current_row) = self.table.selected_data(idx) else {
+                self.clear_staged_selection();
+                return;
+            };
+            if staged.row != *current_row {
+                self.clear_staged_selection();
+            }
+            return;
+        }
+
+        let Some(current_entry) = self.table.selected_kv_entry(idx) else {
             self.clear_staged_selection();
             return;
         };
-        if staged.row != *current_row {
+        let source_matches = staged.source_field.as_deref() == Some(current_entry.key.as_str());
+        if staged.row != current_entry.raw_value || !source_matches {
             self.clear_staged_selection();
         }
     }
@@ -249,5 +263,36 @@ impl HasFocus for CollectorViewState<'_> {
 
     fn area(&self) -> Rect {
         Rect::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ui::theme::dracula::DraculaTheme;
+    use serde_json::json;
+
+    #[test]
+    fn sync_stage_with_selection_uses_key_value_selection_when_rows_are_not_tabular() {
+        let theme = DraculaTheme::new();
+        let mut state = CollectorViewState::default();
+        state
+            .table
+            .apply_result_json(Some(json!({"id":"srv-1","name":"service-a"})), &theme, false);
+        state.table.list_state.select(Some(0));
+        let selected_entry = state.table.selected_kv_entry(0).cloned().expect("key/value entry expected");
+
+        state.set_staged_selection(Some(CollectorStagedSelection::new(
+            selected_entry.raw_value.clone(),
+            selected_entry.raw_value.to_string(),
+            Some(selected_entry.key.clone()),
+            selected_entry.raw_value.clone(),
+        )));
+        state.sync_stage_with_selection(state.table.list_state.selected());
+        assert!(state.staged_selection().is_some());
+
+        state.table.list_state.select(Some(1));
+        state.sync_stage_with_selection(state.table.list_state.selected());
+        assert!(state.staged_selection().is_none());
     }
 }

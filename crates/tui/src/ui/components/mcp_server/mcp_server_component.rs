@@ -156,27 +156,6 @@ impl McpHttpServerComponent {
 }
 
 impl Component for McpHttpServerComponent {
-    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
-        let theme = &*app.ctx.theme;
-        let block = th::block(theme, Some("MCP HTTP Server"), app.mcp_http_server.container_focus.get());
-        let inner = block.inner(rect);
-        frame.render_widget(block, rect);
-
-        let sections = Layout::vertical([
-            Constraint::Length(1), // Status
-            Constraint::Length(3), // Controls
-            Constraint::Min(1),    // Details
-        ])
-        .split(inner);
-        self.layout.status_area = sections[0];
-        self.layout.controls_area = sections[1];
-        self.layout.details_area = sections[2];
-
-        self.render_status(frame, app);
-        self.render_controls(frame, app);
-        self.render_details(frame, app);
-    }
-
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         match key.code {
             KeyCode::Tab => {
@@ -211,6 +190,27 @@ impl Component for McpHttpServerComponent {
             }
         }
         Vec::new()
+    }
+
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
+        let theme = &*app.ctx.theme;
+        let block = th::block(theme, Some("MCP HTTP Server"), app.mcp_http_server.container_focus.get());
+        let inner = block.inner(rect);
+        frame.render_widget(block, rect);
+
+        let sections = Layout::vertical([
+            Constraint::Length(1), // Status
+            Constraint::Length(3), // Controls
+            Constraint::Min(1),    // Details
+        ])
+        .split(inner);
+        self.layout.status_area = sections[0];
+        self.layout.controls_area = sections[1];
+        self.layout.details_area = sections[2];
+
+        self.render_status(frame, app);
+        self.render_controls(frame, app);
+        self.render_details(frame, app);
     }
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {

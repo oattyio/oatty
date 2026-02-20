@@ -7,6 +7,7 @@
 use std::collections::HashMap;
 
 use crate::model::{ContractField, OutputContract, StepRepeat, StepSpec, WorkflowSpec};
+use crate::workflow::condition_syntax::normalize_optional_condition_expression;
 use indexmap::IndexMap;
 use oatty_types::workflow::{RuntimeWorkflow, WorkflowOutputContract, WorkflowOutputField, WorkflowRepeat, WorkflowStepDefinition};
 use serde_json::{Map as JsonMap, Value};
@@ -32,7 +33,7 @@ fn step_definition_to_spec(definition: &WorkflowStepDefinition) -> StepSpec {
             other => Some(other),
         },
         repeat: definition.repeat.as_ref().and_then(convert_repeat),
-        r#if: normalize_condition_expression(definition.r#if.as_deref()),
+        r#if: normalize_optional_condition_expression(definition.r#if.as_deref()),
         output_contract: definition.output_contract.as_ref().map(convert_output_contract),
     }
 }
@@ -46,7 +47,7 @@ fn convert_with_map(values: &IndexMap<String, Value>) -> Option<JsonMap<String, 
 }
 
 fn convert_repeat(repeat: &WorkflowRepeat) -> Option<StepRepeat> {
-    let until = normalize_condition_expression(repeat.until.as_deref()).unwrap_or_default();
+    let until = normalize_optional_condition_expression(repeat.until.as_deref()).unwrap_or_default();
     let every = repeat.every.clone().unwrap_or_else(|| "1s".to_string());
 
     if until.is_empty() {
@@ -72,22 +73,6 @@ fn convert_output_field(field: &WorkflowOutputField) -> ContractField {
         name: field.name.clone(),
         r#type: field.r#type.clone(),
         tags: field.tags.clone(),
-    }
-}
-
-fn normalize_condition_expression(raw: Option<&str>) -> Option<String> {
-    let text = raw?.trim();
-    if text.is_empty() {
-        return None;
-    }
-
-    if let Some(stripped) = text.strip_prefix("${{") {
-        let inner = stripped.trim();
-        let inner = inner.strip_suffix("}}").unwrap_or(inner);
-        let inner = inner.trim();
-        if inner.is_empty() { None } else { Some(inner.to_string()) }
-    } else {
-        Some(text.to_string())
     }
 }
 

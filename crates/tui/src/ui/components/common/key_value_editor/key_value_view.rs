@@ -163,7 +163,7 @@ impl KeyValueEditorView {
         let pos = Position::new(mouse_event.column, mouse_event.row);
         let hit_test_table = self.last_layout.table_area.contains(pos);
         let list_offset = state.table_state().offset();
-        let idx = (pos.y.saturating_sub(self.last_layout.table_area.y + 1)) as usize + list_offset;
+        let idx = pos.y.saturating_sub(self.last_layout.table_area.y + 1) as usize + list_offset;
 
         match mouse_event.kind {
             MouseEventKind::Down(MouseButton::Left) => match () {

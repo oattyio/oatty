@@ -157,6 +157,28 @@ impl RunViewState {
         self.outputs.get(&step_id).cloned().or_else(|| row.get("Output").cloned())
     }
 
+    /// Returns the identifier of the first failed workflow step, if one exists.
+    ///
+    /// Pseudo rows (for example `workflow.final_output`) are excluded.
+    pub fn first_failed_step_identifier(&self) -> Option<String> {
+        self.step_rows.iter().find_map(|row| {
+            let row_object = row.as_object()?;
+            let status = row_object.get("Status")?.as_str()?;
+            if !status.eq_ignore_ascii_case("failed") {
+                return None;
+            }
+
+            let step_identifier = row_object
+                .get(INTERNAL_STEP_ID_COLUMN)
+                .or_else(|| row_object.get("Step"))
+                .and_then(Value::as_str)?;
+            if step_identifier == FINAL_OUTPUT_INTERNAL_STEP_ID || step_identifier == FINAL_OUTPUT_DISPLAY_STEP_LABEL {
+                return None;
+            }
+            Some(step_identifier.to_string())
+        })
+    }
+
     /// Computes a display name favoring the title over the identifier.
     pub fn display_name(&self) -> &str {
         self.workflow_title
@@ -335,8 +357,33 @@ impl RunViewState {
     }
 
     fn rebuild_steps_table(&mut self, theme: &dyn Theme) {
+        let selected_step_identifier = self.selected_step_identifier();
         let payload = Value::Array(self.step_rows.clone());
         self.steps_table.apply_result_json(Some(payload), theme, false);
+        self.restore_selected_step_by_identifier(selected_step_identifier);
+    }
+
+    fn selected_step_identifier(&self) -> Option<String> {
+        let selected_index = self.steps_table.table_state.selected()?;
+        self.step_rows
+            .get(selected_index)
+            .and_then(Value::as_object)
+            .and_then(|row| row.get(INTERNAL_STEP_ID_COLUMN).or_else(|| row.get("Step")))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    }
+
+    fn restore_selected_step_by_identifier(&mut self, selected_step_identifier: Option<String>) {
+        let Some(selected_step_identifier) = selected_step_identifier else {
+            return;
+        };
+        let selected_index = self.step_rows.iter().position(|row| {
+            row.as_object()
+                .and_then(|row| row.get(INTERNAL_STEP_ID_COLUMN).or_else(|| row.get("Step")))
+                .and_then(Value::as_str)
+                .is_some_and(|step_id| step_id == selected_step_identifier)
+        });
+        self.steps_table.table_state.select(selected_index);
     }
 
     /// Returns the current execution status.
@@ -556,6 +603,43 @@ mod tests {
         state.advance_repeat_animations(&theme);
         let row = state.steps_table.selected_data(0).cloned().expect("row exists");
         assert_eq!(row["Details"], Value::String("Running..  (attempt 3/5)".into()));
+    }
+
+    #[test]
+    fn repeat_updates_preserve_user_selected_row() {
+        let theme = DraculaTheme::new();
+        let mut alpha = make_step("alpha", None);
+        alpha.repeat = Some(WorkflowRepeat {
+            until: Some("steps.alpha.output.status == \"ready\"".into()),
+            every: Some("5s".into()),
+            timeout: None,
+            max_attempts: Some(5),
+        });
+        let beta = make_step("beta", Some("completed"));
+
+        let mut state = RunViewState::new("run-1".into(), "workflow".into(), None);
+        state.initialize_steps(&[alpha, beta], &theme);
+
+        state.mark_step_finished(
+            "beta",
+            StepFinishedData {
+                status: WorkflowRunStepStatus::Succeeded,
+                attempts: 1,
+                duration_ms: 10,
+                output: json!({"ok": true}),
+                logs: vec!["ok".into()],
+            },
+            &theme,
+        );
+        state.steps_table.table_state.select(Some(1));
+
+        state.mark_step_running(0, "alpha", &theme);
+        state.update_repeat_attempt("alpha", 2, Some(5), &theme);
+        state.advance_repeat_animations(&theme);
+
+        assert_eq!(state.steps_table.table_state.selected(), Some(1));
+        let selected_row = state.steps_table.selected_data(1).cloned().expect("row exists");
+        assert_eq!(selected_row["Step"], Value::String("beta".into()));
     }
 
     #[test]

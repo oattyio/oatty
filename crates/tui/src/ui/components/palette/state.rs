@@ -14,8 +14,10 @@
 //!   (enums and provider values) until the value is complete.
 //! - Suggestions never render an empty popup.
 use std::{
+    borrow::Cow,
     collections::HashMap,
     sync::{Arc, Mutex},
+    time::Duration,
 };
 
 use crate::ui::theme::Theme;
@@ -30,7 +32,7 @@ use crate::ui::components::common::TextInputState;
 use crate::ui::theme::theme_helpers::{create_spans_with_match, highlight_segments};
 use oatty_engine::provider::{PendingProviderFetch, ValueProvider};
 use oatty_registry::CommandRegistry;
-use oatty_types::{CommandExecution, CommandSpec, Effect, ExecOutcome, ItemKind, Modal, SuggestionItem};
+use oatty_types::{CommandExecution, CommandSpec, Effect, ExecOutcome, ItemKind, MessageType, Modal, SuggestionItem, TransientMessage};
 use oatty_util::{
     HistoryKey, HistoryScope, HistoryScopeKind, HistoryStore, StoredHistoryValue, has_meaningful_value, lex_shell_like,
     lex_shell_like_ranged, value_contains_secret,
@@ -73,6 +75,8 @@ fn token_index_at_cursor(input: &str, cursor: usize) -> Option<usize> {
 pub struct PaletteState {
     /// Focus flag for the input field
     pub f_input: FocusFlag,
+    /// Focus flag for the inline transient message row.
+    pub f_message: FocusFlag,
     /// list state for the suggestion list
     pub list_state: ListState,
     registry: Arc<Mutex<CommandRegistry>>,
@@ -96,8 +100,10 @@ pub struct PaletteState {
     rendered_suggestions: Vec<ListItem<'static>>,
     /// Cached width of the suggestions list area, used for truncation calculations.
     suggestions_view_width: Option<u16>,
-    /// Optional error message to display
-    error_message: Option<String>,
+    /// Optional status message to display (error, success, warning, info).
+    message: Option<TransientMessage>,
+    /// Success message to replay after modal overlays close.
+    pending_success_message: Option<String>,
     /// Whether provider-backed suggestions are actively loading
     provider_loading: bool,
     /// History of executed palette inputs (most recent last)
@@ -128,6 +134,7 @@ impl PaletteState {
             history_profile_id,
             container_focus: FocusFlag::new().with_name("oatty.palette"),
             f_input: FocusFlag::new().with_name("oatty.palette.input"),
+            f_message: FocusFlag::new().with_name("oatty.palette.message"),
             input: String::new(),
             cursor_position: 0,
             ghost_text: None,
@@ -138,7 +145,8 @@ impl PaletteState {
             suggestions: Vec::new(),
             rendered_suggestions: Vec::new(),
             suggestions_view_width: None,
-            error_message: None,
+            message: None,
+            pending_success_message: None,
             provider_loading: false,
             history: Vec::new(),
             history_index: None,
@@ -157,6 +165,9 @@ impl HasFocus for PaletteState {
     fn build(&self, builder: &mut FocusBuilder) {
         let tag = builder.start(self);
         builder.leaf_widget(&self.f_input);
+        if self.has_active_message() {
+            builder.leaf_widget(&self.f_message);
+        }
         builder.end(tag);
     }
 
@@ -224,9 +235,14 @@ impl PaletteState {
         self.ghost_text.as_ref()
     }
 
-    /// Get the current error message
-    pub fn error_message(&self) -> Option<&String> {
-        self.error_message.as_ref()
+    /// Get the current transient message.
+    pub fn message_ref(&self) -> Option<&TransientMessage> {
+        self.message.as_ref()
+    }
+
+    /// Returns whether a non-expired transient message is currently active.
+    pub fn has_active_message(&self) -> bool {
+        self.message.as_ref().is_some_and(|message| !message.is_expired())
     }
 
     /// Whether provider-backed suggestions are currently loading
@@ -266,7 +282,8 @@ impl PaletteState {
         self.suggestions.clear();
         self.rendered_suggestions.clear();
         self.is_suggestions_open = false;
-        self.error_message = None;
+        self.message = None;
+        self.pending_success_message = None;
         self.ghost_text = None;
         self.history_index = None;
         self.draft_input = None;
@@ -277,12 +294,36 @@ impl PaletteState {
 
     /// Apply an error message to the palette
     pub fn apply_error(&mut self, error: String) {
-        self.error_message = Some(error);
+        self.message = Some(TransientMessage::new(Cow::from(error), MessageType::Error, Duration::MAX));
     }
 
-    /// Clear any existing error message
+    /// Apply a success message to the palette with an auto-expiry timeout.
+    pub fn apply_success(&mut self, message: String) {
+        self.message = Some(TransientMessage::new(
+            Cow::from(message.clone()),
+            MessageType::Success,
+            Duration::from_millis(5000),
+        ));
+        self.pending_success_message = Some(message);
+    }
+
+    /// Replays a queued success message, refreshing its timeout window.
+    pub fn replay_pending_success_message(&mut self) {
+        let Some(message) = self.pending_success_message.take() else {
+            return;
+        };
+        self.message = Some(TransientMessage::new(
+            Cow::from(message),
+            MessageType::Success,
+            Duration::from_millis(5000),
+        ));
+    }
+
+    /// Clear any existing error message while preserving non-error statuses.
     pub fn reduce_clear_error(&mut self) {
-        self.error_message = None;
+        if matches!(self.message.as_ref().map(|message| &message.r#type), Some(MessageType::Error)) {
+            self.message = None;
+        }
     }
 
     /// Apply suggestions and update popup state
@@ -969,7 +1010,7 @@ impl PaletteState {
             .filter(|text| !text.is_empty())
             .map(|detail| format!("Provider suggestions failed: {detail}"))
             .unwrap_or_else(|| "Provider suggestions failed.".to_string());
-        self.error_message = Some(friendly_message);
+        self.apply_error(friendly_message);
     }
 
     /// Suggest an end-of-line hint for starting flags when any remain.
@@ -1046,6 +1087,25 @@ impl PaletteState {
         self.stored_commands.insert(command_id.to_string(), stored);
     }
 
+    /// Records a successful command execution in history and resets input state.
+    ///
+    /// This helper centralizes post-success bookkeeping so all success paths
+    /// (including HTTP 204 / empty-body responses) behave consistently.
+    fn finalize_successful_execution(&mut self, success_message: &str) {
+        let history_entry = self.pending_command_input.clone().unwrap_or_else(|| self.input.trim().to_string());
+        self.push_history_if_needed(history_entry.as_str());
+
+        if let Some(command_id) = self.pending_command_id.take() {
+            let input_to_store = self.pending_command_input.take().unwrap_or(history_entry);
+            self.persist_command_history(&command_id, &input_to_store);
+        } else {
+            self.pending_command_input = None;
+        }
+
+        self.reduce_clear_all();
+        self.apply_success(success_message.to_string());
+    }
+
     /// Processes general command execution results (non-plugin specific).
     ///
     /// This method handles the standard processing of command results including
@@ -1078,27 +1138,16 @@ impl PaletteState {
         }
 
         if *status > 399 {
-            self.error_message = Some(format!("Command failed error: status {} - {}", status, log));
+            self.apply_error(format!("Command failed error: status {} - {}", status, log));
             return effects;
         }
 
         if is_null {
-            self.error_message = Some("Command completed successfully but no value was returned".to_string());
-            self.reduce_clear_all();
+            self.finalize_successful_execution("Command completed successfully (no response body).");
             return effects;
         }
 
-        let history_entry = self.pending_command_input.clone().unwrap_or_else(|| self.input.trim().to_string());
-        self.push_history_if_needed(history_entry.as_str());
-
-        if let Some(command_id) = self.pending_command_id.take() {
-            let input_to_store = self.pending_command_input.take().unwrap_or(history_entry.clone());
-            self.persist_command_history(&command_id, &input_to_store);
-        } else {
-            self.pending_command_input = None;
-        }
-
-        self.reduce_clear_all();
+        self.finalize_successful_execution("Command completed successfully");
         effects.push(Effect::ShowModal(Modal::Results(Box::new(execution_outcome))));
 
         effects
@@ -1497,6 +1546,49 @@ mod tests {
     }
 
     #[test]
+    fn null_payload_success_sets_success_message_without_results_modal() {
+        use serde_json::Value;
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::Hasher;
+
+        let registry = Arc::new(Mutex::new(CommandRegistry::from_config().unwrap()));
+        let store: Arc<InMemoryHistoryStore> = Arc::new(InMemoryHistoryStore::new());
+        let mut palette = PaletteState::new(
+            Arc::clone(&registry),
+            store.clone() as Arc<dyn HistoryStore>,
+            DEFAULT_HISTORY_PROFILE.to_string(),
+        );
+
+        let command_input = "apps remove --name demo";
+        palette.set_input(command_input.to_string());
+        palette.set_cursor(command_input.len());
+
+        let mut hasher = DefaultHasher::new();
+        hasher.write(command_input.as_bytes());
+        let request_hash = hasher.finish();
+
+        let command_id = format!("{}:{}", "apps", "remove");
+        palette.record_pending_execution(command_id.clone(), command_input.to_string());
+        palette.set_cmd_exec_hash(request_hash);
+
+        let outcome = ExecOutcome::Http {
+            status_code: 204,
+            log_entry: "no content".into(),
+            payload: Value::Null,
+            request_id: request_hash,
+        };
+
+        let effects = palette.process_general_execution_result(outcome);
+        assert!(effects.is_empty());
+
+        let message = palette.message_ref().expect("success message");
+        assert_eq!(message.r#type, MessageType::Success);
+        assert_eq!(message.message.as_ref(), "Command completed successfully (no response body).");
+        assert_eq!(palette.history.last().map(|s| s.as_str()), Some(command_input));
+        assert!(palette.pending_command_id.is_none());
+    }
+
+    #[test]
     fn replace_partial_positional_on_accept() {
         let mut st = make_palette_state();
         st.set_input("apps info hero".into());
@@ -1546,7 +1638,9 @@ mod tests {
 
         assert!(!state.provider_loading);
         assert!(state.suggestions.iter().all(|item| item.meta.as_deref() != Some("loading")));
-        assert_eq!(state.error_message(), Some(&"Provider suggestions failed: timeout".to_string()));
+        let message = state.message_ref().expect("error message expected");
+        assert_eq!(message.r#type, MessageType::Error);
+        assert_eq!(message.message.as_ref(), "Provider suggestions failed: timeout");
         assert!(state.is_suggestions_open());
         assert_eq!(state.suggestions_len(), 1);
         assert_eq!(state.rendered_suggestions().len(), 1);

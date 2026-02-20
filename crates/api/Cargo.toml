@@ -11,6 +11,5 @@ repository = { workspace = true }
 anyhow = { workspace = true }
 reqwest = { workspace = true }
 tracing = { workspace = true }
-dirs-next = { workspace = true }
 oatty-types = { path = "../types" }
 indexmap.workspace = true

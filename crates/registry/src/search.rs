@@ -191,7 +191,7 @@ fn append_optional(buffer: &mut String, value: Option<&str>) {
     }
 }
 
-fn normalize_identifier<'value>(value: &'value str) -> Cow<'value, str> {
+fn normalize_identifier(value: &'_ str) -> Cow<'_, str> {
     if value.bytes().any(|byte| matches!(byte, b'_' | b'-' | b'.')) {
         Cow::Owned(value.replace(['_', '-', '.'], " "))
     } else {

@@ -6,6 +6,7 @@
 //! responsibilities without bloating the core executor or resolver modules.
 
 pub mod bindings;
+pub mod condition_syntax;
 pub mod document;
 pub mod runner;
 pub mod runtime;

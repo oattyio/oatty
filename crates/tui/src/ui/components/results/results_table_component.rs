@@ -47,7 +47,7 @@ pub struct TableComponent {
     view: ResultsTableView,
     table_area: Rect,
     breadcrumb_area: Rect,
-    last_click: Option<(usize, Instant)>,
+    last_click: Option<(usize, usize, Instant)>,
 }
 
 impl Component for TableComponent {
@@ -103,6 +103,7 @@ impl Component for TableComponent {
         }
         if app.table.has_rows() {
             handle_table_mouse_actions(&mut app.table, mouse, self.table_area);
+            self.select_table_cell_from_mouse(app, mouse);
         } else {
             handle_fallback_mouse_actions(&mut app.table, mouse, self.table_area);
         }
@@ -183,9 +184,9 @@ impl TableComponent {
             } else {
                 app.ctx.theme.text_secondary_style()
             };
-            spans.push(ratatui::text::Span::styled(breadcrumb.clone(), style));
+            spans.push(Span::styled(breadcrumb.clone(), style));
             if index + 1 < breadcrumbs.len() {
-                spans.push(ratatui::text::Span::styled(" / ", app.ctx.theme.text_muted_style()));
+                spans.push(Span::styled(" / ", app.ctx.theme.text_muted_style()));
             }
         }
         let breadcrumb = ratatui::widgets::Paragraph::new(ratatui::text::Line::from(spans)).style(app.ctx.theme.text_secondary_style());
@@ -223,25 +224,61 @@ impl TableComponent {
             return;
         }
         let now = Instant::now();
-        let index = if app.table.has_rows() {
-            app.table.table_state.selected()
+        let (row_index, column_index) = if app.table.has_rows() {
+            let Some(row_index) = app.table.table_state.selected() else {
+                self.last_click = None;
+                return;
+            };
+            let Some(column_index) = app.table.table_state.selected_column() else {
+                self.last_click = None;
+                return;
+            };
+            (row_index, column_index)
         } else {
-            app.table.list_state.selected()
+            let Some(row_index) = app.table.list_state.selected() else {
+                self.last_click = None;
+                return;
+            };
+            (row_index, 0usize)
         };
-        let Some(index) = index else {
-            self.last_click = None;
-            return;
-        };
-        if let Some((last_index, last_instant)) = self.last_click
-            && last_index == index
+        if let Some((last_row_index, last_column_index, last_instant)) = self.last_click
+            && last_row_index == row_index
+            && last_column_index == column_index
             && now.duration_since(last_instant) <= Duration::from_millis(350)
         {
             let _ = app.table.drill_into_selection(&*app.ctx.theme);
             self.last_click = None;
             return;
         }
-        self.last_click = Some((index, now));
+        self.last_click = Some((row_index, column_index, now));
     }
+
+    fn select_table_cell_from_mouse(&mut self, app: &mut App, mouse: MouseEvent) {
+        if mouse.kind != crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left) {
+            return;
+        }
+        let position = Position {
+            x: mouse.column,
+            y: mouse.row,
+        };
+        if !self.table_area.contains(position) {
+            return;
+        }
+        let row_index = find_table_row_index(self.table_area, position, app.table.table_state.offset());
+        let Some(row_index) = row_index else {
+            return;
+        };
+        let relative_x = position.x.saturating_sub(self.table_area.x);
+        let column_index = app.table.hit_test_column(relative_x, self.table_area.width).unwrap_or(0usize);
+        app.table.select_cell(row_index, column_index, self.table_area.width);
+    }
+}
+
+fn find_table_row_index(table_area: Rect, position: Position, table_offset: usize) -> Option<usize> {
+    if !table_area.contains(position) {
+        return None;
+    }
+    Some(position.y.saturating_sub(table_area.y + 1) as usize + table_offset)
 }
 
 fn handle_fallback_navigation_key(

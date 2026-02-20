@@ -15,15 +15,11 @@ oatty-types = { path = "../types" }
 reqwest = { workspace = true }
 oatty-api = { path = "../api" }
 serde_json = { workspace = true }
-percent-encoding = { workspace = true }
 serde = { workspace = true }
 dirs-next = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
-clap = { workspace = true, features = ["derive"] }
 anyhow.workspace = true
-url = { workspace = true }
-unicode-width = { workspace = true }
 keyring = { workspace = true }
 indexmap.workspace = true
 tokio = { workspace = true }

@@ -6,8 +6,8 @@ use crate::ui::{
         theme_helpers::{table_header_style, table_row_style},
     },
     utils::{
-        ColumnWithSize, get_scored_keys, infer_columns_with_sizes_from_json, is_status_like, normalize_header, render_value,
-        status_color_for_value,
+        ColumnWithSize, KeyScoreContext, get_scored_keys, get_scored_keys_with_context, infer_columns_with_sizes_from_json, is_status_like,
+        normalize_header, render_value, status_color_for_value,
     },
 };
 use oatty_types::ExecOutcome;
@@ -29,10 +29,11 @@ pub struct DrillFrame {
     pub value: Value,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct ResultsTableState<'a> {
     result_json: Option<Value>,
     drill_stack: Vec<DrillFrame>,
+    key_score_context: KeyScoreContext,
     // Vec of rows by column value
     row_cells: Option<Vec<Vec<Cell<'a>>>>,
     columns: Option<Vec<ColumnWithSize>>,
@@ -47,6 +48,27 @@ pub struct ResultsTableState<'a> {
     pub container_focus: FocusFlag,
     pub grid_f: FocusFlag,
     pub mouse_over_idx: Option<usize>,
+}
+
+impl<'a> Default for ResultsTableState<'a> {
+    fn default() -> Self {
+        Self {
+            result_json: None,
+            drill_stack: Vec::new(),
+            key_score_context: KeyScoreContext::Browsing,
+            row_cells: None,
+            columns: None,
+            column_constraints: None,
+            headers: None,
+            kv_entries: Vec::new(),
+            truncated_col_idx: 0,
+            table_state: TableState::default(),
+            list_state: ListState::default(),
+            container_focus: FocusFlag::default(),
+            grid_f: FocusFlag::default(),
+            mouse_over_idx: None,
+        }
+    }
 }
 
 impl<'a> ResultsTableState<'a> {
@@ -148,6 +170,16 @@ impl<'a> ResultsTableState<'a> {
         self.drill_stack.clear();
         let json_array = Self::array_from_json(self.current_result_json());
         self.columns = self.create_columns(json_array, rerank_columns);
+        self.reset_render_cache(theme);
+    }
+
+    /// Sets the key-scoring context used by key/value rendering and refreshes the
+    /// render cache so drill transitions retain the expected ordering.
+    pub fn set_key_score_context(&mut self, key_score_context: KeyScoreContext, theme: &dyn UiTheme) {
+        if self.key_score_context == key_score_context {
+            return;
+        }
+        self.key_score_context = key_score_context;
         self.reset_render_cache(theme);
     }
 
@@ -438,7 +470,7 @@ impl<'a> ResultsTableState<'a> {
 
     fn create_kv_entries(&self, value: Option<&Value>) -> Vec<KeyValueEntry> {
         if let Some(json) = value {
-            return build_key_value_entries(json);
+            return build_key_value_entries_with_context(json, self.key_score_context);
         }
         Vec::new()
     }
@@ -598,8 +630,13 @@ pub struct KeyValueEntry {
 }
 
 pub fn build_key_value_entries(value: &Value) -> Vec<KeyValueEntry> {
+    build_key_value_entries_with_context(value, KeyScoreContext::Browsing)
+}
+
+/// Builds key/value rows using context-aware key ranking.
+pub fn build_key_value_entries_with_context(value: &Value, context: KeyScoreContext) -> Vec<KeyValueEntry> {
     match value {
-        Value::Object(map) => get_scored_keys(map)
+        Value::Object(map) => get_scored_keys_with_context(map, context)
             .into_iter()
             .take(24)
             .map(|key| {
@@ -611,7 +648,7 @@ pub fn build_key_value_entries(value: &Value) -> Vec<KeyValueEntry> {
                 }
             })
             .collect(),
-        Value::Array(array) if !array.is_empty() => build_key_value_entries(array.first().unwrap()),
+        Value::Array(array) if !array.is_empty() => build_key_value_entries_with_context(array.first().unwrap(), context),
         _ => vec![],
     }
 }
@@ -689,5 +726,43 @@ mod tests {
         table.table_state.select_column(Some(0));
         assert!(table.drill_into_selection(&theme));
         assert_eq!(table.breadcrumbs(), vec!["Root".to_string(), "service".to_string()]);
+    }
+
+    #[test]
+    fn value_selection_entries_prioritize_identifier_fields() {
+        use super::build_key_value_entries_with_context;
+        use crate::ui::utils::KeyScoreContext;
+
+        let value = json!({
+            "name": "api-service",
+            "id": "srv-1234"
+        });
+
+        let entries = build_key_value_entries_with_context(&value, KeyScoreContext::ValueSelection);
+        assert_eq!(entries.first().map(|entry| entry.key.as_str()), Some("id"));
+    }
+
+    #[test]
+    fn value_selection_context_persists_during_drill_navigation() {
+        use crate::ui::utils::KeyScoreContext;
+
+        let mut table = ResultsTableState::default();
+        let theme = DraculaTheme::new();
+        table.set_key_score_context(KeyScoreContext::ValueSelection, &theme);
+        table.apply_result_json(
+            Some(json!({
+                "item": {
+                    "name": "service-a",
+                    "id": "srv-1234"
+                }
+            })),
+            &theme,
+            false,
+        );
+
+        assert_eq!(table.kv_entries().first().map(|entry| entry.key.as_str()), Some("item"));
+        table.list_state.select(Some(0));
+        assert!(table.drill_into_selection(&theme));
+        assert_eq!(table.kv_entries().first().map(|entry| entry.key.as_str()), Some("id"));
     }
 }

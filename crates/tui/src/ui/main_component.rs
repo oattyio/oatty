@@ -94,6 +94,10 @@ impl MainView {
     /// app.set_current_route(Route::Palette);
     /// ```
     pub fn set_current_route(&mut self, app: &mut App, route: Route) {
+        if matches!(route, Route::Workflows) && app.workflows.is_running() && app.workflows.run_view_state().is_some() {
+            return self.set_current_route(app, Route::WorkflowRun);
+        }
+
         if matches!(route, Route::WorkflowRun) && app.workflows.run_view_state().is_none() {
             app.append_log_message("Workflow run view unavailable; falling back to workflow list.");
             return self.set_current_route(app, Route::Workflows);
@@ -114,7 +118,10 @@ impl MainView {
         self.content_view = Some(view);
 
         app.focus = Rc::new(FocusBuilder::build_for(app));
-        app.focus.focus(*state);
+        match app.current_route {
+            Route::Workflows => app.focus.focus(&app.workflows.f_search),
+            _ => app.focus.focus(*state),
+        }
     }
 
     /// Update the open modal kind (use None to clear).
@@ -266,7 +273,9 @@ impl Component for MainView {
                 .map(|c| c.handle_mouse_events(app, mouse))
                 .unwrap_or_default(),
         );
-        effects.extend(self.logs_view.handle_mouse_events(app, mouse));
+        if app.logs.is_visible {
+            effects.extend(self.logs_view.handle_mouse_events(app, mouse));
+        }
 
         effects
     }

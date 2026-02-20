@@ -54,6 +54,18 @@ Each step supports:
 - `repeat` (`until`, `every`, `timeout`, `max_attempts`)
 - `output_contract`
 
+### Step Output Path Semantics (Clarification)
+- Step output references should point to concrete runtime payload paths.
+- For list responses, references should include an explicit index when selecting a single item (for example, `${{ steps.list_step.0.id }}`).
+- `output_contract.fields` is metadata and does not materialize synthetic runtime fields.
+- Synthetic projections such as `steps.<id>.value` are invalid unless the upstream command output actually contains a `value` field.
+- `output_contract.select` is not supported; manifests using it are rejected during validation.
+
+### Failure Guardrail Pattern (Current State)
+- There is no dedicated first-class `workflow:fail` step today.
+- Workflows that need an intentional terminal failure currently use command-level failure patterns.
+- Recommended future spec enhancement: introduce an explicit fail step primitive with a structured message/cause payload to avoid brittle API-driven failure hacks.
+
 ## Runtime Loading
 - Workflows are loaded from filesystem at runtime.
 - Registry loader reads recursive `yaml`/`yml`/`json` files from the runtime workflows directory.
@@ -81,6 +93,16 @@ Each step supports:
 - Input defaults are applied prior to execution.
 - Step ordering is dependency-aware.
 - Conditions and interpolation are evaluated against run context.
+
+## Preflight Safety Warnings (Implemented)
+- Workflow validation emits non-fatal warnings for high-risk mutation patterns:
+  - mutating step (`POST`/`PUT`/`PATCH`/`DELETE`) before any read/check step
+  - mutating step with no `depends_on` and no `if` guard
+  - provisioning-style `*:create` step without earlier same-vendor read/existence check
+- These warnings are intended to push workflows toward:
+  - source verification before provisioning
+  - target existence checks before create/delete decisions
+  - explicit gated execution paths for irreversible operations
 
 ## Source Alignment
 - `crates/types/src/workflow.rs`

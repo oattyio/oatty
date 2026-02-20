@@ -687,16 +687,6 @@ impl LibraryComponent {
 }
 
 impl Component for LibraryComponent {
-    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
-        self.layout = LibraryLayout::from(self.get_preferred_layout(app, rect));
-
-        self.render_buttons(frame, app);
-        self.render_api_list(frame, app);
-        self.render_message(frame, app);
-        self.render_details(frame, app);
-        self.position_cursor_for_focused_input(frame, app);
-    }
-
     fn handle_message(&mut self, app: &mut App, msg: Msg) -> Vec<Effect> {
         match msg {
             Msg::Tick => {
@@ -832,44 +822,6 @@ impl Component for LibraryComponent {
         Vec::new()
     }
 
-    fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
-        let outter = Layout::vertical([
-            Constraint::Percentage(100), // Content
-            Constraint::Length(2),       // status/error
-        ])
-        .split(area);
-
-        let inner = Layout::horizontal([
-            Constraint::Percentage(30), // Left pane
-            Constraint::Percentage(70), // Right pane
-        ])
-        .spacing(Spacing::Overlap(1))
-        .split(outter[0]);
-
-        let left_pane = Layout::vertical([
-            Constraint::Length(3), // import/remove buttons
-            Constraint::Min(1),    // api list
-        ])
-        .split(inner[0]);
-
-        let buttons = Layout::horizontal([
-            Constraint::Min(0),     // Spacer
-            Constraint::Length(12), // Import button
-            Constraint::Length(1),  // spacer
-            Constraint::Length(12), // Remove button
-            Constraint::Length(1),  // spacer
-        ])
-        .split(left_pane[0]);
-
-        vec![
-            buttons[1],   // Import button
-            buttons[3],   // Remove button
-            left_pane[1], // List
-            inner[1],     // Details area (info + url radio group)
-            outter[1],    // Error
-        ]
-    }
-
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
         let pos = Position {
             x: mouse.column,
@@ -952,6 +904,16 @@ impl Component for LibraryComponent {
         Vec::new()
     }
 
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
+        self.layout = LibraryLayout::from(self.get_preferred_layout(app, rect));
+
+        self.render_buttons(frame, app);
+        self.render_api_list(frame, app);
+        self.render_message(frame, app);
+        self.render_details(frame, app);
+        self.position_cursor_for_focused_input(frame, app);
+    }
+
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         if app.library.kv_state().is_focused() {
             let mut spans = Vec::new();
@@ -1002,5 +964,43 @@ impl Component for LibraryComponent {
         }
 
         theme_helpers::build_hint_spans(&*app.ctx.theme, &hints)
+    }
+
+    fn get_preferred_layout(&self, _app: &App, area: Rect) -> Vec<Rect> {
+        let outter = Layout::vertical([
+            Constraint::Percentage(100), // Content
+            Constraint::Length(2),       // status/error
+        ])
+        .split(area);
+
+        let inner = Layout::horizontal([
+            Constraint::Percentage(30), // Left pane
+            Constraint::Percentage(70), // Right pane
+        ])
+        .spacing(Spacing::Overlap(1))
+        .split(outter[0]);
+
+        let left_pane = Layout::vertical([
+            Constraint::Length(3), // import/remove buttons
+            Constraint::Min(1),    // api list
+        ])
+        .split(inner[0]);
+
+        let buttons = Layout::horizontal([
+            Constraint::Min(0),     // Spacer
+            Constraint::Length(12), // Import button
+            Constraint::Length(1),  // spacer
+            Constraint::Length(12), // Remove button
+            Constraint::Length(1),  // spacer
+        ])
+        .split(left_pane[0]);
+
+        vec![
+            buttons[1],   // Import button
+            buttons[3],   // Remove button
+            left_pane[1], // List
+            inner[1],     // Details area (info + url radio group)
+            outter[1],    // Error
+        ]
     }
 }

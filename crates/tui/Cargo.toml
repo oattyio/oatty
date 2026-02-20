@@ -14,7 +14,6 @@ crossterm = { workspace = true }
 dirs-next = { workspace = true }
 tracing = { workspace = true }
 oatty-registry = { path = "../registry" }
-oatty-registry-gen = { path = "../registry-gen" }
 oatty-util = { path = "../util" }
 oatty-types = { path = "../types" }
 oatty-mcp = { path = "../mcp" }

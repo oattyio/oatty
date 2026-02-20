@@ -40,6 +40,17 @@ pub enum ActionRole {
     ViewDetailsButton,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RunFooterAction {
+    Cancel,
+    ReviewInputs,
+    Pause,
+    Resume,
+    RerunFailed,
+    ViewDetails,
+    Done,
+}
+
 /// Layout metadata captured during the most recent render pass.
 #[derive(Debug, Default, Clone)]
 pub struct RunViewLayout {
@@ -106,18 +117,25 @@ impl Component for RunViewComponent {
             return Vec::new();
         }
 
-        let Some(run_state) = app.workflows.run_view_state_mut() else {
+        let Some(run_state) = app.workflows.run_view_state() else {
             return Vec::new();
         };
-
+        let focus_snapshot = (
+            run_state.steps_table.focus().get(),
+            run_state.cancel_button_focus.get(),
+            run_state.pause_button_focus.get(),
+            run_state.view_details_button_focus.get(),
+            run_state.done_button_focus.get(),
+        );
+        let run_status = run_state.status();
         let run_id = run_state.run_id().to_string();
 
         match () {
-            _ if run_state.steps_table.focus().get() => self.handle_steps_table_keys(run_state, key.code),
-            _ if run_state.cancel_button_focus.get() => Self::handle_cancel_button_keys(run_state, &run_id, key.code),
-            _ if run_state.pause_button_focus.get() => Self::handle_pause_button_keys(run_state, &run_id, key.code),
-            _ if run_state.view_details_button_focus.get() => self.handle_view_details_button_keys(run_state, key.code),
-            _ if run_state.done_button_focus.get() => Self::handle_done_button_keys(key.code),
+            _ if focus_snapshot.0 => self.handle_steps_table_keys(app.workflows.run_view_state_mut().expect("run view state"), key.code),
+            _ if focus_snapshot.1 => self.handle_cancel_button_keys(app, run_status, &run_id, key.code),
+            _ if focus_snapshot.2 => self.handle_pause_button_keys(app, run_status, &run_id, key.code),
+            _ if focus_snapshot.3 => self.handle_view_details_button_keys(app, &run_id, key.code),
+            _ if focus_snapshot.4 => self.handle_done_button_keys(app, &run_id, key.code),
             () => Vec::new(),
         }
     }
@@ -169,11 +187,20 @@ impl Component for RunViewComponent {
         };
 
         if run_state.cancel_button_focus.get() {
-            return build_hint_spans(theme, &[(" Enter", " Cancel run ")]);
+            let label = if run_state.status() == RunExecutionStatus::Failed {
+                " Review inputs "
+            } else {
+                " Cancel run "
+            };
+            return build_hint_spans(theme, &[(" Enter", label)]);
         }
 
         if run_state.pause_button_focus.get() {
-            let label = pause_button_label(run_state.status());
+            let label = if run_state.status() == RunExecutionStatus::Failed {
+                " Re-run failed "
+            } else {
+                pause_button_label(run_state.status())
+            };
             return build_hint_spans(theme, &[(" Enter/Space", label)]);
         }
 
@@ -240,7 +267,7 @@ impl Component for RunViewComponent {
     }
 
     fn on_route_exit(&mut self, app: &mut App) -> Vec<Effect> {
-        app.workflows.end_inputs_session();
+        app.workflows.handle_route_exit_cleanup();
         Vec::new()
     }
 }
@@ -278,59 +305,48 @@ impl RunViewComponent {
         effects
     }
 
-    fn handle_cancel_button_keys(run_state: &RunViewState, run_id: &str, code: KeyCode) -> Vec<Effect> {
-        let mut effects = Vec::new();
-        match code {
-            KeyCode::Enter | KeyCode::Char(' ') => {
-                if cancel_enabled(run_state.status()) {
-                    effects.push(Effect::WorkflowRunControl {
-                        run_id: run_id.to_string(),
-                        command: WorkflowRunControl::Cancel,
-                    })
-                }
-            }
-            _ => {}
+    fn handle_cancel_button_keys(&self, app: &mut App, status: RunExecutionStatus, run_id: &str, code: KeyCode) -> Vec<Effect> {
+        if !is_activation_key(code) {
+            return Vec::new();
         }
-        effects
+        let Some(action) = resolve_cancel_button_action(status) else {
+            return Vec::new();
+        };
+        self.handle_footer_action(app, action, run_id)
     }
 
-    fn handle_pause_button_keys(run_state: &RunViewState, run_id: &str, code: KeyCode) -> Vec<Effect> {
-        let mut effects = Vec::new();
-        match code {
-            KeyCode::Enter | KeyCode::Char(' ') => {
-                if let Some(command) = pause_command_for_status(run_state.status()) {
-                    effects.push(Effect::WorkflowRunControl {
-                        run_id: run_id.to_string(),
-                        command,
-                    })
-                }
-            }
-            _ => {}
+    fn handle_pause_button_keys(&self, app: &mut App, status: RunExecutionStatus, run_id: &str, code: KeyCode) -> Vec<Effect> {
+        if !is_activation_key(code) {
+            return Vec::new();
         }
-        effects
+        let Some(action) = resolve_pause_button_action(status) else {
+            return Vec::new();
+        };
+        self.handle_footer_action(app, action, run_id)
     }
 
-    fn handle_done_button_keys(code: KeyCode) -> Vec<Effect> {
-        match code {
-            KeyCode::Enter | KeyCode::Char(' ') => vec![Effect::SwitchTo(Route::Workflows)],
-            _ => Vec::new(),
+    fn handle_done_button_keys(&self, app: &mut App, run_id: &str, code: KeyCode) -> Vec<Effect> {
+        if !is_activation_key(code) {
+            return Vec::new();
         }
+        self.handle_footer_action(app, RunFooterAction::Done, run_id)
     }
 
-    fn handle_view_details_button_keys(&self, run_state: &RunViewState, code: KeyCode) -> Vec<Effect> {
-        match code {
-            KeyCode::Enter | KeyCode::Char(' ') => self.show_step_output(run_state),
-            _ => Vec::new(),
+    fn handle_view_details_button_keys(&self, app: &mut App, run_id: &str, code: KeyCode) -> Vec<Effect> {
+        if !is_activation_key(code) {
+            return Vec::new();
         }
+        self.handle_footer_action(app, RunFooterAction::ViewDetails, run_id)
     }
 
     fn handle_mouse_target(&mut self, app: &mut App, target: ActionRole, pos: Position) -> Vec<Effect> {
         let mut effects = Vec::new();
-        let Some(run_state) = app.workflows.run_view_state_mut() else {
+        if app.workflows.run_view_state().is_none() {
             return effects;
-        };
+        }
         match target {
             ActionRole::StepsTable => {
+                let run_state = app.workflows.run_view_state_mut().expect("run view state");
                 let idx = self.hit_test_table(pos, run_state.steps_table.table_state.offset());
                 let already_selected = run_state.steps_table.table_state.selected();
                 run_state.steps_table.table_state.select(idx);
@@ -340,30 +356,40 @@ impl RunViewComponent {
                 }
             }
             ActionRole::CancelButton => {
-                app.focus.focus(&run_state.cancel_button_focus);
-                if cancel_enabled(run_state.status()) {
-                    effects.push(Effect::WorkflowRunControl {
-                        run_id: run_state.run_id().to_string(),
-                        command: WorkflowRunControl::Cancel,
-                    });
+                let (run_status, run_id) = {
+                    let run_state = app.workflows.run_view_state_mut().expect("run view state");
+                    app.focus.focus(&run_state.cancel_button_focus);
+                    (run_state.status(), run_state.run_id().to_string())
+                };
+                if let Some(action) = resolve_cancel_button_action(run_status) {
+                    effects.extend(self.handle_footer_action(app, action, &run_id));
                 }
             }
             ActionRole::PauseButton => {
-                app.focus.focus(&run_state.pause_button_focus);
-                if let Some(command) = pause_command_for_status(run_state.status()) {
-                    effects.push(Effect::WorkflowRunControl {
-                        run_id: run_state.run_id().to_string(),
-                        command,
-                    });
+                let (run_status, run_id) = {
+                    let run_state = app.workflows.run_view_state_mut().expect("run view state");
+                    app.focus.focus(&run_state.pause_button_focus);
+                    (run_state.status(), run_state.run_id().to_string())
+                };
+                if let Some(action) = resolve_pause_button_action(run_status) {
+                    effects.extend(self.handle_footer_action(app, action, &run_id));
                 }
             }
             ActionRole::ViewDetailsButton => {
-                app.focus.focus(&run_state.view_details_button_focus);
-                effects.extend(self.show_step_output(run_state));
+                let run_id = {
+                    let run_state = app.workflows.run_view_state_mut().expect("run view state");
+                    app.focus.focus(&run_state.view_details_button_focus);
+                    run_state.run_id().to_string()
+                };
+                effects.extend(self.handle_footer_action(app, RunFooterAction::ViewDetails, &run_id));
             }
             ActionRole::DoneButton => {
-                app.focus.focus(&run_state.done_button_focus);
-                effects.push(Effect::SwitchTo(Route::Workflows));
+                let run_id = {
+                    let run_state = app.workflows.run_view_state_mut().expect("run view state");
+                    app.focus.focus(&run_state.done_button_focus);
+                    run_state.run_id().to_string()
+                };
+                effects.extend(self.handle_footer_action(app, RunFooterAction::Done, &run_id));
             }
         }
         effects
@@ -385,6 +411,32 @@ impl RunViewComponent {
         effects
     }
 
+    fn handle_footer_action(&self, app: &mut App, action: RunFooterAction, run_id: &str) -> Vec<Effect> {
+        match action {
+            RunFooterAction::Cancel => vec![Effect::WorkflowRunControl {
+                run_id: run_id.to_string(),
+                command: WorkflowRunControl::Cancel,
+            }],
+            RunFooterAction::ReviewInputs => app.rerun_failed_workflow(true),
+            RunFooterAction::Pause => vec![Effect::WorkflowRunControl {
+                run_id: run_id.to_string(),
+                command: WorkflowRunControl::Pause,
+            }],
+            RunFooterAction::Resume => vec![Effect::WorkflowRunControl {
+                run_id: run_id.to_string(),
+                command: WorkflowRunControl::Resume,
+            }],
+            RunFooterAction::RerunFailed => app.rerun_failed_workflow(false),
+            RunFooterAction::ViewDetails => {
+                let Some(run_state) = app.workflows.run_view_state_mut() else {
+                    return Vec::new();
+                };
+                self.show_step_output(run_state)
+            }
+            RunFooterAction::Done => vec![Effect::SwitchTo(Route::Workflows)],
+        }
+    }
+
     fn hit_test_mouse_target(&self, mouse: MouseEvent) -> Option<ActionRole> {
         let container_area = self.layout_state.container_area;
         let index = find_target_index_by_mouse_position(&container_area, &self.layout_state.mouse_target_areas, mouse.column, mouse.row)?;
@@ -404,7 +456,13 @@ impl RunViewComponent {
         let footer_block = get_footer_block(theme);
         frame.render_widget(footer_block, layout.footer_block_area);
 
-        let cancel_enabled = cancel_enabled(run_state.status());
+        let failed_terminal = run_state.status() == RunExecutionStatus::Failed;
+        let cancel_label = if failed_terminal { "Review Inputs" } else { "Cancel" };
+        let cancel_enabled = if failed_terminal {
+            true
+        } else {
+            cancel_enabled(run_state.status())
+        };
         let cancel_options = ButtonRenderOptions::new(
             cancel_enabled,
             run_state.cancel_button_focus.get(),
@@ -412,10 +470,18 @@ impl RunViewComponent {
             Borders::ALL,
             ButtonType::Secondary,
         );
-        th::render_button(frame, layout.cancel_button_area, "Cancel", theme, cancel_options);
+        th::render_button(frame, layout.cancel_button_area, cancel_label, theme, cancel_options);
 
-        let pause_enabled = pause_command_for_status(run_state.status()).is_some();
-        let pause_label = pause_button_label(run_state.status());
+        let pause_label = if failed_terminal {
+            "Re-run Failed"
+        } else {
+            pause_button_label(run_state.status())
+        };
+        let pause_enabled = if failed_terminal {
+            true
+        } else {
+            resolve_pause_button_action(run_state.status()).is_some()
+        };
         let pause_options = ButtonRenderOptions::new(
             pause_enabled,
             run_state.pause_button_focus.get(),
@@ -435,7 +501,7 @@ impl RunViewComponent {
         );
         th::render_button(frame, layout.view_details_button_area, "View Details", theme, view_details_options);
 
-        let done_enabled = run_state.status() == RunExecutionStatus::Succeeded;
+        let done_enabled = run_state.status().is_terminal();
         let done_options = ButtonRenderOptions::new(
             done_enabled,
             run_state.done_button_focus.get(),
@@ -533,10 +599,25 @@ fn cancel_enabled(status: RunExecutionStatus) -> bool {
     !status.is_terminal() && status != RunExecutionStatus::CancelRequested
 }
 
-fn pause_command_for_status(status: RunExecutionStatus) -> Option<WorkflowRunControl> {
+fn resolve_cancel_button_action(status: RunExecutionStatus) -> Option<RunFooterAction> {
+    if status == RunExecutionStatus::Failed {
+        Some(RunFooterAction::ReviewInputs)
+    } else if cancel_enabled(status) {
+        Some(RunFooterAction::Cancel)
+    } else {
+        None
+    }
+}
+
+fn resolve_pause_button_action(status: RunExecutionStatus) -> Option<RunFooterAction> {
     match status {
-        RunExecutionStatus::Running => Some(WorkflowRunControl::Pause),
-        RunExecutionStatus::Paused => Some(WorkflowRunControl::Resume),
+        RunExecutionStatus::Failed => Some(RunFooterAction::RerunFailed),
+        RunExecutionStatus::Running => Some(RunFooterAction::Pause),
+        RunExecutionStatus::Paused => Some(RunFooterAction::Resume),
         _ => None,
     }
+}
+
+fn is_activation_key(code: KeyCode) -> bool {
+    matches!(code, KeyCode::Enter | KeyCode::Char(' '))
 }
