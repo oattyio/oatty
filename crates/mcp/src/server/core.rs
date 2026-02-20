@@ -598,7 +598,18 @@ impl OattyMcpCore {
     )]
     async fn workflow_cancel(&self, param: Parameters<WorkflowCancelRequest>) -> Result<CallToolResult, ErrorData> {
         let mut processor = self.task_processor.lock().await;
-        processor.collect_completed_results();
+        if processor
+            .peek_completed()
+            .iter()
+            .any(|result| result.descriptor.operation_id == param.0.operation_id)
+        {
+            return Err(conflict_error(
+                "WORKFLOW_CANCEL_CONFLICT",
+                format!("operation '{}' is already completed and cannot be cancelled", param.0.operation_id),
+                serde_json::json!({ "operation_id": param.0.operation_id }),
+                "Inspect task result and start a new run if needed.",
+            ));
+        }
 
         let cancelled = processor.cancel_task(&param.0.operation_id);
         let structured = if cancelled {

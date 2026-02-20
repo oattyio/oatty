@@ -16,30 +16,30 @@ serde_json = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
-url = { workspace = true }
 dirs-next = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
 async-trait = { workspace = true }
 reqwest = { workspace = true }
+url = { workspace = true }
 once_cell = { workspace = true }
 oatty-util = { path = "../util" }
 oatty-types = { path = "../types" }
 oatty-registry = { path = "../registry" }
 oatty-registry-gen = { path = "../registry-gen" }
 oatty-engine = { path = "../engine" }
-axum = "0.7.9"
-tokio-util = "0.7.16"
+axum = "0.8.8"
+tokio-util = "0.7.18"
 serde_yaml = { workspace = true }
-rmcp = { version = "0.14.0", features = [
-  "server-side-http",
-  "transport-streamable-http-server",
-  "transport-streamable-http-server-session",
-  "client",
-  "transport-child-process",
-  "transport-streamable-http-client-reqwest",
-  "reqwest",
-  "auth",
+rmcp = { version = "0.16.0", features = [
+    "server-side-http",
+    "transport-streamable-http-server",
+    "transport-streamable-http-server-session",
+    "client",
+    "transport-child-process",
+    "transport-streamable-http-client-reqwest",
+    "reqwest",
+    "auth",
 ] }
 indexmap.workspace = true
 schemars = { workspace = true }
@@ -54,8 +54,8 @@ serde_json = { workspace = true }
 default = []
 
 [dev-dependencies]
-temp-env = "0.3"
-tempfile = "3.24.0"
+temp-env = "0.3.6"
+tempfile = "3.25.0"
 
 [target.'cfg(unix)'.dependencies]
 libc = { version = "0.2" }
