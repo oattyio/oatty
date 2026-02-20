@@ -7,9 +7,12 @@
 //! maps raw manifest entries into engine-friendly structures while preserving
 //! authoring order.
 
-use anyhow::{Context, Result, bail};
+use crate::workflow::condition_syntax::{normalize_condition_expression, validate_condition_expression};
+use anyhow::{Context, Result, anyhow, bail};
 use indexmap::IndexMap;
-use oatty_types::{RuntimeWorkflow, WorkflowDefinition, WorkflowInputDefinition, WorkflowProviderArgumentValue};
+use oatty_types::{
+    RuntimeWorkflow, WorkflowDefinition, WorkflowInputDefinition, WorkflowProviderArgumentValue, WorkflowRepeat, WorkflowStepDefinition,
+};
 
 /// Builds a runtime workflow from a manifest definition.
 pub fn runtime_workflow_from_definition(definition: &WorkflowDefinition) -> Result<RuntimeWorkflow> {
@@ -27,6 +30,7 @@ pub fn runtime_workflow_from_definition(definition: &WorkflowDefinition) -> Resu
     }
 
     validate_provider_dependency_bindings(&identifier, &inputs)?;
+    validate_step_condition_expressions(&identifier, &steps)?;
 
     Ok(RuntimeWorkflow {
         identifier,
@@ -37,6 +41,58 @@ pub fn runtime_workflow_from_definition(definition: &WorkflowDefinition) -> Resu
         final_output: definition.final_output.clone(),
         requires: definition.requires.clone(),
     })
+}
+
+/// Ensures step-level conditions and repeat-until expressions use supported syntax.
+fn validate_step_condition_expressions(workflow_identifier: &str, steps: &[WorkflowStepDefinition]) -> Result<()> {
+    for (index, step) in steps.iter().enumerate() {
+        if let Some(raw_condition) = step.r#if.as_deref() {
+            let normalized = normalize_condition_expression(raw_condition);
+            if normalized.is_empty() {
+                continue;
+            }
+            validate_condition_expression(&normalized).map_err(|error| {
+                anyhow!(
+                    "workflow '{}' step '{}'(index {}) has invalid if/when expression: {}",
+                    workflow_identifier,
+                    step.id,
+                    index,
+                    error
+                )
+            })?;
+        }
+
+        if let Some(repeat) = step.repeat.as_ref() {
+            validate_repeat_until_expression(workflow_identifier, index, step, repeat)?;
+        }
+    }
+    Ok(())
+}
+
+/// Validates `repeat.until` syntax when present.
+fn validate_repeat_until_expression(
+    workflow_identifier: &str,
+    step_index: usize,
+    step: &WorkflowStepDefinition,
+    repeat: &WorkflowRepeat,
+) -> Result<()> {
+    let Some(raw_until) = repeat.until.as_deref() else {
+        return Ok(());
+    };
+    let normalized = normalize_condition_expression(raw_until);
+    if normalized.is_empty() {
+        return Ok(());
+    }
+    validate_condition_expression(&normalized).map_err(|error| {
+        anyhow!(
+            "workflow '{}' step '{}'(index {}) has invalid repeat.until expression: {}",
+            workflow_identifier,
+            step.id,
+            step_index,
+            error
+        )
+    })?;
+    Ok(())
 }
 
 /// Ensures provider-backed inputs declare explicit `depends_on` bindings when
@@ -242,5 +298,163 @@ mod tests {
 
         let runtime = runtime_workflow_from_definition(&definition).expect("definition should be valid");
         assert_eq!(runtime.identifier, "with_depends_on");
+    }
+
+    #[test]
+    fn rejects_if_condition_with_strict_equality() {
+        let definition = WorkflowDefinition {
+            workflow: "strict_condition".into(),
+            title: None,
+            description: None,
+            inputs: IndexMap::new(),
+            steps: vec![WorkflowStepDefinition {
+                id: "step".into(),
+                run: "apps:list".into(),
+                description: None,
+                depends_on: Vec::new(),
+                r#if: Some("inputs.env === \"prod\"".into()),
+                with: IndexMap::new(),
+                body: serde_json::Value::Null,
+                repeat: None,
+                output_contract: None,
+            }],
+            final_output: None,
+            requires: None,
+        };
+
+        let error = runtime_workflow_from_definition(&definition).expect_err("expected strict operator error");
+        assert!(error.to_string().contains("strict equality operators are unsupported"));
+    }
+
+    #[test]
+    fn accepts_if_condition_with_signed_and_decimal_numeric_literals() {
+        let definition = WorkflowDefinition {
+            workflow: "numeric_literals".into(),
+            title: None,
+            description: None,
+            inputs: IndexMap::new(),
+            steps: vec![
+                WorkflowStepDefinition {
+                    id: "negative".into(),
+                    run: "apps:list".into(),
+                    description: None,
+                    depends_on: Vec::new(),
+                    r#if: Some("inputs.delta == -1".into()),
+                    with: IndexMap::new(),
+                    body: serde_json::Value::Null,
+                    repeat: None,
+                    output_contract: None,
+                },
+                WorkflowStepDefinition {
+                    id: "decimal".into(),
+                    run: "apps:list".into(),
+                    description: None,
+                    depends_on: Vec::new(),
+                    r#if: Some("inputs.ratio != 1.5".into()),
+                    with: IndexMap::new(),
+                    body: serde_json::Value::Null,
+                    repeat: None,
+                    output_contract: None,
+                },
+            ],
+            final_output: None,
+            requires: None,
+        };
+
+        let runtime = runtime_workflow_from_definition(&definition).expect("definition should be valid");
+        assert_eq!(runtime.identifier, "numeric_literals");
+    }
+
+    #[test]
+    fn rejects_repeat_until_with_output_root() {
+        let definition = WorkflowDefinition {
+            workflow: "output_root_repeat".into(),
+            title: None,
+            description: None,
+            inputs: IndexMap::new(),
+            steps: vec![WorkflowStepDefinition {
+                id: "wait".into(),
+                run: "apps:list".into(),
+                description: None,
+                depends_on: Vec::new(),
+                r#if: None,
+                with: IndexMap::new(),
+                body: serde_json::Value::Null,
+                repeat: Some(WorkflowRepeat {
+                    until: Some("output.status == \"ready\"".into()),
+                    every: Some("5s".into()),
+                    timeout: None,
+                    max_attempts: Some(3),
+                }),
+                output_contract: None,
+            }],
+            final_output: None,
+            requires: None,
+        };
+
+        let error = runtime_workflow_from_definition(&definition).expect_err("expected output root error");
+        assert!(error.to_string().contains("unsupported root 'output'"));
+    }
+
+    #[test]
+    fn accepts_repeat_until_with_steps_root_and_double_equals() {
+        let definition = WorkflowDefinition {
+            workflow: "valid_repeat".into(),
+            title: None,
+            description: None,
+            inputs: IndexMap::new(),
+            steps: vec![WorkflowStepDefinition {
+                id: "wait".into(),
+                run: "apps:list".into(),
+                description: None,
+                depends_on: Vec::new(),
+                r#if: None,
+                with: IndexMap::new(),
+                body: serde_json::Value::Null,
+                repeat: Some(WorkflowRepeat {
+                    until: Some("steps.wait.status == \"ready\"".into()),
+                    every: Some("5s".into()),
+                    timeout: None,
+                    max_attempts: Some(3),
+                }),
+                output_contract: None,
+            }],
+            final_output: None,
+            requires: None,
+        };
+
+        let runtime = runtime_workflow_from_definition(&definition).expect("definition should be valid");
+        assert_eq!(runtime.identifier, "valid_repeat");
+    }
+
+    #[test]
+    fn accepts_repeat_until_with_steps_output_path() {
+        let definition = WorkflowDefinition {
+            workflow: "valid_repeat_output_path".into(),
+            title: None,
+            description: None,
+            inputs: IndexMap::new(),
+            steps: vec![WorkflowStepDefinition {
+                id: "wait".into(),
+                run: "apps:list".into(),
+                description: None,
+                depends_on: Vec::new(),
+                r#if: None,
+                with: IndexMap::new(),
+                body: serde_json::Value::Null,
+                repeat: Some(WorkflowRepeat {
+                    until: Some("steps.fetch.output.id == \"ready\"".into()),
+                    every: Some("5s".into()),
+                    timeout: None,
+                    max_attempts: Some(3),
+                }),
+                output_contract: None,
+            }],
+            final_output: None,
+            requires: None,
+        };
+
+        let runtime = runtime_workflow_from_definition(&definition).expect("definition should be valid");
+        assert_eq!(runtime.identifier, "valid_repeat_output_path");
     }
 }

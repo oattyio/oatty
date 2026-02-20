@@ -92,21 +92,26 @@ impl ResultsTableView {
             render_empty_placeholder(frame, table_layout.table_area, theme);
             return;
         }
+        let is_drill_mode = state.is_in_drill_mode();
         let table_widget = Table::new(rows, widths[truncate_index..].to_vec())
             .header(Row::new(headers.to_owned()).style(th::table_header_row_style(theme)))
             .column_spacing(1)
             .row_highlight_style(if focused {
-                th::table_selected_style(theme)
+                if is_drill_mode {
+                    Style::default()
+                } else {
+                    th::table_selected_style(theme)
+                }
             } else {
                 Style::default()
             })
-            .column_highlight_style(if focused {
-                theme.selection_style().add_modifier(Modifier::BOLD)
-            } else {
-                Style::default()
-            })
+            .column_highlight_style(Style::default())
             .cell_highlight_style(if focused {
-                theme.selection_style().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                if is_drill_mode {
+                    theme.selection_style().add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
+                } else {
+                    Style::default()
+                }
             } else {
                 Style::default()
             })
@@ -151,6 +156,7 @@ impl ResultsTableView {
                         ListItem::new(Line::from(spans)).style(th::panel_style(theme))
                     })
                     .collect();
+                let items = list_items_with_mouse_highlight(items, state.mouse_over_idx, theme);
 
                 let list = List::new(items)
                     .highlight_style(th::table_selected_style(theme))
@@ -168,7 +174,7 @@ impl ResultsTableView {
                 };
 
                 let mut paragraph = Paragraph::new(display).wrap(Wrap { trim: false }).style(theme.text_primary_style());
-                let line_count = paragraph.line_count(area.width) as usize;
+                let line_count = paragraph.line_count(area.width);
                 let visible_rows = area.height as usize;
                 let max_offset = line_count.saturating_sub(visible_rows.max(1));
                 let offset = state.list_state.offset().min(max_offset);
@@ -254,6 +260,19 @@ fn highlighted_row_index(mouse_over_idx: Option<usize>, rows_len: usize) -> Opti
         Some(idx) if idx < rows_len => Some(idx),
         _ => None,
     }
+}
+
+fn list_items_with_mouse_highlight<'a>(
+    mut items: Vec<ListItem<'a>>,
+    mouse_over_idx: Option<usize>,
+    theme: &dyn UiTheme,
+) -> Vec<ListItem<'a>> {
+    if let Some(highlight_idx) = highlighted_row_index(mouse_over_idx, items.len()) {
+        let mut item = items[highlight_idx].clone();
+        item = item.style(theme.selection_style().add_modifier(Modifier::BOLD));
+        std::mem::swap(&mut items[highlight_idx], &mut item);
+    }
+    items
 }
 
 impl ResultsTableView {

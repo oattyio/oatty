@@ -28,8 +28,10 @@ pub struct WorkflowGetRequest {
 
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct WorkflowValidateRequest {
-    #[schemars(description = "Workflow manifest document to validate.")]
-    pub manifest_content: String,
+    #[schemars(description = "Optional inline workflow manifest document to validate.")]
+    pub manifest_content: Option<String>,
+    #[schemars(description = "Optional absolute filesystem path to a workflow manifest file to validate.")]
+    pub input_path: Option<String>,
     #[schemars(description = "Optional format hint: yaml or json.")]
     pub format: Option<String>,
 }

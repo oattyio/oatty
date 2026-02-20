@@ -14,6 +14,7 @@ use oatty_types::{
     decode_provider_selector_action,
 };
 use oatty_util::lex_shell_like;
+use oatty_util::truncate_with_ellipsis;
 use rat_focus::{FocusFlag, HasFocus};
 use ratatui::{
     Frame,
@@ -39,7 +40,7 @@ static FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "�
 struct PaletteLayout {
     input_area: Rect,
     input_inner_area: Rect,
-    error_area: Rect,
+    message_area: Rect,
     suggestions_area: Rect,
 }
 /// Command palette component for input and suggestions.
@@ -141,7 +142,7 @@ impl PaletteComponent {
         ))
     }
 
-    /// Creates the error paragraph widget if an error exists.
+    /// Creates the status paragraph widget when a transient message is active.
     ///
     /// This function creates the error paragraph with appropriate styling.
     ///
@@ -152,17 +153,36 @@ impl PaletteComponent {
     ///
     /// # Returns
     ///
-    /// The error paragraph widget, or None if no error
-    fn create_error_paragraph<'a>(&self, app: &'a App, theme: &'a dyn Theme) -> Option<Paragraph<'a>> {
-        if let Some(err) = app.palette.error_message() {
-            let line = Line::from(vec![
-                Span::styled("✖ ".to_string(), Style::default().fg(theme.roles().error)),
-                Span::styled(err.to_string(), theme.text_primary_style()),
-            ]);
-            Some(Paragraph::new(line))
-        } else {
-            None
+    /// The status paragraph widget, or None if no message is active.
+    fn create_status_paragraph<'a>(&self, app: &'a App, theme: &'a dyn Theme, available_width: u16) -> Option<Paragraph<'a>> {
+        let message = app.palette.message_ref()?;
+        if message.is_expired() {
+            return None;
         }
+        let style = match message.r#type {
+            MessageType::Error => theme.status_error(),
+            MessageType::Warning => theme.status_warning(),
+            MessageType::Info => theme.status_info(),
+            MessageType::Success => theme.status_success(),
+        };
+        let prefix_text = format!("{} ", message.r#type);
+        let prefix_width = prefix_text.chars().count();
+        let message_width = (available_width as usize).saturating_sub(prefix_width);
+        let message_text = if message_width == 0 {
+            String::new()
+        } else {
+            truncate_with_ellipsis(message.message.as_ref(), message_width)
+        };
+        let line = Line::from(vec![
+            Span::styled(prefix_text, style),
+            Span::styled(message_text, theme.text_primary_style()),
+        ]);
+        let paragraph_style = if app.palette.f_message.get() {
+            theme.selection_style().add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+        Some(Paragraph::new(line).style(paragraph_style))
     }
 
     /// Positions the cursor in the input line.
@@ -421,7 +441,7 @@ impl PaletteComponent {
         PaletteLayout {
             input_area: rects[0],
             input_inner_area: rects[1],
-            error_area: rects[2],
+            message_area: rects[2],
             suggestions_area: rects[3],
         }
     }
@@ -573,6 +593,24 @@ impl Component for PaletteComponent {
     /// // Example requires constructing full App and Registry; ignored in doctests.
     /// ```
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
+        if app.palette.f_message.get() && app.palette.has_active_message() {
+            return match key.code {
+                KeyCode::Enter => {
+                    app.logs.toggle_visible();
+                    Vec::new()
+                }
+                KeyCode::Tab => {
+                    app.focus.next();
+                    Vec::new()
+                }
+                KeyCode::BackTab => {
+                    app.focus.prev();
+                    Vec::new()
+                }
+                _ => Vec::new(),
+            };
+        }
+
         let mut effects: Vec<Effect> = vec![];
         match key.code {
             KeyCode::Char(c) if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
@@ -632,6 +670,7 @@ impl Component for PaletteComponent {
         let PaletteLayout {
             suggestions_area,
             input_area,
+            message_area,
             ..
         } = &self.layout;
         let position = Position {
@@ -662,6 +701,11 @@ impl Component for PaletteComponent {
                     let relative_column = mouse.column.saturating_sub(self.layout.input_inner_area.x);
                     let cursor_index = cursor_index_for_column(app.palette.input(), relative_column);
                     app.palette.set_cursor(cursor_index);
+                }
+                if app.palette.has_active_message() && message_area.contains(position) {
+                    app.focus.focus(&app.palette.f_message);
+                    app.logs.toggle_visible();
+                    return Vec::new();
                 }
                 if hit_test_suggestions {
                     app.palette.list_state.select(idx);
@@ -702,7 +746,7 @@ impl Component for PaletteComponent {
         let palette_layout = self.get_palette_layout(app, rect);
         let PaletteLayout {
             input_area,
-            error_area,
+            message_area,
             suggestions_area,
             ..
         } = &palette_layout;
@@ -714,9 +758,9 @@ impl Component for PaletteComponent {
         // Position cursor in the input line
         self.position_cursor(frame, app);
 
-        // Render error message if present
-        if let Some(error_para) = self.create_error_paragraph(app, theme) {
-            frame.render_widget(error_para, *error_area);
+        // Render transient status message (error/success/info/warning) if present
+        if let Some(status_paragraph) = self.create_status_paragraph(app, theme, message_area.width) {
+            frame.render_widget(status_paragraph, *message_area);
         }
 
         // Render suggestions popup
@@ -735,23 +779,27 @@ impl Component for PaletteComponent {
         let theme = &*app.ctx.theme;
         th::build_hint_spans(
             theme,
-            &[
-                ("Tab", " Completions "),
-                ("↑/↓", " Cycle  "),
-                ("Enter", " Accept  "),
-                ("F1", " Help  "),
-                ("Esc", " Cancel"),
-            ],
+            if app.palette.f_message.get() {
+                &[("Enter", " Toggle logs "), ("Tab/Shift+Tab", " Move focus ")]
+            } else {
+                &[
+                    ("Tab", " Completions "),
+                    ("↑/↓", " Cycle  "),
+                    ("Enter", " Accept  "),
+                    ("F1", " Help  "),
+                    ("Esc", " Cancel"),
+                ]
+            },
         )
     }
 
     fn get_preferred_layout(&self, app: &App, area: Rect) -> Vec<Rect> {
-        let has_error = app.palette.error_message().is_some();
+        let has_message = app.palette.has_active_message();
         // 3 areas in total, stacked on top of one another
         let outter_area = Layout::vertical([
-            Constraint::Length(3),                             // input area
-            Constraint::Length(if has_error { 1 } else { 0 }), // error area
-            Constraint::Min(1),                                // Suggestion area
+            Constraint::Length(3),                               // input area
+            Constraint::Length(if has_message { 1 } else { 0 }), // status area
+            Constraint::Min(1),                                  // Suggestion area
         ])
         .split(area);
 

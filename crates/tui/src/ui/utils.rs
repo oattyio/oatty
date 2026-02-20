@@ -209,6 +209,32 @@ pub fn base_key_score(key: &str) -> i32 {
         }
     }
 }
+
+/// Context for scoring JSON object keys when ranking fields for UI display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyScoreContext {
+    /// General browsing context. Prioritizes human-readable fields and
+    /// deprioritizes machine identifiers.
+    Browsing,
+    /// Value selection context. Promotes stable identifier-like fields for
+    /// deterministic value application (for example provider selectors).
+    ValueSelection,
+}
+
+fn score_key_with_context(key: &str, context: KeyScoreContext) -> i32 {
+    let base_score = base_key_score(key) + property_frequency_boost(key);
+    match context {
+        KeyScoreContext::Browsing => base_score,
+        KeyScoreContext::ValueSelection => {
+            let normalized = key.to_ascii_lowercase();
+            if normalized == "id" || normalized.ends_with("_id") {
+                base_score + 260
+            } else {
+                base_score
+            }
+        }
+    }
+}
 /// Generates a sorted vector of keys from a given map, arranged in descending order of their computed scores.
 ///
 /// This function calculates the combined score for each key using two components:
@@ -245,10 +271,18 @@ pub fn base_key_score(key: &str) -> i32 {
 /// # Panics
 /// This function does not explicitly handle panics unless the underlying operations (e.g., `key()` or scoring functions) panic.
 pub fn get_scored_keys(map: &Map<String, Value>) -> Vec<String> {
+    get_scored_keys_with_context(map, KeyScoreContext::Browsing)
+}
+
+/// Generates a sorted vector of keys for a specific ranking context.
+///
+/// Use [`KeyScoreContext::ValueSelection`] when choosing fields for value
+/// application so stable identifiers are promoted.
+pub fn get_scored_keys_with_context(map: &Map<String, Value>, context: KeyScoreContext) -> Vec<String> {
     let mut keys: Vec<String> = map.keys().cloned().collect();
     keys.sort_by(|a, b| {
-        let sa = base_key_score(a) + property_frequency_boost(a);
-        let sb = base_key_score(b) + property_frequency_boost(b);
+        let sa = score_key_with_context(a, context);
+        let sb = score_key_with_context(b, context);
         sb.cmp(&sa)
     });
     keys

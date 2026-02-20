@@ -28,7 +28,7 @@ use crossterm::{
 use futures_util::{StreamExt, stream::FuturesUnordered};
 use oatty_mcp::PluginEngine;
 use oatty_registry::CommandRegistry;
-use oatty_types::{Effect, ExecOutcome, Msg};
+use oatty_types::{Effect, ExecOutcome, Modal, Msg, Route};
 use ratatui::{Terminal, prelude::*};
 use std::rc::Rc;
 use std::time::Instant;
@@ -366,10 +366,14 @@ fn handle_navigation_effects(app: &mut App<'_>, main_view: &mut MainView, effect
                 }
             }
             Effect::CloseModal => {
+                let closed_modal_kind = app.open_modal_kind.clone();
                 if let Some((mut view, _)) = main_view.modal_view.take() {
                     queued_effects.extend(view.on_route_enter(app));
                 }
                 main_view.set_open_modal_kind(app, None);
+                if app.current_route == Route::Palette && matches!(closed_modal_kind, Some(Modal::Results(_))) {
+                    app.palette.replay_pending_success_message();
+                }
             }
             _ => {}
         }

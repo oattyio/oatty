@@ -9,7 +9,7 @@ use crate::ui::components::workflows::collector::{
 use crate::ui::components::workflows::view_utils::{classify_json_value, style_for_role};
 use crate::ui::theme::Theme;
 use crate::ui::theme::theme_helpers::{self as th, ButtonRenderOptions, ButtonType, build_hint_spans};
-use crate::ui::utils::{get_scored_keys, render_value};
+use crate::ui::utils::{KeyScoreContext, get_scored_keys_with_context, render_value};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use oatty_engine::field_paths::{missing_details_from_json_row, nested_scalar_leaf_candidates_from_json, non_scalar_runtime_message};
 use oatty_engine::resolve::select_path;
@@ -282,7 +282,7 @@ impl Component for WorkflowCollectorComponent {
     }
 
     fn on_route_exit(&mut self, app: &mut App) -> Vec<Effect> {
-        app.workflows.end_inputs_session();
+        app.workflows.handle_route_exit_cleanup();
         Vec::new()
     }
 }
@@ -851,7 +851,7 @@ impl WorkflowCollectorComponent {
                 Some((value.clone(), path_prefix.to_string()))
             }
             JsonValue::Object(map) => {
-                let best_key = get_scored_keys(map).first()?.clone();
+                let best_key = get_scored_keys_with_context(map, KeyScoreContext::ValueSelection).first()?.clone();
                 let nested_value = map.get(&best_key)?;
                 let next_path = format!("{path_prefix}.{best_key}");
                 self.resolve_display_scalar_value(nested_value, &next_path, depth + 1)
@@ -889,14 +889,18 @@ impl WorkflowCollectorComponent {
 
         let theme = &*app.ctx.theme;
         let collector = app.workflows.collector_state_mut().expect("selector state");
-        let selected_index = collector.table.table_state.selected();
-        if selected_index.is_none() && collector.table.has_rows() {
+        if collector.table.table_state.selected().is_none() && collector.table.has_rows() {
             collector.table.table_state.select(Some(0));
         }
         if collector.value_field.is_none() {
             collector.table.ensure_column_selected();
             collector.table.ensure_selected_column_visible(layout.table_area.width);
         }
+        let selected_index = if collector.table.has_rows() {
+            collector.table.table_state.selected()
+        } else {
+            collector.table.list_state.selected()
+        };
         collector.sync_stage_with_selection(selected_index);
 
         layout.filter_inner_area = self.render_filter_panel(frame, layout.filter_panel, collector, theme);
@@ -1188,7 +1192,7 @@ mod tests {
     }
 
     #[test]
-    fn extract_selected_value_uses_display_scalar_for_selected_object_cell() {
+    fn extract_selected_value_uses_prioritized_scalar_for_selected_object_cell() {
         let mut selector = base_selector();
         selector.table.apply_result_json(
             Some(json!([{ "service": { "id": "srv-1", "name": "api-service" } }])),
@@ -1209,8 +1213,8 @@ mod tests {
         let (value, source_field) = component
             .extract_selected_value(&selector)
             .expect("selected object cell should resolve to displayed scalar");
-        assert_eq!(value, json!("api-service"));
-        assert_eq!(source_field.as_deref(), Some("service.name"));
+        assert_eq!(value, json!("srv-1"));
+        assert_eq!(source_field.as_deref(), Some("service.id"));
     }
 
     #[test]

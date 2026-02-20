@@ -219,12 +219,12 @@ impl FilePickerModal {
     fn maybe_commit_selection(&mut self, app: &mut App) -> Option<Vec<Effect>> {
         let file_picker = app.file_picker.as_mut()?;
         if let Some(selected_file) = file_picker.selected_file().cloned() {
-            if selected_file.is_directory {
+            return if selected_file.is_directory {
                 file_picker.set_cur_dir(Some(selected_file.path.clone()));
-                return Some(vec![Effect::ListDirectoryContents(selected_file.path)]);
+                Some(vec![Effect::ListDirectoryContents(selected_file.path)])
             } else {
-                return Some(vec![Effect::CloseModal, Effect::ReadFileContents(selected_file.path)]);
-            }
+                Some(vec![Effect::CloseModal, Effect::ReadFileContents(selected_file.path)])
+            };
         }
 
         if file_picker.is_path_input_valid() {

@@ -3,7 +3,7 @@ use crate::ui::components::common::manual_entry_modal::state::ManualEntryState;
 use crate::ui::components::results::ResultsTableState;
 use crate::ui::components::workflows::collector::{CollectorApplyTarget, CollectorSelectionSource, CollectorViewState, SelectorStatus};
 use crate::ui::components::workflows::input::WorkflowInputViewState;
-use crate::ui::components::workflows::list::WorkflowListState;
+use crate::ui::components::workflows::list::{WorkflowListEntry, WorkflowListState};
 use crate::ui::components::workflows::run::{RunViewState, StepFinishedData, WorkflowRunControlHandle};
 use crate::ui::theme::Theme;
 use anyhow::Result;
@@ -140,8 +140,8 @@ impl WorkflowState {
     }
 
     /// Returns a workflow by its absolute index in the catalogue.
-    pub fn workflow_by_index(&self, index: usize) -> Option<&RuntimeWorkflow> {
-        self.list.workflow_by_index(index)
+    pub fn workflow_entry_by_index(&self, index: usize) -> Option<&WorkflowListEntry> {
+        self.list.entry_by_index(index)
     }
 
     /// Returns the currently selected workflow from the filtered view.
@@ -149,9 +149,46 @@ impl WorkflowState {
         self.list.selected_workflow()
     }
 
+    /// Returns the selected list entry including invalid entries.
+    pub fn selected_workflow_entry(&self) -> Option<&WorkflowListEntry> {
+        self.list.selected_entry()
+    }
+
+    /// Returns the selected runnable workflow and hides invalid entries.
+    pub fn selected_openable_workflow(&self) -> Option<&RuntimeWorkflow> {
+        self.selected_workflow()
+    }
+
+    /// Returns a user-facing reason when the current selection cannot be opened.
+    pub fn selected_workflow_block_reason(&self) -> Option<String> {
+        if self.selected_openable_workflow().is_some() {
+            return None;
+        }
+        if let Some(entry) = self.selected_workflow_entry()
+            && let Some(error_message) = entry.invalid_message()
+        {
+            return Some(format!("Workflow cannot run until validation errors are fixed: {}", error_message));
+        }
+        Some("No workflow selected".to_string())
+    }
+
+    /// Returns workflow identifier + display label for the currently selected
+    /// entry, including invalid entries that failed normalization.
+    pub fn selected_workflow_removal_target(&self) -> Option<(String, String)> {
+        let entry = self.selected_workflow_entry()?;
+        let identifier = entry.display_identifier().to_string();
+        let label = entry.display_title().unwrap_or(entry.display_identifier()).to_string();
+        Some((identifier, label))
+    }
+
     /// Computes the identifier column width for the filtered set.
     pub fn filtered_title_width(&self) -> usize {
         self.list.filtered_title_width() + 1 // for the trailing space
+    }
+
+    /// Returns and clears workflow-load diagnostic log messages.
+    pub fn take_load_messages(&mut self) -> Vec<String> {
+        self.list.take_load_messages()
     }
 
     /// Returns a mutable reference to the input view state when active.
@@ -194,6 +231,22 @@ impl WorkflowState {
         self.run_view = None;
         self.active_run_id = None;
         self.run_control = None;
+    }
+
+    /// Applies route-exit cleanup while preserving active workflow runs.
+    ///
+    /// When a workflow is currently running, the run/session state is retained so
+    /// background execution remains attached and events continue to update state.
+    /// Only transient input collection overlays are dismissed in that case.
+    ///
+    /// When no run is active, the workflow session is fully cleared.
+    pub fn handle_route_exit_cleanup(&mut self) {
+        if self.is_running() {
+            self.manual_entry = None;
+            self.collector = None;
+            return;
+        }
+        self.end_inputs_session();
     }
 
     /// Hides the input view while keeping the prepared run state available.
@@ -281,6 +334,36 @@ fn describe_run_status(status: WorkflowRunStatus) -> &'static str {
         WorkflowRunStatus::Failed => "failed",
         WorkflowRunStatus::Canceled => "canceled",
     }
+}
+
+fn format_step_finished_log_message(
+    step_id: &str,
+    status: WorkflowRunStepStatus,
+    attempts: u32,
+    duration_ms: u64,
+    logs: &[String],
+) -> String {
+    let mut message = format!(
+        "Step '{}' {} (attempts: {}, duration: {} ms)",
+        step_id,
+        describe_step_status(status),
+        attempts.max(1),
+        duration_ms
+    );
+    if status == WorkflowRunStepStatus::Failed
+        && let Some(reason) = infer_step_failure_reason(logs)
+    {
+        message.push_str(&format!(" - {reason}"));
+    }
+    message
+}
+
+fn infer_step_failure_reason(logs: &[String]) -> Option<String> {
+    logs.iter().find_map(|line| {
+        line.split_once("failed:")
+            .map(|(_, reason)| reason.trim().to_string())
+            .filter(|reason| !reason.is_empty())
+    })
 }
 
 impl HasFocus for WorkflowState {
@@ -433,7 +516,7 @@ impl WorkflowState {
                     },
                     theme,
                 );
-                log_messages.push(format!("Step '{}' {}", step_id, describe_step_status(status)));
+                log_messages.push(format_step_finished_log_message(&step_id, status, attempts, duration_ms, &logs));
                 if status == WorkflowRunStepStatus::Failed {
                     self.run_control = None;
                 }
@@ -581,6 +664,7 @@ mod workflow_run_tests {
         RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault, WorkflowInputDefinition, WorkflowStepDefinition,
     };
     use serde_json::{Value, json};
+    use tokio::sync::mpsc::unbounded_channel;
 
     fn sample_workflow() -> RuntimeWorkflow {
         RuntimeWorkflow {
@@ -694,6 +778,8 @@ mod workflow_run_tests {
             &theme,
         );
         assert!(logs.iter().any(|entry| entry.contains("Step 'first'")));
+        assert!(logs.iter().any(|entry| entry.contains("attempts: 1")));
+        assert!(logs.iter().any(|entry| entry.contains("duration: 20 ms")));
         let row = state.run_view_state().unwrap().steps_table.selected_data(0).cloned().expect("row");
         assert_eq!(row["Status"], Value::String("succeeded".into()));
 
@@ -714,5 +800,73 @@ mod workflow_run_tests {
             .cloned()
             .expect("final output row present");
         assert_eq!(final_output_row["Output"]["step_ok"], Value::String("true".into()));
+    }
+
+    #[test]
+    fn failed_step_logs_include_failure_reason() {
+        let theme = DraculaTheme::new();
+        let workflow = sample_workflow();
+        let run_id = "run-failure".to_string();
+        let run_state = WorkflowRunState::new(workflow.clone());
+        let mut view_state = RunViewState::new(run_id.clone(), workflow.identifier.clone(), workflow.title.clone());
+        view_state.initialize_steps(&workflow.steps, &theme);
+
+        let mut state = WorkflowState::new();
+        state.begin_run_session(run_id.clone(), run_state, view_state);
+
+        let logs = state.apply_run_event(
+            &run_id,
+            WorkflowRunEvent::StepFinished {
+                step_id: "first".into(),
+                status: WorkflowRunStepStatus::Failed,
+                output: Value::Null,
+                logs: vec!["step 'first' failed: HTTP 403 Forbidden".into()],
+                attempts: 2,
+                duration_ms: 145,
+            },
+            &theme,
+        );
+
+        assert!(logs.iter().any(|entry| entry.contains("HTTP 403 Forbidden")));
+        assert!(logs.iter().any(|entry| entry.contains("attempts: 2")));
+        assert!(logs.iter().any(|entry| entry.contains("duration: 145 ms")));
+    }
+
+    #[test]
+    fn route_exit_cleanup_clears_session_when_not_running() {
+        let theme = DraculaTheme::new();
+        let workflow = sample_workflow();
+        let run_id = "run-cleanup-idle".to_string();
+        let run_state = WorkflowRunState::new(workflow.clone());
+        let mut view_state = RunViewState::new(run_id.clone(), workflow.identifier.clone(), workflow.title.clone());
+        view_state.initialize_steps(&workflow.steps, &theme);
+
+        let mut state = WorkflowState::new();
+        state.begin_run_session(run_id, run_state, view_state);
+        state.handle_route_exit_cleanup();
+
+        assert!(state.active_run_state.is_none());
+        assert!(state.run_view_state().is_none());
+    }
+
+    #[test]
+    fn route_exit_cleanup_preserves_running_session() {
+        let theme = DraculaTheme::new();
+        let workflow = sample_workflow();
+        let run_id = "run-cleanup-running".to_string();
+        let run_state = WorkflowRunState::new(workflow.clone());
+        let mut view_state = RunViewState::new(run_id.clone(), workflow.identifier.clone(), workflow.title.clone());
+        view_state.initialize_steps(&workflow.steps, &theme);
+
+        let mut state = WorkflowState::new();
+        state.begin_run_session(run_id.clone(), run_state, view_state);
+        let (sender, _receiver) = unbounded_channel();
+        state.register_run_control(&run_id, sender);
+
+        state.handle_route_exit_cleanup();
+
+        assert!(state.active_run_state.is_some());
+        assert!(state.run_view_state().is_some());
+        assert!(state.run_control_sender(&run_id).is_some());
     }
 }

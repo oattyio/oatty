@@ -13,13 +13,6 @@ pub struct DefaultManualEntryComponent {
 }
 
 impl Component for DefaultManualEntryComponent {
-    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
-        let Some(state) = app.manual_entry_state.as_mut() else {
-            return;
-        };
-        self.inner.render_with_state(frame, rect, &*app.ctx.theme, state);
-    }
-
     fn handle_key_events(&mut self, app: &mut App, key: KeyEvent) -> Vec<Effect> {
         if key.code == KeyCode::Esc {
             return vec![Effect::CloseModal];
@@ -43,6 +36,13 @@ impl Component for DefaultManualEntryComponent {
         };
 
         self.inner.handle_mouse_events(state, mouse)
+    }
+
+    fn render(&mut self, frame: &mut Frame, rect: Rect, app: &mut App) {
+        let Some(state) = app.manual_entry_state.as_mut() else {
+            return;
+        };
+        self.inner.render_with_state(frame, rect, &*app.ctx.theme, state);
     }
 
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {

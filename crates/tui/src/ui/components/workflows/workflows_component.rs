@@ -2,15 +2,14 @@ use crate::app::App;
 use crate::cmd::parse_workflow_definition;
 use crate::ui::components::common::{ConfirmationModalButton, ConfirmationModalOpts};
 use crate::ui::components::component::Component;
+use crate::ui::components::workflows::list::WorkflowListEntry;
 use crate::ui::theme::theme_helpers as th;
 use crate::ui::theme::theme_helpers::ButtonType;
 use crate::ui::theme::theme_helpers::create_spans_with_match;
 use anyhow::{Result, anyhow};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use oatty_engine::WorkflowRunState;
-use oatty_types::workflow::{
-    RuntimeWorkflow, WorkflowCatalogRequirement, WorkflowCatalogRequirementSourceType, collect_missing_catalog_requirements,
-};
+use oatty_types::workflow::{WorkflowCatalogRequirement, WorkflowCatalogRequirementSourceType, collect_missing_catalog_requirements};
 use oatty_types::{Effect, ExecOutcome, MessageType, Modal, Msg, Route, validate_candidate_value};
 use oatty_util::{HistoryKey, expand_tilde, value_contains_secret, workflow_input_uses_history};
 use ratatui::layout::Position;
@@ -150,7 +149,7 @@ impl WorkflowsComponent {
         );
         th::render_button(frame, buttons[1], "Import", theme, import_options);
 
-        let remove_enabled = app.workflows.selected_workflow().is_some();
+        let remove_enabled = app.workflows.selected_workflow_removal_target().is_some();
         let remove_options = th::ButtonRenderOptions::new(
             remove_enabled,
             app.workflows.f_remove_button.get(),
@@ -217,13 +216,18 @@ impl WorkflowsComponent {
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, workflow_index)| {
-                    state.workflow_by_index(*workflow_index).map(|workflow| {
+                    state.workflow_entry_by_index(*workflow_index).map(|entry| {
+                        let identifier_prefix = if entry.is_invalid() { "⚠ " } else { "" };
                         let identifier_cell = format!(
                             "{:<width$}",
-                            workflow.title.as_ref().unwrap_or(&workflow.identifier),
+                            format!(
+                                "{}{}",
+                                identifier_prefix,
+                                entry.display_title().unwrap_or(entry.display_identifier())
+                            ),
                             width = title_width
                         );
-                        let summary = Self::summarize_workflow(workflow, available_summary_width);
+                        let summary = Self::summarize_workflow_entry(entry, available_summary_width);
                         let needle = filter_input.to_string();
                         let mut spans = create_spans_with_match(needle.clone(), identifier_cell, identifier_style, highlight_style);
                         spans.extend(create_spans_with_match(needle, summary, summary_style, highlight_style));
@@ -259,12 +263,11 @@ impl WorkflowsComponent {
         list_area
     }
 
-    fn summarize_workflow(workflow: &RuntimeWorkflow, max_width: usize) -> String {
-        let summary_source = workflow
-            .description
-            .as_deref()
+    fn summarize_workflow_entry(entry: &WorkflowListEntry, max_width: usize) -> String {
+        let summary_source = entry
+            .display_description()
             .filter(|value| !value.is_empty())
-            .or_else(|| workflow.title.as_deref().filter(|value| !value.is_empty()))
+            .or_else(|| entry.display_title().filter(|value| !value.is_empty()))
             .unwrap_or("No description provided.");
 
         if max_width == 0 {
@@ -277,6 +280,12 @@ impl WorkflowsComponent {
             summary.push_str("...");
         }
         summary
+    }
+
+    fn emit_workflow_load_messages(&self, app: &mut App) {
+        for message in app.workflows.take_load_messages() {
+            app.append_log_message(message);
+        }
     }
 
     /// Populate run state inputs with history-backed defaults when available.
@@ -335,11 +344,10 @@ impl WorkflowsComponent {
     }
 
     fn prompt_remove_workflow(&mut self, app: &mut App) -> Vec<Effect> {
-        let Some(workflow) = app.workflows.selected_workflow() else {
+        let Some((workflow_id, workflow_label)) = app.workflows.selected_workflow_removal_target() else {
             return Vec::new();
         };
 
-        let workflow_label = workflow.title.clone().unwrap_or_else(|| workflow.identifier.clone());
         let message = format!(
             "Are you sure you want to remove '{}'? \nThis action cannot be undone.",
             workflow_label
@@ -357,12 +365,7 @@ impl WorkflowsComponent {
                 ),
             ],
         });
-        self.set_pending_confirmation_action(
-            app,
-            WorkflowImportConfirmationAction::RemoveWorkflow {
-                workflow_id: workflow.identifier.clone(),
-            },
-        );
+        self.set_pending_confirmation_action(app, WorkflowImportConfirmationAction::RemoveWorkflow { workflow_id });
         vec![Effect::ShowModal(Modal::Confirmation)]
     }
 
@@ -408,9 +411,11 @@ impl WorkflowsComponent {
             }
             ExecOutcome::WorkflowImported { .. } => {
                 let _ = app.workflows.ensure_loaded(&app.ctx.command_registry);
+                self.emit_workflow_load_messages(app);
             }
             ExecOutcome::WorkflowRemoved { .. } => {
                 let _ = app.workflows.ensure_loaded(&app.ctx.command_registry);
+                self.emit_workflow_load_messages(app);
             }
             ExecOutcome::WorkflowOperationError(_) => {}
             _ => {}
@@ -620,8 +625,13 @@ impl WorkflowsComponent {
 
     /// Open the interactive input view for the selected workflow.
     pub fn open_workflow_inputs(&mut self, app: &mut App) -> Result<()> {
-        let Some(workflow) = app.workflows.selected_workflow() else {
-            return Err(anyhow!("No workflow selected"));
+        let Some(workflow) = app.workflows.selected_openable_workflow() else {
+            return Err(anyhow!(
+                "{}",
+                app.workflows
+                    .selected_workflow_block_reason()
+                    .unwrap_or_else(|| "No workflow selected".to_string())
+            ));
         };
         let mut run_state = WorkflowRunState::new(workflow.clone());
         self.seed_history_defaults(app, &mut run_state);
@@ -669,6 +679,7 @@ impl Component for WorkflowsComponent {
             app.append_log_message(format!("Failed to load workflows: {error}"));
             return effects;
         }
+        self.emit_workflow_load_messages(app);
         // Defer to the search field if it's focused.
         if app.workflows.f_search.get() {
             return self.handle_search_key(app, key);
@@ -711,12 +722,10 @@ impl Component for WorkflowsComponent {
                 app.workflows.list_state().scroll_down_by(u16::MAX);
             }
             KeyCode::Char(' ') | KeyCode::Enter => {
-                if app.workflows.selected_workflow().is_some() {
-                    if let Err(error) = self.open_workflow_inputs(app) {
-                        effects.push(Effect::Log(format!("Failed to open workflow inputs: {error}")));
-                    } else {
-                        effects.push(Effect::SwitchTo(Route::WorkflowInputs));
-                    }
+                if let Err(error) = self.open_workflow_inputs(app) {
+                    effects.push(Effect::Log(format!("Failed to open workflow inputs: {error}")));
+                } else {
+                    effects.push(Effect::SwitchTo(Route::WorkflowInputs));
                 }
             }
             _ => {}
@@ -785,6 +794,7 @@ impl Component for WorkflowsComponent {
             app.append_log_message(format!("Workflow load error: {error}"));
             return;
         }
+        self.emit_workflow_load_messages(app);
 
         self.render_panel(frame, area, app);
     }
@@ -804,7 +814,7 @@ impl Component for WorkflowsComponent {
         if app.workflows.f_import_button.get() {
             hints.push(("Enter/Space", " Import workflow  "));
         }
-        if app.workflows.f_remove_button.get() && app.workflows.selected_workflow().is_some() {
+        if app.workflows.f_remove_button.get() && app.workflows.selected_workflow_removal_target().is_some() {
             hints.push(("Enter/Space", " Remove workflow  "));
         }
         if app.workflows.list.f_list.get() {
@@ -814,7 +824,7 @@ impl Component for WorkflowsComponent {
             hints.push(("Enter", " Open inputs"));
         }
         hints.push(("Ctrl+O", " Import workflow  "));
-        if app.workflows.selected_workflow().is_some() {
+        if app.workflows.selected_workflow_removal_target().is_some() {
             hints.push(("Ctrl+R", " Remove workflow"));
         }
 

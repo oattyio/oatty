@@ -5,6 +5,7 @@
 //! user interactions, and coordinates between different UI components.
 
 use std::{
+    collections::HashSet,
     rc::Rc,
     sync::{Arc, Mutex, atomic::AtomicUsize},
     time::Duration,
@@ -27,9 +28,10 @@ use crate::ui::{
     theme,
 };
 use oatty_engine::provider::{CacheLookupOutcome, PendingProviderFetch, ProviderRegistry};
-use oatty_engine::{RegistryCommandRunner, ValueProvider};
+use oatty_engine::{RegistryCommandRunner, ValueProvider, WorkflowRunState};
 use oatty_mcp::{McpHttpLogEntry, PluginEngine, RunningMcpHttpServer};
 use oatty_registry::CommandRegistry;
+use oatty_types::workflow::WorkflowStepDefinition;
 use oatty_types::{Effect, LogLevel, Modal, Msg, Route, WorkflowRunEvent, WorkflowRunRequest, WorkflowRunStatus, validate_candidate_value};
 use oatty_util::{
     DEFAULT_HISTORY_PROFILE, HistoryKey, HistoryStore, InMemoryHistoryStore, JsonHistoryStore, UserPreferences, has_meaningful_value,
@@ -749,6 +751,84 @@ impl App<'_> {
             Effect::SwitchTo(Route::WorkflowRun),
         ]
     }
+
+    /// Reruns the active failed workflow from the first failed step forward.
+    ///
+    /// When `review_inputs` is true, the rerun scope is prepared and the user is
+    /// sent to the standard input review screen before execution.
+    pub fn rerun_failed_workflow(&mut self, review_inputs: bool) -> Vec<Effect> {
+        let Some(existing_run_state) = self.workflows.active_run_state.clone() else {
+            self.append_log_message("No active workflow run is available.");
+            return Vec::new();
+        };
+        let Some(run_view_state) = self.workflows.run_view_state() else {
+            self.append_log_message("Cannot rerun: workflow run view is unavailable.");
+            return Vec::new();
+        };
+        let Some(failed_step_identifier) = run_view_state.first_failed_step_identifier() else {
+            self.append_log_message("Cannot rerun: no failed step is available.");
+            return Vec::new();
+        };
+
+        let scoped_run_state = build_failed_rerun_state(&existing_run_state.borrow(), failed_step_identifier.as_str());
+        self.workflows.begin_inputs_session(scoped_run_state);
+
+        if review_inputs {
+            self.append_log_message(format!(
+                "Prepared rerun scope from failed step '{}' for input review.",
+                failed_step_identifier
+            ));
+            return vec![Effect::SwitchTo(Route::WorkflowInputs)];
+        }
+
+        self.append_log_message(format!(
+            "Re-running workflow from failed step '{}' and affected dependents.",
+            failed_step_identifier
+        ));
+        self.run_active_workflow()
+    }
+}
+
+fn build_failed_rerun_state(existing: &WorkflowRunState, failed_step_identifier: &str) -> WorkflowRunState {
+    let mut rerun_state = existing.clone();
+    let impacted_step_identifiers = collect_impacted_steps(existing.workflow.steps.as_slice(), failed_step_identifier);
+
+    rerun_state
+        .workflow
+        .steps
+        .retain(|step| impacted_step_identifiers.contains(step.id.as_str()));
+    for step in &mut rerun_state.workflow.steps {
+        step.depends_on
+            .retain(|dependency| impacted_step_identifiers.contains(dependency.as_str()));
+    }
+    rerun_state
+        .run_context
+        .steps
+        .retain(|step_identifier, _| !impacted_step_identifiers.contains(step_identifier.as_str()));
+
+    rerun_state
+}
+
+fn collect_impacted_steps(steps: &[WorkflowStepDefinition], failed_step_identifier: &str) -> HashSet<String> {
+    let mut impacted_step_identifiers: HashSet<String> = HashSet::from([failed_step_identifier.to_string()]);
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for step in steps {
+            if impacted_step_identifiers.contains(step.id.as_str()) {
+                continue;
+            }
+            if step
+                .depends_on
+                .iter()
+                .any(|dependency| impacted_step_identifiers.contains(dependency.as_str()))
+            {
+                impacted_step_identifiers.insert(step.id.clone());
+                changed = true;
+            }
+        }
+    }
+    impacted_step_identifiers
 }
 
 impl HasFocus for App<'_> {
@@ -806,7 +886,17 @@ impl HasFocus for App<'_> {
             Route::McpHttpServer => {
                 builder.widget(&self.mcp_http_server);
             }
-            Route::Workflows | Route::WorkflowInputs | Route::WorkflowRun => {
+            Route::Workflows => {
+                // Keep list-route focus scoped to the workflow list controls even
+                // when an in-flight run view is retained in state.
+                let tag = builder.start(&self.workflows);
+                builder.leaf_widget(&self.workflows.f_search);
+                builder.leaf_widget(&self.workflows.f_import_button);
+                builder.leaf_widget(&self.workflows.f_remove_button);
+                builder.widget(&self.workflows.list);
+                builder.end(tag);
+            }
+            Route::WorkflowInputs | Route::WorkflowRun => {
                 builder.widget(&self.workflows);
             }
             Route::Library => {
@@ -826,5 +916,95 @@ impl HasFocus for App<'_> {
 
     fn area(&self) -> Rect {
         Rect::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_failed_rerun_state, collect_impacted_steps};
+    use oatty_engine::WorkflowRunState;
+    use oatty_types::workflow::{RuntimeWorkflow, WorkflowStepDefinition};
+    use serde_json::Value;
+
+    fn workflow_with_dependencies() -> RuntimeWorkflow {
+        RuntimeWorkflow {
+            identifier: "workflow".to_string(),
+            title: None,
+            description: None,
+            inputs: Default::default(),
+            steps: vec![
+                WorkflowStepDefinition {
+                    id: "create_network".to_string(),
+                    run: "network:create".to_string(),
+                    description: None,
+                    depends_on: Vec::new(),
+                    with: Default::default(),
+                    body: Value::Null,
+                    r#if: None,
+                    repeat: None,
+                    output_contract: None,
+                },
+                WorkflowStepDefinition {
+                    id: "create_database".to_string(),
+                    run: "db:create".to_string(),
+                    description: None,
+                    depends_on: vec!["create_network".to_string()],
+                    with: Default::default(),
+                    body: Value::Null,
+                    r#if: None,
+                    repeat: None,
+                    output_contract: None,
+                },
+                WorkflowStepDefinition {
+                    id: "deploy_app".to_string(),
+                    run: "app:deploy".to_string(),
+                    description: None,
+                    depends_on: vec!["create_database".to_string()],
+                    with: Default::default(),
+                    body: Value::Null,
+                    r#if: None,
+                    repeat: None,
+                    output_contract: None,
+                },
+            ],
+            final_output: None,
+            requires: None,
+        }
+    }
+
+    #[test]
+    fn collect_impacted_steps_expands_to_transitive_dependents() {
+        let workflow = workflow_with_dependencies();
+        let impacted = collect_impacted_steps(workflow.steps.as_slice(), "create_database");
+
+        assert!(impacted.contains("create_database"));
+        assert!(impacted.contains("deploy_app"));
+        assert!(!impacted.contains("create_network"));
+    }
+
+    #[test]
+    fn build_failed_rerun_state_keeps_unaffected_step_outputs() {
+        let workflow = workflow_with_dependencies();
+        let mut run_state = WorkflowRunState::new(workflow);
+        run_state
+            .run_context
+            .steps
+            .insert("create_network".to_string(), serde_json::json!({"id":"net-1"}));
+        run_state
+            .run_context
+            .steps
+            .insert("create_database".to_string(), serde_json::json!({"id":"db-1"}));
+        run_state
+            .run_context
+            .steps
+            .insert("deploy_app".to_string(), serde_json::json!({"id":"app-1"}));
+
+        let rerun_state = build_failed_rerun_state(&run_state, "create_database");
+        let rerun_step_ids: Vec<&str> = rerun_state.workflow.steps.iter().map(|step| step.id.as_str()).collect();
+
+        assert_eq!(rerun_step_ids, vec!["create_database", "deploy_app"]);
+        assert!(rerun_state.run_context.steps.contains_key("create_network"));
+        assert!(!rerun_state.run_context.steps.contains_key("create_database"));
+        assert!(!rerun_state.run_context.steps.contains_key("deploy_app"));
     }
 }

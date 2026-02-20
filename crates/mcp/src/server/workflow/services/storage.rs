@@ -299,6 +299,17 @@ fn validate_step_key_shape(root_object: &serde_json::Map<String, serde_json::Val
                 invalid_path
             );
         }
+        if let Some(output_contract_value) = step_object.get("output_contract")
+            && let Some(output_contract_object) = output_contract_value.as_object()
+            && output_contract_object.contains_key("select")
+        {
+            bail!(
+                "workflow step '{}'(index {}) uses unsupported key 'output_contract.select'; define output_contract.fields and reference paths directly (for example, '${{{{ steps.{}.field }}}}')",
+                step_identifier,
+                step_index,
+                step_identifier
+            );
+        }
     }
 
     Ok(())
@@ -482,5 +493,24 @@ steps:
         let error = parse_manifest_content(content, Some("yaml")).expect_err("expected unsupported interpolation syntax");
         assert!(error.to_string().contains("unsupported interpolation syntax"));
         assert!(error.to_string().contains("use '${{ ... }}'"));
+    }
+
+    #[test]
+    fn rejects_unsupported_output_contract_select_key() {
+        let content = r#"
+workflow: demo
+steps:
+  - id: find_render_postgres
+    run: render postgres:list
+    output_contract:
+      select:
+        value_field: "[0].postgres.id"
+      fields:
+        - name: value
+          type: string
+"#;
+
+        let error = parse_manifest_content(content, Some("yaml")).expect_err("expected unsupported output_contract.select rejection");
+        assert!(error.to_string().contains("unsupported key 'output_contract.select'"));
     }
 }

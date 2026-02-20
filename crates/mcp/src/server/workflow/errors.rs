@@ -13,9 +13,11 @@ fn build_error_data(
     suggested_action: &str,
     violations: Option<Vec<Value>>,
 ) -> Value {
+    let failure_stage = derive_failure_stage(category, error_code);
     let mut payload = serde_json::json!({
         "error_code": error_code,
         "category": category,
+        "failure_stage": failure_stage,
         "message": message,
         "context": context,
         "retryable": retryable,
@@ -26,6 +28,18 @@ fn build_error_data(
         payload["violations"] = Value::Array(violations);
     }
     payload
+}
+
+fn derive_failure_stage(category: &str, error_code: &str) -> &'static str {
+    if category == "validation" || category == "conflict" || category == "not_found" {
+        return "validation";
+    }
+
+    if category == "execution" && error_code.contains("PROVIDER") {
+        return "provider_http";
+    }
+
+    "engine"
 }
 
 pub fn invalid_params_error(error_code: &str, message: impl Into<String>, context: Value, suggested_action: &str) -> ErrorData {

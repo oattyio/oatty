@@ -67,6 +67,7 @@ use url::Url;
 #[derive(Debug)]
 pub enum Cmd {
     ApplyPaletteError(String),
+    AppendLog(String),
     ClipboardSet(String),
     ExecuteHttp {
         spec: CommandSpec,
@@ -206,7 +207,8 @@ pub async fn run_from_effects(app: &mut App<'_>, effects: Vec<Effect>) -> Comman
             Effect::UpdateCatalogHeaders { title, headers } => Some(vec![Cmd::UpdateCatalogHeaders { title, headers }]),
             Effect::RemoveCatalog(title) => Some(vec![Cmd::RemoveCatalog(title)]),
             Effect::RemoveWorkflow(workflow_id) => Some(vec![Cmd::RemoveWorkflow(workflow_id)]),
-            Effect::Log(_) | Effect::SwitchTo(_) | Effect::ShowModal(_) | Effect::CloseModal => None,
+            Effect::Log(message) => Some(vec![Cmd::AppendLog(message)]),
+            Effect::SwitchTo(_) | Effect::ShowModal(_) | Effect::CloseModal => None,
         };
         if let Some(cmds) = effect_commands {
             commands.extend(cmds);
@@ -237,6 +239,7 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
     for command in commands {
         let (immediate, background) = match command {
             Cmd::ApplyPaletteError(error) => (Some(apply_palette_error(app, error)), None),
+            Cmd::AppendLog(message) => (Some(append_log_entry(app, message)), None),
             Cmd::ClipboardSet(text) => (Some(execute_clipboard_set(app, text)), None),
             Cmd::ExecuteHttp { spec, input, request_id } => (None, Some(spawn_execute_http(app, spec, input, request_id))),
             Cmd::FetchProviderValues {
@@ -283,6 +286,11 @@ pub async fn run_cmds(app: &mut App<'_>, commands: Vec<Cmd>) -> CommandBatch {
         }
     }
     batch
+}
+
+fn append_log_entry(app: &mut App<'_>, message: String) -> ExecOutcome {
+    app.append_log_message(message);
+    ExecOutcome::default()
 }
 /// List directory contents
 fn list_dir_contents(path: PathBuf) -> ExecOutcome {
@@ -583,7 +591,7 @@ where
 
 /// Parses a workflow definition from either JSON or YAML source content.
 pub(crate) fn parse_workflow_definition(content: &str) -> Result<WorkflowDefinition> {
-    serde_json::from_str::<WorkflowDefinition>(content).or_else(|json_error| {
+    from_str::<WorkflowDefinition>(content).or_else(|json_error| {
         serde_yaml::from_str::<WorkflowDefinition>(content)
             .map_err(|yaml_error| anyhow!("json parse error: {json_error}; yaml parse error: {yaml_error}"))
     })

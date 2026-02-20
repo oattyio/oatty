@@ -5,6 +5,7 @@ use oatty_util::has_meaningful_value;
 use rat_focus::{FocusBuilder, FocusFlag, HasFocus};
 use ratatui::layout::Rect;
 use ratatui::widgets::ListState;
+use serde_json::{Map as JsonMap, Value};
 use std::cell::{Ref, RefCell};
 use std::rc::Rc;
 
@@ -58,10 +59,16 @@ pub struct WorkflowInputViewState {
     pub f_details: FocusFlag,
     /// Focus flag used for the cancel action button.
     pub f_cancel_button: FocusFlag,
+    /// Focus flag used for resetting the selected input to its session value.
+    pub f_reset_field_button: FocusFlag,
+    /// Focus flag used for resetting all inputs to their session values.
+    pub f_reset_all_button: FocusFlag,
     /// Focus flag used for the plan action button.
     pub f_plan_button: FocusFlag,
     /// Focus flag used for the run action button.
     pub f_run_button: FocusFlag,
+    /// Snapshot of input values present when the view opened.
+    pub session_inputs: JsonMap<String, Value>,
     details_scroll_offset: u16,
     details_content_height: u16,
     details_viewport_height: u16,
@@ -69,6 +76,7 @@ pub struct WorkflowInputViewState {
 
 impl WorkflowInputViewState {
     pub fn new(run_state: Rc<RefCell<WorkflowRunState>>) -> Self {
+        let session_inputs = run_state.borrow().run_context.inputs.clone();
         Self {
             mouse_over_idx: None,
             run_state,
@@ -78,8 +86,11 @@ impl WorkflowInputViewState {
             f_list: FocusFlag::new().with_name("workflow.inputs.list"),
             f_details: FocusFlag::new().with_name("workflow.inputs.details"),
             f_cancel_button: FocusFlag::new().with_name("workflow.inputs.actions.cancel"),
+            f_reset_field_button: FocusFlag::new().with_name("workflow.inputs.actions.reset_field"),
+            f_reset_all_button: FocusFlag::new().with_name("workflow.inputs.actions.reset_all"),
             f_plan_button: FocusFlag::new().with_name("workflow.inputs.actions.plan"),
             f_run_button: FocusFlag::new().with_name("workflow.inputs.actions.run"),
+            session_inputs,
             details_scroll_offset: 0,
             details_content_height: 0,
             details_viewport_height: 0,
@@ -251,6 +262,63 @@ impl WorkflowInputViewState {
     fn max_details_scroll_offset(&self) -> u16 {
         self.details_content_height.saturating_sub(self.details_viewport_height)
     }
+
+    /// Returns the workflow input key for the currently selected row.
+    pub fn selected_input_key(&self) -> Option<String> {
+        let selected_index = self.input_list_state.selected()?;
+        let run_state = self.run_state.borrow();
+        run_state.workflow.inputs.get_index(selected_index).map(|(key, _)| key.clone())
+    }
+
+    /// Resets the currently selected input to the session snapshot value.
+    ///
+    /// Returns true when an input key was selected and reset logic executed.
+    pub fn reset_selected_input_to_session(&mut self) -> bool {
+        let Some(input_key) = self.selected_input_key() else {
+            return false;
+        };
+        self.reset_input_to_session_value(input_key.as_str())
+    }
+
+    /// Resets all workflow inputs to their session snapshot values.
+    pub fn reset_all_inputs_to_session(&mut self) {
+        let mut run_state = self.run_state.borrow_mut();
+        run_state.run_context.inputs = self.session_inputs.clone();
+        let _ = run_state.evaluate_input_providers();
+    }
+
+    /// Returns true when the currently selected input differs from the session snapshot value.
+    pub fn selected_input_has_changes(&self) -> bool {
+        let Some(input_key) = self.selected_input_key() else {
+            return false;
+        };
+        self.input_has_changes(input_key.as_str())
+    }
+
+    /// Returns true when one or more workflow inputs differ from the session snapshot values.
+    pub fn has_any_input_changes(&self) -> bool {
+        let run_state = self.run_state.borrow();
+        run_state.workflow.inputs.keys().any(|input_key| self.input_has_changes(input_key))
+    }
+
+    fn reset_input_to_session_value(&mut self, input_key: &str) -> bool {
+        let mut run_state = self.run_state.borrow_mut();
+        if let Some(session_value) = self.session_inputs.get(input_key) {
+            run_state.run_context.inputs.insert(input_key.to_string(), session_value.clone());
+        } else {
+            run_state.run_context.inputs.remove(input_key);
+            run_state.apply_input_defaults();
+        }
+        let _ = run_state.evaluate_input_providers();
+        true
+    }
+
+    fn input_has_changes(&self, input_key: &str) -> bool {
+        let run_state = self.run_state.borrow();
+        let current_value = run_state.run_context.inputs.get(input_key);
+        let session_value = self.session_inputs.get(input_key);
+        current_value != session_value
+    }
 }
 
 fn dependency_block_reason(run_state: &WorkflowRunState, definition: &WorkflowInputDefinition) -> Option<String> {
@@ -347,6 +415,8 @@ impl HasFocus for WorkflowInputViewState {
         builder.leaf_widget(&self.f_list);
         builder.leaf_widget(&self.f_details);
         builder.leaf_widget(&self.f_cancel_button);
+        builder.leaf_widget(&self.f_reset_field_button);
+        builder.leaf_widget(&self.f_reset_all_button);
         builder.leaf_widget(&self.f_plan_button);
         builder.leaf_widget(&self.f_run_button);
         builder.end(tag);
@@ -358,5 +428,114 @@ impl HasFocus for WorkflowInputViewState {
 
     fn area(&self) -> Rect {
         Rect::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::WorkflowInputViewState;
+    use indexmap::IndexMap;
+    use oatty_engine::WorkflowRunState;
+    use oatty_types::workflow::{RuntimeWorkflow, WorkflowInputDefinition};
+    use serde_json::json;
+    use std::cell::RefCell;
+    use std::rc::Rc;
+
+    fn build_run_state() -> WorkflowRunState {
+        let mut inputs = IndexMap::new();
+        inputs.insert("name".to_string(), WorkflowInputDefinition::default());
+        inputs.insert("region".to_string(), WorkflowInputDefinition::default());
+        WorkflowRunState::new(RuntimeWorkflow {
+            identifier: "sample".to_string(),
+            title: None,
+            description: None,
+            inputs,
+            steps: Vec::new(),
+            final_output: None,
+            requires: None,
+        })
+    }
+
+    #[test]
+    fn reset_selected_input_uses_session_snapshot() {
+        let mut run_state = build_run_state();
+        run_state.run_context.inputs.insert("name".to_string(), json!("original"));
+        let run_state = Rc::new(RefCell::new(run_state));
+        let mut view = WorkflowInputViewState::new(run_state.clone());
+        view.build_input_rows();
+        view.input_list_state.select(Some(0));
+
+        run_state
+            .borrow_mut()
+            .run_context
+            .inputs
+            .insert("name".to_string(), json!("changed"));
+        assert!(view.reset_selected_input_to_session());
+
+        assert_eq!(run_state.borrow().run_context.inputs.get("name"), Some(&json!("original")));
+    }
+
+    #[test]
+    fn reset_all_inputs_restores_all_session_values() {
+        let mut run_state = build_run_state();
+        run_state.run_context.inputs.insert("name".to_string(), json!("original"));
+        run_state.run_context.inputs.insert("region".to_string(), json!("us-east"));
+        let run_state = Rc::new(RefCell::new(run_state));
+        let mut view = WorkflowInputViewState::new(run_state.clone());
+        view.build_input_rows();
+
+        run_state
+            .borrow_mut()
+            .run_context
+            .inputs
+            .insert("name".to_string(), json!("changed"));
+        run_state
+            .borrow_mut()
+            .run_context
+            .inputs
+            .insert("region".to_string(), json!("eu-west"));
+        view.reset_all_inputs_to_session();
+
+        assert_eq!(run_state.borrow().run_context.inputs.get("name"), Some(&json!("original")));
+        assert_eq!(run_state.borrow().run_context.inputs.get("region"), Some(&json!("us-east")));
+    }
+
+    #[test]
+    fn selected_input_has_changes_only_after_edit() {
+        let mut run_state = build_run_state();
+        run_state.run_context.inputs.insert("name".to_string(), json!("original"));
+        let run_state = Rc::new(RefCell::new(run_state));
+        let mut view = WorkflowInputViewState::new(run_state.clone());
+        view.build_input_rows();
+        view.input_list_state.select(Some(0));
+
+        assert!(!view.selected_input_has_changes());
+
+        run_state
+            .borrow_mut()
+            .run_context
+            .inputs
+            .insert("name".to_string(), json!("changed"));
+
+        assert!(view.selected_input_has_changes());
+    }
+
+    #[test]
+    fn has_any_input_changes_tracks_session_diffs() {
+        let mut run_state = build_run_state();
+        run_state.run_context.inputs.insert("name".to_string(), json!("original"));
+        run_state.run_context.inputs.insert("region".to_string(), json!("us-east"));
+        let run_state = Rc::new(RefCell::new(run_state));
+        let view = WorkflowInputViewState::new(run_state.clone());
+
+        assert!(!view.has_any_input_changes());
+
+        run_state
+            .borrow_mut()
+            .run_context
+            .inputs
+            .insert("region".to_string(), json!("eu-west"));
+
+        assert!(view.has_any_input_changes());
     }
 }

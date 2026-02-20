@@ -2,4 +2,4 @@
 
 pub mod state;
 
-pub use state::WorkflowListState;
+pub use state::{WorkflowListEntry, WorkflowListState};

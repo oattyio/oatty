@@ -17,7 +17,8 @@ use std::sync::{Arc, Mutex};
 pub fn author_and_run(request: &WorkflowAuthorAndRunRequest, command_registry: &Arc<Mutex<CommandRegistry>>) -> Result<Value, ErrorData> {
     let validation = validate_workflow(
         &WorkflowValidateRequest {
-            manifest_content: request.manifest_content.clone(),
+            manifest_content: Some(request.manifest_content.clone()),
+            input_path: None,
             format: request.format.clone(),
         },
         command_registry,

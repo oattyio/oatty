@@ -418,7 +418,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow.validate",
         annotations(read_only_hint = true),
-        description = "Validate inline workflow YAML/JSON without saving. Use before workflow.save. Includes schema checks and command/catalog preflight checks, and returns structured validation errors with violations[]. Authoring guidance: for manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata to improve collector UX; provider-backed inputs must use explicit scalar `select.value_field` paths."
+        description = "Validate workflow YAML/JSON without saving. Input: manifest_content (inline) OR input_path (absolute file path), optional format. Includes schema checks and command/catalog preflight checks, and returns structured validation errors with violations[]. Condition syntax guidance: use `==`/`!=` (not `===`/`!==`), and use roots `inputs.*`, `steps.*`, or `env.*` (`output.*` is unsupported in conditions). Authoring guidance: for manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata to improve collector UX; provider-backed inputs must use explicit scalar `select.value_field` paths."
     )]
     async fn workflow_validate(&self, param: Parameters<WorkflowValidateRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = validate_workflow(&param.0, &self.services.command_registry)?;
@@ -434,7 +434,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow.save",
         annotations(open_world_hint = true),
-        description = "Validate and persist workflow manifest to runtime filesystem storage. Input: workflow_id?, manifest_content, format?, overwrite?, expected_version?. Authoring sequence: search_commands -> workflow.validate -> workflow.save -> workflow.resolve_inputs -> workflow.run. For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata. Provider-backed inputs must use explicit scalar `select.value_field` paths."
+        description = "Validate and persist workflow manifest to runtime filesystem storage. Input: workflow_id?, manifest_content, format?, overwrite?, expected_version?. Authoring sequence: search_commands -> workflow.validate -> workflow.save -> workflow.resolve_inputs -> workflow.run. Condition syntax guidance: use `==`/`!=` (not `===`/`!==`), and use roots `inputs.*`, `steps.*`, or `env.*` (`output.*` is unsupported in conditions). For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata. Provider-backed inputs must use explicit scalar `select.value_field` paths."
     )]
     async fn workflow_save(&self, param: Parameters<WorkflowSaveRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = save_workflow(&param.0, &self.services.command_registry)?;
@@ -758,7 +758,7 @@ impl ServerHandler for OattyMcpCore {
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<rmcp::RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ListResourcesResult, McpError>> + Send + '_ {
+    ) -> impl Future<Output = Result<ListResourcesResult, McpError>> + Send + '_ {
         std::future::ready(Ok(list_workflow_resources()))
     }
 
@@ -766,7 +766,7 @@ impl ServerHandler for OattyMcpCore {
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<rmcp::RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ListResourceTemplatesResult, McpError>> + Send + '_ {
+    ) -> impl Future<Output = Result<ListResourceTemplatesResult, McpError>> + Send + '_ {
         std::future::ready(Ok(list_workflow_resource_templates()))
     }
 
@@ -774,7 +774,7 @@ impl ServerHandler for OattyMcpCore {
         &self,
         request: ReadResourceRequestParams,
         _context: RequestContext<rmcp::RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
+    ) -> impl Future<Output = Result<ReadResourceResult, McpError>> + Send + '_ {
         std::future::ready(read_workflow_resource(&request.uri, &self.services.command_registry))
     }
 
@@ -782,7 +782,7 @@ impl ServerHandler for OattyMcpCore {
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<rmcp::RoleServer>,
-    ) -> impl std::future::Future<Output = Result<ListPromptsResult, McpError>> + Send + '_ {
+    ) -> impl Future<Output = Result<ListPromptsResult, McpError>> + Send + '_ {
         std::future::ready(Ok(list_workflow_prompts()))
     }
 
@@ -790,7 +790,7 @@ impl ServerHandler for OattyMcpCore {
         &self,
         request: GetPromptRequestParams,
         _context: RequestContext<rmcp::RoleServer>,
-    ) -> impl std::future::Future<Output = Result<GetPromptResult, McpError>> + Send + '_ {
+    ) -> impl Future<Output = Result<GetPromptResult, McpError>> + Send + '_ {
         std::future::ready(get_workflow_prompt(&request.name, request.arguments.as_ref()))
     }
 
@@ -2106,7 +2106,7 @@ mod tests {
             "Create app".to_string(),
             Vec::new(),
             vec![
-                oatty_types::CommandFlag {
+                CommandFlag {
                     name: "team_id".to_string(),
                     short_name: Some("t".to_string()),
                     required: true,
@@ -2119,7 +2119,7 @@ mod tests {
                         binds: Vec::new(),
                     }),
                 },
-                oatty_types::CommandFlag {
+                CommandFlag {
                     name: "region".to_string(),
                     short_name: Some("r".to_string()),
                     required: false,
@@ -2149,7 +2149,7 @@ mod tests {
             .find(|item| item.get("name") == Some(&Value::String("team_id".to_string())))
             .and_then(Value::as_object)
             .expect("required flag metadata");
-        assert_eq!(required_flag.get("provider"), Some(&serde_json::json!({ "source": "teams:list" })));
+        assert_eq!(required_flag.get("provider"), Some(&json!({ "source": "teams:list" })));
 
         let optional_flag = flags
             .iter()
@@ -2192,7 +2192,7 @@ mod tests {
 
         assert_eq!(
             positional.get("provider"),
-            Some(&serde_json::json!({
+            Some(&json!({
                 "source": "projects:list",
                 "binds": [{ "provider_key": "teamId", "from": "team_id" }]
             }))

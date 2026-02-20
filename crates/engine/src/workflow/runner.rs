@@ -17,6 +17,8 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, error::TryRecvError}
 use crate::{
     RunContext,
     executor::{self, CommandRunner, PreparedStep, StepResult, StepStatus},
+    model::StepSpec,
+    templates::UnresolvedTemplateRef,
     workflow::{runtime::workflow_spec_from_runtime, state::apply_runtime_input_defaults},
 };
 
@@ -75,10 +77,25 @@ pub async fn drive_workflow_run(
                 break;
             }
         }
+
         let prepared_step = executor::prepare_step(step_spec, &context);
         if let Some(blocked) = dependency_block(&prepared_step, &statuses) {
             statuses.insert(step_spec.id.clone(), WorkflowRunStepStatus::Skipped);
             emit_step_finished(&event_tx, &blocked, WorkflowRunStepStatus::Skipped, &prepared_step, 0)?;
+            continue;
+        }
+        if let Some(skipped_result) = condition_skip_result(step_spec, &context) {
+            statuses.insert(step_spec.id.clone(), WorkflowRunStepStatus::Skipped);
+            emit_step_finished(&event_tx, &skipped_result, WorkflowRunStepStatus::Skipped, &prepared_step, 0)?;
+            continue;
+        }
+
+        let unresolved_templates = executor::collect_unresolved_step_templates(step_spec, &context);
+        if !unresolved_templates.is_empty() {
+            let failed_result = unresolved_template_failure_result(step_spec.id.as_str(), unresolved_templates);
+            statuses.insert(step_spec.id.clone(), WorkflowRunStepStatus::Failed);
+            any_failed = true;
+            emit_step_finished(&event_tx, &failed_result, WorkflowRunStepStatus::Failed, &prepared_step, 0)?;
             continue;
         }
 
@@ -211,6 +228,52 @@ fn blocked_result(step_id: String, dependency: &str, detail: &str) -> StepResult
     }
 }
 
+fn condition_skip_result(step: &StepSpec, run_context: &RunContext) -> Option<StepResult> {
+    let condition = step.r#if.as_ref()?;
+    if crate::resolve::eval_condition(condition, run_context) {
+        return None;
+    }
+
+    let unresolved_references = crate::resolve::find_unresolved_references_in_condition(condition, run_context);
+    let logs = if unresolved_references.is_empty() {
+        vec![format!("step '{}' skipped by condition", step.id)]
+    } else {
+        vec![format!(
+            "step '{}' skipped by unresolved condition references: {}",
+            step.id,
+            unresolved_references.join(", ")
+        )]
+    };
+
+    Some(StepResult {
+        id: step.id.clone(),
+        status: StepStatus::Skipped,
+        output: Value::Null,
+        logs,
+        attempts: 0,
+    })
+}
+
+fn unresolved_template_failure_result(step_id: &str, unresolved_templates: Vec<UnresolvedTemplateRef>) -> StepResult {
+    let mut logs = vec![format!(
+        "step '{}' failed before execution: unresolved template references in with/body",
+        step_id
+    )];
+    for unresolved_template in unresolved_templates {
+        logs.push(format!(
+            "unresolved template at {}: ${{{{ {} }}}}",
+            unresolved_template.source_path, unresolved_template.expression
+        ));
+    }
+    StepResult {
+        id: step_id.to_string(),
+        status: StepStatus::Failed,
+        output: Value::Null,
+        logs,
+        attempts: 0,
+    }
+}
+
 fn step_label_lookup(request: &WorkflowRunRequest) -> HashMap<String, Option<String>> {
     request
         .workflow
@@ -307,7 +370,13 @@ mod tests {
         RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault, WorkflowInputDefinition, WorkflowStepDefinition,
     };
     use serde_json::{Map as JsonMap, Value};
-    use std::collections::HashMap;
+    use std::{
+        collections::HashMap,
+        sync::{
+            Arc as StdArc,
+            atomic::{AtomicUsize, Ordering},
+        },
+    };
     use tokio::sync::mpsc::unbounded_channel;
 
     fn workflow_with_default_condition() -> RuntimeWorkflow {
@@ -372,6 +441,140 @@ mod tests {
         assert!(
             saw_success,
             "expected gate step to succeed when default renders the condition truthy"
+        );
+    }
+
+    struct CountingRunner {
+        invocations: StdArc<AtomicUsize>,
+    }
+
+    impl CommandRunner for CountingRunner {
+        fn run(&self, _run: &str, _with: Option<&Value>, _body: Option<&Value>, _context: &RunContext) -> anyhow::Result<Value> {
+            self.invocations.fetch_add(1, Ordering::SeqCst);
+            Ok(Value::Null)
+        }
+    }
+
+    #[tokio::test]
+    async fn drive_workflow_run_fails_unresolved_templates_before_runner_invocation() {
+        let workflow = RuntimeWorkflow {
+            identifier: "unresolved_templates".into(),
+            title: None,
+            description: None,
+            inputs: IndexMap::new(),
+            steps: vec![WorkflowStepDefinition {
+                id: "delete".into(),
+                run: "demo delete".into(),
+                description: None,
+                depends_on: Vec::new(),
+                with: indexmap! {
+                    "id".into() => Value::String("${{ steps.lookup.value }}".into())
+                },
+                body: Value::Null,
+                r#if: None,
+                repeat: None,
+                output_contract: None,
+            }],
+            final_output: None,
+            requires: None,
+        };
+
+        let request = WorkflowRunRequest {
+            run_id: "run-templates".into(),
+            workflow,
+            inputs: JsonMap::new(),
+            environment: HashMap::new(),
+            step_outputs: HashMap::new(),
+        };
+
+        let invocations = StdArc::new(AtomicUsize::new(0));
+        let runner: Arc<dyn CommandRunner + Send + Sync> = Arc::new(CountingRunner {
+            invocations: StdArc::clone(&invocations),
+        });
+        let (control_tx, control_rx) = unbounded_channel();
+        drop(control_tx);
+        let (event_tx, mut event_rx) = unbounded_channel();
+
+        drive_workflow_run(request, runner, control_rx, event_tx)
+            .await
+            .expect("drive workflow run");
+
+        assert_eq!(invocations.load(Ordering::SeqCst), 0);
+        let mut saw_failed_unresolved = false;
+        while let Ok(event) = event_rx.try_recv() {
+            if let WorkflowRunEvent::StepFinished { status, logs, .. } = event
+                && status == WorkflowRunStepStatus::Failed
+                && logs.iter().any(|entry| entry.contains("unresolved template"))
+            {
+                saw_failed_unresolved = true;
+            }
+        }
+        assert!(saw_failed_unresolved, "expected unresolved template failure in step logs");
+    }
+
+    #[tokio::test]
+    async fn drive_workflow_run_skips_unresolved_condition_before_template_validation() {
+        let workflow = RuntimeWorkflow {
+            identifier: "unresolved_condition".into(),
+            title: None,
+            description: None,
+            inputs: IndexMap::new(),
+            steps: vec![WorkflowStepDefinition {
+                id: "delete".into(),
+                run: "demo delete".into(),
+                description: None,
+                depends_on: Vec::new(),
+                with: indexmap! {
+                    "id".into() => Value::String("${{ steps.lookup.value }}".into())
+                },
+                body: Value::Null,
+                r#if: Some("steps.lookup.value != null".into()),
+                repeat: None,
+                output_contract: None,
+            }],
+            final_output: None,
+            requires: None,
+        };
+
+        let mut step_outputs = HashMap::new();
+        step_outputs.insert("lookup".to_string(), Value::Array(Vec::new()));
+        let request = WorkflowRunRequest {
+            run_id: "run-condition".into(),
+            workflow,
+            inputs: JsonMap::new(),
+            environment: HashMap::new(),
+            step_outputs,
+        };
+
+        let invocations = StdArc::new(AtomicUsize::new(0));
+        let runner: Arc<dyn CommandRunner + Send + Sync> = Arc::new(CountingRunner {
+            invocations: StdArc::clone(&invocations),
+        });
+        let (control_tx, control_rx) = unbounded_channel();
+        drop(control_tx);
+        let (event_tx, mut event_rx) = unbounded_channel();
+
+        drive_workflow_run(request, runner, control_rx, event_tx)
+            .await
+            .expect("drive workflow run");
+
+        assert_eq!(invocations.load(Ordering::SeqCst), 0);
+        let mut saw_condition_skip = false;
+        let mut saw_unresolved_template_log = false;
+        while let Ok(event) = event_rx.try_recv() {
+            if let WorkflowRunEvent::StepFinished { status, logs, .. } = event {
+                if status == WorkflowRunStepStatus::Skipped && logs.iter().any(|entry| entry.contains("unresolved condition references")) {
+                    saw_condition_skip = true;
+                }
+                if logs.iter().any(|entry| entry.contains("unresolved template")) {
+                    saw_unresolved_template_log = true;
+                }
+            }
+        }
+        assert!(saw_condition_skip, "expected condition-based skip");
+        assert!(
+            !saw_unresolved_template_log,
+            "unresolved condition should short-circuit before unresolved template failure"
         );
     }
 }
