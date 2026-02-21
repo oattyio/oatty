@@ -12,7 +12,7 @@ pub mod workflows;
 
 pub use clap_builder::build_clap;
 pub use config::*;
-pub use models::CommandRegistry;
+pub use models::{CatalogHeaderEditMode, CatalogHeaderEditRow, CatalogMutationError, CatalogMutationResult, CommandRegistry};
 pub use oatty_types::{
     CommandFlag, CommandSpec, ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract,
 };
@@ -20,7 +20,7 @@ pub use openapi_import::{
     OpenApiCatalogImportError, OpenApiCatalogImportRequest, OpenApiCatalogImportResult, import_openapi_catalog_into_registry,
 };
 
-pub use search::{SearchError, SearchHandle, create_search_handle};
+pub use search::{SearchError, SearchHandle, create_search_handle, suggest_nearest_canonical_ids};
 
 #[cfg(test)]
 mod tests {

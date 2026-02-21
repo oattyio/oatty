@@ -4,13 +4,17 @@
 //! and runtime catalog mutations so `server/core.rs` remains focused on routing.
 
 use crate::server::schemas::{
-    CatalogImportOpenApiRequest, CatalogPreviewImportRequest, CatalogRemoveRequest, CatalogSetEnabledRequest, CatalogSourceType,
-    CatalogValidateOpenApiRequest,
+    CatalogEditHeadersRequest, CatalogGetMaskedHeadersRequest, CatalogHeaderEditMode, CatalogHeaderEditRow, CatalogHeaderSource,
+    CatalogImportOpenApiRequest, CatalogPreviewImportRequest, CatalogRemoveRequest, CatalogSetBaseUrlRequest, CatalogSetEnabledRequest,
+    CatalogSourceType, CatalogValidateOpenApiRequest,
 };
 use crate::server::workflow::errors::{conflict_error, not_found_error};
-use oatty_registry::{CommandRegistry, OpenApiCatalogImportError, OpenApiCatalogImportRequest, import_openapi_catalog_into_registry};
+use oatty_registry::{
+    CatalogHeaderEditMode as RegistryCatalogHeaderEditMode, CatalogHeaderEditRow as RegistryCatalogHeaderEditRow, CatalogMutationError,
+    CommandRegistry, OpenApiCatalogImportError, OpenApiCatalogImportRequest, import_openapi_catalog_into_registry,
+};
 use oatty_registry_gen::io::{ManifestInput, generate_catalog};
-use oatty_types::{CommandSpec, manifest::RegistryCatalog};
+use oatty_types::{CommandSpec, EnvSource, EnvVar, manifest::RegistryCatalog};
 use rmcp::model::ErrorData;
 use serde_json::{Map, Value};
 use std::path::PathBuf;
@@ -76,11 +80,13 @@ pub(crate) async fn import_openapi_catalog(
                 CatalogSourceType::Path => "path".to_string(),
                 CatalogSourceType::Url => "url".to_string(),
             }),
-            enabled: request.enabled.unwrap_or(true),
+            enabled: request.enabled,
             overwrite: request.overwrite.unwrap_or(false),
         },
     )
     .map_err(|error| map_openapi_import_error_to_mcp(error, request))?;
+
+    let catalog_metadata = masked_catalog_metadata(&import_result.catalog);
 
     Ok(serde_json::json!({
         "catalog_id": import_result.catalog_id,
@@ -89,6 +95,9 @@ pub(crate) async fn import_openapi_catalog(
         "command_count": import_result.command_count,
         "provider_contract_count": import_result.provider_contract_count,
         "enabled": import_result.catalog.is_enabled,
+        "base_urls": catalog_metadata.get("base_urls").cloned().unwrap_or(Value::Array(Vec::new())),
+        "selected_base_url": catalog_metadata.get("selected_base_url").cloned().unwrap_or(Value::Null),
+        "masked_headers": catalog_metadata.get("masked_headers").cloned().unwrap_or(Value::Array(Vec::new())),
         "warnings": [],
     }))
 }
@@ -207,6 +216,88 @@ pub(crate) fn set_catalog_enabled_state(
         "enabled": request.enabled,
         "command_count_after_toggle": command_count_after_toggle,
     }))
+}
+
+/// Sets the selected base URL for a catalog, adding the URL if it does not yet exist.
+pub(crate) fn set_catalog_base_url(registry: &Arc<Mutex<CommandRegistry>>, request: &CatalogSetBaseUrlRequest) -> Result<Value, ErrorData> {
+    let normalized_base_url = request.base_url.trim();
+    if normalized_base_url.is_empty() {
+        return Err(invalid_catalog_params_error(
+            "base_url cannot be empty",
+            serde_json::json!({ "catalog_id": request.catalog_id }),
+            "Provide a non-empty absolute base URL.",
+        ));
+    }
+
+    let updated_catalog = mutate_catalog_with_reload(
+        registry,
+        &request.catalog_id,
+        "Retry catalog base URL update. If this persists, restart MCP server and retry.",
+        "catalog update persisted but could not be reloaded",
+        |registry_guard| {
+            registry_guard
+                .set_selected_base_url(&request.catalog_id, normalized_base_url)
+                .map_err(|error| map_registry_catalog_mutation_error("base URL update", &request.catalog_id, error))
+        },
+    )?;
+
+    Ok(serde_json::json!({
+        "catalog_id": request.catalog_id,
+        "selected_base_url": updated_catalog.selected_base_url(),
+        "base_url_index": updated_catalog.base_url_index,
+        "base_urls": updated_catalog.base_urls,
+    }))
+}
+
+/// Mutates catalog headers according to the provided edit mode.
+pub(crate) fn edit_catalog_headers(
+    registry: &Arc<Mutex<CommandRegistry>>,
+    request: &CatalogEditHeadersRequest,
+) -> Result<Value, ErrorData> {
+    let mode = request.mode.unwrap_or(CatalogHeaderEditMode::Upsert);
+    let registry_mode = map_header_edit_mode(mode);
+    let registry_rows = map_header_edit_rows(&request.headers);
+    let updated_catalog = mutate_catalog_with_reload(
+        registry,
+        &request.catalog_id,
+        "Retry header update. If this persists, restart MCP server and retry.",
+        "header update persisted but catalog could not be reloaded",
+        |registry_guard| {
+            registry_guard
+                .edit_catalog_headers(&request.catalog_id, registry_mode, &registry_rows)
+                .map_err(|error| map_registry_catalog_mutation_error("header update", &request.catalog_id, error))
+        },
+    )?;
+    Ok(serde_json::json!({
+        "catalog_id": request.catalog_id,
+        "mode": header_edit_mode_name(mode),
+        "header_count": updated_catalog.headers.len(),
+        "masked_headers": masked_headers(&updated_catalog.headers),
+    }))
+}
+
+/// Returns masked catalog headers and selected base URL metadata.
+pub(crate) fn get_catalog_masked_headers(
+    registry: &Arc<Mutex<CommandRegistry>>,
+    request: &CatalogGetMaskedHeadersRequest,
+) -> Result<Value, ErrorData> {
+    let registry_guard = registry.lock().map_err(|error| {
+        internal_catalog_error(
+            format!("registry lock failed: {error}"),
+            serde_json::json!({ "catalog_id": request.catalog_id }),
+            "Retry catalog header retrieval. If this persists, restart MCP server and retry.",
+        )
+    })?;
+    let catalog = get_catalog_by_title(&registry_guard, &request.catalog_id).ok_or_else(|| {
+        not_found_error(
+            "CATALOG_NOT_FOUND",
+            format!("catalog '{}' was not found", request.catalog_id),
+            serde_json::json!({ "catalog_id": request.catalog_id }),
+            "Use list_command_topics to inspect configured catalogs.",
+        )
+    })?;
+
+    Ok(masked_catalog_metadata(catalog))
 }
 
 /// Removes an existing runtime catalog entry.
@@ -663,9 +754,150 @@ fn command_execution_type(command_spec: &CommandSpec) -> &'static str {
     "unknown"
 }
 
+fn masked_catalog_metadata(catalog: &RegistryCatalog) -> Value {
+    serde_json::json!({
+        "catalog_id": catalog.title,
+        "selected_base_url": catalog.selected_base_url(),
+        "base_url_index": catalog.base_url_index,
+        "base_urls": catalog.base_urls,
+        "masked_headers": masked_headers(&catalog.headers),
+        "header_count": catalog.headers.len(),
+    })
+}
+
+fn masked_headers(headers: &indexmap::IndexSet<EnvVar>) -> Vec<Value> {
+    headers
+        .iter()
+        .map(|header| {
+            let masked = header.masked();
+            serde_json::json!({
+                "key": masked.key,
+                "source": format!("{}", masked.source),
+                "effective": masked.effective,
+                "masked_value_preview": masked.value,
+            })
+        })
+        .collect()
+}
+
+fn header_edit_mode_name(mode: CatalogHeaderEditMode) -> &'static str {
+    match mode {
+        CatalogHeaderEditMode::Upsert => "upsert",
+        CatalogHeaderEditMode::Remove => "remove",
+        CatalogHeaderEditMode::ReplaceAll => "replace_all",
+    }
+}
+
+fn map_header_edit_mode(mode: CatalogHeaderEditMode) -> RegistryCatalogHeaderEditMode {
+    match mode {
+        CatalogHeaderEditMode::Upsert => RegistryCatalogHeaderEditMode::Upsert,
+        CatalogHeaderEditMode::Remove => RegistryCatalogHeaderEditMode::Remove,
+        CatalogHeaderEditMode::ReplaceAll => RegistryCatalogHeaderEditMode::ReplaceAll,
+    }
+}
+
+fn map_header_edit_rows(rows: &[CatalogHeaderEditRow]) -> Vec<RegistryCatalogHeaderEditRow> {
+    rows.iter()
+        .map(|row| RegistryCatalogHeaderEditRow {
+            key: row.key.clone(),
+            value: row.value.clone(),
+            source: map_header_source(row.source),
+            effective: row.effective.unwrap_or(true),
+        })
+        .collect()
+}
+
+fn map_header_source(source: Option<CatalogHeaderSource>) -> EnvSource {
+    match source.unwrap_or(CatalogHeaderSource::Raw) {
+        CatalogHeaderSource::File => EnvSource::File,
+        CatalogHeaderSource::Secret => EnvSource::Secret,
+        CatalogHeaderSource::Env => EnvSource::Env,
+        CatalogHeaderSource::Raw => EnvSource::Raw,
+    }
+}
+
+fn map_registry_catalog_mutation_error(action: &str, catalog_id: &str, error: CatalogMutationError) -> ErrorData {
+    match error {
+        CatalogMutationError::NoCatalogsConfigured | CatalogMutationError::CatalogNotFound { .. } => not_found_error(
+            "CATALOG_NOT_FOUND",
+            format!("catalog '{}' was not found", catalog_id),
+            serde_json::json!({ "catalog_id": catalog_id }),
+            "Use list_command_topics to inspect configured catalogs.",
+        ),
+        CatalogMutationError::EmptyBaseUrl | CatalogMutationError::EmptyHeaderKey | CatalogMutationError::MissingHeaderValue { .. } => {
+            invalid_catalog_params_error(
+                format!("failed {} for catalog '{}': {}", action, catalog_id, error),
+                serde_json::json!({ "catalog_id": catalog_id }),
+                "Verify provided values, then retry.",
+            )
+        }
+    }
+}
+
+fn mutate_catalog_with_reload(
+    registry: &Arc<Mutex<CommandRegistry>>,
+    catalog_id: &str,
+    lock_failure_suggested_action: &str,
+    reload_failure_message: &str,
+    mutate_catalog: impl FnOnce(&mut CommandRegistry) -> Result<(), ErrorData>,
+) -> Result<RegistryCatalog, ErrorData> {
+    let mut registry_guard = registry.lock().map_err(|error| {
+        internal_catalog_error(
+            format!("registry lock failed: {error}"),
+            serde_json::json!({ "catalog_id": catalog_id }),
+            lock_failure_suggested_action,
+        )
+    })?;
+    mutate_catalog(&mut registry_guard)?;
+
+    registry_guard.config.save().map_err(|error| {
+        internal_catalog_error(
+            format!("failed to persist catalog config: {error}"),
+            serde_json::json!({ "catalog_id": catalog_id }),
+            "Verify runtime config write permissions, then retry.",
+        )
+    })?;
+
+    get_catalog_by_title(&registry_guard, catalog_id).cloned().ok_or_else(|| {
+        internal_catalog_error(
+            reload_failure_message.to_string(),
+            serde_json::json!({ "catalog_id": catalog_id }),
+            "Retry the operation. If this persists, restart MCP server.",
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indexmap::IndexSet;
+    use oatty_types::{EnvSource, EnvVar, manifest::RegistryManifest};
+
+    #[test]
+    fn map_registry_catalog_mutation_error_returns_not_found_for_missing_catalog() {
+        let error = map_registry_catalog_mutation_error(
+            "header update",
+            "missing",
+            CatalogMutationError::CatalogNotFound {
+                title: "missing".to_string(),
+            },
+        );
+
+        assert_eq!(error.code, rmcp::model::ErrorCode::RESOURCE_NOT_FOUND);
+    }
+
+    #[test]
+    fn map_registry_catalog_mutation_error_returns_invalid_params_for_missing_header_value() {
+        let error = map_registry_catalog_mutation_error(
+            "header update",
+            "test",
+            CatalogMutationError::MissingHeaderValue {
+                key: "Authorization".to_string(),
+            },
+        );
+
+        assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+    }
 
     #[test]
     fn detect_openapi_document_kind_identifies_v3() {
@@ -760,5 +992,66 @@ mod tests {
         });
 
         assert!(ensure_openapi_document_preflight(&document).is_ok());
+    }
+
+    #[test]
+    fn map_header_edit_rows_applies_defaults() {
+        let rows = vec![CatalogHeaderEditRow {
+            key: "Authorization".to_string(),
+            value: Some("Bearer token".to_string()),
+            source: None,
+            effective: None,
+        }];
+        let mapped_rows = map_header_edit_rows(&rows);
+        assert_eq!(mapped_rows.len(), 1);
+        let mapped_row = &mapped_rows[0];
+        assert_eq!(mapped_row.key, "Authorization");
+        assert_eq!(mapped_row.source, EnvSource::Raw);
+        assert!(mapped_row.effective);
+    }
+
+    #[test]
+    fn map_header_edit_mode_preserves_variant_semantics() {
+        assert_eq!(
+            map_header_edit_mode(CatalogHeaderEditMode::Upsert),
+            RegistryCatalogHeaderEditMode::Upsert
+        );
+        assert_eq!(
+            map_header_edit_mode(CatalogHeaderEditMode::Remove),
+            RegistryCatalogHeaderEditMode::Remove
+        );
+        assert_eq!(
+            map_header_edit_mode(CatalogHeaderEditMode::ReplaceAll),
+            RegistryCatalogHeaderEditMode::ReplaceAll
+        );
+    }
+
+    #[test]
+    fn masked_catalog_metadata_includes_selected_url_and_header_preview() {
+        let mut catalog = RegistryCatalog {
+            title: "Datadog".to_string(),
+            description: String::new(),
+            vendor: Some("datadog".to_string()),
+            manifest_path: "/tmp/catalog.bin".to_string(),
+            import_source: None,
+            import_source_type: None,
+            headers: IndexSet::new(),
+            base_urls: vec!["https://api.us5.datadoghq.com".to_string()],
+            base_url_index: 0,
+            manifest: Some(RegistryManifest::default()),
+            is_enabled: true,
+        };
+        catalog
+            .headers
+            .insert(EnvVar::new("DD-API-KEY".to_string(), "abc123".to_string(), EnvSource::Secret));
+        let metadata = masked_catalog_metadata(&catalog);
+        let selected_base_url = metadata.get("selected_base_url").and_then(Value::as_str).unwrap_or_default();
+        assert_eq!(selected_base_url, "https://api.us5.datadoghq.com");
+        let masked_headers = metadata
+            .get("masked_headers")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default();
+        assert_eq!(masked_headers.len(), 1);
     }
 }

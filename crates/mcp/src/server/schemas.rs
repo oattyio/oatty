@@ -183,6 +183,84 @@ pub struct CatalogSetEnabledRequest {
     pub enabled: bool,
 }
 
+/// Request payload for updating the selected base URL of an existing catalog.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CatalogSetBaseUrlRequest {
+    /// Catalog title from `list_command_topics`.
+    #[schemars(description = "Catalog title from list_command_topics.")]
+    pub catalog_id: String,
+    /// Base URL to upsert/select for the catalog.
+    #[schemars(description = "Base URL to set as selected for this catalog.")]
+    pub base_url: String,
+}
+
+/// Header edit mode for catalog header mutations.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogHeaderEditMode {
+    /// Insert new headers and replace existing keys.
+    #[default]
+    Upsert,
+    /// Remove matching keys from existing headers.
+    Remove,
+    /// Replace all existing headers with provided entries.
+    ReplaceAll,
+}
+
+/// Source hint for edited catalog headers.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum CatalogHeaderSource {
+    /// Header originates from config file storage.
+    #[default]
+    File,
+    /// Header value should be treated as secret-backed.
+    Secret,
+    /// Header originates from process environment materialization.
+    Env,
+    /// Header originates from raw literal input.
+    Raw,
+}
+
+/// Header edit row used by `catalog.edit_headers`.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CatalogHeaderEditRow {
+    /// Header name.
+    #[schemars(description = "Header name.")]
+    pub key: String,
+    /// Header value used for `upsert` and `replace_all`; ignored for `remove`.
+    #[schemars(description = "Header value. Required for upsert/replace_all; ignored for remove.")]
+    pub value: Option<String>,
+    /// Optional source hint for the header.
+    #[schemars(description = "Optional source hint: file|secret|env|raw. Defaults to raw.")]
+    pub source: Option<CatalogHeaderSource>,
+    /// Optional effective flag override.
+    #[schemars(description = "Optional effective flag for the header value.")]
+    pub effective: Option<bool>,
+}
+
+/// Request payload for mutating catalog headers.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CatalogEditHeadersRequest {
+    /// Catalog title from `list_command_topics`.
+    #[schemars(description = "Catalog title from list_command_topics.")]
+    pub catalog_id: String,
+    /// Header mutation mode.
+    #[schemars(description = "Header edit mode: upsert|remove|replace_all. Defaults to upsert.")]
+    pub mode: Option<CatalogHeaderEditMode>,
+    /// Header rows to apply.
+    #[schemars(description = "Header rows to apply.")]
+    pub headers: Vec<CatalogHeaderEditRow>,
+}
+
+/// Request payload for retrieving masked catalog headers.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CatalogGetMaskedHeadersRequest {
+    /// Catalog title from `list_command_topics`.
+    #[schemars(description = "Catalog title from list_command_topics.")]
+    pub catalog_id: String,
+}
+
 /// Request payload for removing an existing catalog from runtime config.
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CatalogRemoveRequest {
