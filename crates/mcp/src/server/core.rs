@@ -821,7 +821,7 @@ impl ServerHandler for OattyMcpCore {
                 ..Default::default()
             },
             instructions: Some(
-                "LLM-ONLY SERVER INSTRUCTIONS.\nGENERAL FLOW:\n1) Call search_commands.\nWORKFLOW INTENT MODE:\n- If the user asks to create/author/generate a workflow, you MUST use Oatty workflow tools (search_commands -> get_command -> workflow.validate -> workflow.save or workflow.author_and_run).\n- Before implementation, verify command discoverability for EVERY required provider/platform in the request.\n- If any required provider is missing after two focused searches, STOP and run catalog.validate_openapi -> catalog.preview_import -> catalog.import_openapi.\n- Do NOT create repository docs, blueprints, scripts, or CI files unless explicitly requested by the user.\n- File-only fallback is allowed only after reporting which provider cannot be imported and receiving explicit user approval.\n\n2) Select canonical_id from results.\n3) Call get_command for exact single-command schema.\n4) Route by execution_type/http_method.\nEXAMPLES:\n- User asks: 'list vercel projects' -> search_commands(query='list vercel projects', vendor='vercel', include_inputs='none') -> get_command(canonical_id) -> run_safe_command.\n- User asks: 'create render web service' -> search_commands(query='create render web service', vendor='render', include_inputs='required_only') -> get_command(canonical_id) -> run_command.\nCATALOG ONBOARDING:\n- If search_commands returns no relevant commands or required vendors are missing, validate/import catalogs first.\n- Use catalog.validate_openapi -> catalog.preview_import before catalog.import_openapi.\n- catalog.import_openapi mutates user configuration: request user confirmation before calling it.\n- If target APIs require auth, instruct user to configure catalog headers (for example Authorization) before running HTTP commands.\nROUTING:\n- http + GET => run_safe_command\n- http + POST|PUT|PATCH => run_command\n- http + DELETE => run_destructive_command\n- mcp + read-only => run_safe_command\n- mcp + non-destructive => run_command\n- mcp + destructive => unsupported\nSEARCH OPTIMIZATION:\n- Use search_commands limit (for example 5-10) to reduce token usage.\n- Use include_inputs=none for initial discovery.\n- Use include_inputs=required_only for low-token execution planning with compact provider_inputs hints.\n- Use include_inputs=full only when complete flags/args and output_schema detail is required.\n- Canonical query form `<group> <command>` returns a single direct-hit result when found.\n- Do not call get_command_summaries_by_catalog for normal authoring; use it only for deliberate large batch inspection.\n- Use at most one include_inputs=full search per vendor/intent; then switch to get_command.\nDECISION RULES:\n- If required commands are not found after two focused searches, stop searching and switch to catalog.validate_openapi -> catalog.preview_import -> catalog.import_openapi.\n- Treat \"only unrelated catalogs found\" as a hard stop for direct workflow authoring until missing catalogs are imported.\n- After selecting candidate canonical_ids, stop fuzzy searching and switch to get_command for deterministic inspection.\n- Prefer the intended authoring order over hand-written fallback guessing.\nAUTHORING PRECHECK:\n- Confirm required command catalogs exist and are enabled.\n- Confirm required HTTP commands are discoverable.\n- Confirm provider-backed inputs are used for enumerable identifiers/list selections when provider contracts exist.\n- If any precheck fails, import missing catalogs or correct input/provider wiring before drafting more steps.\nARGUMENTS:\n- Prefer get_command for exact single-command args/flags.\n- For provider-backed workflow inputs, call get_command with include_providers=required_only (or full when binds are needed).\n- Build positional_args in declared order.\n- Build named_flags as [name,value]; values may be JSON scalars, arrays, or objects; boolean flags use presence semantics.\nWORKFLOW AUTHORING FLOW:\n- Workflow steps execute HTTP-backed commands only.\n- Do not use MCP/plugin commands as workflow steps.\n- Use search_commands with vendor filters and prefer execution_type=http when building workflows.\n- Use search_commands to discover valid step `run` command IDs (`<group> <command>`, for example `apps apps:list`).\n- If search_commands returns `provider_inputs`, prefer provider-backed workflow inputs unless the field is transformation-heavy.\n- Step arguments belong under `with` using real command parameter names.\n- Use `if`/`when` for conditions (not `condition`).\n- Input defaults must be structured objects (`default: { from: literal|env|history|workflow_output, value: ... }`).\n- Provider-first rule: use providers for enumerable identifiers/list selections (for example owner_id, project_id, service_id, domain).\n- Hybrid rule: keep manual inputs for transformation-heavy fields requiring human mapping.\n- For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata to guide users in the collector modal.\n- For provider-backed inputs, set `select.value_field` to an explicit scalar path from provider item output (for example `owner.id`).\n- Use output_fields/output_schema to map step outputs into downstream provider_args and step inputs.\n- Use summary-first payloads by default; request detailed fields only when needed.\n- Follow this sequence: search_commands -> get_command -> workflow.validate (minimal) -> expand manifest -> workflow.validate -> workflow.save -> workflow.resolve_inputs -> workflow.run.".to_string()
+                "LLM-ONLY SERVER INSTRUCTIONS.\nDISCOVERY FIRST:\n1) Start with search_commands.\n2) Select canonical_id.\n3) Call get_command for exact schema.\n4) Route by execution_type/http_method.\n\nROUTING:\n- http + GET => run_safe_command\n- http + POST|PUT|PATCH => run_command\n- http + DELETE => run_destructive_command\n- mcp + read-only => run_safe_command\n- mcp + non-destructive => run_command\n- mcp + destructive => unsupported\n\nSEARCH RULES:\n- Use limit (usually 5-10).\n- Use include_inputs=none for first pass.\n- Use include_inputs=required_only for planning.\n- Use include_inputs=full only when required; at most once per vendor/intent.\n- Canonical query `<group> <command>` returns direct hit when present.\n- After candidate canonical_ids are found, stop fuzzy search and use get_command.\n- Do not use get_command_summaries_by_catalog except deliberate batch inspection.\n\nCATALOG RULES:\n- If commands are missing after two focused searches, STOP and run:\n  catalog.validate_openapi -> catalog.preview_import -> catalog.import_openapi.\n- If only unrelated catalogs are found, treat as hard stop until required catalogs are imported.\n- catalog.import_openapi mutates user configuration: request user confirmation before calling it.\n- If auth is required, instruct user to configure catalog headers (for example Authorization) before HTTP execution.\n\nARGUMENT RULES:\n- Build positional_args in declared order.\n- Build named_flags as [name,value]. Values may be scalar/array/object; booleans accept explicit true/false.\n- Prefer get_command for exact args/flags.\n- For provider-backed workflow inputs, use get_command(include_providers=required_only|full).\n\nWORKFLOW INTENT MODE:\n- If user asks to create/author/generate a workflow, MUST use Oatty workflow tools.\n- Workflow steps must be HTTP-backed commands only (no MCP/plugin step runs).\n- Preferred sequence:\n  search_commands -> get_command -> workflow.validate(minimal) -> expand manifest -> workflow.validate -> workflow.save -> workflow.resolve_inputs -> workflow.run\n- Before authoring, verify required providers/platforms are discoverable.\n- Use providers for enumerable identifiers/list selections when contracts exist.\n- Keep manual inputs for transformation-heavy fields.\n- If search_commands returns provider_inputs, prefer provider-backed inputs unless transformation-heavy.\n- Use `if`/`when` (not `condition`).\n- Step params belong under `with` using real command parameter names.\n- Input defaults must be structured objects: `default: { from: literal|env|history|workflow_output, value: ... }`.\n- Provider-backed inputs must use explicit scalar select path (for example `owner.id`).\n- Include placeholder/hint/example metadata for manual free-text inputs.\n\nSAFETY:\n- Do NOT create repository docs, blueprints, scripts, or CI files unless explicitly requested.\n- File-only fallback is allowed only after reporting unimportable provider and receiving explicit user approval.\n- Example: 'list vercel projects' => search_commands -> get_command -> run_safe_command.".to_string()
             ),
         }
     }
@@ -1513,7 +1513,7 @@ fn build_mcp_arguments(command_spec: &CommandSpec, param: &RunCommandRequestPara
 
     for (name, value) in named_flags {
         if is_boolean_flag(command_spec, &name) {
-            arguments.insert(name, Value::Bool(true));
+            arguments.insert(name, normalize_boolean_flag_value(value));
         } else {
             arguments.insert(name, value);
         }
@@ -1618,7 +1618,7 @@ fn build_http_input_map(command_spec: &CommandSpec, param: &RunCommandRequestPar
 
 fn normalize_http_flag_value(expected_type: &str, value: Value, flag_name: &str) -> Result<Value, ErrorData> {
     if expected_type == "boolean" {
-        return Ok(Value::Bool(true));
+        return Ok(normalize_boolean_flag_value(value));
     }
 
     match expected_type {
@@ -1640,6 +1640,14 @@ fn normalize_http_flag_value(expected_type: &str, value: Value, flag_name: &str)
         "array" => normalize_structured_value(value, flag_name, Value::is_array, "JSON array"),
         "object" => normalize_structured_value(value, flag_name, Value::is_object, "JSON object"),
         _ => Ok(value),
+    }
+}
+
+fn normalize_boolean_flag_value(value: Value) -> Value {
+    match value {
+        Value::Bool(boolean_value) => Value::Bool(boolean_value),
+        // Preserve historical presence semantics for non-boolean payloads.
+        _ => Value::Bool(true),
     }
 }
 
@@ -1767,7 +1775,7 @@ fn vendor_has_enabled_command_catalog(registry: &Arc<Mutex<CommandRegistry>>, ve
 mod tests {
     use super::*;
     use oatty_registry::RegistryConfig;
-    use oatty_types::{CommandFlag, HttpCommandSpec, SchemaProperty};
+    use oatty_types::{CommandFlag, HttpCommandSpec, McpCommandSpec, SchemaProperty};
     use serde_json::json;
     use std::sync::{Arc, Mutex};
 
@@ -1780,6 +1788,17 @@ mod tests {
             flags,
             HttpCommandSpec::new("POST", "/v1/resources", None, None),
             1,
+        )
+    }
+
+    fn build_mcp_spec_for_flag_tests(flags: Vec<CommandFlag>) -> CommandSpec {
+        CommandSpec::new_mcp(
+            "vendor".to_string(),
+            "resource:update".to_string(),
+            "Update a resource".to_string(),
+            Vec::new(),
+            flags,
+            McpCommandSpec::default(),
         )
     }
 
@@ -1854,6 +1873,61 @@ mod tests {
         assert_eq!(input_map.get("project"), Some(&json!({ "name": "starter-node" })));
         assert_eq!(input_map.get("target"), Some(&json!(["production", "preview", "development"])));
         assert_eq!(input_map.get("upsert"), Some(&json!("true")));
+    }
+
+    #[test]
+    fn build_http_input_map_preserves_explicit_boolean_values() {
+        let command_spec = build_http_spec_for_flag_tests(vec![build_flag("enabled", "boolean")]);
+        let param = RunCommandRequestParam {
+            canonical_id: command_spec.canonical_id(),
+            positional_args: None,
+            named_flags: Some(vec![
+                ("enabled".to_string(), Value::Bool(false)),
+                ("enabled".to_string(), Value::Bool(true)),
+            ]),
+        };
+
+        let input_map = build_http_input_map(&command_spec, &param).expect("boolean values should normalize");
+        assert_eq!(input_map.get("enabled"), Some(&Value::Bool(true)));
+    }
+
+    #[test]
+    fn build_http_input_map_supports_boolean_false() {
+        let command_spec = build_http_spec_for_flag_tests(vec![build_flag("enabled", "boolean")]);
+        let param = RunCommandRequestParam {
+            canonical_id: command_spec.canonical_id(),
+            positional_args: None,
+            named_flags: Some(vec![("enabled".to_string(), Value::Bool(false))]),
+        };
+
+        let input_map = build_http_input_map(&command_spec, &param).expect("boolean false should be preserved");
+        assert_eq!(input_map.get("enabled"), Some(&Value::Bool(false)));
+    }
+
+    #[test]
+    fn build_mcp_arguments_supports_boolean_false() {
+        let command_spec = build_mcp_spec_for_flag_tests(vec![build_flag("enabled", "boolean")]);
+        let param = RunCommandRequestParam {
+            canonical_id: command_spec.canonical_id(),
+            positional_args: None,
+            named_flags: Some(vec![("enabled".to_string(), Value::Bool(false))]),
+        };
+
+        let arguments = build_mcp_arguments(&command_spec, &param).expect("boolean false should be preserved");
+        assert_eq!(arguments.get("enabled"), Some(&Value::Bool(false)));
+    }
+
+    #[test]
+    fn build_http_input_map_preserves_legacy_boolean_presence_semantics() {
+        let command_spec = build_http_spec_for_flag_tests(vec![build_flag("enabled", "boolean")]);
+        let param = RunCommandRequestParam {
+            canonical_id: command_spec.canonical_id(),
+            positional_args: None,
+            named_flags: Some(vec![("enabled".to_string(), Value::String("false".to_string()))]),
+        };
+
+        let input_map = build_http_input_map(&command_spec, &param).expect("legacy boolean flag payloads should remain supported");
+        assert_eq!(input_map.get("enabled"), Some(&Value::Bool(true)));
     }
 
     #[test]

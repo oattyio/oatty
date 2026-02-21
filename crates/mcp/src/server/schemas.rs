@@ -73,9 +73,9 @@ pub struct RunCommandRequestParam {
     pub positional_args: Option<Vec<String>>,
     /// Named flag/value pairs.
     ///
-    /// Boolean flags are enabled by presence; their value element is ignored.
+    /// Boolean flags honor explicit true/false values when provided.
     #[schemars(
-        description = "Named flag/value pairs as [name, value]. Value may be string/number/boolean/object/array. For boolean flags, presence enables the flag and value is ignored."
+        description = "Named flag/value pairs as [name, value]. Value may be string/number/boolean/object/array. Boolean flags accept explicit true/false values."
     )]
     pub named_flags: Option<Vec<(String, Value)>>,
 }
