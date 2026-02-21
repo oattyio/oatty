@@ -89,6 +89,36 @@ pub fn create_search_handle(command_registry: Arc<Mutex<CommandRegistry>>) -> Se
     SearchHandle::new(command_registry)
 }
 
+/// Suggest nearest canonical command IDs for an arbitrary query string.
+pub fn suggest_nearest_canonical_ids(registry: &CommandRegistry, query: &str, limit: usize) -> Vec<String> {
+    let normalized_query = query.trim().to_ascii_lowercase();
+    if normalized_query.is_empty() || limit == 0 {
+        return Vec::new();
+    }
+
+    let mut scored_matches = registry
+        .commands
+        .iter()
+        .filter_map(|command_spec| {
+            let canonical_id = command_spec.canonical_id();
+            let canonical_id_lower = canonical_id.to_ascii_lowercase();
+            let contains_bonus = if canonical_id_lower.contains(&normalized_query) { 200 } else { 0 };
+            let score = fuzzy_score(&canonical_id_lower, &normalized_query).unwrap_or(0) + contains_bonus;
+            if score <= 0 {
+                return None;
+            }
+            Some((score, canonical_id))
+        })
+        .collect::<Vec<(i64, String)>>();
+
+    scored_matches.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    scored_matches
+        .into_iter()
+        .map(|(_, canonical_id)| canonical_id)
+        .take(limit)
+        .collect()
+}
+
 fn score_command_match(registry: &CommandRegistry, command: &CommandSpec, query_lower: &str, query_tokens: &[String]) -> Option<i64> {
     if query_tokens.is_empty() {
         return None;
@@ -297,5 +327,14 @@ mod tests {
         let results = handle.search("qqqqqq").await.expect("search succeeds");
 
         assert!(results.is_empty(), "expected no matches for unmatched query");
+    }
+
+    #[test]
+    fn suggest_nearest_canonical_ids_ranks_expected_match_first() {
+        let registry = build_registry();
+        let registry_guard = registry.lock().expect("registry lock");
+        let suggestions = suggest_nearest_canonical_ids(&registry_guard, "projects project:list", 3);
+        assert!(!suggestions.is_empty(), "expected non-empty suggestions");
+        assert_eq!(suggestions[0], "projects projects:list");
     }
 }

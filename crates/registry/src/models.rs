@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use indexmap::{IndexMap, IndexSet, set::MutableValues};
 use oatty_types::{
-    CommandSpec, EnvVar, ProviderContract,
+    CommandSpec, EnvSource, EnvVar, ProviderContract,
     manifest::{RegistryCatalog, RegistryManifest},
     workflow::WorkflowDefinition,
 };
@@ -13,6 +13,9 @@ use crate::RegistryConfig;
 use crate::workflows::load_runtime_workflows;
 
 const REGISTRY_EVENT_CHANNEL_CAPACITY: usize = 64;
+
+/// Result alias for catalog mutation operations that return typed mutation failures.
+pub type CatalogMutationResult<T> = std::result::Result<T, CatalogMutationError>;
 
 /// The main registry containing all available Oatty CLI commands.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
@@ -28,6 +31,56 @@ pub struct CommandRegistry {
     /// Broadcast sender for Command events (lazy)
     #[serde(skip)]
     event_tx: Option<broadcast::Sender<CommandRegistryEvent>>,
+}
+
+/// Header mutation mode used for catalog header editing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatalogHeaderEditMode {
+    /// Insert/replace matching keys and preserve non-matching existing keys.
+    Upsert,
+    /// Remove matching keys from existing headers.
+    Remove,
+    /// Replace all existing headers with the provided rows.
+    ReplaceAll,
+}
+
+/// Header row used to mutate catalog headers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogHeaderEditRow {
+    /// Header name.
+    pub key: String,
+    /// Header value. Required for `Upsert` and `ReplaceAll`.
+    pub value: Option<String>,
+    /// Source hint for the header.
+    pub source: EnvSource,
+    /// Whether the header value is effective.
+    pub effective: bool,
+}
+
+/// Typed failures for runtime catalog mutation operations.
+#[derive(Debug, Clone, thiserror::Error, PartialEq, Eq)]
+pub enum CatalogMutationError {
+    /// No runtime catalogs are currently configured.
+    #[error("no catalogs configured")]
+    NoCatalogsConfigured,
+    /// The requested catalog title was not found.
+    #[error("catalog '{title}' not found")]
+    CatalogNotFound {
+        /// Catalog title used for lookup.
+        title: String,
+    },
+    /// A required base URL value was empty.
+    #[error("base URL cannot be empty")]
+    EmptyBaseUrl,
+    /// A required header key value was empty.
+    #[error("header key cannot be empty")]
+    EmptyHeaderKey,
+    /// A header value was required but missing for the given key.
+    #[error("header '{key}' is missing value")]
+    MissingHeaderValue {
+        /// Header key missing an associated value.
+        key: String,
+    },
 }
 
 impl CommandRegistry {
@@ -387,6 +440,108 @@ impl CommandRegistry {
             Err(anyhow!("Catalog not found"))
         }
     }
+
+    /// Sets the selected base URL for a catalog, appending it when not present.
+    pub fn set_selected_base_url(&mut self, title: &str, base_url: &str) -> CatalogMutationResult<()> {
+        let normalized_base_url = base_url.trim();
+        if normalized_base_url.is_empty() {
+            return Err(CatalogMutationError::EmptyBaseUrl);
+        }
+        let catalogs = self.config.catalogs.as_mut().ok_or(CatalogMutationError::NoCatalogsConfigured)?;
+        let Some(index) = catalogs.iter().position(|catalog| catalog.title == title) else {
+            return Err(CatalogMutationError::CatalogNotFound { title: title.to_string() });
+        };
+        let catalog = &mut catalogs[index];
+        let selected_index = catalog
+            .base_urls
+            .iter()
+            .position(|candidate| candidate == normalized_base_url)
+            .unwrap_or_else(|| {
+                catalog.base_urls.push(normalized_base_url.to_string());
+                catalog.base_urls.len().saturating_sub(1)
+            });
+        catalog.base_url_index = selected_index;
+        Ok(())
+    }
+
+    /// Edits catalog headers using the provided mutation mode and rows.
+    pub fn edit_catalog_headers(
+        &mut self,
+        title: &str,
+        mode: CatalogHeaderEditMode,
+        rows: &[CatalogHeaderEditRow],
+    ) -> CatalogMutationResult<()> {
+        let catalogs = self.config.catalogs.as_mut().ok_or(CatalogMutationError::NoCatalogsConfigured)?;
+        let Some(index) = catalogs.iter().position(|catalog| catalog.title == title) else {
+            return Err(CatalogMutationError::CatalogNotFound { title: title.to_string() });
+        };
+        let catalog = &mut catalogs[index];
+        catalog.headers = match mode {
+            CatalogHeaderEditMode::Upsert => apply_header_upserts(&catalog.headers, rows)?,
+            CatalogHeaderEditMode::Remove => apply_header_removals(&catalog.headers, rows),
+            CatalogHeaderEditMode::ReplaceAll => build_headers_from_rows(rows)?,
+        };
+        Ok(())
+    }
+}
+
+fn apply_header_upserts(existing_headers: &IndexSet<EnvVar>, rows: &[CatalogHeaderEditRow]) -> CatalogMutationResult<IndexSet<EnvVar>> {
+    let mut retained_headers = existing_headers.iter().cloned().collect::<Vec<EnvVar>>();
+    for row in rows {
+        let normalized_row_key = normalize_header_key(&row.key);
+        if normalized_row_key.is_empty() {
+            return Err(CatalogMutationError::EmptyHeaderKey);
+        }
+        retained_headers.retain(|header| normalize_header_key(&header.key) != normalized_row_key);
+        retained_headers.push(env_var_from_row(row)?);
+    }
+    Ok(retained_headers.into_iter().collect())
+}
+
+fn apply_header_removals(existing_headers: &IndexSet<EnvVar>, rows: &[CatalogHeaderEditRow]) -> IndexSet<EnvVar> {
+    let keys_to_remove = rows
+        .iter()
+        .map(|row| normalize_header_key(&row.key))
+        .filter(|key| !key.is_empty())
+        .collect::<HashSet<String>>();
+    existing_headers
+        .iter()
+        .filter(|header| !keys_to_remove.contains(&normalize_header_key(&header.key)))
+        .cloned()
+        .collect()
+}
+
+fn build_headers_from_rows(rows: &[CatalogHeaderEditRow]) -> CatalogMutationResult<IndexSet<EnvVar>> {
+    let mut headers = Vec::<EnvVar>::new();
+    for row in rows {
+        let normalized_row_key = normalize_header_key(&row.key);
+        if normalized_row_key.is_empty() {
+            return Err(CatalogMutationError::EmptyHeaderKey);
+        }
+        headers.retain(|header| normalize_header_key(&header.key) != normalized_row_key);
+        headers.push(env_var_from_row(row)?);
+    }
+    Ok(headers.into_iter().collect())
+}
+
+fn env_var_from_row(row: &CatalogHeaderEditRow) -> CatalogMutationResult<EnvVar> {
+    let normalized_key = row.key.trim();
+    if normalized_key.is_empty() {
+        return Err(CatalogMutationError::EmptyHeaderKey);
+    }
+    let value = row.value.clone().ok_or_else(|| CatalogMutationError::MissingHeaderValue {
+        key: normalized_key.to_string(),
+    })?;
+    Ok(EnvVar {
+        key: normalized_key.to_string(),
+        value,
+        source: row.source.clone(),
+        effective: row.effective,
+    })
+}
+
+fn normalize_header_key(value: &str) -> String {
+    value.trim().to_ascii_lowercase()
 }
 
 #[derive(Debug, Clone)]
@@ -395,4 +550,95 @@ pub enum CommandRegistryEvent {
     CommandsRemoved(Arc<[CommandSpec]>),
     WorkflowsAdded(Arc<[WorkflowDefinition]>),
     WorkflowsRemoved(Arc<[WorkflowDefinition]>),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use indexmap::IndexSet;
+    use oatty_types::manifest::RegistryCatalog;
+
+    fn catalog_with_title(title: &str) -> RegistryCatalog {
+        RegistryCatalog {
+            title: title.to_string(),
+            description: String::new(),
+            vendor: Some("test".to_string()),
+            manifest_path: "/tmp/test.bin".to_string(),
+            import_source: None,
+            import_source_type: None,
+            headers: IndexSet::new(),
+            base_urls: vec!["https://example.test".to_string()],
+            base_url_index: 0,
+            manifest: Some(RegistryManifest::default()),
+            is_enabled: true,
+        }
+    }
+
+    #[test]
+    fn set_selected_base_url_returns_typed_error_for_missing_catalog() {
+        let mut registry = CommandRegistry::default();
+        registry.config.catalogs = Some(vec![catalog_with_title("alpha")]);
+
+        let result = registry.set_selected_base_url("missing", "https://api.example.com");
+
+        assert_eq!(
+            result.expect_err("missing catalog should fail"),
+            CatalogMutationError::CatalogNotFound {
+                title: "missing".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn edit_catalog_headers_returns_typed_error_for_missing_header_value() {
+        let mut registry = CommandRegistry::default();
+        registry.config.catalogs = Some(vec![catalog_with_title("alpha")]);
+
+        let rows = vec![CatalogHeaderEditRow {
+            key: "Authorization".to_string(),
+            value: None,
+            source: EnvSource::Raw,
+            effective: true,
+        }];
+        let result = registry.edit_catalog_headers("alpha", CatalogHeaderEditMode::Upsert, &rows);
+
+        assert_eq!(
+            result.expect_err("missing value should fail"),
+            CatalogMutationError::MissingHeaderValue {
+                key: "Authorization".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn replace_all_normalizes_duplicate_header_keys_case_insensitively() {
+        let mut registry = CommandRegistry::default();
+        registry.config.catalogs = Some(vec![catalog_with_title("alpha")]);
+
+        let rows = vec![
+            CatalogHeaderEditRow {
+                key: "Authorization".to_string(),
+                value: Some("Bearer first".to_string()),
+                source: EnvSource::Raw,
+                effective: true,
+            },
+            CatalogHeaderEditRow {
+                key: "authorization".to_string(),
+                value: Some("Bearer second".to_string()),
+                source: EnvSource::Raw,
+                effective: true,
+            },
+        ];
+
+        registry
+            .edit_catalog_headers("alpha", CatalogHeaderEditMode::ReplaceAll, &rows)
+            .expect("replace all should succeed");
+
+        let catalogs = registry.config.catalogs.expect("catalogs should exist");
+        let headers = &catalogs[0].headers;
+        assert_eq!(headers.len(), 1);
+        let header = headers.iter().next().expect("single header should exist");
+        assert_eq!(header.key, "authorization");
+        assert_eq!(header.value, "Bearer second");
+    }
 }

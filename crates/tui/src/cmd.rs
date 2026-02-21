@@ -471,7 +471,7 @@ fn import_registry_catalog_from(app: &mut App, content: String, maybe_prefix: Op
             base_url_override: None,
             source: None,
             source_type: None,
-            enabled: true,
+            enabled: Some(true),
             overwrite: false,
         },
     );

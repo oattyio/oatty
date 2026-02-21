@@ -26,8 +26,11 @@ pub struct OpenApiCatalogImportRequest {
     pub source: Option<String>,
     /// Optional source type hint (`path` or `url`) used for catalog provenance.
     pub source_type: Option<String>,
-    /// Whether imported catalog should be enabled.
-    pub enabled: bool,
+    /// Optional enabled-state override for imported catalog.
+    ///
+    /// When omitted, overwrite operations preserve the existing enabled state.
+    /// New imports default to enabled.
+    pub enabled: Option<bool>,
     /// Whether existing catalog with same identifier should be replaced.
     pub overwrite: bool,
 }
@@ -92,6 +95,11 @@ pub fn import_openapi_catalog_into_registry(
     ))
     .map_err(|error| OpenApiCatalogImportError::CatalogGeneration(error.to_string()))?;
 
+    let prospective_catalog_id = request
+        .catalog_title_override
+        .clone()
+        .unwrap_or_else(|| generated_catalog.title.clone());
+    let existing_catalog = get_catalog_by_title(registry, &prospective_catalog_id).cloned();
     let mut normalized_catalog = apply_catalog_overrides(
         generated_catalog,
         request.catalog_title_override.as_deref(),
@@ -100,7 +108,12 @@ pub fn import_openapi_catalog_into_registry(
         request.source.as_deref(),
         request.source_type.as_deref(),
     );
-    normalized_catalog.is_enabled = request.enabled;
+    normalized_catalog = preserve_existing_runtime_configuration(
+        normalized_catalog,
+        existing_catalog.as_ref(),
+        request.enabled,
+        request.base_url_override.is_none(),
+    );
 
     let command_count = normalized_catalog
         .manifest
@@ -179,6 +192,27 @@ fn apply_catalog_overrides(
     catalog
 }
 
+fn preserve_existing_runtime_configuration(
+    mut imported_catalog: RegistryCatalog,
+    existing_catalog: Option<&RegistryCatalog>,
+    enabled_override: Option<bool>,
+    preserve_existing_base_urls: bool,
+) -> RegistryCatalog {
+    if let Some(existing_catalog) = existing_catalog {
+        imported_catalog.headers = existing_catalog.headers.clone();
+        if preserve_existing_base_urls && !existing_catalog.base_urls.is_empty() {
+            imported_catalog.base_urls = existing_catalog.base_urls.clone();
+            imported_catalog.base_url_index = existing_catalog
+                .base_url_index
+                .min(imported_catalog.base_urls.len().saturating_sub(1));
+        }
+        imported_catalog.is_enabled = enabled_override.unwrap_or(existing_catalog.is_enabled);
+        return imported_catalog;
+    }
+    imported_catalog.is_enabled = enabled_override.unwrap_or(true);
+    imported_catalog
+}
+
 fn registry_has_catalog(registry: &CommandRegistry, catalog_title: &str) -> bool {
     registry
         .config
@@ -225,4 +259,81 @@ fn remove_catalog_for_overwrite(registry: &mut CommandRegistry, catalog_id: &str
         })?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use indexmap::IndexSet;
+    use oatty_types::{EnvSource, EnvVar, manifest::RegistryManifest};
+
+    fn sample_catalog(title: &str) -> RegistryCatalog {
+        RegistryCatalog {
+            title: title.to_string(),
+            description: "sample".to_string(),
+            vendor: Some("sample".to_string()),
+            manifest_path: "/tmp/sample.bin".to_string(),
+            import_source: None,
+            import_source_type: None,
+            headers: IndexSet::new(),
+            base_urls: vec!["https://api.example.com".to_string()],
+            base_url_index: 0,
+            manifest: Some(RegistryManifest::default()),
+            is_enabled: true,
+        }
+    }
+
+    #[test]
+    fn preserve_existing_runtime_configuration_keeps_headers_base_url_and_enabled_by_default() {
+        let mut existing = sample_catalog("Test");
+        existing.headers.insert(EnvVar::new(
+            "Authorization".to_string(),
+            "Bearer existing".to_string(),
+            EnvSource::Raw,
+        ));
+        existing.base_urls = vec!["https://api.us5.datadoghq.com".to_string(), "https://api.datadoghq.com".to_string()];
+        existing.base_url_index = 1;
+        existing.is_enabled = false;
+
+        let mut imported = sample_catalog("Test");
+        imported.headers.insert(EnvVar::new(
+            "Authorization".to_string(),
+            "Bearer imported".to_string(),
+            EnvSource::Raw,
+        ));
+        imported.base_urls = vec!["https://api.imported.example.com".to_string()];
+        imported.base_url_index = 0;
+        imported.is_enabled = true;
+
+        let merged = preserve_existing_runtime_configuration(imported, Some(&existing), None, true);
+
+        assert_eq!(merged.headers, existing.headers);
+        assert_eq!(merged.base_urls, existing.base_urls);
+        assert_eq!(merged.base_url_index, existing.base_url_index);
+        assert!(!merged.is_enabled);
+    }
+
+    #[test]
+    fn preserve_existing_runtime_configuration_applies_enabled_override() {
+        let existing = sample_catalog("Test");
+        let imported = sample_catalog("Test");
+        let merged = preserve_existing_runtime_configuration(imported, Some(&existing), Some(false), true);
+        assert!(!merged.is_enabled);
+    }
+
+    #[test]
+    fn preserve_existing_runtime_configuration_keeps_base_url_override_when_provided() {
+        let mut existing = sample_catalog("Test");
+        existing.base_urls = vec!["https://api.existing.example.com".to_string()];
+        existing.base_url_index = 0;
+
+        let mut imported = sample_catalog("Test");
+        imported.base_urls = vec!["https://api.override.example.com".to_string()];
+        imported.base_url_index = 0;
+
+        let merged = preserve_existing_runtime_configuration(imported, Some(&existing), None, false);
+
+        assert_eq!(merged.base_urls, vec!["https://api.override.example.com".to_string()]);
+        assert_eq!(merged.base_url_index, 0);
+    }
 }

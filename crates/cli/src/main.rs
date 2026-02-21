@@ -796,7 +796,7 @@ fn import_catalog_from_source(
             base_url_override: import_matches.get_one::<String>("base-url").cloned(),
             source: Some(source.clone()),
             source_type: Some(source_type.clone()),
-            enabled,
+            enabled: Some(enabled),
             overwrite,
         },
     )

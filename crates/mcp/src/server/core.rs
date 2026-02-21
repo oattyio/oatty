@@ -1,13 +1,14 @@
 use crate::PluginEngine;
 use crate::server::catalog::{
-    import_openapi_catalog, preview_openapi_import, remove_catalog_runtime, set_catalog_enabled_state, validate_openapi_source,
+    edit_catalog_headers, get_catalog_masked_headers, import_openapi_catalog, preview_openapi_import, remove_catalog_runtime,
+    set_catalog_base_url, set_catalog_enabled_state, validate_openapi_source,
 };
 use crate::server::http::McpHttpLogEntry;
 use crate::server::log_payload::{build_log_payload, build_parsed_response_payload};
 use crate::server::schemas::{
-    CatalogImportOpenApiRequest, CatalogPreviewImportRequest, CatalogRemoveRequest, CatalogSetEnabledRequest,
-    CatalogValidateOpenApiRequest, CommandDetailRequest, CommandSummariesRequest, OutputSchemaDetail, ProviderMetadataDetail,
-    RunCommandRequestParam, SearchInputsDetail, SearchRequestParam,
+    CatalogEditHeadersRequest, CatalogGetMaskedHeadersRequest, CatalogImportOpenApiRequest, CatalogPreviewImportRequest,
+    CatalogRemoveRequest, CatalogSetBaseUrlRequest, CatalogSetEnabledRequest, CatalogValidateOpenApiRequest, CommandDetailRequest,
+    CommandSummariesRequest, OutputSchemaDetail, ProviderMetadataDetail, RunCommandRequestParam, SearchInputsDetail, SearchRequestParam,
 };
 use crate::server::workflow::{
     errors::{conflict_error, not_found_error},
@@ -30,7 +31,7 @@ use crate::server::workflow::{
     },
 };
 use anyhow::Result;
-use oatty_registry::{CommandRegistry, SearchHandle};
+use oatty_registry::{CommandRegistry, SearchHandle, suggest_nearest_canonical_ids};
 use oatty_types::{CommandSpec, ExecOutcome, SearchResult};
 use oatty_util::http::exec_remote_for_provider;
 use reqwest::Method;
@@ -357,6 +358,54 @@ impl OattyMcpCore {
         let response = CallToolResult::structured(structured);
         self.emit_log(
             "catalog.set_enabled",
+            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
+            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
+        );
+        Ok(response)
+    }
+
+    #[tool(
+        name = "catalog.set_base_url",
+        annotations(open_world_hint = true),
+        description = "Set the selected base URL for an existing catalog without re-importing. Input: catalog_id (catalog title from list_command_topics), base_url."
+    )]
+    async fn catalog_set_base_url(&self, param: Parameters<CatalogSetBaseUrlRequest>) -> Result<CallToolResult, ErrorData> {
+        let structured = set_catalog_base_url(&self.services.command_registry, &param.0)?;
+        let response = CallToolResult::structured(structured);
+        self.emit_log(
+            "catalog.set_base_url",
+            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
+            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
+        );
+        Ok(response)
+    }
+
+    #[tool(
+        name = "catalog.edit_headers",
+        annotations(open_world_hint = true),
+        description = "Mutate catalog headers. Input: catalog_id (catalog title from list_command_topics), mode(upsert|remove|replace_all, default=upsert), headers[{key,value?,source?,effective?}] where value is required for upsert/replace_all and ignored for remove, and source defaults to raw."
+    )]
+    async fn catalog_edit_headers(&self, param: Parameters<CatalogEditHeadersRequest>) -> Result<CallToolResult, ErrorData> {
+        let structured = edit_catalog_headers(&self.services.command_registry, &param.0)?;
+        let response = CallToolResult::structured(structured);
+        self.emit_log(
+            "catalog.edit_headers",
+            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
+            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
+        );
+        Ok(response)
+    }
+
+    #[tool(
+        name = "catalog.get_masked_headers",
+        annotations(read_only_hint = true),
+        description = "Get masked catalog headers and selected base URL metadata. Input: catalog_id (catalog title from list_command_topics)."
+    )]
+    async fn catalog_get_masked_headers(&self, param: Parameters<CatalogGetMaskedHeadersRequest>) -> Result<CallToolResult, ErrorData> {
+        let structured = get_catalog_masked_headers(&self.services.command_registry, &param.0)?;
+        let response = CallToolResult::structured(structured);
+        self.emit_log(
+            "catalog.get_masked_headers",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -897,6 +946,7 @@ fn resolve_command_spec(registry: &Arc<Mutex<CommandRegistry>>, canonical_id: &s
     })?;
     registry_guard.find_by_group_and_cmd_cloned(&group, &name).map_err(|error| {
         let suggested_search_query = derive_search_query_from_canonical_id(canonical_id);
+        let nearest_canonical_ids = suggest_nearest_canonical_ids(&registry_guard, canonical_id, 3);
         let next_step = format!(
             "Use search_commands(query='{}', include_inputs='none') to discover valid canonical IDs, then call get_command and retry.",
             suggested_search_query
@@ -907,7 +957,8 @@ fn resolve_command_spec(registry: &Arc<Mutex<CommandRegistry>>, canonical_id: &s
                 "canonical_id": canonical_id,
                 "group": group,
                 "command": name,
-                "suggested_search_query": suggested_search_query
+                "suggested_search_query": suggested_search_query,
+                "nearest_canonical_ids": nearest_canonical_ids,
             }),
             next_step.as_str(),
         )
@@ -1954,6 +2005,34 @@ mod tests {
             derive_search_query_from_canonical_id("render/services:create"),
             "render services create".to_string()
         );
+    }
+
+    #[test]
+    fn suggest_nearest_canonical_ids_returns_ranked_matches() {
+        let commands = vec![
+            CommandSpec::new_http(
+                "apps".to_string(),
+                "apps:list".to_string(),
+                "List apps".to_string(),
+                Vec::new(),
+                Vec::new(),
+                HttpCommandSpec::new("GET", "/apps", None, None),
+                0,
+            ),
+            CommandSpec::new_http(
+                "apps".to_string(),
+                "apps:create".to_string(),
+                "Create app".to_string(),
+                Vec::new(),
+                Vec::new(),
+                HttpCommandSpec::new("POST", "/apps", None, None),
+                0,
+            ),
+        ];
+        let registry = CommandRegistry::default().with_commands(commands);
+        let suggestions = suggest_nearest_canonical_ids(&registry, "apps app:list", 2);
+        assert!(!suggestions.is_empty());
+        assert_eq!(suggestions[0], "apps apps:list".to_string());
     }
 
     #[test]
