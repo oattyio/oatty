@@ -53,7 +53,10 @@ fn derive_commands_from_oas3(document: &Value, vendor: &str) -> Result<Vec<Comma
         .ok_or_else(|| anyhow!("OpenAPI document missing paths"))?;
 
     let mut commands = Vec::new();
-    let mut command_names: HashSet<String> = HashSet::new();
+    let mut command_name_state = CommandNameGenerationState {
+        shared_redundant_prefix_segment_count: determine_shared_redundant_prefix_segment_count(paths),
+        command_names: HashSet::new(),
+    };
 
     for (path, path_item) in paths {
         let Some(path_item_object) = path_item.as_object() else {
@@ -69,7 +72,7 @@ fn derive_commands_from_oas3(document: &Value, vendor: &str) -> Result<Vec<Comma
             };
 
             if let Some(command_spec) =
-                build_command_from_operation(document, vendor, path, path_item, operation_object, method, &mut command_names)?
+                build_command_from_operation(document, vendor, path, path_item, operation_object, method, &mut command_name_state)?
             {
                 commands.push(command_spec);
             }
@@ -86,7 +89,7 @@ fn build_command_from_operation(
     path_item: &Value,
     operation: &Map<String, Value>,
     method: &str,
-    command_names: &mut HashSet<String>,
+    command_name_state: &mut CommandNameGenerationState,
 ) -> Result<Option<CommandSpec>> {
     let method_upper = method.to_ascii_uppercase();
     let Some((_, action)) = classify_command(path, method_upper.as_str()) else {
@@ -106,7 +109,7 @@ fn build_command_from_operation(
 
     let http_spec = build_http_command_spec(document, operation, method_upper, path_template)?;
 
-    let (group, name) = derive_unique_command_name(vendor, path, &action, &title, method, command_names);
+    let (group, name) = derive_unique_command_name(vendor, path, &action, &title, method, command_name_state);
     Ok(Some(CommandSpec::new_http(
         group,
         name,
@@ -222,28 +225,43 @@ fn derive_single_array_path_from_object(schema: &SchemaProperty) -> Option<Strin
     None
 }
 
+struct CommandNameGenerationState {
+    shared_redundant_prefix_segment_count: usize,
+    command_names: HashSet<String>,
+}
+
 fn derive_unique_command_name(
     vendor: &str,
     path: &str,
     action: &str,
     title: &str,
     method: &str,
-    command_names: &mut HashSet<String>,
+    command_name_state: &mut CommandNameGenerationState,
 ) -> (String, String) {
-    let (group, name) = derive_command_group_and_name(vendor, path, action);
-    if command_names.insert(format!("{}{}", group, name)) {
+    let (group, name) = derive_command_group_and_name(vendor, path, action, command_name_state.shared_redundant_prefix_segment_count);
+    if command_name_state.command_names.insert(format!("{}{}", group, name)) {
         return (group, name);
     }
 
     if !title.is_empty() {
-        let (title_group, title_name) = derive_command_group_and_name(vendor, path, &title.to_kebab_case());
-        if command_names.insert(format!("{}{}", title_group, title_name)) {
+        let (title_group, title_name) = derive_command_group_and_name(
+            vendor,
+            path,
+            &title.to_kebab_case(),
+            command_name_state.shared_redundant_prefix_segment_count,
+        );
+        if command_name_state.command_names.insert(format!("{}{}", title_group, title_name)) {
             return (title_group, title_name);
         }
     }
 
-    let (method_group, method_name) = derive_command_group_and_name(vendor, path, &method.to_lowercase());
-    command_names.insert(format!("{}{}", method_group, method_name));
+    let (method_group, method_name) = derive_command_group_and_name(
+        vendor,
+        path,
+        &method.to_lowercase(),
+        command_name_state.shared_redundant_prefix_segment_count,
+    );
+    command_name_state.command_names.insert(format!("{}{}", method_group, method_name));
     (method_group, method_name)
 }
 
@@ -695,9 +713,10 @@ fn normalize_group(group: &str) -> String {
     }
 }
 
-fn derive_command_group_and_name(vendor: &str, path: &str, action: &str) -> (String, String) {
+fn derive_command_group_and_name(vendor: &str, path: &str, action: &str, shared_redundant_prefix_segment_count: usize) -> (String, String) {
     let segments: Vec<String> = concrete_segments(path)
         .into_iter()
+        .skip(shared_redundant_prefix_segment_count)
         .map(|segment| normalize_group(&segment))
         .collect();
     let group = if vendor.is_empty() {
@@ -712,6 +731,68 @@ fn derive_command_group_and_name(vendor: &str, path: &str, action: &str) -> (Str
     };
 
     (group, name)
+}
+
+fn determine_shared_redundant_prefix_segment_count(paths: &Map<String, Value>) -> usize {
+    let mut all_operation_segments = Vec::new();
+
+    for (path, path_item) in paths {
+        let Some(path_item_object) = path_item.as_object() else {
+            continue;
+        };
+        for (method, operation) in path_item_object {
+            if !is_supported_http_method(method) {
+                continue;
+            }
+            if !operation.is_object() {
+                continue;
+            }
+            all_operation_segments.push(concrete_segments(path));
+        }
+    }
+
+    let Some(first_segments) = all_operation_segments.first() else {
+        return 0;
+    };
+
+    let maximum_common_prefix_length = first_segments.len();
+    let mut common_prefix_length = 0usize;
+
+    for index in 0..maximum_common_prefix_length {
+        let Some(candidate_segment) = first_segments.get(index) else {
+            break;
+        };
+        if all_operation_segments
+            .iter()
+            .all(|segments| segments.get(index).is_some_and(|segment| segment == candidate_segment))
+        {
+            common_prefix_length += 1;
+        } else {
+            break;
+        }
+    }
+
+    let mut redundant_prefix_length = 0usize;
+    for segment in first_segments.iter().take(common_prefix_length) {
+        if is_redundant_shared_prefix_segment(segment) {
+            redundant_prefix_length += 1;
+        } else {
+            break;
+        }
+    }
+
+    redundant_prefix_length
+}
+
+fn is_redundant_shared_prefix_segment(segment: &str) -> bool {
+    let segment_lower = segment.to_ascii_lowercase();
+    if segment_lower == "api" || segment_lower == "apis" {
+        return true;
+    }
+    if is_version_segment(&segment_lower) {
+        return true;
+    }
+    segment_lower.chars().all(|character| character.is_ascii_digit())
 }
 
 fn singularize(segment: &str) -> String {
@@ -929,7 +1010,7 @@ fn get_default(schema: &Value, root: &Value) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_base_urls_from_document, derive_list_response_path};
+    use super::{collect_base_urls_from_document, derive_commands_from_openapi, derive_list_response_path};
     use oatty_types::SchemaProperty;
     use serde_json::json;
     use std::collections::HashMap;
@@ -1007,5 +1088,62 @@ mod tests {
         };
 
         assert_eq!(derive_list_response_path(Some(&schema)).as_deref(), Some("projects"));
+    }
+
+    #[test]
+    fn trims_universal_redundant_api_prefix_from_command_names() {
+        let document = json!({
+            "openapi": "3.0.3",
+            "info": { "title": "Sentry-style API" },
+            "paths": {
+                "/api/0/projects/{organization}/{project}/keys/": {
+                    "get": {
+                        "summary": "List project keys",
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                },
+                "/api/0/projects/{organization}/{project}/keys/{key_id}/": {
+                    "put": {
+                        "summary": "Update project key",
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                }
+            }
+        });
+
+        let commands = derive_commands_from_openapi(&document, "sentry").expect("derive commands");
+        let canonical_ids = commands.iter().map(|command| command.canonical_id()).collect::<Vec<String>>();
+
+        assert!(canonical_ids.contains(&"sentry projects:keys:list".to_string()));
+        assert!(canonical_ids.contains(&"sentry projects:keys:update".to_string()));
+        assert!(!canonical_ids.iter().any(|identifier| identifier.starts_with("sentry api:0:")));
+    }
+
+    #[test]
+    fn preserves_prefix_when_common_path_segment_is_not_redundant() {
+        let document = json!({
+            "openapi": "3.0.3",
+            "info": { "title": "Business API" },
+            "paths": {
+                "/accounts/users": {
+                    "get": {
+                        "summary": "List account users",
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                },
+                "/accounts/roles": {
+                    "get": {
+                        "summary": "List account roles",
+                        "responses": { "200": { "description": "ok" } }
+                    }
+                }
+            }
+        });
+
+        let commands = derive_commands_from_openapi(&document, "acme").expect("derive commands");
+        let canonical_ids = commands.iter().map(|command| command.canonical_id()).collect::<Vec<String>>();
+
+        assert!(canonical_ids.contains(&"acme accounts:users:list".to_string()));
+        assert!(canonical_ids.contains(&"acme accounts:roles:list".to_string()));
     }
 }
