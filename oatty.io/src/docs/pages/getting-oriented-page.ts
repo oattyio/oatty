@@ -147,7 +147,7 @@ export const gettingOrientedPage: DocsPage = {
         {
             id: 'help',
             title: 'Hints and Help',
-            paragraphs: ['Read the hints bar before executing an unfamiliar action.', 'Use in-view help to confirm expected key and mouse behavior.', 'Treat hints as the fastest way to know which actions are available in the active view.'],
+            paragraphs: ['Hints are shown as hot keys at the bottom of the terminal window.', 'These update to show you which actions are available in the focused area.', 'Treat hints as the fastest way to know which actions are available in the active view.'],
             callouts: [
                 {
                     type: 'expected',

@@ -188,7 +188,7 @@ export class OattySiteApp extends LitElement {
                 <header class="l-header">
                     <div class="l-shell l-header__inner">
                         <a href="/" @click="${this.navigate}" class="m-logo" aria-label="Oatty home">
-                            <img src="/logo-icon.svg" alt="Oatty logo" style="width: 2rem; height: 2rem;"/>
+                            <img src="/icons/logo-icon.svg" alt="Oatty logo" style="width: 2rem; height: 2rem;"/>
                             <span style="font-size: var(--font-size-lg); font-weight: 700; letter-spacing: 0.05em;">OATTY</span>
                         </a>
                         <div class="m-header-actions">
@@ -216,7 +216,7 @@ export class OattySiteApp extends LitElement {
             <header class="l-header">
                 <div class="l-shell l-header__inner">
                     <a href="/" @click="${this.navigate}" class="m-logo" aria-label="Oatty home">
-                        <img src="/logo-icon.svg" alt="Oatty logo" style="width: 2rem; height: 2rem;"/>
+                        <img src="/icons/logo-icon.svg" alt="Oatty logo" style="width: 2rem; height: 2rem;"/>
                         <span style="font-size: var(--font-size-lg); font-weight: 700; letter-spacing: 0.05em;">OATTY</span>
                     </a>
                     <nav class="m-nav" aria-label="Primary">
@@ -291,7 +291,7 @@ export class OattySiteApp extends LitElement {
             <header class="l-header">
                 <div class="l-shell l-header__inner">
                     <a href="#" class="m-logo" aria-label="Oatty home">
-                        <img src="/logo-icon.svg" alt="Oatty logo"/>
+                        <img src="/icons/logo-icon.svg" alt="Oatty logo"/>
                         <span class="m-logo__wordmark">OATTY</span>
                     </a>
                     <nav class="m-nav" aria-label="Primary">
@@ -365,7 +365,7 @@ oatty apps create --name demo-app</code></pre>
                         <div class="l-grid l-grid--problem-cards">
                             <div class="m-card m-card--problem-item">
                                 <div class="m-icon-chip m-icon-chip--problem">
-                                    <img src="/icon-problem-inconsistent.svg" alt="" class="m-icon-size-sm"/>
+                                    <img src="/icons/icon-problem-inconsistent.svg" alt="" class="m-icon-size-sm"/>
                                 </div>
                                 <h3 class="m-heading-lg m-heading-spaced-sm">Inconsistent commands</h3>
                                 <p class="m-card__text">Nearly identical operations with completely different naming
@@ -374,7 +374,7 @@ oatty apps create --name demo-app</code></pre>
 
                             <div class="m-card m-card--problem-item">
                                 <div class="m-icon-chip m-icon-chip--problem">
-                                    <img src="/icon-problem-coverage-gap.svg" alt="" class="m-icon-size-sm"/>
+                                    <img src="/icons/icon-problem-coverage-gap.svg" alt="" class="m-icon-size-sm"/>
                                 </div>
                                 <h3 class="m-heading-lg m-heading-spaced-sm">Partial coverage</h3>
                                 <p class="m-card__text">Incomplete API coverage forces you back to curl or writing
@@ -383,7 +383,7 @@ oatty apps create --name demo-app</code></pre>
 
                             <div class="m-card m-card--problem-item">
                                 <div class="m-icon-chip m-icon-chip--problem">
-                                    <img src="/icon-plugin-fragmentation.svg" alt="" class="m-icon-size-sm"/>
+                                    <img src="/icons/icon-plugin-fragmentation.svg" alt="" class="m-icon-size-sm"/>
                                 </div>
                                 <h3 class="m-heading-lg m-heading-spaced-sm">Fragmented plugins</h3>
                                 <p class="m-card__text">Separate MCP servers for each vendor with even less
@@ -392,7 +392,7 @@ oatty apps create --name demo-app</code></pre>
 
                             <div class="m-card m-card--problem-item">
                                 <div class="m-icon-chip m-icon-chip--problem">
-                                    <img src="/icon-brittle-automation.svg" alt="" class="m-icon-size-sm"/>
+                                    <img src="/icons/icon-brittle-automation.svg" alt="" class="m-icon-size-sm"/>
                                 </div>
                                 <h3 class="m-heading-lg m-heading-spaced-sm">Brittle automation</h3>
                                 <p class="m-card__text">Workflows living in opaque shell scripts that break with every
@@ -428,7 +428,7 @@ oatty apps create --name demo-app</code></pre>
                             <article class="m-card m-card--principle-hero">
                                 <div>
                                     <div class="m-icon-panel">
-                                        <img src="/icon-discoverability.svg" alt="" class="m-icon-fill"/>
+                                        <img src="/icons/icon-discoverability.svg" alt="" class="m-icon-fill"/>
                                     </div>
                                     <h3 class="m-heading-2xl m-heading-spaced-md">Discoverability</h3>
                                     <p class="m-text-lg">
@@ -450,7 +450,7 @@ oatty apps create --name demo-app</code></pre>
 
                             <article class="m-card m-card--elevated">
                                 <div class="m-icon-box">
-                                    <img src="/icon-simplicity.svg" alt="" class="m-icon-fill"/>
+                                    <img src="/icons/icon-simplicity.svg" alt="" class="m-icon-fill"/>
                                 </div>
                                 <h3 class="m-heading-xl m-heading-spaced-sm">Simplicity</h3>
                                 <p class="m-card__text">
@@ -461,7 +461,7 @@ oatty apps create --name demo-app</code></pre>
 
                             <article class="m-card m-card--elevated">
                                 <div class="m-icon-box">
-                                    <img src="/icon-speed.svg" alt="" class="m-icon-fill"/>
+                                    <img src="/icons/icon-speed.svg" alt="" class="m-icon-fill"/>
                                 </div>
                                 <h3 class="m-heading-xl m-heading-spaced-sm">Speed</h3>
                                 <p class="m-card__text">
@@ -472,7 +472,7 @@ oatty apps create --name demo-app</code></pre>
 
                             <article class="m-card m-card--elevated">
                                 <div class="m-icon-box">
-                                    <img src="/icon-consistency.svg" alt="" class="m-icon-fill"/>
+                                    <img src="/icons/icon-consistency.svg" alt="" class="m-icon-fill"/>
                                 </div>
                                 <h3 class="m-heading-xl m-heading-spaced-sm">Consistency</h3>
                                 <p class="m-card__text">
@@ -514,7 +514,7 @@ oatty apps create --name demo-app</code></pre>
                             <div class="l-grid l-grid--features-tight">
                                 <article class="m-card m-card--feature-tile">
                                     <h3 class="m-heading-xl m-feature-title m-heading-spaced-sm">
-                                        <img src="/icon-library.svg" alt="" class="m-feature-title__icon"/>
+                                        <img src="/icons/icon-library.svg" alt="" class="m-feature-title__icon"/>
                                         Library Management
                                     </h3>
                                     <p class="m-card__text m-card__text--spaced-lg">
@@ -528,7 +528,7 @@ oatty apps create --name demo-app</code></pre>
 
                                 <article class="m-card m-card--feature-tile">
                                     <h3 class="m-heading-xl m-feature-title m-heading-spaced-sm">
-                                        <img src="/icon-workflow.svg" alt="" class="m-feature-title__icon"/>
+                                        <img src="/icons/icon-workflow.svg" alt="" class="m-feature-title__icon"/>
                                         Workflow Catalog
                                     </h3>
                                     <p class="m-card__text m-card__text--spaced-lg">
@@ -542,7 +542,7 @@ oatty apps create --name demo-app</code></pre>
 
                                 <article class="m-card m-card--feature-tile">
                                     <h3 class="m-heading-xl m-feature-title m-heading-spaced-sm">
-                                        <img src="/icon-run.svg" alt="" class="m-feature-title__icon"/>
+                                        <img src="/icons/icon-run.svg" alt="" class="m-feature-title__icon"/>
                                         Command Execution
                                     </h3>
                                     <p class="m-card__text m-card__text--spaced-lg">
@@ -558,7 +558,7 @@ oatty apps create --name demo-app</code></pre>
                             <div class="l-grid l-grid--mcp-features">
                                 <article class="m-card m-card--feature-tile">
                                     <h3 class="m-heading-xl m-feature-title m-heading-spaced-sm">
-                                        <img src="/icon-mcp-server.svg" alt="" class="m-feature-title__icon"/>
+                                        <img src="/icons/icon-mcp-server.svg" alt="" class="m-feature-title__icon"/>
                                         MCP Server Mode
                                     </h3>
                                     <p class="m-card__text m-card__text--spaced-lg">
@@ -572,7 +572,7 @@ oatty apps create --name demo-app</code></pre>
 
                                 <article class="m-card m-card--feature-tile">
                                     <h3 class="m-heading-xl m-feature-title m-heading-spaced-sm">
-                                        <img src="/icon-mcp-client.svg" alt="" class="m-feature-title__icon"/>
+                                        <img src="/icons/icon-mcp-client.svg" alt="" class="m-feature-title__icon"/>
                                         MCP Client Mode
                                     </h3>
                                     <p class="m-card__text m-card__text--spaced-lg">
@@ -588,7 +588,7 @@ oatty apps create --name demo-app</code></pre>
                             <div class="l-grid l-grid--four">
                                 <article class="m-card m-card--surface">
                                     <h3 class="m-heading-lg m-feature-title m-heading-spaced-sm">
-                                        <img src="/icon-value-providers.svg" alt=""
+                                        <img src="/icons/icon-value-providers.svg" alt=""
                                              class="m-feature-title__icon m-feature-title__icon--small"/>
                                         Value Providers
                                     </h3>
@@ -600,7 +600,7 @@ oatty apps create --name demo-app</code></pre>
 
                                 <article class="m-card m-card--surface">
                                     <h3 class="m-heading-lg m-feature-title m-heading-spaced-sm">
-                                        <img src="/icon-command-browser.svg" alt=""
+                                        <img src="/icons/icon-command-browser.svg" alt=""
                                              class="m-feature-title__icon m-feature-title__icon--small"/>
                                         Command Browser
                                     </h3>
@@ -612,7 +612,7 @@ oatty apps create --name demo-app</code></pre>
 
                                 <article class="m-card m-card--surface">
                                     <h3 class="m-heading-lg m-feature-title m-heading-spaced-sm">
-                                        <img src="/icon-rich-logging.svg" alt=""
+                                        <img src="/icons/icon-rich-logging.svg" alt=""
                                              class="m-feature-title__icon m-feature-title__icon--small"/>
                                         Rich Logging
                                     </h3>

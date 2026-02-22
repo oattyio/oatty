@@ -55,7 +55,7 @@ export const howOattyExecutesSafelyPage: DocsPage = {
                 },
                 {
                     type: 'advanced',
-                    content: 'For workflows, use `workflow.resolve_inputs` for input/provider readiness, then `workflow.validate` (or run precheck) for command/catalog readiness before execution.'
+                    content: 'Ask your AI assistant to help build/validate complex workflows via MCP.'
                 },
             ],
         },
@@ -64,17 +64,17 @@ export const howOattyExecutesSafelyPage: DocsPage = {
             title: 'Operator Control and Manual Overrides',
             paragraphs: [
                 'Assisted planning does not remove manual operation paths.',
-                'You can still run commands directly, edit workflow manifests, and provide inputs manually.',
+                'You can still run commands directly, edit workflow manifests in your IDE, and provide inputs manually before running.',
                 'This keeps behavior deterministic and audit-friendly in high-stakes changes.',
             ],
             callouts: [
                 {
                     type: 'tip',
-                    content: 'For production changes, prefer explicit command/workflow review over one-shot execution.'
+                    content: 'For production changes, prefer explicit command/workflow review over one-shot executions.'
                 },
                 {
                     type: 'fallback',
-                    content: 'Use CLI commands for explicit scriptable execution when you need non-interactive control.'
+                    content: 'Use CLI commands for explicit scriptable execution when you need non-interactive control in a CI/CD pipeline.'
                 },
             ],
         },

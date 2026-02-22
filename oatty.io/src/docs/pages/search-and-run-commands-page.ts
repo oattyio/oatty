@@ -7,8 +7,8 @@ import type {DocsPage} from '../types';
  */
 export const searchAndRunCommandsPage: DocsPage = {
     path: '/docs/learn/search-and-run-commands',
-    title: 'Search and Run Commands',
-    summary: 'Use the TUI command flow to find commands quickly, execute with confidence, and inspect results without leaving the interface.',
+    title: 'Search for and Run Commands',
+    summary: 'Use the TUI command flow to find commands quickly, execute with confidence, and inspect results without after completion.',
     learnBullets: [
         'Run the primary TUI search-to-execution path.',
         'Use command help and hints before execution.',
@@ -18,6 +18,30 @@ export const searchAndRunCommandsPage: DocsPage = {
     estimatedTime: '10-14 min',
     feedbackPrompt: 'Was this page helpful? Rate it or suggest improvements in docs feedback.',
     sections: [
+        {
+            id: 'flow',
+            title: 'Command Flow',
+            paragraphs: [
+                'Use the TUI to find and execute commands.',
+                'Use command help and hints to confirm expected inputs and command behavior.',
+                'Leverage value providers to provide dynamic inputs.',
+                'Use CLI fallback for automation and scripts.',
+            ],
+            callouts: [
+                {type: 'expected', content: 'You can find and execute commands in the TUI with minimal friction.'},
+                {
+                    type: 'recovery',
+                    content: 'If a command fails, verify authorization, inputs and command behavior before retrying.'
+                },
+                {
+                    type: 'screenshot',
+                    label: 'Run Command Flow',
+                    imageSrc: '/Oatty-command-run-flow.webp',
+                    imageAlt: 'Run command flow',
+                    content: 'Complete run flow that includes selected command, output, dynamic input and logs.'
+                },
+            ]
+        },
         {
             id: 'prerequisites',
             title: 'Prerequisites',
@@ -31,7 +55,7 @@ export const searchAndRunCommandsPage: DocsPage = {
                 {type: 'recovery', content: 'If no commands appear, import a catalog first in Library.'},
                 {
                     type: 'screenshot',
-                    imageSrc: '/Oatty-run.png',
+                    imageSrc: '/Oatty-run-empty.png',
                     imageAlt: 'Run command screenshot',
                     content: 'Capture Run Command focused with an empty input and visible hints.'
                 },
@@ -39,71 +63,53 @@ export const searchAndRunCommandsPage: DocsPage = {
             ],
         },
         {
-            id: 'open-run-command',
-            title: 'Open Run Command',
-            paragraphs: ['Navigate to Run Command from the left navigation.', 'Start typing your task phrase to query commands.'],
-            callouts: [
-                {type: 'expected', content: 'The command input is focused automatically and ready for text entry.'},
-                {
-                    type: 'recovery',
-                    content: 'If typing does not update input, press Tab until the input area is focused.'
-                },
-                {
-                    type: 'screenshot',
-                    imageSrc: '/Oatty-run.png',
-                    imageAlt: 'Run command screenshot',
-                    content: 'Capture Run Command with focused input and active cursor.'
-                },
-            ],
-        },
-        {
             id: 'search-and-select',
-            title: 'Step 2: Search and Select a Command',
-            paragraphs: ['Type a task phrase such as `create app`.', 'Use Up and Down to change selection in the suggestion list.', 'Confirm the selected command before executing.'],
+            title: 'Search for and Select a Command',
+            paragraphs: ['Navigate to Run Command from the left navigation.', 'Type a task phrase such as `create`, then press TAB.', 'Use Up and Down to change selection in the suggestion list.'],
             callouts: [
-                {type: 'expected', content: 'A relevant command is selected in the suggestion list.'},
+                {type: 'expected', content: 'Relevant commands are listed and selectable in the suggestion list.'},
                 {
                     type: 'recovery',
                     content: 'If search returns nothing, verify catalog import and try broader search terms.'
                 },
                 {
                     type: 'screenshot',
-                    imageSrc: '/Oatty-run.png',
+                    imageSrc: '/Oatty-command-suggestions.png',
                     imageAlt: 'Run command screenshot',
-                    content: 'Capture suggestion list open with one highlighted command.'
+                    content: 'Suggestion list open with one highlighted command.'
                 },
                 {
                     type: 'advanced',
-                    content: 'Selection behavior is focus-scoped. Hints remain the source of truth for active controls.'
+                    content: 'Suggestions are positional. Command arguments and flags are also searchable once a command is selected from the list.'
                 },
             ],
         },
         {
             id: 'review-help',
-            title: 'Step 3: Review Help Before Running',
-            paragraphs: ['Open command help from the active command context.', 'Verify required inputs and expected command shape.', 'Return to input and complete required values.'],
+            title: 'Review Help Before Running',
+            paragraphs: ['Open command help from the active command context by pressing F1.', 'Verify required inputs and expected command shape.', 'Return to input using Esc the key and complete required values.'],
             callouts: [
-                {type: 'expected', content: 'Required inputs are known before execution.'},
+                {type: 'expected', content: 'Help modal shows the full command metadata.'},
                 {
                     type: 'recovery',
-                    content: 'If help is unavailable, switch focus to the command area and read the hints bar for supported actions.'
+                    content: 'If help is not shown, verify the desired command is selected in the suggestions list or the command has been typed in the input.'
                 },
                 {
                     type: 'screenshot',
-                    imageSrc: '/Oatty-run.png',
-                    imageAlt: 'Run command screenshot',
-                    content: 'Capture command help visible with required input details.'
+                    imageSrc: '/Oatty-review-command-help.png',
+                    imageAlt: 'Oatty help modal screenshot',
+                    content: 'Command help visible with required input details.'
                 },
                 {
                     type: 'advanced',
-                    content: 'Use this step to prevent avoidable execution failures from missing required arguments.'
+                    content: 'Use help to quickly reference the full command details including args, flags, and defaults. Use Esc to close help and return to input.'
                 },
             ],
         },
         {
             id: 'execute-command',
-            title: 'Step 4: Execute and Inspect Output',
-            paragraphs: ['Run the selected command from the command runner.', 'Inspect structured output in the result view.', 'Open logs to verify completion or debug failures.'],
+            title: 'Execute and Inspect Output',
+            paragraphs: ['Run the selected command from the command runner.', 'Inspect structured output in the result view.'],
             callouts: [
                 {
                     type: 'expected',
@@ -111,13 +117,13 @@ export const searchAndRunCommandsPage: DocsPage = {
                 },
                 {
                     type: 'recovery',
-                    content: 'If execution fails, read the first actionable log message, adjust required inputs, and rerun.'
+                    content: 'If execution fails, an error message is displayed and a log entry made - adjust inputs or address message contents and rerun.'
                 },
                 {
                     type: 'screenshot',
-                    imageSrc: '/Oatty-run.png',
+                    imageSrc: '/Oatty-command-results.png',
                     imageAlt: 'Run command screenshot',
-                    content: 'Capture executed result state and a selected log entry tied to the run.'
+                    content: 'Result table showing the payload af the command.'
                 },
                 {
                     type: 'fallback',
@@ -127,7 +133,7 @@ export const searchAndRunCommandsPage: DocsPage = {
         },
         {
             id: 'find-browser-handoff',
-            title: 'Step 5: Use Find Browser for Discovery',
+            title: 'Use Find/Browser for Discovery',
             paragraphs: ['Open Find to browse commands with summaries and categories.', 'Select a command and send it to Run Command.', 'Execute from Run Command after reviewing inputs.'],
             callouts: [
                 {type: 'expected', content: 'A command selected in Find appears in Run Command ready for execution.'},
@@ -137,9 +143,9 @@ export const searchAndRunCommandsPage: DocsPage = {
                 },
                 {
                     type: 'screenshot',
-                    imageSrc: '/Oatty-run.png',
-                    imageAlt: 'Run command screenshot',
-                    content: 'Capture Find browser with selected command and the post-handoff Run Command state.'
+                    imageSrc: '/Oatty-find-and-runcommand-flow.webp',
+                    imageAlt: 'Oatty find and run command flow',
+                    content: 'Find command then run it'
                 },
                 {
                     type: 'advanced',
@@ -151,7 +157,6 @@ export const searchAndRunCommandsPage: DocsPage = {
             id: 'cli-fallback',
             title: 'CLI Fallback for Automation',
             paragraphs: ['Use CLI search when you need non-interactive discovery.', 'Run commands directly in scripts and CI with explicit inputs.'],
-            codeSample: `oatty search "create app"\noatty apps create --name demo-app`,
             callouts: [
                 {type: 'expected', content: 'You can execute the same command path outside the TUI.'},
                 {
@@ -170,12 +175,6 @@ export const searchAndRunCommandsPage: DocsPage = {
             paragraphs: ['Continue to Library and Catalogs to manage command sources.', 'Then continue to Workflows to compose repeatable multi-step execution.'],
             callouts: [
                 {type: 'expected', content: 'You can discover and run commands reliably in both TUI and CLI contexts.'},
-                {
-                    type: 'screenshot',
-                    imageSrc: '/Oatty-run.png',
-                    imageAlt: 'Run command screenshot',
-                    content: 'Capture a completed run state that includes selected command, output, and logs.'
-                },
             ],
         },
     ],

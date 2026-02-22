@@ -10,18 +10,18 @@ use std::vec;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use oatty_registry::CommandSpec;
 use oatty_types::{
-    Effect, ExecOutcome, ItemKind, MessageType, Modal, Msg, ProviderSelectorActionPayload, ValueProvider as ProviderBinding,
-    decode_provider_selector_action,
+    decode_provider_selector_action, Effect, ExecOutcome, ItemKind, MessageType, Modal, Msg, ProviderSelectorActionPayload,
+    ValueProvider as ProviderBinding,
 };
 use oatty_util::lex_shell_like;
 use oatty_util::truncate_with_ellipsis;
 use rat_focus::{FocusFlag, HasFocus};
 use ratatui::{
-    Frame,
     layout::{Constraint, Layout, Rect},
     prelude::*,
     text::{Line, Span},
     widgets::*,
+    Frame,
 };
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
@@ -29,10 +29,10 @@ use crate::app::App;
 use crate::ui::components::common::text_input::cursor_index_for_column;
 use crate::ui::components::common::{ConfirmationModalButton, ConfirmationModalOpts};
 use crate::ui::components::palette::suggestion_engine::{build_inputs_map_for_flag, build_inputs_map_for_positional};
-use crate::ui::theme::theme_helpers::{ButtonType, create_list_with_highlight};
+use crate::ui::theme::theme_helpers::{create_list_with_highlight, ButtonType};
 use crate::ui::{
     components::component::Component,
-    theme::{Theme, theme_helpers as th},
+    theme::{theme_helpers as th, Theme},
 };
 
 static FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
@@ -243,7 +243,17 @@ impl PaletteComponent {
     /// * `app` - The application state to update
     fn handle_help_request(&self, app: &mut App) -> Vec<Effect> {
         let mut effects = app.rebuild_palette_suggestions();
-        let spec = app.palette.selected_command();
+        let spec = app.palette.selected_command().or_else(|| {
+            let cmd = app.palette.input().to_string();
+            let tokens = lex_shell_like(&cmd);
+            if tokens.len() >= 2
+                && let Some(lock) = app.ctx.command_registry.lock().ok()
+            {
+                return lock.find_by_group_and_cmd_cloned(&tokens[0], &tokens[1]).ok();
+            }
+            None
+        });
+
         if spec.is_some() {
             app.help.set_spec(spec);
             effects.push(Effect::ShowModal(Modal::Help));

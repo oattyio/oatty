@@ -3,9 +3,9 @@
 
 use crate::app::App;
 use crate::ui::components::component::Component;
-use crate::ui::components::workflows::WorkflowInputViewState;
 use crate::ui::components::workflows::input::state::{InputStatus, WorkflowInputRow};
 use crate::ui::components::workflows::view_utils::style_for_role;
+use crate::ui::components::workflows::WorkflowInputViewState;
 use crate::ui::theme::theme_helpers::create_list_with_highlight;
 use crate::ui::theme::{
     roles::Theme,
@@ -19,13 +19,13 @@ use ratatui::layout::Position;
 use ratatui::symbols::merge::MergeStrategy;
 use ratatui::widgets::Block;
 use ratatui::{
-    Frame,
     layout::{Constraint, Layout, Rect, Spacing},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Borders, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
+    Frame,
 };
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 use std::cell::Ref;
 use unicode_width::UnicodeWidthStr;
 
@@ -265,8 +265,8 @@ impl Component for WorkflowInputsComponent {
             .split(main[1]);
         let layout_areas = Layout::horizontal([
             Constraint::Length(12), // cancel
-            Constraint::Length(14), // reset field
-            Constraint::Length(12), // reset all
+            Constraint::Length(15), // reset field
+            Constraint::Length(13), // reset all
             Constraint::Length(14), // plan
             Constraint::Length(12), // run
             Constraint::Length(2),  // padding
