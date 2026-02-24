@@ -1,0 +1,23 @@
+/* Document-level fallback styles before component hydration */
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  color-scheme: dark;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  background: linear-gradient(180deg, #1a1f2e 0%, #12161f 100%);
+  color: #eceff4;
+  min-height: 100vh;
+}
+
+oatty-site-app {
+  display: block;
+}

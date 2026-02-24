@@ -755,25 +755,25 @@ fn step_template_missing_path_next_step(
 ) -> String {
     if details.nested_candidates.len() == 1 {
         return format!(
-            "Update the template to use '${{{{ steps.{}.{} }}}}' and rerun workflow.validate.",
+            "Update the template to use '${{{{ steps.{}.{} }}}}' and rerun workflow_validate.",
             referenced_step_identifier, details.nested_candidates[0]
         );
     }
     if !details.nested_candidates.is_empty() {
         return format!(
-            "Update the template to an explicit output path from step '{}' (candidates: {}) and rerun workflow.validate.",
+            "Update the template to an explicit output path from step '{}' (candidates: {}) and rerun workflow_validate.",
             referenced_step_identifier,
             details.nested_candidates.join(", ")
         );
     }
     if details.available_fields.is_empty() {
         return format!(
-            "Update the template to a valid output path from step '{}' or use a command with a richer output schema, then rerun workflow.validate.",
+            "Update the template to a valid output path from step '{}' or use a command with a richer output schema, then rerun workflow_validate.",
             referenced_step_identifier
         );
     }
     format!(
-        "Update the template to one of step '{}' output fields ({}) and rerun workflow.validate.",
+        "Update the template to one of step '{}' output fields ({}) and rerun workflow_validate.",
         referenced_step_identifier,
         details.available_fields.join(", ")
     )

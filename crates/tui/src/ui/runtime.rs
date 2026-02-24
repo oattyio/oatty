@@ -68,7 +68,7 @@ async fn spawn_input_thread() -> (mpsc::Receiver<Event>, tokio::sync::watch::Sen
             if *shutdown_receiver.borrow() {
                 break;
             }
-            if event::poll(sixteen_ms).is_ok() {
+            if event::poll(sixteen_ms).unwrap_or(false) {
                 match event::read() {
                     Ok(event) => {
                         // Throttle mouse moves events to once per 16 ms.

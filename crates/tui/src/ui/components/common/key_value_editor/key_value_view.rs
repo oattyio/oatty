@@ -130,6 +130,21 @@ impl KeyValueEditorView {
                     focus.focus(&state.f_key_field);
                 }
             }
+            KeyCode::Char(' ') | KeyCode::Enter if state.f_show_secrets_button.get() => {
+                state.toggle_show_secrets();
+            }
+            KeyCode::Char(' ') | KeyCode::Enter if state.f_remove_button.get() => {
+                state.delete_selected_row();
+            }
+            KeyCode::Char(' ') | KeyCode::Enter if state.f_add_button.get() => {
+                state.add_new_row();
+                focus.focus(&state.f_key_field);
+            }
+            KeyCode::Esc => {
+                if state.selected_row().is_some() && state.is_selected_row_empty() {
+                    state.delete_selected_row();
+                }
+            }
             KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => {
                 state.delete_selected_row();
             }
@@ -144,9 +159,6 @@ impl KeyValueEditorView {
             }
             KeyCode::Delete => {
                 state.delete_next_character();
-            }
-            KeyCode::Char(' ') | KeyCode::Enter if state.f_show_secrets_button.get() => {
-                state.toggle_show_secrets();
             }
             KeyCode::Char(character) if self.is_regular_character_input(modifiers) => {
                 if state.selected_row().is_none() {

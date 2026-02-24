@@ -274,18 +274,24 @@ impl Component for PluginsEditComponent {
 
         let focus_areas = self.layout.focus_areas();
         if let Some(idx) = find_target_index_by_mouse_position(&self.layout.container_area, &focus_areas, pos.x, pos.y) {
-            let focusables = [
-                &edit_state.f_transport,    // local transport radio
-                &edit_state.f_transport,    // remote transport radio
-                &edit_state.f_name,         // Name
-                &edit_state.f_command,      // Command
-                &edit_state.f_args,         // Args
-                &edit_state.f_base_url,     // Base URL
-                &edit_state.f_btn_validate, // Validate button
-                &edit_state.f_btn_save,     // Save button
-                &edit_state.f_btn_cancel,   // Cancel button
-            ];
-            app.focus.focus(focusables[idx]);
+            let focused_flag = match idx {
+                0 | 1 => &edit_state.f_transport,
+                2 => &edit_state.f_name,
+                3 => {
+                    if matches!(edit_state.transport, PluginTransport::Local) {
+                        &edit_state.f_command
+                    } else {
+                        &edit_state.f_base_url
+                    }
+                }
+                4 => &edit_state.f_args,
+                5 => &edit_state.f_base_url,
+                6 => &edit_state.f_btn_validate,
+                7 => &edit_state.f_btn_save,
+                8 => &edit_state.f_btn_cancel,
+                _ => return Vec::new(),
+            };
+            app.focus.focus(focused_flag);
             match idx {
                 0 | 1 => self.handle_radio_button_click(edit_state, pos),
                 2 => self.set_cursor_for_input(edit_state, edit_state.f_name.widget_id(), self.layout.name_area, "Name", pos.x),
@@ -327,7 +333,7 @@ impl Component for PluginsEditComponent {
                 _ => {}
             }
             // Buttons
-            if (2..=8).contains(&idx) {
+            if (6..=8).contains(&idx) {
                 return handle_enter_key(app);
             }
         }
@@ -523,11 +529,15 @@ fn render_form_fields(
         }
     }
     render_validation_message(frame, sections[3], theme, &add_state.kv_editor.validate_focused_row());
+    let (command_area, args_area, base_url_area) = match add_state.transport {
+        PluginTransport::Local => (sections[1], sections[2], Rect::default()),
+        PluginTransport::Remote => (Rect::default(), Rect::default(), sections[1]),
+    };
     EditPluginFormLayout {
         name_area: sections[0],
-        command_area: sections[1],
-        args_area: sections[2],
-        base_url_area: sections[1],
+        command_area,
+        args_area,
+        base_url_area,
     }
 }
 

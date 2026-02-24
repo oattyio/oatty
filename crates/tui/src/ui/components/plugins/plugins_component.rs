@@ -10,10 +10,17 @@ use super::{PluginsEditComponent, PluginsTableComponent};
 use crate::ui::components::plugins::plugin_editor::state::PluginEditViewState;
 use crate::{
     app::App,
-    ui::{components::component::Component, theme::theme_helpers::build_hint_spans},
+    ui::{
+        components::{
+            common::{ConfirmationModalButton, ConfirmationModalOpts},
+            component::Component,
+        },
+        theme::theme_helpers::{ButtonType, build_hint_spans},
+    },
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent};
-use oatty_types::{Effect, Msg};
+use oatty_types::{Effect, MessageType, Modal, Msg};
+use rat_focus::FocusFlag;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect, Spacing},
@@ -33,17 +40,39 @@ use ratatui::{
 /// while managing the overall state and user interaction flow. Each child component
 /// (like PluginAddViewState) manages its own focus through the HasFocus trait,
 /// ensuring proper encapsulation and separation of concerns.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct PluginsComponent {
     /// Child component for displaying the plugin list results
     table_component: PluginsTableComponent,
     /// Child component for the add plugin
     edit_component: PluginsEditComponent,
+    /// Focus flag for the delete confirmation modal confirm action.
+    confirm_delete_button: FocusFlag,
+    /// Pending plugin name awaiting delete confirmation.
+    pending_delete_plugin_name: Option<String>,
+}
+
+impl Default for PluginsComponent {
+    fn default() -> Self {
+        Self {
+            table_component: PluginsTableComponent::default(),
+            edit_component: PluginsEditComponent::default(),
+            confirm_delete_button: FocusFlag::new().with_name("plugins.delete.confirm"),
+            pending_delete_plugin_name: None,
+        }
+    }
 }
 
 impl Component for PluginsComponent {
-    fn handle_message(&mut self, _app: &mut App, _msg: Msg) -> Vec<Effect> {
-        Vec::new()
+    fn handle_message(&mut self, _app: &mut App, msg: Msg) -> Vec<Effect> {
+        match msg {
+            Msg::ConfirmationModalButtonClicked(button_id) => self.handle_confirmation_click(button_id),
+            Msg::ConfirmationModalClosed => {
+                self.pending_delete_plugin_name = None;
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// Handles keyboard events for the plugins component and its children.
@@ -65,7 +94,7 @@ impl Component for PluginsComponent {
         let mut effects = self.handle_control_shortcuts(app, key_event);
 
         if let Some(child_effects) = self.delegate_to_focused_child_component(app, key_event) {
-            effects.extend(child_effects);
+            effects.extend(self.intercept_delete_effects(app, child_effects));
             return effects;
         }
 
@@ -105,7 +134,8 @@ impl Component for PluginsComponent {
     /// * `edit_component`
     fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
         let mut effects = vec![];
-        effects.extend(self.table_component.handle_mouse_events(app, mouse));
+        let table_effects = self.table_component.handle_mouse_events(app, mouse);
+        effects.extend(self.intercept_delete_effects(app, table_effects));
         effects.extend(self.edit_component.handle_mouse_events(app, mouse));
         effects
     }
@@ -161,6 +191,49 @@ impl Component for PluginsComponent {
 }
 
 impl PluginsComponent {
+    fn intercept_delete_effects(&mut self, app: &mut App, effects: Vec<Effect>) -> Vec<Effect> {
+        let mut transformed_effects = Vec::with_capacity(effects.len());
+        for effect in effects {
+            match effect {
+                Effect::PluginsDelete(plugin_name) => {
+                    transformed_effects.extend(self.prompt_delete_confirmation(app, plugin_name));
+                }
+                other_effect => transformed_effects.push(other_effect),
+            }
+        }
+        transformed_effects
+    }
+
+    fn prompt_delete_confirmation(&mut self, app: &mut App, plugin_name: String) -> Vec<Effect> {
+        let message = format!(
+            "Are you sure you want to remove MCP plugin '{}'?\nThis action cannot be undone.",
+            plugin_name
+        );
+        let buttons = vec![
+            ConfirmationModalButton::new("Cancel", FocusFlag::new(), ButtonType::Secondary),
+            ConfirmationModalButton::new("Confirm", self.confirm_delete_button.clone(), ButtonType::Destructive),
+        ];
+        app.confirmation_modal_state.update_opts(ConfirmationModalOpts {
+            title: Some("Destructive Action".to_string()),
+            message: Some(message),
+            r#type: Some(MessageType::Warning),
+            buttons,
+        });
+        self.pending_delete_plugin_name = Some(plugin_name);
+        vec![Effect::ShowModal(Modal::Confirmation)]
+    }
+
+    fn handle_confirmation_click(&mut self, button_id: usize) -> Vec<Effect> {
+        if button_id != self.confirm_delete_button.widget_id() {
+            self.pending_delete_plugin_name = None;
+            return Vec::new();
+        }
+        let Some(plugin_name) = self.pending_delete_plugin_name.take() else {
+            return Vec::new();
+        };
+        vec![Effect::PluginsDelete(plugin_name)]
+    }
+
     /// Delegates keyboard events to the currently focused child component.
     ///
     /// This method prefers the add/edit view when it owns focus and otherwise
@@ -187,6 +260,9 @@ impl PluginsComponent {
         }
 
         if app.plugins.table.container_focus.get() {
+            if matches!(key_event.code, KeyCode::Tab | KeyCode::BackTab) {
+                return None;
+            }
             return Some(self.table_component.handle_key_events(app, key_event));
         }
 

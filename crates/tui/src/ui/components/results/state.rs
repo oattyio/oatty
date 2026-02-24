@@ -1,6 +1,7 @@
 use crate::ui::theme::Theme;
 use crate::ui::utils::normalize_result_payload_owned;
 use crate::ui::{
+    components::common::ScrollMetrics,
     theme::{
         roles::Theme as UiTheme,
         theme_helpers::{table_header_style, table_row_style},
@@ -48,6 +49,9 @@ pub struct ResultsTableState<'a> {
     pub container_focus: FocusFlag,
     pub grid_f: FocusFlag,
     pub mouse_over_idx: Option<usize>,
+    split_preview_pinned: bool,
+    split_preview_scroll_metrics: ScrollMetrics,
+    selected_kv_value_overflows: bool,
 }
 
 impl<'a> Default for ResultsTableState<'a> {
@@ -67,6 +71,9 @@ impl<'a> Default for ResultsTableState<'a> {
             container_focus: FocusFlag::default(),
             grid_f: FocusFlag::default(),
             mouse_over_idx: None,
+            split_preview_pinned: false,
+            split_preview_scroll_metrics: ScrollMetrics::default(),
+            selected_kv_value_overflows: false,
         }
     }
 }
@@ -163,6 +170,58 @@ impl<'a> ResultsTableState<'a> {
         }
         let index = idx.min(self.kv_entries.len() - 1);
         self.kv_entries.get(index)
+    }
+
+    /// Sets whether the selected key/value row currently overflows the list row width.
+    pub fn set_selected_kv_value_overflows(&mut self, selected_kv_value_overflows: bool) {
+        self.selected_kv_value_overflows = selected_kv_value_overflows;
+        if !self.should_show_split_preview() {
+            self.split_preview_scroll_metrics.scroll_to_top();
+        }
+    }
+
+    /// Returns whether the split preview should be visible.
+    pub fn should_show_split_preview(&self) -> bool {
+        self.split_preview_pinned || self.selected_kv_value_overflows
+    }
+
+    /// Toggles whether the split preview remains visible even when content fits.
+    pub fn toggle_split_preview_pinned(&mut self) {
+        self.split_preview_pinned = !self.split_preview_pinned;
+        if !self.should_show_split_preview() {
+            self.split_preview_scroll_metrics.scroll_to_top();
+        }
+    }
+
+    /// Updates split preview content and viewport metrics.
+    pub fn update_split_preview_metrics(&mut self, content_height: u16, viewport_height: u16) {
+        self.split_preview_scroll_metrics.update_content_height(content_height);
+        self.split_preview_scroll_metrics.update_viewport_height(viewport_height);
+    }
+
+    /// Returns current split preview vertical scroll offset.
+    pub const fn split_preview_scroll_offset(&self) -> u16 {
+        self.split_preview_scroll_metrics.offset()
+    }
+
+    /// Scrolls split preview by line count.
+    pub fn scroll_split_preview_lines(&mut self, delta: i16) {
+        self.split_preview_scroll_metrics.scroll_lines(delta);
+    }
+
+    /// Scrolls split preview by viewport pages.
+    pub fn scroll_split_preview_pages(&mut self, delta: i16) {
+        self.split_preview_scroll_metrics.scroll_pages(delta);
+    }
+
+    /// Moves split preview scroll position to the first line.
+    pub fn scroll_split_preview_to_top(&mut self) {
+        self.split_preview_scroll_metrics.scroll_to_top();
+    }
+
+    /// Moves split preview scroll position to the last visible page.
+    pub fn scroll_split_preview_to_bottom(&mut self) {
+        self.split_preview_scroll_metrics.scroll_to_bottom();
     }
 
     pub fn apply_result_json(&mut self, value: Option<Value>, theme: &dyn UiTheme, rerank_columns: bool) {
@@ -495,6 +554,9 @@ impl<'a> ResultsTableState<'a> {
         self.table_state = TableState::default();
         self.list_state = ListState::default();
         self.truncated_col_idx = 0;
+        self.split_preview_scroll_metrics.reset();
+        self.selected_kv_value_overflows = false;
+        self.split_preview_pinned = false;
         if !self.kv_entries.is_empty() {
             self.list_state.select(Some(0));
         }

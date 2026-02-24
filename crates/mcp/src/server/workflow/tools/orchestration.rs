@@ -17,6 +17,7 @@ use std::sync::{Arc, Mutex};
 pub fn author_and_run(request: &WorkflowAuthorAndRunRequest, command_registry: &Arc<Mutex<CommandRegistry>>) -> Result<Value, ErrorData> {
     let validation = validate_workflow(
         &WorkflowValidateRequest {
+            workflow_id: None,
             manifest_content: Some(request.manifest_content.clone()),
             input_path: None,
             format: request.format.clone(),
@@ -43,7 +44,7 @@ pub fn author_and_run(request: &WorkflowAuthorAndRunRequest, command_registry: &
                 "WORKFLOW_AUTHOR_RUN_INVALID_SAVE_RESPONSE",
                 "workflow save response did not include workflow_id",
                 serde_json::json!({ "save": save_summary }),
-                "Retry workflow.author_and_run.",
+                "Retry workflow_author_and_run.",
             )
         })?
         .to_string();
@@ -67,7 +68,7 @@ pub fn author_and_run(request: &WorkflowAuthorAndRunRequest, command_registry: &
             "WORKFLOW_AUTHOR_RUN_MISSING_INPUTS",
             "workflow inputs are incomplete",
             serde_json::json!({ "workflow_id": workflow_identifier, "required_missing": missing }),
-            "Provide required inputs and retry workflow.author_and_run.",
+            "Provide required inputs and retry workflow_author_and_run.",
             missing
                 .into_iter()
                 .map(|value| {
@@ -126,7 +127,7 @@ pub fn author_and_run(request: &WorkflowAuthorAndRunRequest, command_registry: &
             "WORKFLOW_AUTHOR_RUN_INPUTS_NOT_READY",
             "workflow inputs are not ready for execution",
             serde_json::json!({ "workflow_id": workflow_identifier }),
-            "Resolve provider prompts/errors and retry workflow.author_and_run.",
+            "Resolve provider prompts/errors and retry workflow_author_and_run.",
             violations,
         ));
     }

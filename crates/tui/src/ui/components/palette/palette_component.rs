@@ -243,7 +243,17 @@ impl PaletteComponent {
     /// * `app` - The application state to update
     fn handle_help_request(&self, app: &mut App) -> Vec<Effect> {
         let mut effects = app.rebuild_palette_suggestions();
-        let spec = app.palette.selected_command();
+        let spec = app.palette.selected_command().or_else(|| {
+            let cmd = app.palette.input().to_string();
+            let tokens = lex_shell_like(&cmd);
+            if tokens.len() >= 2
+                && let Some(lock) = app.ctx.command_registry.lock().ok()
+            {
+                return lock.find_by_group_and_cmd_cloned(&tokens[0], &tokens[1]).ok();
+            }
+            None
+        });
+
         if spec.is_some() {
             app.help.set_spec(spec);
             effects.push(Effect::ShowModal(Modal::Help));

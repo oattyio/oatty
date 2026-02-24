@@ -33,10 +33,10 @@ Documentation is a core adoption engine --- not a support artifact.
 
 Vendor tooling is fragmented:
 
--   Thin CLIs with partial API coverage
--   Separate MCP surfaces with restricted capability
--   Script-based automation lacking validation and review
--   Inconsistent UX patterns across vendors
+- Thin CLIs with partial API coverage
+- Separate MCP surfaces with restricted capability
+- Script-based automation lacking validation and review
+- Inconsistent UX patterns across vendors
 
 This produces: - Relearning costs - Operational drift - Cognitive
 overload - Platform inefficiencies
@@ -45,9 +45,9 @@ overload - Platform inefficiencies
 
 Developers are increasingly operating across:
 
--   Multiple SaaS vendors
--   Multiple internal APIs
--   AI-assisted workflows
+- Multiple SaaS vendors
+- Multiple internal APIs
+- AI-assisted workflows
 
 There is no unified operational layer.
 
@@ -70,10 +70,10 @@ Long-Term Vision:
 
 Oatty becomes the default operational surface for:
 
--   Vendor APIs
--   Internal platform APIs
--   MCP-based tools
--   Human-in-the-loop automation
+- Vendor APIs
+- Internal platform APIs
+- MCP-based tools
+- Human-in-the-loop automation
 
 The CLI becomes a programmable interface. The TUI becomes an exploratory
 surface. Workflows become the automation primitive. MCP becomes the
@@ -104,10 +104,10 @@ User shares workflow or builds plugin.
 
 First Success (within 10 minutes):
 
-1.  Import an OpenAPI spec
-2.  Discover a command via search
-3.  Execute the command
-4.  Run or create a simple workflow
+1. Import an OpenAPI spec
+2. Discover a command via search
+3. Execute the command
+4. Run or create a simple workflow
 
 Instrumentation (future): - Track time-to-first-command - Track
 time-to-first-workflow - Track workflow persistence rate
@@ -129,12 +129,12 @@ These are non-negotiable design constraints.
 
 Canonical narrative:
 
-1.  Import API
-2.  Search command
-3.  Execute command
-4.  Compose workflow
-5.  Add provider
-6.  Run workflow with confirmation
+1. Import API
+2. Search command
+3. Execute command
+4. Compose workflow
+5. Add provider
+6. Run workflow with confirmation
 
 This single path powers: - Demo - Website - Quickstart - Conference
 talks - Blog posts
@@ -143,13 +143,13 @@ talks - Blog posts
 
 # 9. Differentiation Matrix
 
-  Dimension                  Vendor CLI   Raw MCP   Oatty
+Dimension Vendor CLI Raw MCP Oatty
   -------------------------- ------------ --------- -------
-  Full API Coverage          Partial      Partial   Yes
-  Discoverable UI            Limited      None      Yes
-  Workflow Native            Rare         No        Yes
-  Cross-Vendor Consistency   No           No        Yes
-  Human-in-the-Loop          No           Limited   Yes
+Full API Coverage Partial Partial Yes
+Discoverable UI Limited None Yes
+Workflow Native Rare No Yes
+Cross-Vendor Consistency No No Yes
+Human-in-the-Loop No Limited Yes
 
 ------------------------------------------------------------------------
 
@@ -184,7 +184,7 @@ Mitigation: Progressive disclosure and Golden Path emphasis.
 Short-Term: - Time-to-first-workflow under 10 minutes - 50% of new users
 execute workflow in first session
 
-Mid-Term: - 30% reduction in bespoke script usage (internal
+Mid-Term: - 30% reduction in custom script usage (internal
 environments) - 25% repeat usage rate within 7 days
 
 Long-Term: - Community plugin ecosystem growth - Standardized internal
@@ -196,10 +196,10 @@ adoption
 
 To succeed, Oatty requires:
 
--   UX discipline enforcement
--   Clear narrative ownership
--   Documentation treated as product
--   Focus on one polished Golden Path before expanding scope
+- UX discipline enforcement
+- Clear narrative ownership
+- Documentation treated as product
+- Focus on one polished Golden Path before expanding scope
 
 ------------------------------------------------------------------------
 

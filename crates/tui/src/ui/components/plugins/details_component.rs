@@ -4,28 +4,31 @@ use super::{PluginDetailsData, PluginDetailsModalState, PluginToolSummary};
 use crate::{
     app::App,
     ui::{
-        components::{component::Component, plugins::PluginDetailsLoadState},
+        components::{common::render_vertical_scrollbar, component::Component, plugins::PluginDetailsLoadState},
         theme::{Theme, theme_helpers as th},
     },
 };
 use chrono::{DateTime, Local};
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use oatty_mcp::{EnvVar, McpLogEntry, PluginDetail, PluginStatus};
 use oatty_types::Effect;
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout, Rect, Spacing},
+    layout::{Constraint, Direction, Layout, Position, Rect, Spacing},
     style::{Modifier, Style},
     symbols::merge::MergeStrategy,
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, Paragraph, Row, Scrollbar, ScrollbarOrientation, ScrollbarState, Table, Wrap},
+    widgets::{Block, Borders, List, ListItem, Paragraph, Row, Table, Wrap},
 };
 use textwrap::wrap;
 
 /// Renderable implementation of the plugin details modal, including tab navigation and
 /// lifecycle management shortcuts.
 #[derive(Debug, Default)]
-pub struct PluginsDetailsComponent;
+pub struct PluginsDetailsComponent {
+    logs_scroll_area: Rect,
+    tools_scroll_area: Rect,
+}
 
 impl Component for PluginsDetailsComponent {
     /// Handles keyboard events and generates a list of effects based on the input.
@@ -86,25 +89,49 @@ impl Component for PluginsDetailsComponent {
         };
 
         let control_pressed = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alternate_pressed = key.modifiers.contains(KeyModifiers::ALT);
         match key.code {
             KeyCode::Esc => effects.push(Effect::CloseModal),
             KeyCode::Up => {
-                if let PluginDetailsLoadState::Loaded(data) = details_state.load_state() {
-                    let data = data.as_ref();
-                    let total = data.logs.len();
-                    if total > 0 {
-                        details_state.scroll_logs_up(1);
-                    }
+                if alternate_pressed {
+                    details_state.scroll_tools_lines(-1);
+                } else {
+                    details_state.scroll_logs_lines(-1);
                 }
             }
             KeyCode::Down => {
-                if let PluginDetailsLoadState::Loaded(data) = details_state.load_state() {
-                    let data = data.as_ref();
-                    let total = data.logs.len();
-                    if total > 0 {
-                        // We don't know the visible height here; clamp in render
-                        details_state.scroll_logs_down(1, total.saturating_sub(1));
-                    }
+                if alternate_pressed {
+                    details_state.scroll_tools_lines(1);
+                } else {
+                    details_state.scroll_logs_lines(1);
+                }
+            }
+            KeyCode::PageUp => {
+                if alternate_pressed {
+                    details_state.scroll_tools_pages(-1);
+                } else {
+                    details_state.scroll_logs_pages(-1);
+                }
+            }
+            KeyCode::PageDown => {
+                if alternate_pressed {
+                    details_state.scroll_tools_pages(1);
+                } else {
+                    details_state.scroll_logs_pages(1);
+                }
+            }
+            KeyCode::Home => {
+                if alternate_pressed {
+                    details_state.scroll_tools_to_top();
+                } else {
+                    details_state.scroll_logs_to_top();
+                }
+            }
+            KeyCode::End => {
+                if alternate_pressed {
+                    details_state.scroll_tools_to_bottom();
+                } else {
+                    details_state.scroll_logs_to_bottom();
                 }
             }
             KeyCode::Char('r') if !control_pressed => {
@@ -134,8 +161,25 @@ impl Component for PluginsDetailsComponent {
         effects
     }
 
+    fn handle_mouse_events(&mut self, app: &mut App, mouse: MouseEvent) -> Vec<Effect> {
+        let Some(details_state) = app.plugins.details.as_mut() else {
+            return Vec::new();
+        };
+        let position = Position::new(mouse.column, mouse.row);
+        match mouse.kind {
+            MouseEventKind::ScrollDown if self.tools_scroll_area.contains(position) => details_state.scroll_tools_lines(1),
+            MouseEventKind::ScrollUp if self.tools_scroll_area.contains(position) => details_state.scroll_tools_lines(-1),
+            MouseEventKind::ScrollDown if self.logs_scroll_area.contains(position) => details_state.scroll_logs_lines(1),
+            MouseEventKind::ScrollUp if self.logs_scroll_area.contains(position) => details_state.scroll_logs_lines(-1),
+            _ => {}
+        }
+        Vec::new()
+    }
+
     fn render(&mut self, frame: &mut Frame, area: Rect, app: &mut App) {
         let theme = &*app.ctx.theme;
+        self.logs_scroll_area = Rect::default();
+        self.tools_scroll_area = Rect::default();
 
         let title = modal_title(app.plugins.details.as_ref());
         let block = Block::default()
@@ -185,13 +229,14 @@ impl Component for PluginsDetailsComponent {
             .split(left_inner);
 
         self.render_header(frame, left_layout[0], theme, app.plugins.details.as_ref());
-        self.render_content(frame, left_layout[1], theme, app.plugins.details.as_ref());
+        self.render_content(frame, left_layout[1], theme, app.plugins.details.as_mut());
 
         // Render tools list spanning the full right column height when data is loaded
-        if let Some(state) = app.plugins.details.as_ref()
-            && let PluginDetailsLoadState::Loaded(data) = state.load_state()
-        {
-            self.render_tools(frame, tools_inner, theme, data.as_ref());
+        if let Some(details_state) = app.plugins.details.as_mut() {
+            let load_state = details_state.load_state().clone();
+            if let PluginDetailsLoadState::Loaded(data) = load_state {
+                self.render_tools(frame, tools_inner, theme, details_state, data.as_ref());
+            }
         }
     }
 
@@ -250,7 +295,17 @@ impl Component for PluginsDetailsComponent {
     ///
     fn get_hint_spans(&self, app: &App) -> Vec<Span<'_>> {
         let theme = &*app.ctx.theme;
-        let mut spans = th::build_hint_spans(theme, &[("Esc", " Close  "), ("↑/↓", " Scroll logs  "), ("R", " Refresh  ")]);
+        let mut spans = th::build_hint_spans(
+            theme,
+            &[
+                ("Esc", " Close  "),
+                ("↑/↓", " Scroll logs  "),
+                ("Alt+↑/↓", " Scroll tools  "),
+                ("PgUp/PgDn", " Page logs  "),
+                ("Alt+PgUp/PgDn", " Page tools  "),
+                ("R", " Refresh  "),
+            ],
+        );
 
         if let Some(details) = app.plugins.details.as_ref()
             && matches!(details.load_state(), PluginDetailsLoadState::Loaded(_))
@@ -299,7 +354,7 @@ impl PluginsDetailsComponent {
         frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: true }), area);
     }
 
-    fn render_content(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, details_state: Option<&PluginDetailsModalState>) {
+    fn render_content(&mut self, frame: &mut Frame, area: Rect, theme: &dyn Theme, details_state: Option<&mut PluginDetailsModalState>) {
         let Some(state) = details_state else {
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(
@@ -311,7 +366,8 @@ impl PluginsDetailsComponent {
             return;
         };
 
-        match state.load_state() {
+        let load_state = state.load_state().clone();
+        match load_state {
             PluginDetailsLoadState::Idle => frame.render_widget(
                 Paragraph::new(Line::from(Span::styled(
                     "Select a plugin to load details",
@@ -366,25 +422,25 @@ impl PluginsDetailsComponent {
                 );
 
                 let body_area = header_body[1];
-                let visible = body_area.height as usize;
-                let max_scroll = total.saturating_sub(visible);
-                let offset = state.logs_scroll().min(max_scroll);
+                self.logs_scroll_area = body_area;
+                state.update_logs_viewport_height(body_area.height);
+                state.update_logs_content_height(total as u16);
+                let visible = usize::from(state.logs_viewport_height());
+                let offset = usize::from(state.logs_scroll_offset());
                 // Prepare visible items respecting offset
                 let items: Vec<ListItem> = data.logs.iter().map(|log| format_log(theme, log)).collect();
                 let end = (offset + visible).min(items.len());
                 let visible_items = if offset < end { items[offset..end].to_vec() } else { vec![] };
                 frame.render_widget(List::new(visible_items), body_area);
 
-                // Scrollbar at right of log body
-                if total > visible && visible > 0 {
-                    let scrollable_range = total.saturating_sub(visible).saturating_add(1);
-                    let mut sb_state = ScrollbarState::new(scrollable_range)
-                        .position(offset)
-                        .viewport_content_length(visible);
-                    let sb = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-                        .thumb_style(Style::default().fg(theme.roles().scrollbar_thumb))
-                        .track_style(Style::default().fg(theme.roles().scrollbar_track));
-                    frame.render_stateful_widget(sb, body_area, &mut sb_state);
+                if state.is_logs_scrollable() {
+                    let content_length = usize::from(
+                        state
+                            .logs_content_height()
+                            .saturating_sub(state.logs_viewport_height())
+                            .saturating_add(1),
+                    );
+                    render_vertical_scrollbar(frame, body_area, theme, content_length, offset, visible.max(1));
                 }
             }
         }
@@ -535,8 +591,22 @@ impl PluginsDetailsComponent {
 
         frame.render_widget(table, chunks[1]);
     }
-    fn render_tools(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme, plugin_details: &PluginDetailsData) {
-        if plugin_details.tools.is_empty() {
+    fn render_tools(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        theme: &dyn Theme,
+        details_state: &mut PluginDetailsModalState,
+        plugin_details: &PluginDetailsData,
+    ) {
+        self.tools_scroll_area = area;
+        let tools: &[PluginToolSummary] = if plugin_details.tools.is_empty() {
+            &plugin_details.detail.tools
+        } else {
+            &plugin_details.tools
+        };
+
+        if tools.is_empty() {
             frame.render_widget(
                 Paragraph::new(Line::from(Span::styled("No tools exposed", theme.text_muted_style()))),
                 area,
@@ -544,9 +614,29 @@ impl PluginsDetailsComponent {
             return;
         }
 
-        let items: Vec<ListItem> = plugin_details.tools.iter().map(|tool| format_tool(theme, tool, area)).collect();
+        let mut lines: Vec<Line> = Vec::new();
+        for (index, tool) in tools.iter().enumerate() {
+            lines.extend(format_tool_lines(theme, tool, area));
+            if index + 1 < tools.len() {
+                lines.push(Line::from(Span::raw("")));
+            }
+        }
 
-        frame.render_widget(List::new(items).block(Block::default()), area);
+        details_state.update_tools_viewport_height(area.height);
+        details_state.update_tools_content_height(lines.len().min(u16::MAX as usize) as u16);
+        let scroll_offset = details_state.tools_scroll_offset();
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }).scroll((scroll_offset, 0)), area);
+
+        if details_state.is_tools_scrollable() {
+            let viewport_height = usize::from(details_state.tools_viewport_height().max(1));
+            let content_length = usize::from(
+                details_state
+                    .tools_content_height()
+                    .saturating_sub(details_state.tools_viewport_height())
+                    .saturating_add(1),
+            );
+            render_vertical_scrollbar(frame, area, theme, content_length, usize::from(scroll_offset), viewport_height);
+        }
     }
 
     fn render_hrule(&self, frame: &mut Frame, area: Rect, theme: &dyn Theme) {
@@ -632,26 +722,27 @@ fn format_log(theme: &dyn Theme, log: &McpLogEntry) -> ListItem<'static> {
     ]))
 }
 
-fn format_tool<'a>(theme: &dyn Theme, tool: &'a PluginToolSummary, area: Rect) -> ListItem<'a> {
-    let mut spans = Vec::new();
-    spans.push(Span::styled(tool.name.clone(), theme.accent_emphasis_style()));
+fn format_tool_lines(theme: &dyn Theme, tool: &PluginToolSummary, area: Rect) -> Vec<Line<'static>> {
+    let mut title_spans = Vec::new();
+    title_spans.push(Span::styled(tool.name.clone(), theme.accent_emphasis_style()));
     if let Some(title) = &tool.title {
-        spans.push(Span::raw(" — "));
-        spans.push(Span::styled(title.clone(), theme.text_muted_style()));
+        title_spans.push(Span::raw(" - "));
+        title_spans.push(Span::styled(title.clone(), theme.text_muted_style()));
     }
 
-    let mut lines = vec![Line::from(spans)];
+    let mut lines = vec![Line::from(title_spans)];
     if let Some(description) = &tool.description {
         let wrap_width = usize::from(area.width.max(1));
-        let wrapped: Vec<Line> = wrap(description.as_str(), wrap_width)
+        let wrapped_descriptions: Vec<Line> = wrap(description.as_str(), wrap_width)
             .into_iter()
-            .map(|line| Line::from(Span::raw(line)).style(theme.text_muted_style()))
+            .map(|line| Line::from(Span::styled(line.into_owned(), theme.text_muted_style())))
             .collect();
-        lines.extend(wrapped)
+        lines.extend(wrapped_descriptions);
     }
+
     if let Some(summary) = &tool.auth_summary {
         lines.push(Line::from(Span::styled(format!("Auth: {summary}"), theme.text_muted_style())));
     }
 
-    ListItem::new(lines)
+    lines
 }

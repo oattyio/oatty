@@ -2,6 +2,8 @@
 
 ## Why Multi-Step API Work Is Mentally Expensive (And How Oatty Reduces It)
 
+> Superseded: use `/Users/justinwilaby/Development/next-gen-cli/oatty.io/docs/Oatty_Coordination_Cost_OSS_v2.md` as the canonical version for current messaging.
+
 ------------------------------------------------------------------------
 
 # What Is Coordination Cost?
@@ -58,8 +60,8 @@ Scoring:\
   Surface Area             5              4                4          2
   Mental Model Count       5              4                4          2
   Implicit Coupling Risk   5              4                5          1
-  Failure Debuggability    2              3                2          5
-  Refactor Safety          2              3                2          4
+  Failure Debuggability    5              4                5          1
+  Refactor Safety          5              4                5          2
 
 ------------------------------------------------------------------------
 

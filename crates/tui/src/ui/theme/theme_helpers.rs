@@ -198,6 +198,20 @@ pub fn tabs<'a>(theme: &dyn Theme, titles: Vec<Span<'a>>, index: usize) -> Tabs<
         .style(theme.text_secondary_style())
 }
 
+/// Disabled button label style.
+///
+/// Disabled buttons should be less prominent than enabled controls across every theme
+/// variant. Using the border role keeps that relationship stable even in high-contrast
+/// palettes where `text_muted` may be brighter than standard border text.
+fn disabled_button_label_style(theme: &dyn Theme) -> Style {
+    Style::default().fg(theme.roles().border)
+}
+
+/// Disabled button border style.
+fn disabled_button_border_style(theme: &dyn Theme) -> Style {
+    Style::default().fg(theme.roles().border)
+}
+
 /// Primary button style (filled accent background).
 pub fn button_primary_style(theme: &dyn Theme, enabled: bool, selected: bool) -> Style {
     if enabled {
@@ -205,7 +219,7 @@ pub fn button_primary_style(theme: &dyn Theme, enabled: bool, selected: bool) ->
         let style = Style::default().fg(text).add_modifier(Modifier::BOLD);
         if selected { style.bg(accent_primary) } else { style }
     } else {
-        theme.text_muted_style()
+        disabled_button_label_style(theme)
     }
 }
 
@@ -220,7 +234,7 @@ pub fn button_secondary_style(theme: &dyn Theme, enabled: bool, selected: bool) 
         let style = Style::default().fg(accent_secondary);
         if selected { style.bg(selection_bg) } else { style }
     } else {
-        theme.text_muted_style()
+        disabled_button_label_style(theme)
     }
 }
 
@@ -231,7 +245,7 @@ pub fn button_destructive_style(theme: &dyn Theme, enabled: bool, selected: bool
         let style = Style::default().fg(error).add_modifier(Modifier::BOLD);
         if selected { style.bg(error).fg(selection_fg) } else { style }
     } else {
-        theme.text_muted_style()
+        disabled_button_label_style(theme)
     }
 }
 
@@ -317,7 +331,7 @@ pub fn render_button(frame: &mut Frame, area: Rect, label: &str, theme: &dyn The
     let border_style = if options.enabled {
         theme.border_style(options.focused)
     } else {
-        theme.text_muted_style()
+        disabled_button_border_style(theme)
     };
 
     let button_style = match options.button_type {

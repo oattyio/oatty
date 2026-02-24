@@ -17,7 +17,7 @@ use ratatui::{
     layout::{Constraint, Rect},
     style::Modifier,
     text::Span,
-    widgets::{Block, Borders, Row, Table},
+    widgets::{Block, Borders, HighlightSpacing, Row, Table},
 };
 
 /// Table column width constraints for the plugin results.
@@ -564,11 +564,12 @@ impl Component for PluginsTableComponent {
         let column_constraints = Self::create_column_constraints();
 
         let highlight_style = theme.selection_style().add_modifier(Modifier::BOLD);
-        let highlight_symbol = if table_state.f_grid.get() { "> " } else { "" };
+        let highlight_symbol = if table_state.f_grid.get() { "> " } else { "  " };
         let table_widget = Table::new(table_rows, column_constraints)
             .header(table_header)
             .row_highlight_style(highlight_style)
             .highlight_symbol(highlight_symbol)
+            .highlight_spacing(HighlightSpacing::Always)
             .block(
                 Block::default()
                     .borders(Borders::ALL)

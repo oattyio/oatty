@@ -96,6 +96,11 @@ impl McpClient {
         Arc::clone(&self.tools)
     }
 
+    /// Refresh and return the current tool snapshot from the active MCP service.
+    pub async fn refresh_tool_snapshot(&mut self) -> Result<Arc<Vec<McpToolMetadata>>> {
+        self.refresh_tools().await
+    }
+
     /// Current plugin status.
     pub fn status(&self) -> PluginStatus {
         self.status
@@ -173,6 +178,15 @@ impl McpClient {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("plugin '{}' is not connected", self.name))?;
 
+        Self::call_tool_with_service(service, tool_name, arguments).await
+    }
+
+    /// Invoke a tool using a previously captured running service handle.
+    pub async fn call_tool_with_service(
+        service: &RunningService<RoleClient, ()>,
+        tool_name: &str,
+        arguments: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<rmcp::model::CallToolResult> {
         let call_future = service.call_tool(CallToolRequestParams {
             name: tool_name.to_string().into(),
             arguments: Some(arguments.clone()),

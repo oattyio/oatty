@@ -89,7 +89,7 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
                 "input": blocked.input,
                 "argument": blocked.argument,
             }),
-            "Provide the missing workflow inputs and retry workflow.run.",
+            "Provide the missing workflow inputs and retry workflow_run.",
         ));
     }
 
@@ -100,7 +100,7 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
                 "WORKFLOW_RUN_REGISTRY_LOCK_FAILED",
                 format!("registry lock failed: {error}"),
                 serde_json::json!({ "workflow_id": state.workflow.identifier }),
-                "Retry workflow.run.",
+                "Retry workflow_run.",
             )
         })?
         .clone();
@@ -111,7 +111,7 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
         violations,
         "WORKFLOW_RUN_PRECHECK_FAILED",
         "workflow run blocked by command/catalog preflight validation",
-        "Fix listed step run identifiers and catalog configuration, then retry workflow.run.",
+        "Fix listed step run identifiers and catalog configuration, then retry workflow_run.",
     ) {
         return Err(error);
     }
@@ -160,7 +160,7 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
             error.to_string(),
             serde_json::json!({ "workflow_id": state.workflow.identifier, "run_id": run_identifier }),
             true,
-            "Retry workflow.run after verifying history directory permissions.",
+            "Retry workflow_run after verifying history directory permissions.",
         )
     })?;
 

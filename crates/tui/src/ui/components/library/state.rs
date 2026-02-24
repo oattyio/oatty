@@ -155,6 +155,7 @@ impl LibraryState {
         projection.base_urls.remove(selected);
         self.url_list_state.select_previous();
         self.base_url_input.clear();
+        self.is_dirty = true;
         true
     }
 

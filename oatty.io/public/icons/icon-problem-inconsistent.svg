@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="8 12 48 40" role="img" aria-label="Inconsistent commands icon">
+  <rect x="10" y="14" width="44" height="36" rx="8" fill="none" stroke="#5DA3F4" stroke-width="3" opacity="0.95"/>
+  <path d="M20 24 L30 34" fill="none" stroke="#BF616A" stroke-width="3.5" stroke-linecap="round"/>
+  <path d="M30 24 L20 34" fill="none" stroke="#BF616A" stroke-width="3.5" stroke-linecap="round"/>
+  <line x1="36" y1="26" x2="46" y2="26" stroke="#5DA3F4" stroke-width="2.5" stroke-linecap="round" opacity="0.85"/>
+  <line x1="36" y1="33" x2="42" y2="33" stroke="#5DA3F4" stroke-width="2.5" stroke-linecap="round" opacity="0.6"/>
+</svg>
