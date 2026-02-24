@@ -1,6 +1,7 @@
 //! State container for the plugin details modal, including loading lifecycle, tab selection,
 //! and the cached data required for rendering the overview/health/environment/logs/tools tabs.
 
+use crate::ui::components::common::ScrollMetrics;
 use indexmap::IndexSet;
 use oatty_mcp::{EnvVar, McpLogEntry, PluginDetail, PluginToolSummary};
 
@@ -62,7 +63,8 @@ impl PluginDetailsData {
 pub struct PluginDetailsModalState {
     selected_plugin: Option<String>,
     load_state: PluginDetailsLoadState,
-    logs_scroll: usize,
+    logs_scroll_metrics: ScrollMetrics,
+    tools_scroll_metrics: ScrollMetrics,
 }
 
 impl PluginDetailsModalState {
@@ -71,7 +73,8 @@ impl PluginDetailsModalState {
         Self {
             selected_plugin: None,
             load_state: PluginDetailsLoadState::Idle,
-            logs_scroll: 0,
+            logs_scroll_metrics: ScrollMetrics::default(),
+            tools_scroll_metrics: ScrollMetrics::default(),
         }
     }
 
@@ -88,7 +91,8 @@ impl PluginDetailsModalState {
     /// Transition to the loading state for a new plugin selection.
     pub fn begin_load(&mut self, plugin_name: String) {
         self.selected_plugin = Some(plugin_name);
-        self.logs_scroll = 0;
+        self.logs_scroll_metrics.reset();
+        self.tools_scroll_metrics.reset();
         self.load_state = PluginDetailsLoadState::Loading;
     }
 
@@ -102,16 +106,84 @@ impl PluginDetailsModalState {
         self.load_state = PluginDetailsLoadState::Loaded(Box::new(PluginDetailsData::new(detail)));
     }
 
-    pub fn logs_scroll(&self) -> usize {
-        self.logs_scroll
+    pub fn logs_scroll_offset(&self) -> u16 {
+        self.logs_scroll_metrics.offset()
     }
 
-    pub fn scroll_logs_up(&mut self, amount: usize) {
-        self.logs_scroll = self.logs_scroll.saturating_sub(amount);
+    pub fn update_logs_viewport_height(&mut self, viewport_height: u16) {
+        self.logs_scroll_metrics.update_viewport_height(viewport_height);
     }
 
-    pub fn scroll_logs_down(&mut self, amount: usize, max_scroll: usize) {
-        self.logs_scroll = (self.logs_scroll + amount).min(max_scroll);
+    pub fn update_logs_content_height(&mut self, content_height: u16) {
+        self.logs_scroll_metrics.update_content_height(content_height);
+    }
+
+    pub fn is_logs_scrollable(&self) -> bool {
+        self.logs_scroll_metrics.is_scrollable()
+    }
+
+    pub fn logs_viewport_height(&self) -> u16 {
+        self.logs_scroll_metrics.viewport_height()
+    }
+
+    pub fn logs_content_height(&self) -> u16 {
+        self.logs_scroll_metrics.content_height()
+    }
+
+    pub fn scroll_logs_lines(&mut self, delta: i16) {
+        self.logs_scroll_metrics.scroll_lines(delta);
+    }
+
+    pub fn scroll_logs_pages(&mut self, delta_pages: i16) {
+        self.logs_scroll_metrics.scroll_pages(delta_pages);
+    }
+
+    pub fn scroll_logs_to_top(&mut self) {
+        self.logs_scroll_metrics.scroll_to_top();
+    }
+
+    pub fn scroll_logs_to_bottom(&mut self) {
+        self.logs_scroll_metrics.scroll_to_bottom();
+    }
+
+    pub fn tools_scroll_offset(&self) -> u16 {
+        self.tools_scroll_metrics.offset()
+    }
+
+    pub fn update_tools_viewport_height(&mut self, viewport_height: u16) {
+        self.tools_scroll_metrics.update_viewport_height(viewport_height);
+    }
+
+    pub fn update_tools_content_height(&mut self, content_height: u16) {
+        self.tools_scroll_metrics.update_content_height(content_height);
+    }
+
+    pub fn is_tools_scrollable(&self) -> bool {
+        self.tools_scroll_metrics.is_scrollable()
+    }
+
+    pub fn tools_viewport_height(&self) -> u16 {
+        self.tools_scroll_metrics.viewport_height()
+    }
+
+    pub fn tools_content_height(&self) -> u16 {
+        self.tools_scroll_metrics.content_height()
+    }
+
+    pub fn scroll_tools_lines(&mut self, delta: i16) {
+        self.tools_scroll_metrics.scroll_lines(delta);
+    }
+
+    pub fn scroll_tools_pages(&mut self, delta_pages: i16) {
+        self.tools_scroll_metrics.scroll_pages(delta_pages);
+    }
+
+    pub fn scroll_tools_to_top(&mut self) {
+        self.tools_scroll_metrics.scroll_to_top();
+    }
+
+    pub fn scroll_tools_to_bottom(&mut self) {
+        self.tools_scroll_metrics.scroll_to_bottom();
     }
 }
 

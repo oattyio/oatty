@@ -10,7 +10,9 @@ use crate::{
     app::App,
     ui::{
         components::{
-            common::{ResultsTableView, handle_table_navigation_key, highlight_pretty_json_lines},
+            common::{
+                ResultsTableView, ScrollMetrics, handle_table_navigation_key, highlight_pretty_json_lines, render_vertical_scrollbar,
+            },
             component::Component,
             logs::state::LogEntry,
             results::build_key_value_entries,
@@ -25,9 +27,8 @@ use oatty_util::redact_sensitive;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
+    widgets::{Block, Borders, Paragraph, Wrap},
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -54,9 +55,7 @@ pub struct LogDetailsComponent {
     detail_area: Rect,
     detail_view_mode: DetailViewMode,
     last_selected_index: Option<usize>,
-    text_scroll_offset: u16,
-    text_content_height: u16,
-    text_viewport_height: u16,
+    text_scroll_metrics: ScrollMetrics,
     cached_pretty_json: Option<CachedPrettyJson>,
 }
 
@@ -140,58 +139,39 @@ impl LogDetailsComponent {
     }
 
     fn reset_text_scroll_state(&mut self) {
-        self.text_scroll_offset = 0;
-        self.text_content_height = 0;
-        self.text_viewport_height = 0;
+        self.text_scroll_metrics.reset();
     }
 
     fn update_text_viewport_height(&mut self, height: u16) {
-        self.text_viewport_height = height;
-        self.clamp_text_scroll();
+        self.text_scroll_metrics.update_viewport_height(height);
     }
 
     fn update_text_content_height(&mut self, height: u16) {
-        self.text_content_height = height;
-        self.clamp_text_scroll();
+        self.text_scroll_metrics.update_content_height(height);
     }
 
     fn max_text_scroll_offset(&self) -> u16 {
-        self.text_content_height.saturating_sub(self.text_viewport_height)
+        self.text_scroll_metrics.max_offset()
     }
 
     fn is_text_scrollable(&self) -> bool {
-        self.text_content_height > self.text_viewport_height && self.text_viewport_height > 0
-    }
-
-    fn clamp_text_scroll(&mut self) {
-        self.text_scroll_offset = self.text_scroll_offset.min(self.max_text_scroll_offset());
+        self.text_scroll_metrics.is_scrollable()
     }
 
     fn scroll_text_lines(&mut self, delta: i16) {
-        if delta == 0 || !self.is_text_scrollable() {
-            return;
-        }
-        let current = i32::from(self.text_scroll_offset);
-        let max = i32::from(self.max_text_scroll_offset());
-        let next = (current + i32::from(delta)).clamp(0, max);
-        self.text_scroll_offset = next as u16;
+        self.text_scroll_metrics.scroll_lines(delta);
     }
 
     fn scroll_text_pages(&mut self, delta_pages: i16) {
-        if delta_pages == 0 || self.text_viewport_height == 0 {
-            return;
-        }
-        let lines_per_page = self.text_viewport_height as i32;
-        let delta = lines_per_page.saturating_mul(delta_pages as i32);
-        self.scroll_text_lines(delta as i16);
+        self.text_scroll_metrics.scroll_pages(delta_pages);
     }
 
     fn scroll_text_to_top(&mut self) {
-        self.text_scroll_offset = 0;
+        self.text_scroll_metrics.scroll_to_top();
     }
 
     fn scroll_text_to_bottom(&mut self) {
-        self.text_scroll_offset = self.max_text_scroll_offset();
+        self.text_scroll_metrics.scroll_to_bottom();
     }
 
     fn handle_text_scroll_key(&mut self, code: KeyCode) -> bool {
@@ -229,16 +209,17 @@ impl LogDetailsComponent {
             return;
         }
 
-        let viewport_height = usize::from(self.text_viewport_height.max(1));
+        let viewport_height = usize::from(self.text_scroll_metrics.viewport_height().max(1));
         let max_scroll_offset = self.max_text_scroll_offset();
         let content_length = usize::from(max_scroll_offset.saturating_add(1));
-        let mut scrollbar_state = ScrollbarState::new(content_length)
-            .position(self.text_scroll_offset as usize)
-            .viewport_content_length(viewport_height);
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .thumb_style(Style::default().fg(app.ctx.theme.roles().scrollbar_thumb))
-            .track_style(Style::default().fg(app.ctx.theme.roles().scrollbar_track));
-        frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        render_vertical_scrollbar(
+            frame,
+            area,
+            &*app.ctx.theme,
+            content_length,
+            self.text_scroll_metrics.offset() as usize,
+            viewport_height,
+        );
     }
 
     fn render_scrollable_redacted_paragraph(&mut self, frame: &mut Frame, area: Rect, theme: &dyn Theme, text: &str, app: &App) {
@@ -251,7 +232,7 @@ impl LogDetailsComponent {
         let capped_height = line_count.min(u16::MAX as usize) as u16;
         self.update_text_content_height(capped_height);
 
-        paragraph = paragraph.scroll((self.text_scroll_offset, 0));
+        paragraph = paragraph.scroll((self.text_scroll_metrics.offset(), 0));
         frame.render_widget(paragraph, area);
         self.render_text_scrollbar(frame, area, app);
     }
@@ -281,7 +262,7 @@ impl LogDetailsComponent {
         let capped_height = line_count.min(u16::MAX as usize) as u16;
         self.update_text_content_height(capped_height);
 
-        paragraph = paragraph.scroll((self.text_scroll_offset, 0));
+        paragraph = paragraph.scroll((self.text_scroll_metrics.offset(), 0));
         frame.render_widget(paragraph, area);
         self.render_text_scrollbar(frame, area, app);
     }

@@ -20,7 +20,7 @@ export const searchAndRunCommandsPage: DocsPage = {
     sections: [
         {
             id: 'flow',
-            title: 'Command Flow',
+            title: 'Overview',
             paragraphs: [
                 'Use the TUI to find and execute commands.',
                 'Use command help and hints to confirm expected inputs and command behavior.',
@@ -28,10 +28,10 @@ export const searchAndRunCommandsPage: DocsPage = {
                 'Use CLI fallback for automation and scripts.',
             ],
             callouts: [
-                {type: 'expected', content: 'You can find and execute commands in the TUI with minimal friction.'},
                 {
-                    type: 'recovery',
-                    content: 'If a command fails, verify authorization, inputs and command behavior before retrying.'
+                    type: 'expected',
+                    label: 'Goal',
+                    content: 'You can find and execute commands in the TUI with minimal friction.'
                 },
                 {
                     type: 'screenshot',
@@ -55,6 +55,7 @@ export const searchAndRunCommandsPage: DocsPage = {
                 {type: 'recovery', content: 'If no commands appear, import a catalog first in Library.'},
                 {
                     type: 'screenshot',
+                    label: 'Run Command Empty Input',
                     imageSrc: '/Oatty-run-empty.png',
                     imageAlt: 'Run command screenshot',
                     content: 'Capture Run Command focused with an empty input and visible hints.'
@@ -74,6 +75,7 @@ export const searchAndRunCommandsPage: DocsPage = {
                 },
                 {
                     type: 'screenshot',
+                    label: 'Run Command Suggestions',
                     imageSrc: '/Oatty-command-suggestions.png',
                     imageAlt: 'Run command screenshot',
                     content: 'Suggestion list open with one highlighted command.'
@@ -96,6 +98,7 @@ export const searchAndRunCommandsPage: DocsPage = {
                 },
                 {
                     type: 'screenshot',
+                    label: 'Review Command Help',
                     imageSrc: '/Oatty-review-command-help.png',
                     imageAlt: 'Oatty help modal screenshot',
                     content: 'Command help visible with required input details.'
@@ -121,6 +124,7 @@ export const searchAndRunCommandsPage: DocsPage = {
                 },
                 {
                     type: 'screenshot',
+                    label: 'Run Command Result',
                     imageSrc: '/Oatty-command-results.png',
                     imageAlt: 'Run command screenshot',
                     content: 'Result table showing the payload af the command.'
@@ -143,6 +147,7 @@ export const searchAndRunCommandsPage: DocsPage = {
                 },
                 {
                     type: 'screenshot',
+                    label: 'Find and Run Command Flow',
                     imageSrc: '/Oatty-find-and-runcommand-flow.webp',
                     imageAlt: 'Oatty find and run command flow',
                     content: 'Find command then run it'

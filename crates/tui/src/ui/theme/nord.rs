@@ -102,11 +102,10 @@ fn build_nord_high_contrast_roles() -> ThemeRoles {
 
     roles.text = TEXT_SELECTED;
     roles.text_secondary = TEXT_SELECTED;
-    roles.text_muted = TEXT_SECONDARY;
+    roles.text_muted = lighten_rgb(TEXT_MUTED, 0.15);
 
     roles.warning = STATUS_PENDING;
-    roles.selection_bg = lighten_rgb(roles.selection_bg, 0.10);
-    roles.focus = ACCENT_DARK;
+    roles.focus = lighten_rgb(ACCENT_DARK, 0.75);
     roles.scrollbar_thumb = lighten_rgb(roles.scrollbar_thumb, 0.25);
     roles.table_row_even = darken_rgb(BG_PANEL, 0.50);
     roles.table_row_odd = darken_rgb(UI_DIVIDER, 0.50);
@@ -168,5 +167,20 @@ mod tests {
     fn nord_high_contrast_surface_matches_background() {
         let theme = NordThemeHighContrast::new();
         assert_eq!(theme.roles().surface, theme.roles().background);
+    }
+
+    #[test]
+    fn nord_high_contrast_uses_distinct_muted_text() {
+        let theme = NordThemeHighContrast::new();
+        assert_ne!(theme.roles().text_muted, theme.roles().text);
+        assert_ne!(theme.roles().text_muted, theme.roles().text_secondary);
+    }
+
+    #[test]
+    fn nord_high_contrast_uses_prominent_focus_and_selection() {
+        let theme = NordThemeHighContrast::new();
+        assert_ne!(theme.roles().focus, theme.roles().border);
+        assert_ne!(theme.roles().selection_bg, theme.roles().table_row_even);
+        assert_ne!(theme.roles().selection_bg, theme.roles().table_row_odd);
     }
 }

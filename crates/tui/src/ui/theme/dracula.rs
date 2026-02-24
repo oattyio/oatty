@@ -95,7 +95,7 @@ fn build_dracula_high_contrast_roles() -> ThemeRoles {
     roles.divider = lighten_rgb(roles.divider, 0.20);
     roles.text = TEXT_SELECTED;
     roles.text_secondary = TEXT_SELECTED;
-    roles.text_muted = TEXT_SECONDARY;
+    roles.text_muted = lighten_rgb(TEXT_MUTED, 0.10);
     roles.selection_bg = darken_rgb(lighten_rgb(SELECTION_INACTIVE_BACKGROUND, 0.10), 0.85);
     roles.focus = ACCENT_PRIMARY;
     roles.scrollbar_thumb = lighten_rgb(roles.scrollbar_thumb, 0.25);
@@ -122,6 +122,19 @@ impl DraculaTheme {
 impl Theme for DraculaTheme {
     fn roles(&self) -> &ThemeRoles {
         &self.roles
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::DraculaThemeHighContrast;
+    use crate::ui::theme::roles::Theme;
+
+    #[test]
+    fn dracula_high_contrast_uses_distinct_muted_text() {
+        let theme = DraculaThemeHighContrast::new();
+        assert_ne!(theme.roles().text_muted, theme.roles().text);
+        assert_ne!(theme.roles().text_muted, theme.roles().text_secondary);
     }
 }
 

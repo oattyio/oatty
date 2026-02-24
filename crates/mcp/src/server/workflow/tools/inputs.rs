@@ -114,7 +114,7 @@ pub fn resolve_inputs(request: &WorkflowResolveInputsRequest) -> Result<Value, E
             error.to_string(),
             serde_json::json!({ "workflow_id": runtime_workflow.identifier }),
             false,
-            "Inspect provider bindings and retry workflow.resolve_inputs.",
+            "Inspect provider bindings and retry workflow_resolve_inputs.",
         )
     })?;
 

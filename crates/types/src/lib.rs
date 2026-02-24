@@ -1156,6 +1156,12 @@ pub mod value_objects {
         pub is_secret: bool,
     }
 
+    impl EnvRow {
+        pub fn is_empty(&self) -> bool {
+            self.key.is_empty() && self.value.is_empty()
+        }
+    }
+
     impl From<&EnvVar> for EnvRow {
         fn from(value: &EnvVar) -> Self {
             Self {

@@ -159,7 +159,7 @@ upstream state.
 
 ## Evidence
 
--   `workflow.resolve_inputs` readiness checks.
+-   `workflow_resolve_inputs` readiness checks.
 -   Provider bindings receive resolved input context.
 -   Dependency alignment enforced via validation rules.
 

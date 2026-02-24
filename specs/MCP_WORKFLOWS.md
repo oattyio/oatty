@@ -42,23 +42,23 @@ These are served as prompt templates and argument-validated in prompt handlers.
 ## Exposed workflow tools
 
 Implemented workflow tool surface includes:
-- `workflow.list`
-- `workflow.get`
-- `workflow.validate`
-- `workflow.save`
-- `workflow.export`
-- `workflow.import`
-- `workflow.rename`
-- `workflow.delete`
-- `workflow.preview_inputs`
-- `workflow.resolve_inputs`
-- `workflow.run`
-- `workflow.step_plan`
-- `workflow.preview_rendered`
-- `workflow.cancel`
-- `workflow.purge_history`
-- `workflow.author_and_run`
-- `workflow.repair_and_rerun`
+- `workflow_list`
+- `workflow_get`
+- `workflow_validate`
+- `workflow_save`
+- `workflow_export`
+- `workflow_import`
+- `workflow_rename`
+- `workflow_delete`
+- `workflow_preview_inputs`
+- `workflow_resolve_inputs`
+- `workflow_run`
+- `workflow_step_plan`
+- `workflow_preview_rendered`
+- `workflow_cancel`
+- `workflow_purge_history`
+- `workflow_author_and_run`
+- `workflow_repair_and_rerun`
 
 ## Command discovery metadata for authoring
 
@@ -108,13 +108,14 @@ Implemented workflow tool surface includes:
 
 ## Input resolution and readiness semantics
 
-- `workflow.resolve_inputs` applies defaults, evaluates provider bindings, validates values, and returns readiness metadata.
+- `workflow_resolve_inputs` applies defaults, evaluates provider bindings, validates values, and returns readiness metadata.
 - Readiness includes required input completeness and provider outcome status.
-- `workflow.run` rejects unresolved provider prompt/error situations with structured errors.
+- `workflow_run` rejects unresolved provider prompt/error situations with structured errors.
 
 ## Manifest validation semantics
 
-- `workflow.validate` / `workflow.save` enforce a hard provider dependency rule from runtime normalization:
+- `workflow_validate` accepts exactly one source: `workflow_id`, `manifest_content`, or `input_path`.
+- `workflow_validate` / `workflow_save` enforce a hard provider dependency rule from runtime normalization:
   - For provider-backed inputs, any upstream-referencing `provider_args.<arg>` must declare a matching `depends_on.<arg>`.
   - Upstream-referencing means:
     - binding form with `from_input` or `from_step`
@@ -126,9 +127,9 @@ Implemented workflow tool surface includes:
 
 ## Execution behavior
 
-- `workflow.run` currently executes synchronously in tool implementation and returns run results/outputs.
+- `workflow_run` currently executes synchronously in tool implementation and returns run results/outputs.
 - Response includes execution mode metadata and task-mode recommendation flags.
-- Task-capability path is supported through MCP operation processor integration (`workflow.cancel` targets operation IDs).
+- Task-capability path is supported through MCP operation processor integration (`workflow_cancel` targets operation IDs).
 
 ## Error contract
 

@@ -109,7 +109,7 @@ impl OattyMcpCore {
 
     #[tool(
         annotations(read_only_hint = true),
-        description = "Find executable commands by intent. Use first before any run_* call. Use during workflow authoring to discover valid step `run` values (canonical command IDs in `<group> <command>` format, for example `apps apps:list`). Input: query, optional vendor, optional limit, optional include_inputs(none|required_only|full). Canonical direct-hit queries return exactly one result when found. include_inputs=none returns minimal discovery metadata (canonical_id, execution_type, http_method). include_inputs=required_only adds required input fields, compact provider_inputs hints, and compact output_fields. include_inputs=full adds complete positional_args, flags, provider_inputs, and output_fields. For full nested output schema, call get_command with `output_schema_detail=full`. For exact single-command inspection after discovery, use get_command with canonical_id. Authoring decision rule: if required commands are still not discoverable after two focused searches, switch to catalog.validate_openapi -> catalog.preview_import -> catalog.import_openapi before drafting workflow steps. Efficiency rule: after candidate canonical IDs are found, stop fuzzy search and switch to get_command; use at most one include_inputs=full search per vendor/intent. Routing: GET -> run_safe_command, POST/PUT/PATCH -> run_command, DELETE -> run_destructive_command, MCP -> run_safe_command or run_command."
+        description = "Find executable commands by intent. Use first before any run_* call. Use during workflow authoring to discover valid step `run` values (canonical command IDs in `<group> <command>` format, for example `apps apps:list`). Input: query, optional vendor, optional limit, optional include_inputs(none|required_only|full). Canonical direct-hit queries return exactly one result when found. include_inputs=none returns minimal discovery metadata (canonical_id, execution_type, http_method). include_inputs=required_only adds required input fields, compact provider_inputs hints, and compact output_fields. include_inputs=full adds complete positional_args, flags, provider_inputs, and output_fields. For full nested output schema, call get_command with `output_schema_detail=full`. For exact single-command inspection after discovery, use get_command with canonical_id. Authoring decision rule: if required commands are still not discoverable after two focused searches, switch to catalog_validate_openapi -> catalog_preview_import -> catalog_import_openapi before drafting workflow steps. Efficiency rule: after candidate canonical IDs are found, stop fuzzy search and switch to get_command; use at most one include_inputs=full search per vendor/intent. Routing: GET -> run_safe_command, POST/PUT/PATCH -> run_command, DELETE -> run_destructive_command, MCP -> run_safe_command or run_command."
     )]
     async fn search_commands(&self, param: Parameters<SearchRequestParam>) -> Result<CallToolResult, ErrorData> {
         let direct_hit = {
@@ -163,7 +163,7 @@ impl OattyMcpCore {
                     "vendor": vendor_name,
                     "results": 0
                 }),
-                "Check list_command_topics for a disabled/alternate catalog. If present, enable it with catalog.set_enabled; otherwise import the vendor OpenAPI catalog via catalog.validate_openapi -> catalog.preview_import -> catalog.import_openapi, then retry search_commands.",
+                "Check list_command_topics for a disabled/alternate catalog. If present, enable it with catalog_set_enabled; otherwise import the vendor OpenAPI catalog via catalog_validate_openapi -> catalog_preview_import -> catalog_import_openapi, then retry search_commands.",
             ));
         }
         if let Some(limit) = param.0.limit {
@@ -184,7 +184,7 @@ impl OattyMcpCore {
                 )
             })?
         };
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
             "search_commands",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
@@ -202,7 +202,7 @@ impl OattyMcpCore {
         let output_schema_detail = param.0.output_schema_detail.unwrap_or_default();
         let provider_metadata_detail = param.0.include_providers.unwrap_or_default();
         let structured = build_command_summary(&command_spec, output_schema_detail, provider_metadata_detail);
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
             "get_command",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
@@ -225,7 +225,7 @@ impl OattyMcpCore {
                     "Retry list_command_topics. If this persists, check registry/plugin connectivity.",
                 )
             })?;
-        let response = CallToolResult::structured(serde_json::json!(catalogs));
+        let response = build_structured_tool_result(serde_json::json!(catalogs));
         self.emit_log(
             "list_command_catalogs",
             None,
@@ -247,7 +247,7 @@ impl OattyMcpCore {
                     "Use list_command_topics and choose an entry with type='command'; for plugin entries use search_commands with vendor instead.",
                 )
             })?;
-        let response = CallToolResult::structured(serde_json::json!(summaries));
+        let response = build_structured_tool_result(serde_json::json!(summaries));
         self.emit_log(
             "get_command_summaries_by_catalog",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
@@ -301,15 +301,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "catalog.validate_openapi",
+        name = "catalog_validate_openapi",
         annotations(read_only_hint = true),
         description = "Validate an OpenAPI source before import. Input: source, source_type?. Returns valid, document_kind, operation_count, warnings, violations."
     )]
     async fn catalog_validate_openapi(&self, param: Parameters<CatalogValidateOpenApiRequest>) -> Result<CallToolResult, ErrorData> {
         let preview = validate_openapi_source(&param.0).await?;
-        let response = CallToolResult::structured(preview);
+        let response = build_structured_tool_result(preview);
         self.emit_log(
-            "catalog.validate_openapi",
+            "catalog_validate_openapi",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -317,15 +317,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "catalog.preview_import",
+        name = "catalog_preview_import",
         annotations(read_only_hint = true),
         description = "Preview OpenAPI catalog import without writing files. Input: source, source_type?, catalog_title, vendor?, base_url?, include_command_preview?."
     )]
     async fn catalog_preview_import(&self, param: Parameters<CatalogPreviewImportRequest>) -> Result<CallToolResult, ErrorData> {
         let preview = preview_openapi_import(&param.0).await?;
-        let response = CallToolResult::structured(preview);
+        let response = build_structured_tool_result(preview);
         self.emit_log(
-            "catalog.preview_import",
+            "catalog_preview_import",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -333,15 +333,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "catalog.import_openapi",
+        name = "catalog_import_openapi",
         annotations(open_world_hint = true),
         description = "Import OpenAPI schema into runtime catalog configuration. Input: source, source_type?, catalog_title, vendor?, base_url?, overwrite?, enabled?. This mutates local config and should be treated as a user-approved action. If APIs require auth, ask user to configure catalog headers (for example Authorization) before execution."
     )]
     async fn catalog_import_openapi(&self, param: Parameters<CatalogImportOpenApiRequest>) -> Result<CallToolResult, ErrorData> {
         let imported = import_openapi_catalog(&self.services.command_registry, &param.0).await?;
-        let response = CallToolResult::structured(imported);
+        let response = build_structured_tool_result(imported);
         self.emit_log(
-            "catalog.import_openapi",
+            "catalog_import_openapi",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -349,15 +349,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "catalog.set_enabled",
+        name = "catalog_set_enabled",
         annotations(open_world_hint = true),
         description = "Enable or disable an existing runtime catalog. Input: catalog_id, enabled."
     )]
     async fn catalog_set_enabled(&self, param: Parameters<CatalogSetEnabledRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = set_catalog_enabled_state(&self.services.command_registry, &param.0)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "catalog.set_enabled",
+            "catalog_set_enabled",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -413,15 +413,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "catalog.remove",
+        name = "catalog_remove",
         annotations(open_world_hint = true),
         description = "Remove an existing runtime catalog entry. Input: catalog_id, remove_manifest?."
     )]
     async fn catalog_remove(&self, param: Parameters<CatalogRemoveRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = remove_catalog_runtime(&self.services.command_registry, &param.0)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "catalog.remove",
+            "catalog_remove",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -431,33 +431,33 @@ impl OattyMcpCore {
     #[tool(description = "List available workflows")]
     async fn get_workflows(&self) -> Result<CallToolResult, ErrorData> {
         let structured = list_workflows()?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log("get_workflows", None, Some(serde_json::to_value(&response).unwrap_or(Value::Null)));
         Ok(response)
     }
 
     #[tool(
-        name = "workflow.list",
+        name = "workflow_list",
         annotations(read_only_hint = true),
         description = "List filesystem-backed workflow manifests with path, format, and version metadata."
     )]
     async fn workflow_list(&self) -> Result<CallToolResult, ErrorData> {
         let structured = list_workflows()?;
-        let response = CallToolResult::structured(structured);
-        self.emit_log("workflow.list", None, Some(serde_json::to_value(&response).unwrap_or(Value::Null)));
+        let response = build_structured_tool_result(structured);
+        self.emit_log("workflow_list", None, Some(serde_json::to_value(&response).unwrap_or(Value::Null)));
         Ok(response)
     }
 
     #[tool(
-        name = "workflow.get",
+        name = "workflow_get",
         annotations(read_only_hint = true),
         description = "Retrieve workflow manifest content for editing, including content version metadata. Optional flags: include_content (default true), include_parsed (default false)."
     )]
     async fn workflow_get(&self, param: Parameters<WorkflowGetRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = get_workflow(&param.0)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.get",
+            "workflow_get",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -465,15 +465,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow.validate",
+        name = "workflow_validate",
         annotations(read_only_hint = true),
-        description = "Validate workflow YAML/JSON without saving. Input: manifest_content (inline) OR input_path (absolute file path), optional format. Includes schema checks and command/catalog preflight checks, and returns structured validation errors with violations[]. Condition syntax guidance: use `==`/`!=` (not `===`/`!==`), and use roots `inputs.*`, `steps.*`, or `env.*` (`output.*` is unsupported in conditions). Authoring guidance: for manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata to improve collector UX; provider-backed inputs must use explicit scalar `select.value_field` paths."
+        description = "Validate workflow YAML/JSON without saving. Input: workflow_id OR manifest_content (inline) OR input_path (absolute file path), optional format. Includes schema checks and command/catalog preflight checks, and returns structured validation errors with violations[]. Condition syntax guidance: use `==`/`!=` (not `===`/`!==`), and use roots `inputs.*`, `steps.*`, or `env.*` (`output.*` is unsupported in conditions). Authoring guidance: for manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata to improve collector UX; provider-backed inputs must use explicit scalar `select.value_field` paths."
     )]
     async fn workflow_validate(&self, param: Parameters<WorkflowValidateRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = validate_workflow(&param.0, &self.services.command_registry)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.validate",
+            "workflow_validate",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -481,15 +481,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow.save",
+        name = "workflow_save",
         annotations(open_world_hint = true),
-        description = "Validate and persist workflow manifest to runtime filesystem storage. Input: workflow_id?, manifest_content, format?, overwrite?, expected_version?. Authoring sequence: search_commands -> workflow.validate -> workflow.save -> workflow.resolve_inputs -> workflow.run. Condition syntax guidance: use `==`/`!=` (not `===`/`!==`), and use roots `inputs.*`, `steps.*`, or `env.*` (`output.*` is unsupported in conditions). For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata. Provider-backed inputs must use explicit scalar `select.value_field` paths."
+        description = "Validate and persist workflow manifest to runtime filesystem storage. Input: workflow_id?, manifest_content, format?, overwrite?, expected_version?. Authoring sequence: search_commands -> workflow_validate -> workflow_save -> workflow_resolve_inputs -> workflow_run. Condition syntax guidance: use `==`/`!=` (not `===`/`!==`), and use roots `inputs.*`, `steps.*`, or `env.*` (`output.*` is unsupported in conditions). For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata. Provider-backed inputs must use explicit scalar `select.value_field` paths."
     )]
     async fn workflow_save(&self, param: Parameters<WorkflowSaveRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = save_workflow(&param.0, &self.services.command_registry)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.save",
+            "workflow_save",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -497,15 +497,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow.export",
+        name = "workflow_export",
         annotations(open_world_hint = true),
         description = "Export a runtime workflow manifest into a project-relative file for source control. Input: workflow_id, output_path, format?, overwrite?, create_directories?."
     )]
     async fn workflow_export(&self, param: Parameters<WorkflowExportRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = export_workflow(&param.0)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.export",
+            "workflow_export",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -513,15 +513,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow.import",
+        name = "workflow_import",
         annotations(open_world_hint = true),
         description = "Import a workflow manifest file from an absolute filesystem path into runtime storage. Input: input_path (absolute path), workflow_id?, format?, overwrite?, expected_version?."
     )]
     async fn workflow_import(&self, param: Parameters<WorkflowImportRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = import_workflow(&param.0, &self.services.command_registry)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.import",
+            "workflow_import",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -529,15 +529,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow.rename",
+        name = "workflow_rename",
         annotations(open_world_hint = true),
         description = "Rename a workflow identifier and persist it in runtime storage."
     )]
     async fn workflow_rename(&self, param: Parameters<WorkflowRenameRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = rename_workflow(&param.0, &self.services.command_registry)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.rename",
+            "workflow_rename",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -545,15 +545,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow.delete",
+        name = "workflow_delete",
         annotations(open_world_hint = true),
         description = "Delete a workflow manifest from runtime storage and synchronize in-memory registry state."
     )]
     async fn workflow_delete(&self, param: Parameters<WorkflowDeleteRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = delete_workflow(&param.0, &self.services.command_registry)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.delete",
+            "workflow_delete",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -561,15 +561,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow.preview_inputs",
+        name = "workflow_preview_inputs",
         annotations(read_only_hint = true),
         description = "Preview workflow input requirements and readiness. Returns workflow_id + required_missing by default; set include_inputs=true for full per-input detail rows."
     )]
     async fn workflow_preview_inputs(&self, param: Parameters<WorkflowPreviewInputsRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = preview_inputs(&param.0)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.preview_inputs",
+            "workflow_preview_inputs",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -577,15 +577,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow.resolve_inputs",
+        name = "workflow_resolve_inputs",
         annotations(open_world_hint = true),
         description = "Resolve defaults and provider bindings, then validate input values. Input: workflow_id or manifest_content, format?, partial_inputs?, include_resolved_inputs?(default false), include_provider_resolutions?(default false). Always returns ready + required_missing; include detailed payloads only when needed."
     )]
     async fn workflow_resolve_inputs(&self, param: Parameters<WorkflowResolveInputsRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = resolve_inputs(&param.0)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.resolve_inputs",
+            "workflow_resolve_inputs",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -593,15 +593,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow.run",
+        name = "workflow_run",
         annotations(open_world_hint = true),
         description = "Execute workflow by identifier or inline manifest. Input: workflow_id|manifest_content, format?, inputs?, execution_mode(sync|auto|task), include_results?(default true), include_outputs?(default false). Mode guidance: task for long/uncertain runs or when progress/cancel is needed; sync for short immediate runs; auto when unsure."
     )]
     async fn workflow_run(&self, param: Parameters<WorkflowRunRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = run_with_task_capability_guard(&param.0, &self.services.command_registry)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.run",
+            "workflow_run",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -609,15 +609,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow.step_plan",
+        name = "workflow_step_plan",
         annotations(read_only_hint = true),
         description = "Return ordered workflow steps with dependency and condition evaluation metadata."
     )]
     async fn workflow_step_plan(&self, param: Parameters<WorkflowStepPlanRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = step_plan(&param.0)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.step_plan",
+            "workflow_step_plan",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -625,15 +625,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow.preview_rendered",
+        name = "workflow_preview_rendered",
         annotations(read_only_hint = true),
         description = "Preview rendered workflow step payloads after template interpolation with candidate inputs."
     )]
     async fn workflow_preview_rendered(&self, param: Parameters<WorkflowPreviewRenderedRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = preview_rendered(&param.0)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.preview_rendered",
+            "workflow_preview_rendered",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -641,7 +641,7 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow.cancel",
+        name = "workflow_cancel",
         annotations(open_world_hint = true),
         description = "Cancel a task-backed workflow execution by task operation identifier."
     )]
@@ -685,9 +685,9 @@ impl OattyMcpCore {
                 "Use tasks/list to inspect active task-backed workflow runs.",
             ));
         };
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.cancel",
+            "workflow_cancel",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -695,15 +695,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow.purge_history",
+        name = "workflow_purge_history",
         annotations(open_world_hint = true),
         description = "Purge persisted workflow run history entries by workflow identifier and/or input keys."
     )]
     async fn workflow_purge_history(&self, param: Parameters<WorkflowPurgeHistoryRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = purge_workflow_history(&param.0)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.purge_history",
+            "workflow_purge_history",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -711,15 +711,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow.author_and_run",
+        name = "workflow_author_and_run",
         annotations(open_world_hint = true),
         description = "Orchestrate validate -> save -> resolve_inputs -> run for a draft workflow manifest. For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata."
     )]
     async fn workflow_author_and_run(&self, param: Parameters<WorkflowAuthorAndRunRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = author_and_run(&param.0, &self.services.command_registry)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.author_and_run",
+            "workflow_author_and_run",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -727,15 +727,15 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow.repair_and_rerun",
+        name = "workflow_repair_and_rerun",
         annotations(open_world_hint = true),
         description = "Orchestrate repair/save/rerun using manifest_content and optional repaired_manifest_content."
     )]
     async fn workflow_repair_and_rerun(&self, param: Parameters<WorkflowRepairAndRerunRequest>) -> Result<CallToolResult, ErrorData> {
         let structured = repair_and_rerun(&param.0, &self.services.command_registry)?;
-        let response = CallToolResult::structured(structured);
+        let response = build_structured_tool_result(structured);
         self.emit_log(
-            "workflow.repair_and_rerun",
+            "workflow_repair_and_rerun",
             Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
             Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
         );
@@ -763,7 +763,7 @@ impl OattyMcpCore {
 
             let exec_outcome = execute_http_command(&self.services.command_registry, &command_spec, param).await?;
             let structured = exec_outcome_to_value(exec_outcome)?;
-            return Ok(CallToolResult::structured(structured));
+            return Ok(build_structured_tool_result(structured));
         }
 
         if command_spec.mcp().is_some() {
@@ -782,7 +782,7 @@ impl OattyMcpCore {
                     )
                 })?;
             let structured = exec_outcome_to_value(exec_outcome)?;
-            return Ok(CallToolResult::structured(structured));
+            return Ok(build_structured_tool_result(structured));
         }
 
         Err(ErrorData::invalid_params(
@@ -872,6 +872,36 @@ impl ServerHandler for OattyMcpCore {
             instructions: Some(
                 "LLM-ONLY SERVER INSTRUCTIONS.\nDISCOVERY FIRST:\n1) Start with search_commands.\n2) Select canonical_id.\n3) Call get_command for exact schema.\n4) Route by execution_type/http_method.\n\nROUTING:\n- http + GET => run_safe_command\n- http + POST|PUT|PATCH => run_command\n- http + DELETE => run_destructive_command\n- mcp + read-only => run_safe_command\n- mcp + non-destructive => run_command\n- mcp + destructive => unsupported\n\nSEARCH RULES:\n- Use limit (usually 5-10).\n- Use include_inputs=none for first pass.\n- Use include_inputs=required_only for planning.\n- Use include_inputs=full only when required; at most once per vendor/intent.\n- Canonical query `<group> <command>` returns direct hit when present.\n- After candidate canonical_ids are found, stop fuzzy search and use get_command.\n- Do not use get_command_summaries_by_catalog except deliberate batch inspection.\n\nCATALOG RULES:\n- If commands are missing after two focused searches, STOP and run:\n  catalog.validate_openapi -> catalog.preview_import -> catalog.import_openapi.\n- If only unrelated catalogs are found, treat as hard stop until required catalogs are imported.\n- catalog.import_openapi mutates user configuration: request user confirmation before calling it.\n- If auth is required, instruct user to configure catalog headers (for example Authorization) before HTTP execution.\n\nARGUMENT RULES:\n- Build positional_args in declared order.\n- Build named_flags as [name,value]. Values may be scalar/array/object; booleans accept explicit true/false.\n- Prefer get_command for exact args/flags.\n- For provider-backed workflow inputs, use get_command(include_providers=required_only|full).\n\nWORKFLOW INTENT MODE:\n- If user asks to create/author/generate a workflow, MUST use Oatty workflow tools.\n- Workflow steps must be HTTP-backed commands only (no MCP/plugin step runs).\n- Preferred sequence:\n  search_commands -> get_command -> workflow.validate(minimal) -> expand manifest -> workflow.validate -> workflow.save -> workflow.resolve_inputs -> workflow.run\n- Before authoring, verify required providers/platforms are discoverable.\n- Use providers for enumerable identifiers/list selections when contracts exist.\n- Keep manual inputs for transformation-heavy fields.\n- If search_commands returns provider_inputs, prefer provider-backed inputs unless transformation-heavy.\n- Use `if`/`when` (not `condition`).\n- Step params belong under `with` using real command parameter names.\n- Input defaults must be structured objects: `default: { from: literal|env|history|workflow_output, value: ... }`.\n- Provider-backed inputs must use explicit scalar select path (for example `owner.id`).\n- Include placeholder/hint/example metadata for manual free-text inputs.\n\nSAFETY:\n- Do NOT create repository docs, blueprints, scripts, or CI files unless explicitly requested.\n- File-only fallback is allowed only after reporting unimportable provider and receiving explicit user approval.\n- Example: 'list vercel projects' => search_commands -> get_command -> run_safe_command.".to_string()
             ),
+        }
+    }
+}
+
+/// Builds a tool response with MCP `structuredContent` normalized to a JSON object.
+///
+/// Some MCP clients (including Claude Desktop via mcp-remote) require `structuredContent`
+/// to be a dictionary/object and reject top-level arrays or scalar values.
+fn build_structured_tool_result(payload: Value) -> CallToolResult {
+    let normalized_payload = normalize_structured_payload(payload);
+    CallToolResult::structured(normalized_payload)
+}
+
+/// Normalizes structured payloads so tool responses always return object-shaped content.
+///
+/// - Objects are returned unchanged.
+/// - Arrays are wrapped as `{ "items": [...] }`.
+/// - Scalars and null are wrapped as `{ "value": ... }`.
+fn normalize_structured_payload(payload: Value) -> Value {
+    match payload {
+        Value::Object(_) => payload,
+        Value::Array(items) => {
+            let mut envelope = Map::new();
+            envelope.insert("items".to_string(), Value::Array(items));
+            Value::Object(envelope)
+        }
+        value => {
+            let mut envelope = Map::new();
+            envelope.insert("value".to_string(), value);
+            Value::Object(envelope)
         }
     }
 }

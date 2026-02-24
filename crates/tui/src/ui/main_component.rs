@@ -142,7 +142,7 @@ impl MainView {
                     ModalLayout(Box::new(|rect| centered_rect(80, 70, rect))),
                 ),
                 Modal::PluginDetails => (
-                    Box::new(PluginsDetailsComponent),
+                    Box::new(PluginsDetailsComponent::default()),
                     ModalLayout(Box::new(|rect| centered_rect(90, 80, rect))),
                 ),
                 Modal::ThemePicker => {

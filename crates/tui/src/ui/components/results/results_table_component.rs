@@ -11,7 +11,7 @@ use crate::ui::{
     },
     theme::theme_helpers as th,
 };
-use crossterm::event::{KeyCode, KeyEvent, MouseEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use oatty_types::{Effect, Msg};
 
 use crate::ui::components::common::handle_table_mouse_actions;
@@ -77,6 +77,13 @@ impl Component for TableComponent {
         if app.table.has_rows() && handle_table_navigation_key(key.code, &mut app.table, app.focus.as_ref()) {
             return effects;
         }
+        if !app.table.has_rows() && matches!(key.code, KeyCode::Char('v') | KeyCode::Char('V')) {
+            app.table.toggle_split_preview_pinned();
+            return effects;
+        }
+        if !app.table.has_rows() && handle_split_preview_navigation_key(key, &mut app.table) {
+            return effects;
+        }
         if !app.table.has_rows() && handle_fallback_navigation_key(key.code, &mut app.table, app.focus.as_ref()) {
             return effects;
         }
@@ -104,10 +111,22 @@ impl Component for TableComponent {
         if app.table.has_rows() {
             handle_table_mouse_actions(&mut app.table, mouse, self.table_area);
             self.select_table_cell_from_mouse(app, mouse);
+            self.try_handle_double_click_drill(app, mouse);
         } else {
-            handle_fallback_mouse_actions(&mut app.table, mouse, self.table_area);
+            let list_area = self.view.fallback_list_area().unwrap_or(self.table_area);
+            let preview_area = self.view.split_preview_area();
+            handle_fallback_mouse_actions(&mut app.table, mouse, list_area, preview_area);
+            let position = Position {
+                x: mouse.column,
+                y: mouse.row,
+            };
+            if mouse.kind == MouseEventKind::Down(crossterm::event::MouseButton::Left)
+                && preview_area.is_some_and(|area| area.contains(position))
+            {
+                return Vec::new();
+            }
+            self.try_handle_double_click_drill(app, mouse);
         }
-        self.try_handle_double_click_drill(app, mouse);
 
         Vec::new()
     }
@@ -160,15 +179,29 @@ impl Component for TableComponent {
         }
 
         let theme = &*app.ctx.theme;
+        if has_rows {
+            return th::build_hint_spans(
+                theme,
+                &[
+                    ("Esc", if app.table.is_in_drill_mode() { " up " } else { " close " }),
+                    ("Enter", " drill "),
+                    ("C", " copy row "),
+                    ("↑/↓", " scroll  "),
+                    ("PgUp/PgDn", " faster  "),
+                    ("Home/End", " jump"),
+                ],
+            );
+        }
+
         th::build_hint_spans(
             theme,
             &[
                 ("Esc", if app.table.is_in_drill_mode() { " up " } else { " close " }),
                 ("Enter", " drill "),
-                ("C", " copy row "),
-                ("↑/↓", " scroll  "),
-                ("PgUp/PgDn", " faster  "),
-                ("Home/End", " jump"),
+                ("V", " preview  "),
+                ("↑/↓", " list  "),
+                ("Ctrl+↑/↓", " preview  "),
+                ("Ctrl+PgUp/PgDn", " preview page"),
             ],
         )
     }
@@ -320,19 +353,32 @@ fn handle_fallback_navigation_key(
 fn handle_fallback_mouse_actions(
     state: &mut crate::ui::components::results::state::ResultsTableState,
     mouse: MouseEvent,
-    content_area: Rect,
+    list_area: Rect,
+    preview_area: Option<Rect>,
 ) -> bool {
     let position = Position {
         x: mouse.column,
         y: mouse.row,
     };
-    if !content_area.contains(position) {
+    if let Some(preview_area) = preview_area
+        && preview_area.contains(position)
+    {
+        match mouse.kind {
+            MouseEventKind::ScrollDown => state.scroll_split_preview_lines(1),
+            MouseEventKind::ScrollUp => state.scroll_split_preview_lines(-1),
+            MouseEventKind::Down(crossterm::event::MouseButton::Left) => {}
+            _ => return false,
+        }
+        return true;
+    }
+
+    if !list_area.contains(position) {
         return false;
     }
 
     match mouse.kind {
         crossterm::event::MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
-            let relative_row = position.y.saturating_sub(content_area.y) as usize;
+            let relative_row = position.y.saturating_sub(list_area.y) as usize;
             let index = state.list_state.offset() + relative_row;
             if index < state.kv_entries().len() {
                 state.list_state.select(Some(index));
@@ -340,6 +386,38 @@ fn handle_fallback_mouse_actions(
         }
         crossterm::event::MouseEventKind::ScrollUp => state.list_state.scroll_up_by(1),
         crossterm::event::MouseEventKind::ScrollDown => state.list_state.scroll_down_by(1),
+        _ => return false,
+    }
+    true
+}
+
+fn handle_split_preview_navigation_key(key_event: KeyEvent, state: &mut crate::ui::components::results::state::ResultsTableState) -> bool {
+    if !state.should_show_split_preview() {
+        return false;
+    }
+    let has_control = key_event.modifiers.contains(KeyModifiers::CONTROL);
+    if !has_control {
+        return false;
+    }
+    match key_event.code {
+        KeyCode::Up | KeyCode::Char('k') => {
+            state.scroll_split_preview_lines(-1);
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            state.scroll_split_preview_lines(1);
+        }
+        KeyCode::PageUp => {
+            state.scroll_split_preview_pages(-1);
+        }
+        KeyCode::PageDown => {
+            state.scroll_split_preview_pages(1);
+        }
+        KeyCode::Home => {
+            state.scroll_split_preview_to_top();
+        }
+        KeyCode::End => {
+            state.scroll_split_preview_to_bottom();
+        }
         _ => return false,
     }
     true

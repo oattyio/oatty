@@ -153,7 +153,7 @@ pub fn read_resource(uri: &str, command_registry: &Arc<Mutex<CommandRegistry>>) 
                     "WORKFLOW_NOT_FOUND",
                     format!("workflow '{}' was not found", workflow_identifier),
                     serde_json::json!({ "uri": uri, "workflow_id": workflow_identifier }),
-                    "Use workflow.list to inspect available workflow identifiers.",
+                    "Use workflow_list to inspect available workflow identifiers.",
                 ));
             };
 

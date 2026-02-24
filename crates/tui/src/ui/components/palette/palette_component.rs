@@ -10,18 +10,18 @@ use std::vec;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use oatty_registry::CommandSpec;
 use oatty_types::{
-    decode_provider_selector_action, Effect, ExecOutcome, ItemKind, MessageType, Modal, Msg, ProviderSelectorActionPayload,
-    ValueProvider as ProviderBinding,
+    Effect, ExecOutcome, ItemKind, MessageType, Modal, Msg, ProviderSelectorActionPayload, ValueProvider as ProviderBinding,
+    decode_provider_selector_action,
 };
 use oatty_util::lex_shell_like;
 use oatty_util::truncate_with_ellipsis;
 use rat_focus::{FocusFlag, HasFocus};
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout, Rect},
     prelude::*,
     text::{Line, Span},
     widgets::*,
-    Frame,
 };
 use serde_json::{Map as JsonMap, Value as JsonValue};
 
@@ -29,10 +29,10 @@ use crate::app::App;
 use crate::ui::components::common::text_input::cursor_index_for_column;
 use crate::ui::components::common::{ConfirmationModalButton, ConfirmationModalOpts};
 use crate::ui::components::palette::suggestion_engine::{build_inputs_map_for_flag, build_inputs_map_for_positional};
-use crate::ui::theme::theme_helpers::{create_list_with_highlight, ButtonType};
+use crate::ui::theme::theme_helpers::{ButtonType, create_list_with_highlight};
 use crate::ui::{
     components::component::Component,
-    theme::{theme_helpers as th, Theme},
+    theme::{Theme, theme_helpers as th},
 };
 
 static FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];

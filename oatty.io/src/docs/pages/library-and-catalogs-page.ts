@@ -38,6 +38,7 @@ export const libraryAndCatalogsPage: DocsPage = {
                 {type: 'recovery', content: 'If catalogs are missing, verify the catalog import flow.'},
                 {
                     type: 'screenshot',
+                    label: 'Catalog Import Flow',
                     imageSrc: '/Oatty-complete-catalog-flow.webp',
                     imageAlt: 'Catalog import and configuration flow',
                     content: 'Catalog import and configuration flow.'
@@ -53,6 +54,7 @@ export const libraryAndCatalogsPage: DocsPage = {
                 {type: 'recovery', content: 'If Library is empty, import a catalog first.'},
                 {
                     type: 'screenshot',
+                    label: 'Library Catalogs',
                     imageSrc: '/Oatty-library.png',
                     imageAlt: 'Library catalog screenshot',
                     content: 'Capture Library with list, details, and base URL areas visible.'
@@ -68,7 +70,8 @@ export const libraryAndCatalogsPage: DocsPage = {
                 {type: 'recovery', content: 'If import fails, validate schema format and source path/URL, then retry.'},
                 {
                     type: 'screenshot',
-                    imageSrc: '/Oatty-catalog-import.webp',
+                    label: 'Import Catalog Flow',
+                    imageSrc: '/Oatty-catalog-import-flow.webp',
                     imageAlt: 'Library catalog screenshot',
                     content: 'Capture successful import with the new catalog selected.'
                 },
@@ -87,13 +90,14 @@ export const libraryAndCatalogsPage: DocsPage = {
                 {type: 'expected', content: 'Catalog status updates between enabled and disabled.'},
                 {
                     type: 'recovery',
-                    content: 'If status does not change, ensure the catalog row is focused before toggling.'
+                    content: 'If status does not change, ensure the catalog row is focused before toggling or use the mouse.'
                 },
                 {
                     type: 'screenshot',
-                    imageSrc: '/Oatty-library.png',
-                    imageAlt: 'Library catalog screenshot',
-                    content: 'Capture enabled and disabled states for the same catalog.'
+                    label: 'Toggle Catalog Enablement Flow',
+                    imageSrc: '/Oatty-toggle-catalog-enablement.webp',
+                    imageAlt: 'Toggle catalog enablement flow',
+                    content: 'Enabled and disabled states for the same catalog.'
                 },
             ],
         },
@@ -112,11 +116,12 @@ export const libraryAndCatalogsPage: DocsPage = {
                 },
                 {
                     type: 'screenshot',
-                    imageSrc: '/Oatty-library.png',
-                    imageAlt: 'Library catalog screenshot',
-                    content: 'Capture headers editor with a valid Authorization header row.'
+                    label: 'Add Header Flow',
+                    imageSrc: '/Oatty-add-header-flow.webp',
+                    imageAlt: 'Add header row flow',
+                    content: 'Add authorization header with auto-save changes.'
                 },
-                {type: 'advanced', content: 'Header validation enforces non-empty header keys before saving.'},
+                {type: 'advanced', content: 'Header validation errors are shown above the headers list.'},
             ],
         },
         {
@@ -131,30 +136,12 @@ export const libraryAndCatalogsPage: DocsPage = {
                 {type: 'recovery', content: 'If updates fail validation, correct the base URL value and retry.'},
                 {
                     type: 'screenshot',
-                    imageSrc: '/Oatty-library.png',
-                    imageAlt: 'Library catalog screenshot',
-                    content: 'Capture base URL list with active selection and add/remove controls.'
+                    label: 'Add Base URL Flow',
+                    imageSrc: '/Oatty-base-url-flow.webp',
+                    imageAlt: 'Add base URL flow',
+                    content: 'Base URL add and remove actions with validation errors.'
                 },
                 {type: 'advanced', content: 'Base URL validation rejects invalid or empty URL sets for a catalog.'},
-            ],
-        },
-        {
-            id: 'remove-catalog',
-            title: 'Remove a Catalog',
-            paragraphs: ['Select the catalog to remove.', 'Trigger Remove and confirm in the modal.', 'Verify the catalog no longer appears in the list.'],
-            callouts: [
-                {type: 'expected', content: 'Selected catalog is removed from Library.'},
-                {type: 'recovery', content: 'If remove is disabled, select a catalog row first.'},
-                {
-                    type: 'screenshot',
-                    imageSrc: '/Oatty-library.png',
-                    imageAlt: 'Library catalog screenshot',
-                    content: 'Capture remove confirmation modal and post-remove list state.'
-                },
-                {
-                    type: 'advanced',
-                    content: 'Removal is destructive. Use confirmation flow to prevent accidental deletion.'
-                },
             ],
         },
         {
@@ -163,12 +150,6 @@ export const libraryAndCatalogsPage: DocsPage = {
             paragraphs: ['Continue to Workflows Basics to run imported workflows with structured inputs.', 'Return to Search and Run Commands to validate command behavior against updated catalogs.'],
             callouts: [
                 {type: 'expected', content: 'You can keep catalog state aligned with your execution workflows.'},
-                {
-                    type: 'screenshot',
-                    imageSrc: '/Oatty-library.png',
-                    imageAlt: 'Library catalog screenshot',
-                    content: 'Capture final Library state with stable catalog and base URL configuration.'
-                },
             ],
         },
     ],

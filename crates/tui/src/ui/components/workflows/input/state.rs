@@ -1,3 +1,4 @@
+use crate::ui::components::common::ScrollMetrics;
 use crate::ui::components::workflows::{JsonSyntaxRole, classify_json_value, format_preview};
 use oatty_engine::{ProviderBindingOutcome, WorkflowRunState};
 use oatty_types::{WorkflowInputDefinition, WorkflowProviderArgumentValue, WorkflowValueProvider, validate_candidate_value};
@@ -69,9 +70,7 @@ pub struct WorkflowInputViewState {
     pub f_run_button: FocusFlag,
     /// Snapshot of input values present when the view opened.
     pub session_inputs: JsonMap<String, Value>,
-    details_scroll_offset: u16,
-    details_content_height: u16,
-    details_viewport_height: u16,
+    details_scroll_metrics: ScrollMetrics,
 }
 
 impl WorkflowInputViewState {
@@ -91,9 +90,7 @@ impl WorkflowInputViewState {
             f_plan_button: FocusFlag::new().with_name("workflow.inputs.actions.plan"),
             f_run_button: FocusFlag::new().with_name("workflow.inputs.actions.run"),
             session_inputs,
-            details_scroll_offset: 0,
-            details_content_height: 0,
-            details_viewport_height: 0,
+            details_scroll_metrics: ScrollMetrics::default(),
         }
     }
 
@@ -188,79 +185,52 @@ impl WorkflowInputViewState {
 
     /// Returns the current details pane scroll offset.
     pub fn details_scroll_offset(&self) -> u16 {
-        self.details_scroll_offset
+        self.details_scroll_metrics.offset()
     }
 
     /// Updates the details pane viewport height and clamps scroll state.
     pub fn update_details_viewport_height(&mut self, height: u16) {
-        self.details_viewport_height = height;
-        self.clamp_details_scroll_offset();
+        self.details_scroll_metrics.update_viewport_height(height);
     }
 
     /// Updates the details pane content height and clamps scroll state.
     pub fn update_details_content_height(&mut self, height: u16) {
-        self.details_content_height = height;
-        self.clamp_details_scroll_offset();
+        self.details_scroll_metrics.update_content_height(height);
     }
 
     /// Scrolls the details pane by line count.
     pub fn scroll_details_lines(&mut self, delta: i16) {
-        if delta == 0 {
-            return;
-        }
-        self.apply_details_scroll_delta(delta as i32);
+        self.details_scroll_metrics.scroll_lines(delta);
     }
 
     /// Scrolls the details pane by whole-page increments.
     pub fn scroll_details_pages(&mut self, delta_pages: i16) {
-        if delta_pages == 0 || self.details_viewport_height == 0 {
-            return;
-        }
-        let delta = i32::from(self.details_viewport_height).saturating_mul(i32::from(delta_pages));
-        self.apply_details_scroll_delta(delta);
+        self.details_scroll_metrics.scroll_pages(delta_pages);
     }
 
     /// Scrolls the details pane to the top.
     pub fn scroll_details_to_top(&mut self) {
-        self.details_scroll_offset = 0;
+        self.details_scroll_metrics.scroll_to_top();
     }
 
     /// Scrolls the details pane to the bottom.
     pub fn scroll_details_to_bottom(&mut self) {
-        self.details_scroll_offset = self.max_details_scroll_offset();
+        self.details_scroll_metrics.scroll_to_bottom();
     }
 
     /// Returns whether the details pane content exceeds its viewport.
     pub fn details_is_scrollable(&self) -> bool {
-        self.details_content_height > self.details_viewport_height && self.details_viewport_height > 0
+        self.details_scroll_metrics.is_scrollable()
     }
 
     /// Returns the measured details pane content height.
     pub fn details_content_height(&self) -> u16 {
-        self.details_content_height
+        self.details_scroll_metrics.content_height()
     }
 
     /// Returns the measured details pane viewport height.
     pub fn details_viewport_height(&self) -> u16 {
-        self.details_viewport_height
-    }
-
-    fn apply_details_scroll_delta(&mut self, delta: i32) {
-        if delta == 0 || !self.details_is_scrollable() {
-            return;
-        }
-        let current = i32::from(self.details_scroll_offset);
-        let max = i32::from(self.max_details_scroll_offset());
-        let next = (current + delta).clamp(0, max);
-        self.details_scroll_offset = next as u16;
-    }
-
-    fn clamp_details_scroll_offset(&mut self) {
-        self.details_scroll_offset = self.details_scroll_offset.min(self.max_details_scroll_offset());
-    }
-
-    fn max_details_scroll_offset(&self) -> u16 {
-        self.details_content_height.saturating_sub(self.details_viewport_height)
+        self.details_scroll_metrics.viewport_height()
     }
 
     /// Returns the workflow input key for the currently selected row.

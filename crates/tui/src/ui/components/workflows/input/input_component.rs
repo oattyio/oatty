@@ -2,10 +2,11 @@
 //! the transitions into manual or provider-backed collectors.
 
 use crate::app::App;
+use crate::ui::components::common::render_vertical_scrollbar;
 use crate::ui::components::component::Component;
+use crate::ui::components::workflows::WorkflowInputViewState;
 use crate::ui::components::workflows::input::state::{InputStatus, WorkflowInputRow};
 use crate::ui::components::workflows::view_utils::style_for_role;
-use crate::ui::components::workflows::WorkflowInputViewState;
 use crate::ui::theme::theme_helpers::create_list_with_highlight;
 use crate::ui::theme::{
     roles::Theme,
@@ -19,13 +20,13 @@ use ratatui::layout::Position;
 use ratatui::symbols::merge::MergeStrategy;
 use ratatui::widgets::Block;
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout, Rect, Spacing},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Borders, ListItem, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
-    Frame,
+    widgets::{Borders, ListItem, Paragraph, Wrap},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use std::cell::Ref;
 use unicode_width::UnicodeWidthStr;
 
@@ -959,13 +960,14 @@ fn render_details_scrollbar(frame: &mut Frame, area: Rect, theme: &dyn Theme, in
         .details_content_height()
         .saturating_sub(input_view_state.details_viewport_height());
     let content_length = usize::from(max_scroll_offset.saturating_add(1));
-    let mut scrollbar_state = ScrollbarState::new(content_length)
-        .position(usize::from(input_view_state.details_scroll_offset()))
-        .viewport_content_length(viewport_height);
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .thumb_style(Style::default().fg(theme.roles().scrollbar_thumb))
-        .track_style(Style::default().fg(theme.roles().scrollbar_track));
-    frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+    render_vertical_scrollbar(
+        frame,
+        area,
+        theme,
+        content_length,
+        usize::from(input_view_state.details_scroll_offset()),
+        viewport_height,
+    );
 }
 
 #[derive(Debug, Clone, Copy)]

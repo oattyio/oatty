@@ -199,8 +199,6 @@ export class OattySiteApp extends LitElement {
                 <main id="main-content" class="l-main">
                     <div class="l-shell">
                         <article class="m-card">
-                            <h1 class="m-docs-title">Docs page not found</h1>
-                            <p class="m-card__text">This docs route is not implemented yet.</p>
                             <a class="m-button m-button--primary" href="/docs/quick-start" @click="${this.navigate}">Go
                                 to Quick Start</a>
                         </article>

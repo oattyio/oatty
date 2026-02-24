@@ -11,7 +11,7 @@ pub fn purge_workflow_history(request: &WorkflowPurgeHistoryRequest) -> Result<V
     if request.workflow_id.is_none() && request.input_keys.as_ref().is_none_or(Vec::is_empty) {
         return Err(invalid_params_error(
             "WORKFLOW_PURGE_FILTER_REQUIRED",
-            "workflow.purge_history requires workflow_id or input_keys",
+            "workflow_purge_history requires workflow_id or input_keys",
             serde_json::json!({}),
             "Provide workflow_id, input_keys, or both.",
         ));

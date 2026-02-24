@@ -8,7 +8,7 @@ use crate::ui::theme::Theme;
 use crate::{
     app::App,
     ui::{
-        components::{component::Component, help::content::build_command_help_text},
+        components::{common::render_vertical_scrollbar, component::Component, help::content::build_command_help_text},
         theme::theme_helpers as th,
     },
 };
@@ -19,10 +19,10 @@ use ratatui::prelude::Span;
 use ratatui::{
     Frame,
     layout::Rect,
-    style::{Modifier, Style},
+    style::Modifier,
     symbols::merge::MergeStrategy,
     text::{Line, Text},
-    widgets::{Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, Wrap},
+    widgets::{Paragraph, Wrap},
 };
 
 /// Help modal component for displaying command documentation.
@@ -239,12 +239,13 @@ impl HelpComponent {
         let viewport_height = usize::from(app.help.viewport_height().max(1));
         let max_scroll_offset = app.help.content_height().saturating_sub(app.help.viewport_height());
         let content_length = usize::from(max_scroll_offset.saturating_add(1));
-        let mut scrollbar_state = ScrollbarState::new(content_length)
-            .position(app.help.scroll_offset() as usize)
-            .viewport_content_length(viewport_height);
-        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-            .thumb_style(Style::default().fg(theme.roles().scrollbar_thumb))
-            .track_style(Style::default().fg(theme.roles().scrollbar_track));
-        frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+        render_vertical_scrollbar(
+            frame,
+            area,
+            theme,
+            content_length,
+            app.help.scroll_offset() as usize,
+            viewport_height,
+        );
     }
 }

@@ -7,7 +7,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Position, Rect};
 use ratatui::prelude::Span;
 use ratatui::text::Line;
-use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::widgets::{Block, Borders, Paragraph, Wrap};
 
 #[derive(Default, Debug, Clone)]
 pub struct ConfirmationModal {
@@ -70,7 +70,7 @@ impl Component for ConfirmationModal {
                 .lines()
                 .map(|line| Line::from(Span::from(line.to_string())))
                 .collect::<Vec<Line>>();
-            let paragraph = Paragraph::new(lines).block(Block::default());
+            let paragraph = Paragraph::new(lines).block(Block::default()).wrap(Wrap { trim: false });
             frame.render_widget(paragraph, message_rect);
         }
 

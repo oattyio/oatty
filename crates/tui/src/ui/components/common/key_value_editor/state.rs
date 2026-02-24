@@ -70,6 +70,11 @@ impl KeyValueEditorState {
     pub fn set_rows(&mut self, rows: Vec<EnvRow>) {
         self.rows = rows;
         self.is_dirty = false;
+        let normalized_selection = self
+            .table_state
+            .selected()
+            .filter(|selected_index| *selected_index < self.rows.len());
+        self.set_selected_row(normalized_selection);
     }
 
     pub fn is_focused(&self) -> bool {
@@ -315,8 +320,16 @@ impl KeyValueEditorState {
         Ok("✓ Looks good!".to_string())
     }
 
+    /// Return a Vec of valid EnvRow. A valid EnvRow is one that has a non-empty key.
     pub fn valid_rows(&self) -> Vec<EnvRow> {
         self.rows.iter().filter(|row| !row.key.trim().is_empty()).cloned().collect()
+    }
+
+    pub fn is_selected_row_empty(&self) -> bool {
+        let Some(row_index) = self.table_state.selected() else {
+            return true;
+        };
+        self.rows.get(row_index).is_none_or(EnvRow::is_empty)
     }
 
     fn ensure_input_states_for_selected_row(&mut self) {

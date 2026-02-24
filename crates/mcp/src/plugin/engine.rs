@@ -92,6 +92,9 @@ impl PluginEngine {
 
     /// Start the plugin engine.
     pub async fn start(&self) -> Result<(), PluginEngineError> {
+        // Prepare registry and status listener before client autostart so tool/status events are not missed.
+        self.prepare_registry().await?;
+
         // Start the client manager
         self.client_manager
             .start()
@@ -325,17 +328,12 @@ impl PluginEngine {
         let status = registry.get_plugin_status(name).unwrap_or(PluginStatus::Stopped);
         let health = self.client_manager.get_plugin_health(name).await.unwrap_or_default();
         let logs = self.log_manager.get_recent_logs(name, 100).await;
-        let tool_summaries = {
-            let cache = self.tool_cache.lock().await;
-            cache
-                .get(name)
-                .map(|tools| tools.iter().map(PluginEngine::summarize_tool).collect())
-                .unwrap_or_default()
-        };
+        let tool_summaries = self.load_tool_summaries(name).await;
 
         plugin_detail.status = status;
         plugin_detail.health = health;
         plugin_detail.logs = logs;
+        plugin_detail.tool_count = tool_summaries.len();
         plugin_detail.tools = tool_summaries;
 
         Ok(plugin_detail)
@@ -478,6 +476,57 @@ impl PluginEngine {
     pub async fn plugin_tools(&self, name: &str) -> Option<Arc<Vec<McpToolMetadata>>> {
         let cache = self.tool_cache.lock().await;
         cache.get(name).cloned()
+    }
+
+    /// Load tool summaries for a plugin using cache-first semantics with a live-client fallback.
+    ///
+    /// This protects details rendering when startup tool events were emitted before the
+    /// status listener subscribed.
+    async fn load_tool_summaries(&self, plugin_name: &str) -> Vec<PluginToolSummary> {
+        let cached_tools = {
+            let cache = self.tool_cache.lock().await;
+            cache.get(plugin_name).cloned()
+        };
+
+        if let Some(tools) = cached_tools
+            && !tools.is_empty()
+        {
+            return tools.iter().map(Self::summarize_tool).collect();
+        }
+
+        let live_tools = match self.client_manager.get_client(plugin_name).await {
+            Some(client_handle) => {
+                let mut client = client_handle.lock().await;
+                let current_snapshot = client.tools();
+                if current_snapshot.is_empty() {
+                    match client.refresh_tool_snapshot().await {
+                        Ok(refreshed_snapshot) => refreshed_snapshot,
+                        Err(error) => {
+                            tracing::debug!(
+                                plugin = %plugin_name,
+                                error = %error,
+                                "Failed to refresh MCP tool snapshot while loading plugin details"
+                            );
+                            current_snapshot
+                        }
+                    }
+                } else {
+                    current_snapshot
+                }
+            }
+            None => Arc::new(Vec::new()),
+        };
+
+        if live_tools.is_empty() {
+            return Vec::new();
+        }
+
+        {
+            let mut cache = self.tool_cache.lock().await;
+            cache.insert(plugin_name.to_string(), Arc::clone(&live_tools));
+        }
+
+        live_tools.iter().map(Self::summarize_tool).collect()
     }
 
     /// Execute an MCP-backed command specification with the provided arguments.

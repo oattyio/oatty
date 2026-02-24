@@ -159,6 +159,7 @@ export const quickStartPage: DocsPage = {
                 },
                 {
                     type: 'screenshot',
+                    label: 'Run Command view',
                     imageSrc: '/Oatty-run.png',
                     imageAlt: 'Run Command view showing execution output and logs',
                     content: 'Shows the command runner with completion list open and a second shot showing executed result/log output.',
