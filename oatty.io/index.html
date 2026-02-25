@@ -12,6 +12,8 @@
     <meta name="keywords"
           content="CLI, TUI, OpenAPI, MCP, terminal, command line, API, schema-driven, developer tools, rust"/>
     <meta name="author" content="Oatty"/>
+    <meta name="robots" content="index, follow"/>
+    <link rel="canonical" href="https://oatty.io/"/>
 
     <!-- Open Graph / Facebook -->
     <meta property="og:type" content="website"/>
@@ -20,6 +22,7 @@
     <meta property="og:description"
           content="Schema-driven command discovery, interactive terminal UI, and extension via MCP. Stop juggling vendor CLIs."/>
     <meta property="og:site_name" content="Oatty"/>
+    <meta property="og:image" content="https://oatty.io/Oatty-command-suggestions.png"/>
 
     <!-- Twitter -->
     <meta name="twitter:card" content="summary_large_image"/>
@@ -27,6 +30,7 @@
     <meta name="twitter:title" content="Oatty | One CLI for Every API"/>
     <meta name="twitter:description"
           content="Schema-driven command discovery, interactive terminal UI, and extension via MCP. Stop juggling vendor CLIs."/>
+    <meta name="twitter:image" content="https://oatty.io/Oatty-command-suggestions.png"/>
 
     <!-- Theme & Icons -->
     <meta name="theme-color" content="#1a1f2e"/>
@@ -40,6 +44,18 @@
     <link rel="stylesheet"
           href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,400,0,0"/>
     <link rel="stylesheet" href="/src/styles/css/document.css"/>
+    <script type="application/ld+json">
+        {
+            "@context": "https://schema.org",
+            "@type": "SoftwareApplication",
+            "name": "Oatty",
+            "applicationCategory": "DeveloperApplication",
+            "operatingSystem": "macOS, Linux, Windows",
+            "url": "https://oatty.io/",
+            "downloadUrl": "https://www.npmjs.com/package/oatty",
+            "description": "Schema-driven command discovery, interactive terminal UI, and extension via MCP."
+        }
+    </script>
 
     <script>
         // Initialize theme before page render to prevent flash
@@ -52,7 +68,23 @@
     </script>
 </head>
 <body>
-<oatty-site-app></oatty-site-app>
+<oatty-site-app>
+    <main>
+        <h1>Oatty: One CLI for Every API</h1>
+        <p>Schema-driven command discovery, interactive terminal UI, and workflow automation for API operations.</p>
+        <p>Primary documentation:</p>
+        <ul>
+            <li><a href="/docs/quick-start">Quick Start</a></li>
+            <li><a href="/docs/learn/how-oatty-executes-safely">How Oatty Executes Safely</a></li>
+            <li><a href="/docs/learn/getting-oriented">Getting Oriented</a></li>
+            <li><a href="/docs/learn/library-and-catalogs">Library and Catalogs</a></li>
+            <li><a href="/docs/learn/search-and-run-commands">Search and Run Commands</a></li>
+            <li><a href="/docs/learn/workflows-basics">Workflows Basics</a></li>
+            <li><a href="/docs/learn/plugins">Plugins</a></li>
+            <li><a href="/docs/learn/mcp-http-server">MCP HTTP Server</a></li>
+        </ul>
+    </main>
+</oatty-site-app>
 <script type="module" src="/src/main.ts"></script>
 <script
         src="https://js.sentry-cdn.com/69d0d519add6966441e7b4275fbc8082.min.js"

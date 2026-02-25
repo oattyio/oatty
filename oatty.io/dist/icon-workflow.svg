@@ -1,9 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Workflow catalog icon">
-  <circle cx="18" cy="18" r="5" fill="none" stroke="#5DA3F4" stroke-width="3"/>
-  <circle cx="46" cy="18" r="5" fill="none" stroke="#5DA3F4" stroke-width="3"/>
-  <circle cx="18" cy="46" r="5" fill="none" stroke="#5DA3F4" stroke-width="3"/>
-  <circle cx="46" cy="46" r="5" fill="none" stroke="#5DA3F4" stroke-width="3"/>
-  <path d="M23 18 H39" fill="none" stroke="#5DA3F4" stroke-width="2.5" stroke-linecap="round"/>
-  <path d="M46 23 V39" fill="none" stroke="#5DA3F4" stroke-width="2.5" stroke-linecap="round"/>
-  <path d="M41 46 H25" fill="none" stroke="#5DA3F4" stroke-width="2.5" stroke-linecap="round"/>
-</svg>

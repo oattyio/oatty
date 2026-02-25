@@ -1,6 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="8 26 48 28" role="img" aria-label="Partial coverage icon">
-  <path d="M10 40 Q16 28 24 40 T40 40 T54 40" fill="none" stroke="#5DA3F4" stroke-width="3" stroke-linecap="round" opacity="0.9"/>
-  <path d="M10 40 Q16 50 24 40" fill="none" stroke="#5DA3F4" stroke-width="3" stroke-linecap="round" opacity="0.55"/>
-  <path d="M40 40 Q47 29 54 40" fill="none" stroke="#5DA3F4" stroke-width="3" stroke-linecap="round" opacity="0.55"/>
-  <ellipse cx="32" cy="42" rx="7" ry="9" fill="none" stroke="#BF616A" stroke-width="2.5" opacity="0.9"/>
-</svg>

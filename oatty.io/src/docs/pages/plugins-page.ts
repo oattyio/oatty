@@ -25,7 +25,7 @@ export const pluginsPage: DocsPage = {
             paragraphs: [
                 'Plugins are a powerful way to extend Oatty\'s capabilities with your favorite MCP servers (http or stdio).',
                 'Use the Plugins view to manage plugin lifecycle and configuration from one TUI workflow.',
-                'Details and validation errors are surfaced in the TUI, and credentials are saved securely in your OS Keychain.',
+                'Details and validation errors are surfaced in the TUI, and credentials are stored using your OS keychain where available.',
                 'Define remote headers or local env vars in the key-value editor to support vendor requirements.',
             ],
             callouts: [
