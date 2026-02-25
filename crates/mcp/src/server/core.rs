@@ -112,27 +112,10 @@ impl OattyMcpCore {
         description = "Find executable commands by intent. Use first before any run_* call. Use during workflow authoring to discover valid step `run` values (canonical command IDs in `<group> <command>` format, for example `apps apps:list`). Input: query, optional vendor, optional limit, optional include_inputs(none|required_only|full). Canonical direct-hit queries return exactly one result when found. include_inputs=none returns minimal discovery metadata (canonical_id, execution_type, http_method). include_inputs=required_only adds required input fields, compact provider_inputs hints, and compact output_fields. include_inputs=full adds complete positional_args, flags, provider_inputs, and output_fields. For full nested output schema, call get_command with `output_schema_detail=full`. For exact single-command inspection after discovery, use get_command with canonical_id. Authoring decision rule: if required commands are still not discoverable after two focused searches, switch to catalog_validate_openapi -> catalog_preview_import -> catalog_import_openapi before drafting workflow steps. Efficiency rule: after candidate canonical IDs are found, stop fuzzy search and switch to get_command; use at most one include_inputs=full search per vendor/intent. Routing: GET -> run_safe_command, POST/PUT/PATCH -> run_command, DELETE -> run_destructive_command, MCP -> run_safe_command or run_command."
     )]
     async fn search_commands(&self, param: Parameters<SearchRequestParam>) -> Result<CallToolResult, ErrorData> {
-        let direct_hit = {
-            let registry_guard = self.services.command_registry.lock().map_err(|error| {
-                internal_error_with_next_step(
-                    error.to_string(),
-                    serde_json::json!({
-                        "query": param.0.query,
-                        "vendor": param.0.vendor
-                    }),
-                    "Retry search_commands. If this persists, verify registry availability and MCP server health.",
-                )
-            })?;
-            find_direct_search_hit(&registry_guard, param.0.query.as_str(), param.0.vendor.as_deref())
-        };
-
-        let mut results = if let Some(hit) = direct_hit {
-            vec![hit]
-        } else {
-            self.services
-                .search_commands(param.0.query.clone(), param.0.vendor.as_deref())
-                .await
-                .map_err(|error| {
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result: Result<Value, ErrorData> = async {
+            let direct_hit = {
+                let registry_guard = self.services.command_registry.lock().map_err(|error| {
                     internal_error_with_next_step(
                         error.to_string(),
                         serde_json::json!({
@@ -141,56 +124,73 @@ impl OattyMcpCore {
                         }),
                         "Retry search_commands. If this persists, verify registry availability and MCP server health.",
                     )
+                })?;
+                find_direct_search_hit(&registry_guard, param.0.query.as_str(), param.0.vendor.as_deref())
+            };
+
+            let mut results = if let Some(hit) = direct_hit {
+                vec![hit]
+            } else {
+                self.services
+                    .search_commands(param.0.query.clone(), param.0.vendor.as_deref())
+                    .await
+                    .map_err(|error| {
+                        internal_error_with_next_step(
+                            error.to_string(),
+                            serde_json::json!({
+                                "query": param.0.query,
+                                "vendor": param.0.vendor
+                            }),
+                            "Retry search_commands. If this persists, verify registry availability and MCP server health.",
+                        )
+                    })?
+            };
+            if let Some(vendor_name) = param.0.vendor.as_deref()
+                && results.is_empty()
+                && !vendor_has_enabled_command_catalog(&self.services.command_registry, vendor_name).map_err(|error| {
+                    internal_error_with_next_step(
+                        error.to_string(),
+                        serde_json::json!({
+                            "query": param.0.query,
+                            "vendor": vendor_name
+                        }),
+                        "Retry search_commands. If this persists, verify registry availability.",
+                    )
                 })?
-        };
-        if let Some(vendor_name) = param.0.vendor.as_deref()
-            && results.is_empty()
-            && !vendor_has_enabled_command_catalog(&self.services.command_registry, vendor_name).map_err(|error| {
-                internal_error_with_next_step(
-                    error.to_string(),
+            {
+                return Err(invalid_params_with_next_step(
+                    format!("no enabled command catalog found for vendor '{vendor_name}'"),
                     serde_json::json!({
                         "query": param.0.query,
-                        "vendor": vendor_name
+                        "vendor": vendor_name,
+                        "results": 0
                     }),
-                    "Retry search_commands. If this persists, verify registry availability.",
-                )
-            })?
-        {
-            return Err(invalid_params_with_next_step(
-                format!("no enabled command catalog found for vendor '{vendor_name}'"),
-                serde_json::json!({
-                    "query": param.0.query,
-                    "vendor": vendor_name,
-                    "results": 0
-                }),
-                "Check list_command_topics for a disabled/alternate catalog. If present, enable it with catalog_set_enabled; otherwise import the vendor OpenAPI catalog via catalog_validate_openapi -> catalog_preview_import -> catalog_import_openapi, then retry search_commands.",
-            ));
+                    "Check list_command_topics for a disabled/alternate catalog. If present, enable it with catalog_set_enabled; otherwise import the vendor OpenAPI catalog via catalog_validate_openapi -> catalog_preview_import -> catalog_import_openapi, then retry search_commands.",
+                ));
+            }
+            if let Some(limit) = param.0.limit {
+                results.truncate(limit);
+            }
+            let inputs_detail = param.0.include_inputs.unwrap_or_default();
+            let structured = if matches!(inputs_detail, SearchInputsDetail::None) {
+                minimal_search_results(&results)
+            } else {
+                search_results_with_inputs(&self.services.command_registry, &results, inputs_detail).map_err(|error| {
+                    internal_error_with_next_step(
+                        error.to_string(),
+                        serde_json::json!({
+                            "query": param.0.query,
+                            "include_inputs": format!("{inputs_detail:?}").to_lowercase()
+                        }),
+                        "Retry search_commands with a smaller limit or include_inputs=none to isolate the issue.",
+                    )
+                })?
+            };
+            Ok(structured)
         }
-        if let Some(limit) = param.0.limit {
-            results.truncate(limit);
-        }
-        let inputs_detail = param.0.include_inputs.unwrap_or_default();
-        let structured = if matches!(inputs_detail, SearchInputsDetail::None) {
-            minimal_search_results(&results)
-        } else {
-            search_results_with_inputs(&self.services.command_registry, &results, inputs_detail).map_err(|error| {
-                internal_error_with_next_step(
-                    error.to_string(),
-                    serde_json::json!({
-                        "query": param.0.query,
-                        "include_inputs": format!("{inputs_detail:?}").to_lowercase()
-                    }),
-                    "Retry search_commands with a smaller limit or include_inputs=none to isolate the issue.",
-                )
-            })?
-        };
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "search_commands",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        .await;
+
+        Ok(self.finalize_structured_tool_call("search_commands", request_payload, result))
     }
 
     #[tool(
@@ -198,17 +198,13 @@ impl OattyMcpCore {
         description = "Get command details by canonical_id. Defaults to compact output fields (`output_fields`) and no provider metadata. Set `output_schema_detail=full` only when full nested output schema is required. Set `include_providers=required_only|full` to include provider-backed input hints."
     )]
     async fn get_command(&self, param: Parameters<CommandDetailRequest>) -> Result<CallToolResult, ErrorData> {
-        let command_spec = resolve_command_spec(&self.services.command_registry, &param.0.canonical_id)?;
-        let output_schema_detail = param.0.output_schema_detail.unwrap_or_default();
-        let provider_metadata_detail = param.0.include_providers.unwrap_or_default();
-        let structured = build_command_summary(&command_spec, output_schema_detail, provider_metadata_detail);
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "get_command",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = resolve_command_spec(&self.services.command_registry, &param.0.canonical_id).map(|command_spec| {
+            let output_schema_detail = param.0.output_schema_detail.unwrap_or_default();
+            let provider_metadata_detail = param.0.include_providers.unwrap_or_default();
+            build_command_summary(&command_spec, output_schema_detail, provider_metadata_detail)
+        });
+        Ok(self.finalize_structured_tool_call("get_command", request_payload, result))
     }
 
     #[tool(
@@ -216,22 +212,17 @@ impl OattyMcpCore {
         description = "List available command catalogs/topics by vendor. Use when you need a catalog title for get_command_summaries_by_catalog. Only entries with type='command' support catalog summary lookups."
     )]
     async fn list_command_topics(&self) -> Result<CallToolResult, ErrorData> {
-        let catalogs = list_registry_catalogs(&self.services.command_registry, &self.services.plugin_engine)
+        let result = list_registry_catalogs(&self.services.command_registry, &self.services.plugin_engine)
             .await
+            .map(|catalogs| serde_json::json!(catalogs))
             .map_err(|error| {
                 internal_error_with_next_step(
                     error.to_string(),
                     serde_json::json!({}),
                     "Retry list_command_topics. If this persists, check registry/plugin connectivity.",
                 )
-            })?;
-        let response = build_structured_tool_result(serde_json::json!(catalogs));
-        self.emit_log(
-            "list_command_catalogs",
-            None,
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+            });
+        Ok(self.finalize_structured_tool_call("list_command_catalogs", None, result))
     }
 
     #[tool(
@@ -239,21 +230,17 @@ impl OattyMcpCore {
         description = "Get command argument schemas for a full command catalog (type='command'). High-token response intended for batch inspection only. Prefer search_commands -> get_command for normal workflow authoring and single-command lookup."
     )]
     async fn get_command_summaries_by_catalog(&self, param: Parameters<CommandSummariesRequest>) -> Result<CallToolResult, ErrorData> {
-        let summaries =
-            list_command_summaries_by_catalog(&self.services.command_registry, param.0.catalog_title.as_str()).map_err(|error| {
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = list_command_summaries_by_catalog(&self.services.command_registry, param.0.catalog_title.as_str())
+            .map(|summaries| serde_json::json!(summaries))
+            .map_err(|error| {
                 invalid_params_with_next_step(
                     error.to_string(),
                     serde_json::json!({ "catalog_title": param.0.catalog_title }),
                     "Use list_command_topics and choose an entry with type='command'; for plugin entries use search_commands with vendor instead.",
                 )
-            })?;
-        let response = build_structured_tool_result(serde_json::json!(summaries));
-        self.emit_log(
-            "get_command_summaries_by_catalog",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+            });
+        Ok(self.finalize_structured_tool_call("get_command_summaries_by_catalog", request_payload, result))
     }
 
     #[tool(
@@ -261,13 +248,9 @@ impl OattyMcpCore {
         description = "Execute read-only commands. Use for HTTP GET or read-only MCP commands. Input: canonical_id, positional_args[], named_flags[[name,value]]. named_flags values may be JSON scalars, arrays, or objects. Rejects write/destructive HTTP methods."
     )]
     async fn run_safe_command(&self, param: Parameters<RunCommandRequestParam>) -> Result<CallToolResult, ErrorData> {
-        let response = self.execute_command_with_guard(&param.0, HttpMethodGuard::SafeGet).await?;
-        self.emit_log(
-            "run_safe_command",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = self.execute_command_with_guard(&param.0, HttpMethodGuard::SafeGet).await;
+        Ok(self.finalize_tool_call("run_safe_command", request_payload, result))
     }
 
     #[tool(
@@ -275,13 +258,9 @@ impl OattyMcpCore {
         description = "Execute non-destructive write commands. Use for HTTP POST/PUT/PATCH or non-destructive MCP commands. Input: canonical_id, positional_args[], named_flags[[name,value]]. named_flags values may be JSON scalars, arrays, or objects. Rejects HTTP GET and DELETE."
     )]
     async fn run_command(&self, param: Parameters<RunCommandRequestParam>) -> Result<CallToolResult, ErrorData> {
-        let response = self.execute_command_with_guard(&param.0, HttpMethodGuard::Write).await?;
-        self.emit_log(
-            "run_command",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = self.execute_command_with_guard(&param.0, HttpMethodGuard::Write).await;
+        Ok(self.finalize_tool_call("run_command", request_payload, result))
     }
 
     #[tool(
@@ -289,15 +268,9 @@ impl OattyMcpCore {
         description = "Execute HTTP DELETE commands only. MCP commands are not allowed. Input: canonical_id, positional_args[], named_flags[[name,value]]. named_flags values may be JSON scalars, arrays, or objects."
     )]
     async fn run_destructive_command(&self, param: Parameters<RunCommandRequestParam>) -> Result<CallToolResult, ErrorData> {
-        let response = self
-            .execute_command_with_guard(&param.0, HttpMethodGuard::DestructiveDelete)
-            .await?;
-        self.emit_log(
-            "run_destructive_command",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = self.execute_command_with_guard(&param.0, HttpMethodGuard::DestructiveDelete).await;
+        Ok(self.finalize_tool_call("run_destructive_command", request_payload, result))
     }
 
     #[tool(
@@ -306,14 +279,9 @@ impl OattyMcpCore {
         description = "Validate an OpenAPI source before import. Input: source, source_type?. Returns valid, document_kind, operation_count, warnings, violations."
     )]
     async fn catalog_validate_openapi(&self, param: Parameters<CatalogValidateOpenApiRequest>) -> Result<CallToolResult, ErrorData> {
-        let preview = validate_openapi_source(&param.0).await?;
-        let response = build_structured_tool_result(preview);
-        self.emit_log(
-            "catalog_validate_openapi",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = validate_openapi_source(&param.0).await;
+        Ok(self.finalize_structured_tool_call("catalog_validate_openapi", request_payload, result))
     }
 
     #[tool(
@@ -322,14 +290,9 @@ impl OattyMcpCore {
         description = "Preview OpenAPI catalog import without writing files. Input: source, source_type?, catalog_title, vendor?, base_url?, include_command_preview?."
     )]
     async fn catalog_preview_import(&self, param: Parameters<CatalogPreviewImportRequest>) -> Result<CallToolResult, ErrorData> {
-        let preview = preview_openapi_import(&param.0).await?;
-        let response = build_structured_tool_result(preview);
-        self.emit_log(
-            "catalog_preview_import",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = preview_openapi_import(&param.0).await;
+        Ok(self.finalize_structured_tool_call("catalog_preview_import", request_payload, result))
     }
 
     #[tool(
@@ -338,14 +301,9 @@ impl OattyMcpCore {
         description = "Import OpenAPI schema into runtime catalog configuration. Input: source, source_type?, catalog_title, vendor?, base_url?, overwrite?, enabled?. This mutates local config and should be treated as a user-approved action. If APIs require auth, ask user to configure catalog headers (for example Authorization) before execution."
     )]
     async fn catalog_import_openapi(&self, param: Parameters<CatalogImportOpenApiRequest>) -> Result<CallToolResult, ErrorData> {
-        let imported = import_openapi_catalog(&self.services.command_registry, &param.0).await?;
-        let response = build_structured_tool_result(imported);
-        self.emit_log(
-            "catalog_import_openapi",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = import_openapi_catalog(&self.services.command_registry, &param.0).await;
+        Ok(self.finalize_structured_tool_call("catalog_import_openapi", request_payload, result))
     }
 
     #[tool(
@@ -354,62 +312,42 @@ impl OattyMcpCore {
         description = "Enable or disable an existing runtime catalog. Input: catalog_id, enabled."
     )]
     async fn catalog_set_enabled(&self, param: Parameters<CatalogSetEnabledRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = set_catalog_enabled_state(&self.services.command_registry, &param.0)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "catalog_set_enabled",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = set_catalog_enabled_state(&self.services.command_registry, &param.0);
+        Ok(self.finalize_structured_tool_call("catalog_set_enabled", request_payload, result))
     }
 
     #[tool(
-        name = "catalog.set_base_url",
+        name = "catalog_set_base_url",
         annotations(open_world_hint = true),
         description = "Set the selected base URL for an existing catalog without re-importing. Input: catalog_id (catalog title from list_command_topics), base_url."
     )]
     async fn catalog_set_base_url(&self, param: Parameters<CatalogSetBaseUrlRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = set_catalog_base_url(&self.services.command_registry, &param.0)?;
-        let response = CallToolResult::structured(structured);
-        self.emit_log(
-            "catalog.set_base_url",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = set_catalog_base_url(&self.services.command_registry, &param.0);
+        Ok(self.finalize_structured_tool_call("catalog_set_base_url", request_payload, result))
     }
 
     #[tool(
-        name = "catalog.edit_headers",
+        name = "catalog_edit_headers",
         annotations(open_world_hint = true),
         description = "Mutate catalog headers. Input: catalog_id (catalog title from list_command_topics), mode(upsert|remove|replace_all, default=upsert), headers[{key,value?,source?,effective?}] where value is required for upsert/replace_all and ignored for remove, and source defaults to raw."
     )]
     async fn catalog_edit_headers(&self, param: Parameters<CatalogEditHeadersRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = edit_catalog_headers(&self.services.command_registry, &param.0)?;
-        let response = CallToolResult::structured(structured);
-        self.emit_log(
-            "catalog.edit_headers",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = edit_catalog_headers(&self.services.command_registry, &param.0);
+        Ok(self.finalize_structured_tool_call("catalog_edit_headers", request_payload, result))
     }
 
     #[tool(
-        name = "catalog.get_masked_headers",
+        name = "catalog_get_masked_headers",
         annotations(read_only_hint = true),
         description = "Get masked catalog headers and selected base URL metadata. Input: catalog_id (catalog title from list_command_topics)."
     )]
     async fn catalog_get_masked_headers(&self, param: Parameters<CatalogGetMaskedHeadersRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = get_catalog_masked_headers(&self.services.command_registry, &param.0)?;
-        let response = CallToolResult::structured(structured);
-        self.emit_log(
-            "catalog.get_masked_headers",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = get_catalog_masked_headers(&self.services.command_registry, &param.0);
+        Ok(self.finalize_structured_tool_call("catalog_get_masked_headers", request_payload, result))
     }
 
     #[tool(
@@ -418,22 +356,9 @@ impl OattyMcpCore {
         description = "Remove an existing runtime catalog entry. Input: catalog_id, remove_manifest?."
     )]
     async fn catalog_remove(&self, param: Parameters<CatalogRemoveRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = remove_catalog_runtime(&self.services.command_registry, &param.0)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "catalog_remove",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
-    }
-
-    #[tool(description = "List available workflows")]
-    async fn get_workflows(&self) -> Result<CallToolResult, ErrorData> {
-        let structured = list_workflows()?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log("get_workflows", None, Some(serde_json::to_value(&response).unwrap_or(Value::Null)));
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = remove_catalog_runtime(&self.services.command_registry, &param.0);
+        Ok(self.finalize_structured_tool_call("catalog_remove", request_payload, result))
     }
 
     #[tool(
@@ -442,10 +367,7 @@ impl OattyMcpCore {
         description = "List filesystem-backed workflow manifests with path, format, and version metadata."
     )]
     async fn workflow_list(&self) -> Result<CallToolResult, ErrorData> {
-        let structured = list_workflows()?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log("workflow_list", None, Some(serde_json::to_value(&response).unwrap_or(Value::Null)));
-        Ok(response)
+        Ok(self.finalize_structured_tool_call("workflow_list", None, list_workflows()))
     }
 
     #[tool(
@@ -454,14 +376,8 @@ impl OattyMcpCore {
         description = "Retrieve workflow manifest content for editing, including content version metadata. Optional flags: include_content (default true), include_parsed (default false)."
     )]
     async fn workflow_get(&self, param: Parameters<WorkflowGetRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = get_workflow(&param.0)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_get",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        Ok(self.finalize_structured_tool_call("workflow_get", request_payload, get_workflow(&param.0)))
     }
 
     #[tool(
@@ -470,14 +386,9 @@ impl OattyMcpCore {
         description = "Validate workflow YAML/JSON without saving. Input: workflow_id OR manifest_content (inline) OR input_path (absolute file path), optional format. Includes schema checks and command/catalog preflight checks, and returns structured validation errors with violations[]. Condition syntax guidance: use `==`/`!=` (not `===`/`!==`), and use roots `inputs.*`, `steps.*`, or `env.*` (`output.*` is unsupported in conditions). Authoring guidance: for manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata to improve collector UX; provider-backed inputs must use explicit scalar `select.value_field` paths."
     )]
     async fn workflow_validate(&self, param: Parameters<WorkflowValidateRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = validate_workflow(&param.0, &self.services.command_registry)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_validate",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = validate_workflow(&param.0, &self.services.command_registry);
+        Ok(self.finalize_structured_tool_call("workflow_validate", request_payload, result))
     }
 
     #[tool(
@@ -486,14 +397,9 @@ impl OattyMcpCore {
         description = "Validate and persist workflow manifest to runtime filesystem storage. Input: workflow_id?, manifest_content, format?, overwrite?, expected_version?. Authoring sequence: search_commands -> workflow_validate -> workflow_save -> workflow_resolve_inputs -> workflow_run. Condition syntax guidance: use `==`/`!=` (not `===`/`!==`), and use roots `inputs.*`, `steps.*`, or `env.*` (`output.*` is unsupported in conditions). For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata. Provider-backed inputs must use explicit scalar `select.value_field` paths."
     )]
     async fn workflow_save(&self, param: Parameters<WorkflowSaveRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = save_workflow(&param.0, &self.services.command_registry)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_save",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = save_workflow(&param.0, &self.services.command_registry);
+        Ok(self.finalize_structured_tool_call("workflow_save", request_payload, result))
     }
 
     #[tool(
@@ -502,14 +408,8 @@ impl OattyMcpCore {
         description = "Export a runtime workflow manifest into a project-relative file for source control. Input: workflow_id, output_path, format?, overwrite?, create_directories?."
     )]
     async fn workflow_export(&self, param: Parameters<WorkflowExportRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = export_workflow(&param.0)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_export",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        Ok(self.finalize_structured_tool_call("workflow_export", request_payload, export_workflow(&param.0)))
     }
 
     #[tool(
@@ -518,14 +418,9 @@ impl OattyMcpCore {
         description = "Import a workflow manifest file from an absolute filesystem path into runtime storage. Input: input_path (absolute path), workflow_id?, format?, overwrite?, expected_version?."
     )]
     async fn workflow_import(&self, param: Parameters<WorkflowImportRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = import_workflow(&param.0, &self.services.command_registry)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_import",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = import_workflow(&param.0, &self.services.command_registry);
+        Ok(self.finalize_structured_tool_call("workflow_import", request_payload, result))
     }
 
     #[tool(
@@ -534,14 +429,9 @@ impl OattyMcpCore {
         description = "Rename a workflow identifier and persist it in runtime storage."
     )]
     async fn workflow_rename(&self, param: Parameters<WorkflowRenameRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = rename_workflow(&param.0, &self.services.command_registry)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_rename",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = rename_workflow(&param.0, &self.services.command_registry);
+        Ok(self.finalize_structured_tool_call("workflow_rename", request_payload, result))
     }
 
     #[tool(
@@ -550,14 +440,9 @@ impl OattyMcpCore {
         description = "Delete a workflow manifest from runtime storage and synchronize in-memory registry state."
     )]
     async fn workflow_delete(&self, param: Parameters<WorkflowDeleteRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = delete_workflow(&param.0, &self.services.command_registry)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_delete",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = delete_workflow(&param.0, &self.services.command_registry);
+        Ok(self.finalize_structured_tool_call("workflow_delete", request_payload, result))
     }
 
     #[tool(
@@ -566,14 +451,8 @@ impl OattyMcpCore {
         description = "Preview workflow input requirements and readiness. Returns workflow_id + required_missing by default; set include_inputs=true for full per-input detail rows."
     )]
     async fn workflow_preview_inputs(&self, param: Parameters<WorkflowPreviewInputsRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = preview_inputs(&param.0)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_preview_inputs",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        Ok(self.finalize_structured_tool_call("workflow_preview_inputs", request_payload, preview_inputs(&param.0)))
     }
 
     #[tool(
@@ -582,14 +461,8 @@ impl OattyMcpCore {
         description = "Resolve defaults and provider bindings, then validate input values. Input: workflow_id or manifest_content, format?, partial_inputs?, include_resolved_inputs?(default false), include_provider_resolutions?(default false). Always returns ready + required_missing; include detailed payloads only when needed."
     )]
     async fn workflow_resolve_inputs(&self, param: Parameters<WorkflowResolveInputsRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = resolve_inputs(&param.0)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_resolve_inputs",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        Ok(self.finalize_structured_tool_call("workflow_resolve_inputs", request_payload, resolve_inputs(&param.0)))
     }
 
     #[tool(
@@ -598,14 +471,9 @@ impl OattyMcpCore {
         description = "Execute workflow by identifier or inline manifest. Input: workflow_id|manifest_content, format?, inputs?, execution_mode(sync|auto|task), include_results?(default true), include_outputs?(default false). Mode guidance: task for long/uncertain runs or when progress/cancel is needed; sync for short immediate runs; auto when unsure."
     )]
     async fn workflow_run(&self, param: Parameters<WorkflowRunRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = run_with_task_capability_guard(&param.0, &self.services.command_registry)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_run",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = run_with_task_capability_guard(&param.0, &self.services.command_registry);
+        Ok(self.finalize_structured_tool_call("workflow_run", request_payload, result))
     }
 
     #[tool(
@@ -614,14 +482,8 @@ impl OattyMcpCore {
         description = "Return ordered workflow steps with dependency and condition evaluation metadata."
     )]
     async fn workflow_step_plan(&self, param: Parameters<WorkflowStepPlanRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = step_plan(&param.0)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_step_plan",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        Ok(self.finalize_structured_tool_call("workflow_step_plan", request_payload, step_plan(&param.0)))
     }
 
     #[tool(
@@ -630,14 +492,8 @@ impl OattyMcpCore {
         description = "Preview rendered workflow step payloads after template interpolation with candidate inputs."
     )]
     async fn workflow_preview_rendered(&self, param: Parameters<WorkflowPreviewRenderedRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = preview_rendered(&param.0)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_preview_rendered",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        Ok(self.finalize_structured_tool_call("workflow_preview_rendered", request_payload, preview_rendered(&param.0)))
     }
 
     #[tool(
@@ -646,52 +502,49 @@ impl OattyMcpCore {
         description = "Cancel a task-backed workflow execution by task operation identifier."
     )]
     async fn workflow_cancel(&self, param: Parameters<WorkflowCancelRequest>) -> Result<CallToolResult, ErrorData> {
-        let mut processor = self.task_processor.lock().await;
-        if processor
-            .peek_completed()
-            .iter()
-            .any(|result| result.descriptor.operation_id == param.0.operation_id)
-        {
-            return Err(conflict_error(
-                "WORKFLOW_CANCEL_CONFLICT",
-                format!("operation '{}' is already completed and cannot be cancelled", param.0.operation_id),
-                serde_json::json!({ "operation_id": param.0.operation_id }),
-                "Inspect task result and start a new run if needed.",
-            ));
-        }
-
-        let cancelled = processor.cancel_task(&param.0.operation_id);
-        let structured = if cancelled {
-            serde_json::json!({
-                "cancelled": true,
-                "operation_id": param.0.operation_id,
-            })
-        } else if processor
-            .peek_completed()
-            .iter()
-            .any(|result| result.descriptor.operation_id == param.0.operation_id)
-        {
-            return Err(conflict_error(
-                "WORKFLOW_CANCEL_CONFLICT",
-                format!("operation '{}' is already completed and cannot be cancelled", param.0.operation_id),
-                serde_json::json!({ "operation_id": param.0.operation_id }),
-                "Inspect task result and start a new run if needed.",
-            ));
-        } else {
-            return Err(not_found_error(
-                "WORKFLOW_OPERATION_NOT_FOUND",
-                format!("operation '{}' was not found", param.0.operation_id),
-                serde_json::json!({ "operation_id": param.0.operation_id }),
-                "Use tasks/list to inspect active task-backed workflow runs.",
-            ));
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result: Result<Value, ErrorData> = {
+            let mut processor = self.task_processor.lock().await;
+            if processor
+                .peek_completed()
+                .iter()
+                .any(|result| result.descriptor.operation_id == param.0.operation_id)
+            {
+                Err(conflict_error(
+                    "WORKFLOW_CANCEL_CONFLICT",
+                    format!("operation '{}' is already completed and cannot be cancelled", param.0.operation_id),
+                    serde_json::json!({ "operation_id": param.0.operation_id }),
+                    "Inspect task result and start a new run if needed.",
+                ))
+            } else {
+                let cancelled = processor.cancel_task(&param.0.operation_id);
+                if cancelled {
+                    Ok(serde_json::json!({
+                        "cancelled": true,
+                        "operation_id": param.0.operation_id,
+                    }))
+                } else if processor
+                    .peek_completed()
+                    .iter()
+                    .any(|result| result.descriptor.operation_id == param.0.operation_id)
+                {
+                    Err(conflict_error(
+                        "WORKFLOW_CANCEL_CONFLICT",
+                        format!("operation '{}' is already completed and cannot be cancelled", param.0.operation_id),
+                        serde_json::json!({ "operation_id": param.0.operation_id }),
+                        "Inspect task result and start a new run if needed.",
+                    ))
+                } else {
+                    Err(not_found_error(
+                        "WORKFLOW_OPERATION_NOT_FOUND",
+                        format!("operation '{}' was not found", param.0.operation_id),
+                        serde_json::json!({ "operation_id": param.0.operation_id }),
+                        "Use tasks/list to inspect active task-backed workflow runs.",
+                    ))
+                }
+            }
         };
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_cancel",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        Ok(self.finalize_structured_tool_call("workflow_cancel", request_payload, result))
     }
 
     #[tool(
@@ -700,14 +553,8 @@ impl OattyMcpCore {
         description = "Purge persisted workflow run history entries by workflow identifier and/or input keys."
     )]
     async fn workflow_purge_history(&self, param: Parameters<WorkflowPurgeHistoryRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = purge_workflow_history(&param.0)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_purge_history",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        Ok(self.finalize_structured_tool_call("workflow_purge_history", request_payload, purge_workflow_history(&param.0)))
     }
 
     #[tool(
@@ -716,14 +563,9 @@ impl OattyMcpCore {
         description = "Orchestrate validate -> save -> resolve_inputs -> run for a draft workflow manifest. For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata."
     )]
     async fn workflow_author_and_run(&self, param: Parameters<WorkflowAuthorAndRunRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = author_and_run(&param.0, &self.services.command_registry)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_author_and_run",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = author_and_run(&param.0, &self.services.command_registry);
+        Ok(self.finalize_structured_tool_call("workflow_author_and_run", request_payload, result))
     }
 
     #[tool(
@@ -732,14 +574,9 @@ impl OattyMcpCore {
         description = "Orchestrate repair/save/rerun using manifest_content and optional repaired_manifest_content."
     )]
     async fn workflow_repair_and_rerun(&self, param: Parameters<WorkflowRepairAndRerunRequest>) -> Result<CallToolResult, ErrorData> {
-        let structured = repair_and_rerun(&param.0, &self.services.command_registry)?;
-        let response = build_structured_tool_result(structured);
-        self.emit_log(
-            "workflow_repair_and_rerun",
-            Some(serde_json::to_value(&param.0).unwrap_or(Value::Null)),
-            Some(serde_json::to_value(&response).unwrap_or(Value::Null)),
-        );
-        Ok(response)
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = repair_and_rerun(&param.0, &self.services.command_registry);
+        Ok(self.finalize_structured_tool_call("workflow_repair_and_rerun", request_payload, result))
     }
 
     async fn execute_command_with_guard(
@@ -792,6 +629,24 @@ impl OattyMcpCore {
                 "next_step": "Use search_commands and execute only commands with execution_type=http or execution_type=mcp."
             })),
         ))
+    }
+
+    fn finalize_structured_tool_call(&self, tool_name: &str, request: Option<Value>, result: Result<Value, ErrorData>) -> CallToolResult {
+        let response = match result {
+            Ok(payload) => build_structured_tool_result(payload),
+            Err(error) => build_structured_error_tool_result(error),
+        };
+        self.emit_log(tool_name, request, Some(serde_json::to_value(&response).unwrap_or(Value::Null)));
+        response
+    }
+
+    fn finalize_tool_call(&self, tool_name: &str, request: Option<Value>, result: Result<CallToolResult, ErrorData>) -> CallToolResult {
+        let response = match result {
+            Ok(call_result) => call_result,
+            Err(error) => build_structured_error_tool_result(error),
+        };
+        self.emit_log(tool_name, request, Some(serde_json::to_value(&response).unwrap_or(Value::Null)));
+        response
     }
 
     fn emit_log(&self, tool_name: &str, request: Option<Value>, response: Option<Value>) {
@@ -870,7 +725,7 @@ impl ServerHandler for OattyMcpCore {
                 ..Default::default()
             },
             instructions: Some(
-                "LLM-ONLY SERVER INSTRUCTIONS.\nDISCOVERY FIRST:\n1) Start with search_commands.\n2) Select canonical_id.\n3) Call get_command for exact schema.\n4) Route by execution_type/http_method.\n\nROUTING:\n- http + GET => run_safe_command\n- http + POST|PUT|PATCH => run_command\n- http + DELETE => run_destructive_command\n- mcp + read-only => run_safe_command\n- mcp + non-destructive => run_command\n- mcp + destructive => unsupported\n\nSEARCH RULES:\n- Use limit (usually 5-10).\n- Use include_inputs=none for first pass.\n- Use include_inputs=required_only for planning.\n- Use include_inputs=full only when required; at most once per vendor/intent.\n- Canonical query `<group> <command>` returns direct hit when present.\n- After candidate canonical_ids are found, stop fuzzy search and use get_command.\n- Do not use get_command_summaries_by_catalog except deliberate batch inspection.\n\nCATALOG RULES:\n- If commands are missing after two focused searches, STOP and run:\n  catalog.validate_openapi -> catalog.preview_import -> catalog.import_openapi.\n- If only unrelated catalogs are found, treat as hard stop until required catalogs are imported.\n- catalog.import_openapi mutates user configuration: request user confirmation before calling it.\n- If auth is required, instruct user to configure catalog headers (for example Authorization) before HTTP execution.\n\nARGUMENT RULES:\n- Build positional_args in declared order.\n- Build named_flags as [name,value]. Values may be scalar/array/object; booleans accept explicit true/false.\n- Prefer get_command for exact args/flags.\n- For provider-backed workflow inputs, use get_command(include_providers=required_only|full).\n\nWORKFLOW INTENT MODE:\n- If user asks to create/author/generate a workflow, MUST use Oatty workflow tools.\n- Workflow steps must be HTTP-backed commands only (no MCP/plugin step runs).\n- Preferred sequence:\n  search_commands -> get_command -> workflow.validate(minimal) -> expand manifest -> workflow.validate -> workflow.save -> workflow.resolve_inputs -> workflow.run\n- Before authoring, verify required providers/platforms are discoverable.\n- Use providers for enumerable identifiers/list selections when contracts exist.\n- Keep manual inputs for transformation-heavy fields.\n- If search_commands returns provider_inputs, prefer provider-backed inputs unless transformation-heavy.\n- Use `if`/`when` (not `condition`).\n- Step params belong under `with` using real command parameter names.\n- Input defaults must be structured objects: `default: { from: literal|env|history|workflow_output, value: ... }`.\n- Provider-backed inputs must use explicit scalar select path (for example `owner.id`).\n- Include placeholder/hint/example metadata for manual free-text inputs.\n\nSAFETY:\n- Do NOT create repository docs, blueprints, scripts, or CI files unless explicitly requested.\n- File-only fallback is allowed only after reporting unimportable provider and receiving explicit user approval.\n- Example: 'list vercel projects' => search_commands -> get_command -> run_safe_command.".to_string()
+                "LLM-ONLY SERVER INSTRUCTIONS.\nDISCOVERY FIRST:\n1) Start with search_commands.\n2) Select canonical_id.\n3) Call get_command for exact schema.\n4) Route by execution_type/http_method.\n\nROUTING:\n- http + GET => run_safe_command\n- http + POST|PUT|PATCH => run_command\n- http + DELETE => run_destructive_command\n- mcp + read-only => run_safe_command\n- mcp + non-destructive => run_command\n- mcp + destructive => unsupported\n\nSEARCH RULES:\n- Use limit (usually 5-10).\n- Use include_inputs=none for first pass.\n- Use include_inputs=required_only for planning.\n- Use include_inputs=full only when required; at most once per vendor/intent.\n- Canonical query `<group> <command>` returns direct hit when present.\n- After candidate canonical_ids are found, stop fuzzy search and use get_command.\n- Do not use get_command_summaries_by_catalog except deliberate batch inspection.\n\nCATALOG RULES:\n- If commands are missing after two focused searches, STOP and run:\n  catalog_validate_openapi -> catalog_preview_import -> catalog_import_openapi.\n- If only unrelated catalogs are found, treat as hard stop until required catalogs are imported.\n- catalog_import_openapi mutates user configuration: request user confirmation before calling it.\n- If auth is required, instruct user to configure catalog headers (for example Authorization) before HTTP execution.\n\nARGUMENT RULES:\n- Build positional_args in declared order.\n- Build named_flags as [name,value]. Values may be scalar/array/object; booleans accept explicit true/false.\n- Prefer get_command for exact args/flags.\n- For provider-backed workflow inputs, use get_command(include_providers=required_only|full).\n\nWORKFLOW INTENT MODE:\n- If user asks to create/author/generate a workflow, MUST use Oatty workflow tools.\n- Workflow steps must be HTTP-backed commands only (no MCP/plugin step runs).\n- Preferred sequence:\n  search_commands -> get_command -> workflow_validate(minimal) -> expand manifest -> workflow_validate -> workflow_save -> workflow_resolve_inputs -> workflow_run\n- Before authoring, verify required providers/platforms are discoverable.\n- Use providers for enumerable identifiers/list selections when contracts exist.\n- Keep manual inputs for transformation-heavy fields.\n- If search_commands returns provider_inputs, prefer provider-backed inputs unless transformation-heavy.\n- Use `if`/`when` (not `condition`).\n- Step params belong under `with` using real command parameter names.\n- Input defaults must be structured objects: `default: { from: literal|env|history|workflow_output, value: ... }`.\n- Provider-backed inputs must use explicit scalar select path (for example `owner.id`).\n- Include placeholder/hint/example metadata for manual free-text inputs.\n\nSAFETY:\n- Do NOT create repository docs, blueprints, scripts, or CI files unless explicitly requested.\n- File-only fallback is allowed only after reporting unimportable provider and receiving explicit user approval.\n- Example: 'list vercel projects' => search_commands -> get_command -> run_safe_command.".to_string()
             ),
         }
     }
@@ -883,6 +738,50 @@ impl ServerHandler for OattyMcpCore {
 fn build_structured_tool_result(payload: Value) -> CallToolResult {
     let normalized_payload = normalize_structured_payload(payload);
     CallToolResult::structured(normalized_payload)
+}
+
+/// Builds an error tool response with object-shaped structured content.
+///
+/// The payload keeps critical error details in top-level fields so clients that
+/// truncate nested metadata still receive actionable information.
+fn build_structured_error_tool_result(error: ErrorData) -> CallToolResult {
+    let ErrorData { code, message, data } = error;
+    let message_text = message.into_owned();
+
+    let mut payload = Map::new();
+    payload.insert("ok".to_string(), Value::Bool(false));
+    payload.insert("error_code".to_string(), Value::Number(serde_json::Number::from(code.0)));
+    payload.insert("message".to_string(), Value::String(message_text));
+
+    if let Some(error_data) = data {
+        if let Some(details_object) = error_data.as_object() {
+            if let Some(Value::String(domain_error_code)) = details_object.get("error_code") {
+                payload.insert("domain_error_code".to_string(), Value::String(domain_error_code.clone()));
+            }
+            if let Some(Value::String(suggested_action)) = details_object.get("suggested_action") {
+                payload.insert("suggested_action".to_string(), Value::String(suggested_action.clone()));
+                payload.insert("next_step".to_string(), Value::String(suggested_action.clone()));
+            } else if let Some(Value::String(next_step)) = details_object.get("next_step") {
+                payload.insert("next_step".to_string(), Value::String(next_step.clone()));
+            }
+            if let Some(Value::String(correlation_id)) = details_object.get("correlation_id") {
+                payload.insert("correlation_id".to_string(), Value::String(correlation_id.clone()));
+            }
+            if let Some(Value::String(category)) = details_object.get("category") {
+                payload.insert("category".to_string(), Value::String(category.clone()));
+            }
+            if let Some(Value::String(failure_stage)) = details_object.get("failure_stage") {
+                payload.insert("failure_stage".to_string(), Value::String(failure_stage.clone()));
+            }
+            if let Some(violations) = details_object.get("violations") {
+                payload.insert("violations".to_string(), violations.clone());
+            }
+        }
+
+        payload.insert("details".to_string(), error_data);
+    }
+
+    CallToolResult::structured_error(Value::Object(payload))
 }
 
 /// Normalizes structured payloads so tool responses always return object-shaped content.
