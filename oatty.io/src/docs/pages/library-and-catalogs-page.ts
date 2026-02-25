@@ -33,7 +33,7 @@ export const libraryAndCatalogsPage: DocsPage = {
             callouts: [
                 {
                     type: 'expected',
-                    content: 'Catalogs extend your command surface. No limits are placed on catalog count or size.'
+                    content: 'Catalogs extend your command surface. Practical limits depend on your machine and schema size; start with a few catalogs and scale up as needed.'
                 },
                 {type: 'recovery', content: 'If catalogs are missing, verify the catalog import flow.'},
                 {

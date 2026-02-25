@@ -81,12 +81,13 @@ export const mcpHttpServerPage: DocsPage = {
             title: 'Configure MCP Clients to Connect',
             paragraphs: [
                 'Use `http://localhost:62889/mcp` as the server URL.',
-                'Oatty MCP HTTP server uses local HTTP and does not require authentication headers or tokens.',
+                'When bound to localhost, the Oatty MCP HTTP server uses local HTTP and typically does not require authentication headers or tokens.',
+                'Keep the server bound to loopback unless you understand the security implications of exposing it on your network.',
                 'Restart or reconnect the client after updating configuration so it loads the new endpoint.',
             ],
             codeSample: `# Shared connection settings
 URL: http://localhost:62889/mcp
-Auth: none
+Auth: none (localhost)
 
 # Claude Desktop (claude_desktop_config.json)
 {

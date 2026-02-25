@@ -1,5 +1,0 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Command execution icon">
-  <rect x="10" y="12" width="44" height="40" rx="7" fill="none" stroke="#5DA3F4" stroke-width="3" opacity="0.95"/>
-  <path d="M27 22 L41 32 L27 42 Z" fill="#5DA3F4" opacity="0.95"/>
-  <line x1="15" y1="18" x2="49" y2="18" stroke="#5DA3F4" stroke-width="2" opacity="0.5"/>
-</svg>

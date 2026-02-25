@@ -16,6 +16,10 @@ type DocsPageViewElement = HTMLElement & {
     scrollToSection?: (sectionId: string) => boolean;
 };
 
+const DEFAULT_PAGE_TITLE = 'Oatty | One CLI for Every API';
+const DEFAULT_PAGE_DESCRIPTION = 'Schema-driven command discovery, interactive terminal UI, and extension via MCP. Stop juggling vendor CLIs with Oatty - one coherent operational surface for all your APIs.';
+const SITE_ORIGIN = 'https://oatty.io';
+
 const DOCS_NAV = [
     {
         section: 'Get Started',
@@ -34,13 +38,6 @@ const DOCS_NAV = [
         ],
     },
     {
-        section: 'Guides',
-        links: [
-            {title: 'Run First Workflow', path: '/docs/guides/run-first-workflow'},
-            {title: 'Provider-backed Inputs', path: '/docs/guides/provider-backed-inputs'},
-        ],
-    },
-    {
         section: 'Reference',
         links: [
             {title: 'CLI Commands', path: '/docs/reference/cli-commands'},
@@ -54,6 +51,7 @@ export class OattySiteApp extends LitElement {
 
     private readonly onPopState = () => {
         this.currentPath = this.normalizePath(window.location.pathname);
+        this.updateSearchMetadataForRoute();
         this.requestUpdate();
     };
 
@@ -69,6 +67,7 @@ export class OattySiteApp extends LitElement {
         }
 
         window.addEventListener('popstate', this.onPopState);
+        this.updateSearchMetadataForRoute();
     }
 
     disconnectedCallback(): void {
@@ -149,9 +148,50 @@ export class OattySiteApp extends LitElement {
         event.preventDefault();
         history.pushState({}, '', href);
         this.currentPath = this.normalizePath(window.location.pathname);
+        this.updateSearchMetadataForRoute();
         window.scrollTo({top: 0});
         this.requestUpdate();
     };
+
+    private updateSearchMetadataForRoute(): void {
+        const routePath = this.currentPath === '/docs' ? '/docs/quick-start' : this.currentPath;
+        const canonicalUrl = `${SITE_ORIGIN}${routePath}`;
+
+        if (this.isDocsRoute()) {
+            const page = this.currentDocsPage();
+            const docsTitle = page ? `${page.title} | Oatty Docs` : 'Oatty Docs | One CLI for Every API';
+            const docsDescription = page?.summary ?? 'Documentation for Oatty, the schema-driven CLI, TUI, and MCP command surface.';
+            this.applyDocumentMetadata(docsTitle, docsDescription, canonicalUrl);
+            return;
+        }
+
+        this.applyDocumentMetadata(DEFAULT_PAGE_TITLE, DEFAULT_PAGE_DESCRIPTION, canonicalUrl);
+    }
+
+    private applyDocumentMetadata(title: string, description: string, canonicalUrl: string): void {
+        document.title = title;
+        this.updateMetaContent('name', 'title', title);
+        this.updateMetaContent('name', 'description', description);
+        this.updateMetaContent('property', 'og:title', title);
+        this.updateMetaContent('property', 'og:description', description);
+        this.updateMetaContent('property', 'og:url', canonicalUrl);
+        this.updateMetaContent('name', 'twitter:title', title);
+        this.updateMetaContent('name', 'twitter:description', description);
+        this.updateMetaContent('name', 'twitter:url', canonicalUrl);
+
+        const canonicalLinkElement = document.querySelector('link[rel="canonical"]');
+        if (canonicalLinkElement instanceof HTMLLinkElement) {
+            canonicalLinkElement.href = canonicalUrl;
+        }
+    }
+
+    private updateMetaContent(attributeName: 'name' | 'property', selectorValue: string, content: string): void {
+        const selector = `meta[${attributeName}="${selectorValue}"]`;
+        const metaElement = document.querySelector(selector);
+        if (metaElement instanceof HTMLMetaElement) {
+            metaElement.content = content;
+        }
+    }
 
     private handleTableOfContentsClick(event: Event, sectionId: string): void {
         event.preventDefault();
@@ -336,12 +376,14 @@ export class OattySiteApp extends LitElement {
                             </div>
                             <pre class="m-code m-code--hero m-code--hero-shell"><code>npm install -g oatty
 
+# Import a public OpenAPI catalog (required once)
+oatty import https://petstore3.swagger.io/api/v3/openapi.json --kind catalog
+
 # Start in TUI (recommended)
 oatty
 
-# Use CLI fallback for automation
-oatty search "create app"
-oatty apps create --name demo-app</code></pre>
+# Use CLI fallback for automation (after import)
+oatty search "list pets"</code></pre>
                         </div>
                     </div>
                 </section>
@@ -463,8 +505,7 @@ oatty apps create --name demo-app</code></pre>
                                 </div>
                                 <h3 class="m-heading-xl m-heading-spaced-sm">Speed</h3>
                                 <p class="m-card__text">
-                                    Designed for real work, not demos. Command prompt with <code
-                                        class="m-inline-code">:</code> prefix, history navigation, instant autocomplete.
+                                    Designed for real work, not demos. Command palette with history navigation and instant autocomplete.
                                 </p>
                             </article>
 
@@ -563,9 +604,9 @@ oatty apps create --name demo-app</code></pre>
                                         Run Oatty as an MCP server. All commands and workflows exposed as tools for AI
                                         assistants—Claude, Cline, or any MCP client.
                                     </p>
-                                    <img src="/Oatty-mcp-server.png" alt="Oatty MCP server interface"
+                                    <img src="/Oatty-mcp-server-view.png" alt="Oatty MCP server interface"
                                          class="m-screenshot m-screenshot--card"
-                                         @click="${() => this.openLightbox('/Oatty-mcp-server.png', 'Oatty MCP server interface')}"/>
+                                         @click="${() => this.openLightbox('/Oatty-mcp-server-view.png', 'Oatty MCP server interface')}"/>
                                 </article>
 
                                 <article class="m-card m-card--feature-tile">
@@ -630,7 +671,7 @@ oatty apps create --name demo-app</code></pre>
                                     </p>
                                     <div class="l-flex l-flex--wrap m-schema-list">
                                         <div><strong class="m-checkmark">✓</strong> Auto-sync with API changes</div>
-                                        <div><strong class="m-checkmark">✓</strong> 100% coverage guaranteed</div>
+                                        <div><strong class="m-checkmark">✓</strong> Coverage tracks your OpenAPI spec</div>
                                         <div><strong class="m-checkmark">✓</strong> MCP tool integration</div>
                                     </div>
                                 </div>
@@ -665,8 +706,9 @@ oatty --help</code></pre>
                             <pre class="m-code"><code># Start interactive TUI
 oatty
 
-# Import an OpenAPI catalog
-oatty import ./schemas/your-api.json --kind catalog
+# Import an OpenAPI catalog (path or URL)
+oatty import ./openapi.json --kind catalog
+# oatty import https://example.com/openapi.json --kind catalog
 
 # Search for commands
 oatty search "create order"
@@ -723,8 +765,7 @@ oatty workflow run deploy --input env=staging</code></pre>
                             <nav class="m-footer__links">
                                 <a href="https://github.com/oattyio/oatty" target="_blank" rel="noopener"
                                    class="m-footer__link">GitHub</a>
-                                <a href="https://github.com/oattyio/oatty#readme" target="_blank" rel="noopener"
-                                   class="m-footer__link">Documentation</a>
+                                <a href="/docs/quick-start" @click="${this.navigate}" class="m-footer__link">Documentation</a>
                                 <a href="https://github.com/oattyio/oatty/discussions" target="_blank" rel="noopener"
                                    class="m-footer__link">Community</a>
                                 <a href="https://github.com/oattyio/oatty/issues" target="_blank" rel="noopener"

@@ -89,13 +89,11 @@ export const howOattyExecutesSafelyPage: DocsPage = {
             callouts: [
                 {
                     type: 'expected',
-                    content: 'Most failures should map to a clear next action from validation or error metadata.'
+                    content: 'Most failures should map to a clear next action from validation or error metadata.',
                 },
                 {
-                    type: 'screenshot',
-                    imageSrc: '/docs-screenshot-placeholder.svg',
-                    imageAlt: 'Failure and recovery screenshot placeholder',
-                    content: 'Capture a single recovery flow: failure signal -> correction -> successful rerun.',
+                    type: 'tip',
+                    content: 'When something fails, rerun the smallest preflight first (preview/validate) before rerunning the full command or workflow.',
                 },
             ],
         },

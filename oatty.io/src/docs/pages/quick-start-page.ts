@@ -64,7 +64,7 @@ export const quickStartPage: DocsPage = {
             id: 'import_schema',
             title: 'Import Your First Catalog',
             paragraphs: [
-                "Open the Library and look for the Import button. Tab until it's focused then press Enter, space bar or click with your mouse.",
+                "Open the Library and look for the Import button. Tab until it's focused, then press Enter or Space (or click with your mouse).",
             ],
             callouts: [
                 {
@@ -81,7 +81,7 @@ export const quickStartPage: DocsPage = {
                 {
                     type: 'recovery',
                     content:
-                        'If import fails, verify the schema path/URL and format. Oatty currently supports OpenAPI v3 in both yaml and json formats. Retry import from Library, or run the CLI fallback to inspect errors.',
+                        'If import fails, verify the schema path/URL and format. Oatty currently supports OpenAPI v3 in both YAML and JSON formats. Retry import from Library, or run the CLI fallback to inspect errors.',
                 },
                 {
                     type: 'fallback',
@@ -138,7 +138,7 @@ export const quickStartPage: DocsPage = {
                 {
                     type: 'recovery',
                     content:
-                        'If the import fails, verify the schema path/URL and format. Oatty currently supports OpenAPI v3 in both yaml and json formats.',
+                        'If the import fails, verify the schema path/URL and format. Oatty currently supports OpenAPI v3 in both YAML and JSON formats.',
                 },
                 {
                     type: 'advanced',
@@ -150,7 +150,11 @@ export const quickStartPage: DocsPage = {
         {
             id: 'run-command',
             title: 'Discover and Run a Command',
-            paragraphs: ['Open Run Command and type a search phrase then press the Tab key to see matching result', 'Select a command, use Tab to see available flags and arg, input values and execute.', 'Inspect structured output and logs in the UI.'],
+            paragraphs: [
+                'Open Run Command and type a search phrase. Matching commands appear as you type.',
+                'Select a command, then use Tab and Shift+Tab to move between inputs (flags and arguments) and enter values.',
+                'Execute the command and inspect JSON output, logs, and status in the UI.',
+            ],
             callouts: [
                 {type: 'expected', content: 'Command execution completes and results/logs show the final status.'},
                 {
@@ -171,7 +175,7 @@ export const quickStartPage: DocsPage = {
                 {
                     type: 'recovery',
                     label: 'Command help',
-                    content: 'Read the help (Ctrl+h) for the command to understand required inputs and flags. Verify the Auth header is configured and correct',
+                    content: 'Read the help (Ctrl+h) for the command to understand required inputs and flags. Verify the Authorization header is configured and correct.',
                 },
                 {
                     type: 'advanced',
