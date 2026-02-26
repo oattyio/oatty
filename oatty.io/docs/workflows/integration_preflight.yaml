@@ -1,0 +1,100 @@
+workflow: integration_preflight
+title: Integration Preflight (Sentry, Datadog, PagerDuty)
+description: |
+  Validate baseline integration prerequisites across Sentry, Datadog, and PagerDuty.
+  This workflow is read-only.
+inputs:
+  sentry_org_slug:
+    description: Sentry organization slug
+    name: null
+    type: string
+    provider: null
+    select: null
+    mode: single
+    cache_ttl_sec: null
+    on_error: null
+    default:
+      from: literal
+      value: oattyio
+    provider_args: {}
+    depends_on: {}
+    join: null
+    optional: false
+    validate: null
+    placeholder: oattyio
+    hint: Sentry organization slug
+    example: oattyio
+    enum: []
+  pagerduty_service_name:
+    description: PagerDuty service name to verify
+    name: null
+    type: string
+    provider: null
+    select: null
+    mode: single
+    cache_ttl_sec: null
+    on_error: null
+    default:
+      from: literal
+      value: Default Service
+    provider_args: {}
+    depends_on: {}
+    join: null
+    optional: false
+    validate: null
+    placeholder: Default Service
+    hint: Existing PagerDuty service name
+    example: Default Service
+    enum: []
+steps:
+- id: sentry_providers
+  run: sentry organizations:config:integrations:list
+  description: null
+  depends_on: []
+  with:
+    organization_id_or_slug: ${{ inputs.sentry_org_slug }}
+  body: null
+  if: null
+  repeat: null
+  output_contract: null
+- id: pagerduty_services
+  run: pagerduty services:list
+  description: null
+  depends_on: []
+  with:
+    name: ${{ inputs.pagerduty_service_name }}
+  body: null
+  if: null
+  repeat: null
+  output_contract: null
+- id: datadog_pagerduty_mapping
+  run: datadog api:integration:pagerduty:configuration:services:info
+  description: null
+  depends_on: []
+  with:
+    service_name: ${{ inputs.pagerduty_service_name }}
+  body: null
+  if: null
+  repeat: null
+  output_contract: null
+final_output:
+  datadog_pagerduty_mapping: ${{ steps.datadog_pagerduty_mapping }}
+  pagerduty_services: ${{ steps.pagerduty_services }}
+  sentry_providers: ${{ steps.sentry_providers }}
+requires:
+  catalogs:
+  - vendor: sentry
+    title: sentry
+    source: null
+    source_type: null
+    version: null
+  - vendor: datadog
+    title: Datadog V1
+    source: null
+    source_type: null
+    version: null
+  - vendor: pagerduty
+    title: PagerDuty
+    source: null
+    source_type: null
+    version: null

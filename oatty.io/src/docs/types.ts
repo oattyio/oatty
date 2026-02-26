@@ -32,6 +32,7 @@ export type DocsSectionHeadingLevel = 2 | 3 | 4 | 5 | 6;
 export type DocsSection = {
     id: string;
     title: string;
+    tocTitle?: string;
     headingLevel?: DocsSectionHeadingLevel;
     paragraphs: string[];
     codeSample?: string;

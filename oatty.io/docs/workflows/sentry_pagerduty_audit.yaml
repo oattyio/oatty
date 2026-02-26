@@ -1,0 +1,109 @@
+workflow: sentry_pagerduty_audit
+title: Audit Sentry PagerDuty Alert Wiring
+description: |
+  Read-only audit of Sentry rules and workflows to confirm PagerDuty action wiring.
+inputs:
+  sentry_org_slug:
+    description: Sentry organization slug
+    name: null
+    type: string
+    provider: null
+    select: null
+    mode: single
+    cache_ttl_sec: null
+    on_error: null
+    default:
+      from: literal
+      value: oattyio
+    provider_args: {}
+    depends_on: {}
+    join: null
+    optional: false
+    validate: null
+    placeholder: oattyio
+    hint: Sentry organization slug
+    example: oattyio
+    enum: []
+  sentry_project_id:
+    description: Sentry numeric project id for workflow filter
+    name: null
+    type: number
+    provider: null
+    select: null
+    mode: single
+    cache_ttl_sec: null
+    on_error: null
+    default:
+      from: literal
+      value: 4510921127034880
+    provider_args: {}
+    depends_on: {}
+    join: null
+    optional: false
+    validate: null
+    placeholder: '4510921127034880'
+    hint: Numeric project id used by organizations:workflows:list filter
+    example: '4510921127034880'
+    enum: []
+steps:
+- id: provider_catalog
+  run: sentry organizations:config:integrations:list
+  description: null
+  depends_on: []
+  with:
+    organization_id_or_slug: ${{ inputs.sentry_org_slug }}
+  body: null
+  if: null
+  repeat: null
+  output_contract: null
+- id: alert_rules
+  run: sentry organizations:alert-rules:list
+  description: null
+  depends_on: []
+  with:
+    organization_id_or_slug: ${{ inputs.sentry_org_slug }}
+  body: null
+  if: null
+  repeat: null
+  output_contract: null
+- id: workflows
+  run: sentry organizations:workflows:list
+  description: null
+  depends_on: []
+  with:
+    organization_id_or_slug: ${{ inputs.sentry_org_slug }}
+    project:
+    - ${{ inputs.sentry_project_id }}
+  body: null
+  if: null
+  repeat: null
+  output_contract: null
+- id: detectors
+  run: sentry organizations:detectors:list
+  description: null
+  depends_on: []
+  with:
+    organization_id_or_slug: ${{ inputs.sentry_org_slug }}
+    project:
+    - ${{ inputs.sentry_project_id }}
+  body: null
+  if: null
+  repeat: null
+  output_contract: null
+final_output:
+  alert_rules: ${{ steps.alert_rules }}
+  detectors: ${{ steps.detectors }}
+  providers: ${{ steps.provider_catalog }}
+  workflows: ${{ steps.workflows }}
+requires:
+  catalogs:
+  - vendor: sentry
+    title: sentry
+    source: null
+    source_type: null
+    version: null
+  - vendor: sentry-workflow
+    title: Sentry Workflow
+    source: null
+    source_type: null
+    version: null

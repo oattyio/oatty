@@ -1,4 +1,4 @@
-import {mkdir, readFile, writeFile} from 'node:fs/promises';
+import {copyFile, mkdir, readFile, writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 
 import {docsPages} from '../src/docs/pages';
@@ -25,7 +25,18 @@ async function runPostBuildSearchEngineOptimizationTasks(): Promise<void> {
     await generatePrerenderedDocsShells(builtIndexHtml, docsRouteMap);
     await generateRobotsFile();
     await generateSitemapFile(docsRouteMap);
+    await copyRunbooks();
     await writeFile(join(DIST_DIRECTORY, '404.html'), builtIndexHtml, 'utf8');
+}
+
+/**
+ * Copy human-friendly runbooks into the distribution folder for direct linking.
+ */
+async function copyRunbooks(): Promise<void> {
+    const sourcePath = join('docs', 'Sentry_Datadog_PagerDuty_Integration_Playbook.md');
+    const destinationDirectory = join(DIST_DIRECTORY, 'runbooks');
+    await mkdir(destinationDirectory, {recursive: true});
+    await copyFile(sourcePath, join(destinationDirectory, 'sentry-datadog-pagerduty.md'));
 }
 
 /**
