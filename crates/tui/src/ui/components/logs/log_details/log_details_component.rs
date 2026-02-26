@@ -28,7 +28,7 @@ use ratatui::{
     Frame,
     layout::Rect,
     text::{Line, Span},
-    widgets::{Block, Borders, Paragraph, Wrap},
+    widgets::{Block, Borders, Paragraph},
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -45,6 +45,14 @@ enum DetailViewMode {
 struct CachedPrettyJson {
     selected_index: usize,
     formatted: Arc<str>,
+    line_indices: Arc<Vec<(usize, usize)>>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedRedactedText {
+    selected_index: usize,
+    redacted: Arc<str>,
+    line_indices: Arc<Vec<(usize, usize)>>,
 }
 
 /// Renders and manages the log detail modal.
@@ -57,6 +65,7 @@ pub struct LogDetailsComponent {
     last_selected_index: Option<usize>,
     text_scroll_metrics: ScrollMetrics,
     cached_pretty_json: Option<CachedPrettyJson>,
+    cached_redacted_text: Option<CachedRedactedText>,
 }
 
 impl LogDetailsComponent {
@@ -92,6 +101,7 @@ impl LogDetailsComponent {
             self.reset_text_scroll_state();
             self.last_selected_index = Some(selected_index);
             self.cached_pretty_json = None;
+            self.cached_redacted_text = None;
         }
 
         if let Some(parsed_json) = selected_mcp_parsed_response_json(app, selected_index) {
@@ -116,17 +126,17 @@ impl LogDetailsComponent {
             LogEntry::Api { status, raw, .. } => {
                 let detail_text = format!("HTTP {status}\n\n{raw}");
                 self.detail_view_mode = DetailViewMode::Text;
-                self.render_scrollable_redacted_paragraph(frame, area, &*app.ctx.theme, &detail_text, app);
+                self.render_scrollable_redacted_paragraph(frame, area, &*app.ctx.theme, selected_index, &detail_text, app);
             }
             LogEntry::Text { level, msg } => {
                 let heading = level.unwrap_or(LogLevel::Info);
                 let detail_text = format!("[{heading}] {msg}");
                 self.detail_view_mode = DetailViewMode::Text;
-                self.render_scrollable_redacted_paragraph(frame, area, &*app.ctx.theme, &detail_text, app);
+                self.render_scrollable_redacted_paragraph(frame, area, &*app.ctx.theme, selected_index, &detail_text, app);
             }
             LogEntry::Mcp { raw, .. } => {
                 self.detail_view_mode = DetailViewMode::Text;
-                self.render_scrollable_redacted_paragraph(frame, area, &*app.ctx.theme, raw, app);
+                self.render_scrollable_redacted_paragraph(frame, area, &*app.ctx.theme, selected_index, raw, app);
             }
         }
     }
@@ -222,17 +232,36 @@ impl LogDetailsComponent {
         );
     }
 
-    fn render_scrollable_redacted_paragraph(&mut self, frame: &mut Frame, area: Rect, theme: &dyn Theme, text: &str, app: &App) {
+    fn render_scrollable_redacted_paragraph(
+        &mut self,
+        frame: &mut Frame,
+        area: Rect,
+        theme: &dyn Theme,
+        selected_index: usize,
+        text: &str,
+        app: &App,
+    ) {
+        self.ensure_redacted_text_cached(selected_index, text);
+        let Some(cached_text) = self
+            .cached_redacted_text
+            .as_ref()
+            .filter(|cached| cached.selected_index == selected_index)
+        else {
+            return;
+        };
+        let content = Arc::clone(&cached_text.redacted);
+        let line_indices = Arc::clone(&cached_text.line_indices);
         self.update_text_viewport_height(area.height);
-        let mut paragraph = Paragraph::new(redact_sensitive(text))
+        self.update_text_content_height(line_indices.len().min(u16::MAX as usize) as u16);
+        let visible_slice = slice_lines_for_viewport(
+            content.as_ref(),
+            line_indices.as_ref(),
+            self.text_scroll_metrics.offset() as usize,
+            area.height as usize,
+        );
+        let paragraph = Paragraph::new(visible_slice)
             .block(Block::default().borders(Borders::NONE))
-            .wrap(Wrap { trim: false })
             .style(theme.text_primary_style());
-        let line_count = paragraph.line_count(area.width);
-        let capped_height = line_count.min(u16::MAX as usize) as u16;
-        self.update_text_content_height(capped_height);
-
-        paragraph = paragraph.scroll((self.text_scroll_metrics.offset(), 0));
         frame.render_widget(paragraph, area);
         self.render_text_scrollbar(frame, area, app);
     }
@@ -246,23 +275,32 @@ impl LogDetailsComponent {
         json_value: &Value,
         app: &App,
     ) {
-        let mut lines = Vec::new();
-        lines.push(Line::from(vec![Span::styled("parsed_response_text", theme.syntax_keyword_style())]));
-        lines.push(Line::from(Span::raw("")));
         self.ensure_formatted_json_cached(selected_index, json_value);
-        let formatted_json = self.formatted_json_for_selection(selected_index).unwrap_or_else(|| Arc::from(""));
-        lines.extend(highlight_pretty_json_lines(formatted_json.as_ref(), theme));
-
         self.update_text_viewport_height(area.height);
-        let mut paragraph = Paragraph::new(lines)
-            .block(Block::default().borders(Borders::NONE))
-            .wrap(Wrap { trim: false })
-            .style(theme.text_primary_style());
-        let line_count = paragraph.line_count(area.width);
-        let capped_height = line_count.min(u16::MAX as usize) as u16;
-        self.update_text_content_height(capped_height);
+        let Some(cached_json) = self
+            .cached_pretty_json
+            .as_ref()
+            .filter(|cached| cached.selected_index == selected_index)
+        else {
+            return;
+        };
+        let formatted_json = Arc::clone(&cached_json.formatted);
+        let json_line_indices = Arc::clone(&cached_json.line_indices);
+        let total_lines = 2usize.saturating_add(json_line_indices.len());
+        self.update_text_content_height(total_lines.min(u16::MAX as usize) as u16);
 
-        paragraph = paragraph.scroll((self.text_scroll_metrics.offset(), 0));
+        let viewport_height = area.height as usize;
+        let scroll_offset = self.text_scroll_metrics.offset() as usize;
+        let rendered_lines = build_json_viewport_lines(
+            theme,
+            formatted_json.as_ref(),
+            json_line_indices.as_ref(),
+            scroll_offset,
+            viewport_height,
+        );
+        let paragraph = Paragraph::new(rendered_lines)
+            .block(Block::default().borders(Borders::NONE))
+            .style(theme.text_primary_style());
         frame.render_widget(paragraph, area);
         self.render_text_scrollbar(frame, area, app);
     }
@@ -278,21 +316,92 @@ impl LogDetailsComponent {
         }
 
         let formatted_json: Arc<str> = Arc::from(serde_json::to_string_pretty(json_value).unwrap_or_else(|_| json_value.to_string()));
+        let line_indices: Arc<Vec<(usize, usize)>> = Arc::new(compute_line_indices(formatted_json.as_ref()));
         self.cached_pretty_json = Some(CachedPrettyJson {
             selected_index,
             formatted: formatted_json,
+            line_indices,
         });
     }
 
-    fn formatted_json_for_selection(&self, selected_index: usize) -> Option<Arc<str>> {
-        self.cached_pretty_json.as_ref().and_then(|cached| {
-            if cached.selected_index == selected_index {
-                Some(Arc::clone(&cached.formatted))
-            } else {
-                None
-            }
-        })
+    fn ensure_redacted_text_cached(&mut self, selected_index: usize, text: &str) {
+        let already_cached = self
+            .cached_redacted_text
+            .as_ref()
+            .map(|cached| cached.selected_index == selected_index)
+            .unwrap_or(false);
+        if already_cached {
+            return;
+        }
+        let redacted: Arc<str> = Arc::from(redact_sensitive(text));
+        let line_indices: Arc<Vec<(usize, usize)>> = Arc::new(compute_line_indices(redacted.as_ref()));
+        self.cached_redacted_text = Some(CachedRedactedText {
+            selected_index,
+            redacted,
+            line_indices,
+        });
     }
+}
+
+fn build_json_viewport_lines<'line>(
+    theme: &dyn Theme,
+    formatted_json: &'line str,
+    line_indices: &[(usize, usize)],
+    offset: usize,
+    viewport_height: usize,
+) -> Vec<Line<'line>> {
+    let mut remaining = viewport_height;
+    let mut lines = Vec::with_capacity(viewport_height.min(16));
+
+    if remaining == 0 {
+        return lines;
+    }
+
+    if offset == 0 {
+        lines.push(Line::from(vec![Span::styled("parsed_response_text", theme.syntax_keyword_style())]));
+        remaining = remaining.saturating_sub(1);
+    }
+    if remaining == 0 {
+        return lines;
+    }
+    if offset <= 1 {
+        lines.push(Line::from(Span::raw("")));
+        remaining = remaining.saturating_sub(1);
+    }
+    if remaining == 0 {
+        return lines;
+    }
+
+    let json_start_line = offset.saturating_sub(2);
+    let json_slice = slice_lines_for_viewport(formatted_json, line_indices, json_start_line, remaining);
+    lines.extend(highlight_pretty_json_lines(json_slice, theme));
+    lines
+}
+
+fn compute_line_indices(content: &str) -> Vec<(usize, usize)> {
+    let mut line_indices = Vec::new();
+    let mut line_start = 0usize;
+    for (index, byte) in content.as_bytes().iter().enumerate() {
+        if *byte == b'\n' {
+            line_indices.push((line_start, index));
+            line_start = index + 1;
+        }
+    }
+    if line_start < content.len() || line_indices.is_empty() {
+        line_indices.push((line_start, content.len()));
+    }
+    line_indices
+}
+
+fn slice_lines_for_viewport<'a>(content: &'a str, line_indices: &[(usize, usize)], offset: usize, viewport_height: usize) -> &'a str {
+    if line_indices.is_empty() || viewport_height == 0 || offset >= line_indices.len() {
+        return "";
+    }
+
+    let last_line = line_indices.len().min(offset.saturating_add(viewport_height)).saturating_sub(1);
+    let begin = line_indices[offset].0;
+    let end = line_indices[last_line].1;
+    content.get(begin..end).unwrap_or("")
 }
 
 impl Component for LogDetailsComponent {

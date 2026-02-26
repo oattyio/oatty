@@ -1,0 +1,79 @@
+workflow: datadog_pagerduty_config
+title: Configure Datadog to PagerDuty Service Mapping
+description: |
+  Create or update the Datadog PagerDuty service mapping for a PagerDuty service.
+  Requires a PagerDuty Events API v2 integration key.
+inputs:
+  pagerduty_service_name:
+    description: PagerDuty service name in Datadog mapping
+    name: null
+    type: string
+    provider: null
+    select: null
+    mode: single
+    cache_ttl_sec: null
+    on_error: null
+    default:
+      from: literal
+      value: Default Service
+    provider_args: {}
+    depends_on: {}
+    join: null
+    optional: false
+    validate: null
+    placeholder: Default Service
+    hint: PagerDuty service display name
+    example: Default Service
+    enum: []
+  pagerduty_events_api_v2_integration_key:
+    description: PagerDuty Events API v2 integration key
+    name: null
+    type: string
+    provider: null
+    select: null
+    mode: single
+    cache_ttl_sec: null
+    on_error: null
+    default: null
+    provider_args: {}
+    depends_on: {}
+    join: null
+    optional: false
+    validate: null
+    placeholder: pd_events_v2_key
+    hint: Service integration key from PagerDuty Events API v2 integration
+    example: your_pagerduty_events_api_v2_integration_key
+    enum: []
+steps:
+- id: create_mapping
+  run: datadog api:integration:pagerduty:configuration:services:create
+  description: null
+  depends_on: []
+  with:
+    service_name: ${{ inputs.pagerduty_service_name }}
+    service_key: ${{ inputs.pagerduty_events_api_v2_integration_key }}
+  body: null
+  if: null
+  repeat: null
+  output_contract: null
+- id: verify_mapping
+  run: datadog api:integration:pagerduty:configuration:services:info
+  description: null
+  depends_on:
+  - create_mapping
+  with:
+    service_name: ${{ inputs.pagerduty_service_name }}
+  body: null
+  if: null
+  repeat: null
+  output_contract: null
+final_output:
+  created: ${{ steps.create_mapping }}
+  verified: ${{ steps.verify_mapping }}
+requires:
+  catalogs:
+  - vendor: datadog
+    title: Datadog V1
+    source: null
+    source_type: null
+    version: null

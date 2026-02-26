@@ -38,6 +38,27 @@ export const mcpHttpServerPage: DocsPage = {
             ],
         },
         {
+            id: 'why-http-server-not-headless-stdio',
+            title: 'Why Oatty Uses a Visible HTTP MCP Server (Not Headless stdio by Default)',
+            tocTitle: 'Why HTTP (vs stdio)',
+            paragraphs: [
+                'Many MCP servers run as headless stdio processes. Oatty intentionally defaults to a visible local HTTP server in the TUI so operators can observe and control runtime behavior directly.',
+                'The MCP HTTP Server view provides explicit lifecycle controls, endpoint visibility, connected-client counts, and last-error context. This makes troubleshooting and operational review faster than debugging an opaque background process.',
+                'This choice also keeps human-in-the-loop workflows clear: agents can propose and run through MCP while operators keep direct visibility into what is connected and when execution is active.',
+                'Headless stdio is still a valid pattern in some environments. If you need tightly sandboxed single-client process wiring, stdio-based integration can still fit, but Oatty\'s default prioritizes transparent multi-client local operations.',
+            ],
+            callouts: [
+                {
+                    type: 'expected',
+                    content: 'Operators can inspect server state and client activity in real time instead of inferring failures from disconnected client logs.',
+                },
+                {
+                    type: 'tip',
+                    content: 'Use local loopback bind plus visible controls for development and review workflows; only expose network endpoints when you have explicit security controls in place.',
+                },
+            ],
+        },
+        {
             id: 'start-stop-server',
             title: 'Start and Stop the Server',
             paragraphs: ['Use Start to launch the MCP HTTP server.', 'Use Stop to shut down the server when needed.', 'Read status changes to confirm lifecycle transitions.'],

@@ -26,6 +26,16 @@ const DOCS_NAV = [
         links: [{title: 'Quick Start', path: '/docs/quick-start'}],
     },
     {
+        section: 'Guides',
+        links: [
+            {title: 'Bootstrap Sentry with an Agent + MCP', path: '/docs/guides/sentry-bootstrap'},
+            {title: 'Sentry + Datadog + PagerDuty Playbook', path: '/docs/guides/sentry-datadog-pagerduty-playbook'},
+            {title: 'Vercel -> Render Migration Playbook', path: '/docs/guides/vercel-to-render-migration-playbook'},
+            {title: 'Access Review Collection Playbook', path: '/docs/guides/access-review-collection-playbook'},
+            {title: 'Credential Rotation Readiness Playbook', path: '/docs/guides/credential-rotation-readiness-playbook'},
+        ],
+    },
+    {
         section: 'Learn',
         links: [
             {title: 'How Oatty Executes Safely', path: '/docs/learn/how-oatty-executes-safely'},
@@ -306,7 +316,7 @@ export class OattySiteApp extends LitElement {
                                                 class="m-toc__link m-toc__link--level-${section.headingLevel ?? 2}"
                                                 href="#${section.id}"
                                                 @click="${(event: Event) => this.handleTableOfContentsClick(event, section.id)}"
-                                        >${section.title}</a
+                                        >${section.tocTitle ?? section.title}</a
                                         >`
                         )}
                     </aside>
@@ -677,14 +687,61 @@ oatty search "list pets"</code></pre>
                                 </div>
                             </article>
                         </div>
-                    </div>
-                </section>
+	                    </div>
+	                </section>
 
-                <section id="install" class="l-section l-section--install">
-                    <div class="l-shell">
-                        <h2 class="m-heading-4xl m-heading-centered m-heading-spaced-xl">Getting Started</h2>
-                        <div class="l-grid l-grid--two">
-                            <div class="m-card">
+	                <section id="validation" class="l-section">
+	                    <div class="l-shell">
+	                        <p class="m-eyebrow">Real-world Validation</p>
+	                        <h2 class="m-heading-4xl m-heading-spaced-2xl">Agent-driven API operations</h2>
+	                        <div class="l-grid l-grid--two">
+	                            <div class="m-card">
+	                                <h3 class="m-card__title">The pattern</h3>
+	                                <p class="m-card__text m-card__text--spaced-lg">
+	                                    Connect your AI agent to Oatty's MCP server. Turn any OpenAPI-powered platform into a unified operational surface with smart discovery, multi-vendor workflows, and built-in safety reviews.
+	                                </p>
+	                                <p class="m-card__text m-card__text--spaced-lg">
+	                                    Empower your AI agents with Oatty MCP: discover and orchestrate actions across OpenAPI tools safely. Automate complex cross-system workflows without requiring deep expertise in every platform.
+	                                </p>
+	                                <div class="l-stack l-stack--sm">
+	                                    <div><strong class="m-checkmark">✓</strong> Import APIs via OpenAPI</div>
+	                                    <div><strong class="m-checkmark">✓</strong> Discover via search (no memorization)</div>
+	                                    <div><strong class="m-checkmark">✓</strong> Propose sequences as workflows</div>
+	                                    <div><strong class="m-checkmark">✓</strong> Preview/validate, then run explicitly</div>
+	                                </div>
+	                                <p class="m-card__text">
+	                                    This is especially effective for complex observability platforms like Sentry, Datadog, and PagerDuty.
+	                                </p>
+	                            </div>
+	                            <div class="m-card">
+	                                <h3 class="m-card__title">Sentry test (validated)</h3>
+	                                <p class="m-card__text m-card__text--spaced-lg">
+	                                    In a real-world test, an MCP-connected agent imported Sentry APIs into Oatty (token provided via catalog headers)
+	                                    and configured a full baseline with minimal prior knowledge.
+	                                </p>
+	                                <div class="l-stack l-stack--sm">
+	                                    <div><strong class="m-checkmark">✓</strong> Alerts/monitors, workflows, dashboards</div>
+	                                    <div><strong class="m-checkmark">✓</strong> Org-level hardening and global settings</div>
+	                                    <div><strong class="m-checkmark">✓</strong> Project tuning and configuration updates</div>
+	                                    <div><strong class="m-checkmark">✓</strong> Add Sentry as a project source (with other MCP tools)</div>
+	                                </div>
+	                                <p class="m-card__text">
+	                                    Sensitive changes remain human-reviewed through preview and explicit execution.
+	                                </p>
+	                                <div class="l-flex l-flex--wrap">
+	                                    <a class="m-button m-button--primary" href="/docs/guides/sentry-bootstrap" @click="${this.navigate}">Read the guide</a>
+	                                    <a class="m-button" href="/docs/learn/how-oatty-executes-safely" @click="${this.navigate}">Trust model</a>
+	                                </div>
+	                            </div>
+	                        </div>
+	                    </div>
+	                </section>
+
+	                <section id="install" class="l-section l-section--install">
+	                    <div class="l-shell">
+	                        <h2 class="m-heading-4xl m-heading-centered m-heading-spaced-xl">Getting Started</h2>
+	                        <div class="l-grid l-grid--two">
+	                            <div class="m-card">
                                 <h3 class="m-card__title">Install via npm</h3>
                                 <pre class="m-code"><code>npm install -g oatty
 oatty --help</code></pre>

@@ -1,0 +1,72 @@
+workflow: datadog_pagerduty_validation_monitor
+title: Create Draft Datadog to PagerDuty Validation Monitor
+description: |
+  Create a draft Datadog monitor that includes a PagerDuty notification handle.
+  This monitor remains in draft to prevent paging during validation.
+inputs:
+  pagerduty_handle:
+    description: Datadog PagerDuty handle in message body
+    name: null
+    type: string
+    provider: null
+    select: null
+    mode: single
+    cache_ttl_sec: null
+    on_error: null
+    default:
+      from: literal
+      value: '@pagerduty-Default-Service'
+    provider_args: {}
+    depends_on: {}
+    join: null
+    optional: false
+    validate: null
+    placeholder: '@pagerduty-Default-Service'
+    hint: Datadog mention format for PagerDuty service routing
+    example: '@pagerduty-Default-Service'
+    enum: []
+steps:
+- id: create_draft_monitor
+  run: datadog api:monitor:create
+  description: null
+  depends_on: []
+  with:
+    name: integration-validation datadog-to-pagerduty
+    type: query alert
+    query: avg(last_5m):avg:system.load.1{*} > 100000
+    message: Datadog to PagerDuty integration validation monitor. ${{ inputs.pagerduty_handle }}
+    tags:
+    - integration:datadog-pagerduty
+    - env:production
+    - managed-by:oatty
+    priority: 3
+    draft_status: draft
+    options:
+      include_tags: true
+      notify_no_data: false
+      thresholds:
+        critical: 100000
+  body: null
+  if: null
+  repeat: null
+  output_contract: null
+- id: read_monitor
+  run: datadog api:monitor:info
+  description: null
+  depends_on:
+  - create_draft_monitor
+  with:
+    monitor_id: ${{ steps.create_draft_monitor.id }}
+  body: null
+  if: null
+  repeat: null
+  output_contract: null
+final_output:
+  monitor: ${{ steps.read_monitor }}
+requires:
+  catalogs:
+  - vendor: datadog
+    title: Datadog V1
+    source: null
+    source_type: null
+    version: null
