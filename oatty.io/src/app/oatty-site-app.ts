@@ -16,8 +16,8 @@ type DocsPageViewElement = HTMLElement & {
     scrollToSection?: (sectionId: string) => boolean;
 };
 
-const DEFAULT_PAGE_TITLE = 'Oatty | One CLI for Every API';
-const DEFAULT_PAGE_DESCRIPTION = 'Schema-driven command discovery, interactive terminal UI, and extension via MCP. Stop juggling vendor CLIs with Oatty - one coherent operational surface for all your APIs.';
+const DEFAULT_PAGE_TITLE = 'Oatty - Unified TUI & CLI for OpenAPI APIs | Schema-Driven Discovery & Workflows';
+const DEFAULT_PAGE_DESCRIPTION = 'Schema-driven OpenAPI command discovery, workflow orchestration, and MCP execution with reviewable safety gates.';
 const SITE_ORIGIN = 'https://oatty.io';
 
 const DOCS_NAV = [
@@ -349,6 +349,8 @@ export class OattySiteApp extends LitElement {
                            @click="${(event: Event) => this.smoothScrollToSection(event, 'principles')}">Principles</a>
                         <a class="m-nav__link" href="#features"
                            @click="${(event: Event) => this.smoothScrollToSection(event, 'features')}">Features</a>
+                        <a class="m-nav__link" href="#agents"
+                           @click="${(event: Event) => this.smoothScrollToSection(event, 'agents')}">Agents</a>
                         <a class="m-nav__link" href="#install"
                            @click="${(event: Event) => this.smoothScrollToSection(event, 'install')}">Install</a>
                         <a class="m-nav__link m-nav__link--icon" href="https://github.com/oattyio/oatty" target="_blank"
@@ -690,34 +692,29 @@ oatty search "list pets"</code></pre>
 	                    </div>
 	                </section>
 
-	                <section id="validation" class="l-section">
+	                <section id="agents" class="l-section">
 	                    <div class="l-shell">
-	                        <p class="m-eyebrow">Real-world Validation</p>
-	                        <h2 class="m-heading-4xl m-heading-spaced-2xl">Agent-driven API operations</h2>
+	                        <p class="m-eyebrow">For AI Agents</p>
+	                        <h2 class="m-heading-4xl m-heading-spaced-2xl">MCP Superpowers for AI Agents</h2>
 	                        <div class="l-grid l-grid--two">
 	                            <div class="m-card">
-	                                <h3 class="m-card__title">The pattern</h3>
+	                                <h3 class="m-card__title">Connect your agent to Oatty MCP</h3>
 	                                <p class="m-card__text m-card__text--spaced-lg">
-	                                    Connect your AI agent to Oatty's MCP server. Turn any OpenAPI-powered platform into a unified operational surface with smart discovery, multi-vendor workflows, and built-in safety reviews.
-	                                </p>
-	                                <p class="m-card__text m-card__text--spaced-lg">
-	                                    Empower your AI agents with Oatty MCP: discover and orchestrate actions across OpenAPI tools safely. Automate complex cross-system workflows without requiring deep expertise in every platform.
+	                                    Plug your agent into Oatty MCP to discover actions across any OpenAPI schema, coordinate multi-vendor workflows, and execute with reviewable safety gates.
 	                                </p>
 	                                <div class="l-stack l-stack--sm">
-	                                    <div><strong class="m-checkmark">✓</strong> Import APIs via OpenAPI</div>
-	                                    <div><strong class="m-checkmark">✓</strong> Discover via search (no memorization)</div>
-	                                    <div><strong class="m-checkmark">✓</strong> Propose sequences as workflows</div>
-	                                    <div><strong class="m-checkmark">✓</strong> Preview/validate, then run explicitly</div>
+	                                    <div><strong class="m-checkmark">✓</strong> Schema-aware action discovery</div>
+	                                    <div><strong class="m-checkmark">✓</strong> Cross-provider workflow orchestration</div>
+	                                    <div><strong class="m-checkmark">✓</strong> Preview and confirmation checkpoints</div>
 	                                </div>
 	                                <p class="m-card__text">
-	                                    This is especially effective for complex observability platforms like Sentry, Datadog, and PagerDuty.
+	                                    Keep humans in control while letting agents accelerate high-context API work.
 	                                </p>
 	                            </div>
 	                            <div class="m-card">
-	                                <h3 class="m-card__title">Sentry test (validated)</h3>
+	                                <h3 class="m-card__title">Teaser case: Sentry bootstrap</h3>
 	                                <p class="m-card__text m-card__text--spaced-lg">
-	                                    In a real-world test, an MCP-connected agent imported Sentry APIs into Oatty (token provided via catalog headers)
-	                                    and configured a full baseline with minimal prior knowledge.
+	                                    In a real-world test, an MCP-connected agent imported Sentry APIs into Oatty and configured a baseline setup with explicit operator review before sensitive writes.
 	                                </p>
 	                                <div class="l-stack l-stack--sm">
 	                                    <div><strong class="m-checkmark">✓</strong> Alerts/monitors, workflows, dashboards</div>
@@ -740,6 +737,9 @@ oatty search "list pets"</code></pre>
 	                <section id="install" class="l-section l-section--install">
 	                    <div class="l-shell">
 	                        <h2 class="m-heading-4xl m-heading-centered m-heading-spaced-xl">Getting Started</h2>
+                            <p class="m-text-lg m-heading-centered">
+                                Early release, shipping fast: Oatty is currently in the <code class="m-inline-code m-inline-code--body">v0.1</code> line with active MCP and workflow docs.
+                            </p>
 	                        <div class="l-grid l-grid--two">
 	                            <div class="m-card">
                                 <h3 class="m-card__title">Install via npm</h3>
