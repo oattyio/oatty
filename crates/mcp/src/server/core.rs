@@ -1,14 +1,15 @@
 use crate::PluginEngine;
 use crate::server::catalog::{
-    edit_catalog_headers, get_catalog_masked_headers, import_openapi_catalog, preview_openapi_import, remove_catalog_runtime,
-    set_catalog_base_url, set_catalog_enabled_state, validate_openapi_source,
+    apply_catalog_patch_runtime, edit_catalog_headers, get_catalog_masked_headers, import_openapi_catalog, preview_openapi_import,
+    remove_catalog_runtime, set_catalog_base_url, set_catalog_enabled_state, validate_openapi_source,
 };
 use crate::server::http::McpHttpLogEntry;
 use crate::server::log_payload::{build_log_payload, build_parsed_response_payload};
 use crate::server::schemas::{
-    CatalogEditHeadersRequest, CatalogGetMaskedHeadersRequest, CatalogImportOpenApiRequest, CatalogPreviewImportRequest,
-    CatalogRemoveRequest, CatalogSetBaseUrlRequest, CatalogSetEnabledRequest, CatalogValidateOpenApiRequest, CommandDetailRequest,
-    CommandSummariesRequest, OutputSchemaDetail, ProviderMetadataDetail, RunCommandRequestParam, SearchInputsDetail, SearchRequestParam,
+    CatalogApplyPatchRequest, CatalogEditHeadersRequest, CatalogGetMaskedHeadersRequest, CatalogImportOpenApiRequest,
+    CatalogPreviewImportRequest, CatalogRemoveRequest, CatalogSetBaseUrlRequest, CatalogSetEnabledRequest, CatalogValidateOpenApiRequest,
+    CommandDetailRequest, CommandSummariesRequest, OutputSchemaDetail, ProviderMetadataDetail, RunCommandRequestParam, SearchInputsDetail,
+    SearchRequestParam,
 };
 use crate::server::workflow::{
     errors::{conflict_error, not_found_error},
@@ -304,6 +305,17 @@ impl OattyMcpCore {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
         let result = import_openapi_catalog(&self.services.command_registry, &param.0).await;
         Ok(self.finalize_structured_tool_call("catalog_import_openapi", request_payload, result))
+    }
+
+    #[tool(
+        name = "catalog_apply_patch",
+        annotations(open_world_hint = true),
+        description = "Apply deterministic command-level patch operations to an existing catalog and persist the result. Input: catalog_id, operations[{operation_id?,match_command{group,name,http_method,http_path},replacement_command}], fail_on_missing?, fail_on_ambiguous?, overwrite?."
+    )]
+    async fn catalog_apply_patch(&self, param: Parameters<CatalogApplyPatchRequest>) -> Result<CallToolResult, ErrorData> {
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = apply_catalog_patch_runtime(&self.services.command_registry, &param.0);
+        Ok(self.finalize_structured_tool_call("catalog_apply_patch", request_payload, result))
     }
 
     #[tool(
@@ -725,7 +737,7 @@ impl ServerHandler for OattyMcpCore {
                 ..Default::default()
             },
             instructions: Some(
-                "LLM-ONLY SERVER INSTRUCTIONS.\nDISCOVERY FIRST:\n1) Start with search_commands.\n2) Select canonical_id.\n3) Call get_command for exact schema.\n4) Route by execution_type/http_method.\n\nROUTING:\n- http + GET => run_safe_command\n- http + POST|PUT|PATCH => run_command\n- http + DELETE => run_destructive_command\n- mcp + read-only => run_safe_command\n- mcp + non-destructive => run_command\n- mcp + destructive => unsupported\n\nSEARCH RULES:\n- Use limit (usually 5-10).\n- Use include_inputs=none for first pass.\n- Use include_inputs=required_only for planning.\n- Use include_inputs=full only when required; at most once per vendor/intent.\n- Canonical query `<group> <command>` returns direct hit when present.\n- After candidate canonical_ids are found, stop fuzzy search and use get_command.\n- Do not use get_command_summaries_by_catalog except deliberate batch inspection.\n\nCATALOG RULES:\n- If commands are missing after two focused searches, STOP and run:\n  catalog_validate_openapi -> catalog_preview_import -> catalog_import_openapi.\n- If only unrelated catalogs are found, treat as hard stop until required catalogs are imported.\n- catalog_import_openapi mutates user configuration: request user confirmation before calling it.\n- If auth is required, instruct user to configure catalog headers (for example Authorization) before HTTP execution.\n\nARGUMENT RULES:\n- Build positional_args in declared order.\n- Build named_flags as [name,value]. Values may be scalar/array/object; booleans accept explicit true/false.\n- Prefer get_command for exact args/flags.\n- For provider-backed workflow inputs, use get_command(include_providers=required_only|full).\n\nWORKFLOW INTENT MODE:\n- If user asks to create/author/generate a workflow, MUST use Oatty workflow tools.\n- Workflow steps must be HTTP-backed commands only (no MCP/plugin step runs).\n- Preferred sequence:\n  search_commands -> get_command -> workflow_validate(minimal) -> expand manifest -> workflow_validate -> workflow_save -> workflow_resolve_inputs -> workflow_run\n- Before authoring, verify required providers/platforms are discoverable.\n- Use providers for enumerable identifiers/list selections when contracts exist.\n- Keep manual inputs for transformation-heavy fields.\n- If search_commands returns provider_inputs, prefer provider-backed inputs unless transformation-heavy.\n- Use `if`/`when` (not `condition`).\n- Step params belong under `with` using real command parameter names.\n- Input defaults must be structured objects: `default: { from: literal|env|history|workflow_output, value: ... }`.\n- Provider-backed inputs must use explicit scalar select path (for example `owner.id`).\n- Include placeholder/hint/example metadata for manual free-text inputs.\n\nSAFETY:\n- Do NOT create repository docs, blueprints, scripts, or CI files unless explicitly requested.\n- File-only fallback is allowed only after reporting unimportable provider and receiving explicit user approval.\n- Example: 'list vercel projects' => search_commands -> get_command -> run_safe_command.".to_string()
+                "LLM-ONLY SERVER INSTRUCTIONS.\nDISCOVERY FIRST:\n1) Start with search_commands.\n2) Select canonical_id.\n3) Call get_command for exact schema.\n4) Route by execution_type/http_method.\n\nROUTING:\n- http + GET => run_safe_command\n- http + POST|PUT|PATCH => run_command\n- http + DELETE => run_destructive_command\n- mcp + read-only => run_safe_command\n- mcp + non-destructive => run_command\n- mcp + destructive => unsupported\n\nSEARCH RULES:\n- Use limit (usually 5-10).\n- Use include_inputs=none for first pass.\n- Use include_inputs=required_only for planning.\n- Use include_inputs=full only when required; at most once per vendor/intent.\n- Canonical query `<group> <command>` returns direct hit when present.\n- After candidate canonical_ids are found, stop fuzzy search and use get_command.\n- Do not use get_command_summaries_by_catalog except deliberate batch inspection.\n\nCATALOG RULES:\n- If commands are missing after two focused searches, STOP and run:\n  catalog_validate_openapi -> catalog_preview_import -> catalog_import_openapi.\n- For targeted fixes in an existing catalog, use catalog_apply_patch with strict match_command keys.\n- If only unrelated catalogs are found, treat as hard stop until required catalogs are imported.\n- catalog_import_openapi mutates user configuration: request user confirmation before calling it.\n- If auth is required, instruct user to configure catalog headers (for example Authorization) before HTTP execution.\n\nARGUMENT RULES:\n- Build positional_args in declared order.\n- Build named_flags as [name,value]. Values may be scalar/array/object; booleans accept explicit true/false.\n- Prefer get_command for exact args/flags.\n- For provider-backed workflow inputs, use get_command(include_providers=required_only|full).\n\nWORKFLOW INTENT MODE:\n- If user asks to create/author/generate a workflow, MUST use Oatty workflow tools.\n- Workflow steps must be HTTP-backed commands only (no MCP/plugin step runs).\n- Preferred sequence:\n  search_commands -> get_command -> workflow_validate(minimal) -> expand manifest -> workflow_validate -> workflow_save -> workflow_resolve_inputs -> workflow_run\n- Before authoring, verify required providers/platforms are discoverable.\n- Use providers for enumerable identifiers/list selections when contracts exist.\n- Keep manual inputs for transformation-heavy fields.\n- If search_commands returns provider_inputs, prefer provider-backed inputs unless transformation-heavy.\n- Use `if`/`when` (not `condition`).\n- Step params belong under `with` using real command parameter names.\n- Input defaults must be structured objects: `default: { from: literal|env|history|workflow_output, value: ... }`.\n- Provider-backed inputs must use explicit scalar select path (for example `owner.id`).\n- Include placeholder/hint/example metadata for manual free-text inputs.\n\nSAFETY:\n- Do NOT create repository docs, blueprints, scripts, or CI files unless explicitly requested.\n- File-only fallback is allowed only after reporting unimportable provider and receiving explicit user approval.\n- Example: 'list vercel projects' => search_commands -> get_command -> run_safe_command.".to_string()
             ),
         }
     }

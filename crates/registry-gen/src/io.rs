@@ -112,6 +112,14 @@ pub fn generate_manifest(mut input: ManifestInput) -> Result<RegistryManifest> {
     })
 }
 
+/// Builds provider contracts for an already-materialized command list.
+///
+/// This helper is used by catalog mutation paths that replace command
+/// specifications without re-generating the full catalog from OpenAPI.
+pub fn build_provider_contracts_for_commands(commands: &[CommandSpec]) -> IndexMap<String, ProviderContract> {
+    build_provider_contracts(commands)
+}
+
 /// Writes the command manifest to a file.
 ///
 /// This function reads OpenAPI documents from the input paths, generates

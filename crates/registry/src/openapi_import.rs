@@ -5,6 +5,7 @@
 //! can share one implementation.
 
 use crate::CommandRegistry;
+use crate::catalog_persistence::{CatalogPersistErrorKind, insert_catalog_and_persist, replace_catalog_and_persist};
 use oatty_registry_gen::io::{ManifestInput, generate_catalog};
 use oatty_types::manifest::RegistryCatalog;
 use oatty_util::{OpenApiValidationViolation, collect_openapi_preflight_violations};
@@ -131,16 +132,12 @@ pub fn import_openapi_catalog_into_registry(
         if !request.overwrite {
             return Err(OpenApiCatalogImportError::CatalogConflict(catalog_id));
         }
-        remove_catalog_for_overwrite(registry, &catalog_id)?;
+        replace_catalog_and_persist(registry, &catalog_id, normalized_catalog)
+            .map_err(|error| map_catalog_persist_error_to_import_error(&catalog_id, error.kind, error.message))?;
+    } else {
+        insert_catalog_and_persist(registry, normalized_catalog)
+            .map_err(|error| map_catalog_persist_error_to_import_error(&catalog_id, error.kind, error.message))?;
     }
-
-    registry
-        .insert_catalog(normalized_catalog)
-        .map_err(|error| OpenApiCatalogImportError::InsertFailed(error.to_string()))?;
-    registry
-        .config
-        .save()
-        .map_err(|error| OpenApiCatalogImportError::SaveFailed(error.to_string()))?;
 
     let persisted_catalog = get_catalog_by_title(registry, &catalog_id)
         .cloned()
@@ -229,36 +226,19 @@ fn get_catalog_by_title<'catalog>(registry: &'catalog CommandRegistry, catalog_t
         .and_then(|catalogs| catalogs.iter().find(|catalog| catalog.title == catalog_title))
 }
 
-fn remove_catalog_for_overwrite(registry: &mut CommandRegistry, catalog_id: &str) -> Result<(), OpenApiCatalogImportError> {
-    registry
-        .disable_catalog(catalog_id)
-        .map_err(|error| OpenApiCatalogImportError::ReplaceFailed {
+fn map_catalog_persist_error_to_import_error(
+    catalog_id: &str,
+    kind: CatalogPersistErrorKind,
+    message: String,
+) -> OpenApiCatalogImportError {
+    match kind {
+        CatalogPersistErrorKind::Replace => OpenApiCatalogImportError::ReplaceFailed {
             catalog_id: catalog_id.to_string(),
-            message: error.to_string(),
-        })?;
-
-    let Some(catalogs) = registry.config.catalogs.as_mut() else {
-        return Err(OpenApiCatalogImportError::ReplaceFailed {
-            catalog_id: catalog_id.to_string(),
-            message: "no catalogs configured".to_string(),
-        });
-    };
-    let Some(index) = catalogs.iter().position(|catalog| catalog.title == catalog_id) else {
-        return Err(OpenApiCatalogImportError::ReplaceFailed {
-            catalog_id: catalog_id.to_string(),
-            message: "catalog not found".to_string(),
-        });
-    };
-
-    let removed_catalog = catalogs.remove(index);
-    let manifest_path = std::path::PathBuf::from(removed_catalog.manifest_path);
-    if manifest_path.exists() {
-        std::fs::remove_file(&manifest_path).map_err(|error| OpenApiCatalogImportError::ReplaceFailed {
-            catalog_id: catalog_id.to_string(),
-            message: format!("failed to remove old manifest '{}': {error}", manifest_path.display()),
-        })?;
+            message,
+        },
+        CatalogPersistErrorKind::Insert => OpenApiCatalogImportError::InsertFailed(message),
+        CatalogPersistErrorKind::Save => OpenApiCatalogImportError::SaveFailed(message),
     }
-    Ok(())
 }
 
 #[cfg(test)]

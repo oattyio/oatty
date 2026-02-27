@@ -172,6 +172,53 @@ pub struct CatalogImportOpenApiRequest {
     pub enabled: Option<bool>,
 }
 
+/// Request payload for applying deterministic command replacements to an existing catalog.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct CatalogApplyPatchRequest {
+    /// Existing catalog title to patch.
+    #[schemars(description = "Existing catalog title to patch.")]
+    pub catalog_id: String,
+    /// Ordered patch operations.
+    #[schemars(description = "Ordered patch operations to apply.")]
+    pub operations: Vec<CatalogPatchOperationInput>,
+    /// Fail when a target command is missing. Defaults to true.
+    #[schemars(description = "Fail when a target command is missing. Defaults to true.")]
+    pub fail_on_missing: Option<bool>,
+    /// Fail when matching is ambiguous. Defaults to true.
+    #[schemars(description = "Fail when command matching is ambiguous. Defaults to true.")]
+    pub fail_on_ambiguous: Option<bool>,
+    /// Persist by replacing the existing catalog entry. Defaults to true.
+    #[schemars(description = "Persist patched catalog by replacing the existing catalog entry. Defaults to true.")]
+    pub overwrite: Option<bool>,
+}
+
+/// Single command replacement operation in a patch request.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct CatalogPatchOperationInput {
+    /// Optional operation identifier for diagnostics.
+    #[schemars(description = "Optional operation identifier for diagnostics.")]
+    pub operation_id: Option<String>,
+    /// Strict target command match key.
+    #[schemars(description = "Strict command identity key used to select the replacement target.")]
+    pub match_command: CatalogCommandMatchKeyInput,
+    /// Full replacement command specification payload.
+    #[schemars(description = "Full replacement command specification payload.")]
+    pub replacement_command: Value,
+}
+
+/// Match key for targeting an existing command.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CatalogCommandMatchKeyInput {
+    /// Command group (for example `apps`).
+    pub group: String,
+    /// Command name (for example `apps:list`).
+    pub name: String,
+    /// HTTP method (for example `GET`).
+    pub http_method: String,
+    /// HTTP path (for example `/v1/apps`).
+    pub http_path: String,
+}
+
 /// Request payload for enabling or disabling an existing catalog.
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CatalogSetEnabledRequest {
