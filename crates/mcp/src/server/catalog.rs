@@ -4,14 +4,15 @@
 //! and runtime catalog mutations so `server/core.rs` remains focused on routing.
 
 use crate::server::schemas::{
-    CatalogEditHeadersRequest, CatalogGetMaskedHeadersRequest, CatalogHeaderEditMode, CatalogHeaderEditRow, CatalogHeaderSource,
-    CatalogImportOpenApiRequest, CatalogPreviewImportRequest, CatalogRemoveRequest, CatalogSetBaseUrlRequest, CatalogSetEnabledRequest,
-    CatalogSourceType, CatalogValidateOpenApiRequest,
+    CatalogApplyPatchRequest, CatalogCommandMatchKeyInput, CatalogEditHeadersRequest, CatalogGetMaskedHeadersRequest,
+    CatalogHeaderEditMode, CatalogHeaderEditRow, CatalogHeaderSource, CatalogImportOpenApiRequest, CatalogPreviewImportRequest,
+    CatalogRemoveRequest, CatalogSetBaseUrlRequest, CatalogSetEnabledRequest, CatalogSourceType, CatalogValidateOpenApiRequest,
 };
 use crate::server::workflow::errors::{conflict_error, not_found_error};
 use oatty_registry::{
-    CatalogHeaderEditMode as RegistryCatalogHeaderEditMode, CatalogHeaderEditRow as RegistryCatalogHeaderEditRow, CatalogMutationError,
-    CommandRegistry, OpenApiCatalogImportError, OpenApiCatalogImportRequest, import_openapi_catalog_into_registry,
+    CatalogCommandMatchKey, CatalogHeaderEditMode as RegistryCatalogHeaderEditMode, CatalogHeaderEditRow as RegistryCatalogHeaderEditRow,
+    CatalogMutationError, CatalogPatchApplyError, CatalogPatchApplyRequest, CatalogPatchOperation, CommandRegistry,
+    OpenApiCatalogImportError, OpenApiCatalogImportRequest, apply_catalog_patch, import_openapi_catalog_into_registry,
 };
 use oatty_registry_gen::io::{ManifestInput, generate_catalog};
 use oatty_types::{CommandSpec, EnvSource, EnvVar, manifest::RegistryCatalog};
@@ -102,6 +103,41 @@ pub(crate) async fn import_openapi_catalog(
     }))
 }
 
+/// Applies deterministic command-level patch operations to an existing catalog.
+pub(crate) fn apply_catalog_patch_runtime(
+    registry: &Arc<Mutex<CommandRegistry>>,
+    request: &CatalogApplyPatchRequest,
+) -> Result<Value, ErrorData> {
+    let patch_request = map_patch_request(request)?;
+    let mut registry_guard = registry.lock().map_err(|error| {
+        internal_catalog_error(
+            format!("registry lock failed: {error}"),
+            serde_json::json!({ "catalog_id": request.catalog_id }),
+            "Retry catalog patch apply. If this persists, restart MCP server and retry.",
+        )
+    })?;
+    let patch_result =
+        apply_catalog_patch(&mut registry_guard, patch_request).map_err(|error| map_catalog_patch_error_to_mcp(error, request))?;
+
+    let catalog_metadata = patch_result
+        .catalog
+        .as_ref()
+        .map(masked_catalog_metadata)
+        .unwrap_or(Value::Object(Map::new()));
+
+    Ok(serde_json::json!({
+        "catalog_id": patch_result.catalog_id,
+        "requested_operation_count": patch_result.requested_operation_count,
+        "applied_operation_count": patch_result.applied_operation_count,
+        "final_command_count": patch_result.final_command_count,
+        "final_provider_contract_count": patch_result.final_provider_contract_count,
+        "operation_results": patch_result.operation_results,
+        "base_urls": catalog_metadata.get("base_urls").cloned().unwrap_or(Value::Array(Vec::new())),
+        "selected_base_url": catalog_metadata.get("selected_base_url").cloned().unwrap_or(Value::Null),
+        "masked_headers": catalog_metadata.get("masked_headers").cloned().unwrap_or(Value::Array(Vec::new())),
+    }))
+}
+
 fn map_openapi_import_error_to_mcp(error: OpenApiCatalogImportError, request: &CatalogImportOpenApiRequest) -> ErrorData {
     match error {
         OpenApiCatalogImportError::SourceParse(message) => ErrorData::invalid_params(
@@ -164,6 +200,99 @@ fn map_openapi_import_error_to_mcp(error: OpenApiCatalogImportError, request: &C
                 "source": request.source
             }),
             "Run catalog list to verify persisted state and retry import if needed.",
+        ),
+    }
+}
+
+fn map_patch_request(request: &CatalogApplyPatchRequest) -> Result<CatalogPatchApplyRequest, ErrorData> {
+    let mut operations = Vec::with_capacity(request.operations.len());
+    for (operation_index, operation) in request.operations.iter().enumerate() {
+        let replacement_command: CommandSpec = serde_json::from_value(operation.replacement_command.clone()).map_err(|error| {
+            invalid_catalog_params_error(
+                format!("invalid replacement_command at operation {operation_index}: {error}"),
+                serde_json::json!({
+                    "catalog_id": request.catalog_id,
+                    "operation_id": operation.operation_id,
+                    "operation_index": operation_index
+                }),
+                "Provide a valid CommandSpec payload for replacement_command.",
+            )
+        })?;
+
+        operations.push(CatalogPatchOperation {
+            operation_id: operation.operation_id.clone(),
+            match_command: map_match_key(&operation.match_command),
+            replacement_command,
+        });
+    }
+
+    Ok(
+        CatalogPatchApplyRequest::new(request.catalog_id.clone(), operations).with_policy_overrides(
+            request.fail_on_missing,
+            request.fail_on_ambiguous,
+            request.overwrite,
+        ),
+    )
+}
+
+fn map_match_key(match_key: &CatalogCommandMatchKeyInput) -> CatalogCommandMatchKey {
+    CatalogCommandMatchKey {
+        group: match_key.group.clone(),
+        name: match_key.name.clone(),
+        http_method: match_key.http_method.clone(),
+        http_path: match_key.http_path.clone(),
+    }
+}
+
+fn map_catalog_patch_error_to_mcp(error: CatalogPatchApplyError, request: &CatalogApplyPatchRequest) -> ErrorData {
+    match error {
+        CatalogPatchApplyError::CatalogNotFound(catalog_id) => not_found_error(
+            "CATALOG_NOT_FOUND",
+            format!("catalog '{}' was not found", catalog_id),
+            serde_json::json!({ "catalog_id": catalog_id }),
+            "Use list_command_topics to inspect configured catalogs.",
+        ),
+        CatalogPatchApplyError::MissingManifest(catalog_id) => invalid_catalog_params_error(
+            format!("catalog '{}' has no manifest content", catalog_id),
+            serde_json::json!({ "catalog_id": catalog_id }),
+            "Import or re-import the catalog so manifest content is available, then retry patch apply.",
+        ),
+        CatalogPatchApplyError::TargetNotFound { operation_index } => invalid_catalog_params_error(
+            format!("operation {operation_index} target not found"),
+            serde_json::json!({
+                "catalog_id": request.catalog_id,
+                "operation_index": operation_index
+            }),
+            "Run search_commands/get_command to confirm exact group/name/http method/path, then retry patch apply.",
+        ),
+        CatalogPatchApplyError::TargetAmbiguous {
+            operation_index,
+            matched_count,
+        } => invalid_catalog_params_error(
+            format!("operation {operation_index} target is ambiguous (matched {matched_count})"),
+            serde_json::json!({
+                "catalog_id": request.catalog_id,
+                "operation_index": operation_index,
+                "matched_count": matched_count
+            }),
+            "Tighten match_command fields so each operation resolves to exactly one command.",
+        ),
+        CatalogPatchApplyError::OverwriteRequired => invalid_catalog_params_error(
+            "overwrite must be true for catalog patch apply",
+            serde_json::json!({ "catalog_id": request.catalog_id }),
+            "Set overwrite=true to persist the patched catalog.",
+        ),
+        CatalogPatchApplyError::ReplaceFailed { catalog_id, message }
+        | CatalogPatchApplyError::InsertFailed { catalog_id, message }
+        | CatalogPatchApplyError::SaveFailed { catalog_id, message } => internal_catalog_error(
+            format!("failed to persist patched catalog '{}': {message}", catalog_id),
+            serde_json::json!({ "catalog_id": catalog_id }),
+            "Retry patch apply. If this persists, verify runtime config write permissions.",
+        ),
+        CatalogPatchApplyError::PersistedCatalogUnavailable(catalog_id) => internal_catalog_error(
+            format!("patched catalog '{}' is unavailable after save", catalog_id),
+            serde_json::json!({ "catalog_id": catalog_id }),
+            "Run list_command_topics to verify persisted state and retry patch apply if needed.",
         ),
     }
 }

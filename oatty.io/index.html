@@ -3,6 +3,46 @@
 <head>
     <meta charset="UTF-8"/>
     <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+    <script>
+        (() => {
+            const documentElement = document.documentElement;
+            documentElement.classList.add('js', 'app-pending');
+            const revealFallbackContent = () => documentElement.classList.remove('app-pending');
+            const fallbackRevealTimeoutMilliseconds = 4000;
+            const timeoutId = window.setTimeout(revealFallbackContent, fallbackRevealTimeoutMilliseconds);
+
+            if (window.customElements && typeof window.customElements.whenDefined === 'function') {
+                window.customElements
+                    .whenDefined('oatty-site-app')
+                    .then(() => {
+                        window.clearTimeout(timeoutId);
+                        revealFallbackContent();
+                    })
+                    .catch(() => {
+                        revealFallbackContent();
+                    });
+                return;
+            }
+
+            revealFallbackContent();
+        })();
+    </script>
+    <style>
+        /* Critical first-paint defaults to prevent unstyled flashes before CSS/JS load */
+        html,
+        body {
+            margin: 0;
+            min-height: 100%;
+            background: #12161f;
+            color: #eceff4;
+        }
+
+        .js.app-pending oatty-site-app:not(:defined) {
+            display: block;
+            min-height: 100vh;
+            visibility: hidden;
+        }
+    </style>
 
     <!-- Primary Meta Tags -->
     <title>Oatty | One CLI for Every API</title>

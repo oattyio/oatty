@@ -3,6 +3,8 @@
 //! This crate provides the core data structures and functionality for loading,
 //! organizing, and generating CLI commands from Oatty API schemas.
 
+pub mod catalog_patch;
+mod catalog_persistence;
 pub mod clap_builder;
 pub mod config;
 pub mod models;
@@ -10,6 +12,10 @@ pub mod openapi_import;
 pub mod search;
 pub mod workflows;
 
+pub use catalog_patch::{
+    CatalogCommandMatchKey, CatalogPatchApplyError, CatalogPatchApplyRequest, CatalogPatchApplyResult, CatalogPatchOperation,
+    CatalogPatchOperationResult, CatalogPatchOperationStatus, apply_catalog_patch,
+};
 pub use clap_builder::build_clap;
 pub use config::*;
 pub use models::{CatalogHeaderEditMode, CatalogHeaderEditRow, CatalogMutationError, CatalogMutationResult, CommandRegistry};
