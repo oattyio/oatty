@@ -32,7 +32,10 @@ const DOCS_NAV = [
             {title: 'Sentry + Datadog + PagerDuty Playbook', path: '/docs/guides/sentry-datadog-pagerduty-playbook'},
             {title: 'Vercel -> Render Migration Playbook', path: '/docs/guides/vercel-to-render-migration-playbook'},
             {title: 'Access Review Collection Playbook', path: '/docs/guides/access-review-collection-playbook'},
-            {title: 'Credential Rotation Readiness Playbook', path: '/docs/guides/credential-rotation-readiness-playbook'},
+            {
+                title: 'Credential Rotation Readiness Playbook',
+                path: '/docs/guides/credential-rotation-readiness-playbook'
+            },
         ],
     },
     {
@@ -58,6 +61,7 @@ const DOCS_NAV = [
 
 export class OattySiteApp extends LitElement {
     private currentPath = this.normalizePath(window.location.pathname);
+    private isHeroInstallExpanded = false;
 
     private readonly onPopState = () => {
         this.currentPath = this.normalizePath(window.location.pathname);
@@ -129,6 +133,12 @@ export class OattySiteApp extends LitElement {
 
         section.scrollIntoView({behavior: 'smooth', block: 'start'});
         history.replaceState(null, '', `#${sectionId}`);
+    }
+
+    private toggleHeroInstallPanel(event: Event): void {
+        event.preventDefault();
+        this.isHeroInstallExpanded = !this.isHeroInstallExpanded;
+        this.requestUpdate();
     }
 
     private normalizePath(pathname: string): string {
@@ -345,12 +355,12 @@ export class OattySiteApp extends LitElement {
                     <nav class="m-nav" aria-label="Primary">
                         <a class="m-nav__link" href="#problem"
                            @click="${(event: Event) => this.smoothScrollToSection(event, 'problem')}">Problem</a>
-                        <a class="m-nav__link" href="#principles"
-                           @click="${(event: Event) => this.smoothScrollToSection(event, 'principles')}">Principles</a>
-                        <a class="m-nav__link" href="#features"
-                           @click="${(event: Event) => this.smoothScrollToSection(event, 'features')}">Features</a>
+                        <a class="m-nav__link" href="#operators"
+                           @click="${(event: Event) => this.smoothScrollToSection(event, 'operators')}">Operators</a>
                         <a class="m-nav__link" href="#agents"
                            @click="${(event: Event) => this.smoothScrollToSection(event, 'agents')}">Agents</a>
+                        <a class="m-nav__link" href="#features"
+                           @click="${(event: Event) => this.smoothScrollToSection(event, 'features')}">Features</a>
                         <a class="m-nav__link" href="#install"
                            @click="${(event: Event) => this.smoothScrollToSection(event, 'install')}">Install</a>
                         <a class="m-nav__link m-nav__link--icon" href="https://github.com/oattyio/oatty" target="_blank"
@@ -376,19 +386,31 @@ export class OattySiteApp extends LitElement {
                         <div class="l-hero__content">
                             <img src="/logo-lockup.svg" alt="Oatty - Schema-driven CLI+TUI+MCP"
                                  class="m-brand-lockup m-brand-lockup--hero"/>
-                            <h1 class="m-heading-4xl m-heading-balanced">Your Unified Command Surface</h1>
+                            <h1 class="m-heading-4xl m-heading-balanced">Stop duct-taping curl, bash, CI YAML, and
+                                vendor CLIs together.</h1>
                             <p class="m-text-lg m-text-lg--lead">
-                                A beautiful TUI with schema-driven discovery, intelligent autocomplete, and workflow
-                                automation. Stop juggling a dozen vendor CLIs.
+                                Ship the same workflows across vendors without rewriting glue. One consistent execution
+                                surface across the APIs you operate. Keep large command surfaces available without
+                                flooding agent context windows.
                             </p>
                             <div class="l-flex l-flex--center l-hero__actions">
-                                <a class="m-button m-button--primary" href="#install">Get Started</a>
+                                <a class="m-button m-button--primary" href="#install"
+                                   @click="${this.toggleHeroInstallPanel}">Install Oatty</a>
                                 <a class="m-button" href="https://github.com/oattyio/oatty" target="_blank"
                                    rel="noopener">View on GitHub</a>
+                                <a class="m-button" href="/docs/guides/sentry-datadog-pagerduty-playbook"
+                                   @click="${this.navigate}">
+                                    See cross-vendor playbook
+                                </a>
                             </div>
-                            <pre class="m-code m-code--hero m-code--hero-shell"><code>npm install -g oatty
+                            <div class="m-install-teaser">
+                                <span>Start using Oatty in under 60 seconds</span>
+                                <code class="m-inline-code m-inline-code--body">npm install -g oatty</code>
+                            </div>
+                            <div class="m-install-panel ${this.isHeroInstallExpanded ? 'is-open' : ''}">
+                                <pre class="m-code m-code--hero m-code--hero-shell"><code>npm install -g oatty
 
-# Import a public OpenAPI catalog (required once)
+# Import any public OpenAPI catalog (required once)
 oatty import https://petstore3.swagger.io/api/v3/openapi.json --kind catalog
 
 # Start in TUI (recommended)
@@ -396,6 +418,63 @@ oatty
 
 # Use CLI fallback for automation (after import)
 oatty search "list pets"</code></pre>
+                                <div class="l-flex l-flex--center l-flex--wrap">
+                                    <a class="m-button" href="#install"
+                                       @click="${(event: Event) => this.smoothScrollToSection(event, 'install')}">Full
+                                        install guide</a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="l-section">
+                    <div class="l-shell">
+                        <p class="m-eyebrow">Choose Your Path</p>
+                        <h2 class="m-heading-4xl m-heading-spaced-2xl">Use Oatty directly or through agents</h2>
+                        <div class="l-grid l-grid--two">
+                            <article class="m-card m-card--persona">
+                                <h3 class="m-card__title">For Operators</h3>
+                                <p class="m-card__text m-card__text--spaced-lg">
+                                    Replace brittle scripts and CI glue with deterministic workflows.
+                                </p>
+                                <div class="l-stack l-stack--sm">
+                                    <div><strong class="m-checkmark">✓</strong> One workflow model across vendors</div>
+                                    <div><strong class="m-checkmark">✓</strong> File-backed workflows you can diff and
+                                        review
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> Structured retries and conditional steps
+                                    </div>
+                                </div>
+                                <div class="l-flex l-flex--wrap m-persona-card__actions">
+                                    <a class="m-button m-button--primary" href="#operators"
+                                       @click="${(event: Event) => this.smoothScrollToSection(event, 'operators')}">Explore
+                                        operator path</a>
+                                    <a class="m-button" href="/docs/quick-start" @click="${this.navigate}">View quick
+                                        start</a>
+                                </div>
+                            </article>
+                            <article class="m-card m-card--persona">
+                                <h3 class="m-card__title">For Agent-Driven Teams</h3>
+                                <p class="m-card__text m-card__text--spaced-lg">
+                                    Expose one safe operational surface to agents through MCP.
+                                </p>
+                                <div class="l-stack l-stack--sm">
+                                    <div><strong class="m-checkmark">✓</strong> Your Agent does the heavy lifting</div>
+                                    <div><strong class="m-checkmark">✓</strong> Humans review for sensitive operations
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> Agent actions are reviewable, local,
+                                        accessible and auditable
+                                    </div>
+                                </div>
+                                <div class="l-flex l-flex--wrap m-persona-card__actions">
+                                    <a class="m-button m-button--primary" href="#agents"
+                                       @click="${(event: Event) => this.smoothScrollToSection(event, 'agents')}">Explore
+                                        agent path</a>
+                                    <a class="m-button" href="/docs/learn/how-oatty-executes-safely"
+                                       @click="${this.navigate}">Safety model</a>
+                                </div>
+                            </article>
                         </div>
                     </div>
                 </section>
@@ -405,50 +484,47 @@ oatty search "list pets"</code></pre>
                         <div class="m-card m-card--problem-hero">
                             <div class="m-content-max">
                                 <p class="m-eyebrow">The Problem</p>
-                                <h2 class="m-heading-3xl">Vendor CLIs are fragmented, incomplete, and inconsistent</h2>
+                                <h2 class="m-heading-3xl">The real problem is not APIs. It is coordination.</h2>
                                 <p class="m-text-lg">
-                                    Modern APIs are powerful and well-documented, but the developer experience is
-                                    broken. You're forced to juggle a dozen different CLIs, each with partial coverage
-                                    and different conventions.
+                                    If one workflow means juggling curl requests, jq parsing, bash loops, CI YAML,
+                                    multiple
+                                    vendor CLIs, and multiple auth models, you do not have an automation problem.
+                                    You have a coordination problem. The same issue appears with MCP tool sprawl that
+                                    overwhelms agent token budgets.
                                 </p>
                             </div>
                         </div>
 
                         <div class="l-grid l-grid--problem-cards">
                             <div class="m-card m-card--problem-item">
-                                <div class="m-icon-chip m-icon-chip--problem">
-                                    <img src="/icons/icon-problem-inconsistent.svg" alt="" class="m-icon-size-sm"/>
-                                </div>
                                 <h3 class="m-heading-lg m-heading-spaced-sm">Inconsistent commands</h3>
                                 <p class="m-card__text">Nearly identical operations with completely different naming
                                     conventions across vendors.</p>
+                                <p class="m-card__resolution">Resolved in Oatty: one execution model across vendors.</p>
                             </div>
 
                             <div class="m-card m-card--problem-item">
-                                <div class="m-icon-chip m-icon-chip--problem">
-                                    <img src="/icons/icon-problem-coverage-gap.svg" alt="" class="m-icon-size-sm"/>
-                                </div>
                                 <h3 class="m-heading-lg m-heading-spaced-sm">Partial coverage</h3>
                                 <p class="m-card__text">Incomplete API coverage forces you back to curl or writing
                                     custom scripts.</p>
+                                <p class="m-card__resolution">Resolved in Oatty: commands generated directly from
+                                    OpenAPI catalogs.</p>
                             </div>
 
                             <div class="m-card m-card--problem-item">
-                                <div class="m-icon-chip m-icon-chip--problem">
-                                    <img src="/icons/icon-plugin-fragmentation.svg" alt="" class="m-icon-size-sm"/>
-                                </div>
                                 <h3 class="m-heading-lg m-heading-spaced-sm">Fragmented plugins</h3>
                                 <p class="m-card__text">Separate MCP servers for each vendor with even less
                                     functionality than the CLI.</p>
+                                <p class="m-card__resolution">Resolved in Oatty: one MCP surface for commands and
+                                    workflows.</p>
                             </div>
 
                             <div class="m-card m-card--problem-item">
-                                <div class="m-icon-chip m-icon-chip--problem">
-                                    <img src="/icons/icon-brittle-automation.svg" alt="" class="m-icon-size-sm"/>
-                                </div>
                                 <h3 class="m-heading-lg m-heading-spaced-sm">Brittle automation</h3>
                                 <p class="m-card__text">Workflows living in opaque shell scripts that break with every
                                     vendor update.</p>
+                                <p class="m-card__resolution">Resolved in Oatty: deterministic, file-backed workflows
+                                    you can review.</p>
                             </div>
                         </div>
 
@@ -457,9 +533,8 @@ oatty search "list pets"</code></pre>
                                 <p class="m-eyebrow">The Solution</p>
                                 <h2 class="m-heading-3xl">One coherent operational surface</h2>
                                 <p class="m-text-lg m-text-lg--spaced">
-                                    Oatty collapses this complexity. Turn OpenAPI documents into runnable commands,
-                                    explore them in a beautiful TUI, and automate with workflows-all through one
-                                    consistent interface.
+                                    Oatty collapses this complexity. Run one execution model across vendors with
+                                    structured retries, enforced dependencies, and actionable errors.
                                 </p>
                                 <div class="l-flex l-flex--wrap m-checklist">
                                     <span>✓ One interface</span>
@@ -471,65 +546,76 @@ oatty search "list pets"</code></pre>
                     </div>
                 </section>
 
-                <section id="principles" class="l-section">
+                <section id="operators" class="l-section">
                     <div class="l-shell">
-                        <p class="m-eyebrow">Design Philosophy</p>
-                        <h2 class="m-heading-4xl m-heading-spaced-2xl">Built for the terminal. Designed for humans.</h2>
+                        <p class="m-eyebrow">For Operators</p>
+                        <h2 class="m-heading-4xl m-heading-spaced-2xl">Replace glue code with deterministic
+                            workflows</h2>
 
-                        <div class="l-grid l-grid--principles">
-                            <article class="m-card m-card--principle-hero">
-                                <div>
-                                    <div class="m-icon-panel">
-                                        <img src="/icons/icon-discoverability.svg" alt="" class="m-icon-fill"/>
+                        <div class="l-grid l-grid--two">
+                            <article class="m-card m-card--persona">
+                                <h3 class="m-card__title">When this is you</h3>
+                                <div class="l-stack l-stack--sm">
+                                    <div><strong class="m-checkmark">✓</strong> CI jobs call bash, curl, and jq for one
+                                        runbook
                                     </div>
-                                    <h3 class="m-heading-2xl m-heading-spaced-md">Discoverability</h3>
-                                    <p class="m-text-lg">
-                                        You should never need to memorize commands. Guided UI with inline search,
-                                        contextual hints, and discoverable keybindings. If the API supports it, you can
-                                        find it.
-                                    </p>
-                                </div>
-                                <div class="m-terminal-snippet">
-                                    <div class="m-terminal-snippet__title">// Type to search</div>
-                                    <div>oatty<span class="m-text-accent">▊</span></div>
-                                    <div class="m-terminal-snippet__results">
-                                        <div class="m-terminal-snippet__item">→ apps create</div>
-                                        <div class="m-terminal-snippet__item">→ apps list</div>
-                                        <div class="m-terminal-snippet__item">→ databases create</div>
+                                    <div><strong class="m-checkmark">✓</strong> Retries and timeouts are hand-rolled in
+                                        scripts
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> Vendor CLIs use different patterns and
+                                        output shapes
                                     </div>
                                 </div>
+                                <h3 class="m-card__title">What you get on day one</h3>
+                                <div class="l-stack l-stack--sm">
+                                    <div><strong class="m-checkmark">✓</strong> Install Oatty and connect to your Agent
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> Describe your goal using natural
+                                        language
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> Test one reusable multi-vendor workflow
+                                        with retries
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> Move one brittle CI runbook into a
+                                        workflow file
+                                    </div>
+                                </div>
+                                <div class="l-flex l-flex--wrap m-persona-card__actions">
+                                    <a class="m-button m-button--primary" href="#install"
+                                       @click="${(event: Event) => this.smoothScrollToSection(event, 'install')}">Build
+                                        your first workflow</a>
+                                    <a class="m-button" href="/docs/quick-start" @click="${this.navigate}">Operator
+                                        quick start</a>
+                                </div>
                             </article>
 
-                            <article class="m-card m-card--elevated">
-                                <div class="m-icon-box">
-                                    <img src="/icons/icon-simplicity.svg" alt="" class="m-icon-fill"/>
-                                </div>
-                                <h3 class="m-heading-xl m-heading-spaced-sm">Simplicity</h3>
+                            <article class="m-card m-card--persona">
+                                <h3 class="m-card__title">Proof artifact: deterministic workflow</h3>
+                                <p class="m-card__text">A small workflow with dependencies and retries, stored in your
+                                    repo.</p>
+                                <pre class="m-code"><code>steps:
+  - id: create_service
+    run: service:create
+  - id: deploy_service
+    run: service:deploy
+    depends_on: [create_service]
+  - id: wait_until_live
+    repeat:
+      run: service:status
+      until: result.status == "live"</code></pre>
                                 <p class="m-card__text">
-                                    Each screen does one thing, clearly. Search on top, results in center, details on
-                                    right. No clutter, no overloaded views, no hidden modes.
+                                    One model across vendors. Actionable failures. Reviewable files you can diff.
                                 </p>
-                            </article>
-
-                            <article class="m-card m-card--elevated">
-                                <div class="m-icon-box">
-                                    <img src="/icons/icon-speed.svg" alt="" class="m-icon-fill"/>
+                                <div class="l-flex l-flex--wrap m-persona-card__actions">
+                                    <a class="m-button m-button--primary"
+                                       href="/docs/guides/credential-rotation-readiness-playbook"
+                                       @click="${this.navigate}">
+                                        See operator playbook
+                                    </a>
+                                    <a class="m-button" href="#features"
+                                       @click="${(event: Event) => this.smoothScrollToSection(event, 'features')}">Explore
+                                        feature depth</a>
                                 </div>
-                                <h3 class="m-heading-xl m-heading-spaced-sm">Speed</h3>
-                                <p class="m-card__text">
-                                    Designed for real work, not demos. Command palette with history navigation and instant autocomplete.
-                                </p>
-                            </article>
-
-                            <article class="m-card m-card--elevated">
-                                <div class="m-icon-box">
-                                    <img src="/icons/icon-consistency.svg" alt="" class="m-icon-fill"/>
-                                </div>
-                                <h3 class="m-heading-xl m-heading-spaced-sm">Consistency</h3>
-                                <p class="m-card__text">
-                                    Workflows behave like commands. The same search, execution, and logging interface
-                                    across HTTP commands, MCP tools, and workflows.
-                                </p>
                             </article>
                         </div>
                     </div>
@@ -683,65 +769,103 @@ oatty search "list pets"</code></pre>
                                     </p>
                                     <div class="l-flex l-flex--wrap m-schema-list">
                                         <div><strong class="m-checkmark">✓</strong> Auto-sync with API changes</div>
-                                        <div><strong class="m-checkmark">✓</strong> Coverage tracks your OpenAPI spec</div>
+                                        <div><strong class="m-checkmark">✓</strong> Coverage tracks your OpenAPI spec
+                                        </div>
                                         <div><strong class="m-checkmark">✓</strong> MCP tool integration</div>
                                     </div>
                                 </div>
                             </article>
                         </div>
-	                    </div>
-	                </section>
+                    </div>
+                </section>
 
-	                <section id="agents" class="l-section">
-	                    <div class="l-shell">
-	                        <p class="m-eyebrow">For AI Agents</p>
-	                        <h2 class="m-heading-4xl m-heading-spaced-2xl">MCP Superpowers for AI Agents</h2>
-	                        <div class="l-grid l-grid--two">
-	                            <div class="m-card">
-	                                <h3 class="m-card__title">Connect your agent to Oatty MCP</h3>
-	                                <p class="m-card__text m-card__text--spaced-lg">
-	                                    Plug your agent into Oatty MCP to discover actions across any OpenAPI schema, coordinate multi-vendor workflows, and execute with reviewable safety gates.
-	                                </p>
-	                                <div class="l-stack l-stack--sm">
-	                                    <div><strong class="m-checkmark">✓</strong> Schema-aware action discovery</div>
-	                                    <div><strong class="m-checkmark">✓</strong> Cross-provider workflow orchestration</div>
-	                                    <div><strong class="m-checkmark">✓</strong> Preview and confirmation checkpoints</div>
-	                                </div>
-	                                <p class="m-card__text">
-	                                    Keep humans in control while letting agents accelerate high-context API work.
-	                                </p>
-	                            </div>
-	                            <div class="m-card">
-	                                <h3 class="m-card__title">Teaser case: Sentry bootstrap</h3>
-	                                <p class="m-card__text m-card__text--spaced-lg">
-	                                    In a real-world test, an MCP-connected agent imported Sentry APIs into Oatty and configured a baseline setup with explicit operator review before sensitive writes.
-	                                </p>
-	                                <div class="l-stack l-stack--sm">
-	                                    <div><strong class="m-checkmark">✓</strong> Alerts/monitors, workflows, dashboards</div>
-	                                    <div><strong class="m-checkmark">✓</strong> Org-level hardening and global settings</div>
-	                                    <div><strong class="m-checkmark">✓</strong> Project tuning and configuration updates</div>
-	                                    <div><strong class="m-checkmark">✓</strong> Add Sentry as a project source (with other MCP tools)</div>
-	                                </div>
-	                                <p class="m-card__text">
-	                                    Sensitive changes remain human-reviewed through preview and explicit execution.
-	                                </p>
-	                                <div class="l-flex l-flex--wrap">
-	                                    <a class="m-button m-button--primary" href="/docs/guides/sentry-bootstrap" @click="${this.navigate}">Read the guide</a>
-	                                    <a class="m-button" href="/docs/learn/how-oatty-executes-safely" @click="${this.navigate}">Trust model</a>
-	                                </div>
-	                            </div>
-	                        </div>
-	                    </div>
-	                </section>
+                <section id="agents" class="l-section">
+                    <div class="l-shell">
+                        <p class="m-eyebrow">For Agent-Driven Teams</p>
+                        <h2 class="m-heading-4xl m-heading-spaced-2xl">Give agents one execution surface</h2>
+                        <p class="m-text-lg m-text-lg--spaced">
+                            Avoid context-window saturation from oversized MCP tool lists. Oatty keeps a large command
+                            surface available while
+                            narrowing execution through fuzzy discovery and targeted invocation.
+                        </p>
+                        <div class="l-grid l-grid--two">
+                            <article class="m-card m-card--persona">
+                                <h3 class="m-card__title">When this is you</h3>
+                                <div class="l-stack l-stack--sm">
+                                    <div><strong class="m-checkmark">✓</strong> You use multiple MCP servers and CLIs
+                                        across
+                                        vendors
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> Large tool lists blow up prompts and
+                                        force context switching
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> You need guardrails around sensitive
+                                        writes
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> Agent output is hard to standardize and
+                                        reuse
+                                    </div>
+                                </div>
+                                <h3 class="m-card__title">What you get on day one</h3>
+                                <div class="l-stack l-stack--sm">
+                                    <div><strong class="m-checkmark">✓</strong> Expose catalogs and workflows through
+                                        Oatty MCP
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> Route agent requests through fuzzy
+                                        search instead of huge static tool dumps
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> Keep humans in review loop for risky
+                                        changes
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> Persist schema fixes as local reviewable
+                                        patches
+                                    </div>
+                                </div>
+                                <div class="l-flex l-flex--wrap m-persona-card__actions">
+                                    <a class="m-button m-button--primary"
+                                       href="/docs/guides/sentry-datadog-pagerduty-playbook" @click="${this.navigate}">
+                                        Run cross-vendor playbook
+                                    </a>
+                                    <a class="m-button" href="/docs/learn/how-oatty-executes-safely"
+                                       @click="${this.navigate}">Execution safety model</a>
+                                </div>
+                            </article>
+                            <article class="m-card m-card--persona">
+                                <h3 class="m-card__title">Proof artifact: agent flow with review gates</h3>
+                                <p class="m-card__text">A minimal sequence for agent speed with explicit human
+                                    control.</p>
+                                <pre class="m-code"><code>1. Agent searches intent, not an overstuffed context of MCP tools
+2. Oatty resolves a targeted command set via fuzzy discovery
+3. Oatty renders a structured execution preview
+4. Human reviews and approves sensitive writes</code></pre>
+                                <div class="l-stack l-stack--sm">
+                                    <div><strong class="m-checkmark">✓</strong> Cross-vendor API discovery</div>
+                                    <div><strong class="m-checkmark">✓</strong> Structured previews before execution
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> Explicit approval checkpoints</div>
+                                </div>
+                                <div class="l-flex l-flex--wrap m-persona-card__actions">
+                                    <a class="m-button m-button--primary" href="/docs/guides/sentry-bootstrap"
+                                       @click="${this.navigate}">Read Sentry bootstrap guide</a>
+                                    <a class="m-button" href="#features"
+                                       @click="${(event: Event) => this.smoothScrollToSection(event, 'features')}">Explore
+                                        feature depth</a>
+                                </div>
+                            </article>
+                        </div>
+                    </div>
+                </section>
 
-	                <section id="install" class="l-section l-section--install">
-	                    <div class="l-shell">
-	                        <h2 class="m-heading-4xl m-heading-centered m-heading-spaced-xl">Getting Started</h2>
-                            <p class="m-text-lg m-heading-centered">
-                                Early release, shipping fast: Oatty is currently in the <code class="m-inline-code m-inline-code--body">v0.1</code> line with active MCP and workflow docs.
-                            </p>
-	                        <div class="l-grid l-grid--two">
-	                            <div class="m-card">
+                <section id="install" class="l-section l-section--install">
+                    <div class="l-shell">
+                        <h2 class="m-heading-4xl m-heading-centered m-heading-spaced-xl">Getting Started</h2>
+                        <p class="m-text-lg m-heading-centered">
+                            Early release, shipping fast: Oatty is currently in the <code
+                                class="m-inline-code m-inline-code--body">v0.1</code> line with active MCP and workflow
+                            docs.
+                        </p>
+                        <div class="l-grid l-grid--two">
+                            <div class="m-card">
                                 <h3 class="m-card__title">Install via npm</h3>
                                 <pre class="m-code"><code>npm install -g oatty
 oatty --help</code></pre>

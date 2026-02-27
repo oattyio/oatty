@@ -203,6 +203,8 @@
 }
 
 .l-hero__actions {
+  display: flex;
+  flex-wrap: wrap;
   justify-content: center;
   margin-top: var(--space-xl);
 }
