@@ -717,6 +717,13 @@
     background: var(--color-background-alt);
 }
 
+.m-card__resolution {
+    margin-top: auto;
+    color: var(--color-accent);
+    font-weight: 600;
+    font-size: var(--font-size-sm);
+}
+
 .m-card--solution {
     background: linear-gradient(135deg, rgba(136, 192, 208, 0.1) 0%, rgba(129, 161, 193, 0.05) 100%);
     border: 1px solid var(--color-accent);
@@ -760,6 +767,14 @@
 
 .m-card--spaced-top {
     margin-top: var(--space-xl);
+}
+
+.m-card--persona {
+    height: 100%;
+}
+
+.m-persona-card__actions {
+    margin-top: auto;
 }
 
 .m-card__text--spaced-lg {
@@ -895,6 +910,28 @@
     margin: var(--space-2xl) auto 0;
 }
 
+.m-install-teaser {
+    margin-top: var(--space-xl);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-sm);
+    flex-wrap: wrap;
+    color: var(--color-text-secondary);
+}
+
+.m-install-panel {
+    max-height: 0;
+    opacity: 0;
+    overflow: hidden;
+    transition: max-height var(--transition-base), opacity var(--transition-base);
+}
+
+.m-install-panel.is-open {
+    max-height: 700px;
+    opacity: 1;
+}
+
 .m-screenshot--hero {
     width: 100%;
     height: auto;
@@ -949,5 +986,16 @@
     .m-card--principle-hero {
         grid-column: auto;
         grid-template-columns: minmax(0, 1fr);
+    }
+}
+
+@media (max-width: 640px) {
+    .l-hero__actions .m-button,
+    .m-persona-card__actions .m-button {
+        width: 100%;
+    }
+
+    .m-install-teaser {
+        flex-direction: column;
     }
 }
