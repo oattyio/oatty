@@ -145,17 +145,8 @@ impl LibraryComponent {
     fn render_message(&self, frame: &mut Frame, app: &mut App) {
         let theme = &*app.ctx.theme;
         if let Some(message) = app.library.message_ref()
-            && !message.is_expired()
+            && let Some(message_paragraph) = theme_helpers::create_status_paragraph(theme, message, self.layout.message.width, false)
         {
-            let style = match message.r#type {
-                MessageType::Error => theme.status_error(),
-                MessageType::Warning => theme.status_warning(),
-                MessageType::Info => theme.status_info(),
-                MessageType::Success => theme.status_success(),
-            };
-            let message_paragraph = Paragraph::new(format!("{}", message))
-                .style(style)
-                .wrap(ratatui::widgets::Wrap { trim: true });
             frame.render_widget(message_paragraph, self.layout.message);
         }
     }

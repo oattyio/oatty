@@ -24,6 +24,7 @@ oatty-mcp = { path = "../mcp" }
 oatty-types = { path = "../types" }
 reqwest = { workspace = true }
 indexmap.workspace = true
+self_update = { workspace = true }
 
 [[bin]]
 name = "oatty"

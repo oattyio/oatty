@@ -31,7 +31,7 @@ oatty-engine = { path = "../engine" }
 axum = "0.8.8"
 tokio-util = "0.7.18"
 serde_yaml = { workspace = true }
-rmcp = { version = "0.16.0", features = [
+rmcp = { version = "0.17.0", features = [
     "server-side-http",
     "transport-streamable-http-server",
     "transport-streamable-http-server-session",

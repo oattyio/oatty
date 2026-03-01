@@ -430,6 +430,14 @@ oatty search "list pets"</code></pre>
 
                 <section class="l-section">
                     <div class="l-shell">
+                        <p class="m-eyebrow">Demo Preview</p>
+                        <h2 class="m-heading-3xl">Watch: schema import -> fuzzy search -> workflow run</h2>
+                        <div class="m-video-placeholder">Short teaser loop coming soon</div>
+                    </div>
+                </section>
+
+                <section class="l-section">
+                    <div class="l-shell">
                         <p class="m-eyebrow">Choose Your Path</p>
                         <h2 class="m-heading-4xl m-heading-spaced-2xl">Use Oatty directly or through agents</h2>
                         <div class="l-grid l-grid--two">
@@ -535,6 +543,7 @@ oatty search "list pets"</code></pre>
                                 <p class="m-text-lg m-text-lg--spaced">
                                     Oatty collapses this complexity. Run one execution model across vendors with
                                     structured retries, enforced dependencies, and actionable errors.
+                                    Materially less orchestration glue.
                                 </p>
                                 <div class="l-flex l-flex--wrap m-checklist">
                                     <span>✓ One interface</span>
@@ -542,6 +551,73 @@ oatty search "list pets"</code></pre>
                                     <span>✓ One place to operate</span>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="comparison" class="l-section">
+                    <div class="l-shell">
+                        <p class="m-eyebrow">From Glue To Workflows</p>
+                        <h2 class="m-heading-4xl m-heading-spaced-2xl">Before and after in one view</h2>
+                        <div class="l-grid l-grid--two">
+                            <article class="m-card">
+                                <h3 class="m-card__title">Before</h3>
+                                <pre class="m-code"><code>curl ...
+jq ...
+while true; do
+  sleep 20
+done</code></pre>
+                            </article>
+                            <article class="m-card">
+                                <h3 class="m-card__title">After</h3>
+                                <pre class="m-code"><code>steps:
+  - run: service:create
+  - run: service:deploy
+  - repeat:
+      until: status == "live"</code></pre>
+                            </article>
+                        </div>
+                        <p class="m-text-lg m-text-lg--spaced">Materially less orchestration glue.</p>
+                    </div>
+                </section>
+
+                <section id="schema-rehabilitation" class="l-section">
+                    <div class="l-shell">
+                        <p class="m-eyebrow">Schema Rehabilitation</p>
+                        <h2 class="m-heading-4xl m-heading-spaced-2xl">Real-world APIs are messy. Oatty does not require
+                            perfection.</h2>
+                        <p class="m-text-lg m-text-lg--spaced">
+                            A connected Agent can detect failures and propose corrections or build a spec from scratch
+                            for legacy APIs.
+                        </p>
+                        <div class="l-grid l-grid--two">
+                            <article class="m-card">
+                                <h3 class="m-card__title">Normalize imperfect specs</h3>
+                                <div class="l-stack l-stack--sm">
+                                    <div><strong class="m-checkmark">✓</strong> Override missing or broken operation IDs
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> Fix request/response shapes and
+                                        parameter types
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> Add synthetic commands where vendor
+                                        specs are incomplete
+                                    </div>
+                                </div>
+                            </article>
+                            <article class="m-card">
+                                <h3 class="m-card__title">Patch safely and transparently</h3>
+                                <div class="l-stack l-stack--sm">
+                                    <div><strong class="m-checkmark">✓</strong> Best with an agent connected: detect
+                                        failures and propose patches
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> Structured, local patches you can
+                                        inspect and diff
+                                    </div>
+                                    <div><strong class="m-checkmark">✓</strong> No silent fixes to your operational
+                                        surface
+                                    </div>
+                                </div>
+                            </article>
                         </div>
                     </div>
                 </section>
@@ -782,12 +858,29 @@ oatty search "list pets"</code></pre>
                 <section id="agents" class="l-section">
                     <div class="l-shell">
                         <p class="m-eyebrow">For Agent-Driven Teams</p>
-                        <h2 class="m-heading-4xl m-heading-spaced-2xl">Give agents one execution surface</h2>
+                        <h2 class="m-heading-4xl m-heading-spaced-2xl">One MCP Surface. Not Seven.</h2>
                         <p class="m-text-lg m-text-lg--spaced">
                             Avoid context-window saturation from oversized MCP tool lists. Oatty keeps a large command
                             surface available while
                             narrowing execution through fuzzy discovery and targeted invocation.
                         </p>
+                        <div class="l-grid l-grid--three l-grid--section-gap">
+                            <article class="m-card">
+                                <h3 class="m-card__title">Deterministic Execution Layer</h3>
+                                <p class="m-card__text">Route agent intent through one controlled execution model across
+                                    vendors.</p>
+                            </article>
+                            <article class="m-card">
+                                <h3 class="m-card__title">Coherent, Auditable Surface</h3>
+                                <p class="m-card__text">Keep writes reviewable with previews and explicit approval
+                                    checkpoints.</p>
+                            </article>
+                            <article class="m-card">
+                                <h3 class="m-card__title">Schema Normalization Built In</h3>
+                                <p class="m-card__text">Patch spec inconsistencies locally so agent operations stay
+                                    stable.</p>
+                            </article>
+                        </div>
                         <div class="l-grid l-grid--two">
                             <article class="m-card m-card--persona">
                                 <h3 class="m-card__title">When this is you</h3>
@@ -817,7 +910,8 @@ oatty search "list pets"</code></pre>
                                     <div><strong class="m-checkmark">✓</strong> Keep humans in review loop for risky
                                         changes
                                     </div>
-                                    <div><strong class="m-checkmark">✓</strong> Persist schema fixes as local reviewable
+                                    <div><strong class="m-checkmark">✓</strong> Agent-proposed schema fixes stay local,
+                                        reviewable, and auditable
                                         patches
                                     </div>
                                 </div>
@@ -853,6 +947,8 @@ oatty search "list pets"</code></pre>
                                 </div>
                             </article>
                         </div>
+                        <p class="m-text-lg m-heading-centered m-heading-spaced-md">Agents talk to Oatty. Oatty talks to
+                            vendors.</p>
                     </div>
                 </section>
 
@@ -932,6 +1028,28 @@ oatty workflow run deploy --input env=staging</code></pre>
                                     for seamless integration.
                                 </p>
                             </article>
+                        </div>
+                    </div>
+                </section>
+
+                <section class="l-section">
+                    <div class="l-shell">
+                        <div class="m-card m-card--solution">
+                            <div class="m-content-max">
+                                <h2 class="m-heading-3xl">Less glue. Less guessing. Less 2am debugging.</h2>
+                                <p class="m-text-lg m-text-lg--spaced">
+                                    Use one execution model for direct CLI operation and agent-driven workflows.
+                                    Keep every change reviewable, local, and auditable.
+                                </p>
+                                <div class="l-flex l-flex--wrap">
+                                    <a class="m-button m-button--primary"
+                                       href="/docs/guides/sentry-datadog-pagerduty-playbook" @click="${this.navigate}">
+                                        See a real workflow guide
+                                    </a>
+                                    <a class="m-button" href="/docs/quick-start" @click="${this.navigate}">Start quick
+                                        start</a>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </section>

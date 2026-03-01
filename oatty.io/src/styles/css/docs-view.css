@@ -248,6 +248,91 @@
     }
 }
 
+.m-docs-code-block {
+    position: relative;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+}
+
+.m-docs-code-block .m-code {
+    box-sizing: border-box;
+    width: 100%;
+    max-width: 100%;
+    padding-top: calc(var(--space-lg) + 0.25rem);
+    padding-right: calc(var(--space-lg) + 2.4rem);
+}
+
+.m-docs-code-label {
+    margin: 0 0 var(--space-xs);
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-sm);
+    font-weight: 600;
+}
+
+.m-docs-copy-button {
+    position: absolute;
+    top: var(--space-sm);
+    right: var(--space-sm);
+    z-index: 1;
+    width: 2rem;
+    height: 2rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--color-surface-border);
+    border-radius: var(--radius-sm);
+    background: rgb(36 41 51 / 0.9);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: border-color var(--transition-fast), color var(--transition-fast), background var(--transition-fast);
+}
+
+.m-docs-copy-button:hover {
+    color: var(--color-text-primary);
+    border-color: var(--color-accent);
+}
+
+.m-docs-copy-button.is-copied {
+    color: #a3be8c;
+    border-color: #a3be8c;
+}
+
+.m-docs-copy-button.is-failed {
+    color: #bf616a;
+    border-color: #bf616a;
+}
+
+.m-docs-copy-button .material-symbols-outlined {
+    font-family: 'Material Symbols Outlined';
+    font-size: 1rem;
+    line-height: 1;
+    font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 20;
+}
+
+.m-docs-copy-feedback {
+    position: absolute;
+    top: calc(var(--space-sm) + 0.3rem);
+    right: calc(var(--space-sm) + 2.35rem);
+    z-index: 1;
+    font-size: var(--font-size-xs);
+    padding: 0.15rem 0.4rem;
+    border-radius: var(--radius-sm);
+    background: rgb(36 41 51 / 0.9);
+    border: 1px solid var(--color-surface-border);
+    color: var(--color-text-secondary);
+}
+
+.m-docs-copy-feedback.is-copied {
+    color: #a3be8c;
+    border-color: #a3be8c;
+}
+
+.m-docs-copy-feedback.is-failed {
+    color: #bf616a;
+    border-color: #bf616a;
+}
+
 .m-docs-pagination {
     display: flex;
     justify-content: space-between;

@@ -53,7 +53,8 @@ pub fn build_clap(registry: Arc<Mutex<CommandRegistry>>) -> ClapCommand {
     }
 
     root = root.subcommand(build_workflow_root_command());
-    root.subcommand(build_import_root_command())
+    root = root.subcommand(build_import_root_command());
+    root.subcommand(build_update_root_command())
 }
 
 /// Creates the root command with global flags.
@@ -302,6 +303,30 @@ fn build_import_root_command() -> ClapCommand {
             Arg::new("disabled")
                 .long("disabled")
                 .help("Import catalog as disabled (catalog imports only)")
+                .action(ArgAction::SetTrue),
+        )
+}
+
+fn build_update_root_command() -> ClapCommand {
+    ClapCommand::new("update")
+        .about("Update the oatty binary")
+        .arg(
+            Arg::new("check")
+                .long("check")
+                .help("Check for updates without installing")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("force")
+                .long("force")
+                .help("Force update even if already up to date")
+                .action(ArgAction::SetTrue),
+        )
+        .arg(
+            Arg::new("quiet")
+                .long("quiet")
+                .short('q')
+                .help("Suppress output")
                 .action(ArgAction::SetTrue),
         )
 }
