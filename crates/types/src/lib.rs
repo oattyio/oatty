@@ -1167,8 +1167,62 @@ pub mod value_objects {
             Self {
                 key: value.key.clone(),
                 value: value.value.clone(),
-                is_secret: value.is_secret(),
+                is_secret: value.is_secret() || header_key_indicates_secret(&value.key),
             }
+        }
+    }
+
+    fn header_key_indicates_secret(header_key: &str) -> bool {
+        let normalized_header_key = normalize_header_key(header_key);
+        if normalized_header_key.is_empty() {
+            return false;
+        }
+
+        let exact_secret_header_names = ["authorization", "proxyauthorization", "ddapikey", "ddapplicationkey"];
+        if exact_secret_header_names.contains(&normalized_header_key.as_str()) {
+            return true;
+        }
+
+        let secret_key_indicators = [
+            "apikey",
+            "applicationkey",
+            "appkey",
+            "authtoken",
+            "accesstoken",
+            "refreshtoken",
+            "token",
+            "secret",
+            "password",
+            "passwd",
+            "privatekey",
+            "clientsecret",
+        ];
+
+        secret_key_indicators
+            .iter()
+            .any(|indicator| normalized_header_key.contains(indicator))
+    }
+
+    fn normalize_header_key(header_key: &str) -> String {
+        header_key
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .flat_map(char::to_lowercase)
+            .collect()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+        use crate::EnvSource;
+
+        #[test]
+        fn env_row_does_not_mark_non_secret_header_name_as_secret() {
+            let header = EnvVar::new("Content-Type".to_string(), "application/json".to_string(), EnvSource::File);
+
+            let row = EnvRow::from(&header);
+
+            assert!(!row.is_secret);
         }
     }
 }

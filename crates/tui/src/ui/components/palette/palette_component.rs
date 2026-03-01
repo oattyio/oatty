@@ -14,7 +14,6 @@ use oatty_types::{
     decode_provider_selector_action,
 };
 use oatty_util::lex_shell_like;
-use oatty_util::truncate_with_ellipsis;
 use rat_focus::{FocusFlag, HasFocus};
 use ratatui::{
     Frame,
@@ -156,33 +155,7 @@ impl PaletteComponent {
     /// The status paragraph widget, or None if no message is active.
     fn create_status_paragraph<'a>(&self, app: &'a App, theme: &'a dyn Theme, available_width: u16) -> Option<Paragraph<'a>> {
         let message = app.palette.message_ref()?;
-        if message.is_expired() {
-            return None;
-        }
-        let style = match message.r#type {
-            MessageType::Error => theme.status_error(),
-            MessageType::Warning => theme.status_warning(),
-            MessageType::Info => theme.status_info(),
-            MessageType::Success => theme.status_success(),
-        };
-        let prefix_text = format!("{} ", message.r#type);
-        let prefix_width = prefix_text.chars().count();
-        let message_width = (available_width as usize).saturating_sub(prefix_width);
-        let message_text = if message_width == 0 {
-            String::new()
-        } else {
-            truncate_with_ellipsis(message.message.as_ref(), message_width)
-        };
-        let line = Line::from(vec![
-            Span::styled(prefix_text, style),
-            Span::styled(message_text, theme.text_primary_style()),
-        ]);
-        let paragraph_style = if app.palette.f_message.get() {
-            theme.selection_style().add_modifier(Modifier::BOLD)
-        } else {
-            Style::default()
-        };
-        Some(Paragraph::new(line).style(paragraph_style))
+        th::create_status_paragraph(theme, message, available_width, app.palette.f_message.get())
     }
 
     /// Positions the cursor in the input line.

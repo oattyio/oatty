@@ -1,6 +1,7 @@
 use super::roles::Theme;
 use crate::ui::theme::roles::ThemeRoles;
-use oatty_types::MessageType;
+use oatty_types::{MessageType, TransientMessage};
+use oatty_util::truncate_with_ellipsis;
 use ratatui::text::Line;
 use ratatui::widgets::{HighlightSpacing, List, ListItem};
 use ratatui::{
@@ -79,6 +80,51 @@ pub fn styled_line(theme: &dyn Theme, line: &str) -> Line<'static> {
     }
 
     Line::from(spans)
+}
+
+/// Build a one-line status paragraph for a transient message.
+///
+/// The rendered line follows the same structure across components:
+/// `<SEVERITY> <MESSAGE>`, with severity colored by message type and optional
+/// focused styling.
+pub fn create_status_paragraph<'a>(
+    theme: &'a dyn Theme,
+    transient_message: &'a TransientMessage,
+    available_width: u16,
+    focused: bool,
+) -> Option<Paragraph<'a>> {
+    if transient_message.is_expired() {
+        return None;
+    }
+
+    let severity_style = match transient_message.r#type {
+        MessageType::Error => theme.status_error(),
+        MessageType::Warning => theme.status_warning(),
+        MessageType::Info => theme.status_info(),
+        MessageType::Success => theme.status_success(),
+    };
+
+    let prefix_text = format!("{} ", transient_message.r#type);
+    let prefix_width = prefix_text.chars().count();
+    let message_width = (available_width as usize).saturating_sub(prefix_width);
+    let message_text = if message_width == 0 {
+        String::new()
+    } else {
+        truncate_with_ellipsis(transient_message.message.as_ref(), message_width)
+    };
+
+    let line = Line::from(vec![
+        Span::styled(prefix_text, severity_style),
+        Span::styled(message_text, theme.text_primary_style()),
+    ]);
+
+    let paragraph_style = if focused {
+        theme.selection_style().add_modifier(Modifier::BOLD)
+    } else {
+        Style::default()
+    };
+
+    Some(Paragraph::new(line).style(paragraph_style))
 }
 /// Build a standard Block with theme surfaces and borders.
 pub fn block<'a, T>(theme: &dyn Theme, title: Option<T>, focused: bool) -> Block<'a>

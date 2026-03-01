@@ -102,6 +102,7 @@ export const mcpHttpServerPage: DocsPage = {
             title: 'Configure MCP Clients to Connect',
             paragraphs: [
                 'Use `http://localhost:62889/mcp` as the server URL.',
+                'Claude Desktop currently requires a stdio bridge for HTTP MCP endpoints. Use `mcp-remote` to bridge to `http://localhost:62889/mcp`.',
                 'When bound to localhost, the Oatty MCP HTTP server uses local HTTP and typically does not require authentication headers or tokens.',
                 'Keep the server bound to loopback unless you understand the security implications of exposing it on your network.',
                 'Restart or reconnect the client after updating configuration so it loads the new endpoint.',
@@ -114,7 +115,11 @@ Auth: none (localhost)
 {
   "mcpServers": {
     "oatty": {
-      "url": "http://localhost:62889/mcp"
+      "command": "npx",
+      "args": [
+        "mcp-remote",
+        "http://localhost:62889/mcp"
+      ]
     }
   }
 }

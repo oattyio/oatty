@@ -18,6 +18,8 @@ export class DocsPageView extends LitElement {
     };
 
     declare page?: DocsPage;
+    private copyStatus: { sectionId: string; state: 'copied' | 'failed' } | null = null;
+    private copyResetTimerId: number | undefined;
 
     protected createRenderRoot(): ShadowRoot {
         return this.attachShadow({mode: 'open'});
@@ -29,6 +31,15 @@ export class DocsPageView extends LitElement {
         if (this.shadowRoot) {
             applyConstructibleStyles(this.shadowRoot, [themeStyle, utilsStyle, moduleStyle, docsViewStyle]);
         }
+    }
+
+    disconnectedCallback(): void {
+        if (this.copyResetTimerId !== undefined) {
+            window.clearTimeout(this.copyResetTimerId);
+            this.copyResetTimerId = undefined;
+        }
+
+        super.disconnectedCallback();
     }
 
     private openLightbox(callout: DocsCallout): void {
@@ -98,6 +109,99 @@ export class DocsPageView extends LitElement {
 
     private sectionHeadingLevel(section: DocsSection): DocsSectionHeadingLevel {
         return section.headingLevel ?? 2;
+    }
+
+    private async copyToClipboard(content: string): Promise<boolean> {
+        try {
+            if (navigator.clipboard?.writeText) {
+                await navigator.clipboard.writeText(content);
+                return true;
+            }
+        } catch {
+            // Fallback handled below.
+        }
+
+        const temporaryTextArea = document.createElement('textarea');
+        temporaryTextArea.value = content;
+        temporaryTextArea.setAttribute('readonly', 'true');
+        temporaryTextArea.style.position = 'fixed';
+        temporaryTextArea.style.top = '-9999px';
+        document.body.appendChild(temporaryTextArea);
+        temporaryTextArea.select();
+
+        let wasCopied = false;
+        try {
+            wasCopied = document.execCommand('copy');
+        } catch {
+            wasCopied = false;
+        } finally {
+            document.body.removeChild(temporaryTextArea);
+        }
+
+        return wasCopied;
+    }
+
+    private async handleCopyCode(sectionId: string, codeContent: string): Promise<void> {
+        const copySucceeded = await this.copyToClipboard(codeContent);
+        this.copyStatus = {
+            sectionId,
+            state: copySucceeded ? 'copied' : 'failed',
+        };
+        this.requestUpdate();
+
+        if (this.copyResetTimerId !== undefined) {
+            window.clearTimeout(this.copyResetTimerId);
+        }
+
+        this.copyResetTimerId = window.setTimeout(() => {
+            this.copyStatus = null;
+            this.copyResetTimerId = undefined;
+            this.requestUpdate();
+        }, 1500);
+    }
+
+    private normalizeCodeSampleForDisplay(codeSample: string): { label: string | null; content: string } {
+        const normalizedCodeSample = codeSample.replace(/\r\n/g, '\n');
+        const promptPrefix = 'Prompt:\n';
+
+        if (normalizedCodeSample.startsWith(promptPrefix)) {
+            return {
+                label: 'Prompt',
+                content: normalizedCodeSample.slice(promptPrefix.length),
+            };
+        }
+
+        return {
+            label: null,
+            content: codeSample,
+        };
+    }
+
+    private renderCopyableCodeBlock(sectionId: string, codeSample: string) {
+        const normalizedCodeSample = this.normalizeCodeSampleForDisplay(codeSample);
+        const sectionCopyStatus = this.copyStatus?.sectionId === sectionId ? this.copyStatus.state : null;
+        const isCopied = sectionCopyStatus === 'copied';
+        const isFailed = sectionCopyStatus === 'failed';
+        const buttonLabel = isCopied ? 'Copied' : isFailed ? 'Copy failed' : 'Copy to clipboard';
+        const buttonIcon = isCopied ? 'check' : isFailed ? 'error' : 'content_copy';
+        const buttonClass = `m-docs-copy-button${sectionCopyStatus ? ` is-${sectionCopyStatus}` : ''}`;
+
+        return html`
+            <div class="m-docs-code-block">
+                <button
+                    type="button"
+                    class="${buttonClass}"
+                    @click="${() => this.handleCopyCode(sectionId, normalizedCodeSample.content)}"
+                    aria-label="${buttonLabel}"
+                    title="${buttonLabel}"
+                >
+                    <span class="material-symbols-outlined" aria-hidden="true">${buttonIcon}</span>
+                </button>
+                ${sectionCopyStatus ? html`<span class="m-docs-copy-feedback is-${sectionCopyStatus}">${buttonLabel}</span>` : ''}
+                ${normalizedCodeSample.label ? html`<p class="m-docs-code-label">${normalizedCodeSample.label}:</p>` : ''}
+                <pre class="m-code"><code>${normalizedCodeSample.content}</code></pre>
+            </div>
+        `;
     }
 
     /**
@@ -287,8 +391,7 @@ export class DocsPageView extends LitElement {
                         <section id="${section.id}" class="m-docs-section">
                             ${this.renderSectionHeading(section)}
                             ${section.paragraphs.map((paragraph) => html`<p>${this.renderTextWithLinks(paragraph)}</p>`)}
-                            ${section.codeSample ? html`
-                                <pre class="m-code"><code>${section.codeSample}</code></pre>` : ''}
+                            ${section.codeSample ? this.renderCopyableCodeBlock(section.id, section.codeSample) : ''}
                             ${(section.callouts ?? []).map(
                                     (callout) => html`
                                         <aside class="${this.calloutClass(callout)}"

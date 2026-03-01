@@ -456,6 +456,9 @@ async fn run_command(registry: Arc<Mutex<CommandRegistry>>, matches: &ArgMatches
     if group == "import" {
         return handle_import_command(Arc::clone(&registry), matches, group_matches).await;
     }
+    if group == "update" && group_matches.subcommand_name().is_none() {
+        return handle_update_command(group_matches);
+    }
     let (command_name, command_matches) = extract_command_and_matches(group_matches)?;
 
     let (command_spec, base_url, headers) = resolve_command_context(&registry, group, command_name)?;
@@ -617,6 +620,64 @@ fn output_json_or_text(text: &str) -> Result<()> {
         Err(_) => println!("{}", text),
     }
     Ok(())
+}
+
+fn handle_update_command(matches: &ArgMatches) -> Result<()> {
+    let quiet = matches.get_flag("quiet");
+
+    if is_npm_install() {
+        if !quiet {
+            println!("This installation is managed by npm. Please run `npm update -g oatty`.");
+        }
+        return Ok(());
+    }
+
+    let updater = self_update::backends::github::Update::configure()
+        .repo_owner("oattyio")
+        .repo_name("oatty")
+        .bin_name("oatty")
+        .show_download_progress(!quiet)
+        .current_version(env!("CARGO_PKG_VERSION"))
+        .build()?;
+
+    let latest_release = updater.get_latest_release()?;
+
+    if matches.get_flag("check") {
+        if !quiet {
+            if self_update::version::bump_is_greater(env!("CARGO_PKG_VERSION"), &latest_release.version)? {
+                println!("Update available: {} -> {}", env!("CARGO_PKG_VERSION"), latest_release.version);
+            } else {
+                println!("Up to date: {}", env!("CARGO_PKG_VERSION"));
+            }
+        }
+        return Ok(());
+    }
+
+    if !matches.get_flag("force") && !self_update::version::bump_is_greater(env!("CARGO_PKG_VERSION"), &latest_release.version)? {
+        if !quiet {
+            println!(
+                "Already up to date (version: {}). Use --force to reinstall.",
+                env!("CARGO_PKG_VERSION")
+            );
+        }
+        return Ok(());
+    }
+
+    let status = updater.update()?;
+    if !quiet {
+        println!("Update status: `{}`!", status.version());
+    }
+    Ok(())
+}
+
+fn is_npm_install() -> bool {
+    // Check for .oatty-installed-version adjacent to executable
+    if let Ok(exe_path) = std::env::current_exe()
+        && let Some(parent) = exe_path.parent()
+    {
+        return parent.join(".oatty-installed-version").exists();
+    }
+    false
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

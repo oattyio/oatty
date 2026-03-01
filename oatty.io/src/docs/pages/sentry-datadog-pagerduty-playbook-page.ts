@@ -19,7 +19,7 @@ export const sentryDatadogPagerDutyPlaybookPage: DocsPage = {
     summary: 'A natural-language, agent-driven procedure to configure, verify, and roll back Sentry → PagerDuty and Datadog → PagerDuty integrations through Oatty.',
     learnBullets: [
         'Connect Oatty to a natural-language agent via MCP.',
-        'Import OpenAPI catalogs and use preconfigured auth headers.',
+        'Import OpenAPI catalogs and configure auth headers.',
         'Prompt the agent to draft safe, reviewable workflows for integration setup.',
         'Confirm provider availability and required identifiers.',
         'Validate PagerDuty service + Events API v2 integration details.',
@@ -104,7 +104,7 @@ export const sentryDatadogPagerDutyPlaybookPage: DocsPage = {
                 'Use this pattern at the start of a new environment onboarding to automate the catalog import process.',
             ],
             codeSample: `Prompt:
-Import APIs for Sentry, Datadog, and PagerDuty into Oatty using their OpenAPI schemas (URLs preferred). Stub the necessary headers (for example, Authorization), then pause for me to enter access tokens in Oatty\'s TUI.`,
+Import APIs for Sentry, Datadog, and PagerDuty into Oatty using their OpenAPI schemas (URLs preferred). Stub the necessary headers (for example, Authorization), then pause for me to enter access tokens in Oatty\'s TUI. Use https://raw.githubusercontent.com/DataDog/datadog-api-client-go/master/.generator/schemas/v2/openapi.yaml for DataDog`,
             callouts: [
                 {
                     type: 'expected',
@@ -341,7 +341,7 @@ Perform a controlled end-to-end test with explicit approval gates: configure, va
                 'Ask it to verify the necessary headers (for example, `Authorization`) are present so authenticated commands are ready without exposing secrets in chat or workflows.',
             ],
             codeSample: `Prompt:
-Import APIs for Sentry, Datadog, and PagerDuty into Oatty using their OpenAPI schemas (URLs or local paths). Verify required auth headers (e.g., Authorization) are configured for each catalog, then summarize what was imported and what is ready.`,
+Import APIs for Sentry, Datadog, and PagerDuty into Oatty using their OpenAPI schemas (URLs or local paths). Verify required auth headers (e.g., Authorization) are configured for each catalog, then summarize what was imported and what is ready. Use https://raw.githubusercontent.com/DataDog/datadog-api-client-go/master/.generator/schemas/v2/openapi.yaml for DataDog.`,
             callouts: [
                 {
                     type: 'expected',
@@ -358,7 +358,7 @@ Import APIs for Sentry, Datadog, and PagerDuty into Oatty using their OpenAPI sc
             title: 'Verify Headers in the Oatty TUI (Catalog Headers)',
             tocTitle: 'Set Headers',
             paragraphs: [
-                'In the Library view, verify each imported catalog has required auth header values already set.',
+                'In the Library view, set each imported catalog\'s auth header values.',
                 'Keep secrets out of workflow YAML and out of agent prompts while still enabling authenticated discovery and execution.',
             ],
             callouts: [
