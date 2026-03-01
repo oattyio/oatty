@@ -8,7 +8,7 @@ set -euo pipefail
 #   NEXTGEN_CODESIGN_BIN   Path to the binary to sign.
 #   NEXTGEN_CODESIGN_ID    Signing identity (e.g., "Developer ID Application: Your Name (TEAMID)").
 # Optional environment variables:
-#   NEXTGEN_ENTITLEMENTS   Path to entitlements plist (defaults to macos/entitlements.plist when present).
+#   NEXTGEN_ENTITLEMENTS   Path to entitlements plist. When unset, signs without entitlements.
 #   NEXTGEN_CODESIGN_TIMESTAMP (true/false) Force timestamping toggle. Defaults to true for Developer ID identities.
 
 BIN_PATH=${NEXTGEN_CODESIGN_BIN:-}
@@ -39,18 +39,15 @@ EOF
   exit 2
 fi
 
-# Derive project root (script lives under scripts/macos)
-SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &> /dev/null && pwd)"
-ROOT_DIR="$(cd -- "${SCRIPT_DIR}/../.." &> /dev/null && pwd)"
-ENTITLEMENTS=${NEXTGEN_ENTITLEMENTS:-${ROOT_DIR}/macos/entitlements.plist}
-
-if [[ ! -f "${ENTITLEMENTS}" ]]; then
-  if [[ -n "${NEXTGEN_ENTITLEMENTS:-}" ]]; then
-    echo "Warning: entitlements file not found at ${ENTITLEMENTS}. Proceeding without entitlements." >&2
+if [[ -n "${NEXTGEN_ENTITLEMENTS:-}" ]]; then
+  if [[ ! -f "${NEXTGEN_ENTITLEMENTS}" ]]; then
+    echo "Warning: entitlements file not found at ${NEXTGEN_ENTITLEMENTS}. Proceeding without entitlements." >&2
+    ENT_ARGS=()
+  else
+    ENT_ARGS=(--entitlements "${NEXTGEN_ENTITLEMENTS}")
   fi
-  ENT_ARGS=()
 else
-  ENT_ARGS=(--entitlements "${ENTITLEMENTS}")
+  ENT_ARGS=()
 fi
 
 # Hardened runtime improves trust for some setups; safe for CLI tools.
