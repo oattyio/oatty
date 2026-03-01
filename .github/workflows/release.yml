@@ -120,7 +120,7 @@ jobs:
 
           security find-identity -v -p codesigning "${KEYCHAIN_PATH}"
 
-          SIGNING_IDENTITY_SHA="$(security find-identity -v -p codesigning "${KEYCHAIN_PATH}" | awk -v identity="${MACOS_CODESIGN_IDENTITY}" '$0 ~ identity { print $2; exit }')"
+          SIGNING_IDENTITY_SHA="$(security find-identity -v -p codesigning "${KEYCHAIN_PATH}" | awk -v identity="${MACOS_CODESIGN_IDENTITY}" 'index($0, identity) > 0 { print $2; exit }')"
           if [[ -z "${SIGNING_IDENTITY_SHA}" ]]; then
             echo "Expected signing identity not found in temporary keychain: ${MACOS_CODESIGN_IDENTITY}"
             exit 1
