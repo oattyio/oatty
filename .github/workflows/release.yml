@@ -186,7 +186,10 @@ jobs:
           ASSET_BASE="oatty-${GITHUB_REF_NAME}-${{ matrix.target }}"
           ARCHIVE_PATH="dist/${ASSET_BASE}.zip"
           API_KEY_PATH="${RUNNER_TEMP}/AuthKey_${APPLE_NOTARY_API_KEY_ID}.p8"
-          NOTARY_RESULT_PATH="${RUNNER_TEMP}/notary-result.json"
+          SUBMIT_RESULT_PATH="${RUNNER_TEMP}/notary-submit.json"
+          STATUS_RESULT_PATH="${RUNNER_TEMP}/notary-status.json"
+          MAX_POLL_ATTEMPTS=120
+          POLL_INTERVAL_SECONDS=30
 
           if [[ ! -f "${ARCHIVE_PATH}" ]]; then
             echo "Expected notarization archive not found: ${ARCHIVE_PATH}"
@@ -196,19 +199,90 @@ jobs:
           echo "${APPLE_NOTARY_API_PRIVATE_KEY_BASE64}" | base64 -D > "${API_KEY_PATH}"
           chmod 600 "${API_KEY_PATH}"
 
-          xcrun notarytool submit "${ARCHIVE_PATH}" \
-            --key "${API_KEY_PATH}" \
-            --key-id "${APPLE_NOTARY_API_KEY_ID}" \
-            --issuer "${APPLE_NOTARY_API_ISSUER_ID}" \
-            --wait \
-            --output-format json > "${NOTARY_RESULT_PATH}"
+          submit_attempt=1
+          submit_exit_code=1
+          while [[ "${submit_attempt}" -le 3 ]]; do
+            set +e
+            xcrun notarytool submit "${ARCHIVE_PATH}" \
+              --key "${API_KEY_PATH}" \
+              --key-id "${APPLE_NOTARY_API_KEY_ID}" \
+              --issuer "${APPLE_NOTARY_API_ISSUER_ID}" \
+              --output-format json > "${SUBMIT_RESULT_PATH}" 2>"${RUNNER_TEMP}/notary-submit-error.log"
+            submit_exit_code=$?
+            set -e
+            if [[ "${submit_exit_code}" -eq 0 ]]; then
+              break
+            fi
+            echo "Notary submit attempt ${submit_attempt}/3 failed."
+            cat "${RUNNER_TEMP}/notary-submit-error.log" || true
+            submit_attempt=$((submit_attempt + 1))
+            sleep 10
+          done
 
-          SUBMISSION_ID="$(/usr/bin/plutil -extract id raw "${NOTARY_RESULT_PATH}")"
-          SUBMISSION_STATUS="$(/usr/bin/plutil -extract status raw "${NOTARY_RESULT_PATH}")"
+          if [[ "${submit_exit_code}" -ne 0 ]]; then
+            echo "Notary submission failed after retries."
+            exit 1
+          fi
+
+          SUBMISSION_ID="$(/usr/bin/plutil -extract id raw "${SUBMIT_RESULT_PATH}")"
           echo "Notary submission id: ${SUBMISSION_ID}"
-          echo "Notary final status: ${SUBMISSION_STATUS}"
 
-          if [[ "${SUBMISSION_STATUS}" != "Accepted" ]]; then
+          final_status=""
+          for attempt in $(seq 1 "${MAX_POLL_ATTEMPTS}"); do
+            info_attempt=1
+            info_exit_code=1
+            while [[ "${info_attempt}" -le 3 ]]; do
+              set +e
+              xcrun notarytool info "${SUBMISSION_ID}" \
+                --key "${API_KEY_PATH}" \
+                --key-id "${APPLE_NOTARY_API_KEY_ID}" \
+                --issuer "${APPLE_NOTARY_API_ISSUER_ID}" \
+                --output-format json > "${STATUS_RESULT_PATH}" 2>"${RUNNER_TEMP}/notary-info-error.log"
+              info_exit_code=$?
+              set -e
+              if [[ "${info_exit_code}" -eq 0 ]]; then
+                break
+              fi
+              echo "Notary status check failed (attempt ${attempt}/${MAX_POLL_ATTEMPTS}, retry ${info_attempt}/3)."
+              cat "${RUNNER_TEMP}/notary-info-error.log" || true
+              info_attempt=$((info_attempt + 1))
+              sleep 5
+            done
+
+            if [[ "${info_exit_code}" -ne 0 ]]; then
+              echo "Notary status check failed after retries for poll attempt ${attempt}/${MAX_POLL_ATTEMPTS}."
+              sleep "${POLL_INTERVAL_SECONDS}"
+              continue
+            fi
+
+            status="$(/usr/bin/plutil -extract status raw "${STATUS_RESULT_PATH}")"
+            echo "Notary status (${attempt}/${MAX_POLL_ATTEMPTS}): ${status}"
+
+            case "${status}" in
+              Accepted)
+                final_status="${status}"
+                break
+                ;;
+              Invalid|Rejected)
+                final_status="${status}"
+                break
+                ;;
+            esac
+
+            sleep "${POLL_INTERVAL_SECONDS}"
+          done
+
+          if [[ -z "${final_status}" ]]; then
+            echo "Timed out waiting for notarization status after $((MAX_POLL_ATTEMPTS * POLL_INTERVAL_SECONDS)) seconds."
+            xcrun notarytool log "${SUBMISSION_ID}" \
+              --key "${API_KEY_PATH}" \
+              --key-id "${APPLE_NOTARY_API_KEY_ID}" \
+              --issuer "${APPLE_NOTARY_API_ISSUER_ID}" || true
+            exit 1
+          fi
+
+          echo "Notary final status: ${final_status}"
+          if [[ "${final_status}" != "Accepted" ]]; then
             echo "Notary submission was not accepted. Fetching notarization log..."
             xcrun notarytool log "${SUBMISSION_ID}" \
               --key "${API_KEY_PATH}" \
@@ -292,6 +366,37 @@ jobs:
             if [[ -f "$file" ]]; then
               cosign sign-blob --yes "$file" --output-signature "${file}.sig" --output-certificate "${file}.cert"
             fi
+          done
+
+      - name: Verify cosign signatures
+        shell: bash
+        env:
+          EXPECTED_OIDC_ISSUER: https://token.actions.githubusercontent.com
+        run: |
+          set -euo pipefail
+          expected_identity_regex="^https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/(heads|tags)/.+$"
+
+          for file in dist/*; do
+            if [[ ! -f "$file" ]]; then
+              continue
+            fi
+            case "$file" in
+              *.sig|*.cert)
+                continue
+                ;;
+            esac
+
+            if [[ ! -f "${file}.sig" || ! -f "${file}.cert" ]]; then
+              echo "Missing signature or certificate for: $file"
+              exit 1
+            fi
+
+            cosign verify-blob \
+              --signature "${file}.sig" \
+              --certificate "${file}.cert" \
+              --certificate-identity-regexp "${expected_identity_regex}" \
+              --certificate-oidc-issuer "${EXPECTED_OIDC_ISSUER}" \
+              "$file"
           done
 
       - name: Upload signatures and certs

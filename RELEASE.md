@@ -91,6 +91,30 @@ oatty --help
 - Download `SHA256SUMS` and confirm each release asset checksum matches.
 - Verify `.sig` and `.cert` files with `cosign verify-blob` for at least one platform artifact.
 
+### Linux artifact verification example
+
+Use this flow after downloading release assets for tag `vX.Y.Z`:
+
+```bash
+export VERSION="vX.Y.Z"
+export REPO="oattyio/oatty"
+export ASSET="oatty-${VERSION}-x86_64-unknown-linux-gnu.tar.gz"
+
+curl -LO "https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}"
+curl -LO "https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}.sig"
+curl -LO "https://github.com/${REPO}/releases/download/${VERSION}/${ASSET}.cert"
+curl -LO "https://github.com/${REPO}/releases/download/${VERSION}/SHA256SUMS"
+
+shasum -a 256 -c SHA256SUMS 2>/dev/null | grep "${ASSET}: OK"
+
+cosign verify-blob \
+  --signature "${ASSET}.sig" \
+  --certificate "${ASSET}.cert" \
+  --certificate-identity-regexp "^https://github.com/${REPO}/.github/workflows/release.yml@refs/(heads|tags)/.+$" \
+  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+  "${ASSET}"
+```
+
 ## Rollback and recovery
 
 If npm publish fails:
