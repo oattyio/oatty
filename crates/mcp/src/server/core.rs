@@ -1621,6 +1621,7 @@ fn build_http_execution_inputs(command_spec: &CommandSpec, param: &RunCommandReq
     Ok(HttpExecutionInputs { path_variables, payload })
 }
 
+#[cfg(test)]
 fn build_http_input_map(command_spec: &CommandSpec, param: &RunCommandRequestParam) -> Result<Map<String, Value>, ErrorData> {
     Ok(build_http_execution_inputs(command_spec, param)?.payload)
 }
