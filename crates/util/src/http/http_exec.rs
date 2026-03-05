@@ -4,7 +4,7 @@
 //! `CommandSpec`, handling headers and response parsing.
 //! It also provides a convenient `fetch_json_array` helper for list endpoints.
 
-use crate::{build_path, http, resolve_path, shell_lexing};
+use crate::{build_path, extract_path_placeholder_keys, http, resolve_path, shell_lexing};
 use anyhow::anyhow;
 use indexmap::IndexSet;
 use oatty_api::OattyClient;
@@ -238,8 +238,9 @@ pub async fn exec_remote_for_provider(
 ) -> Result<ExecOutcome, String> {
     let http = spec.http().ok_or_else(|| format!("Command '{}' is not HTTP-backed", spec.name))?;
     let path = build_path(http.path.as_str(), &body);
+    let sanitized_body = remove_path_placeholders_from_payload(http.path.as_str(), body);
 
-    match exec_remote_from_spec_inner(http, base_url, headers, body, path).await {
+    match exec_remote_from_spec_inner(http, base_url, headers, sanitized_body, path).await {
         Ok((status, _, text)) => {
             let raw_log = format!("{}\n{}", status, text);
             let mut log = summarize_execution_outcome(&spec.canonical_id(), raw_log.as_str(), status);
@@ -261,6 +262,18 @@ pub async fn exec_remote_for_provider(
         }
         Err(e) => Err(e),
     }
+}
+
+/// Removes path placeholder keys from outbound payload/query parameters.
+///
+/// HTTP commands use placeholder values to hydrate request URLs. Those same
+/// values should not also be sent as query/body fields unless explicitly
+/// modeled as flags in the command schema.
+fn remove_path_placeholders_from_payload(path_template: &str, mut payload: Map<String, Value>) -> Map<String, Value> {
+    for placeholder_key in extract_path_placeholder_keys(path_template) {
+        payload.remove(placeholder_key.as_str());
+    }
+    payload
 }
 
 /// Execute a JSON-backed HTTP request and parse the response payload.
@@ -798,5 +811,35 @@ mod tests {
 
         let items = extract_provider_collection_items(&payload, None).expect("provider wrapper object should be extracted");
         assert_eq!(items, vec![json!({ "id": "project-a" })]);
+    }
+
+    #[test]
+    fn remove_path_placeholders_from_payload_strips_path_fields_from_write_payload() {
+        let payload = Map::from_iter([
+            ("owner".to_string(), json!("oattyio")),
+            ("repo".to_string(), json!("oatty")),
+            ("title".to_string(), json!("M1 (P0 Alpha)")),
+        ]);
+
+        let sanitized = remove_path_placeholders_from_payload("/repos/{owner}/{repo}/milestones", payload);
+
+        assert!(sanitized.get("owner").is_none());
+        assert!(sanitized.get("repo").is_none());
+        assert_eq!(sanitized.get("title"), Some(&json!("M1 (P0 Alpha)")));
+    }
+
+    #[test]
+    fn remove_path_placeholders_from_payload_strips_path_fields_from_get_query_payload() {
+        let payload = Map::from_iter([
+            ("owner".to_string(), json!("oattyio")),
+            ("repo".to_string(), json!("oatty")),
+            ("state".to_string(), json!("open")),
+        ]);
+
+        let sanitized = remove_path_placeholders_from_payload("/repos/{owner}/{repo}/milestones", payload);
+
+        assert!(sanitized.get("owner").is_none());
+        assert!(sanitized.get("repo").is_none());
+        assert_eq!(sanitized.get("state"), Some(&json!("open")));
     }
 }
