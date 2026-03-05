@@ -34,7 +34,7 @@ use crate::server::workflow::{
 use anyhow::Result;
 use oatty_registry::{CommandRegistry, SearchHandle, suggest_nearest_canonical_ids};
 use oatty_types::{CommandSpec, ExecOutcome, SearchResult};
-use oatty_util::http::exec_remote_for_provider;
+use oatty_util::http::{exec_remote_for_provider_with_path_variables, extract_path_placeholder_keys};
 use reqwest::Method;
 use rmcp::handler::server::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
@@ -1555,39 +1555,52 @@ async fn execute_http_command(
         (base_url, headers)
     };
 
-    let input_map = build_http_input_map(command_spec, param)?;
-    exec_remote_for_provider(command_spec, base_url.as_str(), &headers, input_map, 0)
-        .await
-        .map_err(|error| {
-            internal_error_with_next_step(
-                error.to_string(),
-                serde_json::json!({ "canonical_id": command_spec.canonical_id() }),
-                "Inspect the failing HTTP call details and retry with corrected inputs or configuration.",
-            )
-        })
+    let http_inputs = build_http_execution_inputs(command_spec, param)?;
+    exec_remote_for_provider_with_path_variables(
+        command_spec,
+        base_url.as_str(),
+        &headers,
+        http_inputs.path_variables,
+        http_inputs.payload,
+        0,
+    )
+    .await
+    .map_err(|error| {
+        internal_error_with_next_step(
+            error.to_string(),
+            serde_json::json!({ "canonical_id": command_spec.canonical_id() }),
+            "Inspect the failing HTTP call details and retry with corrected inputs or configuration.",
+        )
+    })
 }
 
-fn build_http_input_map(command_spec: &CommandSpec, param: &RunCommandRequestParam) -> Result<Map<String, Value>, ErrorData> {
+#[derive(Debug)]
+struct HttpExecutionInputs {
+    path_variables: Map<String, Value>,
+    payload: Map<String, Value>,
+}
+
+fn build_http_execution_inputs(command_spec: &CommandSpec, param: &RunCommandRequestParam) -> Result<HttpExecutionInputs, ErrorData> {
     let positional_args = param.positional_args.clone().unwrap_or_default();
     let named_flags = param.named_flags.clone().unwrap_or_default();
 
-    let flag_map = build_flag_map(command_spec, &named_flags)?;
-    let positional_strings = positional_args.clone();
-    command_spec.validate_arguments(&flag_map, &positional_strings).map_err(|error| {
-        invalid_params_with_next_step(
-            error.to_string(),
-            serde_json::json!({
-                "canonical_id": command_spec.canonical_id(),
-                "provided_positional_args": positional_args,
-                "provided_named_flags": named_flags
-            }),
-            "Call get_command or get_command_summaries_by_catalog to verify required args/flags, then retry.",
-        )
-    })?;
+    validate_http_inputs(command_spec, &positional_args, &named_flags)?;
 
-    let mut input_map = Map::new();
-    for (spec, value) in command_spec.positional_args.iter().zip(positional_args.iter()) {
-        input_map.insert(spec.name.clone(), Value::String(value.clone()));
+    let placeholder_keys = command_spec
+        .http()
+        .map(|http_spec| extract_path_placeholder_keys(http_spec.path.as_str()))
+        .unwrap_or_default();
+
+    let mut path_variables = Map::new();
+    let mut payload = Map::new();
+
+    for (specification, value) in command_spec.positional_args.iter().zip(positional_args.iter()) {
+        let json_value = Value::String(value.clone());
+        if placeholder_keys.iter().any(|key| key == specification.name.as_str()) {
+            path_variables.insert(specification.name.clone(), json_value);
+        } else {
+            payload.insert(specification.name.clone(), json_value);
+        }
     }
 
     for (name, value) in named_flags {
@@ -1602,10 +1615,30 @@ fn build_http_input_map(command_spec: &CommandSpec, param: &RunCommandRequestPar
             )
         })?;
         let normalized_value = normalize_http_flag_value(flag_spec.r#type.as_str(), value, &name)?;
-        input_map.insert(name, normalized_value);
+        payload.insert(name, normalized_value);
     }
 
-    Ok(input_map)
+    Ok(HttpExecutionInputs { path_variables, payload })
+}
+
+fn build_http_input_map(command_spec: &CommandSpec, param: &RunCommandRequestParam) -> Result<Map<String, Value>, ErrorData> {
+    Ok(build_http_execution_inputs(command_spec, param)?.payload)
+}
+
+fn validate_http_inputs(command_spec: &CommandSpec, positional_args: &[String], named_flags: &[(String, Value)]) -> Result<(), ErrorData> {
+    let flag_map = build_flag_map(command_spec, named_flags)?;
+    let positional_strings = positional_args.to_vec();
+    command_spec.validate_arguments(&flag_map, &positional_strings).map_err(|error| {
+        invalid_params_with_next_step(
+            error.to_string(),
+            serde_json::json!({
+                "canonical_id": command_spec.canonical_id(),
+                "provided_positional_args": positional_args,
+                "provided_named_flags": named_flags
+            }),
+            "Call get_command or get_command_summaries_by_catalog to verify required args/flags, then retry.",
+        )
+    })
 }
 
 fn normalize_http_flag_value(expected_type: &str, value: Value, flag_name: &str) -> Result<Value, ErrorData> {
@@ -1783,6 +1816,22 @@ mod tests {
         )
     }
 
+    fn build_http_spec_with_path_and_flag_collision() -> CommandSpec {
+        CommandSpec::new_http(
+            "github".to_string(),
+            "repos:milestones:create".to_string(),
+            "Create milestone".to_string(),
+            vec![oatty_types::PositionalArgument {
+                name: "project".to_string(),
+                help: Some("Path placeholder value".to_string()),
+                provider: None,
+            }],
+            vec![build_flag("project", "object"), build_flag("title", "string")],
+            HttpCommandSpec::new("POST", "/repos/{project}/milestones", None, None),
+            1,
+        )
+    }
+
     fn build_mcp_spec_for_flag_tests(flags: Vec<CommandFlag>) -> CommandSpec {
         CommandSpec::new_mcp(
             "vendor".to_string(),
@@ -1920,6 +1969,25 @@ mod tests {
 
         let input_map = build_http_input_map(&command_spec, &param).expect("legacy boolean flag payloads should remain supported");
         assert_eq!(input_map.get("enabled"), Some(&Value::Bool(true)));
+    }
+
+    #[test]
+    fn build_http_execution_inputs_preserves_payload_flag_when_it_matches_path_placeholder_name() {
+        let command_spec = build_http_spec_with_path_and_flag_collision();
+        let param = RunCommandRequestParam {
+            canonical_id: command_spec.canonical_id(),
+            positional_args: Some(vec!["oattyio/oatty".to_string()]),
+            named_flags: Some(vec![
+                ("project".to_string(), json!({ "id": "body-project-id" })),
+                ("title".to_string(), json!("M1")),
+            ]),
+        };
+
+        let inputs = build_http_execution_inputs(&command_spec, &param).expect("http execution inputs should build");
+
+        assert_eq!(inputs.path_variables.get("project"), Some(&json!("oattyio/oatty")));
+        assert_eq!(inputs.payload.get("project"), Some(&json!({ "id": "body-project-id" })));
+        assert_eq!(inputs.payload.get("title"), Some(&json!("M1")));
     }
 
     #[test]

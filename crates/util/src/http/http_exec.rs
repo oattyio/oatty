@@ -237,10 +237,27 @@ pub async fn exec_remote_for_provider(
     request_id: u64,
 ) -> Result<ExecOutcome, String> {
     let http = spec.http().ok_or_else(|| format!("Command '{}' is not HTTP-backed", spec.name))?;
-    let path = build_path(http.path.as_str(), &body);
-    let sanitized_body = remove_path_placeholders_from_payload(http.path.as_str(), body);
+    let path_variables = extract_path_placeholder_values(http.path.as_str(), &body);
+    let payload = remove_path_placeholders_from_payload(http.path.as_str(), body);
+    exec_remote_for_provider_with_path_variables(spec, base_url, headers, path_variables, payload, request_id).await
+}
 
-    match exec_remote_from_spec_inner(http, base_url, headers, sanitized_body, path).await {
+/// Executes an HTTP command using explicit path placeholder values and payload.
+///
+/// This variant avoids accidental key collisions where path placeholder names
+/// overlap with explicit payload fields.
+pub async fn exec_remote_for_provider_with_path_variables(
+    spec: &CommandSpec,
+    base_url: &str,
+    headers: &IndexSet<EnvVar>,
+    path_variables: Map<String, Value>,
+    payload: Map<String, Value>,
+    request_id: u64,
+) -> Result<ExecOutcome, String> {
+    let http = spec.http().ok_or_else(|| format!("Command '{}' is not HTTP-backed", spec.name))?;
+    let path = build_path(http.path.as_str(), &path_variables);
+
+    match exec_remote_from_spec_inner(http, base_url, headers, payload, path).await {
         Ok((status, _, text)) => {
             let raw_log = format!("{}\n{}", status, text);
             let mut log = summarize_execution_outcome(&spec.canonical_id(), raw_log.as_str(), status);
@@ -262,6 +279,17 @@ pub async fn exec_remote_for_provider(
         }
         Err(e) => Err(e),
     }
+}
+
+/// Collects path placeholder values from payload map for URL hydration.
+fn extract_path_placeholder_values(path_template: &str, payload: &Map<String, Value>) -> Map<String, Value> {
+    let mut path_variables = Map::new();
+    for placeholder_key in extract_path_placeholder_keys(path_template) {
+        if let Some(value) = payload.get(placeholder_key.as_str()) {
+            path_variables.insert(placeholder_key, value.clone());
+        }
+    }
+    path_variables
 }
 
 /// Removes path placeholder keys from outbound payload/query parameters.
@@ -826,6 +854,20 @@ mod tests {
         assert!(sanitized.get("owner").is_none());
         assert!(sanitized.get("repo").is_none());
         assert_eq!(sanitized.get("title"), Some(&json!("M1 (P0 Alpha)")));
+    }
+
+    #[test]
+    fn extract_path_placeholder_values_collects_only_placeholder_keys() {
+        let payload = Map::from_iter([
+            ("owner".to_string(), json!("oattyio")),
+            ("repo".to_string(), json!("oatty")),
+            ("title".to_string(), json!("M1 (P0 Alpha)")),
+        ]);
+        let path_variables = extract_path_placeholder_values("/repos/{owner}/{repo}/milestones", &payload);
+
+        assert_eq!(path_variables.get("owner"), Some(&json!("oattyio")));
+        assert_eq!(path_variables.get("repo"), Some(&json!("oatty")));
+        assert!(path_variables.get("title").is_none());
     }
 
     #[test]
