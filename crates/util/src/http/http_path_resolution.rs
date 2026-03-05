@@ -60,6 +60,43 @@ pub fn build_path(template: &str, variables: &serde_json::Map<String, Value>) ->
     path
 }
 
+/// Extracts placeholder keys from an OpenAPI-style path template.
+///
+/// Placeholders are recognized in `{name}` segments and returned in encounter
+/// order with duplicates removed.
+///
+/// # Examples
+/// ```ignore
+/// let keys = extract_path_placeholder_keys("/repos/{owner}/{repo}/issues/{issue_number}");
+/// assert_eq!(keys, vec!["owner", "repo", "issue_number"]);
+/// ```
+pub fn extract_path_placeholder_keys(template: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut current = String::new();
+    let mut reading_placeholder = false;
+
+    for character in template.chars() {
+        match character {
+            '{' if !reading_placeholder => {
+                reading_placeholder = true;
+                current.clear();
+            }
+            '}' if reading_placeholder => {
+                let key = current.trim();
+                if !key.is_empty() && !keys.iter().any(|existing| existing == key) {
+                    keys.push(key.to_string());
+                }
+                reading_placeholder = false;
+                current.clear();
+            }
+            _ if reading_placeholder => current.push(character),
+            _ => {}
+        }
+    }
+
+    keys
+}
+
 /// Percent-encodes a path placeholder value while preserving RFC3986 unreserved bytes.
 ///
 /// Unreserved bytes (`A-Z`, `a-z`, `0-9`, `-`, `.`, `_`, `~`) are emitted as-is.
@@ -92,7 +129,7 @@ fn to_upper_hex(nibble: u8) -> char {
 
 #[cfg(test)]
 mod tests {
-    use super::build_path;
+    use super::{build_path, extract_path_placeholder_keys};
     use serde_json::{Map, Value};
 
     #[test]
@@ -111,5 +148,17 @@ mod tests {
 
         let path = build_path("/v1/projects/{project}", &variables);
         assert_eq!(path, "/v1/projects/team%2Fapp%20name");
+    }
+
+    #[test]
+    fn extract_path_placeholder_keys_returns_unique_placeholders_in_order() {
+        let keys = extract_path_placeholder_keys("/repos/{owner}/{repo}/issues/{issue_number}/{repo}");
+        assert_eq!(keys, vec!["owner", "repo", "issue_number"]);
+    }
+
+    #[test]
+    fn extract_path_placeholder_keys_ignores_empty_placeholders() {
+        let keys = extract_path_placeholder_keys("/v1/{project}//{}");
+        assert_eq!(keys, vec!["project"]);
     }
 }
