@@ -1621,11 +1621,6 @@ fn build_http_execution_inputs(command_spec: &CommandSpec, param: &RunCommandReq
     Ok(HttpExecutionInputs { path_variables, payload })
 }
 
-#[cfg(test)]
-fn build_http_input_map(command_spec: &CommandSpec, param: &RunCommandRequestParam) -> Result<Map<String, Value>, ErrorData> {
-    Ok(build_http_execution_inputs(command_spec, param)?.payload)
-}
-
 fn validate_http_inputs(command_spec: &CommandSpec, positional_args: &[String], named_flags: &[(String, Value)]) -> Result<(), ErrorData> {
     let flag_map = build_flag_map(command_spec, named_flags)?;
     let positional_strings = positional_args.to_vec();
@@ -1858,7 +1853,7 @@ mod tests {
     }
 
     #[test]
-    fn build_http_input_map_preserves_object_and_array_flag_values() {
+    fn build_http_execution_inputs_payload_preserves_object_and_array_flag_values() {
         let command_spec = build_http_spec_for_flag_tests(vec![build_flag("project", "object"), build_flag("target", "array")]);
         let param = RunCommandRequestParam {
             canonical_id: command_spec.canonical_id(),
@@ -1869,14 +1864,16 @@ mod tests {
             ]),
         };
 
-        let input_map = build_http_input_map(&command_spec, &param).expect("typed flags should build an HTTP input map");
+        let input_map = build_http_execution_inputs(&command_spec, &param)
+            .map(|inputs| inputs.payload)
+            .expect("typed flags should build an HTTP input map");
 
         assert_eq!(input_map.get("project"), Some(&json!({ "name": "demo" })));
         assert_eq!(input_map.get("target"), Some(&json!(["production", "preview"])));
     }
 
     #[test]
-    fn build_http_input_map_accepts_json_string_for_structured_flags() {
+    fn build_http_execution_inputs_payload_accepts_json_string_for_structured_flags() {
         let command_spec = build_http_spec_for_flag_tests(vec![build_flag("project", "object"), build_flag("target", "array")]);
         let param = RunCommandRequestParam {
             canonical_id: command_spec.canonical_id(),
@@ -1887,7 +1884,9 @@ mod tests {
             ]),
         };
 
-        let input_map = build_http_input_map(&command_spec, &param).expect("JSON text should parse for structured flags");
+        let input_map = build_http_execution_inputs(&command_spec, &param)
+            .map(|inputs| inputs.payload)
+            .expect("JSON text should parse for structured flags");
 
         assert_eq!(input_map.get("project"), Some(&json!({ "name": "demo" })));
         assert_eq!(input_map.get("target"), Some(&json!(["production", "preview"])));
@@ -1910,7 +1909,9 @@ mod tests {
         });
         let param: RunCommandRequestParam = serde_json::from_value(raw_payload).expect("MCP run_command payload should deserialize");
 
-        let input_map = build_http_input_map(&command_spec, &param).expect("deserialized flags should normalize");
+        let input_map = build_http_execution_inputs(&command_spec, &param)
+            .map(|inputs| inputs.payload)
+            .expect("deserialized flags should normalize");
 
         assert_eq!(input_map.get("project"), Some(&json!({ "name": "starter-node" })));
         assert_eq!(input_map.get("target"), Some(&json!(["production", "preview", "development"])));
@@ -1918,7 +1919,7 @@ mod tests {
     }
 
     #[test]
-    fn build_http_input_map_preserves_explicit_boolean_values() {
+    fn build_http_execution_inputs_payload_preserves_explicit_boolean_values() {
         let command_spec = build_http_spec_for_flag_tests(vec![build_flag("enabled", "boolean")]);
         let param = RunCommandRequestParam {
             canonical_id: command_spec.canonical_id(),
@@ -1929,12 +1930,14 @@ mod tests {
             ]),
         };
 
-        let input_map = build_http_input_map(&command_spec, &param).expect("boolean values should normalize");
+        let input_map = build_http_execution_inputs(&command_spec, &param)
+            .map(|inputs| inputs.payload)
+            .expect("boolean values should normalize");
         assert_eq!(input_map.get("enabled"), Some(&Value::Bool(true)));
     }
 
     #[test]
-    fn build_http_input_map_supports_boolean_false() {
+    fn build_http_execution_inputs_payload_supports_boolean_false() {
         let command_spec = build_http_spec_for_flag_tests(vec![build_flag("enabled", "boolean")]);
         let param = RunCommandRequestParam {
             canonical_id: command_spec.canonical_id(),
@@ -1942,7 +1945,9 @@ mod tests {
             named_flags: Some(vec![("enabled".to_string(), Value::Bool(false))]),
         };
 
-        let input_map = build_http_input_map(&command_spec, &param).expect("boolean false should be preserved");
+        let input_map = build_http_execution_inputs(&command_spec, &param)
+            .map(|inputs| inputs.payload)
+            .expect("boolean false should be preserved");
         assert_eq!(input_map.get("enabled"), Some(&Value::Bool(false)));
     }
 
@@ -1960,7 +1965,7 @@ mod tests {
     }
 
     #[test]
-    fn build_http_input_map_preserves_legacy_boolean_presence_semantics() {
+    fn build_http_execution_inputs_payload_preserves_legacy_boolean_presence_semantics() {
         let command_spec = build_http_spec_for_flag_tests(vec![build_flag("enabled", "boolean")]);
         let param = RunCommandRequestParam {
             canonical_id: command_spec.canonical_id(),
@@ -1968,7 +1973,9 @@ mod tests {
             named_flags: Some(vec![("enabled".to_string(), Value::String("false".to_string()))]),
         };
 
-        let input_map = build_http_input_map(&command_spec, &param).expect("legacy boolean flag payloads should remain supported");
+        let input_map = build_http_execution_inputs(&command_spec, &param)
+            .map(|inputs| inputs.payload)
+            .expect("legacy boolean flag payloads should remain supported");
         assert_eq!(input_map.get("enabled"), Some(&Value::Bool(true)));
     }
 
