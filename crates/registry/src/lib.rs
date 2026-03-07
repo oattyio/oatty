@@ -18,7 +18,10 @@ pub use catalog_patch::{
 };
 pub use clap_builder::build_clap;
 pub use config::*;
-pub use models::{CatalogHeaderEditMode, CatalogHeaderEditRow, CatalogMutationError, CatalogMutationResult, CommandRegistry};
+pub use models::{
+    CanonicalCommandId, CatalogHeaderEditMode, CatalogHeaderEditRow, CatalogMutationError, CatalogMutationResult, CommandRegistry,
+    CommandResolutionError, CommandResolutionResult, ExactSearchHit, ResolvedCommand,
+};
 pub use oatty_types::{
     CommandFlag, CommandSpec, ProviderArgumentContract, ProviderContract, ProviderFieldContract, ProviderReturnContract,
 };
@@ -26,7 +29,9 @@ pub use openapi_import::{
     OpenApiCatalogImportError, OpenApiCatalogImportRequest, OpenApiCatalogImportResult, import_openapi_catalog_into_registry,
 };
 
-pub use search::{SearchError, SearchHandle, create_search_handle, suggest_nearest_canonical_ids};
+pub use search::{
+    SearchError, SearchHandle, canonical_id_matches_vendor, command_matches_vendor, create_search_handle, suggest_nearest_canonical_ids,
+};
 
 #[cfg(test)]
 mod tests {

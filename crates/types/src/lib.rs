@@ -1142,6 +1142,8 @@ pub mod messaging {
         pub execution_type: String,
         /// Optional HTTP method when the command is HTTP-backed.
         pub http_method: Option<String>,
+        /// Optional vendor associated with the resolved command.
+        pub vendor: Option<String>,
     }
 }
 

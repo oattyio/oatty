@@ -23,6 +23,7 @@ postcard = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
+nucleo-matcher = { workspace = true }
 
 [build-dependencies]
 anyhow = { workspace = true }

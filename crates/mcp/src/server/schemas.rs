@@ -68,6 +68,9 @@ pub struct RunCommandRequestParam {
     /// Canonical command identifier in `<group> <command>` format.
     #[schemars(description = "Canonical command id in '<group> <command>' format, for example: 'apps apps:list'.")]
     pub canonical_id: String,
+    /// Optional vendor filter used to disambiguate duplicate canonical IDs across catalogs.
+    #[schemars(description = "Optional vendor filter used when the same canonical id exists in multiple catalogs.")]
+    pub vendor: Option<String>,
     /// Ordered positional argument values as required by the command specification.
     #[schemars(description = "Ordered positional argument values. Use command metadata order exactly.")]
     pub positional_args: Option<Vec<String>>,
@@ -94,6 +97,9 @@ pub struct CommandDetailRequest {
     /// Canonical command identifier in `<group> <command>` format.
     #[schemars(description = "Canonical command id in '<group> <command>' format, for example: 'apps apps:list'.")]
     pub canonical_id: String,
+    /// Optional vendor filter used to disambiguate duplicate canonical IDs across catalogs.
+    #[schemars(description = "Optional vendor filter used when the same canonical id exists in multiple catalogs.")]
+    pub vendor: Option<String>,
     /// Optional output schema detail level. Defaults to `paths`.
     #[schemars(description = "Optional output schema detail: paths|full. Default is paths (output_fields only).")]
     pub output_schema_detail: Option<OutputSchemaDetail>,

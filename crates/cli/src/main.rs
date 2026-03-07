@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{Context, Result, anyhow, bail};
-use clap::ArgMatches;
+use clap::{ArgMatches, parser::ValueSource};
 use indexmap::IndexSet;
 use oatty_api::OattyClient;
 use oatty_engine::workflow::document::{build_runtime_catalog, runtime_workflow_from_definition};
@@ -549,8 +549,13 @@ fn collect_positional_values(command_spec: &CommandSpec, command_matches: &ArgMa
 fn collect_request_body(command_spec: &CommandSpec, command_matches: &ArgMatches) -> Result<Map<String, Value>> {
     let mut request_body = Map::new();
     for flag in &command_spec.flags {
+        let was_explicitly_provided = matches!(
+            command_matches.value_source(&flag.name),
+            Some(ValueSource::CommandLine | ValueSource::EnvVariable)
+        );
+
         if flag.r#type == "boolean" {
-            if command_matches.get_flag(&flag.name) {
+            if was_explicitly_provided && command_matches.get_flag(&flag.name) {
                 request_body.insert(flag.name.clone(), Value::Bool(true));
             }
         } else if let Some(raw_value) = command_matches.get_one::<String>(&flag.name) {
@@ -1189,6 +1194,7 @@ mod tests {
     use oatty_engine::{
         ArgumentPrompt, BindingFailure, BindingSource, MissingReason, ProviderResolutionEvent, ProviderResolutionSource, SkipDecision,
     };
+    use oatty_registry::clap_builder::build_clap;
     use oatty_types::workflow::{RuntimeWorkflow, WorkflowDefaultSource, WorkflowInputDefault, WorkflowInputDefinition};
     use serde_json::json;
 
@@ -1305,6 +1311,39 @@ mod tests {
                 }
             })
         );
+    }
+
+    #[test]
+    fn collect_request_body_preserves_clap_default_values() {
+        let command_spec = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List projects".to_string(),
+            Vec::new(),
+            vec![CommandFlag {
+                name: "limit".to_string(),
+                short_name: None,
+                required: false,
+                r#type: "integer".to_string(),
+                enum_values: Vec::new(),
+                default_value: Some("10".to_string()),
+                description: Some("Maximum number of records to return.".to_string()),
+                provider: None,
+            }],
+            oatty_types::command::HttpCommandSpec::new("GET", "/v1/projects", None, None),
+            0,
+        );
+
+        let registry = Arc::new(Mutex::new(CommandRegistry::default().with_commands(vec![command_spec.clone()])));
+        let matches = build_clap(registry)
+            .try_get_matches_from(["oatty", "projects", "list"])
+            .expect("clap parses defaulted command");
+        let (_, group_matches) = extract_group_and_matches(&matches).expect("group matches");
+        let (_, command_matches) = extract_command_and_matches(group_matches).expect("command matches");
+
+        let request_body = collect_request_body(&command_spec, command_matches).expect("request body");
+
+        assert_eq!(request_body.get("limit"), Some(&Value::Number(serde_json::Number::from(10))));
     }
 
     #[test]
