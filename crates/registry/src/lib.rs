@@ -26,7 +26,7 @@ pub use openapi_import::{
     OpenApiCatalogImportError, OpenApiCatalogImportRequest, OpenApiCatalogImportResult, import_openapi_catalog_into_registry,
 };
 
-pub use search::{SearchError, SearchHandle, create_search_handle, suggest_nearest_canonical_ids};
+pub use search::{SearchError, SearchHandle, canonical_id_matches_vendor, create_search_handle, suggest_nearest_canonical_ids};
 
 #[cfg(test)]
 mod tests {

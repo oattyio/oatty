@@ -32,7 +32,7 @@ use crate::server::workflow::{
     },
 };
 use anyhow::Result;
-use oatty_registry::{CommandRegistry, SearchHandle, suggest_nearest_canonical_ids};
+use oatty_registry::{CommandRegistry, SearchHandle, canonical_id_matches_vendor, suggest_nearest_canonical_ids};
 use oatty_types::{CommandSpec, ExecOutcome, SearchResult};
 use oatty_util::http::{exec_remote_for_provider_with_path_variables, extract_path_placeholder_keys};
 use reqwest::Method;
@@ -75,7 +75,7 @@ impl McpToolServices {
     }
 
     async fn search_commands(&self, query: String, vendor: Option<&str>) -> Result<Vec<SearchResult>> {
-        let mut results = self.search_handle.search(&query).await?;
+        let mut results = self.search_handle.search_with_vendor(&query, vendor).await?;
         let registry = self
             .command_registry
             .lock()
@@ -1766,17 +1766,7 @@ fn exec_outcome_to_value(outcome: ExecOutcome) -> Result<Value, ErrorData> {
 }
 
 fn vendor_matches(registry: &CommandRegistry, result: &SearchResult, vendor_name: &str) -> bool {
-    let canonical_id = result.canonical_id.as_str();
-    let Some(catalogs) = registry.config.catalogs.as_ref() else {
-        return false;
-    };
-
-    catalogs.iter().any(|catalog| {
-        let Some(manifest) = catalog.manifest.as_ref() else {
-            return false;
-        };
-        manifest.vendor.eq_ignore_ascii_case(vendor_name) && manifest.commands.iter().any(|command| command.canonical_id() == canonical_id)
-    })
+    canonical_id_matches_vendor(registry, result.canonical_id.as_str(), vendor_name)
 }
 
 fn vendor_has_enabled_command_catalog(registry: &Arc<Mutex<CommandRegistry>>, vendor_name: &str) -> Result<bool> {
