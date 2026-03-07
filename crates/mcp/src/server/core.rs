@@ -32,7 +32,7 @@ use crate::server::workflow::{
     },
 };
 use anyhow::Result;
-use oatty_registry::{CommandRegistry, SearchHandle, canonical_id_matches_vendor, suggest_nearest_canonical_ids};
+use oatty_registry::{CommandRegistry, CommandResolutionError, ExactSearchHit, SearchHandle, suggest_nearest_canonical_ids};
 use oatty_types::{CommandSpec, ExecOutcome, SearchResult};
 use oatty_util::http::{exec_remote_for_provider_with_path_variables, extract_path_placeholder_keys};
 use reqwest::Method;
@@ -75,16 +75,7 @@ impl McpToolServices {
     }
 
     async fn search_commands(&self, query: String, vendor: Option<&str>) -> Result<Vec<SearchResult>> {
-        let mut results = self.search_handle.search_with_vendor(&query, vendor).await?;
-        let registry = self
-            .command_registry
-            .lock()
-            .map_err(|error| anyhow::anyhow!("registry lock failed: {error}"))?;
-
-        if let Some(vendor_name) = vendor {
-            results.retain(|result| vendor_matches(&registry, result, vendor_name));
-        }
-        Ok(results)
+        self.search_handle.search_with_vendor(&query, vendor).await.map_err(Into::into)
     }
 }
 
@@ -110,7 +101,7 @@ impl OattyMcpCore {
 
     #[tool(
         annotations(read_only_hint = true),
-        description = "Find executable commands by intent. Use first before any run_* call. Use during workflow authoring to discover valid step `run` values (canonical command IDs in `<group> <command>` format, for example `apps apps:list`). Input: query, optional vendor, optional limit, optional include_inputs(none|required_only|full). Canonical direct-hit queries return exactly one result when found. include_inputs=none returns minimal discovery metadata (canonical_id, execution_type, http_method). include_inputs=required_only adds required input fields, compact provider_inputs hints, and compact output_fields. include_inputs=full adds complete positional_args, flags, provider_inputs, and output_fields. For full nested output schema, call get_command with `output_schema_detail=full`. For exact single-command inspection after discovery, use get_command with canonical_id. Authoring decision rule: if required commands are still not discoverable after two focused searches, switch to catalog_validate_openapi -> catalog_preview_import -> catalog_import_openapi before drafting workflow steps. Efficiency rule: after candidate canonical IDs are found, stop fuzzy search and switch to get_command; use at most one include_inputs=full search per vendor/intent. Routing: GET -> run_safe_command, POST/PUT/PATCH -> run_command, DELETE -> run_destructive_command, MCP -> run_safe_command or run_command."
+        description = "Find executable commands by intent. Use first before any run_* call. Use during workflow authoring to discover valid step `run` values (canonical command IDs in `<group> <command>` format, for example `apps apps:list`). Input: query, optional vendor, optional limit, optional include_inputs(none|required_only|full). Canonical direct-hit queries return exactly one result when found. include_inputs=none returns minimal discovery metadata (canonical_id, execution_type, http_method). include_inputs=required_only adds required input fields, compact provider_inputs hints, and compact output_fields. include_inputs=full adds complete positional_args, flags, provider_inputs, and output_fields. For full nested output schema, call get_command with `output_schema_detail=full`. For exact single-command inspection after discovery, use get_command with canonical_id and repeat the same vendor when you searched within one provider. Authoring decision rule: if required commands are still not discoverable after two focused searches, switch to catalog_validate_openapi -> catalog_preview_import -> catalog_import_openapi before drafting workflow steps. Efficiency rule: after candidate canonical IDs are found, stop fuzzy search and use get_command; use at most one include_inputs=full search per vendor/intent. Routing: GET -> run_safe_command, POST/PUT/PATCH -> run_command, DELETE -> run_destructive_command, MCP -> run_safe_command or run_command."
     )]
     async fn search_commands(&self, param: Parameters<SearchRequestParam>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -174,7 +165,16 @@ impl OattyMcpCore {
             }
             let inputs_detail = param.0.include_inputs.unwrap_or_default();
             let structured = if matches!(inputs_detail, SearchInputsDetail::None) {
-                minimal_search_results(&results)
+                minimal_search_results(&self.services.command_registry, &results).map_err(|error| {
+                    internal_error_with_next_step(
+                        error.to_string(),
+                        serde_json::json!({
+                            "query": param.0.query,
+                            "include_inputs": "none"
+                        }),
+                        "Retry search_commands. If this persists, verify registry availability and MCP server health.",
+                    )
+                })?
             } else {
                 search_results_with_inputs(&self.services.command_registry, &results, inputs_detail).map_err(|error| {
                     internal_error_with_next_step(
@@ -196,15 +196,22 @@ impl OattyMcpCore {
 
     #[tool(
         annotations(read_only_hint = true),
-        description = "Get command details by canonical_id. Defaults to compact output fields (`output_fields`) and no provider metadata. Set `output_schema_detail=full` only when full nested output schema is required. Set `include_providers=required_only|full` to include provider-backed input hints."
+        description = "Get command details by canonical_id. Defaults to compact output fields (`output_fields`) and no provider metadata. Set `output_schema_detail=full` only when full nested output schema is required. Set `include_providers=required_only|full` to include provider-backed input hints. When duplicate canonical IDs exist across vendors, pass the same vendor used during discovery."
     )]
     async fn get_command(&self, param: Parameters<CommandDetailRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
-        let result = resolve_command_spec(&self.services.command_registry, &param.0.canonical_id).map(|command_spec| {
-            let output_schema_detail = param.0.output_schema_detail.unwrap_or_default();
-            let provider_metadata_detail = param.0.include_providers.unwrap_or_default();
-            build_command_summary(&command_spec, output_schema_detail, provider_metadata_detail)
-        });
+        let result = resolve_resolved_command(&self.services.command_registry, &param.0.canonical_id, param.0.vendor.as_deref()).map(
+            |resolved_command| {
+                let output_schema_detail = param.0.output_schema_detail.unwrap_or_default();
+                let provider_metadata_detail = param.0.include_providers.unwrap_or_default();
+                build_command_summary(
+                    &resolved_command.command,
+                    resolved_command.vendor,
+                    output_schema_detail,
+                    provider_metadata_detail,
+                )
+            },
+        );
         Ok(self.finalize_structured_tool_call("get_command", request_payload, result))
     }
 
@@ -246,7 +253,7 @@ impl OattyMcpCore {
 
     #[tool(
         annotations(read_only_hint = true, open_world_hint = true),
-        description = "Execute read-only commands. Use for HTTP GET or read-only MCP commands. Input: canonical_id, positional_args[], named_flags[[name,value]]. named_flags values may be JSON scalars, arrays, or objects. Rejects write/destructive HTTP methods."
+        description = "Execute read-only commands. Use for HTTP GET or read-only MCP commands. Input: canonical_id, optional vendor, positional_args[], named_flags[[name,value]]. named_flags values may be JSON scalars, arrays, or objects. Rejects write/destructive HTTP methods."
     )]
     async fn run_safe_command(&self, param: Parameters<RunCommandRequestParam>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -256,7 +263,7 @@ impl OattyMcpCore {
 
     #[tool(
         annotations(open_world_hint = true),
-        description = "Execute non-destructive write commands. Use for HTTP POST/PUT/PATCH or non-destructive MCP commands. Input: canonical_id, positional_args[], named_flags[[name,value]]. named_flags values may be JSON scalars, arrays, or objects. Rejects HTTP GET and DELETE."
+        description = "Execute non-destructive write commands. Use for HTTP POST/PUT/PATCH or non-destructive MCP commands. Input: canonical_id, optional vendor, positional_args[], named_flags[[name,value]]. named_flags values may be JSON scalars, arrays, or objects. Rejects HTTP GET and DELETE."
     )]
     async fn run_command(&self, param: Parameters<RunCommandRequestParam>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -266,7 +273,7 @@ impl OattyMcpCore {
 
     #[tool(
         annotations(open_world_hint = true),
-        description = "Execute HTTP DELETE commands only. MCP commands are not allowed. Input: canonical_id, positional_args[], named_flags[[name,value]]. named_flags values may be JSON scalars, arrays, or objects."
+        description = "Execute HTTP DELETE commands only. MCP commands are not allowed. Input: canonical_id, optional vendor, positional_args[], named_flags[[name,value]]. named_flags values may be JSON scalars, arrays, or objects."
     )]
     async fn run_destructive_command(&self, param: Parameters<RunCommandRequestParam>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -596,7 +603,7 @@ impl OattyMcpCore {
         param: &RunCommandRequestParam,
         method_guard: HttpMethodGuard,
     ) -> Result<CallToolResult, ErrorData> {
-        let command_spec = resolve_command_spec(&self.services.command_registry, &param.canonical_id)?;
+        let command_spec = resolve_command_spec(&self.services.command_registry, &param.canonical_id, param.vendor.as_deref())?;
         if let Some(http_spec) = command_spec.http() {
             let method = Method::from_str(&http_spec.method).map_err(|error| {
                 invalid_params_with_next_step(
@@ -876,52 +883,91 @@ impl HttpMethodGuard {
     }
 }
 
-fn resolve_command_spec(registry: &Arc<Mutex<CommandRegistry>>, canonical_id: &str) -> Result<CommandSpec, ErrorData> {
-    let (group, name) = split_canonical_id(canonical_id)?;
+fn resolve_command_spec(
+    registry: &Arc<Mutex<CommandRegistry>>,
+    canonical_id: &str,
+    vendor: Option<&str>,
+) -> Result<CommandSpec, ErrorData> {
+    resolve_resolved_command(registry, canonical_id, vendor).map(|resolved_command| resolved_command.command)
+}
+
+fn resolve_resolved_command(
+    registry: &Arc<Mutex<CommandRegistry>>,
+    canonical_id: &str,
+    vendor: Option<&str>,
+) -> Result<oatty_registry::ResolvedCommand, ErrorData> {
     let registry_guard = registry.lock().map_err(|error| {
         internal_error_with_next_step(
             format!("registry lock failed: {error}"),
-            serde_json::json!({ "canonical_id": canonical_id }),
+            serde_json::json!({ "canonical_id": canonical_id, "vendor": vendor }),
             "Retry the command. If this persists, restart the MCP server session.",
         )
     })?;
-    registry_guard.find_by_group_and_cmd_cloned(&group, &name).map_err(|error| {
-        let suggested_search_query = derive_search_query_from_canonical_id(canonical_id);
-        let nearest_canonical_ids = suggest_nearest_canonical_ids(&registry_guard, canonical_id, 3);
-        let next_step = format!(
-            "Use search_commands(query='{}', include_inputs='none') to discover valid canonical IDs, then call get_command and retry.",
-            suggested_search_query
-        );
-        invalid_params_with_next_step(
-            error.to_string(),
-            serde_json::json!({
-                "canonical_id": canonical_id,
-                "group": group,
-                "command": name,
-                "suggested_search_query": suggested_search_query,
-                "nearest_canonical_ids": nearest_canonical_ids,
-            }),
-            next_step.as_str(),
-        )
-    })
-}
-
-fn split_canonical_id(canonical_id: &str) -> Result<(String, String), ErrorData> {
-    parse_canonical_search_query(canonical_id).ok_or_else(|| {
-        let suggested_search_query = derive_search_query_from_canonical_id(canonical_id);
-        ErrorData::invalid_params(
-            "canonical_id must be in 'group command' format",
-            Some(serde_json::json!({
-                "expected_format": "<group> <command>",
-                "example": "apps apps:list",
-                "suggested_search_query": suggested_search_query,
-                "next_step": format!(
-                    "Do not use vendor CLI syntax directly. Call search_commands(query='{}', include_inputs='none') to discover a canonical_id first.",
-                    suggested_search_query
+    registry_guard
+        .resolve_command_by_canonical_id(canonical_id, vendor)
+        .map_err(|error| match error {
+            CommandResolutionError::InvalidCanonicalId { .. } => {
+                let suggested_search_query = derive_search_query_from_canonical_id(canonical_id);
+                ErrorData::invalid_params(
+                    "canonical_id must be in 'group command' format",
+                    Some(serde_json::json!({
+                        "suggested_search_query": suggested_search_query,
+                        "next_step": "Use search_commands to find a valid canonical_id, then retry."
+                    })),
                 )
-            })),
-        )
-    })
+            }
+            CommandResolutionError::Ambiguous {
+                canonical_id,
+                vendor,
+                matching_vendors,
+            } => invalid_params_with_next_step(
+                format!("canonical_id '{}' is ambiguous across multiple catalogs", canonical_id),
+                serde_json::json!({
+                    "canonical_id": canonical_id,
+                    "vendor": vendor,
+                    "matching_vendors": matching_vendors,
+                }),
+                "Retry with vendor set to the provider returned by search_commands.",
+            ),
+            CommandResolutionError::NotFound {
+                canonical_id,
+                group,
+                command,
+                vendor,
+                matching_vendors,
+            } => {
+                let suggested_search_query = derive_search_query_from_canonical_id(&canonical_id);
+                let nearest_canonical_ids = suggest_nearest_canonical_ids(&registry_guard, &canonical_id, 3);
+                let next_step = if vendor.is_some() && !matching_vendors.is_empty() {
+                    "Retry with the vendor used during search_commands, or omit vendor to inspect ambiguity details.".to_string()
+                } else {
+                    format!(
+                        "Use search_commands(query='{}', include_inputs='none') to discover valid canonical IDs, then call get_command and retry.",
+                        suggested_search_query
+                    )
+                };
+                invalid_params_with_next_step(
+                    if vendor.is_some() && !matching_vendors.is_empty() {
+                        format!(
+                            "no command found for canonical_id '{canonical_id}' in vendor '{}'",
+                            vendor.clone().unwrap_or_default()
+                        )
+                    } else {
+                        format!("{} {} command not found", group, command)
+                    },
+                    serde_json::json!({
+                        "canonical_id": canonical_id,
+                        "vendor": vendor,
+                        "group": group,
+                        "command": command,
+                        "matching_vendors": matching_vendors,
+                        "suggested_search_query": suggested_search_query,
+                        "nearest_canonical_ids": nearest_canonical_ids,
+                    }),
+                    next_step.as_str(),
+                )
+            }
+        })
 }
 
 fn derive_search_query_from_canonical_id(canonical_id: &str) -> String {
@@ -1003,17 +1049,24 @@ fn list_command_summaries_by_catalog(registry: &Arc<Mutex<CommandRegistry>>, cat
         .commands
         .iter()
         .filter(|command| command.catalog_identifier == catalog_index)
-        .map(|command| build_command_summary(command, OutputSchemaDetail::Paths, ProviderMetadataDetail::None))
+        .map(|command| {
+            build_command_summary(
+                command,
+                registry_guard.command_vendor(command),
+                OutputSchemaDetail::Paths,
+                ProviderMetadataDetail::None,
+            )
+        })
         .collect();
     Ok(summaries)
 }
 
-fn minimal_search_results(results: &[SearchResult]) -> Value {
+fn minimal_search_results(_registry: &Arc<Mutex<CommandRegistry>>, results: &[SearchResult]) -> Result<Value> {
     let payload = results
         .iter()
         .map(|result| Value::Object(SearchResultProjection::from_search_result(result, false).into_value_map()))
         .collect::<Vec<Value>>();
-    Value::Array(payload)
+    Ok(Value::Array(payload))
 }
 
 fn search_results_with_inputs(
@@ -1025,13 +1078,10 @@ fn search_results_with_inputs(
     let enriched = results
         .iter()
         .map(|result| {
+            let command = registry_guard.commands.get(result.index);
             let mut entry_object = SearchResultProjection::from_search_result(result, true).into_value_map();
 
-            if let Some(command) = registry_guard
-                .commands
-                .iter()
-                .find(|command| command.canonical_id() == result.canonical_id)
-            {
+            if let Some(command) = command {
                 append_command_inputs_metadata(
                     &mut entry_object,
                     command,
@@ -1049,10 +1099,11 @@ fn search_results_with_inputs(
 
 fn build_command_summary(
     command: &CommandSpec,
+    vendor: Option<String>,
     output_schema_detail: OutputSchemaDetail,
     provider_metadata_detail: ProviderMetadataDetail,
 ) -> Value {
-    let mut summary = SearchResultProjection::from_command_spec(command, true).into_value_map();
+    let mut summary = SearchResultProjection::from_command_spec(command, true, vendor).into_value_map();
     append_command_inputs_metadata(
         &mut summary,
         command,
@@ -1073,6 +1124,7 @@ struct SearchResultProjection {
     execution_type: String,
     summary: Option<String>,
     http_method: Option<String>,
+    vendor: Option<String>,
 }
 
 impl SearchResultProjection {
@@ -1082,15 +1134,17 @@ impl SearchResultProjection {
             execution_type: search_result.execution_type.clone(),
             summary: include_summary.then(|| search_result.summary.clone()),
             http_method: search_result.http_method.clone(),
+            vendor: search_result.vendor.clone(),
         }
     }
 
-    fn from_command_spec(command_spec: &CommandSpec, include_summary: bool) -> Self {
+    fn from_command_spec(command_spec: &CommandSpec, include_summary: bool, vendor: Option<String>) -> Self {
         Self {
             canonical_id: command_spec.canonical_id(),
             execution_type: command_execution_type(command_spec).to_string(),
             summary: include_summary.then(|| command_spec.summary.clone()),
             http_method: command_spec.http().map(|http_spec| http_spec.method.clone()),
+            vendor,
         }
     }
 
@@ -1103,6 +1157,9 @@ impl SearchResultProjection {
         }
         if let Some(http_method) = self.http_method.as_deref() {
             insert_non_empty_string(&mut entry_object, "http_method", http_method);
+        }
+        if let Some(vendor) = self.vendor.as_deref() {
+            insert_non_empty_string(&mut entry_object, "vendor", vendor);
         }
         entry_object
     }
@@ -1264,36 +1321,24 @@ fn prune_sparse_json(value: Value) -> Option<Value> {
     }
 }
 
-fn parse_canonical_search_query(query: &str) -> Option<(String, String)> {
-    let trimmed = query.trim();
-    let (group, command_name) = trimmed.split_once(' ')?;
-    let normalized_group = group.trim();
-    let normalized_command_name = command_name.trim();
-    if normalized_group.is_empty() || normalized_command_name.is_empty() || normalized_command_name.contains(' ') {
-        return None;
-    }
-    Some((normalized_group.to_string(), normalized_command_name.to_string()))
-}
-
 fn find_direct_search_hit(registry: &CommandRegistry, query: &str, vendor: Option<&str>) -> Option<SearchResult> {
-    let (group, command_name) = parse_canonical_search_query(query)?;
-    let command = registry.find_by_group_and_cmd_ref(&group, &command_name).ok()?;
-    let index = registry
-        .commands
-        .iter()
-        .position(|candidate| candidate.group == group && candidate.name == command_name)?;
+    let Some(ExactSearchHit::Unique(resolved_command)) = registry.resolve_exact_search_hit(query, vendor) else {
+        return None;
+    };
+    let (index, command) = registry.commands.iter().enumerate().find(|(_, candidate)| {
+        candidate.group == resolved_command.command.group
+            && candidate.name == resolved_command.command.name
+            && candidate.summary == resolved_command.command.summary
+            && registry.resolve_catalog_identifier_for_command(candidate) == resolved_command.catalog_identifier
+    })?;
     let hit = SearchResult {
         index,
         canonical_id: command.canonical_id(),
         summary: command.summary.clone(),
         execution_type: command_execution_type(command).to_string(),
         http_method: command.http().map(|http_spec| http_spec.method.clone()),
+        vendor: resolved_command.vendor,
     };
-    if let Some(vendor_name) = vendor
-        && !vendor_matches(registry, &hit, vendor_name)
-    {
-        return None;
-    }
     Some(hit)
 }
 
@@ -1765,27 +1810,17 @@ fn exec_outcome_to_value(outcome: ExecOutcome) -> Result<Value, ErrorData> {
     }
 }
 
-fn vendor_matches(registry: &CommandRegistry, result: &SearchResult, vendor_name: &str) -> bool {
-    canonical_id_matches_vendor(registry, result.canonical_id.as_str(), vendor_name)
-}
-
 fn vendor_has_enabled_command_catalog(registry: &Arc<Mutex<CommandRegistry>>, vendor_name: &str) -> Result<bool> {
     let registry_guard = registry.lock().map_err(|error| anyhow::anyhow!("registry lock failed: {error}"))?;
-    let Some(catalogs) = registry_guard.config.catalogs.as_ref() else {
-        return Ok(false);
-    };
-
-    Ok(catalogs
-        .iter()
-        .filter(|catalog| catalog.is_enabled)
-        .filter_map(|catalog| catalog.manifest.as_ref())
-        .any(|manifest| manifest.vendor.eq_ignore_ascii_case(vendor_name)))
+    Ok(registry_guard.has_enabled_catalog_for_vendor(vendor_name))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use indexmap::IndexSet;
     use oatty_registry::RegistryConfig;
+    use oatty_types::manifest::{RegistryCatalog, RegistryManifest};
     use oatty_types::{CommandFlag, HttpCommandSpec, McpCommandSpec, SchemaProperty};
     use serde_json::json;
     use std::sync::{Arc, Mutex};
@@ -1847,6 +1882,7 @@ mod tests {
         let command_spec = build_http_spec_for_flag_tests(vec![build_flag("project", "object"), build_flag("target", "array")]);
         let param = RunCommandRequestParam {
             canonical_id: command_spec.canonical_id(),
+            vendor: None,
             positional_args: None,
             named_flags: Some(vec![
                 ("project".to_string(), json!({ "name": "demo" })),
@@ -1867,6 +1903,7 @@ mod tests {
         let command_spec = build_http_spec_for_flag_tests(vec![build_flag("project", "object"), build_flag("target", "array")]);
         let param = RunCommandRequestParam {
             canonical_id: command_spec.canonical_id(),
+            vendor: None,
             positional_args: None,
             named_flags: Some(vec![
                 ("project".to_string(), Value::String("{\"name\":\"demo\"}".to_string())),
@@ -1913,6 +1950,7 @@ mod tests {
         let command_spec = build_http_spec_for_flag_tests(vec![build_flag("enabled", "boolean")]);
         let param = RunCommandRequestParam {
             canonical_id: command_spec.canonical_id(),
+            vendor: None,
             positional_args: None,
             named_flags: Some(vec![
                 ("enabled".to_string(), Value::Bool(false)),
@@ -1931,6 +1969,7 @@ mod tests {
         let command_spec = build_http_spec_for_flag_tests(vec![build_flag("enabled", "boolean")]);
         let param = RunCommandRequestParam {
             canonical_id: command_spec.canonical_id(),
+            vendor: None,
             positional_args: None,
             named_flags: Some(vec![("enabled".to_string(), Value::Bool(false))]),
         };
@@ -1946,6 +1985,7 @@ mod tests {
         let command_spec = build_mcp_spec_for_flag_tests(vec![build_flag("enabled", "boolean")]);
         let param = RunCommandRequestParam {
             canonical_id: command_spec.canonical_id(),
+            vendor: None,
             positional_args: None,
             named_flags: Some(vec![("enabled".to_string(), Value::Bool(false))]),
         };
@@ -1959,6 +1999,7 @@ mod tests {
         let command_spec = build_http_spec_for_flag_tests(vec![build_flag("enabled", "boolean")]);
         let param = RunCommandRequestParam {
             canonical_id: command_spec.canonical_id(),
+            vendor: None,
             positional_args: None,
             named_flags: Some(vec![("enabled".to_string(), Value::String("false".to_string()))]),
         };
@@ -1974,6 +2015,7 @@ mod tests {
         let command_spec = build_http_spec_with_path_and_flag_collision();
         let param = RunCommandRequestParam {
             canonical_id: command_spec.canonical_id(),
+            vendor: None,
             positional_args: Some(vec!["oattyio/oatty".to_string()]),
             named_flags: Some(vec![
                 ("project".to_string(), json!({ "id": "body-project-id" })),
@@ -1989,17 +2031,23 @@ mod tests {
     }
 
     #[test]
-    fn parse_canonical_search_query_requires_group_and_command() {
+    fn parse_canonical_command_id_requires_group_and_command() {
         assert_eq!(
-            parse_canonical_search_query("apps apps:list"),
-            Some(("apps".to_string(), "apps:list".to_string()))
+            CommandRegistry::parse_canonical_command_id("apps apps:list"),
+            Some(oatty_registry::CanonicalCommandId {
+                group: "apps".to_string(),
+                command: "apps:list".to_string(),
+            })
         );
         assert_eq!(
-            parse_canonical_search_query("  apps   apps:list  "),
-            Some(("apps".to_string(), "apps:list".to_string()))
+            CommandRegistry::parse_canonical_command_id("  apps   apps:list  "),
+            Some(oatty_registry::CanonicalCommandId {
+                group: "apps".to_string(),
+                command: "apps:list".to_string(),
+            })
         );
-        assert_eq!(parse_canonical_search_query("apps"), None);
-        assert_eq!(parse_canonical_search_query("apps apps:list extra"), None);
+        assert_eq!(CommandRegistry::parse_canonical_command_id("apps"), None);
+        assert_eq!(CommandRegistry::parse_canonical_command_id("apps apps:list extra"), None);
     }
 
     #[test]
@@ -2063,6 +2111,273 @@ mod tests {
     }
 
     #[test]
+    fn find_direct_search_hit_scopes_duplicate_canonical_ids_to_requested_vendor() {
+        let vercel_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Vercel projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/projects", None, None),
+            0,
+        );
+        let render_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Render projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/services", None, None),
+            1,
+        );
+        let mut registry = CommandRegistry::default().with_commands(vec![vercel_projects.clone(), render_projects.clone()]);
+        registry.config = RegistryConfig {
+            catalogs: Some(vec![
+                RegistryCatalog {
+                    title: "Vercel".to_string(),
+                    description: "Vercel APIs".to_string(),
+                    vendor: Some("vercel".to_string()),
+                    manifest_path: String::new(),
+                    import_source: None,
+                    import_source_type: None,
+                    headers: IndexSet::new(),
+                    base_urls: vec!["https://api.vercel.com".to_string()],
+                    base_url_index: 0,
+                    manifest: Some(RegistryManifest {
+                        commands: vec![vercel_projects],
+                        provider_contracts: Default::default(),
+                        vendor: "vercel".to_string(),
+                    }),
+                    is_enabled: true,
+                },
+                RegistryCatalog {
+                    title: "Render".to_string(),
+                    description: "Render APIs".to_string(),
+                    vendor: Some("render".to_string()),
+                    manifest_path: String::new(),
+                    import_source: None,
+                    import_source_type: None,
+                    headers: IndexSet::new(),
+                    base_urls: vec!["https://api.render.com".to_string()],
+                    base_url_index: 0,
+                    manifest: Some(RegistryManifest {
+                        commands: vec![render_projects],
+                        provider_contracts: Default::default(),
+                        vendor: "render".to_string(),
+                    }),
+                    is_enabled: true,
+                },
+            ]),
+        };
+
+        let hit = find_direct_search_hit(&registry, "projects list", Some("render")).expect("direct hit should resolve");
+
+        assert_eq!(hit.canonical_id, "projects list");
+        assert_eq!(hit.summary, "List Render projects");
+    }
+
+    #[test]
+    fn find_direct_search_hit_returns_none_for_ambiguous_duplicate_canonical_ids() {
+        let vercel_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Vercel projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/projects", None, None),
+            0,
+        );
+        let render_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Render projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/services", None, None),
+            1,
+        );
+        let mut registry = CommandRegistry::default().with_commands(vec![vercel_projects.clone(), render_projects.clone()]);
+        registry.config = RegistryConfig {
+            catalogs: Some(vec![
+                RegistryCatalog {
+                    title: "Vercel".to_string(),
+                    description: "Vercel APIs".to_string(),
+                    vendor: Some("vercel".to_string()),
+                    manifest_path: String::new(),
+                    import_source: None,
+                    import_source_type: None,
+                    headers: IndexSet::new(),
+                    base_urls: vec!["https://api.vercel.com".to_string()],
+                    base_url_index: 0,
+                    manifest: Some(RegistryManifest {
+                        commands: vec![vercel_projects],
+                        provider_contracts: Default::default(),
+                        vendor: "vercel".to_string(),
+                    }),
+                    is_enabled: true,
+                },
+                RegistryCatalog {
+                    title: "Render".to_string(),
+                    description: "Render APIs".to_string(),
+                    vendor: Some("render".to_string()),
+                    manifest_path: String::new(),
+                    import_source: None,
+                    import_source_type: None,
+                    headers: IndexSet::new(),
+                    base_urls: vec!["https://api.render.com".to_string()],
+                    base_url_index: 0,
+                    manifest: Some(RegistryManifest {
+                        commands: vec![render_projects],
+                        provider_contracts: Default::default(),
+                        vendor: "render".to_string(),
+                    }),
+                    is_enabled: true,
+                },
+            ]),
+        };
+
+        let hit = find_direct_search_hit(&registry, "projects list", None);
+
+        assert!(hit.is_none(), "ambiguous canonical ids should fall back to full search");
+    }
+
+    #[test]
+    fn resolve_command_spec_requires_vendor_for_duplicate_canonical_ids() {
+        let vercel_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Vercel projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/projects", None, None),
+            0,
+        );
+        let render_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Render projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/services", None, None),
+            1,
+        );
+        let mut registry = CommandRegistry::default().with_commands(vec![vercel_projects.clone(), render_projects.clone()]);
+        registry.config = RegistryConfig {
+            catalogs: Some(vec![
+                RegistryCatalog {
+                    title: "Vercel".to_string(),
+                    description: "Vercel APIs".to_string(),
+                    vendor: Some("vercel".to_string()),
+                    manifest_path: String::new(),
+                    import_source: None,
+                    import_source_type: None,
+                    headers: IndexSet::new(),
+                    base_urls: vec!["https://api.vercel.com".to_string()],
+                    base_url_index: 0,
+                    manifest: Some(RegistryManifest {
+                        commands: vec![vercel_projects],
+                        provider_contracts: Default::default(),
+                        vendor: "vercel".to_string(),
+                    }),
+                    is_enabled: true,
+                },
+                RegistryCatalog {
+                    title: "Render".to_string(),
+                    description: "Render APIs".to_string(),
+                    vendor: Some("render".to_string()),
+                    manifest_path: String::new(),
+                    import_source: None,
+                    import_source_type: None,
+                    headers: IndexSet::new(),
+                    base_urls: vec!["https://api.render.com".to_string()],
+                    base_url_index: 0,
+                    manifest: Some(RegistryManifest {
+                        commands: vec![render_projects],
+                        provider_contracts: Default::default(),
+                        vendor: "render".to_string(),
+                    }),
+                    is_enabled: true,
+                },
+            ]),
+        };
+
+        let error = resolve_command_spec(&Arc::new(Mutex::new(registry)), "projects list", None).expect_err("resolution should fail");
+
+        assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+        assert!(
+            error.message.contains("ambiguous"),
+            "expected ambiguity error message, got: {}",
+            error.message
+        );
+    }
+
+    #[test]
+    fn resolve_command_spec_scopes_duplicate_canonical_ids_to_vendor() {
+        let vercel_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Vercel projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/projects", None, None),
+            0,
+        );
+        let render_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Render projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/services", None, None),
+            1,
+        );
+        let mut registry = CommandRegistry::default().with_commands(vec![vercel_projects.clone(), render_projects.clone()]);
+        registry.config = RegistryConfig {
+            catalogs: Some(vec![
+                RegistryCatalog {
+                    title: "Vercel".to_string(),
+                    description: "Vercel APIs".to_string(),
+                    vendor: Some("vercel".to_string()),
+                    manifest_path: String::new(),
+                    import_source: None,
+                    import_source_type: None,
+                    headers: IndexSet::new(),
+                    base_urls: vec!["https://api.vercel.com".to_string()],
+                    base_url_index: 0,
+                    manifest: Some(RegistryManifest {
+                        commands: vec![vercel_projects],
+                        provider_contracts: Default::default(),
+                        vendor: "vercel".to_string(),
+                    }),
+                    is_enabled: true,
+                },
+                RegistryCatalog {
+                    title: "Render".to_string(),
+                    description: "Render APIs".to_string(),
+                    vendor: Some("render".to_string()),
+                    manifest_path: String::new(),
+                    import_source: None,
+                    import_source_type: None,
+                    headers: IndexSet::new(),
+                    base_urls: vec!["https://api.render.com".to_string()],
+                    base_url_index: 0,
+                    manifest: Some(RegistryManifest {
+                        commands: vec![render_projects],
+                        provider_contracts: Default::default(),
+                        vendor: "render".to_string(),
+                    }),
+                    is_enabled: true,
+                },
+            ]),
+        };
+
+        let command = resolve_command_spec(&Arc::new(Mutex::new(registry)), "projects list", Some("render"))
+            .expect("vendor-scoped resolution should succeed");
+
+        assert_eq!(command.summary, "List Render projects");
+    }
+
+    #[test]
     fn search_results_with_inputs_omits_index_field() {
         let command = CommandSpec::new_http(
             "apps".to_string(),
@@ -2082,6 +2397,7 @@ mod tests {
             summary: "List apps".to_string(),
             execution_type: "http".to_string(),
             http_method: Some("GET".to_string()),
+            vendor: None,
         }];
 
         let payload = search_results_with_inputs(&registry, &results, SearchInputsDetail::RequiredOnly).expect("payload should build");
@@ -2093,6 +2409,65 @@ mod tests {
 
         assert!(!first.contains_key("index"));
         assert_eq!(first.get("canonical_id"), Some(&Value::String("apps apps:list".to_string())));
+    }
+
+    #[test]
+    fn minimal_search_results_include_vendor_when_available() {
+        let results = vec![SearchResult {
+            index: 0,
+            canonical_id: "projects list".to_string(),
+            summary: "List Render projects".to_string(),
+            execution_type: "http".to_string(),
+            http_method: Some("GET".to_string()),
+            vendor: Some("render".to_string()),
+        }];
+
+        let payload = minimal_search_results(&Arc::new(Mutex::new(CommandRegistry::default())), &results).expect("payload should build");
+        let first = payload
+            .as_array()
+            .and_then(|items| items.first())
+            .and_then(Value::as_object)
+            .expect("first payload object");
+
+        assert_eq!(first.get("vendor"), Some(&Value::String("render".to_string())));
+    }
+
+    #[test]
+    fn vendor_has_enabled_command_catalog_uses_top_level_vendor_metadata() {
+        let command = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/projects", None, None),
+            0,
+        );
+        let mut registry = CommandRegistry::default().with_commands(vec![command.clone()]);
+        registry.config = RegistryConfig {
+            catalogs: Some(vec![RegistryCatalog {
+                title: "Render".to_string(),
+                description: "Render APIs".to_string(),
+                vendor: Some("render".to_string()),
+                manifest_path: String::new(),
+                import_source: None,
+                import_source_type: None,
+                headers: IndexSet::new(),
+                base_urls: vec!["https://api.render.com".to_string()],
+                base_url_index: 0,
+                manifest: Some(RegistryManifest {
+                    commands: vec![command],
+                    provider_contracts: Default::default(),
+                    vendor: String::new(),
+                }),
+                is_enabled: true,
+            }]),
+        };
+
+        let has_vendor_catalog =
+            vendor_has_enabled_command_catalog(&Arc::new(Mutex::new(registry)), "render").expect("vendor lookup succeeds");
+
+        assert!(has_vendor_catalog, "top-level catalog vendor should satisfy the preflight check");
     }
 
     #[test]
@@ -2134,6 +2509,7 @@ mod tests {
             summary: "Create app".to_string(),
             execution_type: "http".to_string(),
             http_method: Some("POST".to_string()),
+            vendor: None,
         }];
 
         let payload = search_results_with_inputs(&registry, &results, SearchInputsDetail::RequiredOnly).expect("payload should build");
@@ -2181,7 +2557,7 @@ mod tests {
             0,
         );
 
-        let summary = build_command_summary(&command_spec, OutputSchemaDetail::Paths, ProviderMetadataDetail::None);
+        let summary = build_command_summary(&command_spec, None, OutputSchemaDetail::Paths, ProviderMetadataDetail::None);
         let object = summary.as_object().expect("command summary should be object");
         assert!(!object.contains_key("output_schema"));
     }
@@ -2208,7 +2584,7 @@ mod tests {
             0,
         );
 
-        let summary = build_command_summary(&command_spec, OutputSchemaDetail::Full, ProviderMetadataDetail::None);
+        let summary = build_command_summary(&command_spec, None, OutputSchemaDetail::Full, ProviderMetadataDetail::None);
         let object = summary.as_object().expect("command summary should be object");
         let schema = object
             .get("output_schema")
@@ -2250,7 +2626,7 @@ mod tests {
             0,
         );
 
-        let summary = build_command_summary(&command_spec, OutputSchemaDetail::Paths, ProviderMetadataDetail::None);
+        let summary = build_command_summary(&command_spec, None, OutputSchemaDetail::Paths, ProviderMetadataDetail::None);
         let object = summary.as_object().expect("command summary should be object");
         let positional = object
             .get("positional_args")
@@ -2308,7 +2684,7 @@ mod tests {
             0,
         );
 
-        let summary = build_command_summary(&command_spec, OutputSchemaDetail::Paths, ProviderMetadataDetail::RequiredOnly);
+        let summary = build_command_summary(&command_spec, None, OutputSchemaDetail::Paths, ProviderMetadataDetail::RequiredOnly);
         let flags = summary
             .as_object()
             .and_then(|object| object.get("flags"))
@@ -2352,7 +2728,7 @@ mod tests {
             0,
         );
 
-        let summary = build_command_summary(&command_spec, OutputSchemaDetail::Paths, ProviderMetadataDetail::Full);
+        let summary = build_command_summary(&command_spec, None, OutputSchemaDetail::Paths, ProviderMetadataDetail::Full);
         let positional = summary
             .as_object()
             .and_then(|object| object.get("positional_args"))

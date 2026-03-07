@@ -45,7 +45,7 @@ pub struct SearchHandle {
 #[derive(Debug, Default)]
 struct SearchIndexCache {
     fingerprint: Option<u64>,
-    entries: Vec<SearchIndexEntry>,
+    entries: Arc<[SearchIndexEntry]>,
 }
 
 /// Parsed search query reused across candidate scoring.
@@ -66,6 +66,7 @@ struct SearchIndexEntry {
 /// Structured search metadata derived from a command specification.
 #[derive(Debug, Clone)]
 struct SearchCandidateMetadata {
+    catalog_identifier: Option<usize>,
     canonical_id: String,
     canonical_id_lower: String,
     normalized_canonical_id_lower: String,
@@ -111,26 +112,41 @@ impl SearchHandle {
     pub async fn search_with_vendor(&self, query: &str, vendor: Option<&str>) -> Result<Vec<SearchResult>, SearchError> {
         let registry_guard = self.command_registry.lock().map_err(|error| SearchError::Lock(error.to_string()))?;
         let parsed_query = parse_search_query(query, vendor);
+        let search_index = self.get_or_build_search_index(&registry_guard)?;
         if parsed_query.normalized_text.is_empty() {
-            return Ok(Vec::new());
+            if vendor.is_none() {
+                return Ok(Vec::new());
+            }
+
+            return Ok(list_vendor_scoped_results(
+                search_index.as_ref(),
+                &registry_guard,
+                vendor,
+                self.result_limit,
+            ));
         }
 
-        let search_index = self.get_or_build_search_index(&registry_guard)?;
-        if let Some(exact_match) = search_index
-            .iter()
-            .filter(|entry| entry_matches_vendor(&registry_guard, entry, vendor))
-            .find(|entry| entry_is_exact_canonical_match(entry, &parsed_query.normalized_text))
-        {
-            return Ok(vec![exact_match.result.clone().expect("search results include projections")]);
+        if matches!(
+            registry_guard.resolve_exact_search_hit(query, vendor),
+            Some(crate::ExactSearchHit::Unique(_))
+        ) {
+            let exact_matches = search_index
+                .iter()
+                .filter(|entry| entry_matches_vendor(&registry_guard, entry, vendor))
+                .filter(|entry| entry_is_exact_canonical_match(entry, &parsed_query.normalized_text))
+                .collect::<Vec<&SearchIndexEntry>>();
+            if let [exact_match] = exact_matches.as_slice() {
+                return Ok(vec![exact_match.result.clone().expect("search results include projections")]);
+            }
         }
 
         let mut matcher = CommandSearchMatcher::default();
         let mut scored_results = search_index
-            .into_iter()
+            .iter()
             .filter(|entry| entry_matches_vendor(&registry_guard, entry, vendor))
             .filter_map(|entry| {
                 let score = matcher.score_candidate(&parsed_query, &entry.metadata)?;
-                Some((score, entry.result.expect("search results include projections")))
+                Some((score, entry.result.clone().expect("search results include projections")))
             })
             .collect::<Vec<(i64, SearchResult)>>();
 
@@ -144,7 +160,7 @@ impl SearchHandle {
     }
 
     /// Returns a cached search index for the current registry snapshot.
-    fn get_or_build_search_index(&self, registry: &CommandRegistry) -> Result<Vec<SearchIndexEntry>, SearchError> {
+    fn get_or_build_search_index(&self, registry: &CommandRegistry) -> Result<Arc<[SearchIndexEntry]>, SearchError> {
         let fingerprint = compute_registry_search_fingerprint(registry);
         let mut cache = self
             .search_index_cache
@@ -152,11 +168,11 @@ impl SearchHandle {
             .map_err(|error| SearchError::Lock(error.to_string()))?;
 
         if cache.fingerprint != Some(fingerprint) {
-            cache.entries = build_search_index(registry);
+            cache.entries = build_search_index(registry).into();
             cache.fingerprint = Some(fingerprint);
         }
 
-        Ok(cache.entries.clone())
+        Ok(Arc::clone(&cache.entries))
     }
 }
 
@@ -305,17 +321,20 @@ fn build_search_index_entry(
         summary: summary.unwrap_or_default(),
         execution_type: determine_execution_type(command).to_string(),
         http_method: command.http().map(|http_spec| http_spec.method.clone()),
+        vendor: registry.command_vendor(command),
     });
 
     SearchIndexEntry { metadata, result }
 }
 
 fn build_search_candidate_metadata(registry: &CommandRegistry, command: &CommandSpec, canonical_id: &str) -> SearchCandidateMetadata {
+    let catalog_identifier = registry.resolve_catalog_identifier_for_command(command);
     let normalized_canonical_id = normalize_identifier(canonical_id).to_ascii_lowercase();
-    let search_document = build_command_search_document(registry, command, canonical_id);
+    let search_document = build_command_search_document(registry, command, canonical_id, catalog_identifier);
     let search_document_lower = search_document.to_ascii_lowercase();
 
     SearchCandidateMetadata {
+        catalog_identifier,
         canonical_id: canonical_id.to_string(),
         canonical_id_lower: canonical_id.to_ascii_lowercase(),
         normalized_canonical_id_lower: normalized_canonical_id.clone(),
@@ -327,7 +346,12 @@ fn build_search_candidate_metadata(registry: &CommandRegistry, command: &Command
     }
 }
 
-fn build_command_search_document(registry: &CommandRegistry, command: &CommandSpec, canonical_id: &str) -> String {
+fn build_command_search_document(
+    registry: &CommandRegistry,
+    command: &CommandSpec,
+    canonical_id: &str,
+    catalog_identifier: Option<usize>,
+) -> String {
     let mut search_document = String::new();
     append_normalized_value(&mut search_document, canonical_id);
     append_normalized_value(&mut search_document, &command.group);
@@ -344,21 +368,18 @@ fn build_command_search_document(registry: &CommandRegistry, command: &CommandSp
         append_optional_normalized_value(&mut search_document, flag.description.as_deref());
     }
 
-    append_catalog_metadata(&mut search_document, registry, canonical_id);
+    append_catalog_metadata(&mut search_document, registry, catalog_identifier);
     append_mcp_metadata(&mut search_document, command.mcp());
 
     search_document
 }
 
-fn append_catalog_metadata(search_document: &mut String, registry: &CommandRegistry, canonical_id: &str) {
-    if let Some(catalog) = find_catalog_for_canonical_id(registry, canonical_id) {
+fn append_catalog_metadata(search_document: &mut String, registry: &CommandRegistry, catalog_identifier: Option<usize>) {
+    if let Some(catalog) = catalog_identifier.and_then(|identifier| registry.config.catalogs.as_ref()?.get(identifier)) {
         append_normalized_value(search_document, &catalog.title);
         append_normalized_value(search_document, &catalog.description);
-        if let Some(vendor_name) = catalog.vendor.as_deref() {
+        if let Some(vendor_name) = CommandRegistry::catalog_vendor_value(catalog) {
             append_normalized_value(search_document, vendor_name);
-        }
-        if let Some(manifest) = catalog.manifest.as_ref() {
-            append_normalized_value(search_document, &manifest.vendor);
         }
     }
 }
@@ -438,38 +459,38 @@ fn entry_matches_vendor(registry: &CommandRegistry, entry: &SearchIndexEntry, ve
         return true;
     }
 
-    canonical_id_matches_vendor(registry, &entry.metadata.canonical_id, vendor_name)
+    entry
+        .metadata
+        .catalog_identifier
+        .and_then(|catalog_identifier| registry.config.catalogs.as_ref()?.get(catalog_identifier))
+        .is_some_and(|catalog| catalog.is_enabled && CommandRegistry::catalog_vendor_matches(catalog, vendor_name))
+}
+
+fn list_vendor_scoped_results(
+    search_index: &[SearchIndexEntry],
+    registry: &CommandRegistry,
+    vendor: Option<&str>,
+    result_limit: usize,
+) -> Vec<SearchResult> {
+    let mut results = search_index
+        .iter()
+        .filter(|entry| entry_matches_vendor(registry, entry, vendor))
+        .filter_map(|entry| entry.result.clone())
+        .collect::<Vec<SearchResult>>();
+
+    results.sort_by(|left, right| left.canonical_id.cmp(&right.canonical_id));
+    results.truncate(result_limit);
+    results
 }
 
 /// Returns true when the canonical command belongs to the requested vendor.
 pub fn canonical_id_matches_vendor(registry: &CommandRegistry, canonical_id: &str, vendor_name: &str) -> bool {
-    let Some(catalogs) = registry.config.catalogs.as_ref() else {
-        return false;
-    };
-
-    catalogs.iter().any(|catalog| {
-        catalog.manifest.as_ref().is_some_and(|manifest| {
-            manifest.vendor.eq_ignore_ascii_case(vendor_name)
-                && manifest
-                    .commands
-                    .iter()
-                    .any(|catalog_command| catalog_command.canonical_id() == canonical_id)
-        })
-    })
+    registry.canonical_id_matches_vendor(canonical_id, vendor_name)
 }
 
-fn find_catalog_for_canonical_id<'a>(
-    registry: &'a CommandRegistry,
-    canonical_id: &str,
-) -> Option<&'a oatty_types::manifest::RegistryCatalog> {
-    registry.config.catalogs.as_ref()?.iter().find(|catalog| {
-        catalog.manifest.as_ref().is_some_and(|manifest| {
-            manifest
-                .commands
-                .iter()
-                .any(|catalog_command| catalog_command.canonical_id() == canonical_id)
-        })
-    })
+/// Returns true when a specific command belongs to the requested vendor.
+pub fn command_matches_vendor(registry: &CommandRegistry, command: &CommandSpec, vendor_name: &str) -> bool {
+    registry.command_matches_vendor(command, vendor_name)
 }
 
 fn normalize_identifier(value: &'_ str) -> Cow<'_, str> {
@@ -723,6 +744,16 @@ mod tests {
         assert!(results.is_empty(), "expected no matches for unmatched query");
     }
 
+    #[tokio::test]
+    async fn search_returns_empty_for_blank_query_without_vendor_scope() {
+        let registry = build_registry();
+        let handle = SearchHandle::new(registry);
+
+        let results = handle.search("   ").await.expect("search succeeds");
+
+        assert!(results.is_empty(), "expected no matches for blank query");
+    }
+
     #[test]
     fn suggest_nearest_canonical_ids_ranks_expected_match_first() {
         let registry = build_registry();
@@ -752,7 +783,7 @@ mod tests {
                 "Create deployment resources and redeploy previous deployment revisions".to_string(),
                 Vec::new(),
                 Vec::new(),
-                HttpCommandSpec::new("POST", &format!("/deployments/{index}"), None, None),
+                HttpCommandSpec::new("POST", format!("/deployments/{index}"), None, None),
                 1,
             ));
         }
@@ -978,21 +1009,148 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn search_with_vendor_returns_scoped_results_for_vendor_only_query() {
+        let deployment_create = CommandSpec::new_http(
+            "deployments".to_string(),
+            "create".to_string(),
+            "Create a Vercel deployment.".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("POST", "/v13/deployments", None, None),
+            0,
+        );
+        let project_list = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Vercel projects.".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/projects", None, None),
+            0,
+        );
+        let service_scale = CommandSpec::new_http(
+            "services".to_string(),
+            "scale".to_string(),
+            "Scale a Render service.".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("PATCH", "/v1/services/{id}/scale", None, None),
+            1,
+        );
+
+        let commands = vec![deployment_create.clone(), project_list.clone(), service_scale.clone()];
+        let mut registry = CommandRegistry::default().with_commands(commands);
+        registry.config = RegistryConfig {
+            catalogs: Some(vec![
+                build_catalog("Vercel", "vercel", vec![deployment_create, project_list]),
+                build_catalog("Render", "render", vec![service_scale]),
+            ]),
+        };
+
+        let handle = SearchHandle::new(Arc::new(Mutex::new(registry)));
+        let results = handle.search_with_vendor("vercel", Some("vercel")).await.expect("search succeeds");
+
+        assert_eq!(results.len(), 2, "expected only vendor-scoped results");
+        assert_eq!(results[0].canonical_id, "deployments create");
+        assert_eq!(results[1].canonical_id, "projects list");
+    }
+
+    #[tokio::test]
+    async fn search_with_vendor_distinguishes_duplicate_canonical_ids_by_catalog_identity() {
+        let vercel_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Vercel projects.".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/projects", None, None),
+            0,
+        );
+        let render_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Render projects.".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/services", None, None),
+            1,
+        );
+
+        let mut registry = CommandRegistry::default().with_commands(vec![vercel_projects.clone(), render_projects.clone()]);
+        registry.config = RegistryConfig {
+            catalogs: Some(vec![
+                build_catalog("Vercel", "vercel", vec![vercel_projects]),
+                build_catalog("Render", "render", vec![render_projects]),
+            ]),
+        };
+
+        let handle = SearchHandle::new(Arc::new(Mutex::new(registry)));
+        let results = handle
+            .search_with_vendor("render projects", Some("render"))
+            .await
+            .expect("search succeeds");
+
+        assert_eq!(results.len(), 1, "expected only the requested vendor command");
+        assert_eq!(results[0].canonical_id, "projects list");
+        assert_eq!(results[0].summary, "List Render projects.");
+    }
+
+    #[tokio::test]
+    async fn search_exact_duplicate_canonical_id_returns_all_matching_vendors() {
+        let vercel_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Vercel projects.".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/projects", None, None),
+            0,
+        );
+        let render_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Render projects.".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/v1/services", None, None),
+            1,
+        );
+
+        let mut registry = CommandRegistry::default().with_commands(vec![vercel_projects.clone(), render_projects.clone()]);
+        registry.config = RegistryConfig {
+            catalogs: Some(vec![
+                build_catalog("Vercel", "vercel", vec![vercel_projects]),
+                build_catalog("Render", "render", vec![render_projects]),
+            ]),
+        };
+
+        let handle = SearchHandle::new(Arc::new(Mutex::new(registry)));
+        let results = handle.search("projects list").await.expect("search succeeds");
+
+        assert_eq!(results.len(), 2, "duplicate canonical ids should remain visible");
+        assert_eq!(results[0].canonical_id, "projects list");
+        assert_eq!(results[1].canonical_id, "projects list");
+        assert_eq!(results[0].vendor.as_deref(), Some("vercel"));
+        assert_eq!(results[1].vendor.as_deref(), Some("render"));
+    }
+
+    #[tokio::test]
     async fn search_keeps_relevant_commands_ahead_of_noise() {
         let registry = build_heterogeneous_registry();
-        let mut registry_guard = registry.lock().expect("registry lock");
-        for index in 0..40 {
-            registry_guard.commands.push(CommandSpec::new_http(
-                format!("misc{index}"),
-                "list".to_string(),
-                "Enumerate unrelated maintenance records.".to_string(),
-                Vec::new(),
-                Vec::new(),
-                HttpCommandSpec::new("GET", &format!("/v1/misc/{index}"), None, None),
-                0,
-            ));
+        {
+            let mut registry_guard = registry.lock().expect("registry lock");
+            for index in 0..40 {
+                registry_guard.commands.push(CommandSpec::new_http(
+                    format!("misc{index}"),
+                    "list".to_string(),
+                    "Enumerate unrelated maintenance records.".to_string(),
+                    Vec::new(),
+                    Vec::new(),
+                    HttpCommandSpec::new("GET", format!("/v1/misc/{index}"), None, None),
+                    0,
+                ));
+            }
         }
-        drop(registry_guard);
 
         let handle = SearchHandle::new(registry);
         let results = handle.search("service scale").await.expect("search succeeds");

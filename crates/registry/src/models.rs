@@ -17,6 +17,18 @@ const REGISTRY_EVENT_CHANNEL_CAPACITY: usize = 64;
 /// Result alias for catalog mutation operations that return typed mutation failures.
 pub type CatalogMutationResult<T> = std::result::Result<T, CatalogMutationError>;
 
+/// Result alias for canonical command resolution operations.
+pub type CommandResolutionResult<T> = std::result::Result<T, CommandResolutionError>;
+
+/// Parsed canonical identifier in `<group> <command>` form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CanonicalCommandId {
+    /// Top-level command group.
+    pub group: String,
+    /// Command name within the group.
+    pub command: String,
+}
+
 /// The main registry containing all available Oatty CLI commands.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 pub struct CommandRegistry {
@@ -80,6 +92,61 @@ pub enum CatalogMutationError {
     MissingHeaderValue {
         /// Header key missing an associated value.
         key: String,
+    },
+}
+
+/// Resolved command metadata returned by canonical-id lookups.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedCommand {
+    /// Fully resolved command specification.
+    pub command: CommandSpec,
+    /// Catalog identifier that owns the resolved command when it can be determined.
+    pub catalog_identifier: Option<usize>,
+    /// Vendor name associated with the resolved command when present.
+    pub vendor: Option<String>,
+}
+
+/// Outcome for exact canonical-id search attempts.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExactSearchHit {
+    /// Exactly one command matches the canonical query and optional vendor scope.
+    Unique(Box<ResolvedCommand>),
+    /// More than one command matches, so discovery should continue with ranked results.
+    Ambiguous,
+}
+
+/// Typed failures produced while resolving a canonical command identifier.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum CommandResolutionError {
+    /// The canonical identifier does not follow the `<group> <command>` shape.
+    #[error("canonical_id must be in 'group command' format")]
+    InvalidCanonicalId {
+        /// User-provided canonical identifier.
+        canonical_id: String,
+    },
+    /// No command matched the requested canonical identifier and optional vendor.
+    #[error("{group} {command} command not found")]
+    NotFound {
+        /// User-provided canonical identifier.
+        canonical_id: String,
+        /// Parsed group name.
+        group: String,
+        /// Parsed command name.
+        command: String,
+        /// Optional vendor filter used during lookup.
+        vendor: Option<String>,
+        /// Vendors that contain the same canonical identifier under a different scope.
+        matching_vendors: Vec<String>,
+    },
+    /// More than one enabled catalog matched the canonical identifier.
+    #[error("canonical_id '{canonical_id}' is ambiguous across multiple catalogs")]
+    Ambiguous {
+        /// User-provided canonical identifier.
+        canonical_id: String,
+        /// Optional vendor filter used during lookup.
+        vendor: Option<String>,
+        /// Vendors that currently expose the canonical identifier.
+        matching_vendors: Vec<String>,
     },
 }
 
@@ -216,12 +283,26 @@ impl CommandRegistry {
     ///
     /// - `Ok(&CommandSpec)` - The matching command specification
     /// - `Err` - If no command is found with the given group and command name
+    ///
+    /// This legacy helper does not detect duplicate `(group, command)` pairs across vendors.
+    /// Prefer `find_by_group_and_cmd_cloned_for_vendor` or `resolve_command_by_canonical_id`
+    /// when catalogs from multiple providers can overlap.
     pub fn find_by_group_and_cmd_cloned(&self, group: &str, cmd: &str) -> Result<CommandSpec> {
         self.commands
             .iter()
             .find(|c| c.group == group && c.name == cmd)
             .cloned()
             .ok_or(anyhow!("{} {} command not found", group, cmd))
+    }
+
+    /// Finds a specific command by group, command name, and optional vendor filter.
+    pub fn find_by_group_and_cmd_cloned_for_vendor(
+        &self,
+        group: &str,
+        cmd: &str,
+        vendor: Option<&str>,
+    ) -> CommandResolutionResult<ResolvedCommand> {
+        self.resolve_command_by_canonical_id(&format!("{group} {cmd}"), vendor)
     }
 
     ///  Finds a command specification within the collection of commands, based on the provided group
@@ -237,6 +318,10 @@ impl CommandRegistry {
     ///
     ///  # Errors
     ///  Returns an error if no command in the collection matches the provided `group` and `cmd`.
+    ///
+    ///  This legacy helper does not detect duplicate `(group, command)` pairs across vendors.
+    ///  Prefer `find_by_group_and_cmd_ref_for_vendor` or `resolve_command_by_canonical_id`
+    ///  when catalogs from multiple providers can overlap.
     ///
     ///  # Example
     ///  ```ignore
@@ -254,10 +339,213 @@ impl CommandRegistry {
             .ok_or(anyhow!("{} {} command not found", group, cmd))
     }
 
+    /// Finds a specific command reference by group, command name, and optional vendor filter.
+    pub fn find_by_group_and_cmd_ref_for_vendor(
+        &self,
+        group: &str,
+        cmd: &str,
+        vendor: Option<&str>,
+    ) -> CommandResolutionResult<&CommandSpec> {
+        let resolved_command = self.find_by_group_and_cmd_cloned_for_vendor(group, cmd, vendor)?;
+        self.commands
+            .iter()
+            .find(|command| {
+                command.group == resolved_command.command.group
+                    && command.name == resolved_command.command.name
+                    && command.summary == resolved_command.command.summary
+                    && command.catalog_identifier == resolved_command.command.catalog_identifier
+            })
+            .ok_or_else(|| CommandResolutionError::NotFound {
+                canonical_id: resolved_command.command.canonical_id(),
+                group: group.to_string(),
+                command: cmd.to_string(),
+                vendor: vendor.map(ToOwned::to_owned),
+                matching_vendors: Vec::new(),
+            })
+    }
+
+    /// Parses a canonical command identifier in `<group> <command>` form.
+    pub fn parse_canonical_command_id(canonical_id: &str) -> Option<CanonicalCommandId> {
+        split_canonical_id_components(canonical_id).map(|(group, command)| CanonicalCommandId {
+            group: group.to_string(),
+            command: command.to_string(),
+        })
+    }
+
+    /// Resolves the catalog identifier for a command, accounting for stale catalog indexes.
+    pub fn resolve_catalog_identifier_for_command(&self, command: &CommandSpec) -> Option<usize> {
+        let catalogs = self.config.catalogs.as_ref()?;
+
+        if let Some(catalog) = catalogs.get(command.catalog_identifier)
+            && catalog_contains_command(catalog, command)
+        {
+            return Some(command.catalog_identifier);
+        }
+
+        let mut matching_catalog_identifiers = catalogs
+            .iter()
+            .enumerate()
+            .filter(|(_, catalog)| catalog_contains_command(catalog, command))
+            .map(|(catalog_identifier, _)| catalog_identifier);
+
+        let catalog_identifier = matching_catalog_identifiers.next()?;
+        if matching_catalog_identifiers.next().is_some() {
+            return None;
+        }
+
+        Some(catalog_identifier)
+    }
+
+    /// Returns the configured vendor for a command when it can be resolved uniquely.
+    pub fn command_vendor(&self, command: &CommandSpec) -> Option<String> {
+        let catalog_identifier = self.resolve_catalog_identifier_for_command(command)?;
+        let catalog = self.config.catalogs.as_ref()?.get(catalog_identifier)?;
+        Self::catalog_vendor_value(catalog).map(ToOwned::to_owned)
+    }
+
+    /// Returns true when a command belongs to the requested vendor.
+    pub fn command_matches_vendor(&self, command: &CommandSpec, vendor_name: &str) -> bool {
+        let Some(catalog_identifier) = self.resolve_catalog_identifier_for_command(command) else {
+            return false;
+        };
+        let Some(catalog) = self.config.catalogs.as_ref().and_then(|catalogs| catalogs.get(catalog_identifier)) else {
+            return false;
+        };
+
+        catalog.is_enabled && Self::catalog_vendor_matches(catalog, vendor_name)
+    }
+
+    /// Returns true when every enabled catalog containing the canonical identifier matches the requested vendor.
+    pub fn canonical_id_matches_vendor(&self, canonical_id: &str, vendor_name: &str) -> bool {
+        let Some(catalogs) = self.config.catalogs.as_ref() else {
+            return false;
+        };
+
+        let mut catalogs_with_command = catalogs.iter().filter(|catalog| {
+            catalog.is_enabled
+                && catalog.manifest.as_ref().is_some_and(|manifest| {
+                    manifest
+                        .commands
+                        .iter()
+                        .any(|catalog_command| catalog_command.canonical_id() == canonical_id)
+                })
+        });
+
+        let Some(first_catalog) = catalogs_with_command.next() else {
+            return false;
+        };
+
+        Self::catalog_vendor_matches(first_catalog, vendor_name)
+            && catalogs_with_command.all(|catalog| Self::catalog_vendor_matches(catalog, vendor_name))
+    }
+
+    /// Returns whether an enabled catalog exists for the requested vendor.
+    pub fn has_enabled_catalog_for_vendor(&self, vendor_name: &str) -> bool {
+        self.config.catalogs.as_ref().is_some_and(|catalogs| {
+            catalogs
+                .iter()
+                .filter(|catalog| catalog.is_enabled)
+                .any(|catalog| Self::catalog_vendor_matches(catalog, vendor_name))
+        })
+    }
+
+    /// Returns a unique exact canonical-id hit when discovery can short-circuit safely.
+    pub fn resolve_exact_search_hit(&self, query: &str, vendor: Option<&str>) -> Option<ExactSearchHit> {
+        let parsed_canonical_id = Self::parse_canonical_command_id(query)?;
+        let matching_commands = self
+            .commands
+            .iter()
+            .filter(|command| {
+                command.group == parsed_canonical_id.group
+                    && command.name == parsed_canonical_id.command
+                    && vendor.is_none_or(|vendor_name| self.command_matches_vendor(command, vendor_name))
+            })
+            .cloned()
+            .collect::<Vec<CommandSpec>>();
+
+        match matching_commands.as_slice() {
+            [command] => Some(ExactSearchHit::Unique(Box::new(ResolvedCommand {
+                catalog_identifier: self.resolve_catalog_identifier_for_command(command),
+                vendor: self.command_vendor(command),
+                command: command.clone(),
+            }))),
+            [] => None,
+            _ => Some(ExactSearchHit::Ambiguous),
+        }
+    }
+
+    /// Resolves a canonical command identifier to a unique command and vendor.
+    pub fn resolve_command_by_canonical_id(&self, canonical_id: &str, vendor: Option<&str>) -> CommandResolutionResult<ResolvedCommand> {
+        let Some(parsed_canonical_id) = Self::parse_canonical_command_id(canonical_id) else {
+            return Err(CommandResolutionError::InvalidCanonicalId {
+                canonical_id: canonical_id.to_string(),
+            });
+        };
+
+        let matching_commands = self
+            .commands
+            .iter()
+            .filter(|command| command.group == parsed_canonical_id.group && command.name == parsed_canonical_id.command)
+            .cloned()
+            .collect::<Vec<CommandSpec>>();
+        let vendor_scoped_commands = matching_commands
+            .iter()
+            .filter(|command| vendor.is_none_or(|vendor_name| self.command_matches_vendor(command, vendor_name)))
+            .cloned()
+            .collect::<Vec<CommandSpec>>();
+
+        if let [command] = vendor_scoped_commands.as_slice() {
+            return Ok(ResolvedCommand {
+                catalog_identifier: self.resolve_catalog_identifier_for_command(command),
+                vendor: self.command_vendor(command),
+                command: command.clone(),
+            });
+        }
+
+        let matching_vendors = matching_commands
+            .iter()
+            .filter_map(|command| self.command_vendor(command))
+            .collect::<std::collections::BTreeSet<String>>()
+            .into_iter()
+            .collect::<Vec<String>>();
+
+        if vendor_scoped_commands.len() > 1 || (vendor.is_none() && matching_commands.len() > 1) {
+            return Err(CommandResolutionError::Ambiguous {
+                canonical_id: canonical_id.to_string(),
+                vendor: vendor.map(ToOwned::to_owned),
+                matching_vendors,
+            });
+        }
+
+        Err(CommandResolutionError::NotFound {
+            canonical_id: canonical_id.to_string(),
+            group: parsed_canonical_id.group,
+            command: parsed_canonical_id.command,
+            vendor: vendor.map(ToOwned::to_owned),
+            matching_vendors,
+        })
+    }
+
     fn get_catalog(&self, id: usize) -> Option<&RegistryCatalog> {
         let catalogs = self.config.catalogs.as_ref()?;
 
         catalogs.get(id)
+    }
+
+    /// Returns the vendor configured for a catalog from either top-level or manifest metadata.
+    pub fn catalog_vendor_value(catalog: &RegistryCatalog) -> Option<&str> {
+        catalog
+            .vendor
+            .as_deref()
+            .or_else(|| catalog.manifest.as_ref().map(|manifest| manifest.vendor.as_str()))
+            .filter(|vendor| !vendor.trim().is_empty())
+    }
+
+    /// Returns whether the catalog belongs to the requested vendor.
+    pub fn catalog_vendor_matches(catalog: &RegistryCatalog, vendor_name: &str) -> bool {
+        let vendor_name = vendor_name.trim();
+        !vendor_name.is_empty()
+            && Self::catalog_vendor_value(catalog).is_some_and(|catalog_vendor| catalog_vendor.eq_ignore_ascii_case(vendor_name))
     }
 
     /// Inserts the synthetic commands from an MCP client's
@@ -485,6 +773,25 @@ impl CommandRegistry {
     }
 }
 
+fn split_canonical_id_components(canonical_id: &str) -> Option<(&str, &str)> {
+    let trimmed = canonical_id.trim();
+    let (group, command_name) = trimmed.split_once(' ')?;
+    let normalized_group = group.trim();
+    let normalized_command_name = command_name.trim();
+    if normalized_group.is_empty() || normalized_command_name.is_empty() || normalized_command_name.contains(' ') {
+        return None;
+    }
+
+    Some((normalized_group, normalized_command_name))
+}
+
+fn catalog_contains_command(catalog: &RegistryCatalog, command: &CommandSpec) -> bool {
+    catalog
+        .manifest
+        .as_ref()
+        .is_some_and(|manifest| manifest.commands.iter().any(|catalog_command| catalog_command == command))
+}
+
 fn apply_header_upserts(existing_headers: &IndexSet<EnvVar>, rows: &[CatalogHeaderEditRow]) -> CatalogMutationResult<IndexSet<EnvVar>> {
     let mut retained_headers = existing_headers.iter().cloned().collect::<Vec<EnvVar>>();
     for row in rows {
@@ -640,5 +947,174 @@ mod tests {
         let header = headers.iter().next().expect("single header should exist");
         assert_eq!(header.key, "authorization");
         assert_eq!(header.value, "Bearer second");
+    }
+
+    #[test]
+    fn resolve_command_by_canonical_id_requires_vendor_for_duplicate_commands() {
+        let vercel_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Vercel projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            oatty_types::command::HttpCommandSpec::new("GET", "/v1/projects", None, None),
+            0,
+        );
+        let render_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Render projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            oatty_types::command::HttpCommandSpec::new("GET", "/v1/services", None, None),
+            1,
+        );
+
+        let mut registry = CommandRegistry::default().with_commands(vec![vercel_projects.clone(), render_projects.clone()]);
+        registry.config.catalogs = Some(vec![
+            catalog_with_commands("Vercel", "vercel", vec![vercel_projects]),
+            catalog_with_commands("Render", "render", vec![render_projects.clone()]),
+        ]);
+
+        let error = registry
+            .resolve_command_by_canonical_id("projects list", None)
+            .expect_err("duplicate commands should require vendor");
+
+        assert_eq!(
+            error,
+            CommandResolutionError::Ambiguous {
+                canonical_id: "projects list".to_string(),
+                vendor: None,
+                matching_vendors: vec!["render".to_string(), "vercel".to_string()],
+            }
+        );
+    }
+
+    #[test]
+    fn resolve_command_by_canonical_id_scopes_to_vendor() {
+        let vercel_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Vercel projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            oatty_types::command::HttpCommandSpec::new("GET", "/v1/projects", None, None),
+            0,
+        );
+        let render_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Render projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            oatty_types::command::HttpCommandSpec::new("GET", "/v1/services", None, None),
+            1,
+        );
+
+        let mut registry = CommandRegistry::default().with_commands(vec![vercel_projects.clone(), render_projects.clone()]);
+        registry.config.catalogs = Some(vec![
+            catalog_with_commands("Vercel", "vercel", vec![vercel_projects]),
+            catalog_with_commands("Render", "render", vec![render_projects.clone()]),
+        ]);
+
+        let resolved_command = registry
+            .resolve_command_by_canonical_id("projects list", Some("render"))
+            .expect("vendor-scoped resolution should succeed");
+
+        assert_eq!(resolved_command.command.summary, "List Render projects");
+        assert_eq!(resolved_command.vendor.as_deref(), Some("render"));
+        assert_eq!(resolved_command.catalog_identifier, Some(1));
+    }
+
+    #[test]
+    fn resolve_exact_search_hit_reports_ambiguity_for_duplicate_canonical_ids() {
+        let vercel_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Vercel projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            oatty_types::command::HttpCommandSpec::new("GET", "/v1/projects", None, None),
+            0,
+        );
+        let render_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Render projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            oatty_types::command::HttpCommandSpec::new("GET", "/v1/services", None, None),
+            1,
+        );
+
+        let mut registry = CommandRegistry::default().with_commands(vec![vercel_projects.clone(), render_projects.clone()]);
+        registry.config.catalogs = Some(vec![
+            catalog_with_commands("Vercel", "vercel", vec![vercel_projects]),
+            catalog_with_commands("Render", "render", vec![render_projects]),
+        ]);
+
+        assert_eq!(
+            registry.resolve_exact_search_hit("projects list", None),
+            Some(ExactSearchHit::Ambiguous)
+        );
+    }
+
+    #[test]
+    fn resolve_catalog_identifier_recovers_stale_index_for_duplicate_canonical_ids() {
+        let vercel_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Vercel projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            oatty_types::command::HttpCommandSpec::new("GET", "/v1/projects", None, None),
+            0,
+        );
+        let render_projects = CommandSpec::new_http(
+            "projects".to_string(),
+            "list".to_string(),
+            "List Render projects".to_string(),
+            Vec::new(),
+            Vec::new(),
+            oatty_types::command::HttpCommandSpec::new("GET", "/v1/services", None, None),
+            1,
+        );
+
+        let mut registry = CommandRegistry::default().with_commands(vec![vercel_projects.clone(), render_projects.clone()]);
+        registry.config.catalogs = Some(vec![
+            catalog_with_commands("Vercel", "vercel", vec![vercel_projects]),
+            catalog_with_commands("Render", "render", vec![render_projects.clone()]),
+        ]);
+
+        registry.config.catalogs.as_mut().expect("catalogs exist").remove(0);
+        registry.commands = vec![render_projects.clone()];
+
+        let resolved_command = registry
+            .resolve_command_by_canonical_id("projects list", Some("render"))
+            .expect("stale catalog index should still resolve to the owning vendor");
+
+        assert_eq!(resolved_command.command.summary, "List Render projects");
+        assert_eq!(resolved_command.vendor.as_deref(), Some("render"));
+        assert_eq!(resolved_command.catalog_identifier, Some(0));
+    }
+
+    fn catalog_with_commands(title: &str, vendor: &str, commands: Vec<CommandSpec>) -> RegistryCatalog {
+        RegistryCatalog {
+            title: title.to_string(),
+            description: format!("{title} APIs"),
+            vendor: Some(vendor.to_string()),
+            manifest_path: String::new(),
+            import_source: None,
+            import_source_type: None,
+            headers: IndexSet::new(),
+            base_urls: vec![format!("https://api.{vendor}.com")],
+            base_url_index: 0,
+            manifest: Some(RegistryManifest {
+                commands,
+                provider_contracts: Default::default(),
+                vendor: vendor.to_string(),
+            }),
+            is_enabled: true,
+        }
     }
 }
