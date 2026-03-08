@@ -184,11 +184,8 @@ impl LibraryState {
     }
 
     pub fn set_projections(&mut self, projections: Vec<CatalogProjection>) {
-        if self.api_selected_index().is_none() {
-            let idx = self.api_list_state.selected().unwrap_or(0).min(projections.len());
-            self.set_api_selected_index(Some(idx));
-        }
         self.projections = projections;
+        self.sync_selection_with_projections();
     }
 
     pub fn clear_projections(&mut self) {
@@ -198,6 +195,7 @@ impl LibraryState {
 
     pub fn push_projection(&mut self, projection: CatalogProjection) {
         self.projections.push(projection);
+        self.sync_selection_with_projections();
     }
 
     pub fn get_projection_mut(&mut self, idx: usize) -> Option<&mut CatalogProjection> {
@@ -311,6 +309,28 @@ impl LibraryState {
         self.projections.get_mut(index)
     }
 
+    /// Synchronizes the selected catalog index and all editor state after the
+    /// projections list changes.
+    fn sync_selection_with_projections(&mut self) {
+        if self.projections.is_empty() {
+            self.api_list_state.select(None);
+            self.description_input.clear();
+            self.base_url_input.clear();
+            self.update_kv_state();
+            return;
+        }
+
+        let selected_index = self
+            .api_list_state
+            .selected()
+            .unwrap_or(0)
+            .min(self.projections.len().saturating_sub(1));
+
+        self.api_list_state.select(Some(selected_index));
+        self.load_input_for_selected_api();
+        self.update_kv_state();
+    }
+
     fn update_kv_state(&mut self) {
         self.url_list_state.select(None);
         if let Some(p) = self.api_list_state.selected().and_then(|idx| self.projections.get(idx)) {
@@ -372,5 +392,42 @@ impl HasFocus for LibraryState {
 
     fn area(&self) -> Rect {
         Rect::default()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::borrow::Cow;
+
+    use indexmap::IndexSet;
+    use oatty_mcp::{EnvSource, EnvVar};
+
+    use super::LibraryState;
+    use crate::ui::components::library::CatalogProjection;
+
+    #[test]
+    fn set_projections_refreshes_header_editor_for_selected_catalog() {
+        let mut state = LibraryState::new();
+        state.set_projections(vec![catalog_projection("alpha", "Bearer old")]);
+        state.set_api_selected_index(Some(0));
+
+        state.set_projections(vec![catalog_projection("alpha", "Bearer new")]);
+
+        let rows = state.kv_state().rows();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].key, "authorization");
+        assert_eq!(rows[0].value, "Bearer new");
+    }
+
+    fn catalog_projection(title: &str, header_value: &str) -> CatalogProjection {
+        let mut headers = IndexSet::new();
+        headers.insert(EnvVar::new("authorization".to_string(), header_value.to_string(), EnvSource::Raw));
+
+        CatalogProjection {
+            title: Cow::Owned(title.to_string()),
+            headers,
+            base_urls: vec!["https://example.com".to_string()],
+            ..Default::default()
+        }
     }
 }

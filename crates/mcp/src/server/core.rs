@@ -1587,16 +1587,13 @@ async fn execute_http_command(
                 "Set a base URL for the catalog in Library, then retry the command.",
             )
         })?;
-        let headers = registry_guard
-            .resolve_headers_for_command(command_spec)
-            .ok_or_else(|| {
-                invalid_params_with_next_step(
-                    "headers not configured",
-                    serde_json::json!({ "canonical_id": command_spec.canonical_id() }),
-                    "Configure required headers for the catalog in Library, then retry the command.",
-                )
-            })?
-            .clone();
+        let headers = registry_guard.resolve_runtime_headers_for_command(command_spec).ok_or_else(|| {
+            invalid_params_with_next_step(
+                "headers not configured",
+                serde_json::json!({ "canonical_id": command_spec.canonical_id() }),
+                "Configure required headers for the catalog in Library, then retry the command.",
+            )
+        })?;
         (base_url, headers)
     };
 
