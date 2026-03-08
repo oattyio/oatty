@@ -217,7 +217,7 @@ impl CommandRunner for RegistryCommandRunner {
             .ok_or_else(|| anyhow!("base url not configured"))?;
         let headers = self
             .registry
-            .resolve_headers_for_command(&command_spec)
+            .resolve_runtime_headers_for_command(&command_spec)
             .ok_or_else(|| anyhow!("could not determine headers for command: {}", command_spec.canonical_id()))?;
         debug!(
             command = %command_spec.canonical_id(),
@@ -225,7 +225,7 @@ impl CommandRunner for RegistryCommandRunner {
             header_count = headers.len(),
             "resolved command HTTP settings"
         );
-        let client = OattyClient::new(base_url, headers).map_err(|error| anyhow!("could not create the HTTP client: {error}"))?;
+        let client = OattyClient::new(base_url, &headers).map_err(|error| anyhow!("could not create the HTTP client: {error}"))?;
 
         let mut input_map = extract_input_map(with);
         let path_variables = extract_path_variables(&command_spec, &mut input_map);

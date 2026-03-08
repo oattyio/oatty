@@ -1,5 +1,5 @@
 use anyhow::{Result, anyhow};
-use indexmap::{IndexMap, IndexSet, set::MutableValues};
+use indexmap::{IndexMap, IndexSet};
 use oatty_types::{
     CommandSpec, EnvSource, EnvVar, ProviderContract,
     manifest::{RegistryCatalog, RegistryManifest},
@@ -199,16 +199,6 @@ impl CommandRegistry {
             for i in (0..catalogs.len()).rev() {
                 let catalog = &mut catalogs[i];
                 let path = &catalog.manifest_path;
-                for j in 0..catalog.headers.len() {
-                    let Some(EnvVar { value, .. }) = catalog.headers.get_index_mut2(j) else {
-                        continue;
-                    };
-                    let Ok(val) = interpolate_string(value) else {
-                        continue;
-                    };
-                    *value = val;
-                }
-
                 let Ok(manifest_bytes) = std::fs::read(path) else {
                     catalogs.swap_remove(i); // invalid - remove from registry
                     continue;
@@ -266,6 +256,28 @@ impl CommandRegistry {
         let catalog = self.get_catalog(catalog_identifier)?;
 
         Some(&catalog.headers)
+    }
+
+    /// Resolves request-ready headers for a command by interpolating any
+    /// `${env:...}` or `${secret:...}` placeholders at execution time.
+    ///
+    /// Returns `None` when the command is not associated with a catalog or when
+    /// any configured header value cannot be interpolated successfully.
+    pub fn resolve_runtime_headers_for_command(&self, command: &CommandSpec) -> Option<IndexSet<EnvVar>> {
+        let configured_headers = self.resolve_headers_for_command(command)?;
+        let mut runtime_headers = IndexSet::with_capacity(configured_headers.len());
+
+        for configured_header in configured_headers {
+            let interpolated_value = interpolate_string(&configured_header.value).ok()?;
+            runtime_headers.insert(EnvVar {
+                key: configured_header.key.clone(),
+                value: interpolated_value,
+                source: configured_header.source.clone(),
+                effective: configured_header.effective,
+            });
+        }
+
+        Some(runtime_headers)
     }
 
     /// Finds a specific command by its group and command name.
@@ -863,7 +875,7 @@ pub enum CommandRegistryEvent {
 mod tests {
     use super::*;
     use indexmap::IndexSet;
-    use oatty_types::manifest::RegistryCatalog;
+    use oatty_types::{command::HttpCommandSpec, manifest::RegistryCatalog};
 
     fn catalog_with_title(title: &str) -> RegistryCatalog {
         RegistryCatalog {
@@ -879,6 +891,18 @@ mod tests {
             manifest: Some(RegistryManifest::default()),
             is_enabled: true,
         }
+    }
+
+    fn command_with_catalog_identifier(catalog_identifier: usize) -> CommandSpec {
+        CommandSpec::new_http(
+            "catalog".to_string(),
+            "list".to_string(),
+            "List catalog items".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/items", None, None),
+            catalog_identifier,
+        )
     }
 
     #[test]
@@ -947,6 +971,42 @@ mod tests {
         let header = headers.iter().next().expect("single header should exist");
         assert_eq!(header.key, "authorization");
         assert_eq!(header.value, "Bearer second");
+    }
+
+    #[test]
+    fn resolve_runtime_headers_interpolates_without_mutating_configured_values() {
+        let mut registry = CommandRegistry::default();
+        let mut catalog = catalog_with_title("alpha");
+        catalog.headers.insert(EnvVar {
+            key: "Authorization".to_string(),
+            value: "${env:OATTY_TEST_LIBRARY_HEADER}".to_string(),
+            source: EnvSource::Env,
+            effective: true,
+        });
+        registry.config.catalogs = Some(vec![catalog]);
+
+        let original_value = std::env::var("OATTY_TEST_LIBRARY_HEADER").ok();
+        unsafe { std::env::set_var("OATTY_TEST_LIBRARY_HEADER", "Bearer resolved") };
+
+        let command = command_with_catalog_identifier(0);
+
+        let configured_headers = registry
+            .resolve_headers_for_command(&command)
+            .expect("configured headers should exist");
+        let runtime_headers = registry
+            .resolve_runtime_headers_for_command(&command)
+            .expect("runtime headers should resolve");
+
+        let configured_header = configured_headers.iter().next().expect("configured header should exist");
+        let runtime_header = runtime_headers.iter().next().expect("runtime header should exist");
+
+        assert_eq!(configured_header.value, "${env:OATTY_TEST_LIBRARY_HEADER}");
+        assert_eq!(runtime_header.value, "Bearer resolved");
+
+        match original_value {
+            Some(value) => unsafe { std::env::set_var("OATTY_TEST_LIBRARY_HEADER", value) },
+            None => unsafe { std::env::remove_var("OATTY_TEST_LIBRARY_HEADER") },
+        }
     }
 
     #[test]

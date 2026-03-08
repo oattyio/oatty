@@ -528,9 +528,8 @@ fn resolve_command_context(
         .resolve_base_url_for_command(&command_spec)
         .ok_or(anyhow!("base url not defined for this command"))?;
     let headers = registry_lock
-        .resolve_headers_for_command(&command_spec)
-        .ok_or(anyhow!("headers not defined for this command"))?
-        .clone();
+        .resolve_runtime_headers_for_command(&command_spec)
+        .ok_or(anyhow!("headers not defined for this command"))?;
     Ok((command_spec, base_url, headers))
 }
 

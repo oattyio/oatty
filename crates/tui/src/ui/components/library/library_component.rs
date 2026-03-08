@@ -994,4 +994,10 @@ impl Component for LibraryComponent {
             outter[1],    // Error
         ]
     }
+
+    fn on_route_exit(&mut self, app: &mut App) -> Vec<Effect> {
+        let mut effect = self.track_lost_input_focus(app);
+        effect.append(&mut self.track_lost_kv_focus(app));
+        effect
+    }
 }

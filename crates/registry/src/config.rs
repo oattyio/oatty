@@ -3,9 +3,8 @@ use std::{convert::Infallible, env, path::PathBuf};
 use anyhow::Error;
 use dirs_next::config_dir;
 use heck::{ToSnakeCase, ToSnekCase};
-use indexmap::set::MutableValues;
-use oatty_types::{EnvVar, manifest::RegistryCatalog};
-use oatty_util::{expand_tilde, interpolate_string, tokenize_env};
+use oatty_types::manifest::RegistryCatalog;
+use oatty_util::{expand_tilde, tokenize_env};
 use postcard::to_stdvec;
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +26,9 @@ impl RegistryConfig {
 
     pub fn save(&mut self) -> Result<(), Error> {
         let path = default_config_path();
-        if let Some(catalogs) = self.catalogs.as_mut() {
+        let mut tokenized_config = self.clone();
+
+        if let Some(catalogs) = tokenized_config.catalogs.as_mut() {
             let catalogs_path = default_catalogs_path();
             std::fs::create_dir_all(&catalogs_path)?;
 
@@ -48,22 +49,9 @@ impl RegistryConfig {
             }
         }
 
-        let content = serde_json::to_string_pretty(self)?;
+        let content = serde_json::to_string_pretty(&tokenized_config)?;
         std::fs::write(&path, content)?;
 
-        if let Some(catalogs) = self.catalogs.as_mut() {
-            for catalog in catalogs {
-                for j in 0..catalog.headers.len() {
-                    let Some(EnvVar { value, .. }) = catalog.headers.get_index_mut2(j) else {
-                        continue;
-                    };
-                    let Ok(val) = interpolate_string(value) else {
-                        continue;
-                    };
-                    *value = val;
-                }
-            }
-        }
         Ok(())
     }
 }

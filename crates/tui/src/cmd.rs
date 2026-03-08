@@ -1184,7 +1184,7 @@ fn spawn_execute_http(app: &mut App<'_>, spec: CommandSpec, input: String, reque
 
     if let Ok(lock) = app.ctx.command_registry.lock()
         && let Some(base_url) = lock.resolve_base_url_for_command(&spec)
-        && let Some(headers) = lock.resolve_headers_for_command(&spec).cloned()
+        && let Some(headers) = lock.resolve_runtime_headers_for_command(&spec)
     {
         return tokio::spawn(async move { execute_http_task(active, spec, input, base_url, &headers, request_id).await });
     }
