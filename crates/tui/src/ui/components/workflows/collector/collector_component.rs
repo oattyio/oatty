@@ -147,22 +147,18 @@ impl Component for WorkflowCollectorComponent {
                     None
                 };
             }
-            MouseEventKind::ScrollDown => {
-                if self.layout.table_area.contains(position) {
-                    if table.has_rows() {
-                        table.table_state.scroll_down_by(1);
-                    } else {
-                        table.list_state.scroll_down_by(1);
-                    }
+            MouseEventKind::ScrollDown if self.layout.table_area.contains(position) => {
+                if table.has_rows() {
+                    table.table_state.scroll_down_by(1);
+                } else {
+                    table.list_state.scroll_down_by(1);
                 }
             }
-            MouseEventKind::ScrollUp => {
-                if self.layout.table_area.contains(position) {
-                    if table.has_rows() {
-                        table.table_state.scroll_up_by(1);
-                    } else {
-                        table.list_state.scroll_up_by(1);
-                    }
+            MouseEventKind::ScrollUp if self.layout.table_area.contains(position) => {
+                if table.has_rows() {
+                    table.table_state.scroll_up_by(1);
+                } else {
+                    table.list_state.scroll_up_by(1);
                 }
             }
             _ => {}

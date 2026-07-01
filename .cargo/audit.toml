@@ -1,0 +1,8 @@
+[advisories]
+ignore = [
+    # rmcp < 1.4.0 lacks built-in Streamable HTTP Host validation.
+    # Oatty mitigates this in crates/mcp/src/server/http.rs by binding only to
+    # loopback addresses and rejecting non-loopback Host headers before requests
+    # reach the rmcp service. Remove this ignore when rmcp can be upgraded cleanly.
+    "RUSTSEC-2026-0189",
+]

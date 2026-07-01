@@ -4,7 +4,7 @@ import type {DocsPage} from '../types';
  * CLI command reference page model.
  *
  * This page is a lookup reference for CLI invocation patterns, command discovery,
- * and execution routing behavior.
+ * and direct execution behavior.
  */
 export const cliCommandsPage: DocsPage = {
     path: '/docs/reference/cli-commands',
@@ -12,9 +12,9 @@ export const cliCommandsPage: DocsPage = {
     summary: 'Use this page as a command lookup for discovery, inspection, and execution flows in Oatty CLI mode.',
     learnBullets: [
         'Understand canonical command identifiers and CLI argument shape.',
-        'Discover commands with predictable search patterns.',
+        'Discover commands through the supported TUI-first workflow.',
         'Inspect command schemas before execution.',
-        'Route execution by HTTP method and safety guarantees.',
+        'Run workflows and exact command paths from the terminal.',
     ],
     estimatedTime: '8-12 min',
     feedbackPrompt: 'Was this page helpful? Rate it or suggest improvements in docs feedback.',
@@ -39,7 +39,7 @@ oatty apps apps:list --project-id proj_123`,
                 },
                 {
                     type: 'recovery',
-                    content: 'If you only have vendor CLI syntax, run command search first and copy the canonical ID from results.'
+                    content: 'If you only have vendor CLI syntax, use the TUI to discover the matching Oatty command path first, then copy the exact canonical ID into your shell command.'
                 },
             ],
         },
@@ -47,22 +47,19 @@ oatty apps apps:list --project-id proj_123`,
             id: 'command-discovery',
             title: 'Command Discovery',
             paragraphs: [
-                'Use search first when you do not know the exact command path.',
-                'Keep search terms short and task-oriented, then narrow with specific nouns.',
-                'After selecting a candidate, inspect schema before execution.',
+                'Use the TUI when you do not know the exact command path yet.',
+                'After you import a catalog, rerun `oatty --help` or inspect command-specific help to confirm which top-level groups are available.',
+                'Once you know the exact canonical path, execute that command directly from the CLI.',
             ],
-            codeSample: `# Fuzzy discovery
-oatty search "project domain"
+            codeSample: `# Review built-in and imported top-level commands
+oatty --help
 
-# Narrow intent
-oatty search "projects list"
-
-# Review root help for available command groups
-oatty --help`,
+# Inspect one imported command once you know the path
+oatty <group> <command> --help`,
             callouts: [
                 {
                     type: 'tip',
-                    content: 'Prefer discovery output over memorized commands when catalogs change.'
+                    content: 'Prefer TUI discovery over memorized commands when catalogs change.'
                 },
                 {
                     type: 'advanced',
@@ -79,7 +76,7 @@ oatty --help`,
                 'Use help output to compare expected input names with your script variables.',
             ],
             codeSample: `# Inspect one command in detail
-oatty help apps apps:create
+oatty <group> <command> --help
 
 # Alternate: contextual help during TUI command selection
 # press F1 in Run Command`,
@@ -95,21 +92,19 @@ oatty help apps apps:create
             ],
         },
         {
-            id: 'execution-routing',
-            title: 'Execution Routing and Safety Model',
+            id: 'run-exact-commands',
+            title: 'Run Exact Commands and Workflows',
             paragraphs: [
-                'Execution mode follows command backing type and HTTP method.',
-                'Read-only requests are routed through safe execution paths.',
-                'Mutating requests are routed through non-destructive or destructive paths depending on method.',
+                'Run exact catalog-backed commands once you know the canonical path.',
+                'Use workflow subcommands for repeatable automation that lives in workflow files or imported workflow IDs.',
+                'Keep command inputs explicit so terminal runs are easy to review and reuse.',
             ],
-            codeSample: `# Read-only (HTTP GET)
-run_safe_command
+            codeSample: `# Run an imported command once the path is known
+oatty <group> <command> [flags]
 
-# Non-destructive write (HTTP POST/PUT/PATCH)
-run_command
-
-# Destructive write (HTTP DELETE)
-run_destructive_command`,
+# Preview and run workflows
+oatty workflow preview --file ./workflow.yaml
+oatty workflow run --file ./workflow.yaml --input env=staging`,
             callouts: [
                 {
                     type: 'tip',
@@ -130,11 +125,11 @@ run_destructive_command`,
                 'Capture stdout/stderr in your job logs for auditability and failure triage.',
             ],
             codeSample: `# Script-friendly command
-oatty workflow run deploy --input env=staging
+oatty workflow run --file ./workflow.yaml --input env=staging
 
 # Standard shell guard pattern
 set -euo pipefail
-oatty search "apps list"`,
+oatty <group> <command> [flags]`,
             callouts: [
                 {
                     type: 'fallback',

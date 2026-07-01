@@ -40,7 +40,7 @@ pub fn load_workflows_from_directory(root: &Path) -> Result<Vec<WorkflowDefiniti
         workflows.push(definition);
     }
 
-    workflows.sort_by(|left, right| left.workflow.cmp(&right.workflow));
+    workflows.sort_by_key(|workflow| workflow.workflow.clone());
     workflows.dedup_by(|left, right| left.workflow == right.workflow);
     Ok(workflows)
 }

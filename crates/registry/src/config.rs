@@ -51,6 +51,7 @@ impl RegistryConfig {
 
         let content = serde_json::to_string_pretty(&tokenized_config)?;
         std::fs::write(&path, content)?;
+        *self = tokenized_config;
 
         Ok(())
     }

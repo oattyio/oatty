@@ -8,7 +8,13 @@ use std::sync::{
 use std::time::Duration;
 
 use anyhow::{Result, anyhow};
-use axum::Router;
+use axum::{
+    Router,
+    extract::{Request, State},
+    http::{StatusCode, header::HOST},
+    middleware::{self, Next},
+    response::Response,
+};
 use rmcp::transport::streamable_http_server::{StreamableHttpServerConfig, StreamableHttpService, session::local::LocalSessionManager};
 use serde_json::Value;
 use tokio::sync::mpsc::UnboundedSender;
@@ -86,9 +92,12 @@ impl McpHttpServer {
             },
         );
 
-        let router = Router::new().nest_service("/mcp", service);
         let listener = tokio::net::TcpListener::bind(self.bind_address).await?;
         let bound_address = listener.local_addr()?;
+        let host_header_guard = HostHeaderGuard { bound_address };
+        let router = Router::new()
+            .nest_service("/mcp", service)
+            .route_layer(middleware::from_fn_with_state(host_header_guard, validate_host_header));
 
         let server_handle = tokio::spawn({
             let shutdown = cancellation_token.child_token();
@@ -181,4 +190,54 @@ fn spawn_session_monitor(
             }
         }
     })
+}
+
+#[derive(Debug, Clone, Copy)]
+struct HostHeaderGuard {
+    bound_address: SocketAddr,
+}
+
+async fn validate_host_header(State(guard): State<HostHeaderGuard>, request: Request, next: Next) -> Result<Response, StatusCode> {
+    if is_allowed_host_header(
+        request.headers().get(HOST).and_then(|value| value.to_str().ok()),
+        guard.bound_address,
+    ) {
+        Ok(next.run(request).await)
+    } else {
+        Err(StatusCode::FORBIDDEN)
+    }
+}
+
+fn is_allowed_host_header(host_header: Option<&str>, bound_address: SocketAddr) -> bool {
+    let Some(host_header) = host_header else {
+        return false;
+    };
+    let normalized_host = host_header.trim().to_ascii_lowercase();
+    let port = bound_address.port();
+    let allowed_hosts = [format!("localhost:{port}"), format!("127.0.0.1:{port}"), format!("[::1]:{port}")];
+
+    allowed_hosts.contains(&normalized_host)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn host_header_guard_allows_loopback_hosts_on_bound_port() {
+        let bound_address = "127.0.0.1:4567".parse().expect("loopback address parses");
+
+        assert!(is_allowed_host_header(Some("127.0.0.1:4567"), bound_address));
+        assert!(is_allowed_host_header(Some("localhost:4567"), bound_address));
+        assert!(is_allowed_host_header(Some("[::1]:4567"), bound_address));
+    }
+
+    #[test]
+    fn host_header_guard_rejects_unexpected_hosts_and_ports() {
+        let bound_address = "127.0.0.1:4567".parse().expect("loopback address parses");
+
+        assert!(!is_allowed_host_header(Some("example.com:4567"), bound_address));
+        assert!(!is_allowed_host_header(Some("127.0.0.1:9999"), bound_address));
+        assert!(!is_allowed_host_header(None, bound_address));
+    }
 }

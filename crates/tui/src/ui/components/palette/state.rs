@@ -506,7 +506,7 @@ impl PaletteState {
     /// Finalize the suggestions list for the UI: rank, truncate, ghost text, and
     /// state flags.
     fn finalize_suggestions(&mut self, items: &mut [SuggestionItem], theme: &dyn Theme) {
-        items.sort_by(|a, b| b.score.cmp(&a.score));
+        items.sort_by_key(|item| std::cmp::Reverse(item.score));
 
         self.suggestions = items.to_vec();
         self.is_suggestions_open = !self.suggestions.is_empty();
@@ -1045,7 +1045,7 @@ impl PaletteState {
             .filter(|record| matches!(record.key.scope, HistoryScope::PaletteCommand { .. }))
             .collect();
 
-        filtered.sort_by(|a, b| a.value.updated_at.cmp(&b.value.updated_at));
+        filtered.sort_by_key(|record| record.value.updated_at);
 
         for record in filtered {
             if let HistoryScope::PaletteCommand { command_id } = record.key.scope

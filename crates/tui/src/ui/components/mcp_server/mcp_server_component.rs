@@ -430,15 +430,11 @@ impl Component for McpHttpServerComponent {
                     Self::ensure_selected_config_visible(app);
                 }
             }
-            KeyCode::PageDown => {
-                if app.mcp_http_server.config_list_focus.get() {
-                    app.mcp_http_server.scroll_config_pages(1);
-                }
+            KeyCode::PageDown if app.mcp_http_server.config_list_focus.get() => {
+                app.mcp_http_server.scroll_config_pages(1);
             }
-            KeyCode::PageUp => {
-                if app.mcp_http_server.config_list_focus.get() {
-                    app.mcp_http_server.scroll_config_pages(-1);
-                }
+            KeyCode::PageUp if app.mcp_http_server.config_list_focus.get() => {
+                app.mcp_http_server.scroll_config_pages(-1);
             }
             _ => {}
         }

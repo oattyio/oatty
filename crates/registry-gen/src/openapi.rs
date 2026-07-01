@@ -134,18 +134,7 @@ fn extract_operation_summary(operation: &Map<String, Value>) -> (String, String)
 
 fn normalize_flags(flags: &mut [CommandFlag]) {
     assign_unique_short_names(flags);
-    flags.sort_by(|left, right| {
-        if left.required && right.required {
-            return left.name.cmp(&right.name);
-        }
-        if left.required {
-            return std::cmp::Ordering::Less;
-        }
-        if right.required {
-            return std::cmp::Ordering::Greater;
-        }
-        std::cmp::Ordering::Equal
-    });
+    flags.sort_by_cached_key(|flag| (!flag.required, flag.required.then(|| flag.name.clone())));
 }
 
 fn build_http_command_spec(document: &Value, operation: &Map<String, Value>, method: String, path: String) -> Result<HttpCommandSpec> {
