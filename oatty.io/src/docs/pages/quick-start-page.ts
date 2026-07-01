@@ -8,7 +8,7 @@ import type {DocsPage} from '../types';
 export const quickStartPage: DocsPage = {
     path: '/docs/quick-start',
     title: 'Quick Start',
-    summary: 'Start in the TUI, run a real command, run a workflow, then use CLI fallback for automation.',
+    summary: 'Start in the TUI, import a catalog, run a real command, then run a workflow with CLI fallback when needed.',
     learnBullets: [
         'Use the TUI layout, focus movement, and help affordances with confidence.',
         'Import a catalog and discover commands through the interactive TUI path.',
@@ -175,12 +175,47 @@ export const quickStartPage: DocsPage = {
                 {
                     type: 'recovery',
                     label: 'Command help',
-                    content: 'Read the help (Ctrl+h) for the command to understand required inputs and flags. Verify the Authorization header is configured and correct.',
+                    content: 'Read the help (F1) for the command to understand required inputs and flags. Verify the Authorization header is configured and correct.',
                 },
                 {
                     type: 'advanced',
                     content: 'For deeper discovery, use the Find/Browser view to inspect commands and send selected entries back to the runner.',
                     label: 'Advanced discovery',
+                },
+            ],
+        },
+        {
+            id: 'run-workflow',
+            title: 'Import and Run a Workflow',
+            paragraphs: [
+                'Open the Workflows view and import a workflow file from your machine or a URL.',
+                'Select the imported workflow, press Enter to open inputs, and provide any required values.',
+                'Run the workflow and inspect step status, logs, and final outcome from the workflow runner.',
+            ],
+            callouts: [
+                {
+                    type: 'expected',
+                    content: 'The workflow appears in the list, required inputs can be filled in, and the run reaches a terminal status with step-by-step visibility.'
+                },
+                {
+                    type: 'screenshot',
+                    label: 'Workflow execution flow',
+                    imageSrc: '/Oatty-workflow-flow.webp',
+                    imageAlt: 'Workflow import and execution flow',
+                    content: 'Workflow import, input collection, and run status in the TUI.',
+                },
+                {
+                    type: 'recovery',
+                    content: 'If import is blocked, verify the workflow file is valid YAML or JSON and that any required catalogs are already installed. If a run fails, inspect the first failing step before retrying.'
+                },
+                {
+                    type: 'fallback',
+                    content: 'CLI fallback: `oatty import ./workflow.yaml --kind workflow`, `oatty workflow preview --file ./workflow.yaml`, then `oatty workflow run --file ./workflow.yaml --input key=value`.'
+                },
+                {
+                    type: 'advanced',
+                    content: 'Use the Workflows Basics page for deeper guidance on input collection, pause/resume, and workflow run controls.',
+                    label: 'Continue learning',
                 },
             ],
         },

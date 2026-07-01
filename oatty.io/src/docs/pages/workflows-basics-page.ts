@@ -22,9 +22,9 @@ export const workflowsBasicsPage: DocsPage = {
             id: 'overview',
             title: 'Overview',
             paragraphs: [
-                'Workflows are defined in YAML files and imported into Oatty via the CLI or MCP HTTP server.',
+                'Workflows are defined in YAML or JSON files and can be imported into Oatty from the TUI or CLI.',
                 'Workflows are executed in the TUI using the Workflows Runner.',
-                'Workflows can be imported from local files or URLs, and can be managed via the CLI or MCP HTTP server.',
+                'Workflows can be imported from local files or URLs, then previewed or run from the TUI or CLI.',
             ],
             callouts: [
                 {
@@ -100,7 +100,7 @@ export const workflowsBasicsPage: DocsPage = {
                 },
                 {
                     type: 'fallback',
-                    content: 'CLI fallback: `oatty workflow list`, `oatty workflow preview <id>`, `oatty workflow run <id> --input key=value`.'
+                    content: 'CLI fallback: `oatty workflow list`, `oatty workflow preview --id <workflow-id>` or `--file ./workflow.yaml`, and `oatty workflow run --id <workflow-id> --input key=value` or `--file ./workflow.yaml`.'
                 },
             ],
         },

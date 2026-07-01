@@ -8,7 +8,7 @@ import type {DocsPage} from '../types';
 export const searchAndRunCommandsPage: DocsPage = {
     path: '/docs/learn/search-and-run-commands',
     title: 'Search for and Run Commands',
-    summary: 'Use the TUI command flow to find commands quickly, execute with confidence, and inspect results without after completion.',
+    summary: 'Use the TUI command flow to find commands quickly, execute with confidence, and inspect results after completion.',
     learnBullets: [
         'Run the primary TUI search-to-execution path.',
         'Use command help and hints before execution.',
@@ -161,7 +161,11 @@ export const searchAndRunCommandsPage: DocsPage = {
         {
             id: 'cli-fallback',
             title: 'CLI Fallback for Automation',
-            paragraphs: ['Use CLI search when you need non-interactive discovery.', 'Run commands directly in scripts and CI with explicit inputs.'],
+            paragraphs: [
+                'Use the TUI first when you need to discover the right command path.',
+                'After you know the exact canonical command, run that command directly in scripts and CI with explicit inputs.',
+                'Use `oatty --help` and imported command groups to verify what is available in the current environment.'
+            ],
             callouts: [
                 {type: 'expected', content: 'You can execute the same command path outside the TUI.'},
                 {
@@ -170,7 +174,7 @@ export const searchAndRunCommandsPage: DocsPage = {
                 },
                 {
                     type: 'advanced',
-                    content: 'Use TUI for discovery and validation first, then promote stable command lines into automation.'
+                    content: 'Use TUI for discovery and validation first, then promote the exact command line into automation once the catalog-backed command path is stable.'
                 },
             ],
         },

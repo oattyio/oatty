@@ -417,7 +417,8 @@ oatty import https://petstore3.swagger.io/api/v3/openapi.json --kind catalog
 oatty
 
 # Use CLI fallback for automation (after import)
-oatty search "list pets"</code></pre>
+oatty workflow list
+oatty workflow preview --file ./workflow.yaml</code></pre>
                                 <div class="l-flex l-flex--center l-flex--wrap">
                                     <a class="m-button" href="#install"
                                        @click="${(event: Event) => this.smoothScrollToSection(event, 'install')}">Full
@@ -987,12 +988,12 @@ oatty
 oatty import ./openapi.json --kind catalog
 # oatty import https://example.com/openapi.json --kind catalog
 
-# Search for commands
-oatty search "create order"
+# Discover commands in the TUI
+oatty
 
 # Run a workflow
 oatty workflow list
-oatty workflow run deploy --input env=staging</code></pre>
+oatty workflow run --file ./workflow.yaml --input env=staging</code></pre>
                             <p class="m-card__text">Use the guided flow in <a href="/docs/quick-start"
                                                                               @click="${this.navigate}">Quick Start
                                 docs</a>.</p>

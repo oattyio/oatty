@@ -243,6 +243,8 @@ fn map_catalog_persist_error_to_import_error(
 
 #[cfg(test)]
 mod tests {
+    use std::{ffi::OsStr, path::Path};
+
     use super::*;
     use indexmap::IndexSet;
     use oatty_types::{EnvSource, EnvVar, manifest::RegistryManifest};
@@ -315,5 +317,9 @@ mod tests {
 
         assert_eq!(merged.base_urls, vec!["https://api.override.example.com".to_string()]);
         assert_eq!(merged.base_url_index, 0);
+        assert_eq!(
+            Path::new("config.yml.temp").with_extension("").file_prefix(),
+            Some(OsStr::new("config"))
+        );
     }
 }
