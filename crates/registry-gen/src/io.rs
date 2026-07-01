@@ -544,7 +544,7 @@ fn collect_return_fields(schema: &SchemaProperty, prefix: &str, output: &mut Vec
                 return;
             };
             let mut entries = properties.iter().collect::<Vec<_>>();
-            entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+            entries.sort_by_key(|(property_name, _)| *property_name);
             for (property_name, property_schema) in entries {
                 let path = if prefix.is_empty() {
                     property_name.clone()
