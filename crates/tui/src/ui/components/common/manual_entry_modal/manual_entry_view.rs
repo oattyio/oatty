@@ -282,10 +282,8 @@ fn handle_numeric_input(state: &mut ManualEntryState, key: KeyEvent) {
         KeyCode::Left => buffer.move_left(),
         KeyCode::Right => buffer.move_right(),
         KeyCode::Backspace => buffer.backspace(),
-        KeyCode::Char(character) => {
-            if allow_numeric_char(buffer, character, kind) {
-                buffer.insert_char(character);
-            }
+        KeyCode::Char(character) if allow_numeric_char(buffer, character, kind) => {
+            buffer.insert_char(character);
         }
         _ => {}
     }
@@ -307,10 +305,8 @@ fn handle_enum_input(state: &mut ManualEntryState, key: KeyEvent) {
         KeyCode::Up => enum_state.select_previous(),
         KeyCode::Down => enum_state.select_next(),
         KeyCode::Home => enum_state.select(0),
-        KeyCode::End => {
-            if !enum_state.options.is_empty() {
-                enum_state.select(enum_state.options.len() - 1);
-            }
+        KeyCode::End if !enum_state.options.is_empty() => {
+            enum_state.select(enum_state.options.len() - 1);
         }
         _ => {}
     }

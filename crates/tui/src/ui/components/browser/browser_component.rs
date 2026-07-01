@@ -125,15 +125,11 @@ impl Component for BrowserComponent {
                 };
             }
 
-            MouseEventKind::ScrollDown => {
-                if self.layout.list_area.contains(pos) {
-                    app.browser.list_state.scroll_down_by(1);
-                }
+            MouseEventKind::ScrollDown if self.layout.list_area.contains(pos) => {
+                app.browser.list_state.scroll_down_by(1);
             }
-            MouseEventKind::ScrollUp => {
-                if self.layout.list_area.contains(pos) {
-                    app.browser.list_state.scroll_up_by(1);
-                }
+            MouseEventKind::ScrollUp if self.layout.list_area.contains(pos) => {
+                app.browser.list_state.scroll_up_by(1);
             }
             _ => {}
         }
