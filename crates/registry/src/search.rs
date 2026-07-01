@@ -150,7 +150,7 @@ impl SearchHandle {
             })
             .collect::<Vec<(i64, SearchResult)>>();
 
-        scored_results.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.canonical_id.cmp(&right.1.canonical_id)));
+        scored_results.sort_by_key(|(score, result)| (std::cmp::Reverse(*score), result.canonical_id.clone()));
 
         Ok(scored_results
             .into_iter()
@@ -274,7 +274,7 @@ pub fn suggest_nearest_canonical_ids(registry: &CommandRegistry, query: &str, li
         })
         .collect::<Vec<(i64, String)>>();
 
-    scored_matches.sort_by(|left, right| right.0.cmp(&left.0).then_with(|| left.1.cmp(&right.1)));
+    scored_matches.sort_by_key(|(score, canonical_id)| (std::cmp::Reverse(*score), canonical_id.clone()));
     scored_matches
         .into_iter()
         .map(|(_, canonical_id)| canonical_id)
@@ -478,7 +478,7 @@ fn list_vendor_scoped_results(
         .filter_map(|entry| entry.result.clone())
         .collect::<Vec<SearchResult>>();
 
-    results.sort_by(|left, right| left.canonical_id.cmp(&right.canonical_id));
+    results.sort_by_key(|result| result.canonical_id.clone());
     results.truncate(result_limit);
     results
 }

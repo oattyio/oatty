@@ -236,7 +236,7 @@ pub fn write_manifest_json(input: ManifestInput, output: PathBuf) -> Result<()> 
 fn create_commands_from_document(document: &serde_json::Value, prefix_override: Option<String>) -> Result<(String, Vec<CommandSpec>)> {
     let vendor = prefix_override.unwrap_or_else(|| derive_vendor_from_document(document));
     let mut commands = derive_commands_from_openapi(document, &vendor)?;
-    commands.sort_by(|a, b| a.group.cmp(&b.group).then(a.name.cmp(&b.name)));
+    commands.sort_by_key(|command| (command.group.clone(), command.name.clone()));
     Ok((vendor, commands))
 }
 /// Builds a collection of provider contracts from a list of command specifications.
@@ -532,7 +532,7 @@ fn convert_schema_to_return_contract(schema: Option<&SchemaProperty>) -> Provide
 
     let mut fields = Vec::new();
     collect_return_fields(root, "", &mut fields);
-    fields.sort_by(|left, right| left.name.cmp(&right.name));
+    fields.sort_by_key(|field| field.name.clone());
 
     ProviderReturnContract { fields }
 }

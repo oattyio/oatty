@@ -151,7 +151,7 @@ pub fn infer_columns(arr: &[Value]) -> Vec<String> {
         .into_iter()
         .map(|header| (header.clone(), *score.get(&header).unwrap_or(&0)))
         .collect();
-    keys.sort_by(|a, b| b.1.cmp(&a.1));
+    keys.sort_by_key(|(_, score)| std::cmp::Reverse(*score));
     let mut cols: Vec<String> = keys.into_iter().take(6).map(|(header, _)| header).collect();
     if cols.len() < 4 {
         // Ensure at least 4 columns by adding additional keys by frequency of
@@ -165,7 +165,7 @@ pub fn infer_columns(arr: &[Value]) -> Vec<String> {
             }
         }
         let mut extras: Vec<(String, usize)> = freq.into_iter().filter(|(header, _)| !cols.contains(header)).collect();
-        extras.sort_by(|a, b| b.1.cmp(&a.1));
+        extras.sort_by_key(|(_, frequency)| std::cmp::Reverse(*frequency));
         for (header, _) in extras.into_iter() {
             cols.push(header);
             if cols.len() >= 4 {
@@ -280,11 +280,7 @@ pub fn get_scored_keys(map: &Map<String, Value>) -> Vec<String> {
 /// application so stable identifiers are promoted.
 pub fn get_scored_keys_with_context(map: &Map<String, Value>, context: KeyScoreContext) -> Vec<String> {
     let mut keys: Vec<String> = map.keys().cloned().collect();
-    keys.sort_by(|a, b| {
-        let sa = score_key_with_context(a, context);
-        let sb = score_key_with_context(b, context);
-        sb.cmp(&sa)
-    });
+    keys.sort_by_key(|key| std::cmp::Reverse(score_key_with_context(key, context)));
     keys
 }
 /// Applies frequency-based scoring boost for common API properties.

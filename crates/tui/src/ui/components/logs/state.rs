@@ -207,7 +207,7 @@ impl LogsState {
                 .enumerate()
                 .filter_map(|(index, entry)| fuzzy_score(&entry.to_string(), query).map(|score| (score, index)))
                 .collect();
-            scored.sort_by(|left, right| right.0.cmp(&left.0));
+            scored.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
             self.filtered_indices = scored.into_iter().map(|(_, index)| index).collect();
         }
 

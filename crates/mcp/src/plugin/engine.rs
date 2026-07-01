@@ -634,7 +634,7 @@ impl PluginEngine {
             specs.push(CommandSpec::new_mcp(group, command_name, summary, positionals, flags, mcp_spec));
         }
 
-        specs.sort_by(|a, b| a.name.cmp(&b.name));
+        specs.sort_by_key(|spec| spec.name.clone());
         specs
     }
 

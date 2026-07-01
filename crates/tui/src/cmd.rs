@@ -304,10 +304,11 @@ fn list_dir_contents(path: PathBuf) -> ExecOutcome {
                     is_directory: entry.metadata().is_ok_and(|f| f.is_dir()),
                 })
                 .collect();
-            entries.sort_by(|a, b| {
-                b.is_directory
-                    .cmp(&a.is_directory)
-                    .then(a.path.file_name().cmp(&b.path.file_name()))
+            entries.sort_by_key(|entry| {
+                (
+                    std::cmp::Reverse(entry.is_directory),
+                    entry.path.file_name().map(|file_name| file_name.to_os_string()),
+                )
             });
             if let Some(parent) = path.parent() {
                 let mut contents: Vec<DirectoryEntry> = Vec::with_capacity(entries.len() + 1);
@@ -350,7 +351,7 @@ fn apply_palette_error(app: &mut App, error: String) -> ExecOutcome {
 async fn execute_load_plugins(app: &mut App<'_>) -> ExecOutcome {
     let plugin_engine = app.ctx.plugin_engine.clone();
     let mut plugin_details = plugin_engine.list_plugins().await;
-    plugin_details.sort_by(|lhs, rhs| lhs.name.cmp(&rhs.name));
+    plugin_details.sort_by_key(|plugin_detail| plugin_detail.name.clone());
     app.plugins.table.replace_items(plugin_details);
 
     ExecOutcome::default()

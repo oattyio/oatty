@@ -116,7 +116,7 @@ impl ProviderSuggestionBuilder {
                         score,
                     });
                 }
-                items.sort_by(|a, b| b.score.cmp(&a.score));
+                items.sort_by_key(|item| std::cmp::Reverse(item.score));
                 ProviderSuggestionSet::ready(items)
             }
             CacheLookupOutcome::Pending(pending) => ProviderSuggestionSet::with_pending(Vec::new(), pending),

@@ -117,7 +117,7 @@ pub fn list_manifest_records() -> Result<Vec<WorkflowManifestRecord>> {
         });
     }
 
-    records.sort_by(|left, right| left.definition.workflow.cmp(&right.definition.workflow));
+    records.sort_by_key(|record| record.definition.workflow.clone());
     Ok(records)
 }
 

@@ -157,7 +157,7 @@ impl<'a> CollectorViewState<'a> {
             })
             .filter(|(score, _)| *score > 0)
             .collect();
-        scores.sort_by(|a, b| b.0.cmp(&a.0));
+        scores.sort_by_key(|(score, _)| std::cmp::Reverse(*score));
         let dataset = scores.into_iter().map(|(_, index)| items[index].clone()).collect();
 
         let json = Value::Array(dataset);
