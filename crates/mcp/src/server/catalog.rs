@@ -1000,7 +1000,9 @@ fn mutate_catalog_with_reload(
 mod tests {
     use super::*;
     use indexmap::IndexSet;
+    use oatty_registry::RegistryConfig;
     use oatty_types::{EnvSource, EnvVar, manifest::RegistryManifest};
+    use std::sync::{Arc, Mutex};
 
     #[test]
     fn map_registry_catalog_mutation_error_returns_not_found_for_missing_catalog() {
@@ -1182,5 +1184,62 @@ mod tests {
             .cloned()
             .unwrap_or_default();
         assert_eq!(masked_headers.len(), 1);
+    }
+
+    #[test]
+    fn edit_catalog_headers_masks_secret_like_raw_values_after_save() {
+        let temporary_directory = tempfile::tempdir().expect("temporary directory is created");
+        let registry_config_path = temporary_directory.path().join("registry.json");
+        let registry_catalogs_path = temporary_directory.path().join("catalogs");
+        let registry_config_path = registry_config_path.to_string_lossy().to_string();
+        let registry_catalogs_path = registry_catalogs_path.to_string_lossy().to_string();
+
+        temp_env::with_vars(
+            [
+                ("REGISTRY_CONFIG_PATH", Some(registry_config_path.as_str())),
+                ("REGISTRY_CATALOGS_PATH", Some(registry_catalogs_path.as_str())),
+                ("OATTY_SECRETS_BACKEND", Some("env")),
+            ],
+            || {
+                let mut command_registry = CommandRegistry::default();
+                command_registry.config = RegistryConfig {
+                    catalogs: Some(vec![RegistryCatalog {
+                        title: "Datadog".to_string(),
+                        description: String::new(),
+                        vendor: Some("datadog".to_string()),
+                        manifest_path: String::new(),
+                        import_source: None,
+                        import_source_type: None,
+                        headers: IndexSet::new(),
+                        base_urls: vec!["https://api.example.com".to_string()],
+                        base_url_index: 0,
+                        manifest: None,
+                        is_enabled: true,
+                    }]),
+                };
+                let registry = Arc::new(Mutex::new(command_registry));
+                let secret_value = "sk_test_1234567890abcdef1234567890abcdef".to_string();
+                let request = CatalogEditHeadersRequest {
+                    catalog_id: "Datadog".to_string(),
+                    mode: Some(CatalogHeaderEditMode::Upsert),
+                    headers: vec![CatalogHeaderEditRow {
+                        key: "Authorization".to_string(),
+                        value: Some(secret_value.clone()),
+                        source: None,
+                        effective: None,
+                    }],
+                };
+
+                let response = edit_catalog_headers(&registry, &request).expect("header edit succeeds");
+                let masked_preview = response["masked_headers"][0]["masked_value_preview"]
+                    .as_str()
+                    .expect("masked preview is returned");
+                let source = response["masked_headers"][0]["source"].as_str().expect("source is returned");
+
+                assert_eq!(masked_preview, "••••••••••••••••");
+                assert_eq!(source, "secret");
+                assert_ne!(masked_preview, secret_value);
+            },
+        );
     }
 }
