@@ -692,6 +692,7 @@ impl App<'_> {
             );
             return Vec::new();
         };
+        let registry_snapshot = registry_snapshot.clone();
         let runner = RegistryCommandRunner::new(registry_snapshot);
         let preflight_violations = runner.validate_workflow_execution_readiness(&run_state.workflow);
         if !preflight_violations.is_empty() {

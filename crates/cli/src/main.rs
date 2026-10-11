@@ -1155,10 +1155,10 @@ fn run_workflow(registry: Arc<Mutex<CommandRegistry>>, json_output: bool, matche
         );
     }
 
-    let registry_snapshot = {
-        let guard = registry.lock().expect("could not obtain lock on registry");
-        guard.clone()
-    };
+    let registry_snapshot = registry
+        .lock()
+        .map_err(|error| anyhow::anyhow!("could not obtain lock on registry: {error}"))?
+        .clone();
 
     let runner = RegistryCommandRunner::new(registry_snapshot);
     let preflight_violations = runner.validate_workflow_execution_readiness(&state.workflow);

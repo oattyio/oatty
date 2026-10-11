@@ -1,9 +1,9 @@
 //! Workflow execution tool handlers.
 
-use crate::server::workflow::errors::{execution_error, internal_error, invalid_params_error};
+use crate::server::workflow::errors::{execution_error, invalid_params_error};
 use crate::server::workflow::services::history::{WorkflowHistoryEntry, append_history_entry};
 use crate::server::workflow::tools::common::{
-    build_preflight_validation_error, collect_workflow_preflight_violations, resolve_runtime_workflow,
+    acquire_registry_snapshot, build_preflight_validation_error, collect_workflow_preflight_violations, resolve_runtime_workflow,
 };
 use crate::server::workflow::tools::types::{WorkflowPreviewRequest, WorkflowPreviewView, WorkflowRunRequest};
 use oatty_engine::{
@@ -83,19 +83,9 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
         ));
     }
 
-    let registry_snapshot = command_registry
-        .lock()
-        .map_err(|error| {
-            internal_error(
-                "WORKFLOW_RUN_REGISTRY_LOCK_FAILED",
-                format!("registry lock failed: {error}"),
-                serde_json::json!({ "workflow_id": state.workflow.identifier }),
-                "Retry workflow_run.",
-            )
-        })?
-        .clone();
-    let runner = RegistryCommandRunner::new(registry_snapshot);
-    let violations = collect_workflow_preflight_violations(&state.workflow, command_registry)?;
+    let registry_snapshot = acquire_registry_snapshot(command_registry, &state.workflow.identifier, "WORKFLOW_RUN_REGISTRY_LOCK_FAILED")?;
+
+    let violations = collect_workflow_preflight_violations(&state.workflow, &registry_snapshot)?;
     if let Some(error) = build_preflight_validation_error(
         &state.workflow.identifier,
         violations,
@@ -105,6 +95,8 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
     ) {
         return Err(error);
     }
+
+    let runner = RegistryCommandRunner::new(registry_snapshot);
 
     let run_identifier = format!("run-{}-{}", state.workflow.identifier, chrono::Utc::now().timestamp_millis());
     let engine_run_request = EngineWorkflowRunRequest {

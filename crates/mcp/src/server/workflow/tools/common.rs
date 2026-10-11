@@ -168,144 +168,98 @@ pub(crate) fn resolve_workflow_document_source(
     ))
 }
 
-/// Resolves a `WorkflowDocumentSource::Identifier` to a `RuntimeWorkflow` by
-/// looking up the stored manifest record.
+/// Runtime workflow sources exclude filesystem paths, which are supported only
+/// by manifest validation and save operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RuntimeWorkflowSource<'a> {
+    Identifier(&'a str),
+    Inline(&'a str),
+}
+
+/// Resolves a stored workflow identifier to a runtime workflow.
 ///
 /// Returns an error when the identifier is not found in the manifest store.
-fn resolve_identifier_to_runtime_workflow(source: &WorkflowDocumentSource) -> Result<RuntimeWorkflow> {
-    let identifier = match source {
-        WorkflowDocumentSource::Identifier { identifier } => identifier.as_str(),
-        other => return Err(anyhow::anyhow!("expected identifier source, found {:?}", other)),
-    };
-
+fn resolve_identifier_to_runtime_workflow(identifier: &str) -> Result<RuntimeWorkflow> {
     let Some(record) = find_manifest_record(identifier)? else {
         return Err(anyhow::anyhow!("workflow '{}' was not found", identifier));
     };
     oatty_engine::workflow::document::runtime_workflow_from_definition(&record.definition)
 }
 
-/// Resolves a `WorkflowDocumentSource::Inline` into a `RuntimeWorkflow` by
-/// parsing the raw manifest content.
+/// Resolves inline manifest content into a runtime workflow.
 ///
 /// Returns an error when the manifest cannot be parsed.
-fn resolve_inline_to_runtime_workflow(source: &WorkflowDocumentSource, format_hint: Option<&str>) -> Result<RuntimeWorkflow> {
-    let content = match source {
-        WorkflowDocumentSource::Inline { content } => content.as_str(),
-        other => return Err(anyhow::anyhow!("expected inline source, found {:?}", other)),
-    };
+fn resolve_inline_to_runtime_workflow(content: &str, format_hint: Option<&str>) -> Result<RuntimeWorkflow> {
     let (definition, _) = parse_manifest_content(content, format_hint)?;
     oatty_engine::workflow::document::runtime_workflow_from_definition(&definition)
 }
 
-/// Resolves a `WorkflowDocumentSource::Path` into a `RuntimeWorkflow` by
-/// reading the manifest file from disk and parsing it.
-///
-/// Returns an error when the file does not exist or cannot be read.
-fn resolve_path_to_runtime_workflow(source: &WorkflowDocumentSource, format_hint: Option<&str>) -> Result<RuntimeWorkflow> {
-    let path = match source {
-        WorkflowDocumentSource::Path { path } => path,
-        other => return Err(anyhow::anyhow!("expected path source, found {:?}", other)),
-    };
-
-    if !path.exists() {
-        return Err(anyhow::anyhow!("input path '{}' does not exist", path.display()));
-    }
-
-    let content = std::fs::read_to_string(path).map_err(|error| anyhow::anyhow!("failed to read '{}': {error}", path.display()))?;
-    let (definition, _) = parse_manifest_content(&content, format_hint)?;
-    oatty_engine::workflow::document::runtime_workflow_from_definition(&definition)
-}
-
-/// Resolves a `WorkflowDocumentSource` into a `RuntimeWorkflow` by dispatching
-/// to the appropriate resolver based on the variant.
-fn resolve_document_to_runtime_workflow(source: &WorkflowDocumentSource, format_hint: Option<&str>) -> Result<RuntimeWorkflow> {
-    match source {
-        WorkflowDocumentSource::Identifier { .. } => resolve_identifier_to_runtime_workflow(source),
-        WorkflowDocumentSource::Inline { .. } => resolve_inline_to_runtime_workflow(source, format_hint),
-        WorkflowDocumentSource::Path { .. } => resolve_path_to_runtime_workflow(source, format_hint),
-    }
-}
-
-/// Constructs a `WorkflowDocumentSource` from optional identifier and inline
-/// content values, enforcing that at most one is provided.
+/// Selects a borrowed runtime workflow source from optional identifier and
+/// inline content values, enforcing that exactly one is provided.
 ///
 /// This is the focused helper used by runtime workflow operations that only
 /// support identifier or inline content (not filesystem paths).
-pub(crate) fn resolve_runtime_workflow_source(
-    workflow_identifier: Option<&str>,
-    manifest_content: Option<&str>,
-) -> Result<WorkflowDocumentSource, ErrorData> {
-    let provided_source_count = [workflow_identifier.is_some(), manifest_content.is_some()]
-        .into_iter()
-        .filter(|is_present| *is_present)
-        .count();
-
-    if provided_source_count == 0 {
-        return Err(invalid_params_error(
-            "WORKFLOW_RUNTIME_SOURCE_MISSING",
-            "workflow requires one source: workflow_id or manifest_content",
-            serde_json::json!({
-                "has_workflow_id": false,
-                "has_manifest_content": false,
-            }),
-            "Provide workflow_id or inline manifest_content.",
-        ));
+fn resolve_runtime_workflow_source<'a>(
+    workflow_identifier: Option<&'a str>,
+    manifest_content: Option<&'a str>,
+) -> Result<RuntimeWorkflowSource<'a>> {
+    match (workflow_identifier, manifest_content) {
+        (Some(_), Some(_)) => Err(anyhow::anyhow!(
+            "workflow requires exactly one source: workflow_id or manifest_content"
+        )),
+        (None, None) => Err(anyhow::anyhow!("workflow requires one source: workflow_id or manifest_content")),
+        (Some(identifier), None) => Ok(RuntimeWorkflowSource::Identifier(identifier)),
+        (None, Some(content)) => Ok(RuntimeWorkflowSource::Inline(content)),
     }
-
-    if provided_source_count > 1 {
-        return Err(invalid_params_error(
-            "WORKFLOW_RUNTIME_SOURCE_CONFLICT",
-            "workflow requires exactly one source: workflow_id or manifest_content",
-            serde_json::json!({
-                "has_workflow_id": true,
-                "has_manifest_content": true,
-            }),
-            "Provide only one source and retry.",
-        ));
-    }
-
-    if let Some(identifier) = workflow_identifier {
-        return Ok(WorkflowDocumentSource::Identifier {
-            identifier: identifier.to_string(),
-        });
-    }
-
-    Ok(WorkflowDocumentSource::Inline {
-        content: manifest_content.unwrap().to_string(),
-    })
 }
 
 /// This is the main entry point used by all runtime workflow operations. It first
 /// resolves the document source, then deserializes it into a [`RuntimeWorkflow`].
-#[allow(clippy::single_match)]
 pub fn resolve_runtime_workflow(
     workflow_identifier: Option<&str>,
     manifest_content: Option<&str>,
     format_hint: Option<&str>,
 ) -> Result<RuntimeWorkflow> {
-    let source = resolve_runtime_workflow_source(workflow_identifier, manifest_content)?;
-
-    resolve_document_to_runtime_workflow(&source, format_hint)
+    match resolve_runtime_workflow_source(workflow_identifier, manifest_content)? {
+        RuntimeWorkflowSource::Identifier(identifier) => resolve_identifier_to_runtime_workflow(identifier),
+        RuntimeWorkflowSource::Inline(content) => resolve_inline_to_runtime_workflow(content, format_hint),
+    }
 }
 
-/// Collects structured preflight violations for workflow command/catalog readiness.
-pub fn collect_workflow_preflight_violations(
-    workflow: &RuntimeWorkflow,
+/// Acquires an immutable snapshot of the command registry.
+///
+/// Locks the mutex, clones the registry, and returns the snapshot.
+/// Returns an `ErrorData` mapped from poisoned-lock errors using the
+/// provided workflow identifier and error code.
+pub(crate) fn acquire_registry_snapshot(
     command_registry: &Arc<Mutex<CommandRegistry>>,
-) -> Result<Vec<Value>, ErrorData> {
-    let registry_snapshot = command_registry
+    workflow_id: &str,
+    error_code: &str,
+) -> Result<CommandRegistry, ErrorData> {
+    command_registry
         .lock()
         .map_err(|error| {
             internal_error(
-                "WORKFLOW_COMMAND_VALIDATION_REGISTRY_LOCK_FAILED",
+                error_code,
                 format!("registry lock failed: {error}"),
-                serde_json::json!({ "workflow_id": workflow.identifier }),
-                "Retry workflow validation or run.",
+                serde_json::json!({ "workflow_id": workflow_id }),
+                "Retry the workflow request.",
             )
-        })?
-        .clone();
-    let available_catalogs = registry_snapshot.config.catalogs.clone().unwrap_or_default();
-    let runner = RegistryCommandRunner::new(registry_snapshot.clone());
+        })
+        .map(|guard| guard.clone())
+}
+
+/// Collects structured preflight violations for workflow command/catalog readiness.
+///
+/// Accepts a borrowed `CommandRegistry` snapshot so callers can perform
+/// a single clone upfront and share the result across multiple read-only
+/// validation passes.
+pub fn collect_workflow_preflight_violations(
+    workflow: &RuntimeWorkflow,
+    command_registry: &CommandRegistry,
+) -> Result<Vec<Value>, ErrorData> {
+    let available_catalogs = command_registry.config.catalogs.clone().unwrap_or_default();
+    let runner = RegistryCommandRunner::new(command_registry.clone());
 
     let violations: Vec<Value> = runner
         .validate_workflow_execution_readiness(workflow)
@@ -369,37 +323,26 @@ pub fn collect_workflow_preflight_violations(
 
     let mut all_violations = violations;
     all_violations.extend(missing_catalog_violations);
-    all_violations.extend(collect_provider_select_value_field_violations(workflow, &registry_snapshot));
-    all_violations.extend(collect_step_template_output_path_violations(workflow, &registry_snapshot));
+    all_violations.extend(collect_provider_select_value_field_violations(workflow, command_registry));
+    all_violations.extend(collect_step_template_output_path_violations(workflow, command_registry));
 
     Ok(all_violations)
 }
 
 /// Collects non-fatal workflow validation warnings.
-/// Returns a vector of warning objects covering quoted template binding
-/// issues, conditional dependency risks, step template array access,
-/// mutation preflight concerns, and endpoint context warnings.
+///
+/// Accepts a borrowed `CommandRegistry` snapshot so callers can perform
+/// a single clone upfront and share the result across multiple read-only
+/// validation passes.
 #[allow(clippy::single_match)]
 pub fn collect_workflow_validation_warnings(
     workflow: &RuntimeWorkflow,
-    command_registry: &Arc<Mutex<CommandRegistry>>,
+    command_registry: &CommandRegistry,
 ) -> Result<Vec<Value>, ErrorData> {
-    let registry_snapshot = command_registry
-        .lock()
-        .map_err(|error| {
-            internal_error(
-                "WORKFLOW_REGISTRY_LOCK_FAILED",
-                error.to_string(),
-                serde_json::json!({}),
-                "Retry the request.",
-            )
-        })?
-        .clone();
-
-    let mut warnings = collect_quoted_template_non_string_binding_warnings(workflow, &registry_snapshot);
+    let mut warnings = collect_quoted_template_non_string_binding_warnings(workflow, command_registry);
     warnings.extend(collect_conditional_dependency_warnings(workflow));
-    warnings.extend(collect_step_template_array_index_warnings(workflow, &registry_snapshot));
-    warnings.extend(collect_mutation_preflight_warnings(workflow, &registry_snapshot));
+    warnings.extend(collect_step_template_array_index_warnings(workflow, command_registry));
+    warnings.extend(collect_mutation_preflight_warnings(workflow, command_registry));
     warnings.extend(collect_endpoint_context_warnings(workflow));
     Ok(warnings)
 }
@@ -1855,13 +1798,13 @@ mod tests {
     #[test]
     fn resolve_runtime_workflow_source_accepts_identifier() {
         let source = super::resolve_runtime_workflow_source(Some("my-workflow"), None).expect("identifier source");
-        assert!(matches!(source, super::WorkflowDocumentSource::Identifier { .. }));
+        assert!(matches!(source, super::RuntimeWorkflowSource::Identifier("my-workflow")));
     }
 
     #[test]
     fn resolve_runtime_workflow_source_accepts_inline_content() {
         let source = super::resolve_runtime_workflow_source(None, Some("workflow: test")).expect("inline source");
-        assert!(matches!(source, super::WorkflowDocumentSource::Inline { .. }));
+        assert!(matches!(source, super::RuntimeWorkflowSource::Inline("workflow: test")));
     }
 
     #[test]

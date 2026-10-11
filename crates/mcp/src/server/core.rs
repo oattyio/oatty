@@ -1823,6 +1823,15 @@ mod tests {
 
     const MAX_WORKFLOW_TOOL_METADATA_BYTES: usize = 16 * 1024;
 
+    fn default_workflow_tools() -> Vec<rmcp::model::Tool> {
+        OattyMcpCore::default_tool_router()
+            .list_all()
+            .into_iter()
+            .filter(|tool| tool.name.starts_with("workflow_"))
+            .collect()
+    }
+
+    #[cfg(feature = "workflow_admin_tools")]
     fn workflow_tools() -> Vec<rmcp::model::Tool> {
         OattyMcpCore::tool_router()
             .list_all()
@@ -1833,7 +1842,7 @@ mod tests {
 
     #[test]
     fn default_workflow_tool_surface_matches_the_reduced_contract() {
-        let workflow_tools = workflow_tools();
+        let workflow_tools = default_workflow_tools();
         let workflow_tool_names = workflow_tools.iter().map(|tool| tool.name.as_ref()).collect::<Vec<_>>();
 
         assert_eq!(

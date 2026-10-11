@@ -1,13 +1,142 @@
 //! Workflow input preview and resolution handlers.
+//!
+//! This module provides two entry points for inspecting and resolving workflow inputs:
+//! - [`preview_inputs`] returns a read-only view of input status without evaluating providers.
+//! - [`resolve_inputs`] fully resolves inputs, including provider-driven values, and returns
+//!   a readiness signal.
+//!
+//! Both functions share a common initialization path that builds a [`WorkflowRunState`],
+//! applies caller-supplied values and defaults, then performs input-level validation.
+//! The shared helpers below keep the two functions focused on their distinct contracts:
+//! preview never fails on validation; resolution fails with `WORKFLOW_INPUT_VALIDATION_FAILED`.
 
 use crate::server::workflow::errors::{execution_error, invalid_params_error, validation_error_with_violations};
 use crate::server::workflow::tools::common::resolve_runtime_workflow;
 use crate::server::workflow::tools::types::{WorkflowPreviewRequest, WorkflowResolveInputsRequest};
-use oatty_engine::{ProviderBindingOutcome, WorkflowRunState};
-use oatty_types::workflow::validate_candidate_value;
+use oatty_engine::WorkflowRunState;
+use oatty_types::workflow::{RuntimeWorkflow, validate_candidate_value};
 use rmcp::model::ErrorData;
 use serde_json::Value;
 
+/// A typed validation failure for a single input.
+///
+/// This struct captures the input name, a human-readable error message, and the
+/// candidate value that failed validation. It is intentionally unformatted so that
+/// callers can serialize it in the shape they require (JSON violations in errors,
+/// detail rows in previews).
+struct InputValidationFailure {
+    /// The input name that failed validation.
+    input_name: String,
+    /// A human-readable description of the validation failure.
+    message: String,
+    /// The candidate value that was validated (if one existed).
+    actual_value: Option<Value>,
+}
+
+/// Initialize a [`WorkflowRunState`] from a workflow and optional caller-provided inputs.
+///
+/// This helper encapsulates the common initialization sequence shared by preview and
+/// resolution paths:
+/// 1. Create a fresh workflow run state from the supplied workflow.
+/// 2. Apply any caller-provided input values.
+/// 3. Apply default values from the workflow definition.
+///
+/// # Arguments
+///
+/// * `workflow` — The runtime workflow to initialize state for.
+/// * `provided_inputs` — Optional map of input names to candidate values.
+///
+/// # Returns
+///
+/// A [`WorkflowRunState`] with provided inputs and defaults applied, ready for
+/// further processing such as provider evaluation or validation.
+fn initialize_input_state(
+    workflow: &RuntimeWorkflow,
+    provided_inputs: Option<&std::collections::HashMap<String, Value>>,
+) -> WorkflowRunState {
+    let mut state = WorkflowRunState::new(workflow.clone());
+    if let Some(inputs) = provided_inputs {
+        for (input_name, value) in inputs {
+            state.set_input_value(input_name, value.clone());
+        }
+    }
+    state.apply_input_defaults();
+    state
+}
+
+/// Collect the names of required inputs that are missing from the state.
+///
+/// Returns input names in the order they appear in the workflow definition
+/// (deterministic iteration order).
+///
+/// # Arguments
+///
+/// * `state` — The initialized workflow run state.
+/// * `workflow` — The runtime workflow definition.
+///
+/// # Returns
+///
+/// A vector of input names that are declared required but have no value in the state.
+fn collect_missing_required_inputs(state: &WorkflowRunState, workflow: &RuntimeWorkflow) -> Vec<String> {
+    workflow
+        .inputs
+        .iter()
+        .filter(|(name, definition)| definition.is_required() && !state.run_context.inputs.contains_key(*name))
+        .map(|(name, _)| name.clone())
+        .collect()
+}
+
+/// Collect validation failures for every input that has a candidate value.
+///
+/// Iterates over all inputs in workflow declaration order, checks each one that
+/// currently has a value in the state, and returns typed failures for any that
+/// fail the declarative validation rules.
+///
+/// # Arguments
+///
+/// * `state` — The initialized workflow run state.
+/// * `workflow` — The runtime workflow definition.
+///
+/// # Returns
+///
+/// A vector of [`InputValidationFailure`] for inputs that failed validation.
+/// The vector is empty if all inputs with values passed validation.
+fn collect_input_validation_failures(state: &WorkflowRunState, workflow: &RuntimeWorkflow) -> Vec<InputValidationFailure> {
+    workflow
+        .inputs
+        .iter()
+        .filter_map(|(input_name, definition)| {
+            let candidate = state.run_context.inputs.get(input_name)?;
+            definition
+                .validate
+                .as_ref()
+                .and_then(|validation| validate_candidate_value(candidate, validation).err())
+                .map(|error| InputValidationFailure {
+                    input_name: input_name.clone(),
+                    message: error.to_string(),
+                    actual_value: Some(candidate.clone()),
+                })
+        })
+        .collect()
+}
+
+/// Preview the inputs for a workflow without evaluating provider bindings.
+///
+/// Returns a read-only view of input status, including whether each input is
+/// resolved, required-missing, or optional-missing. If `include_details` is true,
+/// per-input validation results are also returned.
+///
+/// **Important:** Preview never fails on validation — it always returns a successful
+/// response with status information.
+///
+/// # Arguments
+///
+/// * `request` — The preview request containing workflow identifier/manifest and
+///   optional candidate inputs.
+///
+/// # Returns
+///
+/// A JSON object with `workflow_id`, `required_missing`, and optionally `inputs`.
 pub fn preview_inputs(request: &WorkflowPreviewRequest) -> Result<Value, ErrorData> {
     let runtime_workflow = resolve_runtime_workflow(
         request.workflow_id.as_deref(),
@@ -26,63 +155,71 @@ pub fn preview_inputs(request: &WorkflowPreviewRequest) -> Result<Value, ErrorDa
         )
     })?;
 
-    let mut state = WorkflowRunState::new(runtime_workflow.clone());
-    if let Some(inputs) = request.inputs.as_ref() {
-        for (input_name, value) in inputs {
-            state.set_input_value(input_name, value.clone());
-        }
-    }
-    state.apply_input_defaults();
+    let state = initialize_input_state(&runtime_workflow, request.inputs.as_ref());
+    let required_missing = collect_missing_required_inputs(&state, &runtime_workflow);
     let include_inputs = request.include_details.unwrap_or(false);
-
-    let input_summaries = runtime_workflow
-        .inputs
-        .iter()
-        .map(|(input_name, definition)| {
-            let value = state.run_context.inputs.get(input_name).cloned();
-            let required = definition.is_required();
-            let validation_error = value.as_ref().and_then(|candidate| {
-                definition
-                    .validate
-                    .as_ref()
-                    .and_then(|validation| validate_candidate_value(candidate, validation).err().map(|error| error.to_string()))
-            });
-            let status = if value.is_some() {
-                "resolved"
-            } else if required {
-                "required_missing"
-            } else {
-                "optional_missing"
-            };
-            serde_json::json!({
-                "input": input_name,
-                "required": required,
-                "type": definition.r#type,
-                "description": definition.description,
-                "value": value,
-                "status": status,
-                "validation_error": validation_error,
-            })
-        })
-        .collect::<Vec<Value>>();
-
-    let required_missing = runtime_workflow
-        .inputs
-        .iter()
-        .filter(|(name, definition)| definition.is_required() && !state.run_context.inputs.contains_key(*name))
-        .map(|(name, _)| name.clone())
-        .collect::<Vec<String>>();
 
     let mut payload = serde_json::Map::new();
     payload.insert("workflow_id".to_string(), serde_json::json!(runtime_workflow.identifier));
     payload.insert("required_missing".to_string(), serde_json::json!(required_missing));
     if include_inputs {
+        // Only compute detailed input summaries when requested to avoid unnecessary validation overhead
+        let input_summaries = runtime_workflow
+            .inputs
+            .iter()
+            .map(|(input_name, definition)| {
+                let value = state.run_context.inputs.get(input_name).cloned();
+                let required = definition.is_required();
+                let validation_error = value.as_ref().and_then(|candidate| {
+                    definition
+                        .validate
+                        .as_ref()
+                        .and_then(|validation| validate_candidate_value(candidate, validation).err().map(|error| error.to_string()))
+                });
+                let status = if value.is_some() {
+                    "resolved"
+                } else if required {
+                    "required_missing"
+                } else {
+                    "optional_missing"
+                };
+                serde_json::json!({
+                    "input": input_name,
+                    "required": required,
+                    "type": definition.r#type,
+                    "description": definition.description,
+                    "value": value,
+                    "status": status,
+                    "validation_error": validation_error,
+                })
+            })
+            .collect::<Vec<Value>>();
         payload.insert("inputs".to_string(), serde_json::json!(input_summaries));
     }
 
     Ok(Value::Object(payload))
 }
 
+/// Fully resolve inputs for a workflow, including provider-driven values.
+///
+/// After applying defaults and evaluating provider bindings, this function validates
+/// all resolved input values against the workflow's declarative rules. If validation
+/// fails, it returns a `WORKFLOW_INPUT_VALIDATION_FAILED` error with typed violations.
+///
+/// # Arguments
+///
+/// * `request` — The resolution request containing workflow identifier/manifest,
+///   partial inputs, and optional inclusion flags.
+///
+/// # Returns
+///
+/// A JSON object with `workflow_id`, `required_missing`, `ready`, and optionally
+/// `resolved_inputs` and `provider_resolutions`.
+///
+/// # Errors
+///
+/// Returns `WORKFLOW_INPUT_VALIDATION_FAILED` if any input value fails validation
+/// after provider resolution.
 pub fn resolve_inputs(request: &WorkflowResolveInputsRequest) -> Result<Value, ErrorData> {
     let runtime_workflow = resolve_runtime_workflow(
         request.workflow_id.as_deref(),
@@ -101,13 +238,7 @@ pub fn resolve_inputs(request: &WorkflowResolveInputsRequest) -> Result<Value, E
         )
     })?;
 
-    let mut state = WorkflowRunState::new(runtime_workflow.clone());
-    if let Some(partial_inputs) = request.partial_inputs.as_ref() {
-        for (input_name, value) in partial_inputs {
-            state.set_input_value(input_name, value.clone());
-        }
-    }
-    state.apply_input_defaults();
+    let mut state = initialize_input_state(&runtime_workflow, request.partial_inputs.as_ref());
     state.evaluate_input_providers().map_err(|error| {
         execution_error(
             "WORKFLOW_PROVIDER_RESOLUTION_FAILED",
@@ -118,36 +249,28 @@ pub fn resolve_inputs(request: &WorkflowResolveInputsRequest) -> Result<Value, E
         )
     })?;
 
-    let mut violations = Vec::new();
-    for (input_name, definition) in &runtime_workflow.inputs {
-        if let Some(validation) = definition.validate.as_ref()
-            && let Some(candidate) = state.run_context.inputs.get(input_name)
-            && let Err(error) = validate_candidate_value(candidate, validation)
-        {
-            violations.push(serde_json::json!({
-                "path": format!("inputs.{}", input_name),
-                "rule": "validation",
-                "message": error.to_string(),
-                "actual": candidate,
-            }));
-        }
-    }
-    if !violations.is_empty() {
+    let validation_failures = collect_input_validation_failures(&state, &runtime_workflow);
+    if !validation_failures.is_empty() {
         return Err(validation_error_with_violations(
             "WORKFLOW_INPUT_VALIDATION_FAILED",
             "one or more workflow inputs failed validation",
             serde_json::json!({ "workflow_id": runtime_workflow.identifier }),
             "Inspect violations and provide corrected input values.",
-            violations,
+            validation_failures
+                .into_iter()
+                .map(|failure| {
+                    serde_json::json!({
+                        "path": format!("inputs.{}", failure.input_name),
+                        "rule": "validation",
+                        "message": failure.message,
+                        "actual": failure.actual_value,
+                    })
+                })
+                .collect(),
         ));
     }
 
-    let unresolved_required = runtime_workflow
-        .inputs
-        .iter()
-        .filter(|(name, definition)| definition.is_required() && !state.run_context.inputs.contains_key(*name))
-        .map(|(name, _)| name.clone())
-        .collect::<Vec<String>>();
+    let unresolved_required = collect_missing_required_inputs(&state, &runtime_workflow);
 
     let provider_resolutions = state
         .telemetry()
@@ -162,24 +285,25 @@ pub fn resolve_inputs(request: &WorkflowResolveInputsRequest) -> Result<Value, E
                     oatty_engine::ProviderResolutionSource::Manual => "manual",
                 },
                 "outcome": match &event.outcome {
-                    ProviderBindingOutcome::Resolved(value) => serde_json::json!({"status":"resolved","value":value}),
-                    ProviderBindingOutcome::Prompt(prompt) => serde_json::json!({
+                    oatty_engine::ProviderBindingOutcome::Resolved(value) => serde_json::json!({"status":"resolved","value":value}),
+                    oatty_engine::ProviderBindingOutcome::Prompt(prompt) => serde_json::json!({
                         "status":"prompt",
                         "required": prompt.required,
                         "reason": prompt.reason.message,
                         "path": prompt.reason.path
                     }),
-                    ProviderBindingOutcome::Skip(skip) => serde_json::json!({"status":"skip","reason": skip.reason.message}),
-                    ProviderBindingOutcome::Error(failure) => serde_json::json!({"status":"error","message": failure.message}),
+                    oatty_engine::ProviderBindingOutcome::Skip(skip) => serde_json::json!({"status":"skip","reason": skip.reason.message}),
+                    oatty_engine::ProviderBindingOutcome::Error(failure) => serde_json::json!({"status":"error","message": failure.message}),
                 }
             })
         })
         .collect::<Vec<Value>>();
-    let has_blocking_provider_resolution = state
-        .telemetry()
-        .provider_resolution_events()
-        .iter()
-        .any(|event| matches!(event.outcome, ProviderBindingOutcome::Prompt(_) | ProviderBindingOutcome::Error(_)));
+    let has_blocking_provider_resolution = state.telemetry().provider_resolution_events().iter().any(|event| {
+        matches!(
+            event.outcome,
+            oatty_engine::ProviderBindingOutcome::Prompt(_) | oatty_engine::ProviderBindingOutcome::Error(_)
+        )
+    });
     let ready = unresolved_required.is_empty() && !has_blocking_provider_resolution;
     let include_resolved_inputs = request.include_resolved_inputs.unwrap_or(false);
     let include_provider_resolutions = request.include_provider_resolutions.unwrap_or(false);
