@@ -41,22 +41,32 @@ These are served as prompt templates and argument-validated in prompt handlers.
 
 ## Exposed workflow tools
 
-Implemented workflow tool surface includes:
+Implemented workflow tool surface (9 tools):
 - `workflow_get`
 - `workflow_validate`
 - `workflow_save`
 - `workflow_export`
 - `workflow_rename`
 - `workflow_delete`
-- `workflow_preview_inputs`
+- `workflow_preview`
 - `workflow_resolve_inputs`
 - `workflow_run`
-- `workflow_step_plan`
-- `workflow_preview_rendered`
-- `workflow_cancel`
-- `workflow_purge_history`
-- `workflow_author_and_run`
-- `workflow_repair_and_rerun`
+
+All workflow tools emit structured MCP errors with stable error codes, actionable `next_step` guidance, and contextual details. Workflow inventory is served via the `oatty://workflow/manifests` resource rather than a dedicated `workflow_list` tool.
+
+### Migration table for clients using removed tools
+
+| Removed tool | Replacement approach |
+| --- | --- |
+| `workflow_list` | Read `oatty://workflow/manifests` resource to list manifest identifiers. |
+| `workflow_import` | Use `workflow_save` with `input_path` pointing to the source file. |
+| `workflow_preview_inputs` | Use `workflow_preview` with `view: inputs`. |
+| `workflow_step_plan` | Use `workflow_preview` with `view: plan`. |
+| `workflow_preview_rendered` | Use `workflow_preview` with `view: rendered`. |
+| `workflow_cancel` | Use the standard MCP `tasks/cancel` method with the operation identifier. |
+| `workflow_author_and_run` | Compose `workflow_validate` → `workflow_save` → `workflow_resolve_inputs` → `workflow_run`. |
+| `workflow_repair_and_rerun` | Repair the manifest through client-side logic, then use the validate/save/run sequence. |
+| `workflow_purge_history` | Not exposed as a default tool; use CLI/TUI admin commands or contact the operator. |
 
 ## Command discovery metadata for authoring
 
@@ -127,7 +137,7 @@ Implemented workflow tool surface includes:
 
 - `workflow_run` currently executes synchronously in tool implementation and returns run results/outputs.
 - Response includes execution mode metadata and task-mode recommendation flags.
-- Task-capability path is supported through MCP operation processor integration (`workflow_cancel` targets operation IDs).
+- Task cancellation uses the standard MCP task protocol (`tasks/cancel`), not a dedicated workflow tool.
 
 ## Error contract
 

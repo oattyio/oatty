@@ -52,6 +52,7 @@ serde_json = { workspace = true }
 
 [features]
 default = []
+workflow_admin_tools = []
 
 [dev-dependencies]
 temp-env = "0.3.6"

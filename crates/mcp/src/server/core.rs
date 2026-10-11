@@ -380,7 +380,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow_get",
         annotations(read_only_hint = true),
-        description = "Retrieve workflow manifest content for editing, including content version metadata. Optional flags: include_content (default true), include_parsed (default false)."
+        description = "Retrieve a workflow manifest by id. Returns content and version metadata. Flags: include_content (default true), include_parsed (default false)."
     )]
     async fn workflow_get(&self, param: Parameters<WorkflowGetRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -390,7 +390,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow_validate",
         annotations(read_only_hint = true),
-        description = "Validate one workflow source without saving: workflow_id, inline manifest_content, or absolute input_path. Returns structured schema and command-preflight violations."
+        description = "Validate a workflow source without saving. Accept workflow_id, manifest_content, or input_path. Returns schema, preflight, and provider violations."
     )]
     async fn workflow_validate(&self, param: Parameters<WorkflowValidateRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -401,7 +401,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow_save",
         annotations(open_world_hint = true),
-        description = "Validate and persist one workflow source. Provide exactly one of inline manifest_content or absolute input_path; supports overwrite and optimistic expected_version."
+        description = "Persist a validated workflow. Provide workflow_id and manifest_content (or input_path). Supports overwrite and optimistic locking."
     )]
     async fn workflow_save(&self, param: Parameters<WorkflowSaveRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -412,7 +412,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow_export",
         annotations(open_world_hint = true),
-        description = "Export a runtime workflow manifest into a project-relative file for source control. Input: workflow_id, output_path, format?, overwrite?, create_directories?."
+        description = "Export a workflow manifest to a project-relative file. Input: workflow_id, output_path, format?, overwrite?, create_directories?."
     )]
     async fn workflow_export(&self, param: Parameters<WorkflowExportRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -422,7 +422,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow_rename",
         annotations(destructive_hint = true),
-        description = "Rename a workflow identifier and persist it in runtime storage."
+        description = "Rename a workflow identifier and persist the change."
     )]
     async fn workflow_rename(&self, param: Parameters<WorkflowRenameRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -432,8 +432,8 @@ impl OattyMcpCore {
 
     #[tool(
         name = "workflow_delete",
-        annotations(open_world_hint = true),
-        description = "Delete a workflow manifest from runtime storage and synchronize in-memory registry state."
+        annotations(destructive_hint = true),
+        description = "Delete a workflow manifest from storage. Inspect oatty://workflow/manifests first to see available identifiers."
     )]
     async fn workflow_delete(&self, param: Parameters<WorkflowDeleteRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -444,7 +444,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow_preview",
         annotations(read_only_hint = true),
-        description = "Return one read-only workflow view: inputs, plan, or rendered. Provide exactly one of workflow_id or manifest_content. include_details is valid only for the inputs view."
+        description = "Return one read-only view: inputs, plan, or rendered. Provide workflow_id or manifest_content. include_details applies to inputs only."
     )]
     async fn workflow_preview(&self, param: Parameters<WorkflowPreviewRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -454,7 +454,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow_resolve_inputs",
         annotations(open_world_hint = true),
-        description = "Resolve defaults and provider bindings, then validate input values. Input: workflow_id or manifest_content, format?, partial_inputs?, include_resolved_inputs?(default false), include_provider_resolutions?(default false). Always returns ready + required_missing; include detailed payloads only when needed."
+        description = "Resolve defaults and provider bindings, then validate inputs. Accept workflow_id or manifest_content. Always returns ready + required_missing; detailed payloads are opt-in."
     )]
     async fn workflow_resolve_inputs(&self, param: Parameters<WorkflowResolveInputsRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -464,7 +464,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow_run",
         annotations(open_world_hint = true),
-        description = "Execute a workflow by identifier or inline manifest. Input scheduling is selected by the MCP task envelope, not a tool argument. Results and outputs are opt-in."
+        description = "Execute a workflow by id or inline manifest. Scheduling uses the MCP task envelope, not a tool argument. Results and outputs are opt-in."
     )]
     async fn workflow_run(&self, param: Parameters<WorkflowRunRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -656,21 +656,19 @@ const SERVER_INSTRUCTIONS: &str = concat!(
     "- Build named_flags as [name,value]. Values may be scalar/array/object; booleans accept explicit true/false.\n",
     "- Prefer get_command for exact args/flags.\n",
     "- For provider-backed workflow inputs, use get_command(include_providers=required_only|full).\n\n",
-    "WORKFLOW INTENT MODE:\n",
-    "- If user asks to create/author/generate a workflow, MUST use Oatty workflow tools.\n",
-    "- Workflow steps must be HTTP-backed commands only (no MCP/plugin step runs).\n",
-    "- Preferred sequence:\n",
-    "  search_commands -> get_command -> workflow_validate(minimal) -> expand manifest -> workflow_validate -> ",
-    "workflow_save -> workflow_resolve_inputs -> workflow_run\n",
-    "- Before authoring, verify required providers/platforms are discoverable.\n",
-    "- Use providers for enumerable identifiers/list selections when contracts exist.\n",
-    "- Keep manual inputs for transformation-heavy fields.\n",
-    "- If search_commands returns provider_inputs, prefer provider-backed inputs unless transformation-heavy.\n",
-    "- Use `if`/`when` (not `condition`).\n",
-    "- Step params belong under `with` using real command parameter names.\n",
-    "- Input defaults must be structured objects: `default: { from: literal|env|history|workflow_output, value: ... }`.\n",
-    "- Provider-backed inputs must use explicit scalar select path (for example `owner.id`).\n",
-    "- Include placeholder/hint/example metadata for manual free-text inputs.\n\n",
+    "WORKFLOW TOOLS:\n",
+    "- workflow_get: retrieve manifest by id (content + version).\n",
+    "- workflow_validate: validate without saving (schema, preflight, provider violations).\n",
+    "- workflow_save: persist validated manifest (overwrite, optimistic locking).\n",
+    "- workflow_export: export to project file for source control.\n",
+    "- workflow_rename: rename workflow identifier.\n",
+    "- workflow_delete: delete manifest (destructive).\n",
+    "- workflow_preview: read-only preview (inputs|plan|rendered).\n",
+    "- workflow_resolve_inputs: resolve defaults, bindings, validate.\n",
+    "- workflow_run: execute workflow (task-envelope scheduling).\n\n",
+    "WORKFLOW AUTHORING SEQUENCE:\n",
+    "- search_commands -> get_command -> workflow_validate -> workflow_save -> workflow_resolve_inputs -> workflow_run.\n",
+    "- Use the oatty://workflow/manifests resource instead of a list tool.\n\n",
     "SAFETY:\n",
     "- Do NOT create repository docs, blueprints, scripts, or CI files unless explicitly requested.\n",
     "- File-only fallback is allowed only after reporting unimportable provider and receiving explicit user approval.\n",

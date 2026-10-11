@@ -4,7 +4,7 @@ use crate::server::workflow::errors::{
     conflict_error, execution_error, internal_error, invalid_params_error, not_found_error, validation_error_with_violations,
 };
 use crate::server::workflow::services::storage::{
-    WorkflowManifestFormat, compute_version, find_manifest_record, list_manifest_records, parse_manifest_content,
+    WorkflowManifestFormat, compute_version, find_manifest_record, parse_manifest_content,
     sanitize_workflow_identifier, serialize_definition, write_manifest,
 };
 use crate::server::workflow::services::sync::synchronize_runtime_workflows;
@@ -21,33 +21,6 @@ use std::sync::{Arc, Mutex};
 
 use rmcp::model::ErrorData;
 use serde_json::Value;
-
-pub fn list_workflows() -> Result<Value, ErrorData> {
-    let records = list_manifest_records().map_err(|error| {
-        internal_error(
-            "WORKFLOW_LIST_FAILED",
-            error.to_string(),
-            serde_json::json!({}),
-            "Verify runtime workflow directory accessibility and retry.",
-        )
-    })?;
-
-    let payload = records
-        .iter()
-        .map(|record| {
-            serde_json::json!({
-                "workflow_id": record.definition.workflow,
-                "title": record.definition.title,
-                "description": record.definition.description,
-                "path": record.path.to_string_lossy().to_string(),
-                "format": record.format.as_str(),
-                "version": record.version,
-            })
-        })
-        .collect::<Vec<Value>>();
-
-    Ok(serde_json::json!(payload))
-}
 
 pub fn get_workflow(request: &WorkflowGetRequest) -> Result<Value, ErrorData> {
     sanitize_workflow_identifier(&request.workflow_id).map_err(|error| {
