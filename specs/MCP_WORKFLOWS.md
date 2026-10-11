@@ -143,7 +143,7 @@ that requires `workflow_id` or `input_keys` as a filter.
 
 ## Execution behavior
 
-- `workflow_run` currently executes synchronously in tool implementation and returns run results/outputs.
+- `workflow_run` currently executes synchronously in tool implementation. Step results and aggregated outputs are opt-in.
 - Responses include the run identifier, workflow identifier, status, and supplied/resolved inputs; result and output payloads remain opt-in.
 - Task cancellation uses the standard MCP task protocol (`tasks/cancel`), not a dedicated workflow tool.
 - `workflow_run` accepts `format` as an explicit override for inline manifests, consistent with `workflow_validate`.

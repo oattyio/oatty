@@ -103,7 +103,7 @@ pub struct WorkflowRunRequest {
     pub format: Option<String>,
     #[schemars(description = "Optional input overrides keyed by input name.")]
     pub inputs: Option<HashMap<String, Value>>,
-    #[schemars(description = "Include step result entries in the response. Defaults to true.")]
+    #[schemars(description = "Include step result entries in the response. Defaults to false.")]
     pub include_results: Option<bool>,
     #[schemars(description = "Include aggregated step outputs in the response. Defaults to false.")]
     pub include_outputs: Option<bool>,

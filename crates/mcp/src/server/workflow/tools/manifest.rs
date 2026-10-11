@@ -111,12 +111,27 @@ pub fn validate_workflow(request: &WorkflowValidateRequest, command_registry: &A
                     "Use the oatty://workflow/manifests resource to inspect available workflow identifiers.",
                 ));
             };
-            (record.content, Some(record.format.as_str().to_string()))
+            (
+                record.content,
+                request
+                    .format
+                    .clone()
+                    .filter(|format| !format.is_empty())
+                    .or_else(|| Some(record.format.as_str().to_string())),
+            )
         }
         crate::server::workflow::tools::common::WorkflowDocumentSource::Inline { content } => {
             (content.clone(), request.format.clone().filter(|format| !format.is_empty()))
         }
         crate::server::workflow::tools::common::WorkflowDocumentSource::Path { path } => {
+            if !path.exists() {
+                return Err(not_found_error(
+                    "WORKFLOW_VALIDATE_PATH_NOT_FOUND",
+                    format!("input path '{}' does not exist", path.to_string_lossy()),
+                    serde_json::json!({ "input_path": path.to_string_lossy() }),
+                    "Provide a valid absolute input path and retry.",
+                ));
+            }
             let content = std::fs::read_to_string(path).map_err(|error| {
                 internal_error(
                     "WORKFLOW_VALIDATE_READ_FAILED",
@@ -950,6 +965,51 @@ steps:
     }
 
     #[test]
+    fn validate_workflow_prefers_explicit_format_over_stored_record_format() {
+        let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
+        let temp_directory = create_temp_directory();
+        temp_env::with_var(
+            "REGISTRY_WORKFLOWS_PATH",
+            Some(temp_directory.to_string_lossy().to_string()),
+            || {
+                let manifest_identifier = "stored_yaml";
+                let (definition, format) =
+                    parse_manifest_content(&sample_manifest(manifest_identifier), Some("yaml")).expect("parse YAML manifest");
+                let serialized = serialize_definition(&definition, format).expect("serialize YAML manifest");
+                write_manifest(manifest_identifier, &serialized, format).expect("persist YAML manifest");
+
+                let request = WorkflowValidateRequest {
+                    workflow_id: Some(manifest_identifier.to_string()),
+                    manifest_content: None,
+                    input_path: None,
+                    format: Some("json".to_string()),
+                };
+
+                let error = validate_workflow(&request, &registry).expect_err("explicit JSON format must not parse stored YAML as YAML");
+                let data = error.data.expect("error data");
+                assert_eq!(data["error_code"], serde_json::json!("WORKFLOW_PARSE_FAILED"));
+            },
+        );
+    }
+
+    #[test]
+    fn validate_workflow_reports_missing_input_path_as_not_found() {
+        let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
+        let temp_directory = create_temp_directory();
+        let missing_path = temp_directory.join("missing.yaml");
+        let request = WorkflowValidateRequest {
+            workflow_id: None,
+            manifest_content: None,
+            input_path: Some(missing_path.to_string_lossy().to_string()),
+            format: None,
+        };
+
+        let error = validate_workflow(&request, &registry).expect_err("missing file must not be an internal error");
+        let data = error.data.expect("error data");
+        assert_eq!(data["error_code"], serde_json::json!("WORKFLOW_VALIDATE_PATH_NOT_FOUND"));
+    }
+
+    #[test]
     fn validate_workflow_rejects_conflicting_sources() {
         let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
         let request = WorkflowValidateRequest {
@@ -961,7 +1021,22 @@ steps:
 
         let error = validate_workflow(&request, &registry).expect_err("validation should reject conflicting sources");
         let data = error.data.expect("error data");
-        assert_eq!(data["error_code"], serde_json::json!("WORKFLOW_SOURCE_CONFLICT"));
+        assert_eq!(data["error_code"], serde_json::json!("WORKFLOW_VALIDATE_SOURCE_CONFLICT"));
+    }
+
+    #[test]
+    fn validate_workflow_preserves_missing_source_error_code() {
+        let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
+        let request = WorkflowValidateRequest {
+            workflow_id: None,
+            manifest_content: None,
+            input_path: None,
+            format: None,
+        };
+
+        let error = validate_workflow(&request, &registry).expect_err("validation requires a source");
+        let data = error.data.expect("error data");
+        assert_eq!(data["error_code"], serde_json::json!("WORKFLOW_VALIDATE_SOURCE_MISSING"));
     }
 
     #[test]

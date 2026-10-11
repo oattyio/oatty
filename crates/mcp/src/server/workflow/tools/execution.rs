@@ -135,7 +135,7 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
     };
     let output_map = execution_summary.output_map;
     let input_map = state.run_context.inputs.clone();
-    let include_results = request.include_results.unwrap_or(true);
+    let include_results = request.include_results.unwrap_or(false);
     let include_outputs = request.include_outputs.unwrap_or(false);
     append_history_entry(&WorkflowHistoryEntry {
         workflow_id: state.workflow.identifier.clone(),

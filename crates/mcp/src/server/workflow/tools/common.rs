@@ -108,21 +108,21 @@ pub(crate) fn resolve_workflow_document_source(
 
     if provided_source_count > 1 {
         return Err(invalid_params_error(
-            "WORKFLOW_SOURCE_CONFLICT",
-            "workflow requires exactly one source: workflow_id, manifest_content, or input_path",
+            "WORKFLOW_VALIDATE_SOURCE_CONFLICT",
+            "workflow_validate accepts exactly one source: workflow_id, manifest_content, or input_path",
             serde_json::json!({
                 "has_workflow_id": workflow_identifier.is_some(),
                 "has_manifest_content": manifest_content.is_some(),
                 "has_input_path": input_path.is_some(),
             }),
-            "Provide only one source and retry.",
+            "Provide only one validation source and retry.",
         ));
     }
 
     if provided_source_count == 0 {
         return Err(invalid_params_error(
-            "WORKFLOW_SOURCE_MISSING",
-            "workflow requires one source: workflow_id, manifest_content, or input_path",
+            "WORKFLOW_VALIDATE_SOURCE_MISSING",
+            "workflow_validate requires one source: workflow_id, manifest_content, or input_path",
             serde_json::json!({
                 "has_workflow_id": false,
                 "has_manifest_content": false,
@@ -157,8 +157,8 @@ pub(crate) fn resolve_workflow_document_source(
     }
 
     Err(invalid_params_error(
-        "WORKFLOW_SOURCE_MISSING",
-        "workflow requires one source: workflow_id, manifest_content, or input_path",
+        "WORKFLOW_VALIDATE_SOURCE_MISSING",
+        "workflow_validate requires one source: workflow_id, manifest_content, or input_path",
         serde_json::json!({
             "has_workflow_id": false,
             "has_manifest_content": false,
