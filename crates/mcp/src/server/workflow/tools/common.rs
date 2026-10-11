@@ -261,6 +261,9 @@ pub(crate) fn resolve_runtime_workflow_source(
     })
 }
 
+/// This is the main entry point used by all runtime workflow operations. It first
+/// resolves the document source, then deserializes it into a [`RuntimeWorkflow`].
+#[allow(clippy::single_match)]
 pub fn resolve_runtime_workflow(
     workflow_identifier: Option<&str>,
     manifest_content: Option<&str>,
@@ -359,6 +362,10 @@ pub fn collect_workflow_preflight_violations(
 }
 
 /// Collects non-fatal workflow validation warnings.
+/// Returns a vector of warning objects covering quoted template binding
+/// issues, conditional dependency risks, step template array access,
+/// mutation preflight concerns, and endpoint context warnings.
+#[allow(clippy::single_match)]
 pub fn collect_workflow_validation_warnings(
     workflow: &RuntimeWorkflow,
     command_registry: &Arc<Mutex<CommandRegistry>>,

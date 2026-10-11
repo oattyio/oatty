@@ -5,6 +5,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// Deserializes a manifest document from JSON, coercing non-string values to a
+/// pretty-printed JSON string representation.
 fn deserialize_manifest_document<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
@@ -18,6 +20,7 @@ where
     }
 }
 
+/// Deserializes an optional manifest document, returning `None` when absent.
 fn deserialize_optional_manifest_document<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
