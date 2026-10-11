@@ -12,7 +12,6 @@ use crate::server::schemas::{
     SearchRequestParam,
 };
 use crate::server::workflow::{
-    errors::not_found_error,
     prompts::{get_prompt as get_workflow_prompt, list_prompts as list_workflow_prompts},
     resources::{
         list_resource_templates as list_workflow_resource_templates, list_resources as list_workflow_resources,

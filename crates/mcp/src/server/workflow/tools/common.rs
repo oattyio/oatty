@@ -3,6 +3,11 @@
 //! This module provides source resolver helpers that model workflow document
 //! origins as a typed enum, making it explicit which source is active and
 //! simplifying validation logic across the workflow tool surface.
+//!
+//! Note: Some helpers and types in this module are used by only a subset of
+//! workflow tools. The dead-code warnings for those items are suppressed at
+//! the call site rather than globally, since the helpers are intentionally
+//! reusable.
 
 use crate::server::workflow::errors::{internal_error, invalid_params_error, validation_error_with_violations};
 use crate::server::workflow::services::storage::{find_manifest_record, parse_manifest_content};
@@ -75,9 +80,7 @@ pub(crate) fn resolve_save_document_source(
         (Some(content), None) => Ok(WorkflowDocumentSource::Inline {
             content: content.to_string(),
         }),
-        (None, Some(path)) => Ok(WorkflowDocumentSource::Path {
-            path: PathBuf::from(path),
-        }),
+        (None, Some(path)) => Ok(WorkflowDocumentSource::Path { path: PathBuf::from(path) }),
     }
 }
 
@@ -92,14 +95,10 @@ pub(crate) fn resolve_workflow_document_source(
     manifest_content: Option<&str>,
     input_path: Option<&str>,
 ) -> Result<WorkflowDocumentSource, ErrorData> {
-    let provided_source_count = [
-        workflow_identifier.is_some(),
-        manifest_content.is_some(),
-        input_path.is_some(),
-    ]
-    .into_iter()
-    .filter(|is_present| *is_present)
-    .count();
+    let provided_source_count = [workflow_identifier.is_some(), manifest_content.is_some(), input_path.is_some()]
+        .into_iter()
+        .filter(|is_present| *is_present)
+        .count();
 
     if provided_source_count > 1 {
         return Err(invalid_params_error(
@@ -140,9 +139,7 @@ pub(crate) fn resolve_workflow_document_source(
     }
 
     if let Some(path) = input_path {
-        return Ok(WorkflowDocumentSource::Path {
-            path: PathBuf::from(path),
-        });
+        return Ok(WorkflowDocumentSource::Path { path: PathBuf::from(path) });
     }
 
     Err(invalid_params_error(
@@ -164,12 +161,7 @@ pub(crate) fn resolve_workflow_document_source(
 fn resolve_identifier_to_runtime_workflow(source: &WorkflowDocumentSource) -> Result<RuntimeWorkflow> {
     let identifier = match source {
         WorkflowDocumentSource::Identifier { identifier } => identifier.as_str(),
-        other => {
-            return Err(anyhow::anyhow!(
-                "expected identifier source, found {:?}",
-                other
-            ))
-        }
+        other => return Err(anyhow::anyhow!("expected identifier source, found {:?}", other)),
     };
 
     let Some(record) = find_manifest_record(identifier)? else {
@@ -182,18 +174,10 @@ fn resolve_identifier_to_runtime_workflow(source: &WorkflowDocumentSource) -> Re
 /// parsing the raw manifest content.
 ///
 /// Returns an error when the manifest cannot be parsed.
-fn resolve_inline_to_runtime_workflow(
-    source: &WorkflowDocumentSource,
-    format_hint: Option<&str>,
-) -> Result<RuntimeWorkflow> {
+fn resolve_inline_to_runtime_workflow(source: &WorkflowDocumentSource, format_hint: Option<&str>) -> Result<RuntimeWorkflow> {
     let content = match source {
         WorkflowDocumentSource::Inline { content } => content.as_str(),
-        other => {
-            return Err(anyhow::anyhow!(
-                "expected inline source, found {:?}",
-                other
-            ))
-        }
+        other => return Err(anyhow::anyhow!("expected inline source, found {:?}", other)),
     };
     let (definition, _) = parse_manifest_content(content, format_hint)?;
     oatty_engine::workflow::document::runtime_workflow_from_definition(&definition)
@@ -203,37 +187,24 @@ fn resolve_inline_to_runtime_workflow(
 /// reading the manifest file from disk and parsing it.
 ///
 /// Returns an error when the file does not exist or cannot be read.
-fn resolve_path_to_runtime_workflow(
-    source: &WorkflowDocumentSource,
-    format_hint: Option<&str>,
-) -> Result<RuntimeWorkflow> {
+fn resolve_path_to_runtime_workflow(source: &WorkflowDocumentSource, format_hint: Option<&str>) -> Result<RuntimeWorkflow> {
     let path = match source {
         WorkflowDocumentSource::Path { path } => path,
-        other => {
-            return Err(anyhow::anyhow!(
-                "expected path source, found {:?}",
-                other
-            ))
-        }
+        other => return Err(anyhow::anyhow!("expected path source, found {:?}", other)),
     };
 
     if !path.exists() {
         return Err(anyhow::anyhow!("input path '{}' does not exist", path.display()));
     }
 
-    let content = std::fs::read_to_string(path).map_err(|error| {
-        anyhow::anyhow!("failed to read '{}': {error}", path.display())
-    })?;
+    let content = std::fs::read_to_string(path).map_err(|error| anyhow::anyhow!("failed to read '{}': {error}", path.display()))?;
     let (definition, _) = parse_manifest_content(&content, format_hint)?;
     oatty_engine::workflow::document::runtime_workflow_from_definition(&definition)
 }
 
 /// Resolves a `WorkflowDocumentSource` into a `RuntimeWorkflow` by dispatching
 /// to the appropriate resolver based on the variant.
-fn resolve_document_to_runtime_workflow(
-    source: &WorkflowDocumentSource,
-    format_hint: Option<&str>,
-) -> Result<RuntimeWorkflow> {
+fn resolve_document_to_runtime_workflow(source: &WorkflowDocumentSource, format_hint: Option<&str>) -> Result<RuntimeWorkflow> {
     match source {
         WorkflowDocumentSource::Identifier { .. } => resolve_identifier_to_runtime_workflow(source),
         WorkflowDocumentSource::Inline { .. } => resolve_inline_to_runtime_workflow(source, format_hint),
@@ -250,13 +221,10 @@ pub(crate) fn resolve_runtime_workflow_source(
     workflow_identifier: Option<&str>,
     manifest_content: Option<&str>,
 ) -> Result<WorkflowDocumentSource, ErrorData> {
-    let provided_source_count = [
-        workflow_identifier.is_some(),
-        manifest_content.is_some(),
-    ]
-    .into_iter()
-    .filter(|is_present| *is_present)
-    .count();
+    let provided_source_count = [workflow_identifier.is_some(), manifest_content.is_some()]
+        .into_iter()
+        .filter(|is_present| *is_present)
+        .count();
 
     if provided_source_count == 0 {
         return Err(invalid_params_error(
@@ -298,10 +266,7 @@ pub fn resolve_runtime_workflow(
     manifest_content: Option<&str>,
     format_hint: Option<&str>,
 ) -> Result<RuntimeWorkflow> {
-    let source = resolve_runtime_workflow_source(
-        workflow_identifier,
-        manifest_content,
-    )?;
+    let source = resolve_runtime_workflow_source(workflow_identifier, manifest_content)?;
 
     resolve_document_to_runtime_workflow(&source, format_hint)
 }
@@ -1800,7 +1765,8 @@ mod tests {
         let deploy_create_schema = object_schema(vec![
             (
                 "deploy",
-                object_schema(vec![("id", schema("string")), ("status", schema("string"))])),
+                object_schema(vec![("id", schema("string")), ("status", schema("string"))]),
+            ),
             ("service", object_schema(vec![("id", schema("string"))])),
         ]);
         let deploy_info_schema = object_schema(vec![("status", schema("string"))]);

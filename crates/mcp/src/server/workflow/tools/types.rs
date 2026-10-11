@@ -5,21 +5,17 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
-fn manifest_document_to_string(document: Value) -> Result<String, String> {
-    match document {
-        Value::String(text) => Ok(text),
-        non_string_document => {
-            serde_json::to_string_pretty(&non_string_document).map_err(|error| format!("failed to serialize manifest_content: {error}"))
-        }
-    }
-}
-
 fn deserialize_manifest_document<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {
     let document = Value::deserialize(deserializer)?;
-    manifest_document_to_string(document).map_err(serde::de::Error::custom)
+    match document {
+        Value::String(text) => Ok(text),
+        non_string_document => {
+            serde_json::to_string_pretty(&non_string_document).map_err(serde::de::Error::custom)
+        }
+    }
 }
 
 fn deserialize_optional_manifest_document<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
@@ -28,7 +24,7 @@ where
 {
     let document = Option::<Value>::deserialize(deserializer)?;
     document
-        .map(manifest_document_to_string)
+        .map(deserialize_manifest_document)
         .transpose()
         .map_err(serde::de::Error::custom)
 }
@@ -63,7 +59,10 @@ pub struct WorkflowValidateRequest {
 pub struct WorkflowSaveRequest {
     #[schemars(description = "Optional workflow identifier override.")]
     pub workflow_id: Option<String>,
-    #[schemars(description = "Inline workflow manifest document to persist. Provide exactly one of manifest_content or input_path.", with = "Option<serde_json::Value>")]
+    #[schemars(
+        description = "Inline workflow manifest document to persist. Provide exactly one of manifest_content or input_path.",
+        with = "Option<serde_json::Value>"
+    )]
     #[serde(default, deserialize_with = "deserialize_optional_manifest_document")]
     pub manifest_content: Option<String>,
     #[schemars(description = "Absolute path to a workflow manifest to persist. Provide exactly one of manifest_content or input_path.")]
@@ -145,7 +144,10 @@ pub struct WorkflowPreviewRequest {
     pub view: WorkflowPreviewView,
     #[schemars(description = "Optional existing workflow identifier. Provide exactly one of workflow_id or manifest_content.")]
     pub workflow_id: Option<String>,
-    #[schemars(description = "Optional inline workflow manifest document. Provide exactly one of workflow_id or manifest_content.", with = "Option<serde_json::Value>")]
+    #[schemars(
+        description = "Optional inline workflow manifest document. Provide exactly one of workflow_id or manifest_content.",
+        with = "Option<serde_json::Value>"
+    )]
     #[serde(default, deserialize_with = "deserialize_optional_manifest_document")]
     pub manifest_content: Option<String>,
     #[schemars(description = "Optional format hint for inline manifest: yaml or json.")]
@@ -157,13 +159,13 @@ pub struct WorkflowPreviewRequest {
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub struct WorkflowPurgeHistoryRequest {
     #[schemars(description = "Optional workflow identifier filter.")]
     pub workflow_id: Option<String>,
     #[schemars(description = "Optional input keys used to select entries for purge.")]
     pub input_keys: Option<Vec<String>>,
 }
-
 
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct WorkflowExportRequest {
@@ -178,7 +180,6 @@ pub struct WorkflowExportRequest {
     #[schemars(description = "Whether to create destination parent directories when missing.")]
     pub create_directories: Option<bool>,
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -211,6 +212,11 @@ mod tests {
         }))
         .expect("deserialize save request");
 
-        assert!(request.manifest_content.expect("manifest content").contains("\"workflow\": \"save_from_object\""));
+        assert!(
+            request
+                .manifest_content
+                .expect("manifest content")
+                .contains("\"workflow\": \"save_from_object\"")
+        );
     }
 }
