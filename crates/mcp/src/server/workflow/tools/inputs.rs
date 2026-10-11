@@ -2,13 +2,13 @@
 
 use crate::server::workflow::errors::{execution_error, invalid_params_error, validation_error_with_violations};
 use crate::server::workflow::tools::common::resolve_runtime_workflow;
-use crate::server::workflow::tools::types::{WorkflowPreviewInputsRequest, WorkflowResolveInputsRequest};
+use crate::server::workflow::tools::types::{WorkflowPreviewRequest, WorkflowResolveInputsRequest};
 use oatty_engine::{ProviderBindingOutcome, WorkflowRunState};
 use oatty_types::workflow::validate_candidate_value;
 use rmcp::model::ErrorData;
 use serde_json::Value;
 
-pub fn preview_inputs(request: &WorkflowPreviewInputsRequest) -> Result<Value, ErrorData> {
+pub fn preview_inputs(request: &WorkflowPreviewRequest) -> Result<Value, ErrorData> {
     let runtime_workflow = resolve_runtime_workflow(
         request.workflow_id.as_deref(),
         request.manifest_content.as_deref(),
@@ -27,13 +27,13 @@ pub fn preview_inputs(request: &WorkflowPreviewInputsRequest) -> Result<Value, E
     })?;
 
     let mut state = WorkflowRunState::new(runtime_workflow.clone());
-    if let Some(partial_inputs) = request.partial_inputs.as_ref() {
-        for (input_name, value) in partial_inputs {
+    if let Some(inputs) = request.inputs.as_ref() {
+        for (input_name, value) in inputs {
             state.set_input_value(input_name, value.clone());
         }
     }
     state.apply_input_defaults();
-    let include_inputs = request.include_inputs.unwrap_or(false);
+    let include_inputs = request.include_details.unwrap_or(false);
 
     let input_summaries = runtime_workflow
         .inputs
@@ -227,12 +227,13 @@ steps:
 
     #[test]
     fn preview_inputs_reports_required_missing_values() {
-        let request = WorkflowPreviewInputsRequest {
+        let request = WorkflowPreviewRequest {
+            view: crate::server::workflow::tools::types::WorkflowPreviewView::Inputs,
             workflow_id: None,
             manifest_content: Some(sample_manifest()),
             format: Some("yaml".to_string()),
-            partial_inputs: None,
-            include_inputs: None,
+            inputs: None,
+            include_details: None,
         };
         let value = preview_inputs(&request).expect("preview inputs should succeed");
         let required_missing = value["required_missing"].as_array().expect("required_missing array");

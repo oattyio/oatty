@@ -1,6 +1,10 @@
 //! Shared helpers for resolving runtime workflows from tool request payloads.
+//!
+//! This module provides source resolver helpers that model workflow document
+//! origins as a typed enum, making it explicit which source is active and
+//! simplifying validation logic across the workflow tool surface.
 
-use crate::server::workflow::errors::{internal_error, validation_error_with_violations};
+use crate::server::workflow::errors::{internal_error, invalid_params_error, validation_error_with_violations};
 use crate::server::workflow::services::storage::{find_manifest_record, parse_manifest_content};
 use anyhow::Result;
 use oatty_engine::RegistryCommandRunner;
@@ -18,23 +22,288 @@ use oatty_types::{CommandSpec, SchemaProperty};
 use rmcp::model::ErrorData;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+
+/// Represents the origin of a workflow document within tool request payloads.
+///
+/// This enum models the three possible ways a workflow manifest can be provided:
+/// as a stored identifier, inline content, or a filesystem path. It is used
+/// internally by the resolver helpers to enforce source selection constraints
+/// and produce descriptively typed results.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum WorkflowDocumentSource {
+    /// A stored workflow referenced by its canonical identifier.
+    Identifier {
+        /// The canonical workflow identifier.
+        identifier: String,
+    },
+    /// Inline manifest content provided directly in the request body.
+    Inline {
+        /// The raw manifest content string.
+        content: String,
+    },
+    /// A manifest file referenced by an absolute filesystem path.
+    Path {
+        /// The resolved absolute path to the manifest file.
+        path: PathBuf,
+    },
+}
+
+/// Validates that exactly one save source is provided among `manifest_content`
+/// and `input_path`.
+///
+/// Returns `WorkflowDocumentSource::Inline` or `WorkflowDocumentSource::Path`
+/// on success. Returns an error when neither or both sources are present.
+pub(crate) fn resolve_save_document_source(
+    manifest_content: Option<&str>,
+    input_path: Option<&str>,
+) -> Result<WorkflowDocumentSource, ErrorData> {
+    match (manifest_content, input_path) {
+        (Some(_), Some(_)) => Err(invalid_params_error(
+            "WORKFLOW_SAVE_SOURCE_CONFLICT",
+            "workflow_save accepts exactly one source: manifest_content or input_path",
+            serde_json::json!({ "has_manifest_content": true, "has_input_path": true }),
+            "Provide either inline manifest_content or an absolute input_path, not both.",
+        )),
+        (None, None) => Err(invalid_params_error(
+            "WORKFLOW_SAVE_SOURCE_MISSING",
+            "workflow_save requires one source: manifest_content or input_path",
+            serde_json::json!({ "has_manifest_content": false, "has_input_path": false }),
+            "Provide inline manifest_content or an absolute input_path.",
+        )),
+        (Some(content), None) => Ok(WorkflowDocumentSource::Inline {
+            content: content.to_string(),
+        }),
+        (None, Some(path)) => Ok(WorkflowDocumentSource::Path {
+            path: PathBuf::from(path),
+        }),
+    }
+}
+
+/// Validates that at least one and at most one source is provided among
+/// `workflow_id`, `manifest_content`, and `input_path`.
+///
+/// Returns `WorkflowDocumentSource::Identifier`, `WorkflowDocumentSource::Inline`,
+/// or `WorkflowDocumentSource::Path` on success. Returns an error when the
+/// source count deviates from the expected range.
+pub(crate) fn resolve_workflow_document_source(
+    workflow_identifier: Option<&str>,
+    manifest_content: Option<&str>,
+    input_path: Option<&str>,
+) -> Result<WorkflowDocumentSource, ErrorData> {
+    let provided_source_count = [
+        workflow_identifier.is_some(),
+        manifest_content.is_some(),
+        input_path.is_some(),
+    ]
+    .into_iter()
+    .filter(|is_present| *is_present)
+    .count();
+
+    if provided_source_count > 1 {
+        return Err(invalid_params_error(
+            "WORKFLOW_SOURCE_CONFLICT",
+            "workflow requires exactly one source: workflow_id, manifest_content, or input_path",
+            serde_json::json!({
+                "has_workflow_id": workflow_identifier.is_some(),
+                "has_manifest_content": manifest_content.is_some(),
+                "has_input_path": input_path.is_some(),
+            }),
+            "Provide only one source and retry.",
+        ));
+    }
+
+    if provided_source_count == 0 {
+        return Err(invalid_params_error(
+            "WORKFLOW_SOURCE_MISSING",
+            "workflow requires one source: workflow_id, manifest_content, or input_path",
+            serde_json::json!({
+                "has_workflow_id": false,
+                "has_manifest_content": false,
+                "has_input_path": false,
+            }),
+            "Provide workflow_id, inline manifest_content, or an absolute input_path and retry.",
+        ));
+    }
+
+    if let Some(identifier) = workflow_identifier {
+        return Ok(WorkflowDocumentSource::Identifier {
+            identifier: identifier.to_string(),
+        });
+    }
+
+    if let Some(content) = manifest_content {
+        return Ok(WorkflowDocumentSource::Inline {
+            content: content.to_string(),
+        });
+    }
+
+    if let Some(path) = input_path {
+        return Ok(WorkflowDocumentSource::Path {
+            path: PathBuf::from(path),
+        });
+    }
+
+    Err(invalid_params_error(
+        "WORKFLOW_SOURCE_MISSING",
+        "workflow requires one source: workflow_id, manifest_content, or input_path",
+        serde_json::json!({
+            "has_workflow_id": false,
+            "has_manifest_content": false,
+            "has_input_path": false,
+        }),
+        "Provide workflow_id, inline manifest_content, or an absolute input_path and retry.",
+    ))
+}
+
+/// Resolves a `WorkflowDocumentSource::Identifier` to a `RuntimeWorkflow` by
+/// looking up the stored manifest record.
+///
+/// Returns an error when the identifier is not found in the manifest store.
+fn resolve_identifier_to_runtime_workflow(source: &WorkflowDocumentSource) -> Result<RuntimeWorkflow> {
+    let identifier = match source {
+        WorkflowDocumentSource::Identifier { identifier } => identifier.as_str(),
+        other => {
+            return Err(anyhow::anyhow!(
+                "expected identifier source, found {:?}",
+                other
+            ))
+        }
+    };
+
+    let Some(record) = find_manifest_record(identifier)? else {
+        return Err(anyhow::anyhow!("workflow '{}' was not found", identifier));
+    };
+    oatty_engine::workflow::document::runtime_workflow_from_definition(&record.definition)
+}
+
+/// Resolves a `WorkflowDocumentSource::Inline` into a `RuntimeWorkflow` by
+/// parsing the raw manifest content.
+///
+/// Returns an error when the manifest cannot be parsed.
+fn resolve_inline_to_runtime_workflow(
+    source: &WorkflowDocumentSource,
+    format_hint: Option<&str>,
+) -> Result<RuntimeWorkflow> {
+    let content = match source {
+        WorkflowDocumentSource::Inline { content } => content.as_str(),
+        other => {
+            return Err(anyhow::anyhow!(
+                "expected inline source, found {:?}",
+                other
+            ))
+        }
+    };
+    let (definition, _) = parse_manifest_content(content, format_hint)?;
+    oatty_engine::workflow::document::runtime_workflow_from_definition(&definition)
+}
+
+/// Resolves a `WorkflowDocumentSource::Path` into a `RuntimeWorkflow` by
+/// reading the manifest file from disk and parsing it.
+///
+/// Returns an error when the file does not exist or cannot be read.
+fn resolve_path_to_runtime_workflow(
+    source: &WorkflowDocumentSource,
+    format_hint: Option<&str>,
+) -> Result<RuntimeWorkflow> {
+    let path = match source {
+        WorkflowDocumentSource::Path { path } => path,
+        other => {
+            return Err(anyhow::anyhow!(
+                "expected path source, found {:?}",
+                other
+            ))
+        }
+    };
+
+    if !path.exists() {
+        return Err(anyhow::anyhow!("input path '{}' does not exist", path.display()));
+    }
+
+    let content = std::fs::read_to_string(path).map_err(|error| {
+        anyhow::anyhow!("failed to read '{}': {error}", path.display())
+    })?;
+    let (definition, _) = parse_manifest_content(&content, format_hint)?;
+    oatty_engine::workflow::document::runtime_workflow_from_definition(&definition)
+}
+
+/// Resolves a `WorkflowDocumentSource` into a `RuntimeWorkflow` by dispatching
+/// to the appropriate resolver based on the variant.
+fn resolve_document_to_runtime_workflow(
+    source: &WorkflowDocumentSource,
+    format_hint: Option<&str>,
+) -> Result<RuntimeWorkflow> {
+    match source {
+        WorkflowDocumentSource::Identifier { .. } => resolve_identifier_to_runtime_workflow(source),
+        WorkflowDocumentSource::Inline { .. } => resolve_inline_to_runtime_workflow(source, format_hint),
+        WorkflowDocumentSource::Path { .. } => resolve_path_to_runtime_workflow(source, format_hint),
+    }
+}
+
+/// Constructs a `WorkflowDocumentSource` from optional identifier and inline
+/// content values, enforcing that at most one is provided.
+///
+/// This is the focused helper used by runtime workflow operations that only
+/// support identifier or inline content (not filesystem paths).
+pub(crate) fn resolve_runtime_workflow_source(
+    workflow_identifier: Option<&str>,
+    manifest_content: Option<&str>,
+) -> Result<WorkflowDocumentSource, ErrorData> {
+    let provided_source_count = [
+        workflow_identifier.is_some(),
+        manifest_content.is_some(),
+    ]
+    .into_iter()
+    .filter(|is_present| *is_present)
+    .count();
+
+    if provided_source_count == 0 {
+        return Err(invalid_params_error(
+            "WORKFLOW_RUNTIME_SOURCE_MISSING",
+            "workflow requires one source: workflow_id or manifest_content",
+            serde_json::json!({
+                "has_workflow_id": false,
+                "has_manifest_content": false,
+            }),
+            "Provide workflow_id or inline manifest_content.",
+        ));
+    }
+
+    if provided_source_count > 1 {
+        return Err(invalid_params_error(
+            "WORKFLOW_RUNTIME_SOURCE_CONFLICT",
+            "workflow requires exactly one source: workflow_id or manifest_content",
+            serde_json::json!({
+                "has_workflow_id": true,
+                "has_manifest_content": true,
+            }),
+            "Provide only one source and retry.",
+        ));
+    }
+
+    if let Some(identifier) = workflow_identifier {
+        return Ok(WorkflowDocumentSource::Identifier {
+            identifier: identifier.to_string(),
+        });
+    }
+
+    Ok(WorkflowDocumentSource::Inline {
+        content: manifest_content.unwrap().to_string(),
+    })
+}
 
 pub fn resolve_runtime_workflow(
     workflow_identifier: Option<&str>,
     manifest_content: Option<&str>,
     format_hint: Option<&str>,
 ) -> Result<RuntimeWorkflow> {
-    if let Some(workflow_identifier) = workflow_identifier {
-        let Some(record) = find_manifest_record(workflow_identifier)? else {
-            return Err(anyhow::anyhow!("workflow '{}' was not found", workflow_identifier));
-        };
-        return oatty_engine::workflow::document::runtime_workflow_from_definition(&record.definition);
-    }
+    let source = resolve_runtime_workflow_source(
+        workflow_identifier,
+        manifest_content,
+    )?;
 
-    let manifest_content = manifest_content.ok_or_else(|| anyhow::anyhow!("either workflow_id or manifest_content must be provided"))?;
-    let (definition, _) = parse_manifest_content(manifest_content, format_hint)?;
-    oatty_engine::workflow::document::runtime_workflow_from_definition(&definition)
+    resolve_document_to_runtime_workflow(&source, format_hint)
 }
 
 /// Collects structured preflight violations for workflow command/catalog readiness.
@@ -1531,8 +1800,7 @@ mod tests {
         let deploy_create_schema = object_schema(vec![
             (
                 "deploy",
-                object_schema(vec![("id", schema("string")), ("status", schema("string"))]),
-            ),
+                object_schema(vec![("id", schema("string")), ("status", schema("string"))])),
             ("service", object_schema(vec![("id", schema("string"))])),
         ]);
         let deploy_info_schema = object_schema(vec![("status", schema("string"))]);
@@ -1595,5 +1863,83 @@ mod tests {
             catalogs: Some(vec![catalog]),
         };
         registry
+    }
+
+    #[test]
+    fn resolve_runtime_workflow_source_accepts_identifier() {
+        let source = super::resolve_runtime_workflow_source(Some("my-workflow"), None).expect("identifier source");
+        assert!(matches!(source, super::WorkflowDocumentSource::Identifier { .. }));
+    }
+
+    #[test]
+    fn resolve_runtime_workflow_source_accepts_inline_content() {
+        let source = super::resolve_runtime_workflow_source(None, Some("workflow: test")).expect("inline source");
+        assert!(matches!(source, super::WorkflowDocumentSource::Inline { .. }));
+    }
+
+    #[test]
+    fn resolve_runtime_workflow_source_rejects_both_sources() {
+        let source = super::resolve_runtime_workflow_source(Some("workflow"), Some("content"));
+        assert!(source.is_err(), "expected error when both sources are provided");
+    }
+
+    #[test]
+    fn resolve_runtime_workflow_source_rejects_no_sources() {
+        let source = super::resolve_runtime_workflow_source(None, None);
+        assert!(source.is_err(), "expected error when no sources are provided");
+    }
+
+    #[test]
+    fn resolve_save_document_source_accepts_manifest_content() {
+        let source = super::resolve_save_document_source(Some("workflow: test"), None).expect("inline save source");
+        assert!(matches!(source, super::WorkflowDocumentSource::Inline { .. }));
+    }
+
+    #[test]
+    fn resolve_save_document_source_accepts_input_path() {
+        let source = super::resolve_save_document_source(None, Some("/tmp/workflow.yaml")).expect("path save source");
+        assert!(matches!(source, super::WorkflowDocumentSource::Path { .. }));
+    }
+
+    #[test]
+    fn resolve_save_document_source_rejects_both_sources() {
+        let source = super::resolve_save_document_source(Some("content"), Some("/tmp/path"));
+        assert!(source.is_err(), "expected error when both save sources are provided");
+    }
+
+    #[test]
+    fn resolve_save_document_source_rejects_no_sources() {
+        let source = super::resolve_save_document_source(None, None);
+        assert!(source.is_err(), "expected error when no save sources are provided");
+    }
+
+    #[test]
+    fn resolve_workflow_document_source_accepts_identifier() {
+        let source = super::resolve_workflow_document_source(Some("my-workflow"), None, None).expect("identifier source");
+        assert!(matches!(source, super::WorkflowDocumentSource::Identifier { .. }));
+    }
+
+    #[test]
+    fn resolve_workflow_document_source_accepts_inline() {
+        let source = super::resolve_workflow_document_source(None, Some("workflow: test"), None).expect("inline source");
+        assert!(matches!(source, super::WorkflowDocumentSource::Inline { .. }));
+    }
+
+    #[test]
+    fn resolve_workflow_document_source_accepts_path() {
+        let source = super::resolve_workflow_document_source(None, None, Some("/tmp/path")).expect("path source");
+        assert!(matches!(source, super::WorkflowDocumentSource::Path { .. }));
+    }
+
+    #[test]
+    fn resolve_workflow_document_source_rejects_multiple_sources() {
+        let source = super::resolve_workflow_document_source(Some("wf"), Some("content"), Some("/tmp/path"));
+        assert!(source.is_err(), "expected error when multiple sources are provided");
+    }
+
+    #[test]
+    fn resolve_workflow_document_source_rejects_no_sources() {
+        let source = super::resolve_workflow_document_source(None, None, None);
+        assert!(source.is_err(), "expected error when no sources are provided");
     }
 }

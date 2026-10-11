@@ -42,12 +42,10 @@ These are served as prompt templates and argument-validated in prompt handlers.
 ## Exposed workflow tools
 
 Implemented workflow tool surface includes:
-- `workflow_list`
 - `workflow_get`
 - `workflow_validate`
 - `workflow_save`
 - `workflow_export`
-- `workflow_import`
 - `workflow_rename`
 - `workflow_delete`
 - `workflow_preview_inputs`
