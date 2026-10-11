@@ -27,7 +27,7 @@ use oatty_types::{CommandSpec, SchemaProperty};
 use rmcp::model::ErrorData;
 use serde_json::Value;
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 /// Represents the origin of a workflow document within tool request payloads.
@@ -80,7 +80,13 @@ pub(crate) fn resolve_save_document_source(
         (Some(content), None) => Ok(WorkflowDocumentSource::Inline {
             content: content.to_string(),
         }),
-        (None, Some(path)) => Ok(WorkflowDocumentSource::Path { path: PathBuf::from(path) }),
+        (None, Some(path)) if Path::new(path).is_absolute() => Ok(WorkflowDocumentSource::Path { path: PathBuf::from(path) }),
+        (None, Some(_)) => Err(invalid_params_error(
+            "WORKFLOW_SAVE_SOURCE_PATH_NOT_ABSOLUTE",
+            "input_path must be an absolute path",
+            serde_json::json!({}),
+            "Provide an absolute path.",
+        )),
     }
 }
 
@@ -139,7 +145,15 @@ pub(crate) fn resolve_workflow_document_source(
     }
 
     if let Some(path) = input_path {
-        return Ok(WorkflowDocumentSource::Path { path: PathBuf::from(path) });
+        if Path::new(path).is_absolute() {
+            return Ok(WorkflowDocumentSource::Path { path: PathBuf::from(path) });
+        }
+        return Err(invalid_params_error(
+            "WORKFLOW_SOURCE_PATH_NOT_ABSOLUTE",
+            "input_path must be an absolute path",
+            serde_json::json!({}),
+            "Provide an absolute path.",
+        ));
     }
 
     Err(invalid_params_error(

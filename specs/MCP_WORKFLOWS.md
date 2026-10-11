@@ -54,6 +54,13 @@ Implemented workflow tool surface (9 tools):
 
 All workflow tools emit structured MCP errors with stable error codes, actionable `next_step` guidance, and contextual details. Workflow inventory is served via the `oatty://workflow/manifests` resource rather than a dedicated `workflow_list` tool.
 
+### Administrative tools (`workflow_admin_tools` feature)
+
+`workflow_purge_history` is gated behind the `workflow_admin_tools` server feature flag.
+The feature is **disabled by default** so the tool does not consume MCP client context.
+When the feature is enabled, `workflow_purge_history` is registered as a destructive tool
+that requires `workflow_id` or `input_keys` as a filter.
+
 ### Migration table for clients using removed tools
 
 | Removed tool | Replacement approach |
@@ -66,7 +73,7 @@ All workflow tools emit structured MCP errors with stable error codes, actionabl
 | `workflow_cancel` | Use the standard MCP `tasks/cancel` method with the operation identifier. |
 | `workflow_author_and_run` | Compose `workflow_validate` → `workflow_save` → `workflow_resolve_inputs` → `workflow_run`. |
 | `workflow_repair_and_rerun` | Repair the manifest through client-side logic, then use the validate/save/run sequence. |
-| `workflow_purge_history` | Not exposed as a default tool; use CLI/TUI admin commands or contact the operator. |
+| `workflow_purge_history` | Gated behind `workflow_admin_tools` feature (disabled by default); when enabled, call `workflow_purge_history` directly. |
 
 ## Command discovery metadata for authoring
 
@@ -132,12 +139,14 @@ All workflow tools emit structured MCP errors with stable error codes, actionabl
 - Validation preflight also checks `requires.catalogs[]` against loaded registry catalogs.
   - Missing catalog requirements are emitted as structured violations at `$.requires.catalogs[index]`.
   - Violations include actionable install guidance and preserve requirement metadata (`vendor`, `title`, `source`, `source_type`).
+- `workflow_validate` honors an explicit `format` parameter for all sources including `input_path`, falling back to path-derived inference when omitted. This matches `workflow_save` behavior.
 
 ## Execution behavior
 
 - `workflow_run` currently executes synchronously in tool implementation and returns run results/outputs.
-- Response includes execution mode metadata and task-mode recommendation flags.
+- Responses include the run identifier, workflow identifier, status, and supplied/resolved inputs; result and output payloads remain opt-in.
 - Task cancellation uses the standard MCP task protocol (`tasks/cancel`), not a dedicated workflow tool.
+- `workflow_run` accepts `format` as an explicit override for inline manifests, consistent with `workflow_validate`.
 
 ## Error contract
 

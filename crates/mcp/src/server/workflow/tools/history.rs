@@ -4,17 +4,15 @@
 //! When disabled, these items are intentionally unused to reduce the default
 //! tool surface and avoid consuming MCP client context.
 
-#[allow(dead_code)]
-mod _internal {
-    use crate::server::workflow::errors::{execution_error, invalid_params_error};
-    use crate::server::workflow::services::history::purge_history;
-    use crate::server::workflow::tools::types::WorkflowPurgeHistoryRequest;
-    use rmcp::model::ErrorData;
-    use serde_json::Value;
+use crate::server::workflow::errors::{execution_error, invalid_params_error};
+use crate::server::workflow::services::history::purge_history;
+use crate::server::workflow::tools::types::WorkflowPurgeHistoryRequest;
+use rmcp::model::ErrorData;
+use serde_json::Value;
 
-    /// Purge persisted workflow run history entries by workflow id and/or input keys.
-    #[allow(dead_code)]
-    pub fn purge_workflow_history(request: &WorkflowPurgeHistoryRequest) -> Result<Value, ErrorData> {
+/// Purge persisted workflow run history entries by workflow id and/or input keys.
+#[allow(dead_code)]
+pub fn purge_workflow_history(request: &WorkflowPurgeHistoryRequest) -> Result<Value, ErrorData> {
     if request.workflow_id.is_none() && request.input_keys.as_ref().is_none_or(Vec::is_empty) {
         return Err(invalid_params_error(
             "WORKFLOW_PURGE_FILTER_REQUIRED",

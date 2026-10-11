@@ -14,9 +14,7 @@ where
     let document = Value::deserialize(deserializer)?;
     match document {
         Value::String(text) => Ok(text),
-        non_string_document => {
-            serde_json::to_string_pretty(&non_string_document).map_err(serde::de::Error::custom)
-        }
+        non_string_document => serde_json::to_string_pretty(&non_string_document).map_err(serde::de::Error::custom),
     }
 }
 

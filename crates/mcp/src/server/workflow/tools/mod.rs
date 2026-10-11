@@ -14,4 +14,5 @@ pub use inputs::resolve_inputs;
 pub use manifest::{delete_workflow, export_workflow, get_workflow, rename_workflow, save_workflow, validate_workflow};
 
 #[cfg(feature = "workflow_admin_tools")]
+#[allow(unused_imports)]
 pub use history::purge_workflow_history;

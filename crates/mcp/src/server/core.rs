@@ -11,6 +11,8 @@ use crate::server::schemas::{
     CommandDetailRequest, CommandSummariesRequest, OutputSchemaDetail, ProviderMetadataDetail, RunCommandRequestParam, SearchInputsDetail,
     SearchRequestParam,
 };
+#[cfg(feature = "workflow_admin_tools")]
+use crate::server::workflow::tools::{purge_workflow_history, types::WorkflowPurgeHistoryRequest};
 use crate::server::workflow::{
     prompts::{get_prompt as get_workflow_prompt, list_prompts as list_workflow_prompts},
     resources::{
@@ -83,7 +85,7 @@ pub struct OattyMcpCore {
     task_processor: Arc<tokio::sync::Mutex<OperationProcessor>>,
 }
 
-#[tool_router]
+#[tool_router(router = default_tool_router)]
 impl OattyMcpCore {
     /// Create a new MCP core handler with shared service dependencies.
     pub fn new(log_sender: Option<UnboundedSender<McpHttpLogEntry>>, services: Arc<McpToolServices>) -> Self {
@@ -92,6 +94,21 @@ impl OattyMcpCore {
             log_sender,
             services,
             task_processor: Arc::new(tokio::sync::Mutex::new(OperationProcessor::new())),
+        }
+    }
+
+    /// Build the MCP tool router, adding administrative tools only when their
+    /// explicit compile-time feature is enabled.
+    fn tool_router() -> ToolRouter<Self> {
+        #[cfg(feature = "workflow_admin_tools")]
+        {
+            let mut router = Self::default_tool_router();
+            router.merge(Self::admin_tool_router());
+            router
+        }
+        #[cfg(not(feature = "workflow_admin_tools"))]
+        {
+            Self::default_tool_router()
         }
     }
 
@@ -554,6 +571,23 @@ impl OattyMcpCore {
             let parsed_message = format!("MCP HTTP: {tool_name} (parsed response.text)");
             let _ = sender.send(McpHttpLogEntry::new(parsed_message, Some(parsed_payload)));
         }
+    }
+}
+
+/// Administrative workflow handlers intentionally excluded from the default
+/// MCP tool surface.
+#[cfg(feature = "workflow_admin_tools")]
+#[tool_router(router = admin_tool_router)]
+impl OattyMcpCore {
+    #[tool(
+        name = "workflow_purge_history",
+        annotations(destructive_hint = true),
+        description = "Purge persisted workflow run history by workflow id and/or input keys. Use with caution to remove stored execution records."
+    )]
+    async fn workflow_purge_history(&self, param: Parameters<WorkflowPurgeHistoryRequest>) -> Result<CallToolResult, ErrorData> {
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = purge_workflow_history(&param.0);
+        Ok(self.finalize_structured_tool_call("workflow_purge_history", request_payload, result))
     }
 }
 
@@ -1786,6 +1820,76 @@ mod tests {
     use oatty_types::{CommandFlag, HttpCommandSpec, McpCommandSpec, SchemaProperty};
     use serde_json::json;
     use std::sync::{Arc, Mutex};
+
+    const MAX_WORKFLOW_TOOL_METADATA_BYTES: usize = 16 * 1024;
+
+    fn workflow_tools() -> Vec<rmcp::model::Tool> {
+        OattyMcpCore::tool_router()
+            .list_all()
+            .into_iter()
+            .filter(|tool| tool.name.starts_with("workflow_"))
+            .collect()
+    }
+
+    #[test]
+    fn default_workflow_tool_surface_matches_the_reduced_contract() {
+        let workflow_tools = workflow_tools();
+        let workflow_tool_names = workflow_tools.iter().map(|tool| tool.name.as_ref()).collect::<Vec<_>>();
+
+        assert_eq!(
+            workflow_tool_names,
+            vec![
+                "workflow_delete",
+                "workflow_export",
+                "workflow_get",
+                "workflow_preview",
+                "workflow_rename",
+                "workflow_resolve_inputs",
+                "workflow_run",
+                "workflow_save",
+                "workflow_validate",
+            ]
+        );
+
+        let serialized_metadata = serde_json::to_vec(&workflow_tools).expect("serialize workflow tool metadata");
+        assert!(
+            serialized_metadata.len() <= MAX_WORKFLOW_TOOL_METADATA_BYTES,
+            "workflow metadata grew to {} bytes, exceeding the {} byte budget",
+            serialized_metadata.len(),
+            MAX_WORKFLOW_TOOL_METADATA_BYTES
+        );
+
+        for tool in &workflow_tools {
+            let annotations = tool.annotations.as_ref().expect("workflow tools have explicit annotations");
+            match tool.name.as_ref() {
+                "workflow_get" | "workflow_validate" | "workflow_preview" => {
+                    assert_eq!(annotations.read_only_hint, Some(true), "{} must be read-only", tool.name);
+                }
+                "workflow_delete" => {
+                    assert_eq!(annotations.destructive_hint, Some(true), "workflow_delete must be destructive");
+                }
+                "workflow_resolve_inputs" | "workflow_run" => {
+                    assert_eq!(annotations.open_world_hint, Some(true), "{} must be open-world", tool.name);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[cfg(feature = "workflow_admin_tools")]
+    #[test]
+    fn administrative_history_purge_is_registered_as_destructive() {
+        let purge_tool = workflow_tools()
+            .into_iter()
+            .find(|tool| tool.name == "workflow_purge_history")
+            .expect("workflow_admin_tools must register workflow_purge_history");
+
+        assert_eq!(
+            purge_tool.annotations.and_then(|annotations| annotations.destructive_hint),
+            Some(true),
+            "workflow_purge_history must be destructive"
+        );
+    }
 
     fn build_http_spec_for_flag_tests(flags: Vec<CommandFlag>) -> CommandSpec {
         CommandSpec::new_http(
