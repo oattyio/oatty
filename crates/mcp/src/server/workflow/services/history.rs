@@ -21,6 +21,7 @@ pub struct WorkflowHistoryEntry {
 
 /// Summary describing removed workflow history records.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[allow(dead_code)]
 pub struct WorkflowHistoryPurgeSummary {
     pub removed_entries: usize,
     pub removed_files: usize,
@@ -48,6 +49,7 @@ pub fn append_history_entry(entry: &WorkflowHistoryEntry) -> Result<()> {
 }
 
 /// Purge workflow history entries by workflow id and/or referenced input keys.
+#[allow(dead_code)]
 pub fn purge_history(workflow_id: Option<&str>, input_keys: &[String]) -> Result<WorkflowHistoryPurgeSummary> {
     let history_directory = history_directory();
     if !history_directory.exists() {
@@ -114,6 +116,7 @@ fn history_file_path(workflow_id: &str) -> PathBuf {
     history_directory().join(format!("{workflow_id}.jsonl"))
 }
 
+#[allow(dead_code)]
 fn list_history_files(workflow_id: Option<&str>) -> Result<Vec<PathBuf>> {
     let history_directory = history_directory();
     if let Some(identifier) = workflow_id {
