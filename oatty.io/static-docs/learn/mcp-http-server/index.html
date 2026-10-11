@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP HTTP Server | Oatty Docs</title><meta name="description" content="Start the local MCP HTTP server, verify endpoint details, and configure clients to connect reliably.">
+<link rel="canonical" href="https://oatty.io/docs/learn/mcp-http-server/"><link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/site.css">
+</head><body><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access">API access</a><a href="/docs/quick-start">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+<div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><p><a href="/docs/api-access">Connect your agent to an API</a></p><ul><li><a href="/docs/quick-start">Quick Start</a></li>
+<li><a href="/docs/guides/sentry-bootstrap">Bootstrap Sentry with an Agent + MCP</a></li>
+<li><a href="/docs/guides/sentry-datadog-pagerduty-playbook">Sentry + Datadog + PagerDuty Integration Playbook</a></li>
+<li><a href="/docs/guides/vercel-to-render-migration-playbook">Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL)</a></li>
+<li><a href="/docs/guides/access-review-collection-playbook">Access Review Collection Playbook (Okta + AWS IAM + Datadog)</a></li>
+<li><a href="/docs/guides/credential-rotation-readiness-playbook">Credential Rotation Readiness Playbook</a></li>
+<li><a href="/docs/learn/how-oatty-executes-safely">How Oatty Executes Safely</a></li>
+<li><a href="/docs/learn/getting-oriented">Getting Oriented</a></li>
+<li><a href="/docs/learn/library-and-catalogs">Library and Catalogs</a></li>
+<li><a href="/docs/learn/search-and-run-commands">Search for and Run Commands</a></li>
+<li><a href="/docs/learn/workflows-basics">Workflows Basics</a></li>
+<li><a href="/docs/learn/plugins">MCP Plugins</a></li>
+<li><a href="/docs/learn/mcp-http-server" aria-current="page">MCP HTTP Server</a></li>
+<li><a href="/docs/reference/cli-commands">CLI Command Reference</a></li>
+<li><a href="/docs/reference/tui-interactions">TUI Interactions Reference</a></li></ul></nav></aside>
+<main id="main-content" class="docs-content"><article><header><p class="eyebrow">Documentation</p><h1>MCP HTTP Server</h1><p class="lede">Start the local MCP HTTP server, verify endpoint details, and configure clients to connect reliably.</p><p><strong>Estimated time:</strong> 8-12 min</p></header>
+<section><h2>What you'll learn</h2><ul><li>Start and stop the server from the TUI control view.</li>
+<li>Use active endpoint and client count details for verification.</li>
+<li>Configure MCP clients with the running `/mcp` endpoint.</li>
+<li>Use auto-start when you need server availability on TUI launch.</li></ul></section><section id="prerequisites"><h2>Prerequisites</h2><p>Open MCP HTTP Server view in the TUI.</p>
+<p>Confirm local network policy allows loopback access.</p><p class="callout"><strong>expected:</strong> Server controls and status details are visible.</p>
+<p class="callout"><strong>recovery:</strong> If the view is unavailable, switch to MCP HTTP Server from left navigation.</p>
+<figure><img src="/Oatty-mcp-server-view.png" alt="MCP server screenshot" loading="lazy"><figcaption>Capture MCP HTTP Server panel with status and controls.</figcaption></figure></section>
+<section id="why-http-server-not-headless-stdio"><h2>Why Oatty Uses a Visible HTTP MCP Server (Not Headless stdio by Default)</h2><p>Many MCP servers run as headless stdio processes. Oatty intentionally defaults to a visible local HTTP server in the TUI so operators can observe and control runtime behavior directly.</p>
+<p>The MCP HTTP Server view provides explicit lifecycle controls, endpoint visibility, connected-client counts, and last-error context. This makes troubleshooting and operational review faster than debugging an opaque background process.</p>
+<p>This choice also keeps human-in-the-loop workflows clear: agents can propose and run through MCP while operators keep direct visibility into what is connected and when execution is active.</p>
+<p>Headless stdio is still a valid pattern in some environments. If you need tightly sandboxed single-client process wiring, stdio-based integration can still fit, but Oatty&#39;s default prioritizes transparent multi-client local operations.</p><p class="callout"><strong>expected:</strong> Operators can inspect server state and client activity in real time instead of inferring failures from disconnected client logs.</p>
+<p class="callout"><strong>tip:</strong> Use local loopback bind plus visible controls for development and review workflows; only expose network endpoints when you have explicit security controls in place.</p></section>
+<section id="start-stop-server"><h2>Start and Stop the Server</h2><p>Use Start to launch the MCP HTTP server.</p>
+<p>Use Stop to shut down the server when needed.</p>
+<p>Read status changes to confirm lifecycle transitions.</p><p class="callout"><strong>expected:</strong> Status transitions between Stopped, Starting, Running, and Stopping as actions execute.</p>
+<p class="callout"><strong>recovery:</strong> If start fails, review Last error and retry from a stopped state.</p>
+<figure><img src="/Oatty-mcp-server-started.png" alt="MCP server view screenshot" loading="lazy"><figcaption>Start action, Running status, and Stop control state.</figcaption></figure></section>
+<section id="endpoint-details"><h2>Verify Endpoint Details</h2><p>Read Configured bind and Active endpoint in the details panel.</p>
+<p>Use Active endpoint as the canonical client connection target while running.</p>
+<p>Monitor Connected clients to confirm successful inbound sessions.</p><p class="callout"><strong>expected:</strong> Active endpoint displays `http://&lt;bound-address&gt;/mcp` while running.</p>
+<p class="callout"><strong>recovery:</strong> If Active endpoint is `not running`, start the server and verify status returns Running.</p>
+<p class="callout"><strong>advanced:</strong> Default bind is loopback (`127.0.0.1:62889`) unless overridden by config.</p></section>
+<section id="configure-clients"><h2>Configure MCP Clients to Connect</h2><p>Use `http://localhost:62889/mcp` as the server URL.</p>
+<p>Claude Desktop currently requires a stdio bridge for HTTP MCP endpoints. Use `mcp-remote` to bridge to `http://localhost:62889/mcp`.</p>
+<p>When bound to localhost, the Oatty MCP HTTP server uses local HTTP and typically does not require authentication headers or tokens.</p>
+<p>Keep the server bound to loopback unless you understand the security implications of exposing it on your network.</p>
+<p>Restart or reconnect the client after updating configuration so it loads the new endpoint.</p><pre><code># Shared connection settings
+URL: http://localhost:62889/mcp
+Auth: none (localhost)
+
+# Claude Desktop (claude_desktop_config.json)
+{
+  &quot;mcpServers&quot;: {
+    &quot;oatty&quot;: {
+      &quot;command&quot;: &quot;npx&quot;,
+      &quot;args&quot;: [
+        &quot;mcp-remote&quot;,
+        &quot;http://localhost:62889/mcp&quot;
+      ]
+    }
+  }
+}
+
+# Cursor (.cursor/mcp.json)
+{
+  &quot;mcpServers&quot;: {
+    &quot;oatty&quot;: {
+      &quot;url&quot;: &quot;http://localhost:62889/mcp&quot;
+    }
+  }
+}
+
+# Cline / Roo Code (mcp_settings.json)
+{
+  &quot;mcpServers&quot;: {
+    &quot;oatty&quot;: {
+      &quot;url&quot;: &quot;http://localhost:62889/mcp&quot;
+    }
+  }
+}
+
+# VS Code MCP config (.vscode/mcp.json or user MCP config)
+{
+  &quot;servers&quot;: {
+    &quot;oatty&quot;: {
+      &quot;type&quot;: &quot;http&quot;,
+      &quot;url&quot;: &quot;http://localhost:62889/mcp&quot;
+    }
+  }
+}
+
+# Generic Streamable HTTP MCP client
+{
+  &quot;servers&quot;: {
+    &quot;oatty&quot;: {
+      &quot;transport&quot;: &quot;streamable-http&quot;,
+      &quot;url&quot;: &quot;http://localhost:62889/mcp&quot;
+    }
+  }
+}</code></pre><p class="callout"><strong>expected:</strong> Connected clients count increases after client connection succeeds.</p>
+<p class="callout"><strong>recovery:</strong> If clients cannot connect, verify server is Running and the configured URL is exactly `http://localhost:62889/mcp`.</p>
+<p class="callout"><strong>advanced:</strong> Use local bind addresses for local clients. Keep endpoint and client config synchronized when bind settings change.</p></section>
+<section id="auto-start"><h2>Configure Auto-start</h2><p>Toggle Auto-start when you want the server started with TUI launch.</p>
+<p>Leave Auto-start disabled for manual lifecycle control.</p><p class="callout"><strong>expected:</strong> Auto-start toggle state persists and reflects your runtime preference.</p>
+<p class="callout"><strong>recovery:</strong> If toggle does not persist, retry toggle and confirm no configuration write errors are logged.</p>
+<figure><img src="/Oatty-mcp-server-autostart.png" alt="MCP server screenshot" loading="lazy"><figcaption>Capture Auto-start enabled and disabled states.</figcaption></figure></section>
+<section id="next-steps"><h2>Next Steps</h2><p>Return to Plugins to validate tool-level integrations exposed through connected clients.</p>
+<p>Continue to Reference docs for configuration and environment variable details.</p><p class="callout"><strong>expected:</strong> You can run a stable local MCP server and connect clients without ambiguity.</p></section>
+<p class="docs-footer-links"><a href="/docs/api-access">API access guide</a> · <a href="/docs/agent-authored-schema">Agent-authored schema</a> · <a href="/docs/repair-command">Repair a command</a></p></article></main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#prerequisites">Prerequisites</a>
+<a href="#why-http-server-not-headless-stdio">Why HTTP (vs stdio)</a>
+<a href="#start-stop-server">Start and Stop the Server</a>
+<a href="#endpoint-details">Verify Endpoint Details</a>
+<a href="#configure-clients">Configure MCP Clients to Connect</a>
+<a href="#auto-start">Configure Auto-start</a>
+<a href="#next-steps">Next Steps</a></aside></div>
+<footer class="site-footer"><p>Oatty is open source.</p><a href="https://github.com/oattyio/oatty/issues">Report a docs issue</a></footer></body></html>

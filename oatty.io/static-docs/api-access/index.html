@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Connect an agent to an API through Oatty, import an OpenAPI catalog, and run the same command in the terminal interface.">
+  <title>Give your agent access to an API | Oatty guides</title>
+  <link rel="canonical" href="https://oatty.io/docs/api-access/">
+  <link rel="icon" href="/favicon.png">
+  <link rel="stylesheet" href="/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access/" aria-current="page">API access</a><a href="/docs/quick-start/">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+  <div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><ul><li><a href="/docs/api-access/" aria-current="page">API access</a></li><li><a href="/docs/agent-authored-schema/">Agent-authored schema</a></li><li><a href="/docs/repair-command/">Repair a command</a></li><li><a href="/docs/quick-start/">Quick start</a></li><li><a href="/docs/learn/mcp-http-server/">MCP HTTP server</a></li></ul></nav></aside>
+  <main id="main" class="docs-content">
+    <p class="eyebrow">Guide</p>
+    <h1>Give your agent access to an API</h1>
+    <p>Connect your existing agent to Oatty through MCP. Import an OpenAPI document, find one operation, and run it. You can then find and run the same command in Oatty's terminal interface.</p>
+    <p>This guide uses a read operation. Have the API's OpenAPI document or URL, its base URL, and any required credentials ready. Use an API and credentials you are allowed to access.</p>
+    <ol>
+      <li><a href="#install">Install and start Oatty</a></li>
+      <li><a href="#connect">Connect your MCP client</a></li>
+      <li><a href="#import">Import the API</a></li>
+      <li><a href="#run">Run one call</a></li>
+      <li><a href="#inspect">Run it yourself</a></li>
+    </ol>
+
+    <section id="install"><h2>Install and start Oatty</h2>
+      <pre><code>npm install -g oatty
+oatty --help
+oatty</code></pre>
+      <p>In the TUI, open the MCP HTTP Server view and start the server. Read its <strong>Active endpoint</strong>. The default local endpoint in the current documentation is <code>http://localhost:62889/mcp</code>; use the address shown by your running instance if it differs.</p>
+      <p>For server controls and connection troubleshooting, see the <a href="/docs/learn/mcp-http-server/">MCP HTTP server guide</a>.</p>
+    </section>
+
+    <section id="connect"><h2>Connect your MCP client</h2>
+      <p>Add the active endpoint as an HTTP MCP server in your client's settings, then reconnect the client. For a client that accepts a server URL, the local setting looks like this:</p>
+      <pre><code>http://localhost:62889/mcp</code></pre>
+      <p>Client configuration formats differ. Verify the client can list Oatty tools before continuing. The TUI shows the server status and connected client count.</p>
+      <p>For authenticated APIs, the inspected source supports request headers backed by raw values, environment variables, files, or secrets. Configure the required header before the first call, and inspect it through the masked-header view. Native OAuth token refresh has not been verified.</p>
+    </section>
+
+    <section id="import"><h2>Import the API</h2>
+      <p>Give the agent the path or URL of your OpenAPI document. Ask it to call <code>catalog_validate_openapi</code>, then <code>catalog_preview_import</code>. Review the validation result, generated command preview, and chosen base URL. Once those match your API, have it call <code>catalog_import_openapi</code> with a clear catalog title.</p>
+      <pre><code>Use Oatty's MCP tools to validate and preview this OpenAPI document: &lt;path-or-URL&gt;.
+Show me the generated read operation and base URL. Then import it as &lt;catalog-title&gt;.</code></pre>
+      <p>If the API does not publish an OpenAPI document, follow <a href="/docs/agent-authored-schema/">author a schema from API documentation</a>.</p>
+    </section>
+
+    <section id="run"><h2>Run one API call</h2>
+      <p>Ask the agent to find a specific read operation with <code>search_commands</code>, inspect its exact inputs with <code>get_command</code>, and execute it with <code>run_safe_command</code>. Supply any required inputs. Check the returned status and response body against the API's expected result.</p>
+      <pre><code>Find the command that reads &lt;resource&gt; from &lt;catalog-title&gt;.
+Inspect its required inputs, run it, and show the response status and body.</code></pre>
+      <p>Use <code>run_command</code> for a POST, PUT, or PATCH operation and <code>run_destructive_command</code> for DELETE. A tool name does not establish that an operation is harmless; check the API operation before executing it.</p>
+    </section>
+
+    <section id="inspect"><h2>Run the same command yourself</h2>
+      <p>Return to Oatty's TUI. Search for the imported operation in the command catalog. Select the command from autocomplete, fill its inputs, and run it. Inspect the response and execution logs. The agent and TUI use the imported catalog, so the command can be examined from either side.</p>
+      <p>If the call fails, inspect the response and inputs first. For a wrong generated path, method, or connection setting, continue to <a href="/docs/repair-command/">correct a catalog command</a>.</p>
+    </section>
+
+    <aside><h2>Release check</h2><p>These steps describe mechanisms present in the inspected source. A published release and a named MCP client have not yet been tested together for this guide. Confirm your installed version exposes the listed tools before relying on this procedure.</p></aside>
+    <nav aria-label="Related guides"><a href="/docs/agent-authored-schema/">No OpenAPI document? Author one with your agent</a><a href="/docs/repair-command/">Correct a failed operation</a></nav>
+  </main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#install">Install and start</a><a href="#connect">Connect your client</a><a href="#import">Import the API</a><a href="#run">Run one call</a><a href="#inspect">Run it yourself</a></aside></div>
+  <footer><p><a href="/">Oatty</a> · <a href="/docs/">Documentation</a></p></footer>
+</body>
+</html>

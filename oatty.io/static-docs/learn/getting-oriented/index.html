@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Getting Oriented | Oatty Docs</title><meta name="description" content="Learn the core interaction model so you can navigate Oatty quickly and recover from common UI friction.">
+<link rel="canonical" href="https://oatty.io/docs/learn/getting-oriented/"><link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/site.css">
+</head><body><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access">API access</a><a href="/docs/quick-start">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+<div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><p><a href="/docs/api-access">Connect your agent to an API</a></p><ul><li><a href="/docs/quick-start">Quick Start</a></li>
+<li><a href="/docs/guides/sentry-bootstrap">Bootstrap Sentry with an Agent + MCP</a></li>
+<li><a href="/docs/guides/sentry-datadog-pagerduty-playbook">Sentry + Datadog + PagerDuty Integration Playbook</a></li>
+<li><a href="/docs/guides/vercel-to-render-migration-playbook">Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL)</a></li>
+<li><a href="/docs/guides/access-review-collection-playbook">Access Review Collection Playbook (Okta + AWS IAM + Datadog)</a></li>
+<li><a href="/docs/guides/credential-rotation-readiness-playbook">Credential Rotation Readiness Playbook</a></li>
+<li><a href="/docs/learn/how-oatty-executes-safely">How Oatty Executes Safely</a></li>
+<li><a href="/docs/learn/getting-oriented" aria-current="page">Getting Oriented</a></li>
+<li><a href="/docs/learn/library-and-catalogs">Library and Catalogs</a></li>
+<li><a href="/docs/learn/search-and-run-commands">Search for and Run Commands</a></li>
+<li><a href="/docs/learn/workflows-basics">Workflows Basics</a></li>
+<li><a href="/docs/learn/plugins">MCP Plugins</a></li>
+<li><a href="/docs/learn/mcp-http-server">MCP HTTP Server</a></li>
+<li><a href="/docs/reference/cli-commands">CLI Command Reference</a></li>
+<li><a href="/docs/reference/tui-interactions">TUI Interactions Reference</a></li></ul></nav></aside>
+<main id="main-content" class="docs-content"><article><header><p class="eyebrow">Documentation</p><h1>Getting Oriented</h1><p class="lede">Learn the core interaction model so you can navigate Oatty quickly and recover from common UI friction.</p><p><strong>Estimated time:</strong> 8-12 min</p></header>
+<section><h2>What you'll learn</h2><ul><li>Move focus predictably with keyboard and mouse.</li>
+<li>Use logs, hints, and help affordances during execution.</li>
+<li>Keep a stable mental model across views and modals.</li></ul></section><section id="prerequisites"><h2>Prerequisites</h2><p>Launch the TUI with `oatty`.</p>
+<p>Use a terminal size that shows navigation, content, and hints clearly.</p>
+<p>Confirm your keyboard sends Tab, Shift+Tab, and Esc correctly.</p><pre><code>oatty</code></pre><p class="callout"><strong>expected:</strong> The default TUI view opens with visible focus and hints.</p>
+<p class="callout"><strong>recovery:</strong> If rendering clips, resize the terminal and relaunch. If key input is inconsistent, verify terminal key settings.</p>
+<figure><img src="/Oatty-first-run.png" alt="Oatty UI screenshot" loading="lazy"><figcaption>The default landing view with focus outline visible.</figcaption></figure></section>
+<section id="navigation-model"><h2>Navigation Model</h2><p>Use the left navigation to switch top-level views.</p>
+<p>Treat each view as a focused workspace with shared interaction rules.</p>
+<p>Return to the same view repeatedly to build speed.</p><p class="callout"><strong>expected:</strong> You can move between Library, Run Command, Find, Workflows, Plugins, and MCP Server without confusion.</p>
+<p class="callout"><strong>recovery:</strong> If a view does not react to input, cycle focus with Tab until the target region highlights.</p>
+<figure><img src="/Oatty-nav.webp" alt="Oatty UI screenshot" loading="lazy"><figcaption>Capture left navigation with one selected view and one hovered view.</figcaption></figure>
+<p class="callout"><strong>advanced:</strong> Most views use Tab and Shift+Tab as the primary focus-cycle pattern.</p></section>
+<section id="keyboard-focus"><h2>Keyboard and Focus</h2><p>Press Tab to move focus forward.</p>
+<p>Press Shift+Tab to move focus backward.</p>
+<p>When a list is focused, press Up and Down to move one row.</p>
+<p>When a long list is focused, press PgUp and PgDown to move faster.</p>
+<p>List navigation keys are focus-scoped, and the hints bar remains the source of truth for active view behavior.</p>
+<p>Press Esc to close modals and transient overlays.</p><p class="callout"><strong>expected:</strong> Focusable areas highlight consistently, and modal dismissal works with Esc.</p>
+<p class="callout"><strong>recovery:</strong> If focus appears stuck, close overlays with Esc, then cycle Tab until the intended element gains focus.</p>
+<figure><img src="/Oatty-keyboard-focus.webp" alt="Oatty UI screenshot" loading="lazy"><figcaption>States showing focus moving across different interactive regions.</figcaption></figure>
+<p class="callout"><strong>advanced:</strong> Hint spans show context-sensitive actions; base focus movement is intentionally omitted from hints in many views.</p></section>
+<section id="mouse-interaction"><h2>Mouse Interaction</h2><p>Click list rows to select entries.</p>
+<p>Click buttons to trigger the same action exposed through keyboard controls.</p>
+<p>Use mouse selection for quick scanning and keyboard for repetitive execution.</p><p class="callout"><strong>expected:</strong> Clicking an interactive element updates focus and action state predictably.</p>
+<p class="callout"><strong>recovery:</strong> If clicks do not act on the expected element, click once to focus the panel, then click the target action again.</p>
+<figure><img src="/Oatty-mouse.webp" alt="Oatty UI screencapture showing mouse interactions" loading="lazy"><figcaption>List selection and hover state in the command finder view.</figcaption></figure>
+<p class="callout"><strong>advanced:</strong> Some modal flows intentionally close through mouse clicks; Esc remains the global close behavior.</p></section>
+<section id="logs-panel"><h2>Logs and Inspection</h2><p>Toggle logs with Ctrl+L.</p>
+<p>Use logs to verify command/workflow status and inspect failures.</p>
+<p>Filter and inspect entries before rerunning actions.</p><p class="callout"><strong>expected:</strong> The logs panel opens and closes without losing your current workflow context.</p>
+<p class="callout"><strong>recovery:</strong> If no entries appear, execute a command first. If the panel feels unresponsive, refocus it with Tab before filtering.</p>
+<figure><img src="/Oatty-logs.webp" alt="Oatty UI screenshot" loading="lazy"><figcaption>Capture logs closed and logs open with one selected log entry.</figcaption></figure>
+<p class="callout"><strong>fallback:</strong> For non-interactive automation logs, run commands with CLI output and collect logs in your shell/CI system.</p>
+<p class="callout"><strong>advanced:</strong> Layout can place logs differently at wider terminal sizes while preserving the same interaction model.</p></section>
+<section id="help"><h2>Hints and Help</h2><p>Hints are shown as hot keys at the bottom of the terminal window.</p>
+<p>These update to show you which actions are available in the focused area.</p>
+<p>Treat hints as the fastest way to know which actions are available in the active view.</p><p class="callout"><strong>expected:</strong> You can identify available actions in the active view without leaving the screen.</p>
+<p class="callout"><strong>recovery:</strong> If hints do not match behavior, confirm the active focus area. Hints are context-sensitive.</p>
+<figure><img src="/Oatty-keyboard-focus.webp" alt="Oatty UI screenshot" loading="lazy"><figcaption>Capture the hints bar while focus is on a list, then on an action button.</figcaption></figure>
+<p class="callout"><strong>advanced:</strong> Parent components may own shared hotkeys in specific flows; this is an intentional exception pattern.</p></section>
+<section id="next-steps"><h2>Next Steps</h2><p>Continue to Search and Run Commands for deeper execution flow.</p>
+<p>Then move to Library and Workflows to build repeatable operations.</p><p class="callout"><strong>expected:</strong> You can navigate the TUI confidently and continue through feature modules faster.</p>
+<figure><img src="/Oatty-finder.png" alt="Oatty UI screenshot" loading="lazy"><figcaption>Capture the final oriented state with a selected view and visible hints.</figcaption></figure></section>
+<p class="docs-footer-links"><a href="/docs/api-access">API access guide</a> · <a href="/docs/agent-authored-schema">Agent-authored schema</a> · <a href="/docs/repair-command">Repair a command</a></p></article></main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#prerequisites">Prerequisites</a>
+<a href="#navigation-model">Navigation Model</a>
+<a href="#keyboard-focus">Keyboard and Focus</a>
+<a href="#mouse-interaction">Mouse Interaction</a>
+<a href="#logs-panel">Logs and Inspection</a>
+<a href="#help">Hints and Help</a>
+<a href="#next-steps">Next Steps</a></aside></div>
+<footer class="site-footer"><p>Oatty is open source.</p><a href="https://github.com/oattyio/oatty/issues">Report a docs issue</a></footer></body></html>

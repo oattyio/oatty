@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Use an existing agent to author a minimal OpenAPI document from API documentation, validate it in Oatty, and import the resulting command catalog.">
+  <title>Use an agent-authored OpenAPI schema | Oatty guides</title>
+  <link rel="canonical" href="https://oatty.io/docs/agent-authored-schema/">
+  <link rel="icon" href="/favicon.png">
+  <link rel="stylesheet" href="/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access/">API access</a><a href="/docs/quick-start/">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+  <div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><ul><li><a href="/docs/api-access/">API access</a></li><li><a href="/docs/agent-authored-schema/" aria-current="page">Agent-authored schema</a></li><li><a href="/docs/repair-command/">Repair a command</a></li><li><a href="/docs/quick-start/">Quick start</a></li><li><a href="/docs/learn/mcp-http-server/">MCP HTTP server</a></li></ul></nav></aside>
+  <main id="main" class="docs-content">
+    <p class="eyebrow">Guide</p>
+    <h1>Use API documentation when there is no OpenAPI file</h1>
+    <p>Your API does not need to publish an OpenAPI document. Give your connected agent usable endpoint documentation or request examples. It can write a small document for the operation you need, then validate and import it through Oatty.</p>
+    <p>Start with <a href="/docs/api-access/">API access</a> to install Oatty and connect your MCP client. You also need the API base URL, one documented endpoint, its inputs, expected response, and supported authentication.</p>
+
+    <section id="choose"><h2>Start with one useful read</h2>
+      <p>Choose a GET operation that confirms access to the API. Give the agent the provider's documentation and a specific task. Ask for the smallest OpenAPI document that covers that operation, including the server URL, parameters, and response.</p>
+      <pre><code>Using this API documentation: &lt;documentation URL or excerpt&gt;
+Write a minimal OpenAPI 3 document for the GET operation that reads &lt;resource&gt;.
+Include the required inputs and response. Show me the document before import.</code></pre>
+      <p>The connected agent supplies the interpretation and schema authorship. Compare its method, path, inputs, and server URL with the provider documentation before executing a call.</p>
+    </section>
+
+    <section id="validate"><h2>Validate and preview the document</h2>
+      <p>In the inspected source, <code>catalog_validate_openapi</code>, <code>catalog_preview_import</code>, and <code>catalog_import_openapi</code> accept the full JSON or YAML text in <code>source</code>. Set <code>source_type</code> to <code>inline</code>. The document does not need a temporary file in that implementation.</p>
+      <pre><code>{
+  "source": "&lt;complete OpenAPI JSON or YAML document&gt;",
+  "source_type": "inline"
+}</code></pre>
+      <p>Have the agent validate the document, then preview the import with a catalog title. Check that the preview contains the expected command and base URL. Fix schema errors in the document and repeat validation before importing.</p>
+    </section>
+
+    <section id="import"><h2>Import and run the operation</h2>
+      <p>Ask the agent to import the validated document with <code>catalog_import_openapi</code>. Then use <code>search_commands</code> and <code>get_command</code> to find the exact generated command and required inputs. Run the GET operation with <code>run_safe_command</code> and inspect the API response.</p>
+      <p>Open the TUI, search for that command, complete its inputs through autocomplete, and run it yourself. If the response differs from the documentation, inspect the generated command and the API response before changing the catalog.</p>
+    </section>
+
+    <aside><h2>Release check</h2><p>Inline <code>source</code> support is present in the local source reviewed for this guide. Published binary support has not been confirmed. If your installed version does not accept inline documents, save the document as a local file and pass its path to the same tools. Validate the file contents before import.</p></aside>
+    <nav aria-label="Related guides"><a href="/docs/api-access/">Back to the first API call</a><a href="/docs/repair-command/">Correct a generated command</a></nav>
+  </main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#choose">Choose a read</a><a href="#validate">Validate and preview</a><a href="#import">Import and run</a></aside></div>
+  <footer><p><a href="/">Oatty</a> · <a href="/docs/">Documentation</a></p></footer>
+</body>
+</html>

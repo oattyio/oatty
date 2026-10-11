@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TUI Interactions Reference | Oatty Docs</title><meta name="description" content="Use this page as a fast reference for keybindings, focus movement, and view-level interaction rules in Oatty.">
+<link rel="canonical" href="https://oatty.io/docs/reference/tui-interactions/"><link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/site.css">
+</head><body><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access">API access</a><a href="/docs/quick-start">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+<div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><p><a href="/docs/api-access">Connect your agent to an API</a></p><ul><li><a href="/docs/quick-start">Quick Start</a></li>
+<li><a href="/docs/guides/sentry-bootstrap">Bootstrap Sentry with an Agent + MCP</a></li>
+<li><a href="/docs/guides/sentry-datadog-pagerduty-playbook">Sentry + Datadog + PagerDuty Integration Playbook</a></li>
+<li><a href="/docs/guides/vercel-to-render-migration-playbook">Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL)</a></li>
+<li><a href="/docs/guides/access-review-collection-playbook">Access Review Collection Playbook (Okta + AWS IAM + Datadog)</a></li>
+<li><a href="/docs/guides/credential-rotation-readiness-playbook">Credential Rotation Readiness Playbook</a></li>
+<li><a href="/docs/learn/how-oatty-executes-safely">How Oatty Executes Safely</a></li>
+<li><a href="/docs/learn/getting-oriented">Getting Oriented</a></li>
+<li><a href="/docs/learn/library-and-catalogs">Library and Catalogs</a></li>
+<li><a href="/docs/learn/search-and-run-commands">Search for and Run Commands</a></li>
+<li><a href="/docs/learn/workflows-basics">Workflows Basics</a></li>
+<li><a href="/docs/learn/plugins">MCP Plugins</a></li>
+<li><a href="/docs/learn/mcp-http-server">MCP HTTP Server</a></li>
+<li><a href="/docs/reference/cli-commands">CLI Command Reference</a></li>
+<li><a href="/docs/reference/tui-interactions" aria-current="page">TUI Interactions Reference</a></li></ul></nav></aside>
+<main id="main-content" class="docs-content"><article><header><p class="eyebrow">Documentation</p><h1>TUI Interactions Reference</h1><p class="lede">Use this page as a fast reference for keybindings, focus movement, and view-level interaction rules in Oatty.</p><p><strong>Estimated time:</strong> 7-10 min</p></header>
+<section><h2>What you'll learn</h2><ul><li>Navigate major views with predictable focus behavior.</li>
+<li>Use command and logs shortcuts without leaving the keyboard.</li>
+<li>Interpret hint bars and context-sensitive actions.</li>
+<li>Recover quickly when focus or state appears inconsistent.</li></ul></section><section id="core-navigation"><h2>Core Navigation Model</h2><p>The TUI follows a consistent focus ring model across panels.</p>
+<p>Use Tab and BackTab to move focus through interactive areas.</p>
+<p>Use Enter to activate focused controls and Esc to dismiss overlays or modals.</p><pre><code>Tab      -&gt; Next focus target
+Shift+Tab -&gt; Previous focus target
+Enter    -&gt; Activate focused control
+Esc      -&gt; Close modal / return</code></pre><p class="callout"><strong>expected:</strong> Focus outline and hint text should always reflect the active interaction target.</p>
+<p class="callout"><strong>recovery:</strong> If focus appears lost, press Esc once or twice, then Tab to re-enter the expected focus cycle.</p></section>
+<section id="global-shortcuts"><h2>Global Shortcuts</h2><p>Global shortcuts provide fast access to high-frequency panels.</p>
+<p>These shortcuts are intended to reduce context switching during execution and debugging.</p><pre><code>Ctrl+L -&gt; Toggle logs panel
+Ctrl+T -&gt; Open theme picker
+F1     -&gt; Open command help (contextual)
+</code></pre><p class="callout"><strong>tip:</strong> Use logs and help shortcuts before rerunning failing commands to reduce trial-and-error loops.</p></section>
+<section id="run-command-flow"><h2>Run Command Interaction Flow</h2><p>Type search text in Run Command to open suggestions.</p>
+<p>Use arrow keys to change selection and Enter to confirm.</p>
+<p>Complete required inputs, run the command, and inspect results and logs.</p><pre><code># Typical loop
+1) Type intent text
+2) Tab / arrows through suggestions
+3) Enter to select
+4) Fill required args/flags
+5) Execute and inspect output</code></pre><p class="callout"><strong>expected:</strong> Selected command details and execution output remain visible in the same workflow.</p>
+<p class="callout"><strong>advanced:</strong> Use Find/Browser for broader discovery, then hand selected commands back into Run Command.</p></section>
+<section id="workflows-and-collector"><h2>Workflows and Input Collector</h2><p>Workflow runs move through list selection, input collection, and execution monitoring.</p>
+<p>Collector screens enforce required inputs before enabling run.</p>
+<p>When provider-backed choices exist, select from list options before falling back to manual entry.</p><pre><code># Typical workflow loop
+1) Select workflow
+2) Open inputs
+3) Provide required values
+4) Run
+5) Monitor step status and logs</code></pre><p class="callout"><strong>expected:</strong> Run actions become available only after required input validation passes.</p>
+<p class="callout"><strong>recovery:</strong> If run remains disabled, inspect collector errors and resolve missing required values first.</p></section>
+<section id="mouse-and-accessibility"><h2>Mouse and Accessibility Behavior</h2><p>Oatty supports mouse interactions for selection and button activation where available.</p>
+<p>Keyboard access remains first-class and should always provide a complete interaction path.</p>
+<p>Use large enough terminal dimensions to avoid clipped content and hidden controls.</p><p class="callout"><strong>tip:</strong> If terminal rendering looks inconsistent, resize first, then reopen the current view before troubleshooting deeper issues.</p></section>
+<p class="docs-footer-links"><a href="/docs/api-access">API access guide</a> · <a href="/docs/agent-authored-schema">Agent-authored schema</a> · <a href="/docs/repair-command">Repair a command</a></p></article></main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#core-navigation">Core Navigation Model</a>
+<a href="#global-shortcuts">Global Shortcuts</a>
+<a href="#run-command-flow">Run Command Interaction Flow</a>
+<a href="#workflows-and-collector">Workflows and Input Collector</a>
+<a href="#mouse-and-accessibility">Mouse and Accessibility Behavior</a></aside></div>
+<footer class="site-footer"><p>Oatty is open source.</p><a href="https://github.com/oattyio/oatty/issues">Report a docs issue</a></footer></body></html>

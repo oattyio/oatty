@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How Oatty Executes Safely | Oatty Docs</title><meta name="description" content="Understand the trust model: suggestion, preview, validation, and explicit operator control before execution.">
+<link rel="canonical" href="https://oatty.io/docs/learn/how-oatty-executes-safely/"><link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/site.css">
+</head><body><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access">API access</a><a href="/docs/quick-start">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+<div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><p><a href="/docs/api-access">Connect your agent to an API</a></p><ul><li><a href="/docs/quick-start">Quick Start</a></li>
+<li><a href="/docs/guides/sentry-bootstrap">Bootstrap Sentry with an Agent + MCP</a></li>
+<li><a href="/docs/guides/sentry-datadog-pagerduty-playbook">Sentry + Datadog + PagerDuty Integration Playbook</a></li>
+<li><a href="/docs/guides/vercel-to-render-migration-playbook">Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL)</a></li>
+<li><a href="/docs/guides/access-review-collection-playbook">Access Review Collection Playbook (Okta + AWS IAM + Datadog)</a></li>
+<li><a href="/docs/guides/credential-rotation-readiness-playbook">Credential Rotation Readiness Playbook</a></li>
+<li><a href="/docs/learn/how-oatty-executes-safely" aria-current="page">How Oatty Executes Safely</a></li>
+<li><a href="/docs/learn/getting-oriented">Getting Oriented</a></li>
+<li><a href="/docs/learn/library-and-catalogs">Library and Catalogs</a></li>
+<li><a href="/docs/learn/search-and-run-commands">Search for and Run Commands</a></li>
+<li><a href="/docs/learn/workflows-basics">Workflows Basics</a></li>
+<li><a href="/docs/learn/plugins">MCP Plugins</a></li>
+<li><a href="/docs/learn/mcp-http-server">MCP HTTP Server</a></li>
+<li><a href="/docs/reference/cli-commands">CLI Command Reference</a></li>
+<li><a href="/docs/reference/tui-interactions">TUI Interactions Reference</a></li></ul></nav></aside>
+<main id="main-content" class="docs-content"><article><header><p class="eyebrow">Documentation</p><h1>How Oatty Executes Safely</h1><p class="lede">Understand the trust model: suggestion, preview, validation, and explicit operator control before execution.</p><p><strong>Estimated time:</strong> 6-9 min</p></header>
+<section><h2>What you'll learn</h2><ul><li>Connect Oatty MCP tooling to your AI assistant for controlled planning support.</li>
+<li>Separate suggestion from execution so generated plans stay reviewable.</li>
+<li>Use preview and validation outputs before running commands or workflows.</li>
+<li>Interpret failures quickly and recover with deterministic next steps.</li>
+<li>Keep manual control even when using AI assistants and natural language requests.</li></ul></section><section id="trust-model"><h2>Trust Model at a Glance</h2><p>Connect Oatty to your AI assistant through MCP so planning and execution tools are discoverable in one place.</p>
+<p>Oatty treats natural language as a planning input, not an execution bypass.</p>
+<p>In the TUI, suggested commands and workflows are reviewable before execution. Connected AI assistants can run/debug workflows if desired.</p>
+<p>Execution remains explicit and observable through status, logs, and result views.</p><p class="callout"><strong>tip:</strong> Use this mental model: suggest -&gt; inspect -&gt; validate -&gt; run.</p>
+<figure><img src="/Oatty-run.png" alt="Run command view with output and logs" loading="lazy"><figcaption>Capture a run view that shows selected command, output, and logs together.</figcaption></figure></section>
+<section id="preview-validation"><h2>Preview and Validation Before Run</h2><p>Before execution, confirm command arguments or workflow inputs match intent.</p>
+<p>Use preview and validation tools to catch schema, dependency, input, and command/catalog preflight issues early.</p>
+<p>When validation fails, use returned violations and suggested actions to repair quickly.</p><p class="callout"><strong>expected:</strong> Validation failures are specific enough to fix in one edit cycle.</p>
+<p class="callout"><strong>recovery:</strong> If a step fails validation, correct the reported field/dependency and run validation again before execution.</p>
+<p class="callout"><strong>advanced:</strong> Ask your AI assistant to help build/validate complex workflows via MCP.</p></section>
+<section id="operator-control"><h2>Operator Control and Manual Overrides</h2><p>Assisted planning does not remove manual operation paths.</p>
+<p>You can still run commands directly, edit workflow manifests in your IDE, and provide inputs manually before running.</p>
+<p>This keeps behavior deterministic and audit-friendly in high-stakes changes.</p><p class="callout"><strong>tip:</strong> For production changes, prefer explicit command/workflow review over one-shot executions.</p>
+<p class="callout"><strong>fallback:</strong> Use CLI commands for explicit scriptable execution when you need non-interactive control in a CI/CD pipeline.</p></section>
+<section id="failure-recovery"><h2>Failure and Recovery Pattern</h2><p>Treat failures as structured feedback, not dead ends.</p>
+<p>Read the first actionable error, update the relevant input/spec, and rerun the smallest validation step first.</p>
+<p>Then rerun execution once readiness checks pass.</p><p class="callout"><strong>expected:</strong> Most failures should map to a clear next action from validation or error metadata.</p>
+<p class="callout"><strong>tip:</strong> When something fails, rerun the smallest preflight first (preview/validate) before rerunning the full command or workflow.</p></section>
+<section id="next-steps"><h2>Next Steps</h2><p>Continue to Search and Run Commands for command-level execution patterns.</p>
+<p>Continue to Workflows Basics for input collection, run controls, and step-level inspection.</p>
+<p>Use workflow export/import flows to share reviewed workflows with teammates and CI pipelines.</p><p class="callout"><strong>expected:</strong> You can evaluate assisted suggestions without sacrificing operator control.</p></section>
+<p class="docs-footer-links"><a href="/docs/api-access">API access guide</a> · <a href="/docs/agent-authored-schema">Agent-authored schema</a> · <a href="/docs/repair-command">Repair a command</a></p></article></main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#trust-model">Trust Model at a Glance</a>
+<a href="#preview-validation">Preview and Validation Before Run</a>
+<a href="#operator-control">Operator Control and Manual Overrides</a>
+<a href="#failure-recovery">Failure and Recovery Pattern</a>
+<a href="#next-steps">Next Steps</a></aside></div>
+<footer class="site-footer"><p>Oatty is open source.</p><a href="https://github.com/oattyio/oatty/issues">Report a docs issue</a></footer></body></html>

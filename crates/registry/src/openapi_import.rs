@@ -25,7 +25,8 @@ pub struct OpenApiCatalogImportRequest {
     pub base_url_override: Option<String>,
     /// Optional source string used for catalog provenance.
     pub source: Option<String>,
-    /// Optional source type hint (`path` or `url`) used for catalog provenance.
+    /// Optional source type (`path`, `url`, or `inline`) used for catalog provenance.
+    /// Inline imports omit the source location rather than retain document text there.
     pub source_type: Option<String>,
     /// Optional enabled-state override for imported catalog.
     ///

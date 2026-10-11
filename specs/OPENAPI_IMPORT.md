@@ -40,6 +40,11 @@ MCP catalog endpoints reuse the same import logic for:
 - enable/disable
 - remove
 
+Validation, preview, and import accept the source document as a JSON/YAML string
+in `source`, optionally with `source_type: "inline"`. No intermediate OpenAPI
+source file is required. Path and HTTP(S) URL sources remain supported.
+Import still persists the generated catalog/manifest and runtime configuration.
+
 ## TUI/Library integration
 
 Library import and mutation flows are expected to refresh library projections from the updated runtime registry state.

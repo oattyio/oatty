@@ -27,8 +27,29 @@ Catalog-related MCP tools exposed from server core include:
 Source loading supports:
 - local path
 - URL (`http`/`https`)
+- inline JSON/YAML document text passed directly in `source`
 
-`source_type` can be explicit; otherwise inferred from source string.
+`source_type` accepts `path`, `url`, or `inline`. An explicit type takes precedence.
+When omitted, HTTP(S) URLs and structured JSON/YAML documents are detected;
+other strings are treated as paths. Use `source_type: "inline"` for malformed
+YAML or scalar input to receive document validation errors rather than path errors.
+
+All three OpenAPI tools (`catalog_validate_openapi`, `catalog_preview_import`,
+and `catalog_import_openapi`) accept inline content. An agent-authored document
+does not need an intermediate source file. For example, validation accepts:
+
+```json
+{
+  "source": "openapi: 3.0.3\ninfo:\n  title: Example API\n  version: 1.0.0\npaths:\n  /items:\n    get:\n      responses:\n        '200':\n          description: Success\n",
+  "source_type": "inline"
+}
+```
+
+Preview and import accept the same source parameters plus `catalog_title` and
+their existing options. Inline previews identify their source as `inline`
+instead of echoing the document. Import persists the generated catalog and
+registry configuration normally, records `import_source_type: "inline"`, and
+omits source-location provenance rather than storing document text there.
 
 ## Validation and preview
 

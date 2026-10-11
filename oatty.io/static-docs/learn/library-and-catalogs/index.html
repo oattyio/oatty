@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Library and Catalogs | Oatty Docs</title><meta name="description" content="Manage catalogs as your command source of truth, including import, enablement, base URLs, and removal.">
+<link rel="canonical" href="https://oatty.io/docs/learn/library-and-catalogs/"><link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/site.css">
+</head><body><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access">API access</a><a href="/docs/quick-start">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+<div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><p><a href="/docs/api-access">Connect your agent to an API</a></p><ul><li><a href="/docs/quick-start">Quick Start</a></li>
+<li><a href="/docs/guides/sentry-bootstrap">Bootstrap Sentry with an Agent + MCP</a></li>
+<li><a href="/docs/guides/sentry-datadog-pagerduty-playbook">Sentry + Datadog + PagerDuty Integration Playbook</a></li>
+<li><a href="/docs/guides/vercel-to-render-migration-playbook">Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL)</a></li>
+<li><a href="/docs/guides/access-review-collection-playbook">Access Review Collection Playbook (Okta + AWS IAM + Datadog)</a></li>
+<li><a href="/docs/guides/credential-rotation-readiness-playbook">Credential Rotation Readiness Playbook</a></li>
+<li><a href="/docs/learn/how-oatty-executes-safely">How Oatty Executes Safely</a></li>
+<li><a href="/docs/learn/getting-oriented">Getting Oriented</a></li>
+<li><a href="/docs/learn/library-and-catalogs" aria-current="page">Library and Catalogs</a></li>
+<li><a href="/docs/learn/search-and-run-commands">Search for and Run Commands</a></li>
+<li><a href="/docs/learn/workflows-basics">Workflows Basics</a></li>
+<li><a href="/docs/learn/plugins">MCP Plugins</a></li>
+<li><a href="/docs/learn/mcp-http-server">MCP HTTP Server</a></li>
+<li><a href="/docs/reference/cli-commands">CLI Command Reference</a></li>
+<li><a href="/docs/reference/tui-interactions">TUI Interactions Reference</a></li></ul></nav></aside>
+<main id="main-content" class="docs-content"><article><header><p class="eyebrow">Documentation</p><h1>Library and Catalogs</h1><p class="lede">Manage catalogs as your command source of truth, including import, enablement, base URLs, and removal.</p><p><strong>Estimated time:</strong> 10-14 min</p></header>
+<section><h2>What you'll learn</h2><ul><li>Import catalogs into the shared command registry.</li>
+<li>Toggle catalog enablement and verify active state.</li>
+<li>Define request headers such as Authorization in the headers editor.</li>
+<li>Set, add, and remove base URLs safely.</li>
+<li>Use CLI fallback for catalog import automation.</li></ul></section><section id="overview"><h2>Overview</h2><p>Catalogs are the source of truth for your command surface. Import OpenAPI schemas to create catalogs.</p>
+<p>Catalogs are shared across TUI, workflows, CLI, and MCP tooling.</p>
+<p>Catalogs can be enabled or disabled to control visibility in the TUI.</p>
+<p>Request headers such as Authorization and others can be set to support Vendor requirements.</p>
+<p>Base URLs can be specified to support multiple API endpoints for a catalog.</p>
+<p>Catalogs can be removed when no longer needed.</p><p class="callout"><strong>expected:</strong> Catalogs extend your command surface. Practical limits depend on your machine and schema size; start with a few catalogs and scale up as needed.</p>
+<p class="callout"><strong>recovery:</strong> If catalogs are missing, verify the catalog import flow.</p>
+<figure><img src="/Oatty-complete-catalog-flow.webp" alt="Catalog import and configuration flow" loading="lazy"><figcaption>Catalog import and configuration flow.</figcaption></figure></section>
+<section id="prerequisites"><h2>Prerequisites</h2><p>Open the Library view.</p>
+<p>Prepare an OpenAPI source path or URL for import.</p><p class="callout"><strong>expected:</strong> Library opens with catalog list and catalog details panels available.</p>
+<p class="callout"><strong>recovery:</strong> If Library is empty, import a catalog first.</p>
+<figure><img src="/Oatty-library.png" alt="Library catalog screenshot" loading="lazy"><figcaption>Capture Library with list, details, and base URL areas visible.</figcaption></figure></section>
+<section id="import-catalog"><h2>Import a Catalog</h2><p>Select Import in Library.</p>
+<p>Provide the schema source and complete the import flow.</p>
+<p>Verify the new catalog appears in the list.</p><p class="callout"><strong>expected:</strong> A new catalog entry appears and is selectable in Library.</p>
+<p class="callout"><strong>recovery:</strong> If import fails, validate schema format and source path/URL, then retry.</p>
+<figure><img src="/Oatty-catalog-import-flow.webp" alt="Library catalog screenshot" loading="lazy"><figcaption>Capture successful import with the new catalog selected.</figcaption></figure>
+<p class="callout"><strong>fallback:</strong> CLI fallback: `oatty import &lt;path-or-url&gt; --kind catalog`.</p>
+<p class="callout"><strong>advanced:</strong> Imported catalogs become a shared command surface used by TUI, workflows, CLI, and MCP tooling.</p></section>
+<section id="toggle-enablement"><h2>Toggle Catalog Enablement</h2><p>Focus the catalog list and select a catalog.</p>
+<p>Toggle enabled state from the list action path.</p>
+<p>Confirm status changes in the catalog row and details.</p><p class="callout"><strong>expected:</strong> Catalog status updates between enabled and disabled.</p>
+<p class="callout"><strong>recovery:</strong> If status does not change, ensure the catalog row is focused before toggling or use the mouse.</p>
+<figure><img src="/Oatty-toggle-catalog-enablement.webp" alt="Toggle catalog enablement flow" loading="lazy"><figcaption>Enabled and disabled states for the same catalog.</figcaption></figure></section>
+<section id="headers-management"><h2>Define Request Headers</h2><p>Open the catalog headers editor in Library.</p>
+<p>Add header key-value entries, including `Authorization` when required.</p>
+<p>Leave header values empty only when your API contract allows optional values.</p><p class="callout"><strong>expected:</strong> Header rows are visible in the catalog details and persist after focus changes.</p>
+<p class="callout"><strong>recovery:</strong> If headers do not persist, check for invalid/empty header keys and correct the row.</p>
+<figure><img src="/Oatty-add-header-flow.webp" alt="Add header row flow" loading="lazy"><figcaption>Add authorization header with auto-save changes.</figcaption></figure>
+<p class="callout"><strong>advanced:</strong> Header validation errors are shown above the headers list.</p></section>
+<section id="base-url-management"><h2>Manage Base URLs</h2><p>Select a catalog and open its base URL section.</p>
+<p>Set the active base URL from the URL list.</p>
+<p>Add or remove base URLs as needed.</p><p class="callout"><strong>expected:</strong> One base URL is marked active and list updates reflect add/remove actions.</p>
+<p class="callout"><strong>recovery:</strong> If updates fail validation, correct the base URL value and retry.</p>
+<figure><img src="/Oatty-base-url-flow.webp" alt="Add base URL flow" loading="lazy"><figcaption>Base URL add and remove actions with validation errors.</figcaption></figure>
+<p class="callout"><strong>advanced:</strong> Base URL validation rejects invalid or empty URL sets for a catalog.</p></section>
+<section id="next-steps"><h2>Next Steps</h2><p>Continue to Workflows Basics to run imported workflows with structured inputs.</p>
+<p>Return to Search and Run Commands to validate command behavior against updated catalogs.</p><p class="callout"><strong>expected:</strong> You can keep catalog state aligned with your execution workflows.</p></section>
+<p class="docs-footer-links"><a href="/docs/api-access">API access guide</a> · <a href="/docs/agent-authored-schema">Agent-authored schema</a> · <a href="/docs/repair-command">Repair a command</a></p></article></main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#overview">Overview</a>
+<a href="#prerequisites">Prerequisites</a>
+<a href="#import-catalog">Import a Catalog</a>
+<a href="#toggle-enablement">Toggle Catalog Enablement</a>
+<a href="#headers-management">Define Request Headers</a>
+<a href="#base-url-management">Manage Base URLs</a>
+<a href="#next-steps">Next Steps</a></aside></div>
+<footer class="site-footer"><p>Oatty is open source.</p><a href="https://github.com/oattyio/oatty/issues">Report a docs issue</a></footer></body></html>

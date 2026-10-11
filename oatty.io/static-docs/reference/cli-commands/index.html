@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CLI Command Reference | Oatty Docs</title><meta name="description" content="Use this page as a command lookup for discovery, inspection, and execution flows in Oatty CLI mode.">
+<link rel="canonical" href="https://oatty.io/docs/reference/cli-commands/"><link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/site.css">
+</head><body><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access">API access</a><a href="/docs/quick-start">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+<div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><p><a href="/docs/api-access">Connect your agent to an API</a></p><ul><li><a href="/docs/quick-start">Quick Start</a></li>
+<li><a href="/docs/guides/sentry-bootstrap">Bootstrap Sentry with an Agent + MCP</a></li>
+<li><a href="/docs/guides/sentry-datadog-pagerduty-playbook">Sentry + Datadog + PagerDuty Integration Playbook</a></li>
+<li><a href="/docs/guides/vercel-to-render-migration-playbook">Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL)</a></li>
+<li><a href="/docs/guides/access-review-collection-playbook">Access Review Collection Playbook (Okta + AWS IAM + Datadog)</a></li>
+<li><a href="/docs/guides/credential-rotation-readiness-playbook">Credential Rotation Readiness Playbook</a></li>
+<li><a href="/docs/learn/how-oatty-executes-safely">How Oatty Executes Safely</a></li>
+<li><a href="/docs/learn/getting-oriented">Getting Oriented</a></li>
+<li><a href="/docs/learn/library-and-catalogs">Library and Catalogs</a></li>
+<li><a href="/docs/learn/search-and-run-commands">Search for and Run Commands</a></li>
+<li><a href="/docs/learn/workflows-basics">Workflows Basics</a></li>
+<li><a href="/docs/learn/plugins">MCP Plugins</a></li>
+<li><a href="/docs/learn/mcp-http-server">MCP HTTP Server</a></li>
+<li><a href="/docs/reference/cli-commands" aria-current="page">CLI Command Reference</a></li>
+<li><a href="/docs/reference/tui-interactions">TUI Interactions Reference</a></li></ul></nav></aside>
+<main id="main-content" class="docs-content"><article><header><p class="eyebrow">Documentation</p><h1>CLI Command Reference</h1><p class="lede">Use this page as a command lookup for discovery, inspection, and execution flows in Oatty CLI mode.</p><p><strong>Estimated time:</strong> 8-12 min</p></header>
+<section><h2>What you'll learn</h2><ul><li>Understand canonical command identifiers and CLI argument shape.</li>
+<li>Discover commands through the supported TUI-first workflow.</li>
+<li>Inspect command schemas before execution.</li>
+<li>Run workflows and exact command paths from the terminal.</li></ul></section><section id="canonical-identifiers"><h2>Canonical Command Identifiers</h2><p>Oatty resolves commands in canonical `&lt;group&gt; &lt;command&gt;` form.</p>
+<p>Use canonical identifiers when inspecting or running commands to avoid ambiguity.</p>
+<p>Treat canonical IDs as stable references for scripts and workflow steps.</p><pre><code># General pattern
+oatty &lt;group&gt; &lt;command&gt; [flags]
+
+# Example
+oatty apps apps:list --project-id proj_123</code></pre><p class="callout"><strong>expected:</strong> Canonical IDs remain consistent across discovery and execution paths.</p>
+<p class="callout"><strong>recovery:</strong> If you only have vendor CLI syntax, use the TUI to discover the matching Oatty command path first, then copy the exact canonical ID into your shell command.</p></section>
+<section id="command-discovery"><h2>Command Discovery</h2><p>Use the TUI when you do not know the exact command path yet.</p>
+<p>After you import a catalog, rerun `oatty --help` or inspect command-specific help to confirm which top-level groups are available.</p>
+<p>Once you know the exact canonical path, execute that command directly from the CLI.</p><pre><code># Review built-in and imported top-level commands
+oatty --help
+
+# Inspect one imported command once you know the path
+oatty &lt;group&gt; &lt;command&gt; --help</code></pre><p class="callout"><strong>tip:</strong> Prefer TUI discovery over memorized commands when catalogs change.</p>
+<p class="callout"><strong>advanced:</strong> For repeated automation, validate once in TUI/CLI, then pin the exact command line in scripts.</p></section>
+<section id="schema-inspection"><h2>Schema Inspection and Input Review</h2><p>Review command details before sending requests to production systems.</p>
+<p>Confirm required positional arguments, required flags, and payload shape.</p>
+<p>Use help output to compare expected input names with your script variables.</p><pre><code># Inspect one command in detail
+oatty &lt;group&gt; &lt;command&gt; --help
+
+# Alternate: contextual help during TUI command selection
+# press F1 in Run Command</code></pre><p class="callout"><strong>expected:</strong> Help output should identify required and optional command inputs.</p>
+<p class="callout"><strong>recovery:</strong> If execution fails due to missing inputs, map each error field to the corresponding required flag or positional argument.</p></section>
+<section id="run-exact-commands"><h2>Run Exact Commands and Workflows</h2><p>Run exact catalog-backed commands once you know the canonical path.</p>
+<p>Use workflow subcommands for repeatable automation that lives in workflow files or imported workflow IDs.</p>
+<p>Keep command inputs explicit so terminal runs are easy to review and reuse.</p><pre><code># Run an imported command once the path is known
+oatty &lt;group&gt; &lt;command&gt; [flags]
+
+# Preview and run workflows
+oatty workflow preview --file ./workflow.yaml
+oatty workflow run --file ./workflow.yaml --input env=staging</code></pre><p class="callout"><strong>tip:</strong> Use preview/inspection before destructive operations.</p>
+<p class="callout"><strong>advanced:</strong> In workflows, keep destructive steps isolated and clearly labeled for easier review and rollback planning.</p></section>
+<section id="automation-patterns"><h2>Automation Patterns</h2><p>Use CLI mode for deterministic non-interactive runs in CI/CD or scheduled jobs.</p>
+<p>Keep inputs explicit and environment-driven where possible.</p>
+<p>Capture stdout/stderr in your job logs for auditability and failure triage.</p><pre><code># Script-friendly command
+oatty workflow run --file ./workflow.yaml --input env=staging
+
+# Standard shell guard pattern
+set -euo pipefail
+oatty &lt;group&gt; &lt;command&gt; [flags]</code></pre><p class="callout"><strong>fallback:</strong> When TUI discovery identifies the right command, copy that exact command into scripts instead of rewriting it from memory.</p>
+<p class="callout"><strong>recovery:</strong> If CI runs behave differently, verify catalog availability, headers, and environment variables in the job context.</p></section>
+<p class="docs-footer-links"><a href="/docs/api-access">API access guide</a> · <a href="/docs/agent-authored-schema">Agent-authored schema</a> · <a href="/docs/repair-command">Repair a command</a></p></article></main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#canonical-identifiers">Canonical Command Identifiers</a>
+<a href="#command-discovery">Command Discovery</a>
+<a href="#schema-inspection">Schema Inspection and Input Review</a>
+<a href="#run-exact-commands">Run Exact Commands and Workflows</a>
+<a href="#automation-patterns">Automation Patterns</a></aside></div>
+<footer class="site-footer"><p>Oatty is open source.</p><a href="https://github.com/oattyio/oatty/issues">Report a docs issue</a></footer></body></html>

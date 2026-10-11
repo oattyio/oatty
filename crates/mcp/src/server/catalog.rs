@@ -30,7 +30,7 @@ pub(crate) async fn validate_openapi_source(request: &CatalogValidateOpenApiRequ
     ensure_openapi_document_preflight(&parsed_document)?;
     Ok(preview_catalog_from_document(
         &parsed_document,
-        &request.source,
+        catalog_source_label(&request.source, request.source_type),
         CatalogPreviewOptions::new(None, None, None, false),
     ))
 }
@@ -42,7 +42,7 @@ pub(crate) async fn preview_openapi_import(request: &CatalogPreviewImportRequest
     ensure_openapi_document_preflight(&parsed_document)?;
     Ok(preview_catalog_from_document(
         &parsed_document,
-        &request.source,
+        catalog_source_label(&request.source, request.source_type),
         CatalogPreviewOptions::new(
             Some(request.catalog_title.as_str()),
             request.vendor.as_deref(),
@@ -64,28 +64,14 @@ pub(crate) async fn import_openapi_catalog(
             format!("registry lock failed: {error}"),
             serde_json::json!({
                 "catalog_title": request.catalog_title,
-                "source": request.source
+                "source": catalog_source_label(&request.source, request.source_type)
             }),
             "Retry catalog import. If this persists, restart MCP server and retry.",
         )
     })?;
-    let import_result = import_openapi_catalog_into_registry(
-        &mut registry_guard,
-        OpenApiCatalogImportRequest {
-            source_content,
-            catalog_title_override: Some(request.catalog_title.clone()),
-            vendor_override: request.vendor.clone(),
-            base_url_override: request.base_url.clone(),
-            source: Some(request.source.clone()),
-            source_type: request.source_type.map(|source_type| match source_type {
-                CatalogSourceType::Path => "path".to_string(),
-                CatalogSourceType::Url => "url".to_string(),
-            }),
-            enabled: request.enabled,
-            overwrite: request.overwrite.unwrap_or(false),
-        },
-    )
-    .map_err(|error| map_openapi_import_error_to_mcp(error, request))?;
+    let import_result =
+        import_openapi_catalog_into_registry(&mut registry_guard, build_openapi_catalog_import_request(request, source_content))
+            .map_err(|error| map_openapi_import_error_to_mcp(error, request))?;
 
     let catalog_metadata = masked_catalog_metadata(&import_result.catalog);
 
@@ -101,6 +87,30 @@ pub(crate) async fn import_openapi_catalog(
         "masked_headers": catalog_metadata.get("masked_headers").cloned().unwrap_or(Value::Array(Vec::new())),
         "warnings": [],
     }))
+}
+
+/// Maps an MCP import request to the shared importer without retaining inline
+/// document contents in source-location provenance.
+///
+/// The generated catalog remains persisted normally. Inline input records only
+/// its source type; path and URL inputs retain their original location.
+fn build_openapi_catalog_import_request(request: &CatalogImportOpenApiRequest, source_content: String) -> OpenApiCatalogImportRequest {
+    let source_type = resolve_catalog_source_type(&request.source, request.source_type);
+    let source_type_name = match source_type {
+        CatalogSourceType::Path => "path",
+        CatalogSourceType::Url => "url",
+        CatalogSourceType::Inline => "inline",
+    };
+    OpenApiCatalogImportRequest {
+        source_content,
+        catalog_title_override: Some(request.catalog_title.clone()),
+        vendor_override: request.vendor.clone(),
+        base_url_override: request.base_url.clone(),
+        source: (source_type != CatalogSourceType::Inline).then(|| request.source.clone()),
+        source_type: Some(source_type_name.to_string()),
+        enabled: request.enabled,
+        overwrite: request.overwrite.unwrap_or(false),
+    }
 }
 
 /// Applies deterministic command-level patch operations to an existing catalog.
@@ -179,7 +189,7 @@ fn map_openapi_import_error_to_mcp(error: OpenApiCatalogImportError, request: &C
             serde_json::json!({
                 "catalog_title": request.catalog_title,
                 "vendor": request.vendor,
-                "source": request.source
+                "source": catalog_source_label(&request.source, request.source_type)
             }),
             "Review the schema for unsupported operations or malformed operation metadata, then retry import.",
         ),
@@ -189,7 +199,7 @@ fn map_openapi_import_error_to_mcp(error: OpenApiCatalogImportError, request: &C
             format!("catalog import failed: {message}"),
             serde_json::json!({
                 "catalog_title": request.catalog_title,
-                "source": request.source
+                "source": catalog_source_label(&request.source, request.source_type)
             }),
             "Retry import. If this persists, verify runtime config write permissions.",
         ),
@@ -197,7 +207,7 @@ fn map_openapi_import_error_to_mcp(error: OpenApiCatalogImportError, request: &C
             "catalog import succeeded but persisted catalog metadata is unavailable".to_string(),
             serde_json::json!({
                 "catalog_title": request.catalog_title,
-                "source": request.source
+                "source": catalog_source_label(&request.source, request.source_type)
             }),
             "Run catalog list to verify persisted state and retry import if needed.",
         ),
@@ -492,6 +502,7 @@ async fn load_catalog_source_content(source: &str, source_type: Option<CatalogSo
     match resolved_source_type {
         CatalogSourceType::Path => load_catalog_source_from_path(source),
         CatalogSourceType::Url => load_catalog_source_from_url(source).await,
+        CatalogSourceType::Inline => Ok(source.to_string()),
     }
 }
 
@@ -502,7 +513,32 @@ fn resolve_catalog_source_type(source: &str, source_type: Option<CatalogSourceTy
     if source.starts_with("http://") || source.starts_with("https://") {
         return CatalogSourceType::Url;
     }
+    if is_inline_catalog_document(source) {
+        return CatalogSourceType::Inline;
+    }
     CatalogSourceType::Path
+}
+
+/// Identifies structured document input while leaving ordinary paths untouched.
+///
+/// JSON object/array prefixes are recognized even when malformed so parsing
+/// returns document errors. YAML must parse as a mapping or sequence; callers
+/// can select `inline` explicitly for malformed YAML or scalar documents.
+fn is_inline_catalog_document(source: &str) -> bool {
+    let trimmed_source = source.trim_start();
+    trimmed_source.starts_with('{')
+        || trimmed_source.starts_with('[')
+        || serde_yaml::from_str::<Value>(source).is_ok_and(|document| document.is_object() || document.is_array())
+}
+
+/// Returns a compact source label for previews and diagnostic error context.
+///
+/// Inline documents are identified by type rather than echoed in responses.
+fn catalog_source_label(source: &str, source_type: Option<CatalogSourceType>) -> &str {
+    match resolve_catalog_source_type(source, source_type) {
+        CatalogSourceType::Inline => "inline",
+        CatalogSourceType::Path | CatalogSourceType::Url => source,
+    }
 }
 
 fn invalid_catalog_params_error(message: impl Into<String>, context: Value, suggested_action: &str) -> ErrorData {
@@ -1003,6 +1039,215 @@ mod tests {
     use oatty_registry::RegistryConfig;
     use oatty_types::{EnvSource, EnvVar, manifest::RegistryManifest};
     use std::sync::{Arc, Mutex};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    const INLINE_OPENAPI_JSON: &str = r#"{
+        "openapi": "3.0.3",
+        "info": {"title": "Inline API", "version": "1.0.0"},
+        "servers": [{"url": "https://api.example.com"}],
+        "paths": {"/apps": {"get": {
+            "operationId": "listApps",
+            "responses": {"200": {"description": "Success"}}
+        }}}
+    }"#;
+
+    const INLINE_OPENAPI_YAML: &str = r#"openapi: 3.0.3
+info:
+  title: Inline API
+  version: 1.0.0
+servers:
+  - url: https://api.example.com
+paths:
+  /apps:
+    get:
+      operationId: listApps
+      responses:
+        '200':
+          description: Success
+"#;
+
+    fn inline_source_cases() -> [(&'static str, Option<CatalogSourceType>); 4] {
+        [
+            (INLINE_OPENAPI_JSON, Some(CatalogSourceType::Inline)),
+            (INLINE_OPENAPI_YAML, Some(CatalogSourceType::Inline)),
+            (INLINE_OPENAPI_JSON, None),
+            (INLINE_OPENAPI_YAML, None),
+        ]
+    }
+
+    fn inline_import_request(source: &str, source_type: Option<CatalogSourceType>) -> CatalogImportOpenApiRequest {
+        serde_json::from_value(serde_json::json!({
+            "source": source,
+            "source_type": source_type,
+            "catalog_title": "Inline API",
+            "vendor": "inline_api",
+            "overwrite": true
+        }))
+        .expect("inline import request deserializes")
+    }
+
+    /// Serves two local OpenAPI requests, accounting for fragmented HTTP headers.
+    async fn serve_openapi_fixture(listener: tokio::net::TcpListener) {
+        for _ in 0..2 {
+            let (mut stream, _) = listener.accept().await.expect("fixture request arrives");
+            let mut request = Vec::new();
+            loop {
+                let mut request_buffer = [0; 4096];
+                let received_bytes = stream.read(&mut request_buffer).await.expect("fixture request is read");
+                assert!(received_bytes > 0, "fixture connection closed before complete headers");
+                request.extend_from_slice(&request_buffer[..received_bytes]);
+                assert!(request.len() <= 8192, "fixture request headers exceed their expected size");
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                INLINE_OPENAPI_JSON.len(),
+                INLINE_OPENAPI_JSON
+            );
+            stream.write_all(response.as_bytes()).await.expect("fixture response is sent");
+        }
+    }
+
+    #[tokio::test]
+    async fn inline_openapi_validation_and_preview_accept_json_and_yaml_without_source_files() {
+        for (source, source_type) in inline_source_cases() {
+            let validation_request: CatalogValidateOpenApiRequest = serde_json::from_value(serde_json::json!({
+                "source": source,
+                "source_type": source_type
+            }))
+            .expect("inline validation request deserializes");
+            let validation = validate_openapi_source(&validation_request)
+                .await
+                .expect("inline document validates");
+            assert_eq!(validation["valid"], true);
+            assert_eq!(validation["operation_count"], 1);
+            assert_eq!(validation["source"], "inline");
+
+            let preview_request = serde_json::from_value(serde_json::json!({
+                "source": source,
+                "source_type": source_type,
+                "catalog_title": "Inline API",
+                "vendor": "inline_api",
+                "include_command_preview": true
+            }))
+            .expect("inline preview request deserializes");
+            let preview = preview_openapi_import(&preview_request).await.expect("inline document previews");
+            assert_eq!(preview["valid"], true);
+            assert_eq!(preview["projected_command_count"], 1);
+            assert_eq!(preview["command_preview"].as_array().expect("command preview exists").len(), 1);
+            assert_eq!(preview["source"], "inline");
+        }
+    }
+
+    #[tokio::test]
+    async fn inline_openapi_validation_reports_document_errors_instead_of_path_errors() {
+        for source in ["{\"openapi\":", "openapi: ["] {
+            let request = CatalogValidateOpenApiRequest {
+                source: source.to_string(),
+                source_type: Some(CatalogSourceType::Inline),
+            };
+            let error = validate_openapi_source(&request)
+                .await
+                .expect_err("malformed inline document is rejected");
+            assert_eq!(error.code, rmcp::model::ErrorCode::INVALID_PARAMS);
+            assert_eq!(
+                error.data.expect("parse violations are included")["error_code"],
+                "OPENAPI_SOURCE_PARSE_FAILED"
+            );
+        }
+        let request = CatalogValidateOpenApiRequest {
+            source: r#"{"paths":{"/apps":{"get":{}}}}"#.to_string(),
+            source_type: None,
+        };
+        let error = validate_openapi_source(&request)
+            .await
+            .expect_err("missing OpenAPI version is rejected");
+        assert_eq!(
+            error.data.expect("preflight violations are included")["error_code"],
+            "OPENAPI_SOURCE_VALIDATION_FAILED"
+        );
+    }
+
+    #[test]
+    fn inline_openapi_import_persists_generated_commands_without_document_location_provenance() {
+        let temporary_directory = tempfile::tempdir().expect("temporary registry directory is created");
+        let config_path = temporary_directory.path().join("registry.json");
+        let catalogs_path = temporary_directory.path().join("catalogs");
+        let config_path_text = config_path.to_string_lossy().to_string();
+        let catalogs_path_text = catalogs_path.to_string_lossy().to_string();
+        temp_env::with_vars(
+            [
+                ("REGISTRY_CONFIG_PATH", Some(config_path_text.as_str())),
+                ("REGISTRY_CATALOGS_PATH", Some(catalogs_path_text.as_str())),
+                ("OATTY_SECRETS_BACKEND", Some("env")),
+            ],
+            || {
+                let runtime = tokio::runtime::Runtime::new().expect("test runtime starts");
+                let registry = Arc::new(Mutex::new(CommandRegistry::default()));
+                for (source, source_type) in inline_source_cases() {
+                    let request = inline_import_request(source, source_type);
+                    let imported = runtime
+                        .block_on(import_openapi_catalog(&registry, &request))
+                        .expect("inline import succeeds");
+                    assert_eq!(imported["command_count"], 1);
+                    assert!(PathBuf::from(imported["manifest_path"].as_str().expect("manifest path is present")).is_file());
+                    let reloaded = CommandRegistry::from_config().expect("persisted registry reloads");
+                    assert_eq!(reloaded.commands.len(), 1);
+                    let catalog = &reloaded.config.catalogs.as_ref().expect("catalog is persisted")[0];
+                    assert_eq!(catalog.import_source, None);
+                    assert_eq!(catalog.import_source_type.as_deref(), Some("inline"));
+                }
+                assert!(config_path.is_file());
+            },
+        );
+    }
+
+    #[tokio::test]
+    async fn catalog_source_loading_preserves_path_and_url_support() {
+        let temporary_directory = tempfile::tempdir().expect("temporary source directory is created");
+        let source_path = temporary_directory.path().join("openapi.json");
+        std::fs::write(&source_path, INLINE_OPENAPI_JSON).expect("source file is written");
+        let source_path_text = source_path.to_string_lossy();
+        for source_type in [None, Some(CatalogSourceType::Path)] {
+            let content = load_catalog_source_content(&source_path_text, source_type)
+                .await
+                .expect("path source loads");
+            assert_eq!(content, INLINE_OPENAPI_JSON);
+        }
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("local fixture server binds");
+        let source_url = format!("http://{}/openapi.json", listener.local_addr().expect("bound address is available"));
+        let server = tokio::spawn(serve_openapi_fixture(listener));
+        for source_type in [None, Some(CatalogSourceType::Url)] {
+            let content = load_catalog_source_content(&source_url, source_type)
+                .await
+                .expect("URL source loads");
+            assert_eq!(content, INLINE_OPENAPI_JSON);
+        }
+        server.await.expect("fixture server finishes");
+    }
+
+    #[test]
+    fn catalog_source_detection_preserves_locations_and_explicit_hints() {
+        for source in ["~/schemas/openapi.yaml", "/tmp/openapi.json", r"C:\schemas\openapi.yaml"] {
+            assert_eq!(resolve_catalog_source_type(source, None), CatalogSourceType::Path);
+        }
+        for source in ["http://localhost/openapi.json", "https://api.example.com/openapi.yaml"] {
+            assert_eq!(resolve_catalog_source_type(source, None), CatalogSourceType::Url);
+        }
+        assert_eq!(
+            resolve_catalog_source_type(INLINE_OPENAPI_JSON, Some(CatalogSourceType::Path)),
+            CatalogSourceType::Path
+        );
+        assert_eq!(
+            resolve_catalog_source_type("https://api.example.com", Some(CatalogSourceType::Inline)),
+            CatalogSourceType::Inline
+        );
+    }
 
     #[test]
     fn map_registry_catalog_mutation_error_returns_not_found_for_missing_catalog() {

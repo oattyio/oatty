@@ -284,7 +284,7 @@ impl OattyMcpCore {
     #[tool(
         name = "catalog_validate_openapi",
         annotations(read_only_hint = true),
-        description = "Validate an OpenAPI source before import. Input: source, source_type?. Returns valid, document_kind, operation_count, warnings, violations."
+        description = "Validate an OpenAPI source before import. Input: source (local path, HTTP(S) URL, or inline JSON/YAML document string), source_type? (path|url|inline; inferred when omitted). Agent-authored documents can be passed directly without saving a file. Returns valid, document_kind, operation_count, warnings, violations."
     )]
     async fn catalog_validate_openapi(&self, param: Parameters<CatalogValidateOpenApiRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -295,7 +295,7 @@ impl OattyMcpCore {
     #[tool(
         name = "catalog_preview_import",
         annotations(read_only_hint = true),
-        description = "Preview OpenAPI catalog import without writing files. Input: source, source_type?, catalog_title, vendor?, base_url?, include_command_preview?."
+        description = "Preview OpenAPI catalog import without writing files. Input: source (local path, HTTP(S) URL, or inline JSON/YAML document string), source_type? (path|url|inline; inferred when omitted), catalog_title, vendor?, base_url?, include_command_preview?. Agent-authored documents can be passed directly without saving a file."
     )]
     async fn catalog_preview_import(&self, param: Parameters<CatalogPreviewImportRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -306,7 +306,7 @@ impl OattyMcpCore {
     #[tool(
         name = "catalog_import_openapi",
         annotations(open_world_hint = true),
-        description = "Import OpenAPI schema into runtime catalog configuration. Input: source, source_type?, catalog_title, vendor?, base_url?, overwrite?, enabled?. This mutates local config and should be treated as a user-approved action. If APIs require auth, ask user to configure catalog headers (for example Authorization) before execution."
+        description = "Import OpenAPI schema into runtime catalog configuration. Input: source (local path, HTTP(S) URL, or inline JSON/YAML document string), source_type? (path|url|inline; inferred when omitted), catalog_title, vendor?, base_url?, overwrite?, enabled?. Agent-authored documents can be passed directly without saving a file. This mutates local config and should be treated as a user-approved action. If APIs require auth, ask user to configure catalog headers (for example Authorization) before execution."
     )]
     async fn catalog_import_openapi(&self, param: Parameters<CatalogImportOpenApiRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));

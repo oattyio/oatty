@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Inspect a failed API operation, correct its generated Oatty command or connection settings through MCP, and retry the same call.">
+  <title>Correct a failed API command | Oatty guides</title>
+  <link rel="canonical" href="https://oatty.io/docs/repair-command/">
+  <link rel="icon" href="/favicon.png">
+  <link rel="stylesheet" href="/site.css">
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access/">API access</a><a href="/docs/quick-start/">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+  <div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><ul><li><a href="/docs/api-access/">API access</a></li><li><a href="/docs/agent-authored-schema/">Agent-authored schema</a></li><li><a href="/docs/repair-command/" aria-current="page">Repair a command</a></li><li><a href="/docs/quick-start/">Quick start</a></li><li><a href="/docs/learn/mcp-http-server/">MCP HTTP server</a></li></ul></nav></aside>
+  <main id="main" class="docs-content">
+    <p class="eyebrow">Guide</p>
+    <h1>Correct a failed API command</h1>
+    <p>A failed call gives you a concrete place to start: the requested command, its inputs, the response, and the execution log. Inspect those facts, change the generated catalog or connection setting that caused the failure, then retry the same call.</p>
+    <p>This guide assumes an imported catalog and a connected agent. Complete <a href="/docs/api-access/">one API call</a> first. Use a test endpoint when reproducing a failure that could change remote data.</p>
+
+    <section id="inspect"><h2>Inspect the failure</h2>
+      <p>Find the failing command with <code>search_commands</code>, then inspect it with <code>get_command</code>. Compare its HTTP method, path, required inputs, and selected base URL with the provider documentation. In the TUI, inspect the response and execution logs for the same call.</p>
+      <p>A 401 response may point to missing or expired credentials. A 404 may point to the wrong path or base URL. Those are diagnostic clues, not automatic repair decisions. Verify the cause against the API documentation and response.</p>
+    </section>
+
+    <section id="change"><h2>Change the specific setting</h2>
+      <p>For a wrong base URL, use <code>catalog_set_base_url</code>. For request headers, use <code>catalog_get_masked_headers</code> to inspect names and masked values, then <code>catalog_edit_headers</code> to change the required entries. Do not put credentials into a public example or log.</p>
+      <p>For a wrong generated command definition, use <code>catalog_apply_patch</code>. Supply the catalog title, a strict <code>match_command</code> key with group, name, HTTP method, and path, and the full corrected <code>replacement_command</code>. Inspect the exact command first so the replacement preserves the fields the operation still needs.</p>
+      <pre><code>{
+  "catalog_id": "&lt;catalog title&gt;",
+  "operations": [{
+    "match_command": {
+      "group": "&lt;group&gt;",
+      "name": "&lt;command name&gt;",
+      "http_method": "&lt;current method&gt;",
+      "http_path": "&lt;current path&gt;"
+    },
+    "replacement_command": { "...": "&lt;complete corrected command definition&gt;" }
+  }]
+}</code></pre>
+      <p>The example shows the request shape, not a runnable patch. The replacement must use the complete command definition returned for your actual catalog. A missing or ambiguous match returns a structured error; recheck the command identity before retrying the patch.</p>
+    </section>
+
+    <section id="retry"><h2>Retry and verify</h2>
+      <p>Run <code>get_command</code> again to confirm the selected definition or connection setting. Retry the same operation with the same inputs. Compare the new response with the failed response and the API's documented result. Find the operation in the TUI and run it there if you need direct confirmation.</p>
+      <p><code>catalog_apply_patch</code> replaces a generated command in Oatty's catalog. It does not edit the provider's original OpenAPI document. If the document itself is invalid, correct the source and import it again.</p>
+    </section>
+
+    <aside><h2>Release check</h2><p>The catalog tools and patch semantics above are documented in the inspected local source. A published release and an end-to-end repair example have not been verified for this guide. Check your installed tool list and test against a controlled API before using this procedure for an important operation.</p></aside>
+    <nav aria-label="Related guides"><a href="/docs/api-access/">Make the first API call</a><a href="/docs/agent-authored-schema/">Create a schema from documentation</a></nav>
+  </main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#inspect">Inspect the failure</a><a href="#change">Change the setting</a><a href="#retry">Retry and verify</a></aside></div>
+  <footer><p><a href="/">Oatty</a> · <a href="/docs/">Documentation</a></p></footer>
+</body>
+</html>

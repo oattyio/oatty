@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Credential Rotation Readiness Playbook | Oatty Docs</title><meta name="description" content="A prompt-driven, read-only guide to assess token/key age, usage, and rotation risk across GitHub, AWS IAM, and Datadog before any write actions.">
+<link rel="canonical" href="https://oatty.io/docs/guides/credential-rotation-readiness-playbook/"><link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/site.css">
+</head><body><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access">API access</a><a href="/docs/quick-start">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+<div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><p><a href="/docs/api-access">Connect your agent to an API</a></p><ul><li><a href="/docs/quick-start">Quick Start</a></li>
+<li><a href="/docs/guides/sentry-bootstrap">Bootstrap Sentry with an Agent + MCP</a></li>
+<li><a href="/docs/guides/sentry-datadog-pagerduty-playbook">Sentry + Datadog + PagerDuty Integration Playbook</a></li>
+<li><a href="/docs/guides/vercel-to-render-migration-playbook">Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL)</a></li>
+<li><a href="/docs/guides/access-review-collection-playbook">Access Review Collection Playbook (Okta + AWS IAM + Datadog)</a></li>
+<li><a href="/docs/guides/credential-rotation-readiness-playbook" aria-current="page">Credential Rotation Readiness Playbook</a></li>
+<li><a href="/docs/learn/how-oatty-executes-safely">How Oatty Executes Safely</a></li>
+<li><a href="/docs/learn/getting-oriented">Getting Oriented</a></li>
+<li><a href="/docs/learn/library-and-catalogs">Library and Catalogs</a></li>
+<li><a href="/docs/learn/search-and-run-commands">Search for and Run Commands</a></li>
+<li><a href="/docs/learn/workflows-basics">Workflows Basics</a></li>
+<li><a href="/docs/learn/plugins">MCP Plugins</a></li>
+<li><a href="/docs/learn/mcp-http-server">MCP HTTP Server</a></li>
+<li><a href="/docs/reference/cli-commands">CLI Command Reference</a></li>
+<li><a href="/docs/reference/tui-interactions">TUI Interactions Reference</a></li></ul></nav></aside>
+<main id="main-content" class="docs-content"><article><header><p class="eyebrow">Documentation</p><h1>Credential Rotation Readiness Playbook</h1><p class="lede">A prompt-driven, read-only guide to assess token/key age, usage, and rotation risk across GitHub, AWS IAM, and Datadog before any write actions.</p><p><strong>Estimated time:</strong> 12-20 min</p></header>
+<section><h2>What you'll learn</h2><ul><li>If required catalogs are missing, ask the agent to import them and verify auth headers first.</li>
+<li>Run read-only credential inventory and usage checks by provider.</li>
+<li>Identify stale, unused, or high-risk credentials and map blast radius.</li>
+<li>Generate a phased rotation plan with explicit verification gates.</li>
+<li>Separate readiness assessment from mutation steps.</li></ul></section><section id="purpose"><h2>Purpose</h2><p>Use this playbook to determine if your environment is ready for safe credential rotation without making any changes.</p>
+<p>If required provider catalogs or mandatory auth headers are not yet configured, begin with an import-and-verify step before running readiness prompts.</p>
+<p>Use it for quarterly security hygiene reviews, pre-rotation planning, and incident-driven key compromise response.</p><p class="callout"><strong>tip:</strong> For manual header verification or updates, use `/docs/learn/library-and-catalogs#headers-management`.</p>
+<p class="callout"><strong>tip:</strong> For execution safeguards and approval flow, use `/docs/learn/how-oatty-executes-safely` and `/docs/learn/workflows-basics`.</p></section>
+<section id="validated-read-only-signals"><h2>Validated Read-Only Signals</h2><p>Representative rotation-readiness signals available through Oatty command catalogs:</p>
+<p>Datadog API keys: `datadog api_keys:list` (includes last-used metadata).</p>
+<p>Datadog application keys: `datadog current_user:application_keys:list` (includes last-used timestamps).</p>
+<p>AWS IAM credential report: `aws #Action=GetCredentialReport:list` (account-wide credential age/status, when auth is configured).</p>
+<p>AWS IAM access keys: `aws #Action=ListAccessKeys:list` (principal key inventory, when auth is configured).</p>
+<p>GitHub SSH/GPG keys: `github user:keys:list`, `github user:gpg_keys:list` (requires authenticated user context).</p><p class="callout"><strong>expected:</strong> These read-only signals are sufficient to produce a practical readiness report and a phased rotation plan before any write actions.</p></section>
+<section id="how-to-use"><h2>How to Use This Guide (Goal-Oriented, NL-First)</h2><p>Describe the rotation goal, systems in scope, and time constraints. Let the agent discover exact commands for your environment.</p>
+<p>If provider catalogs are missing, have the agent import them first and verify required headers before collecting evidence.</p>
+<p>Keep this phase read-only: inventory credentials, map usage and owners, and highlight rotation blockers.</p>
+<p>Require outputs in a normalized schema so readiness can be compared across runs.</p><p class="callout"><strong>tip:</strong> If you need a command-discovery refresher, see `/docs/learn/search-and-run-commands`.</p></section>
+<section id="prompt-patterns-overview"><h2>Prompt Patterns: Prompt -&gt; Expected Agent Actions</h2><p>Use these patterns to run a consistent readiness assessment before rotating credentials.</p></section>
+<section id="pattern-1-inventory"><h3>Pattern 1: Credential Inventory (Read-Only)</h3><p>Start by listing all relevant credential objects and their owners.</p><pre><code>Prompt:
+Run a read-only credential inventory for GitHub, AWS IAM, and Datadog. If a required catalog is missing, import it first and verify required headers. Return keys/tokens by owner with creation time, last-used time, and status.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: import missing catalogs when needed, verify required headers, collect credential inventories per provider, normalize fields, and return counts plus owner mapping.</p></section>
+<section id="pattern-2-risk-classification"><h3>Pattern 2: Risk Classification</h3><p>Classify stale or risky credentials before proposing rotation sequence.</p><pre><code>Prompt:
+Classify credentials into risk tiers (unused, stale, high privilege, unknown owner). Show evidence for each classification and keep this read-only.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: apply risk rules to inventory signals, flag high-priority credentials, and include confidence notes where data is incomplete.</p></section>
+<section id="pattern-3-blast-radius"><h3>Pattern 3: Blast Radius and Dependency Mapping</h3><p>Map operational impact before any key/token change is attempted.</p><pre><code>Prompt:
+For each high-risk credential, estimate blast radius: dependent services, automation paths, and likely failure impact if revoked. Keep it evidence-based and read-only.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: map dependencies and affected systems, identify unknown ownership, and separate confirmed dependencies from inferred ones.</p></section>
+<section id="pattern-4-rotation-plan"><h3>Pattern 4: Phased Rotation Plan</h3><p>Generate a no-surprises plan with verification and rollback gates.</p><pre><code>Prompt:
+Draft a phased rotation plan (prepare, rotate, verify, revoke-old) with approval gates, rollback steps, and success criteria for each provider. Do not execute changes.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: produce an ordered, low-risk rotation plan with per-phase checks and a clear operator approval model.</p></section>
+<section id="pattern-5-executive-summary"><h3>Pattern 5: Read-Only Executive Summary</h3><p>Use this for leadership review before scheduling rotation windows.</p><pre><code>Prompt:
+Provide an executive readiness summary: current risk posture, top blockers, phased rotation recommendation, and unresolved unknowns. Keep this read-only.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: summarize key risks, readiness level, and immediate next actions with owners and priority.</p></section>
+<section id="output-schema"><h2>Recommended Output Schema</h2><p>Use a fixed structure for auditability and comparison over time:</p>
+<p>1) `scope` (providers, credential types, time window).</p>
+<p>2) `credential_inventory` (object, owner, age, last_used, status).</p>
+<p>3) `risk_classification` (tier, reason, confidence).</p>
+<p>4) `blast_radius` (dependencies, impact, unknowns).</p>
+<p>5) `rotation_plan` (phases, gates, rollback).</p>
+<p>6) `open_questions` (missing evidence and owner follow-ups).</p><p class="callout"><strong>tip:</strong> Redact sensitive values and include only identifiers needed for operator action.</p></section>
+<section id="next-steps"><h2>Next Steps</h2><p>After readiness is approved, run rotation in a separate write-enabled workflow with explicit pause points.</p>
+<p>Export readiness outputs and plan artifacts into repository docs for quarterly evidence and change review.</p><p class="callout"><strong>tip:</strong> Use `/docs/learn/workflows-basics` to review and run staged workflows with clear approval gates.</p></section>
+<p class="docs-footer-links"><a href="/docs/api-access">API access guide</a> · <a href="/docs/agent-authored-schema">Agent-authored schema</a> · <a href="/docs/repair-command">Repair a command</a></p></article></main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#purpose">Purpose</a>
+<a href="#validated-read-only-signals">Validated Signals</a>
+<a href="#how-to-use">How to Use</a>
+<a href="#prompt-patterns-overview">Prompt Patterns</a>
+<a href="#pattern-1-inventory">Pattern 1: Inventory</a>
+<a href="#pattern-2-risk-classification">Pattern 2: Risk</a>
+<a href="#pattern-3-blast-radius">Pattern 3: Blast Radius</a>
+<a href="#pattern-4-rotation-plan">Pattern 4: Plan</a>
+<a href="#pattern-5-executive-summary">Pattern 5: Summary</a>
+<a href="#output-schema">Output Schema</a>
+<a href="#next-steps">Next Steps</a></aside></div>
+<footer class="site-footer"><p>Oatty is open source.</p><a href="https://github.com/oattyio/oatty/issues">Report a docs issue</a></footer></body></html>

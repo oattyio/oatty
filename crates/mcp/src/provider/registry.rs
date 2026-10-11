@@ -76,6 +76,9 @@ fn provider_identifier(plugin_name: &str, tool_name: &str) -> String {
 }
 
 /// Contract for MCP provider operations.
+// `async_trait` returns an already-must-use boxed future and also marks the
+// generated methods as must-use, which triggers this lint on newer toolchains.
+#[allow(clippy::double_must_use)]
 #[async_trait::async_trait]
 pub trait McpProviderOps: Send + Sync {
     /// Fetches values from a provider using command arguments.
