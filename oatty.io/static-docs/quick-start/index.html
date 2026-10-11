@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quick Start | Oatty Docs</title><meta name="description" content="Start in the TUI, import a catalog, run a real command, then run a workflow with CLI fallback when needed.">
+<link rel="canonical" href="https://oatty.io/docs/quick-start/"><link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/site.css">
+</head><body><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access">API access</a><a href="/docs/quick-start">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+<div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><p><a href="/docs/api-access">Connect your agent to an API</a></p><ul><li><a href="/docs/quick-start" aria-current="page">Quick Start</a></li>
+<li><a href="/docs/guides/sentry-bootstrap">Bootstrap Sentry with an Agent + MCP</a></li>
+<li><a href="/docs/guides/sentry-datadog-pagerduty-playbook">Sentry + Datadog + PagerDuty Integration Playbook</a></li>
+<li><a href="/docs/guides/vercel-to-render-migration-playbook">Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL)</a></li>
+<li><a href="/docs/guides/access-review-collection-playbook">Access Review Collection Playbook (Okta + AWS IAM + Datadog)</a></li>
+<li><a href="/docs/guides/credential-rotation-readiness-playbook">Credential Rotation Readiness Playbook</a></li>
+<li><a href="/docs/learn/how-oatty-executes-safely">How Oatty Executes Safely</a></li>
+<li><a href="/docs/learn/getting-oriented">Getting Oriented</a></li>
+<li><a href="/docs/learn/library-and-catalogs">Library and Catalogs</a></li>
+<li><a href="/docs/learn/search-and-run-commands">Search for and Run Commands</a></li>
+<li><a href="/docs/learn/workflows-basics">Workflows Basics</a></li>
+<li><a href="/docs/learn/plugins">MCP Plugins</a></li>
+<li><a href="/docs/learn/mcp-http-server">MCP HTTP Server</a></li>
+<li><a href="/docs/reference/cli-commands">CLI Command Reference</a></li>
+<li><a href="/docs/reference/tui-interactions">TUI Interactions Reference</a></li></ul></nav></aside>
+<main id="main-content" class="docs-content"><article><header><p class="eyebrow">Documentation</p><h1>Quick Start</h1><p class="lede">Start in the TUI, import a catalog, run a real command, then run a workflow with CLI fallback when needed.</p><p><strong>Estimated time:</strong> 10-15 min</p></header>
+<section><h2>What you'll learn</h2><ul><li>Use the TUI layout, focus movement, and help affordances with confidence.</li>
+<li>Import a catalog and discover commands through the interactive TUI path.</li>
+<li>Run a command and verify results in the logs and result views.</li>
+<li>Run a workflow end-to-end with structured inputs and step status.</li></ul></section><section id="install"><h2>Install Oatty</h2><p>Install Oatty with npm for the fastest setup.</p>
+<p>Run `oatty --help` to verify the install.</p><pre><code>npm install -g oatty
+oatty --help</code></pre><p class="callout"><strong>expected:</strong> The `oatty --help` command prints usage and exits successfully.</p>
+<p class="callout"><strong>recovery:</strong> If the command is missing, restart the shell and check your PATH. For source builds, run from the release binary path.</p>
+<p class="callout"><strong>Alternative installation:</strong> If npm is unavailable, build from source: `cargo build --release` and run `./target/release/oatty`.</p></section>
+<section id="launch"><h2>Launch the TUI</h2><p>Launch the interface with `oatty` in your terminal.</p>
+<p>Identify the left navigation, main content pane, and the hints bar.</p><pre><code>oatty</code></pre><p class="callout"><strong>expected:</strong> The TUI opens with visible navigation and an empty Library view.</p>
+<figure><img src="/assets/quick-start/oatty-first-launch.png" alt="Oatty TUI landing view with empty Library view" loading="lazy"><figcaption>Default TUI landing state with left nav and hints bar visible</figcaption></figure>
+<p class="callout"><strong>recovery:</strong> If the UI does not render correctly, increase terminal size and relaunch. If colors are unreadable, verify your terminal supports 256 colors.</p>
+<p class="callout"><strong>advanced:</strong> Power-user affordances: `Ctrl+L` toggles logs and `Ctrl+T` opens the theme picker when enabled.</p></section>
+<section id="import_schema"><h2>Import Your First Catalog</h2><p>Open the Library and look for the Import button. Tab until it&#39;s focused, then press Enter or Space (or click with your mouse).</p><figure><img src="/assets/quick-start/oatty-import.png" alt="Oatty TUI import file picker with OpenAPI v3 schema selected from filesystem" loading="lazy"><figcaption>Import file picker with OpenAPI v3 schema selected from filesystem</figcaption></figure>
+<p class="callout"><strong>expected:</strong> Oatty allows you to browse your filesystem or paste a URL and hit Enter or click the Open button to import.</p>
+<p class="callout"><strong>recovery:</strong> If import fails, verify the schema path/URL and format. Oatty currently supports OpenAPI v3 in both YAML and JSON formats. Retry import from Library, or run the CLI fallback to inspect errors.</p>
+<p class="callout"><strong>fallback:</strong> CLI import fallback: `oatty import &lt;path-or-url&gt; --kind catalog` (supports path and HTTP/HTTPS URL).</p></section>
+<section id="optional_command_prefix"><h3>Optional Command Prefix</h3><p>An optional custom command prefix dialog will appear after choosing a file or pasting a URL. This allows you to customize the command prefix for the imported catalog, which can be useful for organizing commands or avoiding conflicts with existing commands.</p>
+<p>Skipping this step will derive the prefix from the schema directly.</p><p class="callout"><strong>expected:</strong> An optional custom command prefix dialog will appear allowing you to customize the command prefix for the imported catalog.</p>
+<figure><img src="/assets/quick-start/oatty-optional-prefix.png" alt="Optional custom command prefix dialog presented after importing an OpenAPI v3 schema" loading="lazy"><figcaption>Command prefix customization dialog</figcaption></figure>
+<p class="callout"><strong>expected:</strong> The Library view updates with the imported catalog and shows the summary of what was imported.</p>
+<p class="callout"><strong>recovery:</strong> If the custom prefix you enter is incorrect, you must remove the catalog and retry the import.</p></section>
+<section id="complete_import"><h3>Complete Import</h3><p>The import process will complete after you press Enter or click the Open button. The Library view will update with the imported catalog and populate the details panel.</p><figure><img src="/assets/quick-start/oatty-library-with-catalog.png" alt="Oatty TUI library view with the newly imported catalog" loading="lazy"><figcaption>Library view with the imported catalog and a populated details panel.</figcaption></figure>
+<p class="callout"><strong>recovery:</strong> If the import fails, verify the schema path/URL and format. Oatty currently supports OpenAPI v3 in both YAML and JSON formats.</p>
+<p class="callout"><strong>Configuration management:</strong> Advanced flow: add/remove catalogs and manage base URLs in Library; this is covered in Learn: Library and Catalogs.</p></section>
+<section id="run-command"><h2>Discover and Run a Command</h2><p>Open Run Command and type a search phrase. Matching commands appear as you type.</p>
+<p>Select a command, then use Tab and Shift+Tab to move between inputs (flags and arguments) and enter values.</p>
+<p>Execute the command and inspect JSON output, logs, and status in the UI.</p><p class="callout"><strong>expected:</strong> Command execution completes and results/logs show the final status.</p>
+<p class="callout"><strong>recovery:</strong> If no command appears, confirm a catalog is imported. If execution fails, open command help and verify required inputs.</p>
+<figure><img src="/Oatty-run.png" alt="Run Command view showing execution output and logs" loading="lazy"><figcaption>Shows the command runner with completion list open and a second shot showing executed result/log output.</figcaption></figure>
+<p class="callout"><strong>fallback:</strong> CLI fallback for the same action: run the selected command directly with required flags/args.</p>
+<p class="callout"><strong>Command help:</strong> Read the help (F1) for the command to understand required inputs and flags. Verify the Authorization header is configured and correct.</p>
+<p class="callout"><strong>Advanced discovery:</strong> For deeper discovery, use the Find/Browser view to inspect commands and send selected entries back to the runner.</p></section>
+<section id="run-workflow"><h2>Import and Run a Workflow</h2><p>Open the Workflows view and import a workflow file from your machine or a URL.</p>
+<p>Select the imported workflow, press Enter to open inputs, and provide any required values.</p>
+<p>Run the workflow and inspect step status, logs, and final outcome from the workflow runner.</p><p class="callout"><strong>expected:</strong> The workflow appears in the list, required inputs can be filled in, and the run reaches a terminal status with step-by-step visibility.</p>
+<figure><img src="/Oatty-workflow-flow.webp" alt="Workflow import and execution flow" loading="lazy"><figcaption>Workflow import, input collection, and run status in the TUI.</figcaption></figure>
+<p class="callout"><strong>recovery:</strong> If import is blocked, verify the workflow file is valid YAML or JSON and that any required catalogs are already installed. If a run fails, inspect the first failing step before retrying.</p>
+<p class="callout"><strong>fallback:</strong> CLI fallback: `oatty import ./workflow.yaml --kind workflow`, `oatty workflow preview --file ./workflow.yaml`, then `oatty workflow run --file ./workflow.yaml --input key=value`.</p>
+<p class="callout"><strong>Continue learning:</strong> Use the Workflows Basics page for deeper guidance on input collection, pause/resume, and workflow run controls.</p></section>
+<p class="docs-footer-links"><a href="/docs/api-access">API access guide</a> · <a href="/docs/agent-authored-schema">Agent-authored schema</a> · <a href="/docs/repair-command">Repair a command</a></p></article></main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#install">Install Oatty</a>
+<a href="#launch">Launch the TUI</a>
+<a href="#import_schema">Import Your First Catalog</a>
+<a href="#optional_command_prefix">Optional Command Prefix</a>
+<a href="#complete_import">Complete Import</a>
+<a href="#run-command">Discover and Run a Command</a>
+<a href="#run-workflow">Import and Run a Workflow</a></aside></div>
+<footer class="site-footer"><p>Oatty is open source.</p><a href="https://github.com/oattyio/oatty/issues">Report a docs issue</a></footer></body></html>

@@ -1300,7 +1300,7 @@ fn run_command(app: &mut App, hydrated_command: String, request_id: u64) -> Opti
 
     match valid {
         Ok((command_spec, input)) => {
-            app.append_log_message_with_level(Some(LogLevel::Info), format!("Running: {}", &hydrated_command));
+            app.append_log_message_with_level(Some(LogLevel::Info), format!("Running: {}", hydrated_command));
             execute_command(command_spec, input, request_id)
         }
         Err(error) => Some(vec![Cmd::ApplyPaletteError(error.to_string())]),

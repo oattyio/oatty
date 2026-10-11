@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL) | Oatty Docs</title><meta name="description" content="A prompt-driven, workflow-aligned guide for migrating a Vercel app to Render while reusing the existing Postgres `DATABASE_URL`.">
+<link rel="canonical" href="https://oatty.io/docs/guides/vercel-to-render-migration-playbook/"><link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/site.css">
+</head><body><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access">API access</a><a href="/docs/quick-start">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+<div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><p><a href="/docs/api-access">Connect your agent to an API</a></p><ul><li><a href="/docs/quick-start">Quick Start</a></li>
+<li><a href="/docs/guides/sentry-bootstrap">Bootstrap Sentry with an Agent + MCP</a></li>
+<li><a href="/docs/guides/sentry-datadog-pagerduty-playbook">Sentry + Datadog + PagerDuty Integration Playbook</a></li>
+<li><a href="/docs/guides/vercel-to-render-migration-playbook" aria-current="page">Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL)</a></li>
+<li><a href="/docs/guides/access-review-collection-playbook">Access Review Collection Playbook (Okta + AWS IAM + Datadog)</a></li>
+<li><a href="/docs/guides/credential-rotation-readiness-playbook">Credential Rotation Readiness Playbook</a></li>
+<li><a href="/docs/learn/how-oatty-executes-safely">How Oatty Executes Safely</a></li>
+<li><a href="/docs/learn/getting-oriented">Getting Oriented</a></li>
+<li><a href="/docs/learn/library-and-catalogs">Library and Catalogs</a></li>
+<li><a href="/docs/learn/search-and-run-commands">Search for and Run Commands</a></li>
+<li><a href="/docs/learn/workflows-basics">Workflows Basics</a></li>
+<li><a href="/docs/learn/plugins">MCP Plugins</a></li>
+<li><a href="/docs/learn/mcp-http-server">MCP HTTP Server</a></li>
+<li><a href="/docs/reference/cli-commands">CLI Command Reference</a></li>
+<li><a href="/docs/reference/tui-interactions">TUI Interactions Reference</a></li></ul></nav></aside>
+<main id="main-content" class="docs-content"><article><header><p class="eyebrow">Documentation</p><h1>Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL)</h1><p class="lede">A prompt-driven, workflow-aligned guide for migrating a Vercel app to Render while reusing the existing Postgres `DATABASE_URL`.</p><p><strong>Estimated time:</strong> 12-20 min</p></header>
+<section><h2>What you'll learn</h2><ul><li>Drive migration with prompts and explicit expected agent actions.</li>
+<li>Inventory Vercel + Render state before running writes.</li>
+<li>Create or reuse a Render web service and set `DATABASE_URL` safely.</li>
+<li>Validate outcomes with optional restart and post-run checks.</li></ul></section><section id="purpose"><h2>Purpose</h2><p>This guide uses the `vercel_to_render_neon` workflow name in prompts and examples.</p>
+<p>The workflow migrates app runtime from Vercel to Render while reusing an existing Postgres connection string (`DATABASE_URL`), rather than provisioning or migrating databases.</p><p class="callout"><strong>expected:</strong> You get a concrete, repeatable path: discover project state, create/find Render service, upsert `DATABASE_URL`, and optionally restart.</p></section>
+<section id="workflow-scope"><h2>Workflow Scope</h2><p>Current in-scope actions for `vercel_to_render_neon`:</p>
+<p>1) Read Vercel project details and locate `DATABASE_URL` (or use an explicit override).</p>
+<p>2) Find an existing Render web service by name, or create one if missing.</p>
+<p>3) Upsert `DATABASE_URL` on the target Render service.</p>
+<p>4) Optionally restart the Render service after env var update.</p><p class="callout"><strong>tip:</strong> Out of scope for this workflow: DNS/domain cutover, cross-database data migration, and blue/green traffic switching.</p></section>
+<section id="how-to-use-this-guide"><h2>How to Use This Guide (Goal-Oriented, NL-First)</h2><p>This guide is outcome-oriented: use natural-language prompts to communicate migration goals, constraints, and gates, then evaluate whether agent actions satisfy those goals.</p>
+<p>For this workflow, step execution is deterministic once inputs are fixed, but input collection and environment mapping are non-deterministic and should be handled through explicit prompt-and-review loops.</p>
+<p>Keep safety invariants stable: do read-only discovery first, review conditional execution paths before write steps, redact secrets in reports, and finish with pass/fail evidence.</p><p class="callout"><strong>expected:</strong> You can use the same goal prompts across environments even when resource IDs, names, or surrounding deployment details differ.</p></section>
+<section id="prompt-patterns-overview"><h2>Prompt Patterns: Prompt -&gt; Expected Agent Actions</h2><p>Use these prompts as realistic operator commands for a connected agent. Each prompt maps to expected actions aligned to the workflow behavior.</p><p class="callout"><strong>tip:</strong> If IDs differ in your environment, ask the agent to discover available commands/workflows first and substitute exact IDs before execution.</p></section>
+<section id="pattern-1-inventory"><h3>Pattern 1: Inventory and Input Collection (Read-Only)</h3><p>Start with discovery to gather workflow inputs and verify prerequisites.</p><pre><code>Prompt:
+Inventory Vercel project and Render workspace state for this migration. Do not write anything. Return required workflow inputs and identify any missing values.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: discover project/service state, resolve owner/project identifiers, and report missing required inputs before execution.</p>
+<p class="callout"><strong>fallback:</strong> Representative discovery commands: `vercel projects:list`, `vercel projects:info`, `vercel projects:env:list`, `render owners:list`, `render services:list`.</p></section>
+<section id="pattern-2-prepare-run"><h3>Pattern 2: Prepare a Safe Run Plan</h3><p>Use the agent to preview what will happen for your inputs before running writes.</p><pre><code>Prompt:
+Prepare a run plan for vercel_to_render_neon using my inputs. Show which steps will execute, which are conditional, and any risks before I approve.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: resolve conditions (existing service vs new service, Vercel value vs override), surface risks, and request approval before writes.</p></section>
+<section id="pattern-3-run-migration"><h3>Pattern 3: Run Migration Workflow</h3><p>Execute the migration workflow after review and approval.</p><pre><code>Prompt:
+Run vercel_to_render_neon now with the approved inputs. Reuse existing Render service if present; create it only if missing. Then set DATABASE_URL and restart if enabled.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: execute workflow steps in order, report which branch was taken (existing/new service, override/derived URL), and return resulting service identifiers.</p>
+<p class="callout"><strong>fallback:</strong> Representative mutating commands: `render services:create`, `render services:env-vars:add-or-update-environment-variable`, `render services:restart:create`.</p></section>
+<section id="pattern-4-post-run-validation"><h3>Pattern 4: Post-Run Validation</h3><p>Validate that app runtime and environment configuration are correct after the workflow completes.</p><pre><code>Prompt:
+Validate migration outcomes without further writes. Confirm the Render service exists, DATABASE_URL is set, and restart status is healthy.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: run read-oriented checks, summarize deployment health, and report pass/fail for each acceptance item.</p>
+<p class="callout"><strong>tip:</strong> Keep `DATABASE_URL` values redacted in summaries and logs.</p></section>
+<section id="pattern-5-read-only-summary"><h3>Pattern 5: Read-Only Executive Summary</h3><p>Use a read-only summary when reporting status to stakeholders.</p><pre><code>Prompt:
+Produce an executive summary of this Vercel-to-Render migration run with completed steps, unresolved risks, and next actions. Do not perform any writes.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: summarize outcomes from completed workflow steps, list open items, and avoid mutating operations.</p></section>
+<section id="workflow-blueprint"><h2>Workflow Blueprint (Recommended Run Order)</h2><p>Use this run order for predictable, reviewable execution:</p>
+<p>1) Inventory and inputs -&gt; 2) Review conditional run plan -&gt; 3) Execute `vercel_to_render_neon` -&gt; 4) Post-run validation -&gt; 5) Executive summary.</p><p class="callout"><strong>tip:</strong> Use the Workflows view to review/approve generated workflows and inspect step-level outcomes: `/docs/learn/workflows-basics`.</p></section>
+<section id="rollback"><h2>Rollback and Safety Notes</h2><p>For this workflow scope, rollback is configuration-focused:</p>
+<p>Re-point runtime traffic to the prior Vercel deployment if Render validation fails.</p>
+<p>Restore prior `DATABASE_URL` value on Render (or remove it) if incorrect.</p>
+<p>Disable optional restart behavior during retries if you need staged verification first.</p><p class="callout"><strong>expected:</strong> You can revert app runtime behavior quickly without performing cross-database rollback operations.</p></section>
+<section id="acceptance-checklist"><h2>Migration Acceptance Checklist</h2><p>Render service is healthy and serving expected responses.</p>
+<p>`DATABASE_URL` is present on Render service and points to the intended database target.</p>
+<p>Workflow branch outcome is documented (existing vs new service, override vs Vercel-derived URL).</p>
+<p>If restart was enabled, restart completed successfully.</p>
+<p>No secret values were exposed in logs or reports.</p><p class="callout"><strong>expected:</strong> Migration is complete for this workflow when runtime and environment checks pass and residual risk is accepted.</p></section>
+<section id="next-steps"><h2>Next Steps</h2><p>If you need full domain cutover or cross-database migration, add separate workflows for those phases and keep them behind explicit approvals.</p>
+<p>Export reviewed workflow runs and operator notes into repository docs for auditability.</p><p class="callout"><strong>tip:</strong> Use a periodic read-only validation prompt to detect config drift after migration.</p></section>
+<section id="extension-workflows-overview"><h2>Extension Goals (For Full Migration Coverage)</h2><p>Use these extension workflows for phases intentionally out of scope for `vercel_to_render_neon`.</p>
+<p>Each extension should be implemented as its own workflow with explicit inputs, gate criteria, and acceptance checks.</p><p class="callout"><strong>tip:</strong> Before running extension prompts, ask the agent to list available workflows and use the exact workflow IDs it finds in your environment.</p>
+<p class="callout"><strong>tip:</strong> Manual operator control points are easiest to run from `/docs/learn/workflows-basics` with guardrails from `/docs/learn/how-oatty-executes-safely`.</p></section>
+<section id="extension-domain-cutover"><h3>Extension Goal 1: Domain Cutover</h3><p>Use a dedicated domain-cutover workflow for this goal. If one does not exist yet, ask the agent to draft it before proceeding.</p>
+<p>Use this extension after Render runtime validation is green and before final traffic switch.</p><pre><code>Prompt:
+Run the domain cutover extension workflow for this migration. Pause before final DNS changes, show me the exact records to change, and continue only after explicit approval.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: verify Render domain readiness, propose DNS changes, pause for approval, execute switch, and run post-switch domain/TLS checks.</p>
+<p class="callout"><strong>tip:</strong> Gate criteria: Render service health is green, rollback target is confirmed, and DNS change window is approved.</p></section>
+<section id="extension-database-migration"><h3>Extension Goal 2: Database Migration</h3><p>Use a dedicated database-migration workflow for this goal. If one does not exist yet, ask the agent to draft it before proceeding.</p>
+<p>Use this extension only when moving data to a new database target; skip if you continue reusing the existing `DATABASE_URL`.</p><pre><code>Prompt:
+Run the database migration extension workflow with pre-migration backup confirmation, parity checks, and rollback notes. Stop immediately if any integrity check fails.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: verify source/target connectivity, enforce backup gate, execute migration sequence, run schema/row-count parity checks, and report pass/fail with rollback readiness.</p>
+<p class="callout"><strong>advanced:</strong> Gate criteria: backup/snapshot exists, migration window is active, validation queries are defined, and operator approval is recorded.</p></section>
+<section id="extension-post-cutover-audit"><h3>Extension Goal 3: Post-Cutover Audit</h3><p>Use a dedicated post-cutover audit workflow for this goal. If one does not exist yet, ask the agent to draft it before proceeding.</p>
+<p>Use this extension after runtime/domain cutover to produce an operator and leadership-ready status report.</p><pre><code>Prompt:
+Run the post-cutover audit extension workflow in read-only mode and return an executive pass/fail summary with unresolved risks and immediate next actions.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: execute read-only checks for health, config integrity, and recent deploy state; then emit concise status, risks, and recommended follow-up actions.</p>
+<p class="callout"><strong>tip:</strong> Gate criteria: cutover is complete, monitoring data is available, and no in-progress rollback is active.</p></section>
+<p class="docs-footer-links"><a href="/docs/api-access">API access guide</a> · <a href="/docs/agent-authored-schema">Agent-authored schema</a> · <a href="/docs/repair-command">Repair a command</a></p></article></main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#purpose">Purpose</a>
+<a href="#workflow-scope">Workflow Scope</a>
+<a href="#how-to-use-this-guide">How to Use</a>
+<a href="#prompt-patterns-overview">Prompt Patterns</a>
+<a href="#pattern-1-inventory">Pattern 1: Inventory</a>
+<a href="#pattern-2-prepare-run">Pattern 2: Plan</a>
+<a href="#pattern-3-run-migration">Pattern 3: Execute</a>
+<a href="#pattern-4-post-run-validation">Pattern 4: Validate</a>
+<a href="#pattern-5-read-only-summary">Pattern 5: Summary</a>
+<a href="#workflow-blueprint">Run Order</a>
+<a href="#rollback">Rollback</a>
+<a href="#acceptance-checklist">Checklist</a>
+<a href="#next-steps">Next Steps</a>
+<a href="#extension-workflows-overview">Extension Goals</a>
+<a href="#extension-domain-cutover">Extension 1: Domains</a>
+<a href="#extension-database-migration">Extension 2: Database</a>
+<a href="#extension-post-cutover-audit">Extension 3: Audit</a></aside></div>
+<footer class="site-footer"><p>Oatty is open source.</p><a href="https://github.com/oattyio/oatty/issues">Report a docs issue</a></footer></body></html>

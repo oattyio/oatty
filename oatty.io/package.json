@@ -4,17 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc --noEmit && vite build && tsx ./scripts/postbuild-seo.ts",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "lit": "^3.2.1"
-  },
-  "devDependencies": {
-    "typescript": "^5.7.3",
-    "vite": "^6.0.5",
-    "tsx": "^4.20.5",
-    "@types/node": "24.x"
+    "dev": "npm run build && node ./scripts/serve.mjs",
+    "build": "node ./scripts/build-static.mjs",
+    "check:static": "python3 ./scripts/verify-static.py",
+    "preview": "node ./scripts/serve.mjs"
   }
 }

@@ -8,6 +8,10 @@ on:
     paths:
       - 'oatty.io/**'
       - '.github/workflows/pages.yml'
+  pull_request:
+    paths:
+      - 'oatty.io/**'
+      - '.github/workflows/pages.yml'
 
 permissions:
   contents: read
@@ -15,7 +19,7 @@ permissions:
   id-token: write
 
 concurrency:
-  group: 'pages'
+  group: "pages-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'deploy' }}"
   cancel-in-progress: true
 
 jobs:
@@ -40,15 +44,22 @@ jobs:
         run: npm run build
         working-directory: oatty.io
 
+      - name: Verify static site
+        run: npm run check:static
+        working-directory: oatty.io
+
       - name: Configure Pages
+        if: github.event_name != 'pull_request'
         uses: actions/configure-pages@v5
 
       - name: Upload artifact
+        if: github.event_name != 'pull_request'
         uses: actions/upload-pages-artifact@v3
         with:
           path: oatty.io/dist
 
   deploy:
+    if: github.event_name != 'pull_request'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

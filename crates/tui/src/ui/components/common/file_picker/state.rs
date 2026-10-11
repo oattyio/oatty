@@ -77,7 +77,7 @@ impl FilePickerState {
 
         let shortcuts_focus = shortcuts
             .iter()
-            .map(|s| FocusFlag::new().with_name(&format!("filepicker.shortcut.{}", &s.name)))
+            .map(|s| FocusFlag::new().with_name(&format!("filepicker.shortcut.{}", s.name)))
             .collect();
 
         Self {

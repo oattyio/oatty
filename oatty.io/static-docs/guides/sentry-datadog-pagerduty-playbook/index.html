@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentry + Datadog + PagerDuty Integration Playbook | Oatty Docs</title><meta name="description" content="A natural-language, agent-driven procedure to configure, verify, and roll back Sentry → PagerDuty and Datadog → PagerDuty integrations through Oatty.">
+<link rel="canonical" href="https://oatty.io/docs/guides/sentry-datadog-pagerduty-playbook/"><link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/site.css">
+</head><body><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access">API access</a><a href="/docs/quick-start">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+<div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><p><a href="/docs/api-access">Connect your agent to an API</a></p><ul><li><a href="/docs/quick-start">Quick Start</a></li>
+<li><a href="/docs/guides/sentry-bootstrap">Bootstrap Sentry with an Agent + MCP</a></li>
+<li><a href="/docs/guides/sentry-datadog-pagerduty-playbook" aria-current="page">Sentry + Datadog + PagerDuty Integration Playbook</a></li>
+<li><a href="/docs/guides/vercel-to-render-migration-playbook">Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL)</a></li>
+<li><a href="/docs/guides/access-review-collection-playbook">Access Review Collection Playbook (Okta + AWS IAM + Datadog)</a></li>
+<li><a href="/docs/guides/credential-rotation-readiness-playbook">Credential Rotation Readiness Playbook</a></li>
+<li><a href="/docs/learn/how-oatty-executes-safely">How Oatty Executes Safely</a></li>
+<li><a href="/docs/learn/getting-oriented">Getting Oriented</a></li>
+<li><a href="/docs/learn/library-and-catalogs">Library and Catalogs</a></li>
+<li><a href="/docs/learn/search-and-run-commands">Search for and Run Commands</a></li>
+<li><a href="/docs/learn/workflows-basics">Workflows Basics</a></li>
+<li><a href="/docs/learn/plugins">MCP Plugins</a></li>
+<li><a href="/docs/learn/mcp-http-server">MCP HTTP Server</a></li>
+<li><a href="/docs/reference/cli-commands">CLI Command Reference</a></li>
+<li><a href="/docs/reference/tui-interactions">TUI Interactions Reference</a></li></ul></nav></aside>
+<main id="main-content" class="docs-content"><article><header><p class="eyebrow">Documentation</p><h1>Sentry + Datadog + PagerDuty Integration Playbook</h1><p class="lede">A natural-language, agent-driven procedure to configure, verify, and roll back Sentry → PagerDuty and Datadog → PagerDuty integrations through Oatty.</p><p><strong>Estimated time:</strong> 20-35 min</p></header>
+<section><h2>What you'll learn</h2><ul><li>Connect Oatty to a natural-language agent via MCP.</li>
+<li>Import OpenAPI catalogs and configure auth headers.</li>
+<li>Prompt the agent to draft safe, reviewable workflows for integration setup.</li>
+<li>Confirm provider availability and required identifiers.</li>
+<li>Validate PagerDuty service + Events API v2 integration details.</li>
+<li>Create and verify Datadog → PagerDuty service-key mappings.</li>
+<li>Validate notification handles safely and keep monitors in draft mode.</li>
+<li>Roll back cleanly when needed.</li></ul></section><section id="purpose"><h2>Purpose</h2><p>This playbook documents a repeatable integration style and a safe procedure to configure, verify, and roll back:</p>
+<p>Sentry -&gt; PagerDuty</p>
+<p>Datadog -&gt; PagerDuty</p>
+<p>Sentry -&gt; Datadog (provider availability check)</p>
+<p>This version is written for a natural-language workflow: you prompt an MCP-connected agent, the agent drafts commands/workflows in Oatty, and you explicitly review and run.</p>
+<p>Use this when onboarding a new environment or re-running setup after service renames, org changes, or key rotation.</p>
+<p>This guide assumes prior account setup, access to credentials (PAT or Bearer token) and the ability to set these tokens securely in Oatty</p><p class="callout"><strong>MCP setup:</strong> If your agent is not connected yet, set up the MCP server first: `/docs/learn/mcp-http-server`.</p></section>
+<section id="how-to-use-this-guide"><h2>How to Use This Guide (Goal-Oriented, NL-First)</h2><p>This guide is designed to communicate goals rather than define one exact path. Use prompts to express intent; let the agent adapt commands/workflows for your environment.</p>
+<p>Prompt patterns are non-deterministic by design: they define expected outcomes and guardrails, not fixed command sequences for every account/org. Always verify output from your agent before execution.</p>
+<p>Keep these safety rules in mind: explicit approval before writes, never provide secrets to your agent, rollback readiness before risky changes, and pass/fail confirmation after each phase.</p><p class="callout"><strong>expected:</strong> Different environments can use different commands while still achieving on the same integration outcomes.</p>
+<p class="callout"><strong>tip:</strong> If command IDs or workflow IDs differ, require your agent to perform discovery first, then continue only after the agent maps equivalent actions for your environment.</p></section>
+<section id="prompt-patterns-overview"><h2>Prompt Patterns: Prompt -&gt; Expected Agent Actions</h2><p>Use these prompt patterns when working with an MCP-connected agent. Adjust the prompts as needed to achieve the desired outcome.</p>
+<p>Each pattern includes a prompt block plus expected actions so review remains predictable and auditable.</p><p class="callout"><strong>tip:</strong> Workflow IDs differ by environment. Ask the agent to discover available workflows first, or view them in Oatty&#39;s TUI workflow view.</p>
+<p class="callout"><strong>expected:</strong> Each prompt should result in accurate, valid workflows, clear gates, and auditable outcomes.</p>
+<p class="callout"><strong>advanced:</strong> Ask your agent to use value providers for inputs to your workflow. This will data to be retrieved remotely as options to workflow input when running it manually.</p></section>
+<section id="prompt-pattern-1-import-catalogs"><h3>Pattern 1: Import Catalogs and Verify Headers</h3><p>Use this pattern at the start of a new environment onboarding to automate the catalog import process.</p><pre><code>Prompt:
+Import APIs for Sentry, Datadog, and PagerDuty into Oatty using their OpenAPI schemas (URLs preferred). Stub the necessary headers (for example, Authorization), then pause for me to enter access tokens in Oatty&#39;s TUI. Use https://raw.githubusercontent.com/DataDog/datadog-api-client-go/master/.generator/schemas/v2/openapi.yaml for DataDog</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: import published OpenAPI catalogs, places blank values for any required headers, and pauses for token entry.</p>
+<p class="callout"><strong>tip:</strong> The Oatty TUI logs agent actions in real time. Use `Ctrl+L` in Oatty to view the logs panel and follow along.</p></section>
+<section id="prompt-pattern-2-configure-mapping"><h3>Pattern 2: Configure Mapping with Review Gates</h3><p>Use this pattern when you want the agent to begin the process of discovery and planning end-to-end.</p><pre><code>Prompt:
+Configure Sentry -&gt; Datadog -&gt; PagerDuty mapping using workflows. Ask me for any missing inputs or actions needed to proceed that cannot be accomplished via Oatty.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: verify connectivity, discover commands, inspect current state, draft preflight/config workflows for review, map outputs, and report success/failure with rollback status.</p></section>
+<section id="prompt-pattern-3-non-paging-validation"><h3>Pattern 3: Non-Paging Datadog -&gt; PagerDuty Validation</h3><p>Use this pattern to validate routing safely without sending pages.</p><pre><code>Prompt:
+Create a non-paging validation path for Datadog -&gt; PagerDuty using workflows.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: run the environment&#39;s validation workflow, confirm monitor is draft, confirm PagerDuty handle in monitor message, and return monitor ID with a safe publish/test plan.</p></section>
+<section id="prompt-pattern-4-preflight-stop"><h3>Pattern 4: Preflight Stop-Before-Write Gate</h3><p>Use this pattern to force hard stop behavior before any write path.</p><pre><code>Prompt:
+Before any write action, run preflight workflow and stop if PagerDuty service is missing or Datadog auth fails.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: execute preflight, enforce gate conditions, and halt on failure with concrete remediation steps instead of attempting writes.</p></section>
+<section id="prompt-pattern-5-verification-checklist"><h3>Pattern 5: Re-Run Verification with Checklist</h3><p>Use this pattern after setup changes or before release windows.</p><pre><code>Prompt:
+Re-run full integration verification and produce a pass/fail checklist.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: run preflight plus Sentry/PagerDuty audit workflows and emit a checklist for Datadog mapping, Sentry PagerDuty wiring, draft monitor presence, and unresolved risks.</p></section>
+<section id="prompt-pattern-6-idempotent-configure-then-verify"><h3>Pattern 6: Idempotent Configure-Then-Verify</h3><p>Use this pattern when existing configuration may already be present.</p><pre><code>Prompt:
+Use workflows to configure and then validate; if configuration already exists, skip creation and only verify.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: run preflight first, detect existing Datadog mapping, skip create when present, still run verification, and return an idempotent outcome summary.</p>
+<p class="callout"><strong>tip:</strong> Ask the agent to assess an existing Sentry, Datadog or PagerDuty configuration and surface gaps or areas of concern.</p></section>
+<section id="prompt-pattern-7-secrets-hardening"><h3>Pattern 7: Workflow Output Hardening</h3><p>Use this pattern before sharing manifests across teams or repositories.</p><pre><code>Prompt:
+Harden workflow outputs so secrets are never exposed. Review and patch workflow manifests accordingly.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: inspect manifests, remove steps/flags that expose secret-bearing fields, sanitize examples/placeholders, save, and revalidate workflows.</p></section>
+<section id="prompt-pattern-8-export-and-run-order"><h3>Pattern 8: Export Workflows with Run Order</h3><p>Use this pattern to produce operational documentation such as a README.md.</p><pre><code>Prompt:
+Export all integration workflows to docs/workflows and include a run-order README with important notes.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: export runtime workflows into the repository, verify files exist, add execution order and safety notes, and report exact file paths.</p></section>
+<section id="prompt-pattern-9-read-only-summary"><h3>Pattern 9: Read-Only Executive Summary</h3><p>Use this pattern when leadership status is needed without changes to configuration or resources.</p><pre><code>Prompt:
+Run only read-only workflows to extract data and provide an executive summary for leadership.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: execute only preflight/audit workflows and provide status, key risks, and next actions with no writes.</p>
+<p class="callout"><strong>tip:</strong> Some agents support scheduled cron jobs for repeated report generation. Oatty workflows allow agents to derive data deterministically in scheduled jobs.</p></section>
+<section id="prompt-pattern-10-controlled-e2e"><h3>Pattern 10: Controlled End-to-End Test</h3><p>Use this pattern for controlled test windows with explicit approval checkpoints.</p><pre><code>Prompt:
+Perform a controlled end-to-end test with explicit approval gates: configure, validate draft monitor, optional publish, optional rollback.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: stage workflow runs in sequence, pause before paging-capable steps, execute only approved gates, and return to a safe state (draft/delete) when requested.</p>
+<p class="callout"><strong>tip:</strong> For reviewing any generated workflow in the TUI, use `/docs/learn/workflows-basics`.</p></section>
+<section id="accounts"><h2>Verify Accounts and Access (Manual Check)</h2><p>Before prompting an agent, confirm the accounts and permissions exist for Sentry, Datadog, and PagerDuty.</p>
+<p>Your agent can check the existence of headers attached to a catalog but Oatty never provides values. Values mut be input by the user before commands can be run. The rest of the playbook assumes you can authenticate to each API with the needed scopes and that required auth headers are already set.</p><p class="callout"><strong>expected:</strong> You have valid credentials/tokens for all three systems and you know which org/account you are targeting.</p>
+<p class="callout"><strong>tip:</strong> Start in a sandbox/non-production environment when possible, then repeat in production after the workflow is reviewed.</p>
+<p class="callout"><strong>tip:</strong> Useful links: MCP setup `/docs/learn/mcp-http-server`, workflow review `/docs/learn/workflows-basics`, and execution guardrails `/docs/learn/how-oatty-executes-safely`.</p></section>
+<section id="connect-oatty-to-agent"><h2>Connect Oatty to Your Agent (MCP)</h2><p>Expose Oatty to your agent through MCP so the agent can discover Oatty tools and request preview/validation/execution flows.</p>
+<p>With an active MCP connection, the TUI shows interactions, workflow state changes, and tool calls in real time so you can observe execution as it happens.</p>
+<p>Keep the trust model: the agent can propose and create, but execution remains explicit and observable.</p><p class="callout"><strong>tip:</strong> Follow the MCP server setup page: `/docs/learn/mcp-http-server`.</p>
+<p class="callout"><strong>tip:</strong> Review the trust model for assisted execution: `/docs/learn/how-oatty-executes-safely`.</p>
+<p class="callout"><strong>tip:</strong> Review proposed and running workflows in the Workflows view; details are covered in `/docs/learn/workflows-basics`.</p>
+<p class="callout"><strong>advanced:</strong> Asking your agent to execute read-only commands for discovery is a common use case and can lead to better overall accuracy and guidance.</p></section>
+<section id="agent-imports"><h2>Prompt the Agent to Import APIs and Verify Headers</h2><p>Use a short prompt to have the agent import OpenAPI schemas for Sentry, Datadog, and PagerDuty into Oatty as catalogs.</p>
+<p>Ask it to verify the necessary headers (for example, `Authorization`) are present so authenticated commands are ready without exposing secrets in chat or workflows.</p><pre><code>Prompt:
+Import APIs for Sentry, Datadog, and PagerDuty into Oatty using their OpenAPI schemas (URLs or local paths). Verify required auth headers (e.g., Authorization) are configured for each catalog, then summarize what was imported and what is ready. Use https://raw.githubusercontent.com/DataDog/datadog-api-client-go/master/.generator/schemas/v2/openapi.yaml for DataDog.</code></pre><p class="callout"><strong>expected:</strong> Three catalogs are imported and you can search commands for each vendor immediately.</p>
+<p class="callout"><strong>recovery:</strong> If an OpenAPI schema import fails, have the agent try a local file, confirm OpenAPI v3, or import just one vendor at a time to narrow the error.</p></section>
+<section id="add-tokens-in-tui"><h2>Verify Headers in the Oatty TUI (Catalog Headers)</h2><p>In the Library view, set each imported catalog&#39;s auth header values.</p>
+<p>Keep secrets out of workflow YAML and out of agent prompts while still enabling authenticated discovery and execution.</p><p class="callout"><strong>tip:</strong> See the headers editor flow: `/docs/learn/library-and-catalogs#headers-management`.</p>
+<p class="callout"><strong>expected:</strong> Authenticated read-only calls succeed (list orgs/projects/services) before you attempt any mutating setup steps.</p>
+<p class="callout"><strong>tip:</strong> Use minimum scopes first. Expand permissions only when you hit a specific blocked step.</p></section>
+<section id="value-of-workflow-shape"><h2>Why This Is Written as a Playbook</h2><p>Integrations tend to fail in the “last mile”: permissions, identifier mismatches, missing providers, and unsafe test notifications.</p>
+<p>A playbook reduces iteration time by making the sequence explicit and by separating safe validation from mutating steps.</p>
+<p>This same structure scales to more complex configuration work (for example, error deduping, SLO thresholds, and escalation routing), where manual YAML/JSON editing and repeated trial runs are otherwise the default.</p><p class="callout"><strong>expected:</strong> You get a repeatable baseline with clear verification points and rollbacks, which reduces alert fatigue and missed incidents caused by subtle misconfiguration.</p>
+<p class="callout"><strong>tip:</strong> When you expand this beyond integrations, keep the same pattern: preflight -&gt; validate -&gt; draft/safe create -&gt; controlled enablement -&gt; verify -&gt; rollback.</p>
+<p class="callout"><strong>Agent prompt:</strong> Ask the agent to keep mutating steps behind explicit validation/preview, and to start with draft or non-notifying configurations.</p></section>
+<section id="integration-style"><h2>Current Integration Style</h2><p>Sentry &lt;-&gt; PagerDuty: native Sentry PagerDuty integration actions.</p>
+<p>Datadog &lt;-&gt; PagerDuty: service-key mapping via Datadog PagerDuty integration.</p>
+<p>Sentry &lt;-&gt; Datadog: no native provider was available in the verified org at the time of testing; treat this as a provider availability check.</p><p class="callout"><strong>expected:</strong> Sentry provider availability can differ by org. Always check before assuming a native Sentry → Datadog install flow exists.</p></section>
+<section id="preflight"><h2>Preflight</h2><p>Confirm Oatty provider auth is valid for `sentry`, `datadog`, and `pagerduty` catalogs/plugins.</p>
+<p>Confirm target identifiers (at minimum): Sentry org slug and PagerDuty service name.</p>
+<p>Never store PagerDuty integration keys in git. Treat them as secrets and store them using your secrets backend.</p><p class="callout"><strong>tip:</strong> For a new environment, start by running read-only commands to validate auth/scopes before drafting any workflow that creates or mutates resources.</p>
+<p class="callout"><strong>Minimal prompt:</strong> Prompt: &quot;List the identifiers we need (org slug, service ID, integration ID) and propose read-only commands to fetch them in each system.&quot;</p></section>
+<section id="sentry-provider-availability"><h2>Confirm Sentry Integration Provider Availability</h2><p>Confirm that Sentry has the expected integration providers available in the target org.</p>
+<p>You want to see PagerDuty present. Datadog may or may not exist.</p><pre><code># List integration providers for an org
+sentry organizations:config:integrations:list &lt;ORG_SLUG&gt;
+
+# Optional targeted check
+sentry organizations:config:integrations:list &lt;ORG_SLUG&gt; --providerKey datadog</code></pre><p class="callout"><strong>expected:</strong> `pagerduty` provider exists. If `datadog` provider is missing, treat native Sentry → Datadog install as unavailable.</p>
+<p class="callout"><strong>recovery:</strong> If a provider is missing, use alternate forwarding patterns instead of trying to force a native install flow.</p>
+<p class="callout"><strong>Minimal prompt:</strong> Prompt: &quot;Check which integration providers exist for this Sentry org and summarize what is available for PagerDuty and Datadog.&quot;</p></section>
+<section id="pagerduty-service-and-events-integration"><h2>Confirm PagerDuty Service + Events API v2 Integration</h2><p>Identify the target PagerDuty service.</p>
+<p>Fetch integrations for the service and locate the Events API v2 integration (integration key is a secret).</p><pre><code># List services
+pagerduty services:list
+
+# Fetch service info including integrations
+pagerduty services:info &lt;SERVICE_ID&gt; --include[]=integrations
+
+# Fetch integration info (use integration ID from previous output)
+pagerduty services:integrations:info &lt;SERVICE_ID&gt; &lt;INTEGRATION_ID&gt;</code></pre><p class="callout"><strong>expected:</strong> You can capture `service_name` and the Events API v2 `integration_key` (keep secret).</p>
+<p class="callout"><strong>tip:</strong> Prefer unambiguous service names to reduce routing mistakes and future maintenance risk.</p>
+<p class="callout"><strong>Minimal prompt:</strong> Prompt: &quot;Find the PagerDuty service we should route to, list its integrations, and tell me which one is Events API v2.&quot;</p></section>
+<section id="datadog-mapping"><h2>Configure Datadog -&gt; PagerDuty Mapping</h2><p>Create the service-key mapping in Datadog using the PagerDuty service name and Events API v2 integration key.</p>
+<p>Then verify the mapping exists.</p><pre><code># Create mapping
+datadog api:integration:pagerduty:configuration:services:create \
+  --service_name &quot;&lt;PAGERDUTY_SERVICE_NAME&gt;&quot; \
+  --service_key &quot;&lt;PAGERDUTY_EVENTS_API_V2_INTEGRATION_KEY&gt;&quot;
+
+# Verify mapping
+datadog api:integration:pagerduty:configuration:services:info &quot;&lt;PAGERDUTY_SERVICE_NAME&gt;&quot;</code></pre><p class="callout"><strong>expected:</strong> The mapping exists and the response contains the target `service_name`.</p>
+<p class="callout"><strong>recovery:</strong> If creation fails, re-check token scopes/permissions and confirm the integration key is correct for the target service.</p>
+<p class="callout"><strong>Minimal prompt:</strong> Prompt: &quot;Create (or update) the Datadog PagerDuty service mapping for &lt;service_name&gt;. Then verify it exists.&quot;</p></section>
+<section id="validate-handle-safe"><h2>Validate Datadog Notification Handle (No Paging)</h2><p>Validate a monitor payload without creating a monitor or paging.</p>
+<p>This is a safe check for message format and handle resolution.</p><pre><code>datadog api:monitor:validate:create \
+  --type &quot;query alert&quot; \
+  --query &quot;avg(last_5m):avg:system.load.1{*} &gt; 100000&quot; \
+  --name &quot;integration-validation-pd-handle&quot; \
+  --message &quot;Datadog-&gt;PagerDuty validation @pagerduty-&lt;SERVICE-NAME-HANDLE&gt;&quot; \
+  --options &#39;{&quot;notify_no_data&quot;:false,&quot;thresholds&quot;:{&quot;critical&quot;:100000}}&#39;</code></pre><p class="callout"><strong>tip:</strong> Recommended handle format example: `@pagerduty-Default-Service`.</p>
+<p class="callout"><strong>expected:</strong> Payload validation succeeds without creating a monitor.</p>
+<p class="callout"><strong>Minimal prompt:</strong> Prompt: &quot;Validate a Datadog monitor payload that would route to PagerDuty, without creating a monitor or notifying.&quot;</p></section>
+<section id="draft-monitor"><h2>Create a Draft Datadog Validation Monitor</h2><p>Create a monitor in draft mode so it does not notify.</p>
+<p>This provides a persisted artifact you can inspect and later enable under controlled incident testing.</p><pre><code>datadog api:monitor:create \
+  --name &quot;integration-validation datadog-to-pagerduty&quot; \
+  --type &quot;query alert&quot; \
+  --query &quot;avg(last_5m):avg:system.load.1{*} &gt; 100000&quot; \
+  --message &quot;Datadog to PagerDuty validation @pagerduty-Default-Service&quot; \
+  --tags &#39;[&quot;integration:datadog-pagerduty&quot;,&quot;env:production&quot;,&quot;managed-by:oatty&quot;]&#39; \
+  --priority 3 \
+  --draft_status draft \
+  --options &#39;{&quot;notify_no_data&quot;:false,&quot;include_tags&quot;:true,&quot;thresholds&quot;:{&quot;critical&quot;:100000}}&#39;
+
+# Verify
+datadog api:monitor:info &lt;MONITOR_ID&gt;</code></pre><p class="callout"><strong>expected:</strong> `draft_status` is `draft`, and the message contains the PagerDuty handle.</p>
+<p class="callout"><strong>tip:</strong> Keep validation monitors in draft unless you are running a controlled incident test.</p>
+<p class="callout"><strong>Minimal prompt:</strong> Prompt: &quot;Create a Datadog validation monitor in draft mode with the PagerDuty handle, then fetch it and confirm draft_status.&quot;</p></section>
+<section id="sentry-pagerduty-validation"><h2>Validate Sentry -&gt; PagerDuty Actions</h2><p>Verify at least one Sentry alert rule or workflow includes a PagerDuty action with a non-null integration identifier.</p>
+<p>This confirms Sentry is wired to incident response in a concrete, inspectable way.</p><pre><code># Alert rules
+sentry organizations:alert-rules:list &lt;ORG_SLUG&gt;
+
+# Workflows (optional)
+sentry organizations:workflows:list &lt;ORG_SLUG&gt; --project [&lt;PROJECT_ID&gt;]</code></pre><p class="callout"><strong>expected:</strong> You see action type `pagerduty` and a non-null integration identifier.</p>
+<p class="callout"><strong>recovery:</strong> If no PagerDuty actions exist, create or edit a rule/workflow and add a PagerDuty action via the integration.</p>
+<p class="callout"><strong>Minimal prompt:</strong> Prompt: &quot;List Sentry alert rules/workflows and confirm at least one routes to PagerDuty. If none do, propose the smallest safe change to add one.&quot;</p></section>
+<section id="rollback"><h2>Rollback</h2><p>Datadog PagerDuty mapping rollback:</p>
+<p>Datadog validation monitor rollback:</p>
+<p>Sentry PagerDuty rollback:</p><pre><code># Datadog PagerDuty mapping rollback
+datadog api:integration:pagerduty:configuration:services:delete &quot;&lt;PAGERDUTY_SERVICE_NAME&gt;&quot;
+
+# Datadog validation monitor rollback
+datadog api:monitor:delete &lt;MONITOR_ID&gt;
+
+# Sentry PagerDuty rollback
+# Remove PagerDuty actions from rules/workflows in Sentry, or disable impacted workflows.</code></pre><p class="callout"><strong>tip:</strong> Test rollback paths in non-production first.</p></section>
+<section id="rerun-checklist"><h2>Re-run Checklist</h2><p>Provider auth confirmed.</p>
+<p>PagerDuty service and integration key confirmed.</p>
+<p>Datadog mapping created or updated.</p>
+<p>Datadog monitor payload validates.</p>
+<p>Draft monitor exists and is query-valid.</p>
+<p>Sentry rules/workflows include PagerDuty actions.</p>
+<p>Rollback commands tested in non-production first.</p><p class="callout"><strong>expected:</strong> You can re-run this playbook safely after org migrations, service renames, or key rotation.</p></section>
+<p class="docs-footer-links"><a href="/docs/api-access">API access guide</a> · <a href="/docs/agent-authored-schema">Agent-authored schema</a> · <a href="/docs/repair-command">Repair a command</a></p></article></main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#purpose">Purpose</a>
+<a href="#how-to-use-this-guide">How to Use</a>
+<a href="#prompt-patterns-overview">Prompt Patterns</a>
+<a href="#prompt-pattern-1-import-catalogs">Pattern 1: Import</a>
+<a href="#prompt-pattern-2-configure-mapping">Pattern 2: Configure</a>
+<a href="#prompt-pattern-3-non-paging-validation">Pattern 3: Validate</a>
+<a href="#prompt-pattern-4-preflight-stop">Pattern 4: Preflight</a>
+<a href="#prompt-pattern-5-verification-checklist">Pattern 5: Checklist</a>
+<a href="#prompt-pattern-6-idempotent-configure-then-verify">Pattern 6: Idempotent</a>
+<a href="#prompt-pattern-7-secrets-hardening">Pattern 7: Hardening</a>
+<a href="#prompt-pattern-8-export-and-run-order">Pattern 8: Export</a>
+<a href="#prompt-pattern-9-read-only-summary">Pattern 9: Read-Only</a>
+<a href="#prompt-pattern-10-controlled-e2e">Pattern 10: Controlled Test</a>
+<a href="#accounts">Prereqs</a>
+<a href="#connect-oatty-to-agent">MCP Setup</a>
+<a href="#agent-imports">Import APIs</a>
+<a href="#add-tokens-in-tui">Set Headers</a>
+<a href="#value-of-workflow-shape">Why Playbook</a>
+<a href="#integration-style">Integration Style</a>
+<a href="#preflight">Preflight</a>
+<a href="#sentry-provider-availability">Sentry Providers</a>
+<a href="#pagerduty-service-and-events-integration">PagerDuty Service</a>
+<a href="#datadog-mapping">Datadog Mapping</a>
+<a href="#validate-handle-safe">Validate Handle</a>
+<a href="#draft-monitor">Draft Monitor</a>
+<a href="#sentry-pagerduty-validation">Sentry -&gt; PagerDuty</a>
+<a href="#rollback">Rollback</a>
+<a href="#rerun-checklist">Re-run Checklist</a></aside></div>
+<footer class="site-footer"><p>Oatty is open source.</p><a href="https://github.com/oattyio/oatty/issues">Report a docs issue</a></footer></body></html>

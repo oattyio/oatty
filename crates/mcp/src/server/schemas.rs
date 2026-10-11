@@ -108,7 +108,12 @@ pub struct CommandDetailRequest {
     pub include_providers: Option<ProviderMetadataDetail>,
 }
 
-/// How to interpret the catalog source location.
+/// How to interpret an OpenAPI catalog source.
+///
+/// Catalog validation, preview, and import accept an existing local path, an
+/// HTTP(S) URL, or the JSON/YAML document itself. An explicit variant overrides
+/// automatic detection, allowing callers to identify malformed inline content
+/// without accidentally treating it as a filesystem path.
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum CatalogSourceType {
@@ -116,27 +121,37 @@ pub enum CatalogSourceType {
     Path,
     /// Source is a remote HTTP(S) URL.
     Url,
+    /// Source contains the OpenAPI document as JSON or YAML text.
+    Inline,
 }
 
 /// Request payload for validating an OpenAPI source without importing it.
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CatalogValidateOpenApiRequest {
-    /// Source location (path or URL).
-    #[schemars(description = "OpenAPI source location (local path or HTTP(S) URL).")]
+    /// Local path, HTTP(S) URL, or complete OpenAPI JSON/YAML document string.
+    #[schemars(
+        description = "OpenAPI source: local path, HTTP(S) URL, or inline JSON/YAML document string. Inline contents need no temporary file."
+    )]
     pub source: String,
     /// Optional source type hint.
-    #[schemars(description = "Optional source type hint: path or url.")]
+    #[schemars(
+        description = "Optional source type: path, url, or inline. When omitted, HTTP(S) URLs and structured JSON/YAML documents are detected automatically; other strings are paths."
+    )]
     pub source_type: Option<CatalogSourceType>,
 }
 
 /// Request payload for previewing an OpenAPI catalog import.
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CatalogPreviewImportRequest {
-    /// Source location (path or URL).
-    #[schemars(description = "OpenAPI source location (local path or HTTP(S) URL).")]
+    /// Local path, HTTP(S) URL, or complete OpenAPI JSON/YAML document string.
+    #[schemars(
+        description = "OpenAPI source: local path, HTTP(S) URL, or inline JSON/YAML document string. Inline contents need no temporary file."
+    )]
     pub source: String,
     /// Optional source type hint.
-    #[schemars(description = "Optional source type hint: path or url.")]
+    #[schemars(
+        description = "Optional source type: path, url, or inline. When omitted, HTTP(S) URLs and structured JSON/YAML documents are detected automatically; other strings are paths."
+    )]
     pub source_type: Option<CatalogSourceType>,
     /// Target catalog title.
     #[schemars(description = "Catalog title to create or update.")]
@@ -155,11 +170,15 @@ pub struct CatalogPreviewImportRequest {
 /// Request payload for importing an OpenAPI catalog into runtime config.
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CatalogImportOpenApiRequest {
-    /// Source location (path or URL).
-    #[schemars(description = "OpenAPI source location (local path or HTTP(S) URL).")]
+    /// Local path, HTTP(S) URL, or complete OpenAPI JSON/YAML document string.
+    #[schemars(
+        description = "OpenAPI source: local path, HTTP(S) URL, or inline JSON/YAML document string. Inline contents need no temporary file."
+    )]
     pub source: String,
     /// Optional source type hint.
-    #[schemars(description = "Optional source type hint: path or url.")]
+    #[schemars(
+        description = "Optional source type: path, url, or inline. When omitted, HTTP(S) URLs and structured JSON/YAML documents are detected automatically; other strings are paths."
+    )]
     pub source_type: Option<CatalogSourceType>,
     /// Target catalog title.
     #[schemars(description = "Catalog title to create or update.")]

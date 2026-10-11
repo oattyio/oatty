@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MCP Plugins | Oatty Docs</title><meta name="description" content="Manage plugin lifecycle and configuration from one TUI workflow, including details, validation, and save paths.">
+<link rel="canonical" href="https://oatty.io/docs/learn/plugins/"><link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/site.css">
+</head><body><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access">API access</a><a href="/docs/quick-start">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+<div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><p><a href="/docs/api-access">Connect your agent to an API</a></p><ul><li><a href="/docs/quick-start">Quick Start</a></li>
+<li><a href="/docs/guides/sentry-bootstrap">Bootstrap Sentry with an Agent + MCP</a></li>
+<li><a href="/docs/guides/sentry-datadog-pagerduty-playbook">Sentry + Datadog + PagerDuty Integration Playbook</a></li>
+<li><a href="/docs/guides/vercel-to-render-migration-playbook">Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL)</a></li>
+<li><a href="/docs/guides/access-review-collection-playbook">Access Review Collection Playbook (Okta + AWS IAM + Datadog)</a></li>
+<li><a href="/docs/guides/credential-rotation-readiness-playbook">Credential Rotation Readiness Playbook</a></li>
+<li><a href="/docs/learn/how-oatty-executes-safely">How Oatty Executes Safely</a></li>
+<li><a href="/docs/learn/getting-oriented">Getting Oriented</a></li>
+<li><a href="/docs/learn/library-and-catalogs">Library and Catalogs</a></li>
+<li><a href="/docs/learn/search-and-run-commands">Search for and Run Commands</a></li>
+<li><a href="/docs/learn/workflows-basics">Workflows Basics</a></li>
+<li><a href="/docs/learn/plugins" aria-current="page">MCP Plugins</a></li>
+<li><a href="/docs/learn/mcp-http-server">MCP HTTP Server</a></li>
+<li><a href="/docs/reference/cli-commands">CLI Command Reference</a></li>
+<li><a href="/docs/reference/tui-interactions">TUI Interactions Reference</a></li></ul></nav></aside>
+<main id="main-content" class="docs-content"><article><header><p class="eyebrow">Documentation</p><h1>MCP Plugins</h1><p class="lede">Manage plugin lifecycle and configuration from one TUI workflow, including details, validation, and save paths.</p><p><strong>Estimated time:</strong> 10-14 min</p></header>
+<section><h2>What you'll learn</h2><ul><li>Extend Oatty&#39;s capabilities with your favorite MCP servers.</li>
+<li>Inspect MCP inventory and open MCP details.</li>
+<li>Start, stop, and restart MCP from table and details contexts.</li>
+<li>Validate and save editor updates safely.</li>
+<li>Define remote headers or local env vars in editor key-value rows.</li></ul></section><section id="overview"><h2>Overview</h2><p>Plugins are a powerful way to extend Oatty&#39;s capabilities with your favorite MCP servers (http or stdio).</p>
+<p>Use the Plugins view to manage plugin lifecycle and configuration from one TUI workflow.</p>
+<p>Details and validation errors are surfaced in the TUI, and credentials are stored using your OS keychain where available.</p>
+<p>Define remote headers or local env vars in the key-value editor to support vendor requirements.</p><p class="callout"><strong>Goal:</strong> Use MCP servers to extend Oatty&#39;s capabilities.</p>
+<figure><img src="/Oatty-mcp-flow.webp" alt="MCP plugin flow" loading="lazy"><figcaption>Complete MCP plugin flow that includes plugin table, details, and editor.</figcaption></figure></section>
+<section id="prerequisites"><h2>Prerequisites</h2><p>Open the Plugins view.</p>
+<p>Confirm at least one plugin entry is present.</p><p class="callout"><strong>expected:</strong> Plugin table loads with search, list, and action controls.</p>
+<p class="callout"><strong>recovery:</strong> If no plugins are listed, create or import plugin definitions first.</p>
+<figure><img src="/Oatty-mcp-servers.png" alt="Oatty MCP plugin table screenshot" loading="lazy"><figcaption>Plugin table with search, list, and action controls.</figcaption></figure></section>
+<section id="add-plugin-editor"><h2>Add or Edit a Plugin Configuration</h2><p>Open plugin editor for add/edit flows.</p>
+<p>Use Remote transport to define request headers in the key-value editor.</p>
+<p>Use Local transport to define environment variables in the same editor.</p>
+<p>Add required auth values such as `Authorization` for remote integrations when needed.</p>
+<p>Validate configuration before save.</p>
+<p>Save after required fields and validation pass.</p><p class="callout"><strong>expected:</strong> Validation feedback is shown, and save persists valid plugin configuration.</p>
+<p class="callout"><strong>recovery:</strong> If save is disabled, resolve validation issues and required fields first.</p>
+<figure><img src="/Oatty-add-mcp-server-flow.webp" alt="Oatty add MCP server flow" loading="lazy"><figcaption>Editor form, validation state, and enabled save button.</figcaption></figure>
+<p class="callout"><strong>advanced:</strong> The key-value editor label switches by transport: Headers for Remote, Env Vars for Local.</p></section>
+<section id="plugin-table-operations"><h2>Use Plugin Table Operations</h2><p>Select a plugin row from the table.</p>
+<p>Open details from the selected plugin.</p>
+<p>Use start, stop, and restart actions from the table-level controls.</p><p class="callout"><strong>expected:</strong> Selected plugin actions execute and status updates reflect control operations.</p>
+<p class="callout"><strong>recovery:</strong> If actions are unavailable, verify a plugin row is selected and supports the target action.</p>
+<figure><img src="/Oatty-mcp-table-actions.webp" alt="Oatty MCP plugin table view" loading="lazy"><figcaption>Selected plugin row, details open action, and start/stop controls.</figcaption></figure>
+<p class="callout"><strong>advanced:</strong> Details, edit, and start/stop/restart are available through dedicated hotkeys in focused table context.</p></section>
+<section id="plugin-details"><h2>Inspect Plugin Details</h2><p>Open plugin details from the selected row.</p>
+<p>Review metadata, logs, and exposed tool information.</p>
+<p>Run control operations from details when needed.</p><p class="callout"><strong>expected:</strong> Details modal loads plugin metadata and tool/log sections for the selected plugin.</p>
+<p class="callout"><strong>recovery:</strong> If details fail to load, refresh details and verify plugin is still selected.</p>
+<figure><img src="/Oatty-mcp-details-view.png" alt="Oatty MCP plugin details view screenshot" loading="lazy"><figcaption>Plugins details modal with metadata, tool, and log sections.</figcaption></figure>
+<p class="callout"><strong>advanced:</strong> Details includes explicit error rendering when detail loading fails.</p></section>
+<section id="next-steps"><h2>Next Steps</h2><p>Continue to MCP HTTP Server to expose Oatty tools over a local MCP endpoint.</p>
+<p>Return to Workflows Basics to combine plugin-backed tools with workflow execution.</p><p class="callout"><strong>expected:</strong> You can operate plugin lifecycle and configuration with predictable outcomes.</p>
+<figure><img src="/Oatty-plugins-table-view.png" alt="Screenshot placeholder" loading="lazy"><figcaption>Capture final plugin operational state with clear status indicators.</figcaption></figure></section>
+<p class="docs-footer-links"><a href="/docs/api-access">API access guide</a> · <a href="/docs/agent-authored-schema">Agent-authored schema</a> · <a href="/docs/repair-command">Repair a command</a></p></article></main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#overview">Overview</a>
+<a href="#prerequisites">Prerequisites</a>
+<a href="#add-plugin-editor">Add or Edit a Plugin Configuration</a>
+<a href="#plugin-table-operations">Use Plugin Table Operations</a>
+<a href="#plugin-details">Inspect Plugin Details</a>
+<a href="#next-steps">Next Steps</a></aside></div>
+<footer class="site-footer"><p>Oatty is open source.</p><a href="https://github.com/oattyio/oatty/issues">Report a docs issue</a></footer></body></html>

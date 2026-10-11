@@ -106,7 +106,7 @@ fn fetch_and_cache(
             .ok_or_else(|| anyhow!("missing base URL for command '{}'", spec.name))?;
         let headers = registry_lock
             .resolve_runtime_headers_for_command(&spec)
-            .ok_or_else(|| anyhow!("could not determine headers for command: {}", &spec.canonical_id()))?;
+            .ok_or_else(|| anyhow!("could not determine headers for command: {}", spec.canonical_id()))?;
         debug!(
             provider_id = %provider_id,
             command = %spec.canonical_id(),

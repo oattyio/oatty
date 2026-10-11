@@ -644,12 +644,17 @@ fn handle_update_command(matches: &ArgMatches) -> Result<()> {
         .current_version(env!("CARGO_PKG_VERSION"))
         .build()?;
 
-    let latest_release = updater.get_latest_release()?;
+    let latest_releases = updater.get_latest_release()?;
+    let latest_version = latest_releases
+        .latest()
+        .map(|release| release.version())
+        .ok_or_else(|| anyhow!("GitHub returned no Oatty releases"))?;
+    let update_available = latest_releases.is_update_available()?;
 
     if matches.get_flag("check") {
         if !quiet {
-            if self_update::version::bump_is_greater(env!("CARGO_PKG_VERSION"), &latest_release.version)? {
-                println!("Update available: {} -> {}", env!("CARGO_PKG_VERSION"), latest_release.version);
+            if update_available {
+                println!("Update available: {} -> {}", env!("CARGO_PKG_VERSION"), latest_version);
             } else {
                 println!("Up to date: {}", env!("CARGO_PKG_VERSION"));
             }
@@ -657,7 +662,7 @@ fn handle_update_command(matches: &ArgMatches) -> Result<()> {
         return Ok(());
     }
 
-    if !matches.get_flag("force") && !self_update::version::bump_is_greater(env!("CARGO_PKG_VERSION"), &latest_release.version)? {
+    if !matches.get_flag("force") && !update_available {
         if !quiet {
             println!(
                 "Already up to date (version: {}). Use --force to reinstall.",

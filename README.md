@@ -7,11 +7,14 @@
 
 # Oatty
 
-Schema-driven API operations across CLI, TUI, MCP, and workflows.
+Give a connected agent access to APIs through Oatty's MCP tools and OpenAPI catalogs. Search, run, and inspect the same commands in the terminal interface.
 
 Full documentation: https://oatty.io
 
 - Quick Start: https://oatty.io/docs/quick-start
+- Connect an agent to an API: https://oatty.io/docs/api-access
+- Create an OpenAPI schema from documentation: https://oatty.io/docs/agent-authored-schema
+- Correct a generated command: https://oatty.io/docs/repair-command
 - Learn: https://oatty.io/docs/learn/getting-oriented
 - Guides: https://oatty.io/docs/guides/sentry-bootstrap
 
@@ -76,9 +79,10 @@ oatty workflow preview --file workflows/example.yaml
 
 ## MCP and Agent Usage
 
-Run Oatty as an MCP server so agents can discover and run tools/workflows with explicit operator control.
+Run Oatty as an MCP server so connected agents can discover and run catalog commands.
 
 - MCP HTTP Server docs: https://oatty.io/docs/learn/mcp-http-server
+- API access guide: https://oatty.io/docs/api-access
 - Safety model: https://oatty.io/docs/learn/how-oatty-executes-safely
 
 ## Development

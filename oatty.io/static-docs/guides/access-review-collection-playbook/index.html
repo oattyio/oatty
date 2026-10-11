@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Access Review Collection Playbook (Okta + AWS IAM + Datadog) | Oatty Docs</title><meta name="description" content="A prompt-driven, agent-assisted guide to collect user lists, permission grants, and audit evidence for quarterly reviews or incidents using read-only workflows.">
+<link rel="canonical" href="https://oatty.io/docs/guides/access-review-collection-playbook/"><link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/site.css">
+</head><body><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access">API access</a><a href="/docs/quick-start">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+<div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><p><a href="/docs/api-access">Connect your agent to an API</a></p><ul><li><a href="/docs/quick-start">Quick Start</a></li>
+<li><a href="/docs/guides/sentry-bootstrap">Bootstrap Sentry with an Agent + MCP</a></li>
+<li><a href="/docs/guides/sentry-datadog-pagerduty-playbook">Sentry + Datadog + PagerDuty Integration Playbook</a></li>
+<li><a href="/docs/guides/vercel-to-render-migration-playbook">Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL)</a></li>
+<li><a href="/docs/guides/access-review-collection-playbook" aria-current="page">Access Review Collection Playbook (Okta + AWS IAM + Datadog)</a></li>
+<li><a href="/docs/guides/credential-rotation-readiness-playbook">Credential Rotation Readiness Playbook</a></li>
+<li><a href="/docs/learn/how-oatty-executes-safely">How Oatty Executes Safely</a></li>
+<li><a href="/docs/learn/getting-oriented">Getting Oriented</a></li>
+<li><a href="/docs/learn/library-and-catalogs">Library and Catalogs</a></li>
+<li><a href="/docs/learn/search-and-run-commands">Search for and Run Commands</a></li>
+<li><a href="/docs/learn/workflows-basics">Workflows Basics</a></li>
+<li><a href="/docs/learn/plugins">MCP Plugins</a></li>
+<li><a href="/docs/learn/mcp-http-server">MCP HTTP Server</a></li>
+<li><a href="/docs/reference/cli-commands">CLI Command Reference</a></li>
+<li><a href="/docs/reference/tui-interactions">TUI Interactions Reference</a></li></ul></nav></aside>
+<main id="main-content" class="docs-content"><article><header><p class="eyebrow">Documentation</p><h1>Access Review Collection Playbook (Okta + AWS IAM + Datadog)</h1><p class="lede">A prompt-driven, agent-assisted guide to collect user lists, permission grants, and audit evidence for quarterly reviews or incidents using read-only workflows.</p><p><strong>Estimated time:</strong> 15-25 min</p></header>
+<section><h2>What you'll learn</h2><ul><li>If required catalogs are missing, ask the agent to import them and verify auth headers first.</li>
+<li>Run provider connectivity preflight before any collection.</li>
+<li>Collect identity and access posture with read-only commands/workflows.</li>
+<li>Normalize outputs into a single review-ready report shape.</li>
+<li>Handle partial provider failures with explicit gap reporting.</li>
+<li>Produce quarterly and incident summaries without exposing secrets.</li></ul></section><section id="purpose"><h2>Purpose</h2><p>This playbook is for collecting access-review evidence from Okta, AWS IAM, and Datadog through an MCP-connected agent.</p>
+<p>Use it for quarterly access reviews and incident response evidence collection when you need auditable, repeatable, read-only execution.</p>
+<p>The guide is goal-oriented and non-deterministic: prompts define outcomes and safety constraints, while command/workflow selection adapts to each environment.</p>
+<p>If required provider catalogs or auth headers are not yet configured, begin with an import-and-verify step before running collection prompts.</p><p class="callout"><strong>tip:</strong> Before running prompts, ensure your agent is connected through MCP HTTP Server: `/docs/learn/mcp-http-server`.</p>
+<p class="callout"><strong>tip:</strong> If you still need to add or update required auth headers manually, use `/docs/learn/library-and-catalogs#headers-management` first.</p>
+<p class="callout"><strong>tip:</strong> Use the Workflows view to review run plans, approvals, and execution details: `/docs/learn/workflows-basics`.</p></section>
+<section id="scope"><h2>Scope and Feasibility</h2><p>In-scope outcomes for this playbook:</p>
+<p>1) User and group inventory (identity state).</p>
+<p>2) Role/policy/grant inventory (permission state).</p>
+<p>3) Available audit/security event evidence per provider.</p>
+<p>4) Unified summary with pass/fail coverage and unresolved gaps.</p>
+<p>With provider authentication already configured, this guide is feasible for identity and permission collection across Okta, AWS IAM, and Datadog. Audit/event depth varies by provider endpoint availability and account configuration.</p><p class="callout"><strong>expected:</strong> Expected result: a useful guide remains feasible even when one provider is partially unavailable, as long as preflight and gap reporting are enforced.</p></section>
+<section id="validated-signals"><h2>Validated Read-Only Signals</h2><p>Representative evidence signals available through Oatty command catalogs:</p>
+<p>Identity inventory: `github users:list`, `okta api:users:list`, `okta api:groups:list`, `aws #Action=ListUsers:list`, `datadog users:list`.</p>
+<p>Permission posture: `aws #Action=ListRoles:list`, `aws #Action=ListPolicies:list`, `aws #Action=GetAccountAuthorizationDetails:list`, `datadog permissions:list`, `github repos:collaborators:list`.</p>
+<p>Audit/event evidence: `okta api:logs:list` and provider-specific event endpoints where available.</p><p class="callout"><strong>expected:</strong> This playbook remains useful even with partial provider availability, as long as outputs include explicit provider coverage and collection gaps.</p></section>
+<section id="how-to-use"><h2>How to Use This Guide (Goal-Oriented, NL-First)</h2><p>Start each run with clear goals, time window, and allowed mutation policy (read-only by default).</p>
+<p>Have the agent discover available commands/workflows first, then run preflight gates, then collect evidence in provider order.</p>
+<p>Require normalized output sections and explicit coverage gaps rather than raw payload dumps.</p><p class="callout"><strong>tip:</strong> If you need a refresher on command discovery and safe execution controls, see `/docs/learn/search-and-run-commands` and `/docs/learn/how-oatty-executes-safely`.</p></section>
+<section id="prompt-patterns"><h2>Prompt Patterns: Prompt -&gt; Expected Agent Actions</h2><p>Use these prompt patterns to drive consistent collection and reporting behavior with a connected agent.</p></section>
+<section id="pattern-preflight"><h3>Pattern 1: Auth and Connectivity Preflight</h3><p>Run this first on every quarterly or incident pull.</p><pre><code>Prompt:
+Run a preflight for Okta, AWS IAM, and Datadog before we collect anything. If a catalog is missing, import it first, verify required headers, and give me a go/no-go summary.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: import missing catalogs when needed, verify required headers, execute provider connectivity checks, and produce a go/no-go table before evidence collection.</p></section>
+<section id="pattern-collect-identity"><h3>Pattern 2: Collect Identity Inventory</h3><p>Use this to collect users, groups, and account-level ownership context.</p><pre><code>Prompt:
+Collect a read-only identity inventory from Okta, AWS IAM, and Datadog. Return users, groups/teams, and account ownership in one normalized format.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: run read-only identity commands per provider, map provider-specific fields to a shared schema, and return counts plus key identifiers.</p>
+<p class="callout"><strong>fallback:</strong> Representative commands include `okta api:users:list`, `okta api:groups:list`, `aws #Action=ListUsers:list`, `datadog users:list`, and `datadog roles:list`.</p></section>
+<section id="pattern-collect-permissions"><h3>Pattern 3: Collect Permissions and Grants</h3><p>Use this to capture effective permission posture and high-risk grant surfaces.</p><pre><code>Prompt:
+Collect read-only permission grants and role/policy mappings from Okta, AWS IAM, and Datadog. Highlight admin-equivalent access and anything with unclear ownership.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: gather roles/policies/grants, classify privilege level, and flag high-risk assignments for reviewer follow-up.</p>
+<p class="callout"><strong>fallback:</strong> Representative commands include `aws #Action=ListRoles:list`, `aws #Action=ListPolicies:list`, `aws #Action=GetAccountAuthorizationDetails:list`, and `datadog permissions:list`.</p></section>
+<section id="pattern-collect-audit"><h3>Pattern 4: Collect Audit and Event Evidence</h3><p>Use this to collect available audit/security events for the requested time window.</p><pre><code>Prompt:
+Pull read-only audit/security evidence for the last 90 days from available provider endpoints. Summarize key actions and call out any coverage gaps.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: collect available event streams, summarize notable admin/security actions, and explicitly report provider-specific audit depth limits.</p>
+<p class="callout"><strong>fallback:</strong> For example, use `okta api:logs:list` where available and account for missing endpoints by emitting a structured collection gap section.</p></section>
+<section id="pattern-quarterly-summary"><h3>Pattern 5: Quarterly Review Output</h3><p>Use this for governance-oriented review packets.</p><pre><code>Prompt:
+Create a quarterly access review summary with provider coverage, user/grant totals, high-risk findings, unresolved gaps, and prioritized remediation actions. Keep this read-only.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: produce a concise executive summary plus reviewer-ready details and a clear remediation queue with owners.</p></section>
+<section id="pattern-incident-summary"><h3>Pattern 6: Incident Evidence Output</h3><p>Use this for time-bounded incident response support.</p><pre><code>Prompt:
+For incident window &lt;start&gt; to &lt;end&gt;, collect read-only access and audit evidence. Return an actor timeline, affected identities, privilege changes, and confidence notes where data is missing.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: constrain collection to the incident window, produce a timeline with confidence annotations, and separate confirmed evidence from assumptions.</p></section>
+<section id="report-schema"><h2>Recommended Output Schema</h2><p>Require this structure in every run output for consistency:</p>
+<p>1) `run_scope` (quarterly or incident, time window, providers requested).</p>
+<p>2) `provider_coverage` (success/fail/partial + reason).</p>
+<p>3) `identity_inventory` (users, groups/roles, key counts).</p>
+<p>4) `permission_posture` (grants/policies, high-risk findings).</p>
+<p>5) `audit_evidence` (events collected + notable actions).</p>
+<p>6) `collection_gaps` (endpoint limitations, blocked data, or unavailable provider responses).</p>
+<p>7) `recommended_next_actions` (prioritized remediation and owners).</p><p class="callout"><strong>tip:</strong> Keep raw secrets and token-like values redacted in both terminal output and exported summaries.</p></section>
+<section id="safety"><h2>Safety and Review Controls</h2><p>Run this playbook in read-only mode by default and reject any prompt that implies mutation unless explicitly approved.</p>
+<p>If any provider preflight fails because of endpoint/scope limitations, continue with partial collection only when requested and always include a remediation plan.</p>
+<p>Use workflow and tool-call review in the TUI while the agent is connected to monitor actions in real time.</p><p class="callout"><strong>tip:</strong> For manual review workflows and run approval practices, see `/docs/learn/workflows-basics`.</p></section>
+<section id="next-steps"><h2>Next Steps</h2><p>If you need additional provider coverage (for example, GitHub or AWS CloudTrail), extend catalogs and add matching read-only collection steps.</p>
+<p>Export your finalized collection workflows and reporting templates into repository docs for repeat quarterly execution.</p><p class="callout"><strong>tip:</strong> Import and tune catalogs with `/docs/learn/library-and-catalogs` before adding new provider goals.</p></section>
+<p class="docs-footer-links"><a href="/docs/api-access">API access guide</a> · <a href="/docs/agent-authored-schema">Agent-authored schema</a> · <a href="/docs/repair-command">Repair a command</a></p></article></main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#purpose">Purpose</a>
+<a href="#scope">Scope</a>
+<a href="#validated-signals">Validated Signals</a>
+<a href="#how-to-use">How to Use</a>
+<a href="#prompt-patterns">Prompt Patterns</a>
+<a href="#pattern-preflight">Pattern 1: Preflight</a>
+<a href="#pattern-collect-identity">Pattern 2: Identity</a>
+<a href="#pattern-collect-permissions">Pattern 3: Grants</a>
+<a href="#pattern-collect-audit">Pattern 4: Audit</a>
+<a href="#pattern-quarterly-summary">Pattern 5: Quarterly</a>
+<a href="#pattern-incident-summary">Pattern 6: Incident</a>
+<a href="#report-schema">Output Schema</a>
+<a href="#safety">Safety</a>
+<a href="#next-steps">Next Steps</a></aside></div>
+<footer class="site-footer"><p>Oatty is open source.</p><a href="https://github.com/oattyio/oatty/issues">Report a docs issue</a></footer></body></html>

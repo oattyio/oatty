@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bootstrap Sentry with an Agent + MCP | Oatty Docs</title><meta name="description" content="Import Sentry’s OpenAPI catalog, then use an MCP-connected agent to propose and run reviewable workflows for alerts, dashboards, and hardening.">
+<link rel="canonical" href="https://oatty.io/docs/guides/sentry-bootstrap/"><link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/site.css">
+</head><body><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access">API access</a><a href="/docs/quick-start">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+<div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><p><a href="/docs/api-access">Connect your agent to an API</a></p><ul><li><a href="/docs/quick-start">Quick Start</a></li>
+<li><a href="/docs/guides/sentry-bootstrap" aria-current="page">Bootstrap Sentry with an Agent + MCP</a></li>
+<li><a href="/docs/guides/sentry-datadog-pagerduty-playbook">Sentry + Datadog + PagerDuty Integration Playbook</a></li>
+<li><a href="/docs/guides/vercel-to-render-migration-playbook">Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL)</a></li>
+<li><a href="/docs/guides/access-review-collection-playbook">Access Review Collection Playbook (Okta + AWS IAM + Datadog)</a></li>
+<li><a href="/docs/guides/credential-rotation-readiness-playbook">Credential Rotation Readiness Playbook</a></li>
+<li><a href="/docs/learn/how-oatty-executes-safely">How Oatty Executes Safely</a></li>
+<li><a href="/docs/learn/getting-oriented">Getting Oriented</a></li>
+<li><a href="/docs/learn/library-and-catalogs">Library and Catalogs</a></li>
+<li><a href="/docs/learn/search-and-run-commands">Search for and Run Commands</a></li>
+<li><a href="/docs/learn/workflows-basics">Workflows Basics</a></li>
+<li><a href="/docs/learn/plugins">MCP Plugins</a></li>
+<li><a href="/docs/learn/mcp-http-server">MCP HTTP Server</a></li>
+<li><a href="/docs/reference/cli-commands">CLI Command Reference</a></li>
+<li><a href="/docs/reference/tui-interactions">TUI Interactions Reference</a></li></ul></nav></aside>
+<main id="main-content" class="docs-content"><article><header><p class="eyebrow">Documentation</p><h1>Bootstrap Sentry with an Agent + MCP</h1><p class="lede">Import Sentry’s OpenAPI catalog, then use an MCP-connected agent to propose and run reviewable workflows for alerts, dashboards, and hardening.</p><p><strong>Estimated time:</strong> 15-25 min</p></header>
+<section><h2>What you'll learn</h2><ul><li>Import Sentry APIs into Oatty via OpenAPI schema ingestion.</li>
+<li>Use search-driven discovery instead of memorizing endpoints.</li>
+<li>Turn agent suggestions into explicit, previewable workflows.</li>
+<li>Apply org and project tuning safely with human-in-the-loop review.</li>
+<li>Link Sentry to PagerDuty and bootstrap Datadog + PagerDuty integrations.</li></ul></section><section id="overview"><h2>What This Proves</h2><p>Sentry has a comprehensive API surface, but configuring it well typically requires deep prior knowledge of endpoints, scopes, pagination, and failure modes.</p>
+<p>In a real-world test, an MCP-connected agent used Oatty to import Sentry APIs, discover the right operations through search, and assemble multi-step workflows for alerts, dashboards, and configuration hardening.</p>
+<p>The operator stayed in control: sensitive steps were previewed and confirmed before execution.</p><p class="callout"><strong>expected:</strong> You can go from “I want good alerts and dashboards” to concrete API-backed changes without first learning Sentry’s full endpoint taxonomy.</p></section>
+<section id="how-to-use-this-guide"><h2>How to Use This Guide (Goal-Oriented, NL-First)</h2><p>This guide is intentionally outcome-focused rather than strictly deterministic. You express goals in natural language; the agent adapts command/workflow selection to your environment.</p>
+<p>Treat prompts as control intents, not rigid scripts. Expected actions describe what the agent should accomplish and what evidence it should return.</p>
+<p>Consider these safety rules across all runs: no writes before approval, redact secrets in outputs, define rollback before risky changes, and finish with pass/fail confirmation.</p><p class="callout"><strong>expected:</strong> You can achieve consistent outcomes even when exact command IDs, resources, or provider behavior differ by environment.</p>
+<p class="callout"><strong>tip:</strong> When a prompt is ambiguous, require the agent to propose a plan first, then request explicit approval before execution.</p></section>
+<section id="why-this-matters"><h2>Why This Matters for Real Playbooks</h2><p>Complex operational playbooks (for example, error deduping rules, SLO thresholds, and escalation routing) often turn into hours of YAML/JSON editing, permission wrangling, and iterative trial-and-error across multiple tools.</p>
+<p>With Oatty connected to an agent through MCP, the “work” shifts from memorizing endpoints to reviewing a proposed workflow: a concrete sequence of API-backed steps with preview, validation, and logs.</p>
+<p>The practical benefit is not magic automation: it is faster iteration with fewer accidental misconfigurations because the workflow is explicit and repeatable.</p><p class="callout"><strong>expected:</strong> A successful setup becomes a reusable baseline that can be applied to the next service/team with small edits instead of re-learning and re-clicking.</p>
+<p class="callout"><strong>tip:</strong> Treat these workflows as “runbooks you can run”: export them, review them, and keep them close to the systems they configure.</p></section>
+<section id="prerequisites"><h2>Prerequisites</h2><p>Install Oatty and verify `oatty --help` works.</p>
+<p>Have a Sentry API token with the scopes required for the operations you intend to perform.</p>
+<p>Run Oatty as an MCP server (or connect it as an MCP tool) so your agent can discover and invoke Oatty tooling.</p>
+<p>Decide which environment you are targeting (sandbox vs production) and start in a safe environment when possible.</p>
+<p>This guide assumes these prerequisites and mandatory auth headers are already fulfilled before you run the prompt patterns.</p><p class="callout"><strong>tip:</strong> If you are unsure about token scopes, start by importing the schema and running read-only discovery commands first.</p>
+<p class="callout"><strong>tip:</strong> Manual setup links: connect MCP via `/docs/learn/mcp-http-server`, review execution model in `/docs/learn/how-oatty-executes-safely`, and review runs in `/docs/learn/workflows-basics`.</p></section>
+<section id="import-sentry-schema"><h2>Import Sentry APIs (OpenAPI)</h2><p>Import Sentry’s OpenAPI v3 schema as a catalog so Oatty can derive commands.</p>
+<p>Use either a local copy of the schema file or a URL to the schema source.</p>
+<p>After import, confirm the catalog appears in Library and that commands are discoverable in Run Command and Find.</p><p class="callout"><strong>expected:</strong> You can search for Sentry operations by intent (for example, “create project”, “list alerts”, “dashboards”).</p>
+<p class="callout"><strong>recovery:</strong> If import fails, validate the schema is OpenAPI v3 (YAML or JSON) and retry. Use CLI import fallback to capture errors.</p>
+<p class="callout"><strong>fallback:</strong> CLI import fallback: `oatty import &lt;path-or-url&gt; --kind catalog`.</p></section>
+<section id="configure-auth"><h2>Verify Authentication (Bearer Token)</h2><p>Verify required request headers (for example, `Authorization`) are already set in the catalog headers editor so derived commands can authenticate.</p>
+<p>Prefer tokens scoped to the minimum permissions required for your intended changes.</p><p class="callout"><strong>expected:</strong> Authenticated discovery and execution calls succeed without embedding tokens in workflows or scripts.</p>
+<p class="callout"><strong>tip:</strong> Treat catalog headers as configuration. Avoid copying tokens into workflow YAML or repository files.</p>
+<p class="callout"><strong>tip:</strong> Manual headers setup is covered in `/docs/learn/library-and-catalogs#headers-management`.</p></section>
+<section id="agent-workflows"><h2>Let the Agent Propose Workflows (You Still Review)</h2><p>Use the agent for planning and assembly: it can search commands, suggest sequences, and draft workflows.</p>
+<p>When an agent is connected through MCP, the TUI shows interactions, workflow progress, and tool calls in real time while work is being assembled and executed.</p>
+<p>Keep execution explicit: validate and preview workflows, then run when the plan matches intent.</p>
+<p>This is the key leverage: multi-step configuration becomes a reviewable artifact instead of ad-hoc endpoint guessing.</p><p class="callout"><strong>tip:</strong> Use this loop: discover -&gt; draft workflow -&gt; preview/validate -&gt; run -&gt; inspect logs/results -&gt; iterate.</p>
+<p class="callout"><strong>expected:</strong> If you can review the workflow, you can delegate the assembly work without delegating operator control.</p>
+<p class="callout"><strong>tip:</strong> For workflow review in the TUI, use Workflows Basics: `/docs/learn/workflows-basics`.</p></section>
+<section id="prompt-patterns-overview"><h2>Prompt Patterns: Prompt -&gt; Expected Agent Actions</h2><p>Use these operator-ready prompt patterns when bootstrapping Sentry with an MCP-connected agent.</p>
+<p>Each pattern keeps execution reviewable: prompt in a code block, expected behavior in callouts.</p><p class="callout"><strong>tip:</strong> If workflow names differ in your environment, ask the agent to discover existing workflows first and substitute exact IDs.</p></section>
+<section id="prompt-pattern-1-import-and-verify"><h3>Pattern 1: Import Sentry APIs and Verify Headers</h3><p>Use this first when starting in a new Sentry org or environment.</p><pre><code>Prompt:
+Import Sentry APIs into Oatty using the OpenAPI schema URL (preferred). Verify required auth headers (for example, Authorization) are already configured, then summarize imports and readiness for authenticated discovery.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: import the catalog from URL, verify required headers are present, and report readiness for authenticated discovery.</p></section>
+<section id="prompt-pattern-2-discover-and-draft"><h3>Pattern 2: Discover Commands and Draft Workflow</h3><p>Use this when your goal is clear but exact endpoints are unknown.</p><pre><code>Prompt:
+Discover the commands needed to bootstrap Sentry for this service (project setup, alerting baseline, dashboard baseline). Draft a reviewable workflow and ask me for any missing inputs that cannot be derived.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: search for commands by intent, inspect current state, draft a workflow with validation gates, and request missing inputs before writes.</p></section>
+<section id="prompt-pattern-3-preflight-before-write"><h3>Pattern 3: Preflight Gate Before Mutations</h3><p>Use this to force safe-stop behavior before any configuration changes.</p><pre><code>Prompt:
+Before any write action, run a read-only preflight and stop if permissions or required identifiers are missing.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: run read-only checks first, enforce fail-fast gates, and return concrete remediation steps instead of attempting writes.</p></section>
+<section id="prompt-pattern-4-verify-and-summarize"><h3>Pattern 4: Verify Outcomes and Summarize Risks</h3><p>Use this after initial setup or when preparing a status report.</p><pre><code>Prompt:
+Re-run integration verification for this Sentry baseline and produce a pass/fail checklist with unresolved risks and recommended next actions.</code></pre><p class="callout"><strong>expected:</strong> Expected agent actions: run verification workflows, emit a checklist for configured resources, and summarize outstanding risk items.</p>
+<p class="callout"><strong>tip:</strong> Review workflow details in the Workflows view: `/docs/learn/workflows-basics`.</p></section>
+<section id="what-the-agent-can-handle"><h2>What the Agent Can Handle Through Oatty</h2><p>The following categories are representative of the “expertise barrier” reduction you get when an agent can discover and execute via Oatty:</p>
+<p>Alerts and monitors: create, update, and tune alert rules and monitor configurations.</p>
+<p>Alert workflows: build multi-step routing and notification flows.</p>
+<p>Dashboards: create and update dashboard definitions programmatically.</p>
+<p>Org-level hardening: apply global settings changes (for example, SSO/SCIM configuration, rate limit and security-related settings) with careful review.</p>
+<p>Project tuning: adjust project-level settings (for example, grouping and filters) and align SDK configuration expectations.</p>
+<p>Add Sentry as a project source: coordinate repo/service integrations by combining Oatty workflows with other MCP tools (for example, GitHub or filesystem tooling) when available.</p><p class="callout"><strong>expected:</strong> You can translate ambiguous intent into concrete, logged, repeatable operations without becoming an API expert first.</p>
+<p class="callout"><strong>advanced:</strong> Use workflow export/import to share reviewed configuration playbooks with teammates and CI pipelines.</p></section>
+<section id="link-pagerduty-to-sentry"><h2>Next: Link PagerDuty to Sentry</h2><p>Once Sentry is bootstrapped, a high-leverage next step is connecting incident response by linking PagerDuty.</p>
+<p>In practice, this is typically a multi-resource flow: create or select PagerDuty services, configure an integration (or event routing), then configure Sentry to send the right alerts to the right targets.</p>
+<p>With Oatty connected through MCP, your agent can discover the necessary operations in both APIs and draft a workflow that you review before execution.</p>
+<p>Use the Sentry + Datadog + PagerDuty playbook for the concrete command sequence and rollback steps.</p><p class="callout"><strong>tip:</strong> Start with read-only discovery in both catalogs (list services/integrations/routing rules) to confirm identifiers and permissions before creating or changing anything.</p>
+<p class="callout"><strong>expected:</strong> You end up with an explicit workflow that sets up the PagerDuty linkage and can be re-run (or adapted) for new teams/projects.</p>
+<p class="callout"><strong>recovery:</strong> If setup fails due to permissions or resource constraints, reduce the workflow to the smallest failing step, adjust scopes/roles, validate, then continue.</p>
+<p class="callout"><strong>fallback:</strong> Follow the playbook: `/docs/guides/sentry-datadog-pagerduty-playbook`.</p></section>
+<section id="bootstrap-datadog-and-pagerduty"><h2>Then: Bootstrap Datadog + PagerDuty Integrations</h2><p>After Sentry → PagerDuty is in place, you can use the same discovery-to-workflow loop to bootstrap Datadog monitors and route events to PagerDuty.</p>
+<p>This is a classic “expertise barrier” problem: monitor types, query languages, notification policies, paging rules, and team ownership are all separate concepts with separate endpoints.</p>
+<p>Oatty helps by turning OpenAPI schemas into runnable commands and letting an agent propose cohesive, reviewable workflows across multiple systems.</p>
+<p>Use the Sentry + Datadog + PagerDuty playbook for safe validation commands (payload validation, draft monitor creation, and rollbacks).</p><p class="callout"><strong>expected:</strong> You can go from intent (“page on high error rate”, “dashboard per service”, “route to on-call”) to a repeatable baseline without spending days learning three different APIs.</p>
+<p class="callout"><strong>advanced:</strong> If your agent has access to additional MCP tools (for example, GitHub), extend the workflow to store exported manifests and update runbooks or service metadata in-repo.</p>
+<p class="callout"><strong>fallback:</strong> Follow the playbook: `/docs/guides/sentry-datadog-pagerduty-playbook`.</p></section>
+<section id="next-steps"><h2>Next Steps</h2><p>If you have not already, read How Oatty Executes Safely for the trust model and operator control pattern.</p>
+<p>Use MCP HTTP Server docs to connect your agent reliably.</p>
+<p>Use Workflows Basics to convert successful sequences into reusable YAML definitions.</p><p class="callout"><strong>expected:</strong> You can repeat this approach for other observability platforms (for example, Datadog and PagerDuty) by importing their OpenAPI catalogs and applying the same discovery-to-workflow loop.</p></section>
+<p class="docs-footer-links"><a href="/docs/api-access">API access guide</a> · <a href="/docs/agent-authored-schema">Agent-authored schema</a> · <a href="/docs/repair-command">Repair a command</a></p></article></main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#overview">Purpose</a>
+<a href="#how-to-use-this-guide">How to Use</a>
+<a href="#why-this-matters">Value</a>
+<a href="#prerequisites">Prereqs</a>
+<a href="#import-sentry-schema">Import APIs</a>
+<a href="#configure-auth">Authentication</a>
+<a href="#agent-workflows">Agent Workflows</a>
+<a href="#prompt-patterns-overview">Prompt Patterns</a>
+<a href="#prompt-pattern-1-import-and-verify">Pattern 1: Import</a>
+<a href="#prompt-pattern-2-discover-and-draft">Pattern 2: Draft</a>
+<a href="#prompt-pattern-3-preflight-before-write">Pattern 3: Preflight</a>
+<a href="#prompt-pattern-4-verify-and-summarize">Pattern 4: Verify</a>
+<a href="#what-the-agent-can-handle">Agent Capabilities</a>
+<a href="#link-pagerduty-to-sentry">Link PagerDuty</a>
+<a href="#bootstrap-datadog-and-pagerduty">Bootstrap Datadog</a>
+<a href="#next-steps">Next Steps</a></aside></div>
+<footer class="site-footer"><p>Oatty is open source.</p><a href="https://github.com/oattyio/oatty/issues">Report a docs issue</a></footer></body></html>

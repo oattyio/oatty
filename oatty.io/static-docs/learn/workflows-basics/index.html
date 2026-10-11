@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workflows Basics | Oatty Docs</title><meta name="description" content="Move from workflow selection to input collection to execution, then control active runs from the run view.">
+<link rel="canonical" href="https://oatty.io/docs/learn/workflows-basics/"><link rel="icon" href="/favicon.png"><link rel="stylesheet" href="/site.css">
+</head><body><a class="skip-link" href="#main-content">Skip to content</a>
+<header class="site-header legacy-header"><a class="brand" href="/"><img src="/icons/logo-icon.svg" alt="">OATTY</a><nav aria-label="Primary"><a href="/docs/api-access">API access</a><a href="/docs/quick-start">Docs</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></header>
+<div class="docs-layout"><aside class="docs-sidebar"><nav aria-label="Documentation"><h2>Documentation</h2><p><a href="/docs/api-access">Connect your agent to an API</a></p><ul><li><a href="/docs/quick-start">Quick Start</a></li>
+<li><a href="/docs/guides/sentry-bootstrap">Bootstrap Sentry with an Agent + MCP</a></li>
+<li><a href="/docs/guides/sentry-datadog-pagerduty-playbook">Sentry + Datadog + PagerDuty Integration Playbook</a></li>
+<li><a href="/docs/guides/vercel-to-render-migration-playbook">Vercel -&gt; Render Migration Playbook (Reuse Existing Postgres URL)</a></li>
+<li><a href="/docs/guides/access-review-collection-playbook">Access Review Collection Playbook (Okta + AWS IAM + Datadog)</a></li>
+<li><a href="/docs/guides/credential-rotation-readiness-playbook">Credential Rotation Readiness Playbook</a></li>
+<li><a href="/docs/learn/how-oatty-executes-safely">How Oatty Executes Safely</a></li>
+<li><a href="/docs/learn/getting-oriented">Getting Oriented</a></li>
+<li><a href="/docs/learn/library-and-catalogs">Library and Catalogs</a></li>
+<li><a href="/docs/learn/search-and-run-commands">Search for and Run Commands</a></li>
+<li><a href="/docs/learn/workflows-basics" aria-current="page">Workflows Basics</a></li>
+<li><a href="/docs/learn/plugins">MCP Plugins</a></li>
+<li><a href="/docs/learn/mcp-http-server">MCP HTTP Server</a></li>
+<li><a href="/docs/reference/cli-commands">CLI Command Reference</a></li>
+<li><a href="/docs/reference/tui-interactions">TUI Interactions Reference</a></li></ul></nav></aside>
+<main id="main-content" class="docs-content"><article><header><p class="eyebrow">Documentation</p><h1>Workflows Basics</h1><p class="lede">Move from workflow selection to input collection to execution, then control active runs from the run view.</p><p><strong>Estimated time:</strong> 12-16 min</p></header>
+<section><h2>What you'll learn</h2><ul><li>Import and remove workflows from the workflow list.</li>
+<li>Open pre-run inputs and resolve required values.</li>
+<li>Run workflows and inspect step status and details.</li>
+<li>Use pause/resume/cancel controls during active runs.</li></ul></section><section id="overview"><h2>Overview</h2><p>Workflows are defined in YAML or JSON files and can be imported into Oatty from the TUI or CLI.</p>
+<p>Workflows are executed in the TUI using the Workflows Runner.</p>
+<p>Workflows can be imported from local files or URLs, then previewed or run from the TUI or CLI.</p><p class="callout"><strong>Goal:</strong> Use the Workflows Runner to import and execute workflows, then inspect the results.</p>
+<figure><img src="/Oatty-workflow-flow.webp" alt="Workflow execution screenshot" loading="lazy"><figcaption>Capture import action and remove confirmation flow.</figcaption></figure></section>
+<section id="manage-list"><h2>Manage Workflow List</h2><p>Use Import to add workflows to the list.</p>
+<p>Select a workflow and use Remove when needed.</p>
+<p>Use search and list navigation to locate workflows quickly.</p><p class="callout"><strong>expected:</strong> Workflow list reflects import/remove actions and selection state.</p>
+<p class="callout"><strong>recovery:</strong> If Remove is unavailable, select a workflow first.</p>
+<figure><img src="/Oatty-import-workflow-flow.webp" alt="Workflow execution screenshot" loading="lazy"><figcaption>Capture import action and remove confirmation flow.</figcaption></figure>
+<p class="callout"><strong>advanced:</strong> List navigation supports row movement and page jumps for larger workflow sets.</p></section>
+<section id="open-inputs"><h2>Open Inputs and Set Values</h2><p>Press Enter on a selected workflow to open inputs.</p>
+<p>Review required fields and collect values from provider or manual entry paths.</p>
+<p>Use manual entry when provider selection is not appropriate.</p><p class="callout"><strong>expected:</strong> Required inputs are set and Run becomes available.</p>
+<p class="callout"><strong>recovery:</strong> If input collection blocks a workflow run, fill missing required values and retry.</p>
+<figure><img src="/Oatty-workflow-collect-values-flow.webp" alt="Workflow input view screenshot" loading="lazy"><figcaption>Input list, and collector/manual entry paths.</figcaption></figure>
+<p class="callout"><strong>advanced:</strong> Workflows can be defined so values are pulled in from a designated command and presented as a list of options to choose from.</p></section>
+<section id="start-run"><h2>Start a Workflow Run</h2><p>Run from the input view after required values are set.</p>
+<p>Move to the run view and monitor step transitions.</p>
+<p>Open step detail and logs for verification.</p><p class="callout"><strong>expected:</strong> Run view shows workflow status and step-level execution progress.</p>
+<p class="callout"><strong>recovery:</strong> If run fails early, inspect the first failing step detail and log message before rerunning.</p>
+<figure><img src="/Oatty-workflows-runner.png" alt="Workflow execution screenshot" loading="lazy"><figcaption>Capture active run view with step table, detail action, and log linkage.</figcaption></figure>
+<p class="callout"><strong>fallback:</strong> CLI fallback: `oatty workflow list`, `oatty workflow preview --id &lt;workflow-id&gt;` or `--file ./workflow.yaml`, and `oatty workflow run --id &lt;workflow-id&gt; --input key=value` or `--file ./workflow.yaml`.</p></section>
+<section id="run-controls"><h2>Control Active Runs</h2><p>Use Pause or Resume based on current run state.</p>
+<p>Use Cancel when you need to stop execution.</p>
+<p>Use Done to close completed runs.</p><p class="callout"><strong>expected:</strong> Run control actions update run state and status messaging.</p>
+<p class="callout"><strong>recovery:</strong> If a control is disabled, verify the current run state supports that action.</p>
+<figure><img src="/Oatty-workflows-runner.png" alt="Workflow execution screenshot" loading="lazy"><figcaption>Capture pause/resume/cancel controls across different run states.</figcaption></figure>
+<p class="callout"><strong>advanced:</strong> Known limitation: step-level rerun/resume is not yet first-class.</p></section>
+<section id="next-steps"><h2>Next Steps</h2><p>Continue to Plugins to integrate plugin-backed tools used by workflows.</p>
+<p>Then continue to MCP HTTP Server to expose Oatty tools for MCP clients.</p>
+<p>Return to Search and Run Commands to validate command-level behavior used inside workflows.</p><p class="callout"><strong>expected:</strong> You can execute workflows repeatedly with predictable input and control behavior.</p>
+<figure><img src="/Oatty-workflows-runner.png" alt="Workflow execution screenshot" loading="lazy"><figcaption>Capture a completed run with terminal status and finalized step table.</figcaption></figure></section>
+<p class="docs-footer-links"><a href="/docs/api-access">API access guide</a> · <a href="/docs/agent-authored-schema">Agent-authored schema</a> · <a href="/docs/repair-command">Repair a command</a></p></article></main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#overview">Overview</a>
+<a href="#manage-list">Manage Workflow List</a>
+<a href="#open-inputs">Open Inputs and Set Values</a>
+<a href="#start-run">Start a Workflow Run</a>
+<a href="#run-controls">Control Active Runs</a>
+<a href="#next-steps">Next Steps</a></aside></div>
+<footer class="site-footer"><p>Oatty is open source.</p><a href="https://github.com/oattyio/oatty/issues">Report a docs issue</a></footer></body></html>
