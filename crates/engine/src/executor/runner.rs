@@ -80,104 +80,7 @@ impl RegistryCommandRunner {
     /// early with deterministic, structured diagnostics rather than surfacing
     /// runtime errors after partial execution begins.
     pub fn validate_workflow_execution_readiness(&self, workflow: &RuntimeWorkflow) -> Vec<WorkflowPreflightViolation> {
-        workflow
-            .steps
-            .iter()
-            .enumerate()
-            .filter_map(|(step_index, step_definition)| {
-                let parsed_identifier = match parse_run_identifier(&step_definition.run) {
-                    Ok(identifier) => identifier,
-                    Err(_) => {
-                        return Some(WorkflowPreflightViolation {
-                            step_index,
-                            step_id: step_definition.id.clone(),
-                            run: step_definition.run.clone(),
-                            code: "WORKFLOW_STEP_RUN_INVALID",
-                            message: format!(
-                                "step run identifier '{}' is invalid; expected '<group> <command>'",
-                                step_definition.run
-                            ),
-                            suggested_action: "Use search/discovery to copy a canonical command id and update this step.".to_string(),
-                        });
-                    }
-                };
-
-                let command_spec = match self
-                    .registry
-                    .find_by_group_and_cmd_cloned(&parsed_identifier.group, &parsed_identifier.name)
-                {
-                    Ok(command_specification) => command_specification,
-                    Err(_) => {
-                        return Some(WorkflowPreflightViolation {
-                            step_index,
-                            step_id: step_definition.id.clone(),
-                            run: step_definition.run.clone(),
-                            code: "WORKFLOW_STEP_COMMAND_NOT_FOUND",
-                            message: format!("command '{}' was not found in the loaded catalogs", step_definition.run),
-                            suggested_action: "Import/enable the required catalog, then update the step run id if needed.".to_string(),
-                        });
-                    }
-                };
-
-                if let Some(mcp_tool) = command_spec.mcp() {
-                    return Some(WorkflowPreflightViolation {
-                        step_index,
-                        step_id: step_definition.id.clone(),
-                        run: step_definition.run.clone(),
-                        code: "WORKFLOW_STEP_MCP_UNSUPPORTED",
-                        message: format!(
-                            "command '{}' delegates to MCP tool '{}:{}' and cannot run in workflow HTTP execution mode",
-                            command_spec.canonical_id(),
-                            mcp_tool.plugin_name,
-                            mcp_tool.tool_name
-                        ),
-                        suggested_action: "Select an HTTP-backed command or execute this MCP operation outside workflow steps.".to_string(),
-                    });
-                }
-
-                if command_spec.http().is_none() {
-                    return Some(WorkflowPreflightViolation {
-                        step_index,
-                        step_id: step_definition.id.clone(),
-                        run: step_definition.run.clone(),
-                        code: "WORKFLOW_STEP_NOT_HTTP_BACKED",
-                        message: format!("command '{}' is not HTTP-backed", command_spec.canonical_id()),
-                        suggested_action: "Use an HTTP-backed command for workflow steps.".to_string(),
-                    });
-                }
-
-                if self.registry.resolve_base_url_for_command(&command_spec).is_none() {
-                    return Some(WorkflowPreflightViolation {
-                        step_index,
-                        step_id: step_definition.id.clone(),
-                        run: step_definition.run.clone(),
-                        code: "WORKFLOW_STEP_BASE_URL_MISSING",
-                        message: format!(
-                            "catalog configuration is incomplete for command '{}' (base URL missing)",
-                            command_spec.canonical_id()
-                        ),
-                        suggested_action: "Configure or re-import the command catalog with a valid base URL.".to_string(),
-                    });
-                }
-
-                if self.registry.resolve_headers_for_command(&command_spec).is_none() {
-                    return Some(WorkflowPreflightViolation {
-                        step_index,
-                        step_id: step_definition.id.clone(),
-                        run: step_definition.run.clone(),
-                        code: "WORKFLOW_STEP_HEADERS_MISSING",
-                        message: format!(
-                            "catalog configuration is incomplete for command '{}' (headers unresolved)",
-                            command_spec.canonical_id()
-                        ),
-                        suggested_action: "Configure required catalog headers (for example Authorization) and retry the workflow run."
-                            .to_string(),
-                    });
-                }
-
-                None
-            })
-            .collect()
+        preflight_readiness(&self.registry, workflow)
     }
 }
 
@@ -190,7 +93,7 @@ impl CommandRunner for RegistryCommandRunner {
             "registry runner executing command"
         );
         let identifier = parse_run_identifier(run)?;
-        let command_spec = self.registry.find_by_group_and_cmd_cloned(&identifier.group, &identifier.name)?;
+        let command_spec = self.registry.find_by_group_and_cmd_ref(&identifier.group, &identifier.name)?;
 
         if let Some(mcp) = command_spec.mcp() {
             warn!(
@@ -213,22 +116,21 @@ impl CommandRunner for RegistryCommandRunner {
         let method = Method::from_str(&http_spec.method).map_err(|error| anyhow!(error))?;
         let base_url = self
             .registry
-            .resolve_base_url_for_command(&command_spec)
+            .resolve_base_url_for_command(command_spec)
             .ok_or_else(|| anyhow!("base url not configured"))?;
         let headers = self
             .registry
-            .resolve_runtime_headers_for_command(&command_spec)
+            .resolve_runtime_headers_for_command(command_spec)
             .ok_or_else(|| anyhow!("could not determine headers for command: {}", command_spec.canonical_id()))?;
         debug!(
             command = %command_spec.canonical_id(),
-            base_url = %base_url,
             header_count = headers.len(),
             "resolved command HTTP settings"
         );
         let client = OattyClient::new(base_url, &headers).map_err(|error| anyhow!("could not create the HTTP client: {error}"))?;
 
         let mut input_map = extract_input_map(with);
-        let path_variables = extract_path_variables(&command_spec, &mut input_map);
+        let path_variables = extract_path_variables(command_spec, &mut input_map);
 
         let request_path = build_path(&http_spec.path, &path_variables);
         let request_method = method.clone();
@@ -243,6 +145,120 @@ impl CommandRunner for RegistryCommandRunner {
 
 fn parse_run_identifier(run: &str) -> Result<ProviderIdentifier> {
     ProviderIdentifier::parse(run).ok_or_else(|| anyhow!("invalid run identifier: {run}"))
+}
+
+/// Perform preflight readiness checks against a borrowed command registry.
+///
+/// This function validates workflow step command wiring without cloning the
+/// registry. Callers acquire a single `CommandRegistry` snapshot (which may
+/// involve one clone from the underlying `Arc<Mutex<CommandRegistry>>`) and
+/// pass it as a reference here, satisfying the "at most one deep clone per
+/// request" invariant.
+///
+/// # Arguments
+///
+/// * `registry` — A borrowed command registry snapshot.
+/// * `workflow` — The runtime workflow to validate.
+///
+/// # Returns
+///
+/// A vector of preflight violations, empty if the workflow is ready to execute.
+pub fn preflight_readiness(registry: &CommandRegistry, workflow: &RuntimeWorkflow) -> Vec<WorkflowPreflightViolation> {
+    workflow
+        .steps
+        .iter()
+        .enumerate()
+        .filter_map(|(step_index, step_definition)| {
+            let parsed_identifier = match parse_run_identifier(&step_definition.run) {
+                Ok(identifier) => identifier,
+                Err(_) => {
+                    return Some(WorkflowPreflightViolation {
+                        step_index,
+                        step_id: step_definition.id.clone(),
+                        run: step_definition.run.clone(),
+                        code: "WORKFLOW_STEP_RUN_INVALID",
+                        message: format!(
+                            "step run identifier '{}' is invalid; expected '<group> <command>'",
+                            step_definition.run
+                        ),
+                        suggested_action: "Use search/discovery to copy a canonical command id and update this step.".to_string(),
+                    });
+                }
+            };
+
+            let command_spec = match registry.find_by_group_and_cmd_ref(&parsed_identifier.group, &parsed_identifier.name) {
+                Ok(command_specification) => command_specification,
+                Err(_) => {
+                    return Some(WorkflowPreflightViolation {
+                        step_index,
+                        step_id: step_definition.id.clone(),
+                        run: step_definition.run.clone(),
+                        code: "WORKFLOW_STEP_COMMAND_NOT_FOUND",
+                        message: format!("command '{}' was not found in the loaded catalogs", step_definition.run),
+                        suggested_action: "Import/enable the required catalog, then update the step run id if needed.".to_string(),
+                    });
+                }
+            };
+
+            if let Some(mcp_tool) = command_spec.mcp() {
+                return Some(WorkflowPreflightViolation {
+                    step_index,
+                    step_id: step_definition.id.clone(),
+                    run: step_definition.run.clone(),
+                    code: "WORKFLOW_STEP_MCP_UNSUPPORTED",
+                    message: format!(
+                        "command '{}' delegates to MCP tool '{}:{}' and cannot run in workflow HTTP execution mode",
+                        command_spec.canonical_id(),
+                        mcp_tool.plugin_name,
+                        mcp_tool.tool_name
+                    ),
+                    suggested_action: "Select an HTTP-backed command or execute this MCP operation outside workflow steps.".to_string(),
+                });
+            }
+
+            if command_spec.http().is_none() {
+                return Some(WorkflowPreflightViolation {
+                    step_index,
+                    step_id: step_definition.id.clone(),
+                    run: step_definition.run.clone(),
+                    code: "WORKFLOW_STEP_NOT_HTTP_BACKED",
+                    message: format!("command '{}' is not HTTP-backed", command_spec.canonical_id()),
+                    suggested_action: "Use an HTTP-backed command for workflow steps.".to_string(),
+                });
+            }
+
+            if registry.resolve_base_url_for_command(command_spec).is_none() {
+                return Some(WorkflowPreflightViolation {
+                    step_index,
+                    step_id: step_definition.id.clone(),
+                    run: step_definition.run.clone(),
+                    code: "WORKFLOW_STEP_BASE_URL_MISSING",
+                    message: format!(
+                        "catalog configuration is incomplete for command '{}' (base URL missing)",
+                        command_spec.canonical_id()
+                    ),
+                    suggested_action: "Configure or re-import the command catalog with a valid base URL.".to_string(),
+                });
+            }
+
+            if registry.resolve_headers_for_command(command_spec).is_none() {
+                return Some(WorkflowPreflightViolation {
+                    step_index,
+                    step_id: step_definition.id.clone(),
+                    run: step_definition.run.clone(),
+                    code: "WORKFLOW_STEP_HEADERS_MISSING",
+                    message: format!(
+                        "catalog configuration is incomplete for command '{}' (headers unresolved)",
+                        command_spec.canonical_id()
+                    ),
+                    suggested_action: "Configure required catalog headers (for example Authorization) and retry the workflow run."
+                        .to_string(),
+                });
+            }
+
+            None
+        })
+        .collect()
 }
 
 fn extract_input_map(with: Option<&Value>) -> serde_json::Map<String, Value> {
@@ -263,4 +279,89 @@ fn extract_path_variables(
         }
     }
     path_variables
+}
+
+#[cfg(test)]
+mod tests {
+    use oatty_registry::CommandRegistry;
+    use oatty_types::{
+        CommandSpec,
+        command::HttpCommandSpec,
+        manifest::{RegistryCatalog, RegistryManifest},
+        workflow::{RuntimeWorkflow, WorkflowStepDefinition},
+    };
+    use serde_json::Value;
+
+    use super::{RegistryCommandRunner, preflight_readiness};
+
+    fn workflow_with_single_command() -> RuntimeWorkflow {
+        RuntimeWorkflow {
+            identifier: "list_apps".to_string(),
+            title: None,
+            description: None,
+            inputs: Default::default(),
+            steps: vec![WorkflowStepDefinition {
+                id: "list_apps".to_string(),
+                run: "apps list".to_string(),
+                description: None,
+                depends_on: Vec::new(),
+                with: Default::default(),
+                body: Value::Null,
+                r#if: None,
+                repeat: None,
+                output_contract: None,
+            }],
+            final_output: None,
+            requires: None,
+        }
+    }
+
+    fn registry_with_http_command() -> CommandRegistry {
+        let command = CommandSpec::new_http(
+            "apps".to_string(),
+            "list".to_string(),
+            "List applications".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/apps", None, None),
+            0,
+        );
+        let catalog = RegistryCatalog {
+            title: "Applications".to_string(),
+            description: "Application APIs".to_string(),
+            vendor: Some("example".to_string()),
+            manifest_path: String::new(),
+            import_source: None,
+            import_source_type: None,
+            headers: Default::default(),
+            base_urls: vec!["https://example.test".to_string()],
+            base_url_index: 0,
+            manifest: Some(RegistryManifest {
+                commands: vec![command.clone()],
+                provider_contracts: Default::default(),
+                vendor: "example".to_string(),
+            }),
+            is_enabled: true,
+        };
+        let mut registry = CommandRegistry::default().with_commands(vec![command]);
+        registry.config.catalogs = Some(vec![catalog]);
+        registry
+    }
+
+    #[test]
+    fn runner_preflight_uses_snapshot_after_source_registry_changes() {
+        let workflow = workflow_with_single_command();
+        let mut source_registry = registry_with_http_command();
+        let registry_snapshot = source_registry.clone();
+
+        source_registry.commands.clear();
+
+        let source_violations = preflight_readiness(&source_registry, &workflow);
+        assert_eq!(source_violations.len(), 1);
+        assert_eq!(source_violations[0].code, "WORKFLOW_STEP_COMMAND_NOT_FOUND");
+
+        assert!(preflight_readiness(&registry_snapshot, &workflow).is_empty());
+        let runner = RegistryCommandRunner::new(registry_snapshot);
+        assert!(runner.validate_workflow_execution_readiness(&workflow).is_empty());
+    }
 }

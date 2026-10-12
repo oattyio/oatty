@@ -12,11 +12,11 @@
 use crate::server::workflow::errors::{internal_error, invalid_params_error, validation_error_with_violations};
 use crate::server::workflow::services::storage::{find_manifest_record, parse_manifest_content};
 use anyhow::Result;
-use oatty_engine::RegistryCommandRunner;
 use oatty_engine::field_paths::{
     is_non_scalar_schema_type, missing_details_from_schema, non_scalar_suggested_next_step, non_scalar_validation_message,
     resolve_schema_path,
 };
+use oatty_engine::preflight_readiness;
 use oatty_engine::provider::parse_provider_group_and_command;
 use oatty_engine::templates::{extract_template_expressions, parse_step_reference_expression};
 use oatty_registry::CommandRegistry;
@@ -258,11 +258,8 @@ pub fn collect_workflow_preflight_violations(
     workflow: &RuntimeWorkflow,
     command_registry: &CommandRegistry,
 ) -> Result<Vec<Value>, ErrorData> {
-    let available_catalogs = command_registry.config.catalogs.clone().unwrap_or_default();
-    let runner = RegistryCommandRunner::new(command_registry.clone());
-
-    let violations: Vec<Value> = runner
-        .validate_workflow_execution_readiness(workflow)
+    let available_catalogs = command_registry.config.catalogs.as_deref().unwrap_or_default();
+    let violations: Vec<Value> = preflight_readiness(command_registry, workflow)
         .into_iter()
         .map(|violation| {
             serde_json::json!({
@@ -276,7 +273,7 @@ pub fn collect_workflow_preflight_violations(
         })
         .collect();
 
-    let missing_catalog_violations = collect_missing_catalog_requirements(workflow.requires.as_ref(), available_catalogs.as_slice())
+    let missing_catalog_violations = collect_missing_catalog_requirements(workflow.requires.as_ref(), available_catalogs)
         .into_iter()
         .map(|missing_requirement| {
             let source_hint = missing_requirement.requirement.source.clone();

@@ -24,13 +24,13 @@ use serde_json::Value;
 /// candidate value that failed validation. It is intentionally unformatted so that
 /// callers can serialize it in the shape they require (JSON violations in errors,
 /// detail rows in previews).
-struct InputValidationFailure {
+struct InputValidationFailure<'a> {
     /// The input name that failed validation.
-    input_name: String,
+    input_name: &'a str,
     /// A human-readable description of the validation failure.
     message: String,
-    /// The candidate value that was validated (if one existed).
-    actual_value: Option<Value>,
+    /// The candidate value that failed validation.
+    actual_value: &'a Value,
 }
 
 /// Initialize a [`WorkflowRunState`] from a workflow and optional caller-provided inputs.
@@ -51,10 +51,10 @@ struct InputValidationFailure {
 /// A [`WorkflowRunState`] with provided inputs and defaults applied, ready for
 /// further processing such as provider evaluation or validation.
 fn initialize_input_state(
-    workflow: &RuntimeWorkflow,
+    workflow: RuntimeWorkflow,
     provided_inputs: Option<&std::collections::HashMap<String, Value>>,
 ) -> WorkflowRunState {
-    let mut state = WorkflowRunState::new(workflow.clone());
+    let mut state = WorkflowRunState::new(workflow);
     if let Some(inputs) = provided_inputs {
         for (input_name, value) in inputs {
             state.set_input_value(input_name, value.clone());
@@ -72,13 +72,13 @@ fn initialize_input_state(
 /// # Arguments
 ///
 /// * `state` — The initialized workflow run state.
-/// * `workflow` — The runtime workflow definition.
 ///
 /// # Returns
 ///
 /// A vector of input names that are declared required but have no value in the state.
-fn collect_missing_required_inputs(state: &WorkflowRunState, workflow: &RuntimeWorkflow) -> Vec<String> {
-    workflow
+fn collect_missing_required_inputs(state: &WorkflowRunState) -> Vec<String> {
+    state
+        .workflow
         .inputs
         .iter()
         .filter(|(name, definition)| definition.is_required() && !state.run_context.inputs.contains_key(*name))
@@ -95,14 +95,14 @@ fn collect_missing_required_inputs(state: &WorkflowRunState, workflow: &RuntimeW
 /// # Arguments
 ///
 /// * `state` — The initialized workflow run state.
-/// * `workflow` — The runtime workflow definition.
 ///
 /// # Returns
 ///
 /// A vector of [`InputValidationFailure`] for inputs that failed validation.
 /// The vector is empty if all inputs with values passed validation.
-fn collect_input_validation_failures(state: &WorkflowRunState, workflow: &RuntimeWorkflow) -> Vec<InputValidationFailure> {
-    workflow
+fn collect_input_validation_failures(state: &WorkflowRunState) -> Vec<InputValidationFailure<'_>> {
+    state
+        .workflow
         .inputs
         .iter()
         .filter_map(|(input_name, definition)| {
@@ -112,9 +112,9 @@ fn collect_input_validation_failures(state: &WorkflowRunState, workflow: &Runtim
                 .as_ref()
                 .and_then(|validation| validate_candidate_value(candidate, validation).err())
                 .map(|error| InputValidationFailure {
-                    input_name: input_name.clone(),
+                    input_name,
                     message: error.to_string(),
-                    actual_value: Some(candidate.clone()),
+                    actual_value: candidate,
                 })
         })
         .collect()
@@ -155,27 +155,28 @@ pub fn preview_inputs(request: &WorkflowPreviewRequest) -> Result<Value, ErrorDa
         )
     })?;
 
-    let state = initialize_input_state(&runtime_workflow, request.inputs.as_ref());
-    let required_missing = collect_missing_required_inputs(&state, &runtime_workflow);
+    let state = initialize_input_state(runtime_workflow, request.inputs.as_ref());
+    let required_missing = collect_missing_required_inputs(&state);
     let include_inputs = request.include_details.unwrap_or(false);
 
     let mut payload = serde_json::Map::new();
-    payload.insert("workflow_id".to_string(), serde_json::json!(runtime_workflow.identifier));
+    payload.insert("workflow_id".to_string(), serde_json::json!(state.workflow.identifier));
     payload.insert("required_missing".to_string(), serde_json::json!(required_missing));
     if include_inputs {
-        // Only compute detailed input summaries when requested to avoid unnecessary validation overhead
-        let input_summaries = runtime_workflow
+        let validation_failures = collect_input_validation_failures(&state);
+        let validation_by_name: std::collections::HashMap<&str, String> = validation_failures
+            .into_iter()
+            .map(|failure| (failure.input_name, failure.message))
+            .collect();
+
+        let input_summaries: Vec<Value> = state
+            .workflow
             .inputs
             .iter()
             .map(|(input_name, definition)| {
                 let value = state.run_context.inputs.get(input_name).cloned();
                 let required = definition.is_required();
-                let validation_error = value.as_ref().and_then(|candidate| {
-                    definition
-                        .validate
-                        .as_ref()
-                        .and_then(|validation| validate_candidate_value(candidate, validation).err().map(|error| error.to_string()))
-                });
+                let validation_error = validation_by_name.get(input_name.as_str()).cloned();
                 let status = if value.is_some() {
                     "resolved"
                 } else if required {
@@ -238,23 +239,23 @@ pub fn resolve_inputs(request: &WorkflowResolveInputsRequest) -> Result<Value, E
         )
     })?;
 
-    let mut state = initialize_input_state(&runtime_workflow, request.partial_inputs.as_ref());
+    let mut state = initialize_input_state(runtime_workflow, request.partial_inputs.as_ref());
     state.evaluate_input_providers().map_err(|error| {
         execution_error(
             "WORKFLOW_PROVIDER_RESOLUTION_FAILED",
             error.to_string(),
-            serde_json::json!({ "workflow_id": runtime_workflow.identifier }),
+            serde_json::json!({ "workflow_id": state.workflow.identifier }),
             false,
             "Inspect provider bindings and retry workflow_resolve_inputs.",
         )
     })?;
 
-    let validation_failures = collect_input_validation_failures(&state, &runtime_workflow);
+    let validation_failures = collect_input_validation_failures(&state);
     if !validation_failures.is_empty() {
         return Err(validation_error_with_violations(
             "WORKFLOW_INPUT_VALIDATION_FAILED",
             "one or more workflow inputs failed validation",
-            serde_json::json!({ "workflow_id": runtime_workflow.identifier }),
+            serde_json::json!({ "workflow_id": state.workflow.identifier }),
             "Inspect violations and provide corrected input values.",
             validation_failures
                 .into_iter()
@@ -270,7 +271,7 @@ pub fn resolve_inputs(request: &WorkflowResolveInputsRequest) -> Result<Value, E
         ));
     }
 
-    let unresolved_required = collect_missing_required_inputs(&state, &runtime_workflow);
+    let unresolved_required = collect_missing_required_inputs(&state);
 
     let provider_resolutions = state
         .telemetry()
@@ -309,7 +310,7 @@ pub fn resolve_inputs(request: &WorkflowResolveInputsRequest) -> Result<Value, E
     let include_provider_resolutions = request.include_provider_resolutions.unwrap_or(false);
 
     let mut payload = serde_json::Map::new();
-    payload.insert("workflow_id".to_string(), serde_json::json!(runtime_workflow.identifier));
+    payload.insert("workflow_id".to_string(), serde_json::json!(state.workflow.identifier));
     payload.insert("required_missing".to_string(), serde_json::json!(unresolved_required));
     payload.insert("ready".to_string(), serde_json::json!(ready));
     if include_resolved_inputs {
@@ -444,5 +445,104 @@ steps:
         assert_eq!(value["required_missing"], serde_json::json!([]));
         assert_eq!(value["ready"], false);
         assert_eq!(value["provider_resolutions"][0]["outcome"]["status"], "prompt");
+    }
+
+    // Phase 2: Validation parity — both preview and resolution produce identical
+    // validation messages for the same invalid candidate value.
+    #[test]
+    fn preview_and_resolve_produce_identical_validation_messages() {
+        let mut partial_inputs = std::collections::HashMap::new();
+        partial_inputs.insert("app".to_string(), serde_json::json!("BAD-1"));
+
+        let preview_request = WorkflowPreviewRequest {
+            view: crate::server::workflow::tools::types::WorkflowPreviewView::Inputs,
+            workflow_id: None,
+            manifest_content: Some(sample_manifest()),
+            format: Some("yaml".to_string()),
+            inputs: Some(partial_inputs.clone()),
+            include_details: Some(true),
+        };
+        let preview_result = preview_inputs(&preview_request).expect("preview should succeed even with invalid input");
+        let preview_details = preview_result["inputs"].as_array().expect("preview should have input details");
+        let preview_validation = preview_details
+            .iter()
+            .find(|row| row["input"] == "app")
+            .expect("app input should be present")["validation_error"]
+            .as_str()
+            .expect("app should have a validation_error");
+
+        let resolve_request = WorkflowResolveInputsRequest {
+            workflow_id: None,
+            manifest_content: Some(sample_manifest()),
+            format: Some("yaml".to_string()),
+            partial_inputs: Some(partial_inputs),
+            include_resolved_inputs: None,
+            include_provider_resolutions: None,
+        };
+        let resolve_error = resolve_inputs(&resolve_request).expect_err("resolve should fail validation");
+        let data = resolve_error.data.expect("error should have data");
+        let violations = data["violations"].as_array().expect("violations should be an array");
+        let resolve_validation = violations
+            .iter()
+            .find(|v| v["path"] == "inputs.app")
+            .expect("app violation should be present")["message"]
+            .as_str()
+            .expect("app should have a message");
+
+        assert_eq!(
+            preview_validation, resolve_validation,
+            "preview and resolve validation messages should be identical"
+        );
+    }
+
+    // Phase 3: Compact mode — invalid input with include_details=false returns
+    // successful compact response without exposing details or validation errors.
+    #[test]
+    fn preview_compact_mode_excludes_details_for_invalid_input() {
+        let mut partial_inputs = std::collections::HashMap::new();
+        partial_inputs.insert("app".to_string(), serde_json::json!("BAD-1"));
+
+        let request = WorkflowPreviewRequest {
+            view: crate::server::workflow::tools::types::WorkflowPreviewView::Inputs,
+            workflow_id: None,
+            manifest_content: Some(sample_manifest()),
+            format: Some("yaml".to_string()),
+            inputs: Some(partial_inputs),
+            include_details: Some(false),
+        };
+        let value = preview_inputs(&request).expect("compact preview should succeed even with invalid input");
+        let required_missing = value["required_missing"].as_array().expect("required_missing should be present");
+        // app has a value ("BAD-1") so it is NOT in required_missing;
+        // required_missing only contains inputs with no value at all.
+        assert!(required_missing.is_empty(), "app has a value so it cannot be required_missing");
+        // No inputs key — compact mode should not include detailed input rows.
+        assert!(value.get("inputs").is_none(), "compact mode should not expose inputs");
+    }
+
+    // Phase 3: Detail mode — same invalid input with include_details=true has
+    // validation_error populated in each input row.
+    #[test]
+    fn preview_detail_mode_includes_validation_errors() {
+        let mut partial_inputs = std::collections::HashMap::new();
+        partial_inputs.insert("app".to_string(), serde_json::json!("BAD-1"));
+
+        let request = WorkflowPreviewRequest {
+            view: crate::server::workflow::tools::types::WorkflowPreviewView::Inputs,
+            workflow_id: None,
+            manifest_content: Some(sample_manifest()),
+            format: Some("yaml".to_string()),
+            inputs: Some(partial_inputs),
+            include_details: Some(true),
+        };
+        let value = preview_inputs(&request).expect("detail preview should succeed");
+        let inputs = value["inputs"].as_array().expect("inputs should be an array");
+        let app_row = inputs
+            .iter()
+            .find(|row| row["input"] == "app")
+            .expect("app input should be present");
+        assert!(
+            app_row["validation_error"].is_string(),
+            "app should have a validation_error string when include_details is true"
+        );
     }
 }
