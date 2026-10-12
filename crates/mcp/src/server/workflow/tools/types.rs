@@ -5,41 +5,27 @@ use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 
-#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkflowRunExecutionMode {
-    /// Execute immediately in the current tool invocation.
-    Sync,
-    /// Choose execution strategy automatically and include recommendations.
-    Auto,
-    /// Prefer task-backed execution semantics for long-running workflows.
-    Task,
-}
-
-fn manifest_document_to_string(document: Value) -> Result<String, String> {
-    match document {
-        Value::String(text) => Ok(text),
-        non_string_document => {
-            serde_json::to_string_pretty(&non_string_document).map_err(|error| format!("failed to serialize manifest_content: {error}"))
-        }
-    }
-}
-
+/// Deserializes a manifest document from JSON, coercing non-string values to a
+/// pretty-printed JSON string representation.
 fn deserialize_manifest_document<'de, D>(deserializer: D) -> Result<String, D::Error>
 where
     D: Deserializer<'de>,
 {
     let document = Value::deserialize(deserializer)?;
-    manifest_document_to_string(document).map_err(serde::de::Error::custom)
+    match document {
+        Value::String(text) => Ok(text),
+        non_string_document => serde_json::to_string_pretty(&non_string_document).map_err(serde::de::Error::custom),
+    }
 }
 
+/// Deserializes an optional manifest document, returning `None` when absent.
 fn deserialize_optional_manifest_document<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let document = Option::<Value>::deserialize(deserializer)?;
     document
-        .map(manifest_document_to_string)
+        .map(deserialize_manifest_document)
         .transpose()
         .map_err(serde::de::Error::custom)
 }
@@ -74,9 +60,14 @@ pub struct WorkflowValidateRequest {
 pub struct WorkflowSaveRequest {
     #[schemars(description = "Optional workflow identifier override.")]
     pub workflow_id: Option<String>,
-    #[schemars(description = "Workflow manifest document to persist.", with = "serde_json::Value")]
-    #[serde(deserialize_with = "deserialize_manifest_document")]
-    pub manifest_content: String,
+    #[schemars(
+        description = "Inline workflow manifest document to persist. Provide exactly one of manifest_content or input_path.",
+        with = "Option<serde_json::Value>"
+    )]
+    #[serde(default, deserialize_with = "deserialize_optional_manifest_document")]
+    pub manifest_content: Option<String>,
+    #[schemars(description = "Absolute path to a workflow manifest to persist. Provide exactly one of manifest_content or input_path.")]
+    pub input_path: Option<String>,
     #[schemars(description = "Optional format hint for persisted content: yaml or json.")]
     pub format: Option<String>,
     #[schemars(description = "Whether to overwrite when the target file already exists.")]
@@ -101,12 +92,6 @@ pub struct WorkflowRenameRequest {
     pub overwrite: Option<bool>,
 }
 
-#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq, Eq, Hash)]
-pub struct WorkflowCancelRequest {
-    #[schemars(description = "Task operation identifier returned for task-backed workflow execution.")]
-    pub operation_id: String,
-}
-
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct WorkflowRunRequest {
     #[schemars(description = "Optional existing workflow identifier.")]
@@ -118,9 +103,7 @@ pub struct WorkflowRunRequest {
     pub format: Option<String>,
     #[schemars(description = "Optional input overrides keyed by input name.")]
     pub inputs: Option<HashMap<String, Value>>,
-    #[schemars(description = "Execution preference: sync, auto, or task.")]
-    pub execution_mode: Option<WorkflowRunExecutionMode>,
-    #[schemars(description = "Include step result entries in the response. Defaults to true.")]
+    #[schemars(description = "Include step result entries in the response. Defaults to false.")]
     pub include_results: Option<bool>,
     #[schemars(description = "Include aggregated step outputs in the response. Defaults to false.")]
     pub include_outputs: Option<bool>,
@@ -143,96 +126,46 @@ pub struct WorkflowResolveInputsRequest {
     pub include_provider_resolutions: Option<bool>,
 }
 
-#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct WorkflowPreviewInputsRequest {
-    #[schemars(description = "Optional existing workflow identifier.")]
-    pub workflow_id: Option<String>,
-    #[schemars(description = "Optional inline workflow manifest document.", with = "Option<serde_json::Value>")]
-    #[serde(default, deserialize_with = "deserialize_optional_manifest_document")]
-    pub manifest_content: Option<String>,
-    #[schemars(description = "Optional format hint for inline manifest: yaml or json.")]
-    pub format: Option<String>,
-    #[schemars(description = "Optional partial input values keyed by input name.")]
-    pub partial_inputs: Option<HashMap<String, Value>>,
-    #[schemars(description = "Include per-input detail rows in the response. Defaults to false.")]
-    pub include_inputs: Option<bool>,
+/// Selects the one compact, read-only preview representation to return.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkflowPreviewView {
+    /// Describe defaults, missing required values, and optional input details.
+    Inputs,
+    /// Describe ordered steps, dependencies, and condition evaluation.
+    Plan,
+    /// Render step payloads and final output with candidate input values.
+    Rendered,
 }
 
+/// Request one read-only workflow preview from an identifier or inline manifest.
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct WorkflowPreviewRenderedRequest {
-    #[schemars(description = "Optional existing workflow identifier.")]
+pub struct WorkflowPreviewRequest {
+    #[schemars(description = "Required preview representation: inputs, plan, or rendered.")]
+    pub view: WorkflowPreviewView,
+    #[schemars(description = "Optional existing workflow identifier. Provide exactly one of workflow_id or manifest_content.")]
     pub workflow_id: Option<String>,
-    #[schemars(description = "Optional inline workflow manifest document.", with = "Option<serde_json::Value>")]
+    #[schemars(
+        description = "Optional inline workflow manifest document. Provide exactly one of workflow_id or manifest_content.",
+        with = "Option<serde_json::Value>"
+    )]
     #[serde(default, deserialize_with = "deserialize_optional_manifest_document")]
     pub manifest_content: Option<String>,
     #[schemars(description = "Optional format hint for inline manifest: yaml or json.")]
     pub format: Option<String>,
-    #[schemars(description = "Optional input values keyed by input name.")]
+    #[schemars(description = "Optional candidate input values keyed by input name.")]
     pub inputs: Option<HashMap<String, Value>>,
+    #[schemars(description = "Include per-input detail rows. Valid only when view is inputs.")]
+    pub include_details: Option<bool>,
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct WorkflowStepPlanRequest {
-    #[schemars(description = "Optional existing workflow identifier.")]
-    pub workflow_id: Option<String>,
-    #[schemars(description = "Optional inline workflow manifest document.", with = "Option<serde_json::Value>")]
-    #[serde(default, deserialize_with = "deserialize_optional_manifest_document")]
-    pub manifest_content: Option<String>,
-    #[schemars(description = "Optional format hint for inline manifest: yaml or json.")]
-    pub format: Option<String>,
-    #[schemars(description = "Optional input values keyed by input name.")]
-    pub inputs: Option<HashMap<String, Value>>,
-}
-
-#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub struct WorkflowPurgeHistoryRequest {
     #[schemars(description = "Optional workflow identifier filter.")]
     pub workflow_id: Option<String>,
     #[schemars(description = "Optional input keys used to select entries for purge.")]
     pub input_keys: Option<Vec<String>>,
-}
-
-#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct WorkflowAuthorAndRunRequest {
-    #[schemars(description = "Optional workflow identifier override.")]
-    pub workflow_id: Option<String>,
-    #[schemars(
-        description = "Draft workflow manifest document to persist and execute.",
-        with = "serde_json::Value"
-    )]
-    #[serde(deserialize_with = "deserialize_manifest_document")]
-    pub manifest_content: String,
-    #[schemars(description = "Optional format hint for persisted content: yaml or json.")]
-    pub format: Option<String>,
-    #[schemars(description = "Whether to overwrite when the target file already exists.")]
-    pub overwrite: Option<bool>,
-    #[schemars(description = "Optional optimistic concurrency version from workflow_get.")]
-    pub expected_version: Option<String>,
-    #[schemars(description = "Optional input overrides keyed by input name.")]
-    pub inputs: Option<HashMap<String, Value>>,
-}
-
-#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct WorkflowRepairAndRerunRequest {
-    #[schemars(description = "Optional workflow identifier override.")]
-    pub workflow_id: Option<String>,
-    #[schemars(description = "Current workflow manifest document.", with = "serde_json::Value")]
-    #[serde(deserialize_with = "deserialize_manifest_document")]
-    pub manifest_content: String,
-    #[schemars(
-        description = "Optional repaired workflow manifest document to use instead of manifest_content.",
-        with = "Option<serde_json::Value>"
-    )]
-    #[serde(default, deserialize_with = "deserialize_optional_manifest_document")]
-    pub repaired_manifest_content: Option<String>,
-    #[schemars(description = "Optional format hint for persisted content: yaml or json.")]
-    pub format: Option<String>,
-    #[schemars(description = "Whether to overwrite when the target file already exists.")]
-    pub overwrite: Option<bool>,
-    #[schemars(description = "Optional optimistic concurrency version from workflow_get.")]
-    pub expected_version: Option<String>,
-    #[schemars(description = "Optional input overrides keyed by input name.")]
-    pub inputs: Option<HashMap<String, Value>>,
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -247,20 +180,6 @@ pub struct WorkflowExportRequest {
     pub overwrite: Option<bool>,
     #[schemars(description = "Whether to create destination parent directories when missing.")]
     pub create_directories: Option<bool>,
-}
-
-#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
-pub struct WorkflowImportRequest {
-    #[schemars(description = "Absolute input path for the manifest to import.")]
-    pub input_path: String,
-    #[schemars(description = "Optional workflow identifier override.")]
-    pub workflow_id: Option<String>,
-    #[schemars(description = "Optional format hint for import content: yaml or json.")]
-    pub format: Option<String>,
-    #[schemars(description = "Whether to overwrite when workflow already exists in runtime storage.")]
-    pub overwrite: Option<bool>,
-    #[schemars(description = "Optional optimistic concurrency version from workflow_get.")]
-    pub expected_version: Option<String>,
 }
 
 #[cfg(test)]
@@ -294,6 +213,11 @@ mod tests {
         }))
         .expect("deserialize save request");
 
-        assert!(request.manifest_content.contains("\"workflow\": \"save_from_object\""));
+        assert!(
+            request
+                .manifest_content
+                .expect("manifest content")
+                .contains("\"workflow\": \"save_from_object\"")
+        );
     }
 }

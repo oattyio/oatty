@@ -11,22 +11,20 @@ use crate::server::schemas::{
     CommandDetailRequest, CommandSummariesRequest, OutputSchemaDetail, ProviderMetadataDetail, RunCommandRequestParam, SearchInputsDetail,
     SearchRequestParam,
 };
+#[cfg(feature = "workflow_admin_tools")]
+use crate::server::workflow::tools::{purge_workflow_history, types::WorkflowPurgeHistoryRequest};
 use crate::server::workflow::{
-    errors::{conflict_error, not_found_error},
     prompts::{get_prompt as get_workflow_prompt, list_prompts as list_workflow_prompts},
     resources::{
         list_resource_templates as list_workflow_resource_templates, list_resources as list_workflow_resources,
         read_resource as read_workflow_resource,
     },
     tools::{
-        author_and_run, delete_workflow, export_workflow, get_workflow, import_workflow, list_workflows, preview_inputs, preview_rendered,
-        purge_workflow_history, rename_workflow, repair_and_rerun, resolve_inputs, run_with_task_capability_guard, save_workflow,
-        step_plan,
+        delete_workflow, export_workflow, get_workflow, preview_workflow, rename_workflow, resolve_inputs, run_with_task_capability_guard,
+        save_workflow,
         types::{
-            WorkflowAuthorAndRunRequest, WorkflowCancelRequest, WorkflowDeleteRequest, WorkflowExportRequest, WorkflowGetRequest,
-            WorkflowImportRequest, WorkflowPreviewInputsRequest, WorkflowPreviewRenderedRequest, WorkflowPurgeHistoryRequest,
-            WorkflowRenameRequest, WorkflowRepairAndRerunRequest, WorkflowResolveInputsRequest, WorkflowRunRequest, WorkflowSaveRequest,
-            WorkflowStepPlanRequest, WorkflowValidateRequest,
+            WorkflowDeleteRequest, WorkflowExportRequest, WorkflowGetRequest, WorkflowPreviewRequest, WorkflowRenameRequest,
+            WorkflowResolveInputsRequest, WorkflowRunRequest, WorkflowSaveRequest, WorkflowValidateRequest,
         },
         validate_workflow,
     },
@@ -87,7 +85,7 @@ pub struct OattyMcpCore {
     task_processor: Arc<tokio::sync::Mutex<OperationProcessor>>,
 }
 
-#[tool_router]
+#[tool_router(router = default_tool_router)]
 impl OattyMcpCore {
     /// Create a new MCP core handler with shared service dependencies.
     pub fn new(log_sender: Option<UnboundedSender<McpHttpLogEntry>>, services: Arc<McpToolServices>) -> Self {
@@ -96,6 +94,21 @@ impl OattyMcpCore {
             log_sender,
             services,
             task_processor: Arc::new(tokio::sync::Mutex::new(OperationProcessor::new())),
+        }
+    }
+
+    /// Build the MCP tool router, adding administrative tools only when their
+    /// explicit compile-time feature is enabled.
+    fn tool_router() -> ToolRouter<Self> {
+        #[cfg(feature = "workflow_admin_tools")]
+        {
+            let mut router = Self::default_tool_router();
+            router.merge(Self::admin_tool_router());
+            router
+        }
+        #[cfg(not(feature = "workflow_admin_tools"))]
+        {
+            Self::default_tool_router()
         }
     }
 
@@ -381,18 +394,9 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow_list",
-        annotations(read_only_hint = true),
-        description = "List filesystem-backed workflow manifests with path, format, and version metadata."
-    )]
-    async fn workflow_list(&self) -> Result<CallToolResult, ErrorData> {
-        Ok(self.finalize_structured_tool_call("workflow_list", None, list_workflows()))
-    }
-
-    #[tool(
         name = "workflow_get",
         annotations(read_only_hint = true),
-        description = "Retrieve workflow manifest content for editing, including content version metadata. Optional flags: include_content (default true), include_parsed (default false)."
+        description = "Retrieve a workflow manifest by id. Returns content and version metadata. Flags: include_content (default true), include_parsed (default false)."
     )]
     async fn workflow_get(&self, param: Parameters<WorkflowGetRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -402,7 +406,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow_validate",
         annotations(read_only_hint = true),
-        description = "Validate workflow YAML/JSON without saving. Input: workflow_id OR manifest_content (inline) OR input_path (absolute file path), optional format. Includes schema checks and command/catalog preflight checks, and returns structured validation errors with violations[]. Condition syntax guidance: use `==`/`!=` (not `===`/`!==`), and use roots `inputs.*`, `steps.*`, or `env.*` (`output.*` is unsupported in conditions). Authoring guidance: for manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata to improve collector UX; provider-backed inputs must use explicit scalar `select.value_field` paths."
+        description = "Validate a workflow source without saving. Accept workflow_id, manifest_content, or input_path. Returns schema, preflight, and provider violations."
     )]
     async fn workflow_validate(&self, param: Parameters<WorkflowValidateRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -413,7 +417,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow_save",
         annotations(open_world_hint = true),
-        description = "Validate and persist workflow manifest to runtime filesystem storage. Input: workflow_id?, manifest_content, format?, overwrite?, expected_version?. Authoring sequence: search_commands -> workflow_validate -> workflow_save -> workflow_resolve_inputs -> workflow_run. Condition syntax guidance: use `==`/`!=` (not `===`/`!==`), and use roots `inputs.*`, `steps.*`, or `env.*` (`output.*` is unsupported in conditions). For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata. Provider-backed inputs must use explicit scalar `select.value_field` paths."
+        description = "Persist a validated workflow. Provide workflow_id and manifest_content (or input_path). Supports overwrite and optimistic locking."
     )]
     async fn workflow_save(&self, param: Parameters<WorkflowSaveRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -424,7 +428,7 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow_export",
         annotations(open_world_hint = true),
-        description = "Export a runtime workflow manifest into a project-relative file for source control. Input: workflow_id, output_path, format?, overwrite?, create_directories?."
+        description = "Export a workflow manifest to a project-relative file. Input: workflow_id, output_path, format?, overwrite?, create_directories?."
     )]
     async fn workflow_export(&self, param: Parameters<WorkflowExportRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -432,20 +436,9 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow_import",
-        annotations(open_world_hint = true),
-        description = "Import a workflow manifest file from an absolute filesystem path into runtime storage. Input: input_path (absolute path), workflow_id?, format?, overwrite?, expected_version?."
-    )]
-    async fn workflow_import(&self, param: Parameters<WorkflowImportRequest>) -> Result<CallToolResult, ErrorData> {
-        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
-        let result = import_workflow(&param.0, &self.services.command_registry);
-        Ok(self.finalize_structured_tool_call("workflow_import", request_payload, result))
-    }
-
-    #[tool(
         name = "workflow_rename",
-        annotations(open_world_hint = true),
-        description = "Rename a workflow identifier and persist it in runtime storage."
+        annotations(destructive_hint = true),
+        description = "Rename a workflow identifier and persist the change."
     )]
     async fn workflow_rename(&self, param: Parameters<WorkflowRenameRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -455,8 +448,8 @@ impl OattyMcpCore {
 
     #[tool(
         name = "workflow_delete",
-        annotations(open_world_hint = true),
-        description = "Delete a workflow manifest from runtime storage and synchronize in-memory registry state."
+        annotations(destructive_hint = true),
+        description = "Delete a workflow manifest from storage. Inspect oatty://workflow/manifests first to see available identifiers."
     )]
     async fn workflow_delete(&self, param: Parameters<WorkflowDeleteRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -465,19 +458,19 @@ impl OattyMcpCore {
     }
 
     #[tool(
-        name = "workflow_preview_inputs",
+        name = "workflow_preview",
         annotations(read_only_hint = true),
-        description = "Preview workflow input requirements and readiness. Returns workflow_id + required_missing by default; set include_inputs=true for full per-input detail rows."
+        description = "Return one read-only view: inputs, plan, or rendered. Provide workflow_id or manifest_content. include_details applies to inputs only."
     )]
-    async fn workflow_preview_inputs(&self, param: Parameters<WorkflowPreviewInputsRequest>) -> Result<CallToolResult, ErrorData> {
+    async fn workflow_preview(&self, param: Parameters<WorkflowPreviewRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
-        Ok(self.finalize_structured_tool_call("workflow_preview_inputs", request_payload, preview_inputs(&param.0)))
+        Ok(self.finalize_structured_tool_call("workflow_preview", request_payload, preview_workflow(&param.0)))
     }
 
     #[tool(
         name = "workflow_resolve_inputs",
         annotations(open_world_hint = true),
-        description = "Resolve defaults and provider bindings, then validate input values. Input: workflow_id or manifest_content, format?, partial_inputs?, include_resolved_inputs?(default false), include_provider_resolutions?(default false). Always returns ready + required_missing; include detailed payloads only when needed."
+        description = "Resolve defaults and provider bindings, then validate inputs. Accept workflow_id or manifest_content. Always returns ready + required_missing; detailed payloads are opt-in."
     )]
     async fn workflow_resolve_inputs(&self, param: Parameters<WorkflowResolveInputsRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
@@ -487,115 +480,12 @@ impl OattyMcpCore {
     #[tool(
         name = "workflow_run",
         annotations(open_world_hint = true),
-        description = "Execute workflow by identifier or inline manifest. Input: workflow_id|manifest_content, format?, inputs?, execution_mode(sync|auto|task), include_results?(default true), include_outputs?(default false). Mode guidance: task for long/uncertain runs or when progress/cancel is needed; sync for short immediate runs; auto when unsure."
+        description = "Execute a workflow by id or inline manifest. Scheduling uses the MCP task envelope, not a tool argument. Results and outputs are opt-in."
     )]
     async fn workflow_run(&self, param: Parameters<WorkflowRunRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
         let result = run_with_task_capability_guard(&param.0, &self.services.command_registry);
         Ok(self.finalize_structured_tool_call("workflow_run", request_payload, result))
-    }
-
-    #[tool(
-        name = "workflow_step_plan",
-        annotations(read_only_hint = true),
-        description = "Return ordered workflow steps with dependency and condition evaluation metadata."
-    )]
-    async fn workflow_step_plan(&self, param: Parameters<WorkflowStepPlanRequest>) -> Result<CallToolResult, ErrorData> {
-        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
-        Ok(self.finalize_structured_tool_call("workflow_step_plan", request_payload, step_plan(&param.0)))
-    }
-
-    #[tool(
-        name = "workflow_preview_rendered",
-        annotations(read_only_hint = true),
-        description = "Preview rendered workflow step payloads after template interpolation with candidate inputs."
-    )]
-    async fn workflow_preview_rendered(&self, param: Parameters<WorkflowPreviewRenderedRequest>) -> Result<CallToolResult, ErrorData> {
-        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
-        Ok(self.finalize_structured_tool_call("workflow_preview_rendered", request_payload, preview_rendered(&param.0)))
-    }
-
-    #[tool(
-        name = "workflow_cancel",
-        annotations(open_world_hint = true),
-        description = "Cancel a task-backed workflow execution by task operation identifier."
-    )]
-    async fn workflow_cancel(&self, param: Parameters<WorkflowCancelRequest>) -> Result<CallToolResult, ErrorData> {
-        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
-        let result: Result<Value, ErrorData> = {
-            let mut processor = self.task_processor.lock().await;
-            if processor
-                .peek_completed()
-                .iter()
-                .any(|result| result.descriptor.operation_id == param.0.operation_id)
-            {
-                Err(conflict_error(
-                    "WORKFLOW_CANCEL_CONFLICT",
-                    format!("operation '{}' is already completed and cannot be cancelled", param.0.operation_id),
-                    serde_json::json!({ "operation_id": param.0.operation_id }),
-                    "Inspect task result and start a new run if needed.",
-                ))
-            } else {
-                let cancelled = processor.cancel_task(&param.0.operation_id);
-                if cancelled {
-                    Ok(serde_json::json!({
-                        "cancelled": true,
-                        "operation_id": param.0.operation_id,
-                    }))
-                } else if processor
-                    .peek_completed()
-                    .iter()
-                    .any(|result| result.descriptor.operation_id == param.0.operation_id)
-                {
-                    Err(conflict_error(
-                        "WORKFLOW_CANCEL_CONFLICT",
-                        format!("operation '{}' is already completed and cannot be cancelled", param.0.operation_id),
-                        serde_json::json!({ "operation_id": param.0.operation_id }),
-                        "Inspect task result and start a new run if needed.",
-                    ))
-                } else {
-                    Err(not_found_error(
-                        "WORKFLOW_OPERATION_NOT_FOUND",
-                        format!("operation '{}' was not found", param.0.operation_id),
-                        serde_json::json!({ "operation_id": param.0.operation_id }),
-                        "Use tasks/list to inspect active task-backed workflow runs.",
-                    ))
-                }
-            }
-        };
-        Ok(self.finalize_structured_tool_call("workflow_cancel", request_payload, result))
-    }
-
-    #[tool(
-        name = "workflow_purge_history",
-        annotations(open_world_hint = true),
-        description = "Purge persisted workflow run history entries by workflow identifier and/or input keys."
-    )]
-    async fn workflow_purge_history(&self, param: Parameters<WorkflowPurgeHistoryRequest>) -> Result<CallToolResult, ErrorData> {
-        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
-        Ok(self.finalize_structured_tool_call("workflow_purge_history", request_payload, purge_workflow_history(&param.0)))
-    }
-
-    #[tool(
-        name = "workflow_author_and_run",
-        annotations(open_world_hint = true),
-        description = "Orchestrate validate -> save -> resolve_inputs -> run for a draft workflow manifest. For manual/free-text inputs, include `placeholder`, `hint`, and `example` metadata."
-    )]
-    async fn workflow_author_and_run(&self, param: Parameters<WorkflowAuthorAndRunRequest>) -> Result<CallToolResult, ErrorData> {
-        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
-        let result = author_and_run(&param.0, &self.services.command_registry);
-        Ok(self.finalize_structured_tool_call("workflow_author_and_run", request_payload, result))
-    }
-
-    #[tool(
-        name = "workflow_repair_and_rerun",
-        annotations(open_world_hint = true),
-        description = "Orchestrate repair/save/rerun using manifest_content and optional repaired_manifest_content."
-    )]
-    async fn workflow_repair_and_rerun(&self, param: Parameters<WorkflowRepairAndRerunRequest>) -> Result<CallToolResult, ErrorData> {
-        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
-        let result = repair_and_rerun(&param.0, &self.services.command_registry);
-        Ok(self.finalize_structured_tool_call("workflow_repair_and_rerun", request_payload, result))
     }
 
     async fn execute_command_with_guard(
@@ -681,6 +571,23 @@ impl OattyMcpCore {
             let parsed_message = format!("MCP HTTP: {tool_name} (parsed response.text)");
             let _ = sender.send(McpHttpLogEntry::new(parsed_message, Some(parsed_payload)));
         }
+    }
+}
+
+/// Administrative workflow handlers intentionally excluded from the default
+/// MCP tool surface.
+#[cfg(feature = "workflow_admin_tools")]
+#[tool_router(router = admin_tool_router)]
+impl OattyMcpCore {
+    #[tool(
+        name = "workflow_purge_history",
+        annotations(destructive_hint = true),
+        description = "Purge persisted workflow run history by workflow id and/or input keys. Use with caution to remove stored execution records."
+    )]
+    async fn workflow_purge_history(&self, param: Parameters<WorkflowPurgeHistoryRequest>) -> Result<CallToolResult, ErrorData> {
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = purge_workflow_history(&param.0);
+        Ok(self.finalize_structured_tool_call("workflow_purge_history", request_payload, result))
     }
 }
 
@@ -782,21 +689,19 @@ const SERVER_INSTRUCTIONS: &str = concat!(
     "- Build named_flags as [name,value]. Values may be scalar/array/object; booleans accept explicit true/false.\n",
     "- Prefer get_command for exact args/flags.\n",
     "- For provider-backed workflow inputs, use get_command(include_providers=required_only|full).\n\n",
-    "WORKFLOW INTENT MODE:\n",
-    "- If user asks to create/author/generate a workflow, MUST use Oatty workflow tools.\n",
-    "- Workflow steps must be HTTP-backed commands only (no MCP/plugin step runs).\n",
-    "- Preferred sequence:\n",
-    "  search_commands -> get_command -> workflow_validate(minimal) -> expand manifest -> workflow_validate -> ",
-    "workflow_save -> workflow_resolve_inputs -> workflow_run\n",
-    "- Before authoring, verify required providers/platforms are discoverable.\n",
-    "- Use providers for enumerable identifiers/list selections when contracts exist.\n",
-    "- Keep manual inputs for transformation-heavy fields.\n",
-    "- If search_commands returns provider_inputs, prefer provider-backed inputs unless transformation-heavy.\n",
-    "- Use `if`/`when` (not `condition`).\n",
-    "- Step params belong under `with` using real command parameter names.\n",
-    "- Input defaults must be structured objects: `default: { from: literal|env|history|workflow_output, value: ... }`.\n",
-    "- Provider-backed inputs must use explicit scalar select path (for example `owner.id`).\n",
-    "- Include placeholder/hint/example metadata for manual free-text inputs.\n\n",
+    "WORKFLOW TOOLS:\n",
+    "- workflow_get: retrieve manifest by id (content + version).\n",
+    "- workflow_validate: validate without saving (schema, preflight, provider violations).\n",
+    "- workflow_save: persist validated manifest (overwrite, optimistic locking).\n",
+    "- workflow_export: export to project file for source control.\n",
+    "- workflow_rename: rename workflow identifier.\n",
+    "- workflow_delete: delete manifest (destructive).\n",
+    "- workflow_preview: read-only preview (inputs|plan|rendered).\n",
+    "- workflow_resolve_inputs: resolve defaults, bindings, validate.\n",
+    "- workflow_run: execute workflow (task-envelope scheduling).\n\n",
+    "WORKFLOW AUTHORING SEQUENCE:\n",
+    "- search_commands -> get_command -> workflow_validate -> workflow_save -> workflow_resolve_inputs -> workflow_run.\n",
+    "- Use the oatty://workflow/manifests resource instead of a list tool.\n\n",
     "SAFETY:\n",
     "- Do NOT create repository docs, blueprints, scripts, or CI files unless explicitly requested.\n",
     "- File-only fallback is allowed only after reporting unimportable provider and receiving explicit user approval.\n",
@@ -1915,6 +1820,85 @@ mod tests {
     use oatty_types::{CommandFlag, HttpCommandSpec, McpCommandSpec, SchemaProperty};
     use serde_json::json;
     use std::sync::{Arc, Mutex};
+
+    const MAX_WORKFLOW_TOOL_METADATA_BYTES: usize = 16 * 1024;
+
+    fn default_workflow_tools() -> Vec<rmcp::model::Tool> {
+        OattyMcpCore::default_tool_router()
+            .list_all()
+            .into_iter()
+            .filter(|tool| tool.name.starts_with("workflow_"))
+            .collect()
+    }
+
+    #[cfg(feature = "workflow_admin_tools")]
+    fn workflow_tools() -> Vec<rmcp::model::Tool> {
+        OattyMcpCore::tool_router()
+            .list_all()
+            .into_iter()
+            .filter(|tool| tool.name.starts_with("workflow_"))
+            .collect()
+    }
+
+    #[test]
+    fn default_workflow_tool_surface_matches_the_reduced_contract() {
+        let workflow_tools = default_workflow_tools();
+        let workflow_tool_names = workflow_tools.iter().map(|tool| tool.name.as_ref()).collect::<Vec<_>>();
+
+        assert_eq!(
+            workflow_tool_names,
+            vec![
+                "workflow_delete",
+                "workflow_export",
+                "workflow_get",
+                "workflow_preview",
+                "workflow_rename",
+                "workflow_resolve_inputs",
+                "workflow_run",
+                "workflow_save",
+                "workflow_validate",
+            ]
+        );
+
+        let serialized_metadata = serde_json::to_vec(&workflow_tools).expect("serialize workflow tool metadata");
+        assert!(
+            serialized_metadata.len() <= MAX_WORKFLOW_TOOL_METADATA_BYTES,
+            "workflow metadata grew to {} bytes, exceeding the {} byte budget",
+            serialized_metadata.len(),
+            MAX_WORKFLOW_TOOL_METADATA_BYTES
+        );
+
+        for tool in &workflow_tools {
+            let annotations = tool.annotations.as_ref().expect("workflow tools have explicit annotations");
+            match tool.name.as_ref() {
+                "workflow_get" | "workflow_validate" | "workflow_preview" => {
+                    assert_eq!(annotations.read_only_hint, Some(true), "{} must be read-only", tool.name);
+                }
+                "workflow_delete" => {
+                    assert_eq!(annotations.destructive_hint, Some(true), "workflow_delete must be destructive");
+                }
+                "workflow_resolve_inputs" | "workflow_run" => {
+                    assert_eq!(annotations.open_world_hint, Some(true), "{} must be open-world", tool.name);
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[cfg(feature = "workflow_admin_tools")]
+    #[test]
+    fn administrative_history_purge_is_registered_as_destructive() {
+        let purge_tool = workflow_tools()
+            .into_iter()
+            .find(|tool| tool.name == "workflow_purge_history")
+            .expect("workflow_admin_tools must register workflow_purge_history");
+
+        assert_eq!(
+            purge_tool.annotations.and_then(|annotations| annotations.destructive_hint),
+            Some(true),
+            "workflow_purge_history must be destructive"
+        );
+    }
 
     fn build_http_spec_for_flag_tests(flags: Vec<CommandFlag>) -> CommandSpec {
         CommandSpec::new_http(

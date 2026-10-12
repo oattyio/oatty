@@ -1,13 +1,11 @@
 //! Workflow execution tool handlers.
 
-use crate::server::workflow::errors::{execution_error, internal_error, invalid_params_error};
+use crate::server::workflow::errors::{execution_error, invalid_params_error};
 use crate::server::workflow::services::history::{WorkflowHistoryEntry, append_history_entry};
 use crate::server::workflow::tools::common::{
-    build_preflight_validation_error, collect_workflow_preflight_violations, resolve_runtime_workflow,
+    acquire_registry_snapshot, build_preflight_validation_error, collect_workflow_preflight_violations, resolve_runtime_workflow,
 };
-use crate::server::workflow::tools::types::{
-    WorkflowPreviewRenderedRequest, WorkflowRunExecutionMode, WorkflowRunRequest, WorkflowStepPlanRequest,
-};
+use crate::server::workflow::tools::types::{WorkflowPreviewRequest, WorkflowPreviewView, WorkflowRunRequest};
 use oatty_engine::{
     ProviderBindingOutcome, RegistryCommandRunner, StepStatus, WorkflowRunState, drive_workflow_run,
     executor::{StepResult, order_steps_for_execution},
@@ -47,14 +45,6 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
         )
     })?;
 
-    let execution_mode = request.execution_mode.unwrap_or(WorkflowRunExecutionMode::Auto);
-    let should_recommend_task_mode = runtime_workflow.steps.len() > 5 || runtime_workflow.steps.iter().any(|step| step.repeat.is_some());
-    let task_recommendation_reason = if should_recommend_task_mode {
-        Some("workflow has multiple or repeating steps and may exceed synchronous tool-call limits")
-    } else {
-        None
-    };
-
     let mut state = WorkflowRunState::new(runtime_workflow);
     if let Some(inputs) = request.inputs.as_ref() {
         for (input_name, value) in inputs {
@@ -93,19 +83,9 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
         ));
     }
 
-    let registry_snapshot = command_registry
-        .lock()
-        .map_err(|error| {
-            internal_error(
-                "WORKFLOW_RUN_REGISTRY_LOCK_FAILED",
-                format!("registry lock failed: {error}"),
-                serde_json::json!({ "workflow_id": state.workflow.identifier }),
-                "Retry workflow_run.",
-            )
-        })?
-        .clone();
-    let runner = RegistryCommandRunner::new(registry_snapshot);
-    let violations = collect_workflow_preflight_violations(&state.workflow, command_registry)?;
+    let registry_snapshot = acquire_registry_snapshot(command_registry, &state.workflow.identifier, "WORKFLOW_RUN_REGISTRY_LOCK_FAILED")?;
+
+    let violations = collect_workflow_preflight_violations(&state.workflow, &registry_snapshot)?;
     if let Some(error) = build_preflight_validation_error(
         &state.workflow.identifier,
         violations,
@@ -115,6 +95,8 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
     ) {
         return Err(error);
     }
+
+    let runner = RegistryCommandRunner::new(registry_snapshot);
 
     let run_identifier = format!("run-{}-{}", state.workflow.identifier, chrono::Utc::now().timestamp_millis());
     let engine_run_request = EngineWorkflowRunRequest {
@@ -145,7 +127,7 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
     };
     let output_map = execution_summary.output_map;
     let input_map = state.run_context.inputs.clone();
-    let include_results = request.include_results.unwrap_or(true);
+    let include_results = request.include_results.unwrap_or(false);
     let include_outputs = request.include_outputs.unwrap_or(false);
     append_history_entry(&WorkflowHistoryEntry {
         workflow_id: state.workflow.identifier.clone(),
@@ -168,17 +150,6 @@ pub fn run_workflow(request: &WorkflowRunRequest, command_registry: &Arc<Mutex<C
     response.insert("run_id".to_string(), serde_json::json!(run_identifier));
     response.insert("workflow_id".to_string(), serde_json::json!(state.workflow.identifier));
     response.insert("status".to_string(), serde_json::json!(run_status));
-    response.insert(
-        "execution_mode_requested".to_string(),
-        serde_json::json!(execution_mode_label(execution_mode)),
-    );
-    response.insert("execution_mode_used".to_string(), serde_json::json!("sync"));
-    response.insert("task_mode_supported".to_string(), serde_json::json!(true));
-    response.insert("task_recommended".to_string(), serde_json::json!(should_recommend_task_mode));
-    response.insert(
-        "task_recommendation_reason".to_string(),
-        serde_json::json!(task_recommendation_reason),
-    );
     response.insert("inputs".to_string(), serde_json::json!(input_map));
     if include_results {
         response.insert("results".to_string(), enrich_step_results_with_failure_reasons(&results));
@@ -204,14 +175,6 @@ pub fn run_with_task_capability_guard(
     // When clients invoke this tool with a `task` request envelope, rmcp's task handler enqueues
     // and tracks the execution automatically through the shared OperationProcessor.
     run_workflow(request, command_registry)
-}
-
-fn execution_mode_label(execution_mode: WorkflowRunExecutionMode) -> &'static str {
-    match execution_mode {
-        WorkflowRunExecutionMode::Sync => "sync",
-        WorkflowRunExecutionMode::Auto => "auto",
-        WorkflowRunExecutionMode::Task => "task",
-    }
 }
 
 #[derive(Debug)]
@@ -337,7 +300,24 @@ fn map_engine_step_status(step_status: EngineWorkflowRunStepStatus) -> StepStatu
     }
 }
 
-pub fn step_plan(request: &WorkflowStepPlanRequest) -> Result<Value, ErrorData> {
+pub fn preview_workflow(request: &WorkflowPreviewRequest) -> Result<Value, ErrorData> {
+    if request.include_details.unwrap_or(false) && request.view != WorkflowPreviewView::Inputs {
+        return Err(invalid_params_error(
+            "WORKFLOW_PREVIEW_INVALID_REQUEST",
+            "include_details is only valid when view is inputs",
+            serde_json::json!({ "view": request.view }),
+            "Remove include_details or set view to inputs.",
+        ));
+    }
+
+    match request.view {
+        WorkflowPreviewView::Inputs => crate::server::workflow::tools::inputs::preview_inputs(request),
+        WorkflowPreviewView::Plan => preview_step_plan(request),
+        WorkflowPreviewView::Rendered => preview_rendered(request),
+    }
+}
+
+fn preview_step_plan(request: &WorkflowPreviewRequest) -> Result<Value, ErrorData> {
     let runtime_workflow = resolve_runtime_workflow(
         request.workflow_id.as_deref(),
         request.manifest_content.as_deref(),
@@ -345,7 +325,7 @@ pub fn step_plan(request: &WorkflowStepPlanRequest) -> Result<Value, ErrorData> 
     )
     .map_err(|error| {
         invalid_params_error(
-            "WORKFLOW_STEP_PLAN_FAILED",
+            "WORKFLOW_PREVIEW_INVALID_REQUEST",
             error.to_string(),
             serde_json::json!({
                 "workflow_id": request.workflow_id,
@@ -399,7 +379,7 @@ pub fn step_plan(request: &WorkflowStepPlanRequest) -> Result<Value, ErrorData> 
     }))
 }
 
-pub fn preview_rendered(request: &WorkflowPreviewRenderedRequest) -> Result<Value, ErrorData> {
+fn preview_rendered(request: &WorkflowPreviewRequest) -> Result<Value, ErrorData> {
     let runtime_workflow = resolve_runtime_workflow(
         request.workflow_id.as_deref(),
         request.manifest_content.as_deref(),
@@ -407,7 +387,7 @@ pub fn preview_rendered(request: &WorkflowPreviewRenderedRequest) -> Result<Valu
     )
     .map_err(|error| {
         invalid_params_error(
-            "WORKFLOW_PREVIEW_RENDERED_FAILED",
+            "WORKFLOW_PREVIEW_INVALID_REQUEST",
             error.to_string(),
             serde_json::json!({
                 "workflow_id": request.workflow_id,
@@ -669,13 +649,15 @@ final_output:
     fn step_plan_evaluates_conditions() {
         let mut inputs = std::collections::HashMap::new();
         inputs.insert("app".to_string(), serde_json::json!("demo"));
-        let request = WorkflowStepPlanRequest {
+        let request = WorkflowPreviewRequest {
+            view: WorkflowPreviewView::Plan,
             workflow_id: None,
             manifest_content: Some(sample_manifest()),
             format: Some("yaml".to_string()),
             inputs: Some(inputs),
+            include_details: None,
         };
-        let value = step_plan(&request).expect("step plan should succeed");
+        let value = preview_workflow(&request).expect("step plan should succeed");
         let steps = value["steps"].as_array().expect("steps array");
         assert_eq!(steps.len(), 2);
         assert_eq!(steps[0]["step_id"], "create_app");
@@ -687,13 +669,15 @@ final_output:
     fn preview_rendered_interpolates_step_values() {
         let mut inputs = std::collections::HashMap::new();
         inputs.insert("app".to_string(), serde_json::json!("demo"));
-        let request = WorkflowPreviewRenderedRequest {
+        let request = WorkflowPreviewRequest {
+            view: WorkflowPreviewView::Rendered,
             workflow_id: None,
             manifest_content: Some(sample_manifest()),
             format: Some("yaml".to_string()),
             inputs: Some(inputs),
+            include_details: None,
         };
-        let value = preview_rendered(&request).expect("preview rendered should succeed");
+        let value = preview_workflow(&request).expect("preview rendered should succeed");
         let rendered_steps = value["rendered_steps"].as_array().expect("rendered_steps array");
         assert_eq!(rendered_steps.len(), 2);
         assert_eq!(rendered_steps[0]["with"]["app"], "demo");
@@ -743,11 +727,13 @@ final_output:
     fn failure_summary_includes_rendered_failed_step_diagnostics_with_state() {
         let mut inputs = std::collections::HashMap::new();
         inputs.insert("app".to_string(), serde_json::json!("demo"));
-        let request = WorkflowPreviewRenderedRequest {
+        let request = WorkflowPreviewRequest {
+            view: WorkflowPreviewView::Rendered,
             workflow_id: None,
             manifest_content: Some(sample_manifest()),
             format: Some("yaml".to_string()),
             inputs: Some(inputs),
+            include_details: None,
         };
         let runtime_workflow =
             resolve_runtime_workflow(None, request.manifest_content.as_deref(), request.format.as_deref()).expect("runtime workflow");

@@ -1177,4 +1177,48 @@ mod tests {
             is_enabled: true,
         }
     }
+
+    #[test]
+    fn snapshot_remains_consistent_after_source_mutation() {
+        // Create a registry with a single command.
+        let apps_list = CommandSpec::new_http(
+            "apps".to_string(),
+            "list".to_string(),
+            "List applications".to_string(),
+            Vec::new(),
+            Vec::new(),
+            oatty_types::command::HttpCommandSpec::new("GET", "/apps", None, None),
+            0,
+        );
+
+        let mut registry = CommandRegistry::default().with_commands(vec![apps_list]);
+
+        // Clone the registry (this is what acquire_registry_snapshot does internally).
+        let snapshot = registry.clone();
+
+        // Mutate the source registry after the snapshot was taken.
+        let users_get = CommandSpec::new_http(
+            "users".to_string(),
+            "get".to_string(),
+            "Get user".to_string(),
+            Vec::new(),
+            Vec::new(),
+            oatty_types::command::HttpCommandSpec::new("GET", "/users", None, None),
+            0,
+        );
+        registry.insert_commands(Arc::from(vec![users_get]));
+
+        // The snapshot should still contain only the original command.
+        assert_eq!(snapshot.commands.len(), 1);
+        assert_eq!(snapshot.commands[0].group, "apps");
+        assert_eq!(snapshot.commands[0].name, "list");
+
+        // The mutation should NOT affect the snapshot.
+        let find_result = snapshot.find_by_group_and_cmd_cloned("apps", "list");
+        assert!(find_result.is_ok(), "snapshot should still contain the original command");
+
+        // The newly added command should NOT be visible through the snapshot.
+        let missing_result = snapshot.find_by_group_and_cmd_cloned("users", "get");
+        assert!(missing_result.is_err(), "snapshot should not see commands added after cloning");
+    }
 }

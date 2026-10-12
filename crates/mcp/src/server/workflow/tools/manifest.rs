@@ -4,52 +4,36 @@ use crate::server::workflow::errors::{
     conflict_error, execution_error, internal_error, invalid_params_error, not_found_error, validation_error_with_violations,
 };
 use crate::server::workflow::services::storage::{
-    WorkflowManifestFormat, compute_version, find_manifest_record, list_manifest_records, parse_manifest_content,
-    sanitize_workflow_identifier, serialize_definition, write_manifest,
+    WorkflowManifestFormat, compute_version, find_manifest_record, parse_manifest_content, sanitize_workflow_identifier,
+    serialize_definition, write_manifest,
 };
 use crate::server::workflow::services::sync::synchronize_runtime_workflows;
 use crate::server::workflow::tools::common::{
-    build_preflight_validation_error, collect_workflow_preflight_violations, collect_workflow_validation_warnings,
+    WorkflowDocumentSource, acquire_registry_snapshot, build_preflight_validation_error, collect_workflow_preflight_violations,
+    collect_workflow_validation_warnings, resolve_save_document_source, resolve_workflow_document_source,
 };
 use crate::server::workflow::tools::types::{
-    WorkflowDeleteRequest, WorkflowExportRequest, WorkflowGetRequest, WorkflowImportRequest, WorkflowRenameRequest, WorkflowSaveRequest,
-    WorkflowValidateRequest,
+    WorkflowDeleteRequest, WorkflowExportRequest, WorkflowGetRequest, WorkflowRenameRequest, WorkflowSaveRequest, WorkflowValidateRequest,
 };
 use oatty_registry::CommandRegistry;
-use oatty_types::workflow::RuntimeWorkflow;
+use oatty_types::workflow::{RuntimeWorkflow, WorkflowDefinition};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use rmcp::model::ErrorData;
 use serde_json::Value;
 
-pub fn list_workflows() -> Result<Value, ErrorData> {
-    let records = list_manifest_records().map_err(|error| {
-        internal_error(
-            "WORKFLOW_LIST_FAILED",
-            error.to_string(),
-            serde_json::json!({}),
-            "Verify runtime workflow directory accessibility and retry.",
-        )
-    })?;
-
-    let payload = records
-        .iter()
-        .map(|record| {
-            serde_json::json!({
-                "workflow_id": record.definition.workflow,
-                "title": record.definition.title,
-                "description": record.definition.description,
-                "path": record.path.to_string_lossy().to_string(),
-                "format": record.format.as_str(),
-                "version": record.version,
-            })
-        })
-        .collect::<Vec<Value>>();
-
-    Ok(serde_json::json!(payload))
-}
-
+/// Retrieve a workflow manifest by id, returning content and version metadata.
+///
+/// # Arguments
+///
+/// * `request` - Contains the workflow identifier and optional
+///   `include_content` / `include_parsed` flags.
+///
+/// # Returns
+///
+/// A structured JSON payload with `workflow_id`, `path`, `format`, `version`,
+/// and optionally `content` and `parsed` fields.
 pub fn get_workflow(request: &WorkflowGetRequest) -> Result<Value, ErrorData> {
     sanitize_workflow_identifier(&request.workflow_id).map_err(|error| {
         invalid_params_error(
@@ -73,7 +57,7 @@ pub fn get_workflow(request: &WorkflowGetRequest) -> Result<Value, ErrorData> {
             "WORKFLOW_NOT_FOUND",
             format!("workflow '{}' was not found", request.workflow_id),
             serde_json::json!({ "workflow_id": request.workflow_id }),
-            "Use workflow_list to inspect available workflow identifiers.",
+            "Use the oatty://workflow/manifests resource to inspect available workflow identifiers.",
         ));
     };
 
@@ -94,26 +78,86 @@ pub fn get_workflow(request: &WorkflowGetRequest) -> Result<Value, ErrorData> {
     Ok(Value::Object(payload))
 }
 
+/// Validate a workflow source without persisting it.
+///
+/// Accepts exactly one of `workflow_id`, `manifest_content`, or `input_path`.
+/// Returns schema, preflight, and provider violations when applicable.
+///
+/// # Format handling
+///
+/// The `format` parameter is honored for all sources, including `input_path`.
+/// When not provided, the format is inferred from the source (stored record,
+/// file extension, or default).
 pub fn validate_workflow(request: &WorkflowValidateRequest, command_registry: &Arc<Mutex<CommandRegistry>>) -> Result<Value, ErrorData> {
-    let (manifest_content, format_hint, input_path) = resolve_validation_manifest_source(request)?;
-    let (definition, _) = parse_manifest_content(&manifest_content, format_hint.as_deref()).map_err(|error| {
-        let parse_message = error.to_string();
-        validation_error_with_violations(
-            "WORKFLOW_PARSE_FAILED",
-            parse_message.clone(),
-            serde_json::json!({
-                "format": format_hint,
-                "input_path": input_path,
-            }),
-            parse_failure_suggested_action(&parse_message).as_str(),
-            vec![serde_json::json!({
-                "path": "$",
-                "rule": "parse",
-                "message": parse_message,
-                "expected": format_hint.unwrap_or_else(|| "yaml|json".to_string()),
-            })],
-        )
-    })?;
+    let source = resolve_workflow_document_source(
+        request.workflow_id.as_deref(),
+        request.manifest_content.as_deref(),
+        request.input_path.as_deref(),
+    )?;
+    let (manifest_content, format_hint) = match &source {
+        WorkflowDocumentSource::Identifier { identifier } => {
+            sanitize_workflow_identifier(identifier).map_err(|error| {
+                invalid_params_error(
+                    "WORKFLOW_IDENTIFIER_INVALID",
+                    error.to_string(),
+                    serde_json::json!({ "workflow_id": identifier }),
+                    "Provide a workflow identifier containing only letters, numbers, underscores, or hyphens.",
+                )
+            })?;
+
+            let Some(record) = find_manifest_record(identifier).map_err(|error| {
+                internal_error(
+                    "WORKFLOW_GET_FAILED",
+                    error.to_string(),
+                    serde_json::json!({ "workflow_id": identifier }),
+                    "Inspect runtime workflow directory and retry.",
+                )
+            })?
+            else {
+                return Err(not_found_error(
+                    "WORKFLOW_NOT_FOUND",
+                    format!("workflow '{}' was not found", identifier),
+                    serde_json::json!({ "workflow_id": identifier }),
+                    "Use the oatty://workflow/manifests resource to inspect available workflow identifiers.",
+                ));
+            };
+            (
+                record.content,
+                normalize_format_hint(request.format.as_deref())
+                    .map(str::to_owned)
+                    .or_else(|| Some(record.format.as_str().to_string())),
+            )
+        }
+        WorkflowDocumentSource::Inline { content } => {
+            (content.clone(), normalize_format_hint(request.format.as_deref()).map(str::to_owned))
+        }
+        WorkflowDocumentSource::Path { path } => {
+            if !path.exists() {
+                return Err(not_found_error(
+                    "WORKFLOW_VALIDATE_PATH_NOT_FOUND",
+                    format!("input path '{}' does not exist", path.to_string_lossy()),
+                    serde_json::json!({ "input_path": path.to_string_lossy() }),
+                    "Provide a valid absolute input path and retry.",
+                ));
+            }
+            let content = std::fs::read_to_string(path).map_err(|error| {
+                internal_error(
+                    "WORKFLOW_VALIDATE_READ_FAILED",
+                    error.to_string(),
+                    serde_json::json!({ "input_path": path.to_string_lossy() }),
+                    "Verify read permissions for the source file and retry.",
+                )
+            })?;
+            let format_hint = normalize_format_hint(request.format.as_deref())
+                .or_else(|| WorkflowManifestFormat::from_path(path).map(WorkflowManifestFormat::as_str));
+            (content, format_hint.map(str::to_owned))
+        }
+    };
+    let source_path = match &source {
+        WorkflowDocumentSource::Path { path } => Some(path.as_path()),
+        WorkflowDocumentSource::Identifier { .. } | WorkflowDocumentSource::Inline { .. } => None,
+    };
+    let (definition, _) = parse_workflow_manifest_content(&manifest_content, format_hint.as_deref(), source_path)?;
 
     let runtime = oatty_engine::workflow::document::runtime_workflow_from_definition(&definition).map_err(|error| {
         validation_error_with_violations(
@@ -129,8 +173,12 @@ pub fn validate_workflow(request: &WorkflowValidateRequest, command_registry: &A
         )
     })?;
 
-    validate_workflow_command_readiness(&runtime, command_registry)?;
-    let warnings = collect_workflow_validation_warnings(&runtime, command_registry)?;
+    let registry_snapshot = acquire_registry_snapshot(command_registry, &runtime.identifier, "WORKFLOW_VALIDATE_REGISTRY_LOCK_FAILED")?;
+
+    validate_workflow_command_readiness(&runtime, &registry_snapshot)?;
+    let warnings = collect_workflow_validation_warnings(&runtime, &registry_snapshot)?;
+
+    let input_path = source_path.map(|path| path.to_string_lossy().to_string());
 
     Ok(serde_json::json!({
         "valid": true,
@@ -140,140 +188,17 @@ pub fn validate_workflow(request: &WorkflowValidateRequest, command_registry: &A
     }))
 }
 
-fn resolve_validation_manifest_source(request: &WorkflowValidateRequest) -> Result<(String, Option<String>, Option<String>), ErrorData> {
-    let provided_source_count = [
-        request.workflow_id.is_some(),
-        request.manifest_content.is_some(),
-        request.input_path.is_some(),
-    ]
-    .into_iter()
-    .filter(|is_present| *is_present)
-    .count();
-
-    if provided_source_count > 1 {
-        return Err(invalid_params_error(
-            "WORKFLOW_VALIDATE_SOURCE_CONFLICT",
-            "workflow_validate accepts exactly one source: workflow_id, manifest_content, or input_path",
-            serde_json::json!({
-                "has_workflow_id": request.workflow_id.is_some(),
-                "has_manifest_content": request.manifest_content.is_some(),
-                "has_input_path": request.input_path.is_some()
-            }),
-            "Provide only one validation source and retry.",
-        ));
-    }
-
-    if provided_source_count == 0 {
-        return Err(invalid_params_error(
-            "WORKFLOW_VALIDATE_SOURCE_MISSING",
-            "workflow_validate requires one source: workflow_id, manifest_content, or input_path",
-            serde_json::json!({
-                "has_workflow_id": false,
-                "has_manifest_content": false,
-                "has_input_path": false
-            }),
-            "Provide workflow_id, inline manifest_content, or an absolute input_path and retry.",
-        ));
-    }
-
-    if let Some(workflow_identifier) = request.workflow_id.as_ref() {
-        sanitize_workflow_identifier(workflow_identifier).map_err(|error| {
-            invalid_params_error(
-                "WORKFLOW_IDENTIFIER_INVALID",
-                error.to_string(),
-                serde_json::json!({ "workflow_id": workflow_identifier }),
-                "Provide a workflow identifier containing only letters, numbers, underscores, or hyphens.",
-            )
-        })?;
-
-        let Some(record) = find_manifest_record(workflow_identifier).map_err(|error| {
-            internal_error(
-                "WORKFLOW_GET_FAILED",
-                error.to_string(),
-                serde_json::json!({ "workflow_id": workflow_identifier }),
-                "Inspect runtime workflow directory and retry.",
-            )
-        })?
-        else {
-            return Err(not_found_error(
-                "WORKFLOW_NOT_FOUND",
-                format!("workflow '{}' was not found", workflow_identifier),
-                serde_json::json!({ "workflow_id": workflow_identifier }),
-                "Use workflow_list to inspect available workflow identifiers.",
-            ));
-        };
-
-        return Ok((
-            record.content,
-            request.format.clone(),
-            Some(record.path.to_string_lossy().to_string()),
-        ));
-    }
-
-    if let Some(manifest_content) = request.manifest_content.as_ref() {
-        return Ok((manifest_content.clone(), request.format.clone(), None));
-    }
-
-    if let Some(input_path) = request.input_path.as_ref() {
-        let absolute_input_path = resolve_absolute_input_path(input_path)?;
-        if !absolute_input_path.exists() {
-            return Err(not_found_error(
-                "WORKFLOW_VALIDATE_PATH_NOT_FOUND",
-                format!("input path '{}' does not exist", absolute_input_path.to_string_lossy()),
-                serde_json::json!({ "input_path": input_path }),
-                "Provide a valid absolute input path and retry.",
-            ));
-        }
-
-        let manifest_content = std::fs::read_to_string(&absolute_input_path).map_err(|error| {
-            internal_error(
-                "WORKFLOW_VALIDATE_READ_FAILED",
-                error.to_string(),
-                serde_json::json!({ "input_path": absolute_input_path }),
-                "Verify read permissions for the source file and retry.",
-            )
-        })?;
-
-        let resolved_format = request
-            .format
-            .clone()
-            .or_else(|| WorkflowManifestFormat::from_path(&absolute_input_path).map(|format| format.as_str().to_string()));
-        return Ok((
-            manifest_content,
-            resolved_format,
-            Some(absolute_input_path.to_string_lossy().to_string()),
-        ));
-    }
-
-    Err(invalid_params_error(
-        "WORKFLOW_VALIDATE_SOURCE_MISSING",
-        "workflow_validate requires one source: workflow_id, manifest_content, or input_path",
-        serde_json::json!({
-            "has_workflow_id": request.workflow_id.is_some(),
-            "has_manifest_content": request.manifest_content.is_some(),
-            "has_input_path": request.input_path.is_some()
-        }),
-        "Provide workflow_id, inline manifest_content, or an absolute input_path and retry.",
-    ))
-}
-
+/// Persist a validated workflow manifest.
+///
+/// Accepts either `manifest_content` (inline) or `input_path` (filesystem).
+/// Supports overwrite guard and optimistic concurrency via `expected_version`.
 pub fn save_workflow(request: &WorkflowSaveRequest, command_registry: &Arc<Mutex<CommandRegistry>>) -> Result<Value, ErrorData> {
-    let (mut definition, format) = parse_manifest_content(&request.manifest_content, request.format.as_deref()).map_err(|error| {
-        let parse_message = error.to_string();
-        validation_error_with_violations(
-            "WORKFLOW_PARSE_FAILED",
-            parse_message.clone(),
-            serde_json::json!({ "format": request.format }),
-            parse_failure_suggested_action(&parse_message).as_str(),
-            vec![serde_json::json!({
-                "path": "$",
-                "rule": "parse",
-                "message": parse_message,
-                "expected": request.format.clone().unwrap_or_else(|| "yaml|json".to_string()),
-            })],
-        )
-    })?;
-
+    let source = resolve_save_document_source(request.manifest_content.as_deref(), request.input_path.as_deref())?;
+    let format_hint = normalize_format_hint(request.format.as_deref()).or_else(|| match &source {
+        WorkflowDocumentSource::Path { path } => WorkflowManifestFormat::from_path(path).map(WorkflowManifestFormat::as_str),
+        _ => None,
+    });
+    let (mut definition, format) = parse_save_document_source(&source, format_hint)?;
     let workflow_identifier = resolve_workflow_identifier(request, &mut definition)?;
     let runtime = oatty_engine::workflow::document::runtime_workflow_from_definition(&definition).map_err(|error| {
         validation_error_with_violations(
@@ -288,7 +213,8 @@ pub fn save_workflow(request: &WorkflowSaveRequest, command_registry: &Arc<Mutex
             })],
         )
     })?;
-    validate_workflow_command_readiness(&runtime, command_registry)?;
+    let registry_snapshot = acquire_registry_snapshot(command_registry, &workflow_identifier, "WORKFLOW_SAVE_REGISTRY_LOCK_FAILED")?;
+    validate_workflow_command_readiness(&runtime, &registry_snapshot)?;
 
     let existing = find_manifest_record(&workflow_identifier).map_err(|error| {
         internal_error(
@@ -351,7 +277,7 @@ pub fn save_workflow(request: &WorkflowSaveRequest, command_registry: &Arc<Mutex
         )
     })?;
 
-    Ok(serde_json::json!({
+    let mut response = serde_json::json!({
         "workflow_id": workflow_identifier,
         "path": path.to_string_lossy().to_string(),
         "format": format.as_str(),
@@ -360,13 +286,77 @@ pub fn save_workflow(request: &WorkflowSaveRequest, command_registry: &Arc<Mutex
             "workflow_count": sync_summary.workflow_count,
             "synthetic_command_count": sync_summary.synthetic_command_count,
         }
-    }))
+    });
+    if let (WorkflowDocumentSource::Path { path: source_path }, Some(response)) = (&source, response.as_object_mut()) {
+        response.insert(
+            "source_path".to_string(),
+            serde_json::json!(source_path.to_string_lossy().to_string()),
+        );
+    }
+    Ok(response)
 }
 
-fn validate_workflow_command_readiness(
-    workflow: &RuntimeWorkflow,
-    command_registry: &Arc<Mutex<CommandRegistry>>,
-) -> Result<(), ErrorData> {
+/// Parse the selected save source while preserving the workflow parse-error contract.
+fn parse_save_document_source(
+    source: &WorkflowDocumentSource,
+    format_hint: Option<&str>,
+) -> Result<(WorkflowDefinition, WorkflowManifestFormat), ErrorData> {
+    match source {
+        WorkflowDocumentSource::Inline { content } => parse_workflow_manifest_content(content, format_hint, None),
+        WorkflowDocumentSource::Path { path } => {
+            let content = std::fs::read_to_string(path).map_err(|error| {
+                invalid_params_error(
+                    "WORKFLOW_SAVE_READ_FAILED",
+                    error.to_string(),
+                    serde_json::json!({ "input_path": path.to_string_lossy() }),
+                    "Verify read permissions for the source file and retry.",
+                )
+            })?;
+            parse_workflow_manifest_content(&content, format_hint, Some(path))
+        }
+        WorkflowDocumentSource::Identifier { .. } => Err(invalid_params_error(
+            "WORKFLOW_SAVE_SOURCE_INVALID",
+            "workflow_save requires manifest_content or input_path, not a stored identifier",
+            serde_json::json!({}),
+            "Provide manifest_content or an absolute input_path.",
+        )),
+    }
+}
+
+/// Parse workflow content and build a structured violation on failure.
+fn parse_workflow_manifest_content(
+    manifest_content: &str,
+    format_hint: Option<&str>,
+    input_path: Option<&Path>,
+) -> Result<(WorkflowDefinition, WorkflowManifestFormat), ErrorData> {
+    parse_manifest_content(manifest_content, format_hint).map_err(|error| {
+        let parse_message = error.to_string();
+        validation_error_with_violations(
+            "WORKFLOW_PARSE_FAILED",
+            parse_message.clone(),
+            serde_json::json!({
+                "format": format_hint,
+                "input_path": input_path.map(|path| path.to_string_lossy().to_string()),
+            }),
+            parse_failure_suggested_action(&parse_message).as_str(),
+            vec![serde_json::json!({
+                "path": "$",
+                "rule": "parse",
+                "message": parse_message,
+                "expected": format_hint.unwrap_or("yaml|json"),
+            })],
+        )
+    })
+}
+
+/// Normalize an optional workflow format hint for consistent tool behavior.
+fn normalize_format_hint(format_hint: Option<&str>) -> Option<&str> {
+    format_hint.map(str::trim).filter(|format| !format.is_empty())
+}
+
+/// Verify that the workflow's command references are resolvable
+/// in the current registry configuration.
+fn validate_workflow_command_readiness(workflow: &RuntimeWorkflow, command_registry: &CommandRegistry) -> Result<(), ErrorData> {
     let violations = collect_workflow_preflight_violations(workflow, command_registry)?;
     if let Some(error) = build_preflight_validation_error(
         &workflow.identifier,
@@ -380,6 +370,9 @@ fn validate_workflow_command_readiness(
     Ok(())
 }
 
+/// Delete a workflow manifest from storage.
+///
+/// Removes the manifest file and synchronizes the registry.
 pub fn delete_workflow(request: &WorkflowDeleteRequest, command_registry: &Arc<Mutex<CommandRegistry>>) -> Result<Value, ErrorData> {
     sanitize_workflow_identifier(&request.workflow_id).map_err(|error| {
         invalid_params_error(
@@ -403,7 +396,7 @@ pub fn delete_workflow(request: &WorkflowDeleteRequest, command_registry: &Arc<M
             "WORKFLOW_NOT_FOUND",
             format!("workflow '{}' was not found", request.workflow_id),
             serde_json::json!({ "workflow_id": request.workflow_id }),
-            "Use workflow_list to inspect available workflow identifiers.",
+            "Use the oatty://workflow/manifests resource to inspect available workflow identifiers.",
         ));
     };
 
@@ -436,6 +429,10 @@ pub fn delete_workflow(request: &WorkflowDeleteRequest, command_registry: &Arc<M
     }))
 }
 
+/// Rename a workflow identifier and persist the change.
+///
+/// Updates the workflow manifest and synchronizes the registry.
+/// Fails if the destination already exists unless `overwrite` is true.
 pub fn rename_workflow(request: &WorkflowRenameRequest, command_registry: &Arc<Mutex<CommandRegistry>>) -> Result<Value, ErrorData> {
     let source_identifier = sanitize_workflow_identifier(&request.workflow_id).map_err(|error| {
         invalid_params_error(
@@ -475,7 +472,7 @@ pub fn rename_workflow(request: &WorkflowRenameRequest, command_registry: &Arc<M
             "WORKFLOW_NOT_FOUND",
             format!("workflow '{}' was not found", source_identifier),
             serde_json::json!({ "workflow_id": source_identifier }),
-            "Use workflow_list to inspect available workflow identifiers.",
+            "Use the oatty://workflow/manifests resource to inspect available workflow identifiers.",
         ));
     };
 
@@ -549,6 +546,9 @@ pub fn rename_workflow(request: &WorkflowRenameRequest, command_registry: &Arc<M
     }))
 }
 
+/// Export a workflow manifest to a project-relative file.
+///
+/// Supports format override and directory creation.
 pub fn export_workflow(request: &WorkflowExportRequest) -> Result<Value, ErrorData> {
     sanitize_workflow_identifier(&request.workflow_id).map_err(|error| {
         invalid_params_error(
@@ -572,7 +572,7 @@ pub fn export_workflow(request: &WorkflowExportRequest) -> Result<Value, ErrorDa
             "WORKFLOW_NOT_FOUND",
             format!("workflow '{}' was not found", request.workflow_id),
             serde_json::json!({ "workflow_id": request.workflow_id }),
-            "Use workflow_list to inspect available workflow identifiers.",
+            "Use the oatty://workflow/manifests resource to inspect available workflow identifiers.",
         ));
     };
 
@@ -639,43 +639,12 @@ pub fn export_workflow(request: &WorkflowExportRequest) -> Result<Value, ErrorDa
     }))
 }
 
-pub fn import_workflow(request: &WorkflowImportRequest, command_registry: &Arc<Mutex<CommandRegistry>>) -> Result<Value, ErrorData> {
-    let input_path = resolve_absolute_input_path(&request.input_path)?;
-    if !input_path.exists() {
-        return Err(not_found_error(
-            "WORKFLOW_IMPORT_PATH_NOT_FOUND",
-            format!("input path '{}' does not exist", input_path.to_string_lossy()),
-            serde_json::json!({ "input_path": request.input_path }),
-            "Provide a valid absolute input path and retry.",
-        ));
-    }
-
-    let content = std::fs::read_to_string(&input_path).map_err(|error| {
-        internal_error(
-            "WORKFLOW_IMPORT_READ_FAILED",
-            error.to_string(),
-            serde_json::json!({ "input_path": input_path }),
-            "Verify read permissions for the source file and retry.",
-        )
-    })?;
-
-    let save_summary = save_workflow(
-        &WorkflowSaveRequest {
-            workflow_id: request.workflow_id.clone(),
-            manifest_content: content,
-            format: request.format.clone(),
-            overwrite: request.overwrite,
-            expected_version: request.expected_version.clone(),
-        },
-        command_registry,
-    )?;
-
-    Ok(serde_json::json!({
-        "source_path": input_path.to_string_lossy().to_string(),
-        "saved": save_summary,
-    }))
-}
-
+/// Resolve the workflow identifier from a save request and manifest.
+///
+/// The identifier is determined by the following priority:
+/// 1. Explicit `workflow_id` from the request
+/// 2. Parsed `workflow` field from the manifest
+/// 3. Error if neither is available
 fn resolve_workflow_identifier(
     request: &WorkflowSaveRequest,
     definition: &mut oatty_types::workflow::WorkflowDefinition,
@@ -725,6 +694,7 @@ fn resolve_workflow_identifier(
     Ok(resolved)
 }
 
+/// Resolve a project-relative path for workflow export.
 fn resolve_project_relative_path(project_relative_path: &str) -> Result<PathBuf, ErrorData> {
     let trimmed = project_relative_path.trim();
     if trimmed.is_empty() {
@@ -772,6 +742,8 @@ fn resolve_project_relative_path(project_relative_path: &str) -> Result<PathBuf,
     Ok(resolved_path)
 }
 
+/// Resolve an absolute input path for workflow save operations.
+#[allow(dead_code)]
 fn resolve_absolute_input_path(input_path: &str) -> Result<PathBuf, ErrorData> {
     let trimmed = input_path.trim();
     if trimmed.is_empty() {
@@ -787,7 +759,7 @@ fn resolve_absolute_input_path(input_path: &str) -> Result<PathBuf, ErrorData> {
     if !absolute_path.is_absolute() {
         return Err(invalid_params_error(
             "WORKFLOW_PATH_INVALID",
-            "workflow_import requires an absolute input path",
+            "workflow_save requires an absolute input path",
             serde_json::json!({ "path": input_path }),
             "Use an absolute file path (for example, /Users/me/project/workflows/my_workflow.yaml).",
         ));
@@ -796,6 +768,7 @@ fn resolve_absolute_input_path(input_path: &str) -> Result<PathBuf, ErrorData> {
     Ok(absolute_path.to_path_buf())
 }
 
+/// Generate suggested actions for common workflow parse failures.
 fn parse_failure_suggested_action(parse_message: &str) -> String {
     if parse_message.contains("must place command arguments under 'with'") {
         return "Move step arguments under `with` using real parameter names (do not use `flags` or `positional_args`).".to_string();
@@ -968,6 +941,77 @@ steps:
     }
 
     #[test]
+    fn validate_workflow_prefers_explicit_format_over_input_path_extension() {
+        let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
+        let temp_directory = create_temp_directory();
+        let manifest_path = temp_directory.join("workflow.yaml");
+        std::fs::write(
+            &manifest_path,
+            r#"{
+  "workflow": "json_from_yaml_extension",
+  "steps": [{"id": "list_apps", "run": "apps list"}]
+}"#,
+        )
+        .expect("write JSON manifest with YAML extension");
+
+        let request = WorkflowValidateRequest {
+            workflow_id: None,
+            manifest_content: None,
+            input_path: Some(manifest_path.to_string_lossy().to_string()),
+            format: Some("json".to_string()),
+        };
+
+        let response = validate_workflow(&request, &registry).expect("explicit JSON format should override file extension");
+        assert_eq!(response["valid"], serde_json::json!(true));
+        assert_eq!(response["workflow_id"], serde_json::json!("json_from_yaml_extension"));
+    }
+
+    #[test]
+    fn validate_workflow_prefers_explicit_format_over_stored_record_format() {
+        let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
+        let temp_directory = create_temp_directory();
+        temp_env::with_var(
+            "REGISTRY_WORKFLOWS_PATH",
+            Some(temp_directory.to_string_lossy().to_string()),
+            || {
+                let manifest_identifier = "stored_yaml";
+                let (definition, format) =
+                    parse_manifest_content(&sample_manifest(manifest_identifier), Some("yaml")).expect("parse YAML manifest");
+                let serialized = serialize_definition(&definition, format).expect("serialize YAML manifest");
+                write_manifest(manifest_identifier, &serialized, format).expect("persist YAML manifest");
+
+                let request = WorkflowValidateRequest {
+                    workflow_id: Some(manifest_identifier.to_string()),
+                    manifest_content: None,
+                    input_path: None,
+                    format: Some("json".to_string()),
+                };
+
+                let error = validate_workflow(&request, &registry).expect_err("explicit JSON format must not parse stored YAML as YAML");
+                let data = error.data.expect("error data");
+                assert_eq!(data["error_code"], serde_json::json!("WORKFLOW_PARSE_FAILED"));
+            },
+        );
+    }
+
+    #[test]
+    fn validate_workflow_reports_missing_input_path_as_not_found() {
+        let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
+        let temp_directory = create_temp_directory();
+        let missing_path = temp_directory.join("missing.yaml");
+        let request = WorkflowValidateRequest {
+            workflow_id: None,
+            manifest_content: None,
+            input_path: Some(missing_path.to_string_lossy().to_string()),
+            format: None,
+        };
+
+        let error = validate_workflow(&request, &registry).expect_err("missing file must not be an internal error");
+        let data = error.data.expect("error data");
+        assert_eq!(data["error_code"], serde_json::json!("WORKFLOW_VALIDATE_PATH_NOT_FOUND"));
+    }
+
+    #[test]
     fn validate_workflow_rejects_conflicting_sources() {
         let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
         let request = WorkflowValidateRequest {
@@ -983,6 +1027,142 @@ steps:
     }
 
     #[test]
+    fn validate_workflow_preserves_missing_source_error_code() {
+        let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
+        let request = WorkflowValidateRequest {
+            workflow_id: None,
+            manifest_content: None,
+            input_path: None,
+            format: None,
+        };
+
+        let error = validate_workflow(&request, &registry).expect_err("validation requires a source");
+        let data = error.data.expect("error data");
+        assert_eq!(data["error_code"], serde_json::json!("WORKFLOW_VALIDATE_SOURCE_MISSING"));
+    }
+
+    #[test]
+    fn validate_and_save_treat_blank_format_as_unspecified() {
+        let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
+        let temp_directory = create_temp_directory();
+        let manifest_content = sample_manifest("blank_format");
+
+        temp_env::with_var(
+            "REGISTRY_WORKFLOWS_PATH",
+            Some(temp_directory.to_string_lossy().to_string()),
+            || {
+                let validation_request = WorkflowValidateRequest {
+                    workflow_id: None,
+                    manifest_content: Some(manifest_content.clone()),
+                    input_path: None,
+                    format: Some("  ".to_string()),
+                };
+                validate_workflow(&validation_request, &registry).expect("blank format should infer YAML during validation");
+
+                let save_request = WorkflowSaveRequest {
+                    workflow_id: None,
+                    manifest_content: Some(manifest_content.clone()),
+                    input_path: None,
+                    format: Some("  ".to_string()),
+                    overwrite: None,
+                    expected_version: None,
+                };
+                let response = save_workflow(&save_request, &registry).expect("blank format should infer YAML during save");
+                assert_eq!(response["format"], serde_json::json!("yaml"));
+            },
+        );
+    }
+
+    #[test]
+    fn validate_workflow_uses_actionable_parse_guidance() {
+        let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
+        let request = WorkflowValidateRequest {
+            workflow_id: None,
+            manifest_content: Some(
+                r#"
+workflow: invalid_step_arguments
+steps:
+  - id: list_apps
+    run: apps list
+    flags:
+      all: true
+"#
+                .to_string(),
+            ),
+            input_path: None,
+            format: Some("yaml".to_string()),
+        };
+
+        let error = validate_workflow(&request, &registry).expect_err("unsupported flags key must fail parsing");
+        let data = error.data.expect("error data");
+        assert_eq!(data["error_code"], serde_json::json!("WORKFLOW_PARSE_FAILED"));
+        assert!(
+            data["suggested_action"]
+                .as_str()
+                .expect("suggested action")
+                .contains("under `with`")
+        );
+    }
+
+    #[test]
+    fn validate_workflow_rejects_invalid_workflow_identifier() {
+        let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
+        let request = WorkflowValidateRequest {
+            workflow_id: Some("../invalid".to_string()),
+            manifest_content: None,
+            input_path: None,
+            format: None,
+        };
+
+        let error = validate_workflow(&request, &registry).expect_err("invalid workflow identifier must be rejected");
+        let data = error.data.expect("error data");
+        assert_eq!(data["error_code"], serde_json::json!("WORKFLOW_IDENTIFIER_INVALID"));
+    }
+
+    #[test]
+    fn save_workflow_preserves_structured_inline_parse_error() {
+        let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
+        let request = WorkflowSaveRequest {
+            workflow_id: Some("invalid_manifest".to_string()),
+            manifest_content: Some("workflow: [".to_string()),
+            input_path: None,
+            format: Some("yaml".to_string()),
+            overwrite: None,
+            expected_version: None,
+        };
+
+        let error = save_workflow(&request, &registry).expect_err("malformed inline manifest must fail parsing");
+        let data = error.data.expect("error data");
+        assert_eq!(data["error_code"], serde_json::json!("WORKFLOW_PARSE_FAILED"));
+        assert_eq!(data["violations"][0]["rule"], serde_json::json!("parse"));
+    }
+
+    #[test]
+    fn save_workflow_preserves_structured_file_parse_error() {
+        let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
+        let temp_directory = create_temp_directory();
+        let manifest_path = temp_directory.join("invalid.yaml");
+        std::fs::write(&manifest_path, "workflow: [").expect("write malformed workflow manifest");
+        let request = WorkflowSaveRequest {
+            workflow_id: Some("invalid_manifest".to_string()),
+            manifest_content: None,
+            input_path: Some(manifest_path.to_string_lossy().to_string()),
+            format: None,
+            overwrite: None,
+            expected_version: None,
+        };
+
+        let error = save_workflow(&request, &registry).expect_err("malformed file manifest must fail parsing");
+        let data = error.data.expect("error data");
+        assert_eq!(data["error_code"], serde_json::json!("WORKFLOW_PARSE_FAILED"));
+        assert_eq!(data["violations"][0]["rule"], serde_json::json!("parse"));
+        assert_eq!(
+            data["context"]["input_path"],
+            serde_json::json!(manifest_path.to_string_lossy().to_string())
+        );
+    }
+
+    #[test]
     fn validate_workflow_supports_workflow_id_source() {
         let registry = Arc::new(Mutex::new(build_provider_validation_registry()));
         let temp_directory = create_temp_directory();
@@ -994,7 +1174,7 @@ steps:
                 let (definition, format) =
                     parse_manifest_content(&sample_manifest(manifest_identifier), Some("yaml")).expect("parse source manifest");
                 let serialized = serialize_definition(&definition, format).expect("serialize source manifest");
-                let manifest_path = write_manifest(manifest_identifier, &serialized, format).expect("persist source manifest");
+                let _manifest_path = write_manifest(manifest_identifier, &serialized, format).expect("persist source manifest");
 
                 let request = WorkflowValidateRequest {
                     workflow_id: Some(manifest_identifier.to_string()),
@@ -1006,10 +1186,7 @@ steps:
                 let response = validate_workflow(&request, &registry).expect("validate by workflow id");
                 assert_eq!(response["valid"], serde_json::json!(true));
                 assert_eq!(response["workflow_id"], serde_json::json!(manifest_identifier));
-                assert_eq!(
-                    response["input_path"],
-                    serde_json::json!(manifest_path.to_string_lossy().to_string())
-                );
+                assert_eq!(response["input_path"], serde_json::json!(null));
             },
         );
     }

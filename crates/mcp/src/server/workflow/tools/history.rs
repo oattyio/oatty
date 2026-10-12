@@ -1,4 +1,8 @@
 //! Workflow history management MCP tools.
+//!
+//! This module is gated behind the `workflow_admin_tools` feature flag.
+//! When disabled, these items are intentionally unused to reduce the default
+//! tool surface and avoid consuming MCP client context.
 
 use crate::server::workflow::errors::{execution_error, invalid_params_error};
 use crate::server::workflow::services::history::purge_history;
@@ -7,6 +11,7 @@ use rmcp::model::ErrorData;
 use serde_json::Value;
 
 /// Purge persisted workflow run history entries by workflow id and/or input keys.
+#[allow(dead_code)]
 pub fn purge_workflow_history(request: &WorkflowPurgeHistoryRequest) -> Result<Value, ErrorData> {
     if request.workflow_id.is_none() && request.input_keys.as_ref().is_none_or(Vec::is_empty) {
         return Err(invalid_params_error(
