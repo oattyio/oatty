@@ -5,7 +5,7 @@
 //! merge rules used by both TUI save flows and the `mcp_server_configure` tool.
 //! It intentionally contains no runtime or I/O side effects; orchestration that
 //! acquires the operation guard, persists the file, and reloads the engine lives
-//! in a later implementation phase.
+//! in the sibling [`super::apply_config_mutation`] module.
 
 use crate::config::{McpConfig, McpServer, validate_config};
 use indexmap::IndexMap;
@@ -283,16 +283,14 @@ pub enum ReloadPolicy {
 /// patch helper can accept a typed reference without re-exposing the public
 /// enum variant shape.
 #[derive(Debug, Clone)]
-#[allow(dead_code, reason = "staged for phase 2 apply_config_mutation orchestration")]
-struct ConfigureServerMutation {
-    name: String,
-    patch: McpServerPatch,
-    mode: ConfigureMode,
+pub(crate) struct ConfigureServerMutation {
+    pub(crate) name: String,
+    pub(crate) patch: McpServerPatch,
+    pub(crate) mode: ConfigureMode,
 }
 
 /// Returns the schema path used to report a [`ClearField`] in conflict
 /// messages.
-#[allow(dead_code, reason = "staged for phase 2 apply_config_mutation orchestration")]
 fn clear_field_path(field: &ClearField) -> &'static str {
     match field {
         ClearField::Command => "command",
@@ -315,7 +313,6 @@ fn clear_field_path(field: &ClearField) -> &'static str {
 ///
 /// Returns a list of conflicting field paths. An empty list means the patch is
 /// safe to apply (pending typed deserialization of the complete candidate).
-#[allow(dead_code, reason = "staged for phase 2 apply_config_mutation orchestration")]
 pub fn validate_patch_operations(patch: &McpServerPatch) -> Vec<String> {
     let mut conflicts = Vec::new();
     let configuration = &patch.configuration;
@@ -444,8 +441,7 @@ pub fn validate_patch_operations(patch: &McpServerPatch) -> Vec<String> {
 /// add/edit mode, applies operations in the deterministic order required by the
 /// contract, runs the configure-tool stricter transport check on the selected
 /// entry, and clears its diagnostic `err` field.
-#[allow(dead_code, reason = "staged for phase 2 apply_config_mutation orchestration")]
-fn apply_server_patch(document: &mut Value, mutation: &ConfigureServerMutation) -> Result<(), McpConfigMutationError> {
+pub(crate) fn apply_server_patch(document: &mut Value, mutation: &ConfigureServerMutation) -> Result<(), McpConfigMutationError> {
     let conflicts = validate_patch_operations(&mutation.patch);
     if !conflicts.is_empty() {
         return Err(McpConfigMutationError::PatchConflict(conflicts));
@@ -570,7 +566,6 @@ fn apply_server_patch(document: &mut Value, mutation: &ConfigureServerMutation) 
 }
 
 /// Removes a child field from the server's `auth` object if present.
-#[allow(dead_code, reason = "staged for phase 2 apply_config_mutation orchestration")]
 fn remove_auth_child(server: &mut serde_json::Map<String, Value>, child: &str) {
     if let Some(Value::Object(auth)) = server.get_mut("auth") {
         auth.remove(child);
@@ -579,7 +574,6 @@ fn remove_auth_child(server: &mut serde_json::Map<String, Value>, child: &str) {
 
 /// Removes entries from the server's `env` collection, respecting both map and
 /// array shapes.
-#[allow(dead_code, reason = "staged for phase 2 apply_config_mutation orchestration")]
 fn remove_env_entries(server: &mut serde_json::Map<String, Value>, keys: &[String]) {
     if keys.is_empty() {
         return;
@@ -604,7 +598,6 @@ fn remove_env_entries(server: &mut serde_json::Map<String, Value>, keys: &[Strin
 
 /// Removes entries from the server's `headers` collection, respecting both map
 /// and array shapes and using ASCII case-insensitive key matching.
-#[allow(dead_code, reason = "staged for phase 2 apply_config_mutation orchestration")]
 fn remove_header_entries(server: &mut serde_json::Map<String, Value>, names: &[String]) {
     if names.is_empty() {
         return;
@@ -628,7 +621,6 @@ fn remove_header_entries(server: &mut serde_json::Map<String, Value>, names: &[S
 
 /// Merges supplied environment variables into the existing `env` collection,
 /// preserving its persisted shape.
-#[allow(dead_code, reason = "staged for phase 2 apply_config_mutation orchestration")]
 fn merge_env_collection(
     server: &mut serde_json::Map<String, Value>,
     upsert: &IndexMap<String, String>,
@@ -684,7 +676,6 @@ fn merge_env_collection(
 
 /// Merges supplied headers into the existing `headers` collection, preserving
 /// its persisted shape and rejecting duplicate normalized header names.
-#[allow(dead_code, reason = "staged for phase 2 apply_config_mutation orchestration")]
 fn merge_header_collection(
     server: &mut serde_json::Map<String, Value>,
     upsert: &IndexMap<String, String>,
@@ -754,7 +745,6 @@ fn merge_header_collection(
 }
 
 /// Merges supplied auth fields into the server's `auth` object.
-#[allow(dead_code, reason = "staged for phase 2 apply_config_mutation orchestration")]
 fn merge_auth(server: &mut serde_json::Map<String, Value>, patch: &McpAuthPatch) {
     // An empty auth patch is a no-op; do not create an auth object with no
     // required scheme field.
@@ -807,7 +797,6 @@ fn merge_auth(server: &mut serde_json::Map<String, Value>, patch: &McpAuthPatch)
 /// This stricter configure-tool rule is applied only to the entry being patched
 /// so that pre-existing mixed configuration files continue to load through the
 /// runtime loader.
-#[allow(dead_code, reason = "staged for phase 2 apply_config_mutation orchestration")]
 fn validate_selected_server_transport(server: &McpServer, name: &str) -> Result<(), McpConfigMutationError> {
     let mut normalized_headers = std::collections::HashSet::with_capacity(server.headers.len());
     for header in &server.headers {
@@ -882,8 +871,7 @@ fn validate_selected_server_transport(server: &McpServer, name: &str) -> Result<
 /// `deny_unknown_fields` on servers and auth), then run through the existing
 /// whole-configuration validator. Validation failures are reported as safe
 /// messages without echoing raw values.
-#[allow(dead_code, reason = "staged for phase 2 apply_config_mutation orchestration")]
-fn deserialize_validated_candidate(document: Value) -> Result<McpConfig, McpConfigMutationError> {
+pub(crate) fn deserialize_validated_candidate(document: Value) -> Result<McpConfig, McpConfigMutationError> {
     let config: McpConfig = serde_json::from_value(document).map_err(|_| {
         McpConfigMutationError::ValidationFailed("candidate configuration contains unsupported fields or invalid types".to_string())
     })?;
