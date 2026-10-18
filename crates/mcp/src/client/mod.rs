@@ -4,7 +4,7 @@
 //! Implementation is split across submodules for clarity and maintainability.
 
 mod core;
-mod gateway;
+pub(crate) mod gateway;
 mod health;
 mod http;
 mod stdio;
