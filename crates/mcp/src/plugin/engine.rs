@@ -658,7 +658,7 @@ impl PluginEngine {
             let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Unknown);
             outcomes.push(crate::types::McpServerApplyOutcome {
                 name: name.to_string(),
-                status: self.to_server_status(status),
+                status,
                 runtime_applied: true,
                 connection_attempted: false,
                 connection_error: None,
@@ -670,7 +670,7 @@ impl PluginEngine {
             let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Unknown);
             outcomes.push(crate::types::McpServerApplyOutcome {
                 name: name.to_string(),
-                status: self.to_server_status(status),
+                status,
                 runtime_applied: true,
                 connection_attempted: false,
                 connection_error: None,
@@ -688,7 +688,7 @@ impl PluginEngine {
             let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Unknown);
             outcomes.push(crate::types::McpServerApplyOutcome {
                 name: name.to_string(),
-                status: self.to_server_status(status),
+                status,
                 runtime_applied: true,
                 connection_attempted: false,
                 connection_error: None,
@@ -794,7 +794,7 @@ impl PluginEngine {
                     let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Unknown);
                     crate::types::McpServerApplyOutcome {
                         name: name.to_string(),
-                        status: self.to_server_status(status),
+                        status,
                         runtime_applied: true,
                         connection_attempted: true,
                         connection_error: None,
@@ -815,23 +815,11 @@ impl PluginEngine {
             let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Unknown);
             crate::types::McpServerApplyOutcome {
                 name: name.to_string(),
-                status: self.to_server_status(status),
+                status,
                 runtime_applied: true,
                 connection_attempted: false,
                 connection_error: None,
             }
-        }
-    }
-
-    /// Convert PluginStatus to ServerStatus.
-    fn to_server_status(&self, status: PluginStatus) -> crate::config::ServerStatus {
-        match status {
-            PluginStatus::Running => crate::config::ServerStatus::Running,
-            PluginStatus::Stopped => crate::config::ServerStatus::Stopped,
-            PluginStatus::Starting => crate::config::ServerStatus::Starting,
-            PluginStatus::Stopping => crate::config::ServerStatus::Stopping,
-            PluginStatus::Error => crate::config::ServerStatus::Error,
-            PluginStatus::Warning | PluginStatus::Unknown => crate::config::ServerStatus::Unknown,
         }
     }
 

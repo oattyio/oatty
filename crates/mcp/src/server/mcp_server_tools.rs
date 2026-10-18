@@ -88,6 +88,12 @@ pub(crate) async fn mcp_server_configure(
     let new_config = load_config_from_path(&path).map_err(internal_error)?;
     plugin_engine.update_config(new_config).await.map_err(internal_error)?;
 
+    // If connect=true, start the server
+    let should_connect = request.connect.unwrap_or(true) && !server_config.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false);
+    if should_connect {
+        let _ = plugin_engine.start_plugin(&request.name).await;
+    }
+
     Ok(serde_json::json!({
         "name": request.name,
         "operation": if existing.is_some() { "updated" } else { "created" },
@@ -97,7 +103,7 @@ pub(crate) async fn mcp_server_configure(
 }
 
 /// List all configured upstream MCP servers with runtime status.
-pub(crate) async fn mcp_servers_list(plugin_engine: &Arc<crate::PluginEngine>) -> Result<Value, ErrorData> {
+pub(crate) async fn mcp_servers_list(plugin_engine: &Arc<crate::PluginEngine>, limit: Option<usize>) -> Result<Value, ErrorData> {
     let path = oatty_registry::default_config_path();
 
     let doc = match load_raw_config_document_from_path(&path) {
@@ -145,6 +151,10 @@ pub(crate) async fn mcp_servers_list(plugin_engine: &Arc<crate::PluginEngine>) -
         }));
     }
 
+    if let Some(lim) = limit {
+        servers.truncate(lim);
+    }
+
     Ok(serde_json::json!({
         "servers": servers,
         "total": servers.len(),
@@ -165,7 +175,7 @@ pub(crate) async fn mcp_server_set_running(
     let status = plugin_engine
         .get_plugin_status(&request.name)
         .await
-        .map(|s| format!("{s:?}"))
+        .map(|s| format!("{s:?}").to_lowercase())
         .unwrap_or_else(|e| format!("error: {e}"));
 
     Ok(serde_json::json!({
