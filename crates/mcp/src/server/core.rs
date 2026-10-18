@@ -5,11 +5,12 @@ use crate::server::catalog::{
 };
 use crate::server::http::McpHttpLogEntry;
 use crate::server::log_payload::{build_log_payload, build_parsed_response_payload};
+use crate::server::mcp_server_tools::{mcp_server_configure, mcp_server_set_running, mcp_servers_list};
 use crate::server::schemas::{
     CatalogApplyPatchRequest, CatalogEditHeadersRequest, CatalogGetMaskedHeadersRequest, CatalogImportOpenApiRequest,
     CatalogPreviewImportRequest, CatalogRemoveRequest, CatalogSetBaseUrlRequest, CatalogSetEnabledRequest, CatalogValidateOpenApiRequest,
-    CommandDetailRequest, CommandSummariesRequest, OutputSchemaDetail, ProviderMetadataDetail, RunCommandRequestParam, SearchInputsDetail,
-    SearchRequestParam,
+    CommandDetailRequest, CommandSummariesRequest, McpServerConfigureRequest, McpServerSetRunningRequest, McpServersListRequest,
+    OutputSchemaDetail, ProviderMetadataDetail, RunCommandRequestParam, SearchInputsDetail, SearchRequestParam,
 };
 #[cfg(feature = "workflow_admin_tools")]
 use crate::server::workflow::tools::{purge_workflow_history, types::WorkflowPurgeHistoryRequest};
@@ -391,6 +392,39 @@ impl OattyMcpCore {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
         let result = remove_catalog_runtime(&self.services.command_registry, &param.0);
         Ok(self.finalize_structured_tool_call("catalog_remove", request_payload, result))
+    }
+
+    #[tool(
+        name = "mcp_server_configure",
+        annotations(open_world_hint = true),
+        description = "Configure an upstream MCP server. Input: name (unique identifier), transport (stdio or http), command (for stdio), base_url (for http), optional args, enabled, tags, connect. Mutates local MCP config and can connect the server immediately. Use list_mcp_servers to inspect current configuration."
+    )]
+    async fn mcp_server_configure(&self, param: Parameters<McpServerConfigureRequest>) -> Result<CallToolResult, ErrorData> {
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = mcp_server_configure(&self.services.plugin_engine, &param.0).await;
+        Ok(self.finalize_structured_tool_call("mcp_server_configure", request_payload, result))
+    }
+
+    #[tool(
+        name = "mcp_servers_list",
+        annotations(read_only_hint = true),
+        description = "List all configured upstream MCP servers with runtime status and masked configuration. Returns server names, transport types, disabled state, runtime availability, status, and tool counts. Sensitive values (tokens, passwords) are masked."
+    )]
+    async fn mcp_servers_list(&self, param: Parameters<McpServersListRequest>) -> Result<CallToolResult, ErrorData> {
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = mcp_servers_list();
+        Ok(self.finalize_structured_tool_call("mcp_servers_list", request_payload, result))
+    }
+
+    #[tool(
+        name = "mcp_server_set_running",
+        annotations(open_world_hint = true),
+        description = "Start or stop a specific upstream MCP server. Input: name (server identifier), running (true to start, false to stop). Returns the new server status. Useful for recovering from connection failures or temporarily disabling servers."
+    )]
+    async fn mcp_server_set_running(&self, param: Parameters<McpServerSetRunningRequest>) -> Result<CallToolResult, ErrorData> {
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = mcp_server_set_running(&self.services.plugin_engine, &param.0).await;
+        Ok(self.finalize_structured_tool_call("mcp_server_set_running", request_payload, result))
     }
 
     #[tool(

@@ -2,6 +2,7 @@ mod catalog;
 mod core;
 mod http;
 mod log_payload;
+mod mcp_server_tools;
 mod schemas;
 mod workflow;
 
