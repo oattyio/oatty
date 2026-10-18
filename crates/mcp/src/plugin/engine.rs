@@ -1,6 +1,7 @@
 //! Plugin engine implementation.
 
 use crate::McpServer;
+use crate::client::gateway::{AckFence, BarrierLagError, EngineStateSnapshot, InternalEvent, McpOperationGuard, ServerRuntimeSnapshot};
 use crate::client::{ClientGatewayEvent, McpClientGateway};
 use crate::config::McpConfig;
 use crate::logging::{AuditEntry, AuditResult, LogManager};
@@ -15,11 +16,23 @@ use std::sync::Mutex;
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
+    sync::atomic::{AtomicBool, Ordering},
 };
 use tokio::{
-    sync::{Mutex as TokioMutex, RwLock, broadcast::error::RecvError as TokioRecvError},
+    sync::{Mutex as TokioMutex, RwLock},
     task::JoinHandle,
+    time::Duration,
 };
+
+/// Internal structure representing the delta between two configurations.
+#[derive(Default, Debug)]
+struct ConfigDelta {
+    unchanged: Vec<String>,
+    metadata_only: Vec<String>,
+    connection_changed: Vec<String>,
+    added: Vec<String>,
+    removed: Vec<String>,
+}
 
 /// Plugin engine that orchestrates all MCP plugin operations.
 #[derive(Debug)]
@@ -51,13 +64,24 @@ pub struct PluginEngine {
 
     /// Background task that keeps the registry in sync with client status events.
     status_listener: TokioMutex<Option<JoinHandle<()>>>,
+
+    /// Shared dirty flag set when the status listener fails to apply an event.
+    listener_dirty: Arc<AtomicBool>,
 }
 
 impl PluginEngine {
     /// Create a new plugin engine.
     pub fn new(config: McpConfig, command_registry: Arc<Mutex<CommandRegistry>>) -> anyhow::Result<Self> {
-        let client_manager = McpClientGateway::new(config.clone())?;
-        let log_manager = Arc::new(LogManager::new()?);
+        Self::new_with_log_manager(config, command_registry, Arc::new(LogManager::new()?))
+    }
+
+    /// Create a new plugin engine with an injected log manager.
+    pub(crate) fn new_with_log_manager(
+        config: McpConfig,
+        command_registry: Arc<Mutex<CommandRegistry>>,
+        log_manager: Arc<LogManager>,
+    ) -> anyhow::Result<Self> {
+        let client_manager = crate::client::gateway::McpClientGateway::new_with_log_manager(config.clone(), log_manager.clone())?;
         let lifecycle_manager = LifecycleManager::new();
 
         Ok(Self {
@@ -70,6 +94,7 @@ impl PluginEngine {
             config: RwLock::new(config),
             command_registry,
             status_listener: TokioMutex::new(None),
+            listener_dirty: Arc::new(AtomicBool::new(false)),
         })
     }
 
@@ -113,74 +138,208 @@ impl PluginEngine {
             return;
         }
 
-        let mut receiver = self.client_manager.subscribe();
+        let mut internal_rx = match self.client_manager.take_internal_receiver().await {
+            Ok(rx) => rx,
+            Err(err) => {
+                tracing::warn!(error = %err, "Failed to take internal receiver for status listener");
+                return;
+            }
+        };
+
         let tool_cache = Arc::clone(&self.tool_cache);
         let synthetic_specs = Arc::clone(&self.synthetic_specs);
         let command_registry = Arc::clone(&self.command_registry);
+        let listener_dirty = Arc::clone(&self.listener_dirty);
+        let gateway = self.client_manager.clone();
 
+        self.client_manager.mark_listener_active(true);
         let handle = tokio::spawn(async move {
+            let mut local_dirty = false;
             loop {
-                match receiver.recv().await {
-                    Ok(ClientGatewayEvent::ToolsUpdated { name, tools }) => {
-                        if let Err(update_err) = registry.set_plugin_tool_count(&name, tools.len()) {
-                            tracing::warn!(plugin = %name, error = %update_err, "Failed to update tool count");
-                        }
-
+                match internal_rx.recv().await {
+                    Some(InternalEvent::Lifecycle(event)) => {
+                        if let Err(err) =
+                            PluginEngine::apply_lifecycle_event(&event, &mut registry, &tool_cache, &synthetic_specs, &command_registry)
+                                .await
                         {
-                            let mut cache = tool_cache.lock().await;
-                            if tools.is_empty() {
-                                cache.remove(&name);
-                            } else {
-                                cache.insert(name.clone(), Arc::clone(&tools));
-                            }
-                        }
-
-                        let auth_message = registry
-                            .get_plugin(&name)
-                            .and_then(|detail| PluginEngine::format_auth_summary(detail.auth_status));
-
-                        let synthesized = PluginEngine::synthesize_mcp_specs(&name, tools.as_ref(), auth_message.as_deref());
-                        {
-                            let mut synthetic_specs_lock = synthetic_specs.lock().await;
-                            if let Ok(mut registry_lock) = command_registry.lock() {
-                                if synthesized.is_empty() {
-                                    if let Some(specs) = synthetic_specs_lock.remove(&name).as_ref() {
-                                        let ids = specs.iter().map(|s| s.canonical_id()).collect();
-                                        registry_lock.remove_commands(ids);
-                                    }
-                                } else {
-                                    let syn_arc: Arc<[CommandSpec]> = Arc::from(synthesized);
-                                    registry_lock.insert_commands(syn_arc.clone());
-                                    synthetic_specs_lock.insert(name.clone(), syn_arc);
-                                }
-                            }
+                            tracing::warn!(error = %err, "Failed to apply lifecycle event");
+                            local_dirty = true;
+                            listener_dirty.store(true, Ordering::Release);
                         }
                     }
-                    Ok(event) => {
-                        let (name, status) = match event {
-                            ClientGatewayEvent::Starting { name } => (name, PluginStatus::Starting),
-                            ClientGatewayEvent::Started { name } => (name, PluginStatus::Running),
-                            ClientGatewayEvent::StartFailed { name, error } => {
-                                tracing::warn!(plugin = %name, error = %error, "Plugin failed to start");
-                                (name, PluginStatus::Error)
-                            }
-                            ClientGatewayEvent::Stopping { name } => (name, PluginStatus::Stopping),
-                            ClientGatewayEvent::Stopped { name } => (name, PluginStatus::Stopped),
-                            ClientGatewayEvent::ToolsUpdated { .. } => unreachable!("tools updates handled above"),
+                    Some(InternalEvent::Barrier(AckFence { acknowledge, .. })) => {
+                        let result = if local_dirty || listener_dirty.load(Ordering::Acquire) {
+                            Err(BarrierLagError::ListenerDirty)
+                        } else {
+                            Ok(())
                         };
-                        if let Err(update_err) = registry.set_plugin_status(&name, status) {
-                            tracing::warn!(plugin = %name, error = %update_err, "Failed to update registry status");
+                        let _ = acknowledge.send(result);
+                    }
+                    Some(InternalEvent::Reconcile { snapshot, acknowledge }) => {
+                        match PluginEngine::rebuild_from_snapshot(snapshot, &mut registry, &tool_cache, &synthetic_specs, &command_registry)
+                            .await
+                        {
+                            Ok(()) => {
+                                local_dirty = false;
+                                listener_dirty.store(false, Ordering::Release);
+                                let _ = acknowledge.send(Ok(()));
+                            }
+                            Err(err) => {
+                                local_dirty = true;
+                                listener_dirty.store(true, Ordering::Release);
+                                let _ = acknowledge.send(Err(err));
+                            }
                         }
                     }
-                    Err(TokioRecvError::Closed) => break,
-                    Err(TokioRecvError::Lagged(skipped)) => {
-                        tracing::warn!("Plugin status listener lagged by {} events", skipped);
-                    }
+                    None => break,
                 }
             }
+            gateway.mark_listener_active(false);
         });
 
         *guard = Some(handle);
+    }
+
+    /// Apply a single lifecycle event to the registry, tool cache, and synthetic command map.
+    #[allow(clippy::type_complexity)]
+    async fn apply_lifecycle_event(
+        event: &ClientGatewayEvent,
+        registry: &mut PluginRegistry,
+        tool_cache: &Arc<TokioMutex<HashMap<String, Arc<Vec<McpToolMetadata>>>>>,
+        synthetic_specs: &Arc<TokioMutex<HashMap<String, Arc<[CommandSpec]>>>>,
+        command_registry: &Arc<Mutex<CommandRegistry>>,
+    ) -> Result<(), String> {
+        match event {
+            ClientGatewayEvent::ToolsUpdated { name, tools } => {
+                registry.set_plugin_tool_count(name, tools.len()).map_err(|e| e.to_string())?;
+
+                {
+                    let mut cache = tool_cache.lock().await;
+                    if tools.is_empty() {
+                        cache.remove(name);
+                    } else {
+                        cache.insert(name.clone(), Arc::clone(tools));
+                    }
+                }
+
+                let auth_message = registry
+                    .get_plugin(name)
+                    .and_then(|detail| PluginEngine::format_auth_summary(detail.auth_status));
+
+                let synthesized = PluginEngine::synthesize_mcp_specs(name, tools.as_ref(), auth_message.as_deref());
+                {
+                    let mut synthetic_specs_lock = synthetic_specs.lock().await;
+                    if let Ok(mut registry_lock) = command_registry.lock() {
+                        registry_lock.remove_commands_for_plugin(name);
+                        if !synthesized.is_empty() {
+                            let syn_arc: Arc<[CommandSpec]> = Arc::from(synthesized);
+                            registry_lock.insert_commands(syn_arc.clone());
+                            synthetic_specs_lock.insert(name.clone(), syn_arc);
+                        } else {
+                            synthetic_specs_lock.remove(name);
+                        }
+                    }
+                }
+                Ok(())
+            }
+            event => {
+                let (name, status) = match event.clone() {
+                    ClientGatewayEvent::Starting { name } => (name, PluginStatus::Starting),
+                    ClientGatewayEvent::Started { name } => (name, PluginStatus::Running),
+                    ClientGatewayEvent::StartFailed { name, error } => {
+                        tracing::warn!(plugin = %name, error = %error, "Plugin failed to start");
+                        (name, PluginStatus::Error)
+                    }
+                    ClientGatewayEvent::Stopping { name } => (name, PluginStatus::Stopping),
+                    ClientGatewayEvent::Stopped { name } => (name, PluginStatus::Stopped),
+                    ClientGatewayEvent::ToolsUpdated { .. } => unreachable!("tools updates handled above"),
+                };
+                registry.set_plugin_status(&name, status).map_err(|e| e.to_string())
+            }
+        }
+    }
+
+    /// Rebuild listener-owned projections from an authoritative snapshot.
+    #[allow(clippy::type_complexity)]
+    async fn rebuild_from_snapshot(
+        snapshot: EngineStateSnapshot,
+        registry: &mut PluginRegistry,
+        tool_cache: &Arc<TokioMutex<HashMap<String, Arc<Vec<McpToolMetadata>>>>>,
+        synthetic_specs: &Arc<TokioMutex<HashMap<String, Arc<[CommandSpec]>>>>,
+        command_registry: &Arc<Mutex<CommandRegistry>>,
+    ) -> Result<(), String> {
+        registry.clear().map_err(|e| e.to_string())?;
+        PluginEngine::sync_registry_metadata(registry, &snapshot.config.mcp_servers).map_err(|e| e.to_string())?;
+
+        {
+            let mut cache = tool_cache.lock().await;
+            cache.clear();
+            let mut synthetic_lock = synthetic_specs.lock().await;
+            synthetic_lock.clear();
+        }
+
+        for (name, server_snapshot) in snapshot.servers {
+            registry
+                .set_plugin_status(&name, server_snapshot.status)
+                .map_err(|e| e.to_string())?;
+            registry
+                .set_plugin_tool_count(&name, server_snapshot.tools.len())
+                .map_err(|e| e.to_string())?;
+
+            {
+                let mut cache = tool_cache.lock().await;
+                if server_snapshot.tools.is_empty() {
+                    cache.remove(&name);
+                } else {
+                    cache.insert(name.clone(), Arc::clone(&server_snapshot.tools));
+                }
+            }
+
+            let auth_message = registry
+                .get_plugin(&name)
+                .and_then(|detail| PluginEngine::format_auth_summary(detail.auth_status));
+            let synthesized = PluginEngine::synthesize_mcp_specs(&name, server_snapshot.tools.as_ref(), auth_message.as_deref());
+            {
+                let mut synthetic_specs_lock = synthetic_specs.lock().await;
+                if let Ok(mut registry_lock) = command_registry.lock() {
+                    registry_lock.remove_commands_for_plugin(&name);
+                    if !synthesized.is_empty() {
+                        let syn_arc: Arc<[CommandSpec]> = Arc::from(synthesized);
+                        registry_lock.insert_commands(syn_arc.clone());
+                        synthetic_specs_lock.insert(name.clone(), syn_arc);
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Static helper to register plugin metadata from configuration without touching
+    /// the lifecycle manager.
+    fn sync_registry_metadata(registry: &mut PluginRegistry, mcp_servers: &HashMap<String, McpServer>) -> Result<(), RegistryError> {
+        for (name, server) in mcp_servers {
+            let mut plugin_detail = PluginDetail::new(
+                name.clone(),
+                if server.is_stdio() {
+                    server.command.as_ref().unwrap().clone()
+                } else {
+                    server.base_url.as_ref().unwrap().to_string()
+                },
+                server.args.clone().map(|a| a.join(" ")),
+            );
+            plugin_detail.transport_type = server.transport_type().to_string();
+            plugin_detail.tags = server.tags.clone().unwrap_or_default();
+            plugin_detail.enabled = !server.is_disabled();
+            plugin_detail.env = if server.is_stdio() {
+                server.env.clone()
+            } else {
+                server.headers.clone()
+            };
+
+            registry.register_plugin(plugin_detail)?;
+        }
+        Ok(())
     }
 
     /// Stop the plugin engine.
@@ -382,6 +541,12 @@ impl PluginEngine {
         &self.client_manager
     }
 
+    /// Acquire the shared operation guard from the client gateway.
+    #[allow(dead_code)]
+    pub(crate) async fn acquire_operation_guard(&self) -> McpOperationGuard {
+        self.client_manager.acquire_operation_guard().await
+    }
+
     /// Get the log manager.
     pub fn log_manager(&self) -> &LogManager {
         &self.log_manager
@@ -409,67 +574,330 @@ impl PluginEngine {
 
     /// Update configuration.
     pub async fn update_config(&self, config: McpConfig) -> Result<(), PluginEngineError> {
+        let guard = self.client_manager.acquire_operation_guard().await;
+        let policy = crate::config::ReloadPolicy::RestorePreviouslyRunning;
+        let outcome = self.update_config_under_guard(config, &policy, &guard).await?;
+        // Map outcome: if any server failed to apply structurally, return error.
+        // Connection failures are reported in the outcome, not as structural failures.
+        let mut structural_errors = Vec::new();
+        for server_outcome in outcome.applied_servers {
+            if !server_outcome.runtime_applied {
+                structural_errors.push((server_outcome.name, server_outcome.status));
+            }
+        }
+        if !structural_errors.is_empty() {
+            let names: Vec<String> = structural_errors.iter().map(|(n, _)| n.clone()).collect();
+            return Err(PluginEngineError::ClientManagerError(format!(
+                "Failed to apply configuration for servers: {}",
+                names.join(", ")
+            )));
+        }
+        tracing::info!("Plugin engine configuration updated (incremental)");
+        Ok(())
+    }
+
+    /// Apply a configuration update under the shared operation guard.
+    ///
+    /// This is the internal reload method. The public `update_config` wraps it
+    /// with `ReloadPolicy::RestorePreviouslyRunning`. The shared mutation service
+    /// passes its caller-selected policy.
+    ///
+    /// Returns `McpConfigApplyOutcome` with per-server connection results.
+    pub(crate) async fn update_config_under_guard(
+        &self,
+        config: McpConfig,
+        policy: &crate::config::ReloadPolicy,
+        guard: &McpOperationGuard,
+    ) -> Result<crate::types::McpConfigApplyOutcome, PluginEngineError> {
+        let old_config = self.config.read().await.clone();
+
+        // Classify changes
+        let delta = Self::classify_config_delta(&old_config.mcp_servers, &config.mcp_servers);
+
+        // Apply the new config to the engine and gateway
+        {
+            let mut guard = self.config.write().await;
+            *guard = config.clone();
+        }
+        self.client_manager
+            .guarded_update_config(config.clone(), guard)
+            .await
+            .map_err(|e| PluginEngineError::ClientManagerError(e.to_string()))?;
+
+        // Update plugin registry metadata
         let Ok(mut registry) = self.prepare_registry().await else {
             return Err(PluginEngineError::RegistryError(RegistryError::OperationFailed {
                 reason: "registry unavailable".into(),
             }));
         };
-        // Capture which plugins should be restarted after reload.
-        let mut restart_candidates = Vec::new();
-        for name in registry.get_plugin_names() {
-            let was_running = registry
-                .get_plugin_status(&name)
-                .map(|status| status == PluginStatus::Running)
-                .unwrap_or(false);
-            if was_running {
-                restart_candidates.push(name.clone());
+
+        // Remove stale synthetic commands for servers being changed or removed
+        let servers_to_clean: Vec<String> = delta.connection_changed.iter().chain(delta.removed.iter()).cloned().collect();
+        for name in &servers_to_clean {
+            self.remove_commands_for_plugin(name);
+        }
+
+        // Stop servers that need connection changes or are being removed
+        for name in &servers_to_clean {
+            if let Err(e) = self.client_manager.guarded_stop_plugin(name, guard).await {
+                tracing::warn!(plugin = %name, error = %e, "Failed to stop plugin during config update");
             }
-            if let Err(e) = self.stop_plugin(&name).await {
-                tracing::warn!("Failed to stop plugin {} during config update: {}", name, e);
+        }
+
+        // Wait for stop events to be processed
+        self.wait_for_barrier().await?;
+
+        // Update registry metadata for all servers
+        Self::sync_registry_metadata(&mut registry, &config.mcp_servers)?;
+
+        // Build outcomes
+        let mut outcomes = Vec::new();
+
+        // Handle unchanged servers — preserve their state
+        for name in &delta.unchanged {
+            let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Unknown);
+            outcomes.push(crate::types::McpServerApplyOutcome {
+                name: name.to_string(),
+                status: self.to_server_status(status),
+                runtime_applied: true,
+                connection_attempted: false,
+                connection_error: None,
+            });
+        }
+
+        // Handle metadata-only changes — update metadata without reconnecting
+        for name in &delta.metadata_only {
+            let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Unknown);
+            outcomes.push(crate::types::McpServerApplyOutcome {
+                name: name.to_string(),
+                status: self.to_server_status(status),
+                runtime_applied: true,
+                connection_attempted: false,
+                connection_error: None,
+            });
+        }
+
+        // Handle connection changes and removals
+        for name in &delta.connection_changed {
+            let server = config.mcp_servers.get(name);
+            let outcome = self.apply_server_change(name, server, policy, guard).await;
+            outcomes.push(outcome);
+        }
+        for name in &delta.removed {
+            self.clear_server_state(name);
+            let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Unknown);
+            outcomes.push(crate::types::McpServerApplyOutcome {
+                name: name.to_string(),
+                status: self.to_server_status(status),
+                runtime_applied: true,
+                connection_attempted: false,
+                connection_error: None,
+            });
+        }
+
+        // Handle added servers
+        for name in &delta.added {
+            let server = config.mcp_servers.get(name);
+            let outcome = self.apply_server_change(name, server, policy, guard).await;
+            outcomes.push(outcome);
+        }
+
+        Ok(crate::types::McpConfigApplyOutcome { applied_servers: outcomes })
+    }
+
+    /// Classify configuration changes into categories.
+    fn classify_config_delta(
+        old: &std::collections::HashMap<String, crate::McpServer>,
+        new: &std::collections::HashMap<String, crate::McpServer>,
+    ) -> ConfigDelta {
+        let mut delta = ConfigDelta::default();
+
+        // Check for added servers
+        for name in new.keys() {
+            if !old.contains_key(name) {
+                delta.added.push(name.clone());
             }
         }
 
-        {
-            let mut cache = self.tool_cache.lock().await;
-            cache.clear();
+        // Check for removed servers
+        for name in old.keys() {
+            if !new.contains_key(name) {
+                delta.removed.push(name.clone());
+            }
         }
 
-        {
-            let mut overlay = self.synthetic_specs.lock().await;
-            overlay.clear();
+        // Check for changed servers
+        for (name, new_server) in new {
+            if let Some(old_server) = old.get(name) {
+                if Self::connection_inputs_changed(old_server, new_server) {
+                    delta.connection_changed.push(name.clone());
+                } else if Self::metadata_changed(old_server, new_server) {
+                    delta.metadata_only.push(name.clone());
+                } else {
+                    delta.unchanged.push(name.clone());
+                }
+            }
         }
 
-        // Update client manager configuration
-        self.client_manager
-            .update_config(config.clone())
-            .await
+        delta
+    }
+
+    /// Determine if connection inputs changed between old and new server configs.
+    fn connection_inputs_changed(old: &crate::McpServer, new: &crate::McpServer) -> bool {
+        old.command != new.command
+            || old.args != new.args
+            || old.base_url != new.base_url
+            || old.env != new.env
+            || old.headers != new.headers
+            || old.auth.is_some() != new.auth.is_some()
+            || (old.auth.is_some()
+                && new.auth.is_some()
+                && (old.auth.as_ref().unwrap().scheme != new.auth.as_ref().unwrap().scheme
+                    || old.auth.as_ref().unwrap().username != new.auth.as_ref().unwrap().username
+                    || old.auth.as_ref().unwrap().password != new.auth.as_ref().unwrap().password
+                    || old.auth.as_ref().unwrap().token != new.auth.as_ref().unwrap().token
+                    || old.auth.as_ref().unwrap().header_name != new.auth.as_ref().unwrap().header_name
+                    || old.auth.as_ref().unwrap().interactive != new.auth.as_ref().unwrap().interactive))
+            || old.disabled != new.disabled
+    }
+
+    /// Determine if only metadata (non-connection) fields changed.
+    fn metadata_changed(old: &crate::McpServer, new: &crate::McpServer) -> bool {
+        old.tags != new.tags
+    }
+
+    /// Apply a change to a specific server and return its outcome.
+    async fn apply_server_change(
+        &self,
+        name: &str,
+        server: Option<&crate::McpServer>,
+        policy: &crate::config::ReloadPolicy,
+        guard: &McpOperationGuard,
+    ) -> crate::types::McpServerApplyOutcome {
+        // Determine if we should connect this server based on policy
+        let should_connect = match policy {
+            crate::config::ReloadPolicy::RestorePreviouslyRunning => {
+                // Check if it was running before
+                let was_running =
+                    self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Stopped) == PluginStatus::Running;
+                was_running && server.map(|s| !s.is_disabled()).unwrap_or(false)
+            }
+            crate::config::ReloadPolicy::ConfigureTarget { name: target, connect } => name == target && *connect,
+        };
+
+        if should_connect {
+            match self.client_manager.guarded_start_plugin(name, guard).await {
+                Ok(()) => {
+                    // Wait for start events
+                    self.wait_for_barrier().await.ok();
+                    let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Unknown);
+                    crate::types::McpServerApplyOutcome {
+                        name: name.to_string(),
+                        status: self.to_server_status(status),
+                        runtime_applied: true,
+                        connection_attempted: true,
+                        connection_error: None,
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(plugin = %name, error = %e, "Failed to start plugin during config update");
+                    crate::types::McpServerApplyOutcome {
+                        name: name.to_string(),
+                        status: crate::config::ServerStatus::Error,
+                        runtime_applied: true,
+                        connection_attempted: true,
+                        connection_error: Some(PluginEngineError::ClientManagerError(e.to_string())),
+                    }
+                }
+            }
+        } else {
+            let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Unknown);
+            crate::types::McpServerApplyOutcome {
+                name: name.to_string(),
+                status: self.to_server_status(status),
+                runtime_applied: true,
+                connection_attempted: false,
+                connection_error: None,
+            }
+        }
+    }
+
+    /// Convert PluginStatus to ServerStatus.
+    fn to_server_status(&self, status: PluginStatus) -> crate::config::ServerStatus {
+        match status {
+            PluginStatus::Running => crate::config::ServerStatus::Running,
+            PluginStatus::Stopped => crate::config::ServerStatus::Stopped,
+            PluginStatus::Starting => crate::config::ServerStatus::Starting,
+            PluginStatus::Stopping => crate::config::ServerStatus::Stopping,
+            PluginStatus::Error => crate::config::ServerStatus::Error,
+            PluginStatus::Warning | PluginStatus::Unknown => crate::config::ServerStatus::Unknown,
+        }
+    }
+
+    /// Remove all commands registered for a specific plugin.
+    fn remove_commands_for_plugin(&self, plugin_name: &str) {
+        let mut registry = self.command_registry.lock().unwrap();
+        registry.remove_commands_for_plugin(plugin_name);
+    }
+
+    /// Clear all state (tool cache, synthetic specs) for a removed server.
+    fn clear_server_state(&self, name: &str) {
+        let mut cache = self.tool_cache.blocking_lock();
+        cache.remove(name);
+        let mut overlay = self.synthetic_specs.blocking_lock();
+        overlay.remove(name);
+    }
+
+    /// Wait for a barrier to be acknowledged by the status listener.
+    async fn wait_for_barrier(&self) -> Result<(), PluginEngineError> {
+        match self.client_manager.emit_barrier() {
+            Ok(ack) => match tokio::time::timeout(Duration::from_secs(30), ack).await {
+                Ok(Ok(Ok(()))) => Ok(()),
+                Ok(Ok(Err(err))) => Err(PluginEngineError::ClientManagerError(err.to_string())),
+                Ok(Err(_dropped)) => Err(PluginEngineError::ClientManagerError(
+                    "barrier acknowledgement channel dropped".into(),
+                )),
+                Err(_) => Err(PluginEngineError::ClientManagerError("barrier timed out".into())),
+            },
+            Err(e) => Err(PluginEngineError::ClientManagerError(e.to_string())),
+        }
+    }
+
+    /// Reconcile the status listener if it has been marked dirty.
+    #[allow(dead_code)]
+    pub(crate) async fn reconcile_status_listener_under_guard(&self, _guard: &McpOperationGuard) -> Result<(), PluginEngineError> {
+        if !self.listener_dirty.load(Ordering::Acquire) {
+            return Ok(());
+        }
+        let snapshot = self.build_engine_snapshot().await;
+        let ack = self
+            .client_manager
+            .emit_reconcile(snapshot)
             .map_err(|e| PluginEngineError::ClientManagerError(e.to_string()))?;
-
-        {
-            let mut guard = self.config.write().await;
-            *guard = config.clone();
+        match tokio::time::timeout(Duration::from_secs(30), ack).await {
+            Ok(Ok(Ok(()))) => Ok(()),
+            Ok(Ok(Err(err))) => Err(PluginEngineError::ClientManagerError(err)),
+            Ok(Err(_dropped)) => Err(PluginEngineError::ClientManagerError(
+                "reconcile acknowledgement channel dropped".into(),
+            )),
+            Err(_) => Err(PluginEngineError::ClientManagerError("reconciliation timed out".into())),
         }
+    }
 
-        // Clear and rebuild the registry
-        registry.clear()?;
-
-        self.sync_registry(&mut registry, &config.mcp_servers).await?;
-
-        // Restart plugins that were previously running and still exist + enabled.
-        for name in restart_candidates {
-            let Some(entry) = config.mcp_servers.get(&name) else {
-                continue;
+    /// Build an authoritative snapshot of current engine state for reconciliation.
+    #[allow(dead_code)]
+    async fn build_engine_snapshot(&self) -> EngineStateSnapshot {
+        let config = self.config.read().await.clone();
+        let mut servers = HashMap::new();
+        for name in config.mcp_servers.keys() {
+            let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Stopped);
+            let tools = match self.client_manager.get_client(name).await {
+                Some(client) => client.lock().await.tools(),
+                None => Arc::new(Vec::new()),
             };
-            if entry.is_disabled() {
-                continue;
-            }
-            if let Err(error) = self.start_plugin(&name).await {
-                tracing::warn!("Failed to restart plugin {} after config update: {}", name, error);
-            }
+            servers.insert(name.clone(), ServerRuntimeSnapshot { status, tools });
         }
-
-        tracing::info!("Plugin engine configuration updated");
-        Ok(())
+        EngineStateSnapshot { config, servers }
     }
 
     /// Return the current tool metadata snapshot for the requested plugin, if known.
@@ -639,26 +1067,8 @@ impl PluginEngine {
     }
 
     async fn sync_registry(&self, registry: &mut PluginRegistry, mcp_servers: &HashMap<String, McpServer>) -> Result<(), RegistryError> {
-        for (name, server) in mcp_servers {
-            let mut plugin_detail = PluginDetail::new(
-                name.clone(),
-                if server.is_stdio() {
-                    server.command.as_ref().unwrap().clone()
-                } else {
-                    server.base_url.as_ref().unwrap().to_string()
-                },
-                server.args.clone().map(|a| a.join(" ")),
-            );
-            plugin_detail.transport_type = server.transport_type().to_string();
-            plugin_detail.tags = server.tags.clone().unwrap_or_default();
-            plugin_detail.enabled = !server.is_disabled();
-            plugin_detail.env = if server.is_stdio() {
-                server.env.clone()
-            } else {
-                server.headers.clone()
-            };
-
-            registry.register_plugin(plugin_detail)?;
+        PluginEngine::sync_registry_metadata(registry, mcp_servers)?;
+        for name in mcp_servers.keys() {
             self.lifecycle_manager.register_plugin(name.clone()).await;
         }
         Ok(())
@@ -958,6 +1368,7 @@ mod tests {
     use crate::McpServer;
     use crate::config::McpConfig;
     use serde_json::{Value, json};
+    use tokio::time::Duration;
     use url::Url;
 
     fn tool_with_schema(schema: Value) -> McpToolMetadata {
@@ -970,6 +1381,90 @@ mod tests {
             annotations: None,
             auth_summary: None,
         }
+    }
+
+    fn make_server(name: &str, disabled: bool, tags: Option<Vec<String>>) -> McpServer {
+        McpServer {
+            command: Some(format!("echo {}", name)),
+            args: None,
+            env: indexmap::IndexSet::new(),
+            cwd: None,
+            base_url: None,
+            headers: indexmap::IndexSet::new(),
+            auth: None,
+            disabled,
+            tags,
+            err: None,
+        }
+    }
+
+    #[test]
+    fn delta_classification_unchanged() {
+        let old = std::collections::HashMap::from([
+            ("server-a".to_string(), make_server("a", false, None)),
+            ("server-b".to_string(), make_server("b", false, None)),
+        ]);
+        let new = old.clone();
+        let delta = PluginEngine::classify_config_delta(&old, &new);
+        assert_eq!(delta.unchanged.len(), 2);
+        assert!(delta.connection_changed.is_empty());
+        assert!(delta.metadata_only.is_empty());
+        assert!(delta.added.is_empty());
+        assert!(delta.removed.is_empty());
+    }
+
+    #[test]
+    fn delta_classification_connection_changed() {
+        let old = std::collections::HashMap::from([
+            ("server-a".to_string(), make_server("a", false, None)),
+            ("server-b".to_string(), make_server("b", false, None)),
+        ]);
+        let mut new = old.clone();
+        let mut server_a = new.remove("server-a").unwrap();
+        server_a.command = Some("echo changed".to_string());
+        new.insert("server-a".to_string(), server_a);
+        let delta = PluginEngine::classify_config_delta(&old, &new);
+        assert_eq!(delta.connection_changed, vec!["server-a"]);
+        assert_eq!(delta.unchanged, vec!["server-b"]);
+    }
+
+    #[test]
+    fn delta_classification_metadata_only() {
+        let old = std::collections::HashMap::from([("server-a".to_string(), make_server("a", false, None))]);
+        let mut new = old.clone();
+        let mut server_a = new.remove("server-a").unwrap();
+        server_a.tags = Some(vec!["important".to_string()]);
+        new.insert("server-a".to_string(), server_a);
+        let delta = PluginEngine::classify_config_delta(&old, &new);
+        assert_eq!(delta.metadata_only, vec!["server-a"]);
+        assert!(delta.connection_changed.is_empty());
+    }
+
+    #[test]
+    fn delta_classification_added_and_removed() {
+        let old = std::collections::HashMap::from([
+            ("server-a".to_string(), make_server("a", false, None)),
+            ("server-b".to_string(), make_server("b", false, None)),
+        ]);
+        let new = std::collections::HashMap::from([
+            ("server-b".to_string(), make_server("b", false, None)),
+            ("server-c".to_string(), make_server("c", false, None)),
+        ]);
+        let delta = PluginEngine::classify_config_delta(&old, &new);
+        assert_eq!(delta.removed, vec!["server-a"]);
+        assert_eq!(delta.added, vec!["server-c"]);
+        assert_eq!(delta.unchanged, vec!["server-b"]);
+    }
+
+    #[test]
+    fn delta_classification_disabled_change() {
+        let old = std::collections::HashMap::from([("server-a".to_string(), make_server("a", false, None))]);
+        let mut new = old.clone();
+        let mut server_a = new.remove("server-a").unwrap();
+        server_a.disabled = true;
+        new.insert("server-a".to_string(), server_a);
+        let delta = PluginEngine::classify_config_delta(&old, &new);
+        assert_eq!(delta.connection_changed, vec!["server-a"]);
     }
 
     #[tokio::test]
@@ -1323,6 +1818,48 @@ mod tests {
         let info = registry.get_plugin("svc").unwrap();
         assert_eq!(info.tags, vec!["alpha", "beta"]);
         assert!(!info.enabled);
+
+        engine.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn status_listener_applies_internal_lifecycle_events_and_acknowledges_barriers() {
+        let mut cfg = McpConfig::default();
+        let server = McpServer {
+            command: Some("node".into()),
+            ..Default::default()
+        };
+        cfg.mcp_servers.insert("demo".into(), server);
+
+        let registry = Arc::new(Mutex::new(CommandRegistry::default()));
+        let engine = PluginEngine::new(cfg, Arc::clone(&registry)).unwrap();
+        engine.prepare_registry().await.unwrap();
+
+        let tools = Arc::new(vec![McpToolMetadata {
+            name: "demo_info".into(),
+            title: None,
+            description: Some("demo tool".into()),
+            input_schema: json!({ "type": "object" }),
+            output_schema: None,
+            annotations: None,
+            auth_summary: None,
+        }]);
+        engine.client_manager.guarded_emit_lifecycle(ClientGatewayEvent::ToolsUpdated {
+            name: "demo".into(),
+            tools,
+        });
+
+        let ack = engine.client_manager.emit_barrier().unwrap();
+        McpClientGateway::wait_for_barrier_ack(ack, Duration::from_secs(1)).await.unwrap();
+
+        {
+            let reg = registry.lock().unwrap();
+            assert_eq!(reg.commands.len(), 1);
+            let spec = &reg.commands[0];
+            assert_eq!(spec.group, "demo");
+            assert_eq!(spec.name, "info");
+            assert!(spec.mcp().is_some_and(|m| m.plugin_name == "demo" && m.tool_name == "demo_info"));
+        }
 
         engine.stop().await.unwrap();
     }

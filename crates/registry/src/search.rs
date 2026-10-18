@@ -1159,6 +1159,81 @@ mod tests {
         assert_eq!(results[0].canonical_id, "services scale");
     }
 
+    #[tokio::test]
+    async fn search_handle_rebuilds_index_after_plugin_command_removal() {
+        let plugin_a = CommandSpec::new_mcp(
+            "plugins".to_string(),
+            "list".to_string(),
+            "List plugin A tools".to_string(),
+            Vec::new(),
+            Vec::new(),
+            McpCommandSpec {
+                plugin_name: "plugin-a".to_string(),
+                tool_name: "list".to_string(),
+                ..Default::default()
+            },
+        );
+        let plugin_b = CommandSpec::new_mcp(
+            "plugins".to_string(),
+            "list".to_string(),
+            "List plugin B tools".to_string(),
+            Vec::new(),
+            Vec::new(),
+            McpCommandSpec {
+                plugin_name: "plugin-b".to_string(),
+                tool_name: "list".to_string(),
+                ..Default::default()
+            },
+        );
+        let http_command = CommandSpec::new_http(
+            "plugins".to_string(),
+            "list".to_string(),
+            "List catalog plugins".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/plugins", None, None),
+            0,
+        );
+
+        // All three commands share the canonical ID "plugins list".
+        let registry = Arc::new(Mutex::new(CommandRegistry::default().with_commands(vec![
+            plugin_a,
+            plugin_b,
+            http_command,
+        ])));
+        let handle = SearchHandle::new(Arc::clone(&registry));
+
+        let initial_results = handle.search("list").await.unwrap();
+        assert_eq!(initial_results.len(), 3);
+
+        let fingerprint_before_removal = compute_registry_search_fingerprint(&registry.lock().unwrap());
+        registry.lock().unwrap().remove_commands_for_plugin("plugin-a");
+        let fingerprint_after_removal = compute_registry_search_fingerprint(&registry.lock().unwrap());
+        assert_ne!(
+            fingerprint_before_removal, fingerprint_after_removal,
+            "removing a plugin's commands should invalidate the cached search index"
+        );
+
+        let results = handle.search("list").await.unwrap();
+        assert_eq!(results.len(), 2, "only B and HTTP commands should remain discoverable");
+        assert!(
+            results.iter().all(|result| result.summary != "List plugin A tools"),
+            "removed plugin A command should no longer appear"
+        );
+        assert!(
+            results
+                .iter()
+                .any(|result| result.summary == "List plugin B tools" && result.execution_type == "mcp"),
+            "plugin B command with a colliding canonical ID should remain"
+        );
+        assert!(
+            results
+                .iter()
+                .any(|result| result.summary == "List catalog plugins" && result.execution_type == "http"),
+            "HTTP command with a colliding canonical ID should remain"
+        );
+    }
+
     #[test]
     fn normalize_identifier_splits_colon_and_slash_separators() {
         assert_eq!(normalize_identifier("deployments:create/v1").as_ref(), "deployments create v1");
