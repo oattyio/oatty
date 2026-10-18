@@ -100,7 +100,7 @@ pub(crate) async fn mcp_server_configure(
 
 /// List all configured upstream MCP servers with runtime status.
 pub(crate) async fn mcp_servers_list(plugin_engine: &Arc<crate::PluginEngine>, limit: Option<usize>) -> Result<Value, ErrorData> {
-    let path = oatty_registry::default_config_path();
+    let path = crate::config::default_config_path();
 
     let doc = match load_raw_config_document_from_path(&path) {
         Ok(doc) => doc,
@@ -135,14 +135,19 @@ pub(crate) async fn mcp_servers_list(plugin_engine: &Arc<crate::PluginEngine>, l
             Err(_) => "unknown".to_string(),
         };
         let runtime_available = engine_status.is_ok();
+        let effective_disabled = if runtime_available {
+            serde_json::json!(config.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false))
+        } else {
+            serde_json::Value::Null
+        };
         servers.push(serde_json::json!({
             "name": name,
             "transport": transport,
             "disabled": config.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false),
-            "effective_disabled": config.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false),
+            "effective_disabled": effective_disabled,
             "runtime_available": runtime_available,
             "status": runtime_status,
-            "tool_count": 0,
+            "tool_count": serde_json::Value::Null,
             "masked_config": masked,
         }));
     }
@@ -183,16 +188,17 @@ pub(crate) async fn mcp_server_set_running(
 
 /// Mask sensitive values in server configuration for display.
 fn mask_server_config(config: &Map<String, Value>) -> Value {
+    const MASKED: &str = "<masked>";
     let mut masked = Map::new();
 
     if config.contains_key("command") {
-        masked.insert("command".to_string(), serde_json::json!("***"));
+        masked.insert("command".to_string(), serde_json::json!(MASKED));
     }
     if let Some(args) = config.get("args").and_then(|v| v.as_array()) {
         masked.insert("argument_count".to_string(), serde_json::json!(args.len()));
     }
     if config.contains_key("baseUrl") {
-        masked.insert("baseUrl".to_string(), serde_json::json!("***"));
+        masked.insert("baseUrl".to_string(), serde_json::json!(MASKED));
     }
     if let Some(headers) = config.get("headers").and_then(|v| v.as_array()) {
         let mut masked_headers = Vec::new();
