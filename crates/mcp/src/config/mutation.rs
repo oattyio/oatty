@@ -238,6 +238,10 @@ pub enum McpConfigMutationError {
     #[error("Root document is not an object with 'mcpServers' key")]
     InvalidRootShape,
 
+    /// The targeted server does not exist in the persisted configuration.
+    #[error("Server '{0}' was not found in configuration")]
+    ServerNotFound(String),
+
     /// Patch operations conflict with one another.
     #[error("Patch conflict detected: {0:?}")]
     PatchConflict(Vec<String>),

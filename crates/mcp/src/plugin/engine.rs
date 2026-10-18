@@ -684,7 +684,7 @@ impl PluginEngine {
             outcomes.push(outcome);
         }
         for name in &delta.removed {
-            self.clear_server_state(name);
+            self.clear_server_state(name).await;
             let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Unknown);
             outcomes.push(crate::types::McpServerApplyOutcome {
                 name: name.to_string(),
@@ -830,10 +830,10 @@ impl PluginEngine {
     }
 
     /// Clear all state (tool cache, synthetic specs) for a removed server.
-    fn clear_server_state(&self, name: &str) {
-        let mut cache = self.tool_cache.blocking_lock();
+    async fn clear_server_state(&self, name: &str) {
+        let mut cache = self.tool_cache.lock().await;
         cache.remove(name);
-        let mut overlay = self.synthetic_specs.blocking_lock();
+        let mut overlay = self.synthetic_specs.lock().await;
         overlay.remove(name);
     }
 

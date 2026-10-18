@@ -54,6 +54,48 @@ pub async fn apply_config_mutation(
             let changed_fields = diff_server_fields(old_server.as_ref(), new_server.as_ref());
             (name, "configure".to_string(), changed_fields, document)
         }
+        McpConfigMutation::ReplaceServer {
+            old_name,
+            new_name,
+            server,
+        } => {
+            let mut document = load_raw_config_document_from_path(&path)?;
+            let old_server = document.get("mcpServers").and_then(|m| m.get(&old_name)).cloned();
+            let server_value = serde_json::to_value(&server)
+                .map_err(|e| McpConfigMutationError::ValidationFailed(format!("failed to serialize replacement server: {e}")))?;
+            let root = document.as_object_mut().ok_or(McpConfigMutationError::InvalidRootShape)?;
+            let mcp_servers = root
+                .get_mut("mcpServers")
+                .and_then(Value::as_object_mut)
+                .ok_or(McpConfigMutationError::InvalidRootShape)?;
+            // A rename drops the old entry first; a same-name replacement
+            // overwrites the entry in place.
+            if old_name != new_name {
+                mcp_servers.remove(&old_name);
+            }
+            mcp_servers.insert(new_name.clone(), server_value.clone());
+            let changed_fields = diff_server_fields(old_server.as_ref(), Some(&server_value));
+            (new_name, "replace".to_string(), changed_fields, document)
+        }
+        McpConfigMutation::RemoveServer(name) => {
+            let mut document = load_raw_config_document_from_path(&path)?;
+            let root = document.as_object_mut().ok_or(McpConfigMutationError::InvalidRootShape)?;
+            let mcp_servers = root
+                .get_mut("mcpServers")
+                .and_then(Value::as_object_mut)
+                .ok_or(McpConfigMutationError::InvalidRootShape)?;
+            let removed = mcp_servers.remove(&name);
+            if removed.is_none() {
+                return Err(McpConfigMutationError::ServerNotFound(name));
+            }
+            // Every persisted field of the entry is gone after removal.
+            let changed_fields = removed
+                .as_ref()
+                .and_then(Value::as_object)
+                .map(|entry| entry.keys().cloned().collect())
+                .unwrap_or_default();
+            (name, "remove".to_string(), changed_fields, document)
+        }
         other => {
             return Err(McpConfigMutationError::ValidationFailed(format!(
                 "unsupported mutation variant: {other:?}"
@@ -142,7 +184,7 @@ fn diff_server_fields(old: Option<&Value>, new: Option<&Value>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ConfigureMode, McpConfig, McpServerPatch, load_raw_config_document_from_path};
+    use crate::config::{ConfigureMode, McpConfig, McpServer, McpServerPatch, load_raw_config_document_from_path};
     use oatty_registry::CommandRegistry;
     use std::sync::Mutex;
 
@@ -180,6 +222,141 @@ mod tests {
 
         let persisted = load_raw_config_document_from_path(&path).unwrap();
         assert_eq!(persisted["mcpServers"]["demo"]["command"], "node");
+    }
+
+    #[tokio::test]
+    async fn replace_renames_server_and_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert("old".to_string(), McpServer::default());
+        config.mcp_servers.get_mut("old").unwrap().command = Some("node".to_string());
+        std::fs::write(&path, serde_json::to_string(&config).unwrap()).unwrap();
+
+        let engine = Arc::new(PluginEngine::new(config, Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+
+        let replacement = McpServer {
+            command: Some("node".to_string()),
+            args: Some(vec!["--fast".to_string()]),
+            ..Default::default()
+        };
+
+        let outcome = apply_config_mutation(
+            Arc::clone(&engine),
+            path.clone(),
+            McpConfigMutation::ReplaceServer {
+                old_name: "old".to_string(),
+                new_name: "renamed".to_string(),
+                server: replacement,
+            },
+            ReloadPolicy::RestorePreviouslyRunning,
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.persisted);
+        assert!(outcome.runtime_applied);
+        assert!(!outcome.connection_attempted);
+        assert_eq!(outcome.server_name, "renamed");
+        assert_eq!(outcome.operation, "replace");
+        assert!(outcome.changed_fields.contains(&"args".to_string()));
+
+        let persisted = load_raw_config_document_from_path(&path).unwrap();
+        assert!(persisted["mcpServers"].get("old").is_none());
+        assert_eq!(persisted["mcpServers"]["renamed"]["command"], "node");
+        assert_eq!(persisted["mcpServers"]["renamed"]["args"][0], "--fast");
+    }
+
+    #[tokio::test]
+    async fn replace_same_name_overwrites_entry() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert("demo".to_string(), McpServer::default());
+        config.mcp_servers.get_mut("demo").unwrap().command = Some("node".to_string());
+        std::fs::write(&path, serde_json::to_string(&config).unwrap()).unwrap();
+
+        let engine = Arc::new(PluginEngine::new(config, Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+
+        let replacement = McpServer {
+            command: Some("deno".to_string()),
+            ..Default::default()
+        };
+
+        let outcome = apply_config_mutation(
+            Arc::clone(&engine),
+            path.clone(),
+            McpConfigMutation::ReplaceServer {
+                old_name: "demo".to_string(),
+                new_name: "demo".to_string(),
+                server: replacement,
+            },
+            ReloadPolicy::RestorePreviouslyRunning,
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.persisted);
+        assert_eq!(outcome.server_name, "demo");
+        assert_eq!(outcome.operation, "replace");
+
+        let persisted = load_raw_config_document_from_path(&path).unwrap();
+        assert_eq!(persisted["mcpServers"].as_object().unwrap().len(), 1);
+        assert_eq!(persisted["mcpServers"]["demo"]["command"], "deno");
+    }
+
+    #[tokio::test]
+    async fn remove_deletes_server_and_persists() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert("demo".to_string(), McpServer::default());
+        config.mcp_servers.get_mut("demo").unwrap().command = Some("node".to_string());
+        std::fs::write(&path, serde_json::to_string(&config).unwrap()).unwrap();
+
+        let engine = Arc::new(PluginEngine::new(config, Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+
+        let outcome = apply_config_mutation(
+            Arc::clone(&engine),
+            path.clone(),
+            McpConfigMutation::RemoveServer("demo".to_string()),
+            ReloadPolicy::RestorePreviouslyRunning,
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.persisted);
+        assert!(outcome.runtime_applied);
+        assert_eq!(outcome.server_name, "demo");
+        assert_eq!(outcome.operation, "remove");
+        assert!(outcome.changed_fields.contains(&"command".to_string()));
+
+        let persisted = load_raw_config_document_from_path(&path).unwrap();
+        assert!(persisted["mcpServers"].as_object().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn remove_missing_server_returns_not_found() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+
+        let engine = Arc::new(PluginEngine::new(McpConfig::default(), Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+
+        let error = apply_config_mutation(
+            Arc::clone(&engine),
+            path.clone(),
+            McpConfigMutation::RemoveServer("ghost".to_string()),
+            ReloadPolicy::RestorePreviouslyRunning,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, McpConfigMutationError::ServerNotFound(name) if name == "ghost"));
+        // A rejected removal must not create the configuration file.
+        assert!(!path.exists());
     }
 
     #[test]

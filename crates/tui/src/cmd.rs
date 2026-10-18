@@ -24,10 +24,11 @@ use crate::ui::components::plugins::PluginTransport;
 use anyhow::Result;
 use anyhow::anyhow;
 use chrono::Utc;
-use indexmap::IndexSet;
+use indexmap::{IndexMap, IndexSet};
 use oatty_engine::{RegistryCommandRunner, drive_workflow_run, provider::ProviderFetchPlan};
 use oatty_mcp::config::{
-    McpServer, default_config_path, load_config_from_path, save_config_to_path, validate_config, validate_server_name,
+    ClearField, ConfigureMode, McpConfigMutation, McpConfigMutationError, McpServer, McpServerConfigurationPatch, McpServerPatch,
+    ReloadPolicy, apply_config_mutation, default_config_path, save_config_to_path, validate_server_name,
 };
 use oatty_mcp::{McpConfig, McpHttpServer, PluginEngine, resolve_bind_address};
 
@@ -957,8 +958,9 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
     };
     let name = add_view_state.name.trim().to_string();
     let original_name = add_view_state.original_name.as_deref();
+    let transport = add_view_state.transport;
     let mut server = McpServer::default();
-    match add_view_state.transport {
+    match transport {
         PluginTransport::Remote => {
             let base_url = add_view_state.base_url.trim();
             if let Ok(url) = Url::parse(base_url) {
@@ -1004,38 +1006,32 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
         }
     }
 
-    // Write to config
-    let path = default_config_path();
-    let mut cfg = if let Ok(text) = read_to_string(&path) {
-        from_str::<McpConfig>(&text).unwrap_or_default()
-    } else {
-        McpConfig::default()
-    };
-    apply_plugin_name_change(&mut cfg, original_name, &name);
-    cfg.mcp_servers.insert(name.clone(), server);
-    if let Err(e) = validate_config(&cfg) {
-        return ExecOutcome::PluginValidationErr {
-            message: format!("Plugin validation failed: {}", e),
-        };
-    }
-    if let Err(error) = save_config_to_path(&mut cfg, &path) {
-        return ExecOutcome::PluginValidationErr {
-            message: format!("Failed to save MCP configuration: {error}"),
-        };
-    }
-
-    let runtime_cfg = match load_config_from_path(&path) {
-        Ok(config) => config,
-        Err(error) => {
-            return ExecOutcome::PluginValidationErr {
-                message: format!("Saved plugin, but failed to reload configuration: {error}"),
-            };
-        }
+    // Persist and reload through the shared mutation service so tool and TUI
+    // writes share one operation guard. Renames replace the old entry with
+    // the form-built server; new and same-name saves go through the configure
+    // contract, which enforces add/edit name existence rules and preserves
+    // fields the form does not own (cwd, auth, tags, disabled).
+    let mutation = match original_name {
+        Some(previous) if previous != name => McpConfigMutation::ReplaceServer {
+            old_name: previous.to_string(),
+            new_name: name.clone(),
+            server,
+        },
+        _ => McpConfigMutation::ConfigureServer {
+            name: name.clone(),
+            patch: plugin_form_patch(&server, transport),
+            mode: if original_name.is_some() {
+                ConfigureMode::Edit
+            } else {
+                ConfigureMode::Add
+            },
+        },
     };
 
-    if let Err(error) = app.ctx.plugin_engine.update_config(runtime_cfg).await {
+    let engine = Arc::clone(&app.ctx.plugin_engine);
+    if let Err(error) = apply_config_mutation(engine, default_config_path(), mutation, ReloadPolicy::RestorePreviouslyRunning).await {
         return ExecOutcome::PluginValidationErr {
-            message: format!("Saved plugin, but failed to refresh MCP engine: {error}"),
+            message: plugin_mutation_error_message("Saved plugin", error),
         };
     }
 
@@ -1052,36 +1048,19 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
 
 /// Remove an existing MCP plugin from config and refresh runtime state.
 async fn execute_plugins_delete(app: &mut App<'_>, plugin_name: String) -> ExecOutcome {
-    let path = default_config_path();
-    let mut configuration = if let Ok(text) = read_to_string(&path) {
-        from_str::<McpConfig>(&text).unwrap_or_default()
-    } else {
-        McpConfig::default()
-    };
-
-    if configuration.mcp_servers.remove(&plugin_name).is_none() {
-        return ExecOutcome::Log(format!("Plugins: '{}' was not found in config.", plugin_name));
-    }
-
-    if let Err(error) = save_config_to_path(&mut configuration, &path) {
-        return ExecOutcome::PluginValidationErr {
-            message: format!("Failed to save MCP configuration after delete: {error}"),
-        };
-    }
-
-    let runtime_configuration = match load_config_from_path(&path) {
-        Ok(config) => config,
+    let engine = Arc::clone(&app.ctx.plugin_engine);
+    let mutation = McpConfigMutation::RemoveServer(plugin_name.clone());
+    match apply_config_mutation(engine, default_config_path(), mutation, ReloadPolicy::RestorePreviouslyRunning).await {
+        // Removing an absent entry stays a friendly no-op with the previous message.
+        Err(McpConfigMutationError::ServerNotFound(_)) => {
+            return ExecOutcome::Log(format!("Plugins: '{}' was not found in config.", plugin_name));
+        }
         Err(error) => {
             return ExecOutcome::PluginValidationErr {
-                message: format!("Deleted plugin, but failed to reload configuration: {error}"),
+                message: plugin_mutation_error_message("Deleted plugin", error),
             };
         }
-    };
-
-    if let Err(error) = app.ctx.plugin_engine.update_config(runtime_configuration).await {
-        return ExecOutcome::PluginValidationErr {
-            message: format!("Deleted plugin, but failed to refresh MCP engine: {error}"),
-        };
+        Ok(_) => {}
     }
 
     execute_load_plugins(app).await;
@@ -1112,12 +1091,58 @@ fn collect_key_value_rows(rows: &[EnvRow]) -> Result<IndexSet<EnvVar>, Vec<Strin
     Ok(envs)
 }
 
-/// Remove the previous plugin entry when the user renames a server.
-fn apply_plugin_name_change(config: &mut McpConfig, original_name: Option<&str>, desired_name: &str) {
-    if let Some(previous) = original_name
-        && previous != desired_name
-    {
-        config.mcp_servers.remove(previous);
+/// Build the shared configure patch for the Add Plugin form.
+///
+/// The patch supplies the form-controlled fields for the selected transport
+/// and clears the opposite transport's fields so a transport switch cannot
+/// leave ambiguous leftovers behind. Fields the form does not own (cwd, auth,
+/// tags, disabled) are preserved by the patch contract.
+fn plugin_form_patch(server: &McpServer, transport: PluginTransport) -> McpServerPatch {
+    let mut configuration = McpServerConfigurationPatch::default();
+    let mut clear_fields = Vec::new();
+
+    match transport {
+        PluginTransport::Remote => {
+            configuration.base_url = server.base_url.as_ref().map(|url| url.to_string());
+            configuration.headers = Some(env_rows_to_upsert_map(&server.headers));
+            clear_fields.extend([ClearField::Command, ClearField::Args, ClearField::Env]);
+        }
+        PluginTransport::Local => {
+            configuration.command = server.command.clone();
+            if server.args.as_ref().is_some_and(|args| !args.is_empty()) {
+                configuration.args = server.args.clone();
+            } else {
+                clear_fields.push(ClearField::Args);
+            }
+            configuration.env = Some(env_rows_to_upsert_map(&server.env));
+            clear_fields.extend([ClearField::BaseUrl, ClearField::Headers]);
+        }
+    }
+
+    McpServerPatch {
+        configuration,
+        clear_fields,
+        ..Default::default()
+    }
+}
+
+/// Convert ordered env/header rows into the upsert map used by configure patches.
+fn env_rows_to_upsert_map(rows: &IndexSet<EnvVar>) -> IndexMap<String, String> {
+    rows.iter().map(|row| (row.key.clone(), row.value.clone())).collect()
+}
+
+/// Describe a failed shared config mutation with stage-accurate wording.
+///
+/// `completed` names the stage that already succeeded ("Saved plugin" or
+/// "Deleted plugin") for failures that occur after persistence.
+fn plugin_mutation_error_message(completed: &str, error: McpConfigMutationError) -> String {
+    match error {
+        McpConfigMutationError::ValidationFailed(detail) => format!("Plugin validation failed: {detail}"),
+        McpConfigMutationError::PatchConflict(conflicts) => format!("Plugin validation failed: {}", conflicts.join("; ")),
+        McpConfigMutationError::SaveFailed(err) => format!("Failed to save MCP configuration: {err}"),
+        McpConfigMutationError::RuntimeLoadFailed(err) => format!("{completed}, but failed to reload configuration: {err}"),
+        McpConfigMutationError::RuntimeApplyFailed(err) => format!("{completed}, but failed to refresh MCP engine: {err}"),
+        error => format!("Plugin validation failed: {error}"),
     }
 }
 
@@ -1364,6 +1389,7 @@ fn execute_command(command_spec: CommandSpec, hydrated_shell_command: String, re
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 
@@ -1386,20 +1412,55 @@ mod tests {
     }
 
     #[test]
-    fn apply_plugin_name_change_removed_old_key() {
-        let mut config = McpConfig::default();
-        config.mcp_servers.insert("old".into(), McpServer::default());
-        apply_plugin_name_change(&mut config, Some("old"), "new");
+    fn plugin_form_patch_local_supplies_transport_fields_and_clears_http_fields() {
+        let mut env = IndexSet::new();
+        env.insert(EnvVar::new("KEY".into(), "value".into(), determine_env_source("value")));
+        let mut server = McpServer::default();
+        server.command = Some("node".into());
+        server.args = Some(vec!["--fast".into()]);
+        server.env = env;
 
-        assert!(!config.mcp_servers.contains_key("old"));
+        let patch = plugin_form_patch(&server, PluginTransport::Local);
+
+        assert_eq!(patch.configuration.command.as_deref(), Some("node"));
+        assert_eq!(patch.configuration.args, Some(vec!["--fast".to_string()]));
+        assert_eq!(
+            patch.configuration.env.as_ref().and_then(|env| env.get("KEY")),
+            Some(&"value".to_string())
+        );
+        assert!(patch.clear_fields.contains(&ClearField::BaseUrl));
+        assert!(patch.clear_fields.contains(&ClearField::Headers));
+        assert!(!patch.clear_fields.contains(&ClearField::Args));
     }
 
     #[test]
-    fn apply_plugin_name_change_keeps_existing_when_name_same() {
-        let mut config = McpConfig::default();
-        config.mcp_servers.insert("same".into(), McpServer::default());
-        apply_plugin_name_change(&mut config, Some("same"), "same");
+    fn plugin_form_patch_local_clears_args_when_form_leaves_them_empty() {
+        let mut server = McpServer::default();
+        server.command = Some("node".into());
 
-        assert!(config.mcp_servers.contains_key("same"));
+        let patch = plugin_form_patch(&server, PluginTransport::Local);
+
+        assert!(patch.configuration.args.is_none());
+        assert!(patch.clear_fields.contains(&ClearField::Args));
+    }
+
+    #[test]
+    fn plugin_form_patch_remote_supplies_http_fields_and_clears_stdio_fields() {
+        let mut headers = IndexSet::new();
+        headers.insert(EnvVar::new("X-Api-Key".into(), "token".into(), determine_env_source("token")));
+        let mut server = McpServer::default();
+        server.base_url = Some(Url::parse("https://example.com").unwrap());
+        server.headers = headers;
+
+        let patch = plugin_form_patch(&server, PluginTransport::Remote);
+
+        assert_eq!(patch.configuration.base_url.as_deref(), Some("https://example.com/"));
+        assert_eq!(
+            patch.configuration.headers.as_ref().and_then(|headers| headers.get("X-Api-Key")),
+            Some(&"token".to_string())
+        );
+        assert!(patch.clear_fields.contains(&ClearField::Command));
+        assert!(patch.clear_fields.contains(&ClearField::Args));
+        assert!(patch.clear_fields.contains(&ClearField::Env));
     }
 }
