@@ -97,7 +97,7 @@ pub(crate) async fn mcp_server_configure(
 }
 
 /// List all configured upstream MCP servers with runtime status.
-pub(crate) fn mcp_servers_list() -> Result<Value, ErrorData> {
+pub(crate) async fn mcp_servers_list(plugin_engine: &Arc<crate::PluginEngine>) -> Result<Value, ErrorData> {
     let path = oatty_registry::default_config_path();
 
     let doc = match load_raw_config_document_from_path(&path) {
@@ -110,7 +110,13 @@ pub(crate) fn mcp_servers_list() -> Result<Value, ErrorData> {
     let mcp_servers = doc.get("mcpServers").and_then(|v| v.as_object()).cloned().unwrap_or_default();
 
     let mut servers = Vec::new();
-    for (name, config) in &mcp_servers {
+
+    // Sort by name for deterministic output
+    let mut sorted_names: Vec<&String> = mcp_servers.keys().collect();
+    sorted_names.sort();
+
+    for name in sorted_names {
+        let config = &mcp_servers[name];
         let transport = if config.get("command").is_some() {
             "stdio"
         } else if config.get("baseUrl").is_some() {
@@ -120,13 +126,20 @@ pub(crate) fn mcp_servers_list() -> Result<Value, ErrorData> {
         };
 
         let masked = mask_server_config(config.as_object().unwrap_or(&Map::new()));
+        // Look up runtime status from the engine
+        let engine_status = plugin_engine.get_plugin_status(name).await;
+        let runtime_status = match &engine_status {
+            Ok(s) => format!("{s:?}").to_lowercase(),
+            Err(_) => "unknown".to_string(),
+        };
+        let runtime_available = engine_status.is_ok();
         servers.push(serde_json::json!({
             "name": name,
             "transport": transport,
             "disabled": config.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false),
             "effective_disabled": config.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false),
-            "runtime_available": true,
-            "status": "unknown",
+            "runtime_available": runtime_available,
+            "status": runtime_status,
             "tool_count": 0,
             "masked_config": masked,
         }));
@@ -166,14 +179,14 @@ pub(crate) async fn mcp_server_set_running(
 fn mask_server_config(config: &Map<String, Value>) -> Value {
     let mut masked = Map::new();
 
-    if let Some(cmd) = config.get("command") {
-        masked.insert("command".to_string(), cmd.clone());
+    if config.contains_key("command") {
+        masked.insert("command".to_string(), serde_json::json!("***"));
     }
-    if let Some(args) = config.get("args") {
-        masked.insert("args".to_string(), args.clone());
+    if let Some(args) = config.get("args").and_then(|v| v.as_array()) {
+        masked.insert("argument_count".to_string(), serde_json::json!(args.len()));
     }
-    if let Some(url) = config.get("baseUrl") {
-        masked.insert("baseUrl".to_string(), url.clone());
+    if config.contains_key("baseUrl") {
+        masked.insert("baseUrl".to_string(), serde_json::json!("***"));
     }
     if let Some(headers) = config.get("headers").and_then(|v| v.as_array()) {
         let mut masked_headers = Vec::new();
