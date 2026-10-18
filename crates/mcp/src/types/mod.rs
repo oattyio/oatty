@@ -9,3 +9,20 @@ pub use oatty_types::plugin::{
     TransportStatus,
 };
 pub use tools::McpToolMetadata;
+
+/// Outcome of applying a configuration update across multiple servers.
+#[derive(Debug)]
+pub(crate) struct McpConfigApplyOutcome {
+    pub(crate) applied_servers: Vec<McpServerApplyOutcome>,
+}
+
+/// Per-server outcome from a configuration update.
+#[derive(Debug)]
+#[allow(dead_code)]
+pub(crate) struct McpServerApplyOutcome {
+    pub(crate) name: String,
+    pub(crate) status: crate::config::ServerStatus,
+    pub(crate) runtime_applied: bool,
+    pub(crate) connection_attempted: bool,
+    pub(crate) connection_error: Option<crate::plugin::PluginEngineError>,
+}
