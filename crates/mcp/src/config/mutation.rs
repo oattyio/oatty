@@ -218,21 +218,10 @@ pub enum ErrorStage {
 }
 
 /// Current lifecycle status of a server.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ServerStatus {
-    /// Running.
-    Running,
-    /// Stopped.
-    Stopped,
-    /// Starting.
-    Starting,
-    /// Stopping.
-    Stopping,
-    /// Error.
-    Error,
-    /// Unknown.
-    Unknown,
-}
+///
+/// Alias for [`oatty_types::plugin::PluginStatus`] — the widened variants
+/// (`Warning`) are collapsed only at display time by the adapter layer.
+pub type ServerStatus = oatty_types::plugin::PluginStatus;
 
 /// Errors specific to configuration mutations.
 #[derive(Debug, Error)]

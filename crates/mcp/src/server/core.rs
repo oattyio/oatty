@@ -412,7 +412,7 @@ impl OattyMcpCore {
     )]
     async fn mcp_servers_list(&self, param: Parameters<McpServersListRequest>) -> Result<CallToolResult, ErrorData> {
         let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
-        let result = mcp_servers_list(&self.services.plugin_engine).await;
+        let result = mcp_servers_list(&self.services.plugin_engine, param.0.limit).await;
         Ok(self.finalize_structured_tool_call("mcp_servers_list", request_payload, result))
     }
 
