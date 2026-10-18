@@ -2,6 +2,54 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+/// Parameters for configuring an upstream MCP server.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct McpServerConfigureRequest {
+    /// Server name to configure. Must be unique across all servers.
+    #[schemars(description = "Unique server name to configure.")]
+    pub name: String,
+    /// Transport type for this server.
+    #[schemars(description = "Transport type: stdio or http.")]
+    pub transport: String,
+    /// Command to execute (required for stdio transport).
+    #[schemars(description = "Command to execute for stdio transport.")]
+    pub command: Option<String>,
+    /// Arguments for the command (for stdio transport).
+    #[schemars(description = "Arguments for the command (stdio transport).")]
+    pub args: Option<Vec<String>>,
+    /// Base URL (required for HTTP transport).
+    #[schemars(description = "Base URL for HTTP transport.")]
+    pub base_url: Option<String>,
+    /// Whether to enable or disable this server.
+    #[schemars(description = "Whether to enable or disable this server. Defaults to enabled.")]
+    pub enabled: Option<bool>,
+    /// Optional tags for the server.
+    #[schemars(description = "Optional tags for display/filtering.")]
+    pub tags: Option<Vec<String>>,
+    /// Whether to connect the server immediately after configuration.
+    #[schemars(description = "Whether to connect immediately after configuration. Defaults to true for enabled servers.")]
+    pub connect: Option<bool>,
+}
+
+/// Parameters for listing all configured upstream MCP servers.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct McpServersListRequest {
+    /// Optional limit on the number of servers returned.
+    #[schemars(description = "Optional limit on the number of servers returned.")]
+    pub limit: Option<usize>,
+}
+
+/// Parameters for starting or stopping a specific upstream MCP server.
+#[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct McpServerSetRunningRequest {
+    /// Server name to start or stop.
+    #[schemars(description = "Server name to start or stop.")]
+    pub name: String,
+    /// Whether to start or stop the server.
+    #[schemars(description = "true to start, false to stop.")]
+    pub running: bool,
+}
+
 /// Detail level for including command input metadata in search results.
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 #[serde(rename_all = "snake_case")]
