@@ -3,7 +3,10 @@
 //! These tools allow agent-driven configuration, listing, and lifecycle
 //! management of the upstream MCP servers that provide command capabilities.
 
-use crate::config::{load_config_from_path, load_raw_config_document_from_path};
+use crate::config::{
+    ClearField, ConfigureMode, McpConfigMutation, McpServerPatch, ReloadPolicy, apply_config_mutation, default_config_path,
+    load_raw_config_document_from_path,
+};
 use crate::server::schemas::{McpServerConfigureRequest, McpServerSetRunningRequest};
 use rmcp::model::ErrorData;
 use serde_json::{Map, Value};
@@ -18,87 +21,80 @@ pub(crate) async fn mcp_server_configure(
     plugin_engine: &Arc<crate::PluginEngine>,
     request: &McpServerConfigureRequest,
 ) -> Result<Value, ErrorData> {
-    let path = oatty_registry::default_config_path();
+    let path = default_config_path();
 
-    // Load current config (sync call)
-    let mut doc = match load_raw_config_document_from_path(&path) {
-        Ok(doc) => doc,
-        Err(e) => {
-            return Err(internal_error(format!("Failed to load config: {e}")));
-        }
-    };
-
-    // Determine if this is an add or edit
+    // Read the persisted document once to determine add-vs-edit mode and the
+    // effective enabled state so `connect` honors "disabled servers remain
+    // disconnected". The shared service re-reads under the operation guard.
+    let doc = load_raw_config_document_from_path(&path).map_err(|e| internal_error(format!("Failed to load config: {e}")))?;
     let existing = doc
         .get("mcpServers")
         .and_then(|v| v.as_object())
         .and_then(|servers| servers.get(&request.name))
         .cloned();
 
-    // Build or update the server config
-    let mut server_config = existing.clone().unwrap_or(Value::Object(Map::new()));
+    let mode = if existing.is_some() {
+        ConfigureMode::Edit
+    } else {
+        ConfigureMode::Add
+    };
+
+    let enabled = request.enabled.unwrap_or_else(|| {
+        existing
+            .as_ref()
+            .and_then(|v| v.get("disabled"))
+            .and_then(|v| v.as_bool())
+            .map(|disabled| !disabled)
+            .unwrap_or(true)
+    });
+    let connect = request.connect.unwrap_or(true) && enabled;
+
+    let mut patch = McpServerPatch::default();
+    patch.configuration.disabled = request.enabled.map(|enabled| !enabled);
+    patch.configuration.tags = request.tags.clone();
 
     match request.transport.as_str() {
         "stdio" => {
-            if let Some(cmd) = &request.command {
-                server_config["command"] = serde_json::json!(cmd);
-            }
-            if let Some(args) = &request.args {
-                server_config["args"] = serde_json::json!(args);
-            }
-            if let Some(obj) = server_config.as_object_mut() {
-                obj.remove("baseUrl");
-            }
+            patch.configuration.command = request.command.clone();
+            patch.configuration.args = request.args.clone();
+            patch.clear_fields = vec![ClearField::BaseUrl, ClearField::Headers, ClearField::Auth];
         }
         "http" => {
-            if let Some(url) = &request.base_url {
-                server_config["baseUrl"] = serde_json::json!(url);
-            }
-            if let Some(obj) = server_config.as_object_mut() {
-                obj.remove("command");
-                obj.remove("args");
-            }
+            patch.configuration.base_url = request.base_url.clone();
+            patch.clear_fields = vec![ClearField::Command, ClearField::Args, ClearField::Cwd, ClearField::Env];
         }
         other => {
             return Err(internal_error(format!("invalid transport type: {other}")));
         }
     }
 
-    if let Some(enabled) = request.enabled {
-        server_config["disabled"] = serde_json::json!(!enabled);
-    }
-    if let Some(tags) = &request.tags {
-        server_config["tags"] = serde_json::json!(tags);
-    }
+    let mutation = McpConfigMutation::ConfigureServer {
+        name: request.name.clone(),
+        patch,
+        mode,
+    };
+    let policy = ReloadPolicy::ConfigureTarget {
+        name: request.name.clone(),
+        connect,
+    };
 
-    // Save to config
-    let mcp_servers = doc.get("mcpServers").and_then(|v| v.as_object()).cloned().unwrap_or_default();
-    let mut mcp_servers = mcp_servers;
-    mcp_servers.insert(request.name.clone(), server_config.clone());
-    doc["mcpServers"] = serde_json::json!(mcp_servers);
-
-    // Write the JSON directly
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let content = serde_json::to_string_pretty(&doc).map_err(internal_error)?;
-    std::fs::write(&path, content).map_err(internal_error)?;
-
-    // Reload the engine config
-    let new_config = load_config_from_path(&path).map_err(internal_error)?;
-    plugin_engine.update_config(new_config).await.map_err(internal_error)?;
-
-    // If connect=true, start the server
-    let should_connect = request.connect.unwrap_or(true) && !server_config.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false);
-    if should_connect {
-        let _ = plugin_engine.start_plugin(&request.name).await;
-    }
+    let outcome = apply_config_mutation(Arc::clone(plugin_engine), path, mutation, policy)
+        .await
+        .map_err(|e| internal_error(e.to_string()))?;
 
     Ok(serde_json::json!({
-        "name": request.name,
-        "operation": if existing.is_some() { "updated" } else { "created" },
-        "persisted": true,
-        "runtime_applied": true,
+        "name": outcome.server_name,
+        "operation": outcome.operation,
+        "changed_fields": outcome.changed_fields,
+        "persisted": outcome.persisted,
+        "runtime_applied": outcome.runtime_applied,
+        "connection_attempted": outcome.connection_attempted,
+        "status": format!("{:?}", outcome.status).to_lowercase(),
+        "error": outcome.error.map(|e| serde_json::json!({
+            "error_code": format!("{:?}", e.error_code).to_lowercase(),
+            "stage": format!("{:?}", e.stage).to_lowercase(),
+            "next_step": e.next_step,
+        })),
     }))
 }
 
