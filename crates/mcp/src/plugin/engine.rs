@@ -749,6 +749,7 @@ impl PluginEngine {
             || old.base_url != new.base_url
             || old.env != new.env
             || old.headers != new.headers
+            || old.cwd != new.cwd
             || old.auth.is_some() != new.auth.is_some()
             || (old.auth.is_some()
                 && new.auth.is_some()
