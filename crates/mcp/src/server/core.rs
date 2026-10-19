@@ -1911,7 +1911,7 @@ mod tests {
                     "secret-host",
                     "secret-tag",
                 ] {
-                    assert!(!payload.contains(secret), "configure log leaked {secret}: {}", entry.message);
+                    assert!(!payload.contains(secret), "configure log leaked a request value");
                 }
             }
         }
