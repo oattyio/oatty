@@ -2,7 +2,7 @@
 
 use indexmap::{IndexMap, IndexSet};
 use oatty_types::{EnvSource, EnvVar};
-use oatty_util::InterpolationError;
+use oatty_util::{InterpolationError, determine_env_source};
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -127,7 +127,15 @@ where
             }
             EnvVarCollection::Map(map) => {
                 for (key, value) in map {
-                    set.insert(EnvVar::new(key, value, EnvSource::File));
+                    // Map entries have no source field. Preserve the usual File
+                    // classification for literals, but mark unresolved secret
+                    // and env references before interpolation replaces them.
+                    let source = match determine_env_source(&value) {
+                        EnvSource::Secret => EnvSource::Secret,
+                        EnvSource::Env => EnvSource::Env,
+                        _ => EnvSource::File,
+                    };
+                    set.insert(EnvVar::new(key, value, source));
                 }
             }
         }

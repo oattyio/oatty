@@ -622,6 +622,24 @@ impl PluginEngine {
         // Classify changes
         let delta = Self::classify_config_delta(&old_config.mcp_servers, &config.mcp_servers);
 
+        // Retire queued autostarts for every affected server before publishing
+        // the new configuration. A configure request also retires its target
+        // when the patch is a no-op or asks to leave it disconnected.
+        let mut affected: HashSet<&str> = delta
+            .added
+            .iter()
+            .chain(&delta.removed)
+            .chain(&delta.connection_changed)
+            .chain(&delta.metadata_only)
+            .map(String::as_str)
+            .collect();
+        if let crate::config::ReloadPolicy::ConfigureTarget { name, .. } = policy {
+            affected.insert(name);
+        }
+        for name in affected {
+            self.client_manager.increment_server_revision(name);
+        }
+
         // Apply the new config to the engine and gateway
         {
             let mut guard = self.config.write().await;
@@ -1892,6 +1910,36 @@ mod tests {
             assert!(spec.mcp().is_some_and(|m| m.plugin_name == "demo" && m.tool_name == "demo_info"));
         }
 
+        engine.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn configure_without_connect_retires_queued_autostart_for_unchanged_server() {
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert("demo".to_string(), make_server("demo", false, None));
+        let engine = PluginEngine::new(config.clone(), Arc::new(Mutex::new(CommandRegistry::default()))).unwrap();
+        let guard = engine.acquire_operation_guard().await;
+        let queued_revision = engine.client_manager.current_server_revision("demo");
+        let gateway = engine.client_manager.clone();
+        let queued_autostart = tokio::spawn(async move {
+            let _guard = gateway.acquire_operation_guard().await;
+            gateway.check_server_revision("demo", queued_revision)
+        });
+
+        engine
+            .update_config_under_guard(
+                config,
+                &crate::config::ReloadPolicy::ConfigureTarget {
+                    name: "demo".to_string(),
+                    connect: false,
+                },
+                &guard,
+            )
+            .await
+            .unwrap();
+        drop(guard);
+
+        assert!(!queued_autostart.await.unwrap());
         engine.stop().await.unwrap();
     }
 }
