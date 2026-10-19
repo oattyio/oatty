@@ -15,6 +15,7 @@ use oatty_util::tokenize_env;
 use serde_json::Value;
 
 use super::io::{load_config_from_path, load_raw_config_document_from_path};
+use super::model::McpHttpServerConfig;
 use super::mutation::{
     ConfigureServerMutation, ErrorCategory, ErrorStage, McpConfigMutation, McpConfigMutationError, McpConfigMutationOutcome, ReloadPolicy,
     SafeError, ServerStatus, apply_server_patch, deserialize_validated_candidate,
@@ -99,10 +100,22 @@ pub async fn apply_config_mutation(
                 .unwrap_or_default();
             (name, "remove".to_string(), changed_fields, document)
         }
-        other => {
-            return Err(McpConfigMutationError::ValidationFailed(format!(
-                "unsupported mutation variant: {other:?}"
-            )));
+        McpConfigMutation::SetHttpAutostart { auto_start } => {
+            let mut document = load_raw_config_document_from_path(&path)?;
+            let root = document.as_object_mut().ok_or(McpConfigMutationError::InvalidRootShape)?;
+            let default_http_server = serde_json::to_value(McpHttpServerConfig::default())
+                .map_err(|e| McpConfigMutationError::ValidationFailed(format!("failed to serialize HTTP server defaults: {e}")))?;
+            let http_server = root.entry("httpServer").or_insert(default_http_server);
+            let http_server = http_server
+                .as_object_mut()
+                .ok_or_else(|| McpConfigMutationError::ValidationFailed("httpServer must be an object".to_string()))?;
+            http_server.insert("autoStart".to_string(), Value::Bool(auto_start));
+            (
+                "httpServer".to_string(),
+                "setHttpAutostart".to_string(),
+                vec!["autoStart".to_string()],
+                document,
+            )
         }
     };
 
@@ -267,6 +280,90 @@ mod tests {
     use crate::config::{ConfigureMode, McpConfig, McpServer, McpServerPatch, load_config_from_path, load_raw_config_document_from_path};
     use oatty_registry::CommandRegistry;
     use std::sync::Mutex;
+
+    #[tokio::test]
+    async fn autostart_first_toggle_creates_default_document_for_either_value() {
+        for auto_start in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("mcp.json");
+            let engine = Arc::new(PluginEngine::new(McpConfig::default(), Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+
+            let outcome = apply_config_mutation(
+                Arc::clone(&engine),
+                path.clone(),
+                McpConfigMutation::SetHttpAutostart { auto_start },
+                ReloadPolicy::RestorePreviouslyRunning,
+            )
+            .await
+            .unwrap();
+
+            assert!(outcome.persisted);
+            assert_eq!(outcome.operation, "setHttpAutostart");
+            assert!(!outcome.connection_attempted);
+            let persisted = load_raw_config_document_from_path(&path).unwrap();
+            assert_eq!(persisted["httpServer"]["autoStart"], auto_start);
+            assert_eq!(persisted["httpServer"]["bindAddress"], "127.0.0.1:62889");
+            assert!(persisted["mcpServers"].as_object().unwrap().is_empty());
+            assert_eq!(engine.config_snapshot().await.http_server.auto_start, auto_start);
+        }
+    }
+
+    #[tokio::test]
+    async fn autostart_adds_missing_http_server_without_rewriting_other_fields() {
+        for auto_start in [true, false] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("mcp.json");
+            let original = serde_json::json!({
+                "mcpServers": {"disabled": {"command": "node", "disabled": true}},
+                "extension": {"preserve": [1, 2, 3]}
+            });
+            std::fs::write(&path, serde_json::to_vec(&original).unwrap()).unwrap();
+            let engine = Arc::new(
+                PluginEngine::new(
+                    load_config_from_path(&path).unwrap(),
+                    Arc::new(Mutex::new(CommandRegistry::default())),
+                )
+                .unwrap(),
+            );
+
+            apply_config_mutation(
+                engine,
+                path.clone(),
+                McpConfigMutation::SetHttpAutostart { auto_start },
+                ReloadPolicy::RestorePreviouslyRunning,
+            )
+            .await
+            .unwrap();
+
+            let persisted = load_raw_config_document_from_path(&path).unwrap();
+            assert_eq!(persisted["mcpServers"], original["mcpServers"]);
+            assert_eq!(persisted["extension"], original["extension"]);
+            assert_eq!(persisted["httpServer"]["autoStart"], auto_start);
+            assert_eq!(persisted["httpServer"]["bindAddress"], "127.0.0.1:62889");
+        }
+    }
+
+    #[tokio::test]
+    async fn autostart_rejects_invalid_existing_document_without_overwrite() {
+        for original in ["{bad json", r#"{"mcpServers":{},"httpServer":[]}"#] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("mcp.json");
+            std::fs::write(&path, original).unwrap();
+            let engine = Arc::new(PluginEngine::new(McpConfig::default(), Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+
+            assert!(
+                apply_config_mutation(
+                    engine,
+                    path.clone(),
+                    McpConfigMutation::SetHttpAutostart { auto_start: true },
+                    ReloadPolicy::RestorePreviouslyRunning,
+                )
+                .await
+                .is_err()
+            );
+            assert_eq!(std::fs::read_to_string(&path).unwrap(), original);
+        }
+    }
 
     #[tokio::test]
     async fn configure_adds_server_and_persists() {
