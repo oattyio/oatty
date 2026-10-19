@@ -215,11 +215,9 @@ impl PluginEngine {
 
                 {
                     let mut cache = tool_cache.lock().await;
-                    if tools.is_empty() {
-                        cache.remove(name);
-                    } else {
-                        cache.insert(name.clone(), Arc::clone(tools));
-                    }
+                    // An empty update is a known-empty snapshot, distinct from
+                    // a server whose tools have never been observed.
+                    cache.insert(name.clone(), Arc::clone(tools));
                 }
 
                 let auth_message = registry
@@ -288,11 +286,7 @@ impl PluginEngine {
 
             {
                 let mut cache = tool_cache.lock().await;
-                if server_snapshot.tools.is_empty() {
-                    cache.remove(&name);
-                } else {
-                    cache.insert(name.clone(), Arc::clone(&server_snapshot.tools));
-                }
+                cache.insert(name.clone(), Arc::clone(&server_snapshot.tools));
             }
 
             let auth_message = registry
@@ -573,6 +567,12 @@ impl PluginEngine {
     /// Return a cloned snapshot of the current MCP configuration.
     pub async fn config_snapshot(&self) -> McpConfig {
         self.config.read().await.clone()
+    }
+
+    /// Return listener-maintained metadata without refreshing upstream tools.
+    pub(crate) async fn cached_plugin_detail(&self, name: &str) -> Option<PluginDetail> {
+        let registry = self.plugin_registry.lock().await;
+        registry.as_ref().and_then(|registry| registry.get_plugin(name))
     }
 
     /// Get the lifecycle manager.
