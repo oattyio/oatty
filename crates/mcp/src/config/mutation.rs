@@ -89,8 +89,8 @@ pub struct McpAuthPatch {
     pub interactive: Option<bool>,
 }
 
-/// Complete patch for a single server including upsert, clear, and remove
-/// operations.
+/// Complete patch for a single server including upsert, clear, exact-set, and
+/// remove operations.
 #[derive(Debug, Clone, Default)]
 pub struct McpServerPatch {
     /// Scalar/map upserts.
@@ -101,6 +101,28 @@ pub struct McpServerPatch {
     pub remove_env: Vec<String>,
     /// HTTP header names to remove.
     pub remove_headers: Vec<String>,
+    /// Exact set of environment keys to retain.
+    ///
+    /// When `Some`, every persisted environment key not listed here is removed
+    /// after upserts and [`Self::remove_env`] have been applied. Keys listed
+    /// here that were neither upserted nor already persisted are not created.
+    /// Works for both map-shaped (`{KEY: VALUE}`) and array-shaped
+    /// (`[{key, value}]`) collections.
+    ///
+    /// Combining this field with [`ClearField::Env`] is a
+    /// [`McpConfigMutationError::PatchConflict`].
+    pub env_keys_exact: Option<Vec<String>>,
+    /// Exact set of HTTP header names to retain.
+    ///
+    /// When `Some`, every persisted header name not listed here is removed
+    /// after upserts and [`Self::remove_headers`] have been applied. Identity is
+    /// ASCII case-insensitive, matching the rest of the header contract. Keys
+    /// listed here that were neither upserted nor already persisted are not
+    /// created. Works for both map-shaped and array-shaped collections.
+    ///
+    /// Combining this field with [`ClearField::Headers`] is a
+    /// [`McpConfigMutationError::PatchConflict`].
+    pub header_keys_exact: Option<Vec<String>>,
 }
 
 /// Whether a configure operation adds a new server or edits an existing one.
@@ -110,6 +132,9 @@ pub enum ConfigureMode {
     Add,
     /// Edit an existing server; the name must already exist.
     Edit,
+    /// Derive add versus edit from the freshly read, guarded document: an
+    /// existing name is edited and a missing name is added.
+    Derive,
 }
 
 /// A mutation targeting the MCP configuration file.
@@ -259,10 +284,18 @@ pub enum McpConfigMutationError {
     SaveFailed(std::io::Error),
 
     /// Failed to reload configuration after saving.
+    ///
+    /// Invariant: the candidate document was already persisted before this
+    /// error is returned. Callers may therefore report partial success (the
+    /// configuration was saved but runtime loading failed).
     #[error("Failed to reload configuration after save: {0}")]
     RuntimeLoadFailed(String),
 
     /// Failed to apply configuration at runtime.
+    ///
+    /// Invariant: the candidate document was already persisted before this
+    /// error is returned. Callers may therefore report partial success (the
+    /// configuration was saved but runtime application failed).
     #[error("Failed to apply configuration at runtime: {0}")]
     RuntimeApplyFailed(String),
 }
@@ -275,6 +308,9 @@ pub enum ReloadPolicy {
     RestorePreviouslyRunning,
 
     /// Connect or disconnect the specified server according to `connect`.
+    ///
+    /// The shared mutation service treats `connect` as intent and clears it when
+    /// the resulting persisted server is disabled.
     ConfigureTarget {
         /// Target server name.
         name: String,
@@ -391,6 +427,14 @@ pub fn validate_patch_operations(patch: &McpServerPatch) -> Vec<String> {
         }
     }
 
+    // Clear collection + request an exact set for that collection.
+    if cleared.contains("env") && patch.env_keys_exact.is_some() {
+        conflicts.push("env + env_keys_exact".to_string());
+    }
+    if cleared.contains("headers") && patch.header_keys_exact.is_some() {
+        conflicts.push("headers + header_keys_exact".to_string());
+    }
+
     // Upsert + remove the same entry.
     if let Some(env) = &configuration.env {
         for key in &patch.remove_env {
@@ -457,9 +501,15 @@ pub(crate) fn apply_server_patch(document: &mut Value, mutation: &ConfigureServe
         .and_then(Value::as_object_mut)
         .ok_or(McpConfigMutationError::InvalidRootShape)?;
 
-    // Enforce add/edit mode before any mutation.
+    // Enforce add/edit mode before any mutation. `Derive` resolves against the
+    // guarded document the caller is currently mutating.
     let exists = mcp_servers.contains_key(&mutation.name);
-    match mutation.mode {
+    let mode = match mutation.mode {
+        ConfigureMode::Derive if exists => ConfigureMode::Edit,
+        ConfigureMode::Derive => ConfigureMode::Add,
+        explicit => explicit,
+    };
+    match mode {
         ConfigureMode::Add if exists => {
             return Err(McpConfigMutationError::ValidationFailed(format!(
                 "server '{}' already exists; use edit mode",
@@ -552,7 +602,17 @@ pub(crate) fn apply_server_patch(document: &mut Value, mutation: &ConfigureServe
         merge_auth(server, auth);
     }
 
-    // 4. Clear the selected server's diagnostic err.
+    // 4. Reduce collections to the caller's exact key sets (if requested). This
+    //    runs after upserts and per-key removals so the retained set reflects
+    //    the final values.
+    if let Some(keys) = &mutation.patch.env_keys_exact {
+        remove_keys_outside_exact_set(server, "env", keys, false);
+    }
+    if let Some(names) = &mutation.patch.header_keys_exact {
+        remove_keys_outside_exact_set(server, "headers", names, true);
+    }
+
+    // 5. Clear the selected server's diagnostic err.
     server.remove("err");
 
     // New servers may not have a persisted disabled value; default it to false
@@ -560,14 +620,14 @@ pub(crate) fn apply_server_patch(document: &mut Value, mutation: &ConfigureServe
     // an otherwise-optional flag.
     server.entry("disabled".to_string()).or_insert_with(|| Value::Bool(false));
 
-    // 5. Validate the selected entry under the stricter configure-tool transport
+    // 6. Validate the selected entry under the stricter configure-tool transport
     //    rules: exactly one of nonempty command or valid http/https baseUrl, with
     //    no incompatible leftovers from the other transport.
     let patched_server: McpServer = serde_json::from_value(server_value.clone())
         .map_err(|_| McpConfigMutationError::ValidationFailed(format!("server '{}' contains invalid field values", mutation.name)))?;
     validate_selected_server_transport(&patched_server, &mutation.name)?;
 
-    // 6. Commit the validated clone back to the document.
+    // 7. Commit the validated clone back to the document.
     mcp_servers.insert(mutation.name.clone(), server_value);
     Ok(())
 }
@@ -577,6 +637,51 @@ fn remove_auth_child(server: &mut serde_json::Map<String, Value>, child: &str) {
     if let Some(Value::Object(auth)) = server.get_mut("auth") {
         auth.remove(child);
     }
+}
+
+/// Removes every persisted key of `field` that is not in `exact`.
+///
+/// The removal is delegated to the existing env/header helpers so both map and
+/// array shapes keep their metadata handling and malformed rows still fail
+/// later candidate validation instead of being silently dropped.
+fn remove_keys_outside_exact_set(server: &mut serde_json::Map<String, Value>, field: &str, exact: &[String], case_insensitive: bool) {
+    let Some(collection) = server.get(field) else {
+        return;
+    };
+
+    let mut removals = Vec::new();
+    match collection {
+        Value::Object(map) => {
+            for key in map.keys() {
+                if !exact_set_contains(exact, key, case_insensitive) {
+                    removals.push(key.clone());
+                }
+            }
+        }
+        Value::Array(array) => {
+            for item in array {
+                if let Some(key) = item.get("key").and_then(Value::as_str)
+                    && !exact_set_contains(exact, key, case_insensitive)
+                {
+                    removals.push(key.to_string());
+                }
+            }
+        }
+        _ => return,
+    }
+
+    if field == "env" {
+        remove_env_entries(server, &removals);
+    } else {
+        remove_header_entries(server, &removals);
+    }
+}
+
+/// Returns whether `exact` contains `key`, honoring header case-folding.
+fn exact_set_contains(exact: &[String], key: &str, case_insensitive: bool) -> bool {
+    exact
+        .iter()
+        .any(|candidate| candidate == key || (case_insensitive && candidate.eq_ignore_ascii_case(key)))
 }
 
 /// Removes entries from the server's `env` collection, respecting both map and
@@ -1508,5 +1613,149 @@ mod tests {
         };
         let conflicts = validate_patch_operations(&patch);
         assert!(conflicts.iter().any(|c| c.contains("duplicate remove_env.KEY")));
+    }
+
+    #[test]
+    fn exact_env_keys_prune_map_shape_after_upsert() {
+        let mut document = serde_json::json!({
+            "mcpServers": {
+                "server": {
+                    "command": "node",
+                    "env": {"KEEP": "old", "DROP": "drop", "UPDATE": "old"},
+                    "disabled": false
+                }
+            }
+        });
+
+        let mut env = IndexMap::new();
+        env.insert("UPDATE".to_string(), "new".to_string());
+        env.insert("ADDED".to_string(), "added".to_string());
+        let patch = McpServerPatch {
+            configuration: McpServerConfigurationPatch {
+                env: Some(env),
+                ..Default::default()
+            },
+            env_keys_exact: Some(vec![
+                "KEEP".to_string(),
+                "UPDATE".to_string(),
+                "ADDED".to_string(),
+                "MISSING".to_string(),
+            ]),
+            ..Default::default()
+        };
+        apply_server_patch(&mut document, &configure_mutation("server", patch, ConfigureMode::Edit)).unwrap();
+
+        let env = document["mcpServers"]["server"]["env"].as_object().unwrap();
+        assert_eq!(env.len(), 3);
+        assert_eq!(env["KEEP"], "old");
+        assert_eq!(env["UPDATE"], "new");
+        assert_eq!(env["ADDED"], "added");
+        assert!(!env.contains_key("DROP"));
+        // Exact-set members that were never persisted are not created.
+        assert!(!env.contains_key("MISSING"));
+    }
+
+    #[test]
+    fn exact_header_keys_prune_array_shape_case_insensitively_and_preserve_metadata() {
+        let mut document = serde_json::json!({
+            "mcpServers": {
+                "server": {
+                    "baseUrl": "https://example.com",
+                    "headers": [
+                        {"key": "X-Keep", "value": "keep", "source": "Env", "effective": false},
+                        {"key": "X-Drop", "value": "drop", "source": "Secret"}
+                    ],
+                    "disabled": false
+                }
+            }
+        });
+
+        let patch = McpServerPatch {
+            header_keys_exact: Some(vec!["x-keep".to_string()]),
+            ..Default::default()
+        };
+        apply_server_patch(&mut document, &configure_mutation("server", patch, ConfigureMode::Edit)).unwrap();
+
+        let headers = document["mcpServers"]["server"]["headers"].as_array().unwrap();
+        assert_eq!(headers.len(), 1);
+        assert_eq!(headers[0]["key"], "X-Keep");
+        assert_eq!(headers[0]["value"], "keep");
+        assert_eq!(headers[0]["source"], "Env");
+        assert_eq!(headers[0]["effective"], false);
+    }
+
+    #[test]
+    fn exact_set_conflicts_with_clear_field() {
+        let patch = McpServerPatch {
+            clear_fields: vec![ClearField::Env, ClearField::Headers],
+            env_keys_exact: Some(Vec::new()),
+            header_keys_exact: Some(Vec::new()),
+            ..Default::default()
+        };
+        let conflicts = validate_patch_operations(&patch);
+        assert!(conflicts.contains(&"env + env_keys_exact".to_string()));
+        assert!(conflicts.contains(&"headers + header_keys_exact".to_string()));
+
+        let error = apply_server_patch(
+            &mut serde_json::json!({"mcpServers": {"server": {"command": "node"}}}),
+            &configure_mutation("server", patch, ConfigureMode::Edit),
+        )
+        .unwrap_err();
+        assert!(matches!(error, McpConfigMutationError::PatchConflict(_)));
+    }
+
+    #[test]
+    fn exact_set_matching_persisted_keys_is_no_op() {
+        let mut document = serde_json::json!({
+            "mcpServers": {
+                "server": {
+                    "command": "node",
+                    "env": {"A": "1", "B": "2"},
+                    "disabled": false
+                }
+            }
+        });
+        let original = document.clone();
+
+        let patch = McpServerPatch {
+            env_keys_exact: Some(vec!["A".to_string(), "B".to_string()]),
+            ..Default::default()
+        };
+        apply_server_patch(&mut document, &configure_mutation("server", patch, ConfigureMode::Edit)).unwrap();
+
+        assert_eq!(document, original);
+    }
+
+    #[test]
+    fn derive_mode_adds_missing_server() {
+        let mut document = serde_json::json!({"mcpServers": {}});
+        let patch = McpServerPatch {
+            configuration: McpServerConfigurationPatch {
+                command: Some("node".to_string()),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        apply_server_patch(&mut document, &configure_mutation("fresh", patch, ConfigureMode::Derive)).unwrap();
+
+        assert_eq!(document["mcpServers"]["fresh"]["command"], "node");
+    }
+
+    #[test]
+    fn derive_mode_edits_existing_server() {
+        let mut document = serde_json::json!({
+            "mcpServers": {"existing": {"command": "node", "disabled": false}}
+        });
+        let patch = McpServerPatch {
+            configuration: McpServerConfigurationPatch {
+                args: Some(vec!["--flag".to_string()]),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        apply_server_patch(&mut document, &configure_mutation("existing", patch, ConfigureMode::Derive)).unwrap();
+
+        assert_eq!(document["mcpServers"]["existing"]["args"], serde_json::json!(["--flag"]));
+        assert_eq!(document["mcpServers"]["existing"]["command"], "node");
     }
 }

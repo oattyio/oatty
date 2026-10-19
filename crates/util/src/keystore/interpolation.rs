@@ -64,8 +64,8 @@ pub fn tokenize_env(envs: &mut IndexSet<EnvVar>, name: &String) -> Result<(), In
 
 /// Interpolate a string value, replacing ${env:NAME} and ${secret:NAME} patterns.
 pub fn interpolate_string(value: &str) -> Result<String, InterpolationError> {
-    let env_regex = Regex::new(r"\$\{env:([\w+_-]*)}")?;
-    let secret_regex = Regex::new(r"\$\{secret:([\w+_-]*)}")?;
+    let env_regex = Regex::new(r"\$\{env:([\w.+-]*)}")?;
+    let secret_regex = Regex::new(r"\$\{secret:([\w.+-]*)}")?;
 
     let mut resolved_env = Vec::new();
     for cap in env_regex.captures_iter(value) {
@@ -208,6 +208,20 @@ mod tests {
             || {
                 let resolved = resolve_secret("INTERPOLATION_TEST_SECRET").expect("secret resolves from environment");
                 assert_eq!(resolved, "test-secret-value");
+            },
+        );
+    }
+
+    #[test]
+    fn interpolates_namespaced_secret_names_containing_dots() {
+        temp_env::with_vars(
+            [
+                (SECRETS_BACKEND_ENV_VAR, Some("env")),
+                ("server-auth.password", Some("namespaced-secret")),
+            ],
+            || {
+                let resolved = interpolate_string("${secret:server-auth.password}").expect("namespaced secret resolves");
+                assert_eq!(resolved, "namespaced-secret");
             },
         );
     }

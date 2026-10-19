@@ -5,7 +5,9 @@ use crate::server::catalog::{
 };
 use crate::server::http::McpHttpLogEntry;
 use crate::server::log_payload::{build_log_payload, build_parsed_response_payload};
-use crate::server::mcp_server_tools::{configure_request_log_projection, mcp_server_configure, mcp_server_set_running, mcp_servers_list};
+use crate::server::mcp_server_tools::{
+    configure_request_log_projection, mcp_server_configure, mcp_server_set_running, mcp_servers_list, set_running_request_log_projection,
+};
 use crate::server::schemas::{
     CatalogApplyPatchRequest, CatalogEditHeadersRequest, CatalogGetMaskedHeadersRequest, CatalogImportOpenApiRequest,
     CatalogPreviewImportRequest, CatalogRemoveRequest, CatalogSetBaseUrlRequest, CatalogSetEnabledRequest, CatalogValidateOpenApiRequest,
@@ -422,9 +424,9 @@ impl OattyMcpCore {
         description = "Start or stop a specific upstream MCP server. Input: name (server identifier), running (true to start, false to stop). Returns the new server status. Useful for recovering from connection failures or temporarily disabling servers."
     )]
     async fn mcp_server_set_running(&self, param: Parameters<McpServerSetRunningRequest>) -> Result<CallToolResult, ErrorData> {
-        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let request_payload = Some(set_running_request_log_projection(&param.0));
         let result = mcp_server_set_running(&self.services.plugin_engine, &param.0).await;
-        Ok(self.finalize_structured_tool_call("mcp_server_set_running", request_payload, result))
+        Ok(self.finalize_sensitive_structured_tool_call("mcp_server_set_running", request_payload, result))
     }
 
     #[tool(
@@ -1914,6 +1916,51 @@ mod tests {
                     assert!(!payload.contains(secret), "configure log leaked a request value");
                 }
             }
+        }
+    }
+
+    #[tokio::test]
+    async fn set_running_error_response_and_logs_omit_raw_failure_values() {
+        let command_registry = Arc::new(Mutex::new(CommandRegistry::default()));
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert(
+            "secret-server".into(),
+            crate::McpServer {
+                base_url: Some(url::Url::parse("http://127.0.0.1:1/secret-path?token=secret-token").unwrap()),
+                ..Default::default()
+            },
+        );
+        let engine = Arc::new(PluginEngine::new(config, Arc::clone(&command_registry)).unwrap());
+        engine.prepare_registry().await.unwrap();
+        let search_handle = oatty_registry::create_search_handle(Arc::clone(&command_registry));
+        let services = Arc::new(McpToolServices::new(command_registry, Arc::clone(&engine), search_handle));
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let core = OattyMcpCore::new(Some(sender), services);
+
+        let request = McpServerSetRunningRequest {
+            name: "secret-server".into(),
+            running: true,
+        };
+        let error = mcp_server_set_running(&engine, &request)
+            .await
+            .expect_err("connection to the closed local port must fail");
+        assert_eq!(error.data.as_ref().unwrap()["error_code"], "lifecycle_failed");
+
+        let response = core.finalize_sensitive_structured_tool_call(
+            "mcp_server_set_running",
+            Some(set_running_request_log_projection(&request)),
+            Err(error),
+        );
+        let serialized_response = serde_json::to_string(&response).unwrap();
+        assert!(!serialized_response.contains("secret-token"));
+        assert!(!serialized_response.contains("secret-path"));
+
+        for _ in 0..2 {
+            let entry = receiver.try_recv().expect("standard and parsed-response log entries");
+            let payload = entry.payload.unwrap().to_string();
+            assert!(!payload.contains("secret-server"), "set_running log leaked a server name");
+            assert!(!payload.contains("secret-token"), "set_running log leaked an interpolated URL");
+            assert!(!payload.contains("secret-path"), "set_running log leaked an interpolated URL");
         }
     }
 
