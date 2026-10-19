@@ -208,16 +208,8 @@ fn mask_server_config(config: &Map<String, Value>) -> Value {
                 if let Some(key) = obj.get("key") {
                     masked_header.insert("key".to_string(), key.clone());
                 }
-                if let Some(value) = obj.get("value") {
-                    if let Some(val_str) = value.as_str() {
-                        if val_str.len() > 8 {
-                            masked_header.insert("value".to_string(), serde_json::json!("***"));
-                        } else {
-                            masked_header.insert("value".to_string(), value.clone());
-                        }
-                    } else {
-                        masked_header.insert("value".to_string(), value.clone());
-                    }
+                if obj.get("value").is_some() {
+                    masked_header.insert("value".to_string(), serde_json::json!(MASKED));
                 }
                 masked_headers.push(serde_json::Value::Object(masked_header));
             }
