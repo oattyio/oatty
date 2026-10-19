@@ -1,240 +1,175 @@
 # Repository Guidelines
 
-- Always organize code by breaking it down into focused responsibilities, cleaning up code for readability. apply
-  idiomatic rust, expand abbreviations, add comprehensive doc blocks and breaking out long functions into shorter ones
-  as needed
+Keep changes focused, readable, and idiomatic. Preserve existing behavior and public APIs unless the task explicitly
+requires a change. Prefer small functions with one responsibility, descriptive names, typed errors, and tests for
+behavioral logic.
 
-## Project Structure & Module Organization
+## Workspace Layout
 
-- Workspace crates: `crates/cli` (binary), `crates/tui`, `crates/registry`, `crates/engine`, `crates/api`,
-  `crates/util`, `crates/mcp` (MCP plugin infrastructure).
-- Supporting assets: `schemas/` (schemas), `workflows/` (sample workflow YAML/JSON), `specs/` (as-built product specs).
-- Example layout:
-    - `crates/cli/src/main.rs` — CLI entrypoint
-    - `crates/tui/` — Ratatui UI
-    - `crates/registry/` — schema → command registry
-    - `crates/mcp/` — MCP plugin engine, client management, logging
-    - Tests live inline (`#[cfg(test)]`) or under each crate's `tests/`.
+- Rust workspace crates:
+  - `crates/cli` (`oatty`) — binary entrypoint, CLI routing, and TUI startup.
+  - `crates/tui` — Ratatui UI, focus/state management, and interactive views.
+  - `crates/registry` — runtime catalog and workflow loading.
+  - `crates/registry-gen` — OpenAPI-to-registry manifest generation.
+  - `crates/engine` — workflow execution and value-provider logic.
+  - `crates/api` — HTTP execution helpers.
+  - `crates/mcp` — MCP server, plugin runtime, clients, and tool routing.
+  - `crates/util` — shared redaction, schema, storage, and formatting utilities.
+  - `crates/types` — shared domain, message, and effect types.
+- Supporting areas: `schemas/` for OpenAPI samples, `specs/` for as-built specifications, `assets/` for media,
+  `scripts/` for development/release utilities, and `oatty.io/` for the static documentation website.
+- Runtime workflows are loaded from `~/.config/oatty/workflows` or `REGISTRY_WORKFLOWS_PATH`; there is no required root
+  `workflows/` directory.
+- Tests live inline under `#[cfg(test)]` or in `crates/<name>/tests/`.
+- See `ARCHITECTURE.md` for the current system overview and crate relationships.
 
 ## Build, Test, and Development Commands
 
-- Build all: `cargo build --workspace` — compiles every crate.
-- Run CLI: `cargo run -p oatty -- <group> <command> [flags]`.
-- TUI mode: `cargo run -p oatty` — launches Ratatui UI, or run installed binary `oatty`.
-- Tests: `cargo test --workspace` — run unit/integration tests.
-- Single test: `cargo test --workspace <test_name>` — run specific test function.
-- Single crate tests: `cargo test -p <crate_name>` — run tests for specific crate.
-- Lint: `cargo clippy --workspace -- -D warnings` — fail on warnings.
-- Format: `cargo fmt --all` — apply repo `rustfmt` settings.
-- Helpful env: `OATTY_LOG=debug` (stderr logs are silenced during TUI),
-  `MCP_CONFIG_PATH=~/.config/oatty/mcp.json`.
+- Build like CI: `cargo build --workspace --locked --all-targets`.
+- Fast compile check: `cargo check --workspace`.
+- Launch the TUI: `cargo run -p oatty`.
+- Run a CLI command: `cargo run -p oatty -- <group> <command> [flags]`.
+- Test the workspace: `cargo test --workspace --locked`.
+- Run one test: `cargo test --workspace --locked <test_name>`.
+- Test one crate: `cargo test -p <package_name> --locked`.
+- Lint like CI: `cargo clippy --workspace --all-targets -- -D warnings`.
+- Check formatting: `cargo fmt --all -- --check`; apply formatting with `cargo fmt --all`.
+- Build docs: `cargo doc --workspace --no-deps`.
+- Build/check the website: `npm --prefix oatty.io run build` and `npm --prefix oatty.io run check:static`.
+- Test the website: `npm --prefix oatty.io run test` (runs the static-site verifier tests and script tests).
 
-## Coding Style & Naming Conventions
+Useful environment variables include `OATTY_LOG=error|warn|info|debug|trace`, `TUI_THEME`, `MCP_CONFIG_PATH`,
+`REGISTRY_CONFIG_PATH`, `REGISTRY_CATALOGS_PATH`, and `REGISTRY_WORKFLOWS_PATH`.
 
-- Edition: Rust 2024; indent 4 spaces; max width 140 (see `rustfmt.toml`).
-- Naming: modules/files `snake_case`; types/enums `PascalCase`; functions/vars `snake_case`, do not abbreviate;
-  constants `SCREAMING_SNAKE_CASE`.
-- Errors: apps use `anyhow::Result`; libraries prefer `thiserror`.
-- Imports: Group std imports first, then external crates, then internal modules. Use `use` statements at file top.
-- Keep diffs minimal; run `cargo fmt` and fix all `clippy` issues before pushing.
+## Code Search and Structural Matching
 
-## Testing Guidelines
+- Prefer `ast-grep` when a search depends on syntax: calls, method chains, implementations, control-flow shapes, or
+  other structural patterns. For Rust, start with `ast-grep --lang rust -p '<pattern>'` and use metavariables such as
+  `$EXPRESSION` and `$$$ARGUMENTS`.
+- Use `rg` or `rg --files` for literal text, regular expressions, filenames, configuration, documentation, logs, and
+  initial discovery when the desired syntax shape is unknown.
+- Inspect matches before applying an `ast-grep` rewrite, scope transformations narrowly, and review the resulting diff.
+  Use `ast-grep --help` for relational rules, constraints, and advanced rewrites.
 
-- Unit tests inline with code: `#[cfg(test)] mod tests { … }`.
-- Integration tests under `crates/<name>/tests/` when needed.
-- Async tests: `#[tokio::test]` where appropriate.
-- Single test: `cargo test --workspace <test_name>` — run specific test function.
-- Single crate tests: `cargo test -p <crate_name>` — run tests for specific crate.
-- Ensure deterministic output; run `cargo test --workspace` locally.
+## Task Planning and Sub-Agent Delegation
 
-## Commit & Pull Request Guidelines
+Use delegation to keep the primary assistant's context focused, parallelize independent investigation, and obtain
+independent implementation, testing, or review perspectives. Delegation is proportional to the task: handle small,
+tightly coupled changes directly, and use sub-agents when work can be separated by responsibility or file ownership.
+Plans should identify useful delegation boundaries, dependencies, shared-file risks, and acceptance evidence without
+requiring a fixed number of agents, fixed roles, or a prescribed sequence.
 
-- Commits: Conventional Commits (e.g., `feat:`, `fix:`, `refactor:`). Match recent `feat:` usage.
-- PRs include: clear summary, linked issues, rationale; before/after screenshots or terminal output for TUI/CLI;
-  validation steps (exact build/run/test commands).
-- Checklist: `cargo fmt` + `clippy` clean; no stray `dbg!`/`println!`.
+The orchestrator remains accountable for the complete result. It must:
 
-## Security & Configuration Tips
+- read the complete request, plan, and applicable repository instructions itself;
+- inspect the working tree and preserve unrelated user changes;
+- define scope, invariants, public contracts, completion criteria, and validation expectations before delegating;
+- give each agent a bounded responsibility, explicit file access, and permission or prohibition to edit;
+- avoid concurrent edits to the same file and sequence dependent work when agents share a worktree;
+- independently inspect agent findings, edits, and the combined diff rather than accepting completion claims;
+- resolve conflicts between implementation choices, test expectations, and review findings;
+- perform or confirm final validation and report results, residual risks, and pre-existing failures.
 
-- Redaction utilities mask sensitive values in logs; still avoid pasting tokens.
-- Network via `reqwest` + TLS; set `OATTY_LOG=error|warn|info|debug|trace` for diagnostics (stderr logs are silenced
-  during TUI).
-- MCP plugins: Use `${secret:NAME}` interpolation for sensitive values; secrets stored in OS keychain via `keyring-rs`.
-- MCP config: Located at `~/.config/oatty/mcp.json`; supports stdio and HTTP/SSE transports.
+Do not delegate interpretation of `AGENTS.md`, final scope decisions, destructive Git operations, or final acceptance.
+Keep the task tree shallow and auditable; sub-agents should not create further agents unless the plan explicitly calls
+for deeper delegation and the orchestrator retains clear ownership.
 
-## Architecture Overview
+Every delegated task should provide the smallest context packet that allows independent work:
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for a full overview of crates, command/registry design, ValueProviders, execution
-flow, TUI UX, and security/caching.
+```text
+Objective and completion criteria:
+Allowed files and edit permissions:
+Relevant reference files and repository instructions:
+Behavioral invariants and public contracts:
+Known baseline behavior or failures:
+Required validation:
+Explicit non-goals:
+Expected handoff:
+```
 
-## TUI Components
+Keep assignments focused and avoid asking an agent to rediscover the whole architecture. Agents must read the relevant
+files before editing, inspect affected call sites, preserve contracts, avoid unrelated cleanup, and never weaken a test
+merely to make it pass. A handoff should list inspected or modified files, decisions, commands and results, findings,
+and unresolved concerns. Review findings should be ordered by severity and include exact locations, triggering
+conditions, and minimal remedies; avoid speculative style-only feedback.
 
-- **Location:** `crates/tui/src/ui/components/` with one folder per feature (e.g., `palette/`, `table/`, `logs/`,
-  `browser/`, `help/`, `pagination/`). Each submodule typically has `mod.rs`, a main component file (e.g.,
-  `palette.rs`), and an optional `state.rs` plus helpers.
-- **Trait:** All renderable pieces implement `ui::components::component::Component`, which defines `init()`,
-  `handle_events()`, `handle_key_events()`, `handle_mouse_events()`, `update()`, and `render(frame, area, app)`. Most
-  components implement `handle_key_events` and `render` and mutate local state under `app.*` directly; cross-cutting
-  actions go through `app.update(Msg)` and return `Vec<Effect>`.
-- **State:** App-level owns state structs (e.g., `PaletteState`, `BrowserState`, `TableState`) in `app::App`. Components
-  are thin, mostly stateless render/controllers that read/write `app.*`. Put UI-specific state in `state.rs` under each
-  component folder.
-    - State ownership guideline: Top-level components (palette, browser, logs, help, table) keep their `*State` on
-      `app::App` so other parts of the UI can coordinate. Nested/leaf subcomponents (e.g., `PaginationComponent` inside
-      the table) may encapsulate their own `*State` privately and be composed by the parent component.
-- **Shared views:** Complex renderers that need their own widget state but no business data live in
-  `ui/components/common/`. Controllers (the structs implementing `Component`) pass explicit state references into these
-  helpers—e.g., `ResultsTableView::render_results(frame, area, &app.table, focused, theme)`. This keeps rendering
-  reusable across multiple instances of the same primary UI while the controller decides which slice of `App` state to
-  expose.
-- **Focus:** Use `rat_focus::FocusFlag` per focusable area (e.g., `browser.search_flag`, `table.grid_f`). Build focus
-  rings via `FocusBuilder` to cycle focus on Tab/BackTab. Focus affects styling through theme helpers.
-- **Theme:** Use `ui::theme::helpers` (`th::block`, `panel_style`, `selection_style`) and `Theme::border_style(focused)`
-  instead of raw styles to keep a consistent look.
-- **Integration:** Components are constructed in `crates/tui/src/lib.rs` and rendered from `ui/main.rs`. Key input
-  routing also lives in `crates/tui/src/lib.rs` (`handle_key`) and delegates to the focused/visible component.
+Parallelize read-only investigation and edits to disjoint files. Re-read current contents before integrating advice or
+patches because another agent may have changed the shared worktree. When delegation is unavailable or not worthwhile,
+the primary assistant should still keep implementation, verification, and review as distinct responsibilities. If work
+cannot proceed without guessing about scope, contracts, ownership, or overlapping changes, stop and report the exact
+location, conflicting invariant, and smallest viable options.
 
-**Create A New Component**
+## Rust Style and Documentation
 
-- **Scaffold:**
-    - Add `crates/tui/src/ui/components/<name>/` with `mod.rs`, `<name>.rs`, and optional `state.rs`/helpers.
-    - Export from `crates/tui/src/ui/components/mod.rs` and re-export types as needed (
-      `pub use <name>::NameComponent;`).
-- **State:**
-    - Define a `NameState` in `state.rs` for UI data and focus flags.
-    - Derive/implement `Default` and add convenience selectors/reducers (getters and `reduce_*`/`apply_*` methods) to
-      keep logic testable.
-- **Component:**
-    - Implement `Component` for `NameComponent` in `<name>.rs`.
-    - Prefer local UI mutations on `app.<feature>`; for global actions use `effects.extend(app.update(Msg::...))` and
-      return the `Vec<Effect>`.
-    - Handle focus-specific keys inside the component, using `FocusFlag`s on your state for routing (see
-      `BrowserComponent::handle_*_keys`).
-- **Rendering:**
-    - Lay out the area with `ratatui::layout::Layout`. Wrap sections in `th::block(theme, title, focused)` where
-      appropriate.
-    - Read styles from `app.ctx.theme`; avoid hard-coded colors.
-    - Manage the cursor with `frame.set_cursor_position((x, y))` using character counts, not bytes (see
-      `PaletteComponent::position_cursor`).
-- **Wire-up:**
-    - Instantiate your component in `crates/tui/src/lib.rs` alongside others.
-    - Render it from `ui/main.rs` in the right layout slot.
-    - Route keys in `handle_key` (in `crates/tui/src/lib.rs`) by delegating to `component.handle_key_events(app, key)`
-      when your component is visible/focused.
-- **Effects & Commands:**
-    - Components return `Vec<app::Effect>`. The runtime maps these via `cmd::from_effects` and `cmd::run_cmds`.
-    - Use `app.update(Msg)` for state transitions that may produce effects; only perform side-effects via returned
-      `Effect`s.
-- **Modal Pattern:**
-    - For overlays, clear the area with `widgets::Clear` and use a centered rect (`ui::utils::centered_rect`). See
-      `HelpComponent`, `BrowserComponent`, and `TableComponent` for examples.
-- **Pagination Pattern:**
-    - If your view shows pageable API data, compose `PaginationComponent` like `TableComponent` does and expose focus
-      items via `FocusFlag`s for Tab/BackTab cycling.
+- The workspace uses Rust 2024 with a minimum Rust version of 1.93.0. Use four-space indentation and the 140-column
+  limit in `rustfmt.toml`.
+- Follow Rust naming conventions. Prefer clear, descriptive names over new abbreviations, while retaining established
+  domain and API names such as `MCP`, `TUI`, `Msg`, and `ctx` when consistency requires them.
+- Group imports as standard library, external crates, then internal modules; keep `use` statements at module scope
+  except where a narrower scope materially improves clarity.
+- Use `anyhow` at application/orchestration boundaries and `thiserror` for reusable typed errors. Follow the surrounding
+  crate's established public error contract.
+- Add module documentation and document public APIs with their purpose, important arguments, return values, errors,
+  invariants, and side effects. Include examples when they clarify non-obvious usage; do not pad trivial private helpers.
+- Extract helpers when a function mixes responsibilities, has deep nesting, or grows beyond roughly 30–50 lines.
+  Keep parameters focused and return types explicit.
+- Comments should explain business rules or non-obvious decisions, not restate the code. Do not leave stray `dbg!` or
+  diagnostic `println!` calls.
 
-## Design Conventions
+## TUI Architecture and Components
 
-- **Local-first updates:** UI interactions update `app.<feature>` state directly; reserve `Msg` + `Effect` for
-  cross-feature actions (open/close modals, run, copy, pagination fetch).
-- **Focus-normalization:** Provide a `normalize_focus()` on state to ensure a valid initial focus when made visible (see
-  `BrowserState::normalize_focus`).
-- **Performance:** Precompute expensive view models in state reducers (`apply_result_json` builds table rows/columns
-  once), then keep `render()` side-effect free except drawing.
-- **Security:** Redact sensitive values before display/copy (`oatty_util::redact_sensitive`). This is enforced in logs
-  and detail views; reuse that pattern for new components.
+- Components live in `crates/tui/src/ui/components/`. Feature folders include `palette`, `browser`, `results`, `logs`,
+  `library`, `plugins`, `workflows`, `mcp_server`, `theme_picker`, and `help`; reusable leaf views live in `common`.
+- A feature usually contains `mod.rs`, `<name>_component.rs`, and optional `state.rs`, nested components, or helpers.
+- Renderable controllers implement `ui::components::component::Component`. The current lifecycle surface includes
+  `handle_message`, key/mouse handlers, `render`, `get_hint_spans`, `get_preferred_layout`, and route enter/exit hooks.
+- `App` owns cross-feature state such as `PaletteState`, `BrowserState`, `ResultsTableState`, `LogsState`, `PluginsState`,
+  and `WorkflowState`. Nested/leaf state may remain private to its parent component.
+- Prefer direct `app.<feature>` mutation for local UI interactions. Use `App::update(&Msg)` for cross-feature transitions
+  and return `Vec<Effect>` for side effects. `Msg` and `Effect` are defined in `oatty_types`; the runtime executes effects
+  through `cmd::run_from_effects` and `cmd::run_cmds`.
+- Top-level composition and modal routing live in `ui/main_component.rs`; terminal setup, event routing, rendering, and
+  effect execution live in `ui/runtime.rs`.
+- Build focus rings with `rat_focus::FocusFlag`, `FocusBuilder`, and `HasFocus`. Route keys only to the active/focused
+  component and ensure newly visible views receive a valid focus target.
+- Use `ui::theme::theme_helpers` and `Theme` role methods rather than hard-coded colors. Compose layouts with
+  `ratatui::layout::Layout`; use `ui::utils::centered_rect` for centered overlays and character counts for cursor
+  placement.
+- Keep `render` limited to drawing, cursor placement, and render-cache bookkeeping. Precompute expensive view models in
+  state reducers such as `ResultsTableState::apply_result_json`.
+- Shared renderers receive explicit state references—for example, `ResultsTableView::render_results` operates on a
+  `ResultsTableState` selected by its controller.
 
-## Testing Tips
+When adding a component, export it from `ui/components/mod.rs`, add its state to `App` only when other features must
+coordinate with it, compose it in `ui/main_component.rs`, and wire event/effect handling through the existing runtime.
+For overlays, reuse the existing modal routing and shared modal/view helpers.
 
-- **Unit tests:** Co-locate simple reducers/selectors under `#[cfg(test)]` in `state.rs` or the component module. Favor
-  pure functions for parsing/formatting.
-- **Manual checks:** Run `cargo run -p oatty` (or `oatty` if installed) and verify focus, key handling, and styling
-  in a small terminal. Use `OATTY_LOG=debug` to surface useful info.
-- **CI hygiene:** `cargo fmt --all`, `cargo clippy --workspace -- -D warnings`, and `cargo test --workspace` must be
-  clean.
-- **Single test execution:** Use `cargo test --workspace <test_name>` to run specific tests during development.
+## Security and Runtime Configuration
 
-## General Use Instructions for AI Assistants
+- Redact sensitive values before logging, displaying, persisting, or copying them. Reuse
+  `oatty_util::redact_sensitive` and the existing secret-detection helpers.
+- Use `${secret:NAME}` for keychain-backed values and `${env:NAME}` for environment-backed configuration. Secrets use
+  the OS keychain through `keyring-rs` unless the configured backend explicitly selects environment variables.
+- MCP configuration defaults to `~/.config/oatty/mcp.json` and supports stdio and Streamable HTTP transports.
+- Network access uses `reqwest` with TLS. Never commit tokens, credentials, private endpoints, or raw sensitive logs.
 
-When working on this codebase, follow these guidelines to ensure consistent, high-quality code:
+## Testing and Change Validation
 
-### Code Organization & Refactoring
+- Co-locate unit tests with pure reducers, parsers, formatters, and other business logic. Use integration tests for
+  cross-crate behavior and `#[tokio::test]` for async paths.
+- Keep tests deterministic. Add coverage for behavior changes and regression fixes.
+- Manually exercise affected TUI focus, keyboard, mouse, layout, and styling behavior in a small terminal when UI code
+  changes. Use `OATTY_LOG=debug` for diagnostics; normal TUI operation should not write uncontrolled output to the
+  alternate screen.
+- Before handing off code, run formatting, targeted tests, relevant crate/workspace tests, and Clippy in proportion to
+  the change. Full CI validation is `cargo build --workspace --locked --all-targets`, `cargo test --workspace --locked`,
+  `cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --all -- --check`, and
+  `cargo doc --workspace --no-deps`.
 
-- **Break down long functions**: Functions over 50 lines should be decomposed into smaller, focused helper functions
-- **Expand abbreviations**: Use full descriptive names instead of abbreviations (e.g., `ctx` → `context`, `msg` →
-  `message`, `out` → `outcome`)
-- **Add comprehensive documentation**: Every public function, struct, and enum should have detailed doc blocks
-  explaining purpose, arguments, return values, and examples
-- **Apply idiomatic Rust**: Follow Rust best practices, use proper error handling, and leverage Rust's type system
-  effectively
-- **Single responsibility principle**: Each function should have one clear purpose and responsibility
+## Commits and Pull Requests
 
-### Naming Conventions
-
-- **Variables**: Use descriptive names that explain intent (e.g., `execution_outcome` instead of `out`,
-  `selected_command_spec` instead of `spec`)
-- **Functions**: Use verb-noun patterns for clarity (e.g., `handle_execution_completion`,
-  `process_general_execution_result`)
-- **Constants**: Use `SCREAMING_SNAKE_CASE` with descriptive names (e.g., `MAX_LOG_ENTRIES`)
-- **Types**: Use `PascalCase` with clear, descriptive names
-- **Modules**: Use `snake_case` with descriptive names
-
-### Documentation Standards
-
-- **Module-level docs**: Start each module with a comprehensive doc block explaining its purpose and responsibilities
-- **Function docs**: Include purpose, arguments, return values, examples, and any side effects
-- **Struct/Enum docs**: Explain the purpose, usage patterns, and relationships to other types
-- **Inline comments**: Add comments for complex logic, business rules, and non-obvious decisions
-- **Examples**: Provide usage examples in doc blocks where helpful
-
-### Function Extraction Guidelines
-
-- **Extract when**: Functions exceed 30-50 lines, have multiple responsibilities, or contain complex nested logic
-- **Naming**: Use descriptive names that clearly indicate the function's purpose
-- **Parameters**: Keep parameter lists focused and use descriptive names
-- **Return values**: Make return types clear and well-documented
-- **Error handling**: Use proper Rust error handling patterns (`Result<T, E>`, `Option<T>`)
-
-### Code Quality Checklist
-
-Before submitting changes, ensure:
-
-- [ ] All functions have comprehensive documentation
-- [ ] Abbreviations have been expanded to full descriptive names
-- [ ] Long functions have been broken down into smaller, focused functions
-- [ ] Variable names are descriptive and self-documenting
-- [ ] Code follows idiomatic Rust patterns
-- [ ] All linting errors have been resolved (`cargo clippy --workspace -- -D warnings`)
-- [ ] Code is properly formatted (`cargo fmt --all`)
-- [ ] All tests pass (`cargo test --workspace`)
-
-### Refactoring Process
-
-1. **Read and understand** the existing code structure and purpose
-2. **Identify** areas for improvement (long functions, abbreviations, missing docs)
-3. **Plan** the refactoring approach (what to extract, how to name things)
-4. **Implement** changes incrementally, testing after each major change
-5. **Verify** that functionality remains intact and code quality improves
-6. **Document** any architectural decisions or patterns established
-
-### Common Patterns to Apply
-
-- **State management**: Use clear state structs with descriptive field names
-- **Event handling**: Break down complex event handlers into focused methods
-- **Rendering**: Separate rendering logic into focused, reusable functions
-- **Error handling**: Use descriptive error types and proper error propagation
-- **Resource management**: Use appropriate Rust patterns for cleanup and resource management
-
-### Testing Considerations
-
-- **Unit tests**: Add tests for extracted helper functions when they contain business logic
-- **Integration tests**: Ensure refactored code still works correctly in the broader system
-- **Manual testing**: Test UI changes manually to ensure behavior is preserved
-- **Performance**: Verify that refactoring doesn't introduce performance regressions
-- **Single test execution**: Use `cargo test --workspace <test_name>` to run specific tests during development
-
-### Communication
-
-- **Explain changes**: Document why changes were made and what benefits they provide
-- **Preserve functionality**: Ensure that refactoring doesn't change external behavior
-- **Maintain compatibility**: Keep public APIs stable unless explicitly changing them
-- **Follow conventions**: Adhere to existing code patterns and architectural decisions
+- Use Conventional Commit prefixes such as `feat:`, `fix:`, `refactor:`, `chore:`, and `docs:`.
+- Keep diffs focused and avoid unrelated cleanup. Explain the rationale and any architectural decision; preserve
+  compatibility unless a breaking change is explicit.
+- Pull requests should include a clear summary, linked issues when applicable, exact validation commands, and terminal
+  output or before/after screenshots for user-visible CLI/TUI changes.
