@@ -351,7 +351,7 @@ mod tests {
             "secret-user",
             "secret-password",
         ] {
-            assert!(!serialized.contains(secret), "masked inventory leaked {secret}");
+            assert!(!serialized.contains(secret), "masked inventory leaked a credential");
         }
         assert_eq!(masked["connection_origin"], "https://example.com:8443");
         assert_eq!(masked["argument_count"], 1);
