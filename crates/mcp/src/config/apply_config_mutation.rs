@@ -9,9 +9,11 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use indexmap::IndexSet;
+use oatty_types::{EnvSource, EnvVar};
+use oatty_util::tokenize_env;
 use serde_json::Value;
 
-use super::interpolation::tokenize_config;
 use super::io::{load_config_from_path, load_raw_config_document_from_path};
 use super::mutation::{
     ConfigureServerMutation, ErrorCategory, ErrorStage, McpConfigMutation, McpConfigMutationError, McpConfigMutationOutcome, ReloadPolicy,
@@ -109,13 +111,9 @@ pub async fn apply_config_mutation(
     let mut document = document;
     deserialize_validated_candidate(document.clone())?;
 
-    // Tokenize any secret/env values before persisting so credentials are not
-    // written to disk in clear text.
-    let mut candidate = deserialize_validated_candidate(document.clone())?;
-    tokenize_config(&mut candidate)
-        .map_err(|e| McpConfigMutationError::ValidationFailed(format!("failed to tokenize configuration: {e}")))?;
-    document = serde_json::to_value(candidate)
-        .map_err(|e| McpConfigMutationError::ValidationFailed(format!("failed to serialize tokenized configuration: {e}")))?;
+    // Tokenize credential values in place. Serializing the typed candidate
+    // would discard root extensions and rewrite existing env/header shapes.
+    tokenize_document_values(&mut document)?;
 
     persist_document(&path, &document)?;
 
@@ -168,6 +166,66 @@ pub async fn apply_config_mutation(
     })
 }
 
+/// Tokenize env and header values without rewriting the unresolved document.
+fn tokenize_document_values(document: &mut Value) -> Result<(), McpConfigMutationError> {
+    let servers = document
+        .get_mut("mcpServers")
+        .and_then(Value::as_object_mut)
+        .ok_or(McpConfigMutationError::InvalidRootShape)?;
+    for (name, server) in servers {
+        let server = server.as_object_mut().ok_or(McpConfigMutationError::InvalidRootShape)?;
+        for field in ["env", "headers"] {
+            let Some(collection) = server.get_mut(field) else {
+                continue;
+            };
+            if let Some(entries) = collection.as_object_mut() {
+                for (key, value) in entries {
+                    let raw = value.as_str().ok_or(McpConfigMutationError::InvalidRootShape)?;
+                    *value = Value::String(tokenize_value(name, key, raw)?.value);
+                }
+            } else if let Some(entries) = collection.as_array_mut() {
+                for entry in entries {
+                    let item = entry.as_object_mut().ok_or(McpConfigMutationError::InvalidRootShape)?;
+                    let key = item
+                        .get("key")
+                        .and_then(Value::as_str)
+                        .ok_or(McpConfigMutationError::InvalidRootShape)?;
+                    let raw = item
+                        .get("value")
+                        .and_then(Value::as_str)
+                        .ok_or(McpConfigMutationError::InvalidRootShape)?;
+                    let tokenized = tokenize_value(name, key, raw)?;
+                    let update_source = tokenized.value != raw || matches!(tokenized.source, EnvSource::Secret | EnvSource::Env);
+                    item.insert("value".to_string(), Value::String(tokenized.value));
+                    if update_source {
+                        item.insert(
+                            "source".to_string(),
+                            serde_json::to_value(tokenized.source).expect("EnvSource is serializable"),
+                        );
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Apply the same credential policy as `save_config_to_path` to one raw value.
+fn tokenize_value(name: &str, key: &str, raw: &str) -> Result<EnvVar, McpConfigMutationError> {
+    // References already name their storage source; sending them to tokenize_env
+    // would store the placeholder itself as a new secret in keychain mode.
+    if raw.contains("${secret:") {
+        return Ok(EnvVar::new(key.to_string(), raw.to_string(), EnvSource::Secret));
+    }
+    if raw.contains("${env:") {
+        return Ok(EnvVar::new(key.to_string(), raw.to_string(), EnvSource::Env));
+    }
+    let mut values = IndexSet::from([EnvVar::new(key.to_string(), raw.to_string(), EnvSource::File)]);
+    tokenize_env(&mut values, &name.to_string())
+        .map_err(|e| McpConfigMutationError::ValidationFailed(format!("failed to tokenize configuration: {e}")))?;
+    Ok(values.into_iter().next().expect("singleton env set"))
+}
+
 /// Serialize and write the unresolved document, creating parent directories.
 fn persist_document(path: &PathBuf, document: &Value) -> Result<(), McpConfigMutationError> {
     if let Some(parent) = path.parent() {
@@ -206,7 +264,7 @@ fn diff_server_fields(old: Option<&Value>, new: Option<&Value>) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::{ConfigureMode, McpConfig, McpServer, McpServerPatch, load_raw_config_document_from_path};
+    use crate::config::{ConfigureMode, McpConfig, McpServer, McpServerPatch, load_config_from_path, load_raw_config_document_from_path};
     use oatty_registry::CommandRegistry;
     use std::sync::Mutex;
 
@@ -244,6 +302,105 @@ mod tests {
 
         let persisted = load_raw_config_document_from_path(&path).unwrap();
         assert_eq!(persisted["mcpServers"]["demo"]["command"], "node");
+    }
+
+    #[tokio::test]
+    async fn configure_preserves_unrelated_raw_fields_and_collection_shapes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        let original = serde_json::json!({
+            "mcpServers": {
+                "target": {"command": "node", "disabled": false, "env": {"PLAIN": "value"}},
+                "other": {
+                    "command": "node",
+                    "disabled": false,
+                    "headers": [{"key": "X-Keep", "value": "plain", "source": "File", "effective": false}]
+                }
+            },
+            "httpServer": {"autoStart": false, "bindAddress": "127.0.0.1:62889"},
+            "extension": {"keep": true}
+        });
+        std::fs::write(&path, serde_json::to_string(&original).unwrap()).unwrap();
+        let config: McpConfig = serde_json::from_value(original.clone()).unwrap();
+        let engine = Arc::new(PluginEngine::new(config, Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+
+        let mut patch = McpServerPatch::default();
+        patch.configuration.tags = Some(vec!["updated".to_string()]);
+        apply_config_mutation(
+            engine,
+            path.clone(),
+            McpConfigMutation::ConfigureServer {
+                name: "target".to_string(),
+                patch,
+                mode: ConfigureMode::Edit,
+            },
+            ReloadPolicy::ConfigureTarget {
+                name: "target".to_string(),
+                connect: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        let persisted = load_raw_config_document_from_path(&path).unwrap();
+        assert_eq!(persisted["extension"], original["extension"]);
+        assert_eq!(persisted["httpServer"], original["httpServer"]);
+        assert_eq!(persisted["mcpServers"]["other"], original["mcpServers"]["other"]);
+        assert_eq!(persisted["mcpServers"]["target"]["env"], original["mcpServers"]["target"]["env"]);
+        assert_eq!(persisted["mcpServers"]["target"]["tags"], serde_json::json!(["updated"]));
+    }
+
+    #[test]
+    fn tokenized_map_and_array_secrets_remain_masked_after_reload() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        let mut document = serde_json::json!({
+            "mcpServers": {
+                "map": {
+                    "baseUrl": "https://example.com",
+                    "headers": {"Authorization": "${secret:OATTY_REVIEW_TEST_SECRET}"},
+                    "disabled": false
+                },
+                "array": {
+                    "command": "node",
+                    "env": [{"key": "TOKEN", "value": "${secret:OATTY_REVIEW_TEST_SECRET}", "source": "File"}],
+                    "disabled": false
+                }
+            }
+        });
+
+        temp_env::with_var("OATTY_SECRETS_BACKEND", None::<&str>, || {
+            tokenize_document_values(&mut document).unwrap();
+        });
+        assert!(document["mcpServers"]["map"]["headers"].is_object());
+        assert_eq!(
+            document["mcpServers"]["map"]["headers"]["Authorization"],
+            "${secret:OATTY_REVIEW_TEST_SECRET}"
+        );
+        assert_eq!(
+            document["mcpServers"]["array"]["env"][0]["value"],
+            "${secret:OATTY_REVIEW_TEST_SECRET}"
+        );
+        assert_eq!(document["mcpServers"]["array"]["env"][0]["source"], "Secret");
+        std::fs::write(&path, serde_json::to_string(&document).unwrap()).unwrap();
+
+        let loaded = temp_env::with_vars(
+            [
+                ("OATTY_SECRETS_BACKEND", Some("env")),
+                ("OATTY_REVIEW_TEST_SECRET", Some("resolved-secret")),
+            ],
+            || load_config_from_path(&path).unwrap(),
+        );
+        for (server, field) in [("map", "headers"), ("array", "env")] {
+            let value = if field == "headers" {
+                loaded.mcp_servers[server].headers.iter().next().unwrap()
+            } else {
+                loaded.mcp_servers[server].env.iter().next().unwrap()
+            };
+            assert_eq!(value.value, "resolved-secret");
+            assert_eq!(value.source, EnvSource::Secret);
+            assert_eq!(value.masked().value, "••••••••••••••••");
+        }
     }
 
     #[tokio::test]
