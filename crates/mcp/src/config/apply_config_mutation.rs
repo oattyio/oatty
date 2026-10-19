@@ -21,6 +21,7 @@ use super::mutation::{
     SafeError, ServerStatus, apply_server_patch, deserialize_validated_candidate,
 };
 use crate::PluginEngine;
+use crate::types::McpServerApplyOutcome;
 
 /// Apply a configuration mutation with shared operation guard semantics.
 ///
@@ -151,11 +152,47 @@ pub async fn apply_config_mutation(
         .map_err(|e| McpConfigMutationError::RuntimeApplyFailed(format!("runtime application task failed: {e}")))??;
 
     let server_outcome = apply_outcome.applied_servers.iter().find(|o| o.name == server_name);
+    Ok(mutation_outcome_from_server_apply(
+        server_name,
+        operation,
+        changed_fields,
+        server_outcome,
+    ))
+}
+
+fn mutation_outcome_from_server_apply(
+    server_name: String,
+    operation: String,
+    changed_fields: Vec<String>,
+    server_outcome: Option<&McpServerApplyOutcome>,
+) -> McpConfigMutationOutcome {
     let (status, runtime_applied, connection_attempted) = server_outcome
         .map(|o| (o.status, o.runtime_applied, o.connection_attempted))
         .unwrap_or((ServerStatus::Unknown, false, false));
 
-    let error = if connection_attempted && server_outcome.is_some_and(|o| o.connection_error.is_some()) {
+    let error = safe_error_for_server_outcome(server_outcome);
+
+    McpConfigMutationOutcome {
+        server_name,
+        operation,
+        changed_fields,
+        persisted: true,
+        runtime_applied,
+        connection_attempted,
+        status,
+        error,
+    }
+}
+
+fn safe_error_for_server_outcome(server_outcome: Option<&McpServerApplyOutcome>) -> Option<SafeError> {
+    let outcome = server_outcome?;
+    if !outcome.runtime_applied {
+        Some(SafeError {
+            error_code: ErrorCategory::RuntimeApplyFailed,
+            stage: ErrorStage::RuntimeApply,
+            next_step: "The server was saved, but runtime updates could not be confirmed. Inspect server status and retry.".to_string(),
+        })
+    } else if outcome.connection_attempted && outcome.connection_error.is_some() {
         Some(SafeError {
             error_code: ErrorCategory::ConnectionFailed,
             stage: ErrorStage::Connect,
@@ -165,18 +202,7 @@ pub async fn apply_config_mutation(
         })
     } else {
         None
-    };
-
-    Ok(McpConfigMutationOutcome {
-        server_name,
-        operation,
-        changed_fields,
-        persisted: true,
-        runtime_applied,
-        connection_attempted,
-        status,
-        error,
-    })
+    }
 }
 
 /// Tokenize env and header values without rewriting the unresolved document.
@@ -280,6 +306,47 @@ mod tests {
     use crate::config::{ConfigureMode, McpConfig, McpServer, McpServerPatch, load_config_from_path, load_raw_config_document_from_path};
     use oatty_registry::CommandRegistry;
     use std::sync::Mutex;
+
+    #[test]
+    fn saved_mutation_reports_unconfirmed_start_as_runtime_apply_failure() {
+        let server_outcome = McpServerApplyOutcome {
+            name: "demo".into(),
+            status: ServerStatus::Running,
+            runtime_applied: false,
+            connection_attempted: true,
+            connection_error: None,
+        };
+        let outcome = mutation_outcome_from_server_apply("demo".into(), "configure".into(), vec!["command".into()], Some(&server_outcome));
+        assert!(outcome.persisted);
+        assert!(!outcome.runtime_applied);
+        assert!(outcome.connection_attempted);
+        assert_eq!(outcome.status, ServerStatus::Running);
+        let error = outcome.error.unwrap();
+        assert_eq!(error.error_code, ErrorCategory::RuntimeApplyFailed);
+        assert_eq!(error.stage, ErrorStage::RuntimeApply);
+        assert!(!error.next_step.contains("secret"));
+    }
+
+    #[test]
+    fn saved_mutation_keeps_connection_failure_distinct() {
+        let server_outcome = McpServerApplyOutcome {
+            name: "demo".into(),
+            status: ServerStatus::Error,
+            runtime_applied: true,
+            connection_attempted: true,
+            connection_error: Some(crate::plugin::PluginEngineError::ClientManagerError(
+                "secret upstream diagnostic".into(),
+            )),
+        };
+        let outcome = mutation_outcome_from_server_apply("demo".into(), "configure".into(), vec![], Some(&server_outcome));
+        assert!(outcome.persisted);
+        assert!(outcome.runtime_applied);
+        assert!(outcome.connection_attempted);
+        let error = outcome.error.unwrap();
+        assert_eq!(error.error_code, ErrorCategory::ConnectionFailed);
+        assert_eq!(error.stage, ErrorStage::Connect);
+        assert!(!error.next_step.contains("secret upstream diagnostic"));
+    }
 
     #[tokio::test]
     async fn autostart_first_toggle_creates_default_document_for_either_value() {

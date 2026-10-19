@@ -4,8 +4,8 @@
 //! management of the upstream MCP servers that provide command capabilities.
 
 use crate::config::{
-    ClearField, ConfigureMode, McpConfigMutation, McpConfigMutationError, McpServerPatch, ReloadPolicy, apply_config_mutation,
-    default_config_path, load_raw_config_document_from_path,
+    ClearField, ConfigureMode, ErrorCategory, ErrorStage, McpConfigMutation, McpConfigMutationError, McpConfigMutationOutcome,
+    McpServerPatch, ReloadPolicy, apply_config_mutation, default_config_path, load_raw_config_document_from_path,
 };
 use crate::server::schemas::{McpServerConfigureRequest, McpServerSetRunningRequest};
 use rmcp::model::ErrorData;
@@ -48,6 +48,49 @@ fn mutation_error_code(error: &McpConfigMutationError) -> &'static str {
         McpConfigMutationError::RuntimeLoadFailed(_) => "runtime_load_failed",
         McpConfigMutationError::RuntimeApplyFailed(_) => "runtime_apply_failed",
     }
+}
+
+fn error_category_label(category: &ErrorCategory) -> &'static str {
+    match category {
+        ErrorCategory::ReadFailed => "read_failed",
+        ErrorCategory::ParseFailed => "parse_failed",
+        ErrorCategory::PatchConflict => "patch_conflict",
+        ErrorCategory::ValidationFailed => "validation_failed",
+        ErrorCategory::TokenizationFailed => "tokenization_failed",
+        ErrorCategory::SaveFailed => "save_failed",
+        ErrorCategory::RuntimeLoadFailed => "runtime_load_failed",
+        ErrorCategory::RuntimeApplyFailed => "runtime_apply_failed",
+        ErrorCategory::ConnectionFailed => "connection_failed",
+    }
+}
+
+fn error_stage_label(stage: &ErrorStage) -> &'static str {
+    match stage {
+        ErrorStage::Read => "read",
+        ErrorStage::Parse => "parse",
+        ErrorStage::Patch => "patch",
+        ErrorStage::Save => "save",
+        ErrorStage::RuntimeLoad => "runtime_load",
+        ErrorStage::RuntimeApply => "runtime_apply",
+        ErrorStage::Connect => "connect",
+    }
+}
+
+fn configure_outcome_json(outcome: McpConfigMutationOutcome) -> Value {
+    serde_json::json!({
+        "name": outcome.server_name,
+        "operation": outcome.operation,
+        "changed_fields": outcome.changed_fields,
+        "persisted": outcome.persisted,
+        "runtime_applied": outcome.runtime_applied,
+        "connection_attempted": outcome.connection_attempted,
+        "status": format!("{:?}", outcome.status).to_lowercase(),
+        "error": outcome.error.map(|error| serde_json::json!({
+            "error_code": error_category_label(&error.error_code),
+            "stage": error_stage_label(&error.stage),
+            "next_step": error.next_step,
+        })),
+    })
 }
 
 /// Configure an upstream MCP server.
@@ -116,20 +159,7 @@ pub(crate) async fn mcp_server_configure(
         .await
         .map_err(|e| configure_error(mutation_error_code(&e)))?;
 
-    Ok(serde_json::json!({
-        "name": outcome.server_name,
-        "operation": outcome.operation,
-        "changed_fields": outcome.changed_fields,
-        "persisted": outcome.persisted,
-        "runtime_applied": outcome.runtime_applied,
-        "connection_attempted": outcome.connection_attempted,
-        "status": format!("{:?}", outcome.status).to_lowercase(),
-        "error": outcome.error.map(|e| serde_json::json!({
-            "error_code": format!("{:?}", e.error_code).to_lowercase(),
-            "stage": format!("{:?}", e.stage).to_lowercase(),
-            "next_step": e.next_step,
-        })),
-    }))
+    Ok(configure_outcome_json(outcome))
 }
 
 /// List all configured upstream MCP servers with runtime status.
@@ -293,7 +323,7 @@ fn mask_server_config(config: &Map<String, Value>) -> Value {
 mod tests {
     use super::*;
     use crate::client::gateway::{ClientGatewayEvent, McpClientGateway};
-    use crate::config::{McpConfig, McpServer};
+    use crate::config::{McpConfig, McpServer, SafeError};
     use crate::types::McpToolMetadata;
     use oatty_registry::CommandRegistry;
     use std::sync::Mutex;
@@ -337,6 +367,79 @@ mod tests {
         let serialized = serde_json::to_string(&safe).unwrap();
         assert_eq!(safe.data.as_ref().unwrap()["error_code"], "validation_failed");
         assert!(!serialized.contains("secret-command"));
+    }
+
+    #[test]
+    fn configure_outcome_uses_stable_error_wire_labels() {
+        for (category, stage, expected_category, expected_stage, runtime_applied) in [
+            (
+                ErrorCategory::RuntimeApplyFailed,
+                ErrorStage::RuntimeApply,
+                "runtime_apply_failed",
+                "runtime_apply",
+                false,
+            ),
+            (
+                ErrorCategory::ConnectionFailed,
+                ErrorStage::Connect,
+                "connection_failed",
+                "connect",
+                true,
+            ),
+        ] {
+            let outcome = McpConfigMutationOutcome {
+                server_name: "demo".into(),
+                operation: "configure".into(),
+                changed_fields: vec!["command".into()],
+                persisted: true,
+                runtime_applied,
+                connection_attempted: true,
+                status: if runtime_applied {
+                    crate::types::PluginStatus::Error
+                } else {
+                    crate::types::PluginStatus::Running
+                },
+                error: Some(SafeError {
+                    error_code: category,
+                    stage,
+                    next_step: "Retry safely".into(),
+                }),
+            };
+            let serialized = configure_outcome_json(outcome);
+            assert_eq!(serialized["persisted"], true);
+            assert_eq!(serialized["connection_attempted"], true);
+            assert_eq!(serialized["runtime_applied"], runtime_applied);
+            assert_eq!(serialized["error"]["error_code"], expected_category);
+            assert_eq!(serialized["error"]["stage"], expected_stage);
+        }
+    }
+
+    #[test]
+    fn every_configure_error_variant_has_a_snake_case_label() {
+        for (category, expected) in [
+            (ErrorCategory::ReadFailed, "read_failed"),
+            (ErrorCategory::ParseFailed, "parse_failed"),
+            (ErrorCategory::PatchConflict, "patch_conflict"),
+            (ErrorCategory::ValidationFailed, "validation_failed"),
+            (ErrorCategory::TokenizationFailed, "tokenization_failed"),
+            (ErrorCategory::SaveFailed, "save_failed"),
+            (ErrorCategory::RuntimeLoadFailed, "runtime_load_failed"),
+            (ErrorCategory::RuntimeApplyFailed, "runtime_apply_failed"),
+            (ErrorCategory::ConnectionFailed, "connection_failed"),
+        ] {
+            assert_eq!(error_category_label(&category), expected);
+        }
+        for (stage, expected) in [
+            (ErrorStage::Read, "read"),
+            (ErrorStage::Parse, "parse"),
+            (ErrorStage::Patch, "patch"),
+            (ErrorStage::Save, "save"),
+            (ErrorStage::RuntimeLoad, "runtime_load"),
+            (ErrorStage::RuntimeApply, "runtime_apply"),
+            (ErrorStage::Connect, "connect"),
+        ] {
+            assert_eq!(error_stage_label(&stage), expected);
+        }
     }
 
     #[tokio::test]

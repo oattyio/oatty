@@ -13,8 +13,11 @@ pub use apply_config_mutation::apply_config_mutation;
 pub use interpolation::interpolate_config;
 pub use io::{default_config_path, load_config, load_config_from_path, load_raw_config_document_from_path, save_config_to_path};
 pub use model::{ConfigError, McpAuthConfig, McpConfig, McpServer};
+#[cfg(test)]
+pub(crate) use mutation::SafeError;
 pub use mutation::{
     ClearField, ConfigureMode, McpConfigMutation, McpConfigMutationError, McpServerConfigurationPatch, McpServerPatch, ReloadPolicy,
     ServerStatus,
 };
+pub(crate) use mutation::{ErrorCategory, ErrorStage, McpConfigMutationOutcome};
 pub use validation::{ValidationError, validate_config, validate_server_name};
