@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 use serde_json::Value;
 
+use super::interpolation::tokenize_config;
 use super::io::{load_config_from_path, load_raw_config_document_from_path};
 use super::mutation::{
     ConfigureServerMutation, ErrorCategory, ErrorStage, McpConfigMutation, McpConfigMutationError, McpConfigMutationOutcome, ReloadPolicy,
@@ -105,17 +106,38 @@ pub async fn apply_config_mutation(
 
     // Validate the complete candidate before touching disk so a rejected
     // candidate is never persisted.
+    let mut document = document;
     deserialize_validated_candidate(document.clone())?;
+
+    // Tokenize any secret/env values before persisting so credentials are not
+    // written to disk in clear text.
+    let mut candidate = deserialize_validated_candidate(document.clone())?;
+    tokenize_config(&mut candidate)
+        .map_err(|e| McpConfigMutationError::ValidationFailed(format!("failed to tokenize configuration: {e}")))?;
+    document = serde_json::to_value(candidate)
+        .map_err(|e| McpConfigMutationError::ValidationFailed(format!("failed to serialize tokenized configuration: {e}")))?;
 
     persist_document(&path, &document)?;
 
     // Reload the now-persisted configuration and apply it under the guard we
     // already hold. Runtime application must not reacquire the guard.
+    // Run the reload in a spawned task so cancellation of the requesting
+    // future cannot interrupt it mid-flight or drop the operation guard
+    // before application completes.
     let new_config = load_config_from_path(&path).map_err(|e| McpConfigMutationError::RuntimeLoadFailed(e.to_string()))?;
-    let apply_outcome = engine
-        .update_config_under_guard(new_config, &policy, &guard)
+    let apply_task = tokio::spawn({
+        let engine = Arc::clone(&engine);
+        let policy = policy.clone();
+        async move {
+            engine
+                .update_config_under_guard(new_config, &policy, &guard)
+                .await
+                .map_err(|e| McpConfigMutationError::RuntimeApplyFailed(e.to_string()))
+        }
+    });
+    let apply_outcome = apply_task
         .await
-        .map_err(|e| McpConfigMutationError::RuntimeApplyFailed(e.to_string()))?;
+        .map_err(|e| McpConfigMutationError::RuntimeApplyFailed(format!("runtime application task failed: {e}")))??;
 
     let server_outcome = apply_outcome.applied_servers.iter().find(|o| o.name == server_name);
     let (status, runtime_applied, connection_attempted) = server_outcome

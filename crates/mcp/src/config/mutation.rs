@@ -539,6 +539,9 @@ pub(crate) fn apply_server_patch(document: &mut Value, mutation: &ConfigureServe
     if let Some(tags) = &configuration.tags {
         server.insert("tags".to_string(), Value::Array(tags.iter().cloned().map(Value::String).collect()));
     }
+    if let Some(disabled) = configuration.disabled {
+        server.insert("disabled".to_string(), Value::Bool(disabled));
+    }
     if let Some(env) = &configuration.env {
         merge_env_collection(server, env)?;
     }

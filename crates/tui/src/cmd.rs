@@ -28,7 +28,8 @@ use indexmap::{IndexMap, IndexSet};
 use oatty_engine::{RegistryCommandRunner, drive_workflow_run, provider::ProviderFetchPlan};
 use oatty_mcp::config::{
     ClearField, ConfigureMode, McpConfigMutation, McpConfigMutationError, McpServer, McpServerConfigurationPatch, McpServerPatch,
-    ReloadPolicy, apply_config_mutation, default_config_path, save_config_to_path, validate_server_name,
+    ReloadPolicy, apply_config_mutation, default_config_path, load_raw_config_document_from_path, save_config_to_path,
+    validate_server_name,
 };
 use oatty_mcp::{McpConfig, McpHttpServer, PluginEngine, resolve_bind_address};
 
@@ -1011,7 +1012,10 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
     // the form-built server; new and same-name saves go through the configure
     // contract, which enforces add/edit name existence rules and preserves
     // fields the form does not own (cwd, auth, tags, disabled).
-    let mutation = match original_name {
+    let planned_env_keys: std::collections::HashSet<String> = server.env.iter().map(|entry| entry.key.clone()).collect();
+    let planned_header_keys: std::collections::HashSet<String> = server.headers.iter().map(|entry| entry.key.clone()).collect();
+
+    let mut mutation = match original_name {
         Some(previous) if previous != name => McpConfigMutation::ReplaceServer {
             old_name: previous.to_string(),
             new_name: name.clone(),
@@ -1027,6 +1031,37 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
             },
         },
     };
+
+    // When editing an existing server, drop env/header entries that were removed
+    // from the form so they do not linger in the persisted configuration.
+    if let McpConfigMutation::ConfigureServer {
+        name: mutation_name,
+        patch,
+        ..
+    } = &mut mutation
+        && original_name == Some(&mutation_name.clone())
+        && let Ok(doc) = load_raw_config_document_from_path(&default_config_path())
+        && let Some(old_server) = doc
+            .get("mcpServers")
+            .and_then(|s| s.get(mutation_name.as_str()))
+            .and_then(|v| v.as_object())
+    {
+                    let new_env_keys = planned_env_keys.clone();
+                    let old_env_keys = collect_persisted_keys(old_server.get("env"));
+                    for key in old_env_keys {
+                        if !new_env_keys.contains(&key) {
+                            patch.remove_env.push(key);
+                        }
+                    }
+
+                    let new_header_keys = planned_header_keys.clone();
+                    let old_header_keys = collect_persisted_keys(old_server.get("headers"));
+                    for key in old_header_keys {
+                        if !new_header_keys.contains(&key) {
+                            patch.remove_headers.push(key);
+                        }
+                    }
+        }
 
     let engine = Arc::clone(&app.ctx.plugin_engine);
     if let Err(error) = apply_config_mutation(engine, default_config_path(), mutation, ReloadPolicy::RestorePreviouslyRunning).await {
@@ -1089,6 +1124,24 @@ fn collect_key_value_rows(rows: &[EnvRow]) -> Result<IndexSet<EnvVar>, Vec<Strin
     }
 
     Ok(envs)
+}
+
+/// Collect the keys stored in a persisted env/header value, supporting both the
+/// object and array-of-`{key,value}` shapes.
+fn collect_persisted_keys(value: Option<&serde_json::Value>) -> Vec<String> {
+    let Some(value) = value else {
+        return Vec::new();
+    };
+    if let Some(map) = value.as_object() {
+        return map.keys().cloned().collect();
+    }
+    if let Some(array) = value.as_array() {
+        return array
+            .iter()
+            .filter_map(|item| item.get("key").and_then(|v| v.as_str()).map(str::to_string))
+            .collect();
+    }
+    Vec::new()
 }
 
 /// Build the shared configure patch for the Add Plugin form.

@@ -726,6 +726,8 @@ impl PluginEngine {
         }
         for name in &delta.removed {
             self.clear_server_state(name).await;
+            self.lifecycle_manager.unregister_plugin(name).await;
+            registry.unregister_plugin(name).ok();
             let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Unknown);
             outcomes.push(crate::types::McpServerApplyOutcome {
                 name: name.to_string(),
@@ -738,6 +740,7 @@ impl PluginEngine {
 
         // Handle added servers
         for name in &delta.added {
+            self.lifecycle_manager.register_plugin(name.clone()).await;
             let server = config.mcp_servers.get(name);
             let outcome = self.apply_server_change(name, server, policy, guard, false).await;
             outcomes.push(outcome);
