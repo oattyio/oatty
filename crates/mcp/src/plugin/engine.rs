@@ -319,6 +319,11 @@ impl PluginEngine {
     /// the lifecycle manager.
     fn sync_registry_metadata(registry: &mut PluginRegistry, mcp_servers: &HashMap<String, McpServer>) -> Result<(), RegistryError> {
         for (name, server) in mcp_servers {
+            // Preserve the live runtime status instead of resetting every
+            // registered server to `Stopped` on each reload. `register_plugin`
+            // unconditionally writes `Stopped`, which would mask active
+            // unchanged/metadata-only servers.
+            let previous_status = registry.get_plugin_status(name);
             let mut plugin_detail = PluginDetail::new(
                 name.clone(),
                 if server.is_stdio() {
@@ -338,6 +343,9 @@ impl PluginEngine {
             };
 
             registry.register_plugin(plugin_detail)?;
+            if let Some(status) = previous_status {
+                registry.set_plugin_status(name, status)?;
+            }
         }
         Ok(())
     }
@@ -631,6 +639,14 @@ impl PluginEngine {
             }));
         };
 
+        // Capture running state for changed servers before they are stopped,
+        // so `RestorePreviouslyRunning` can decide whether to reconnect.
+        let mut changed_was_running: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+        for name in &delta.connection_changed {
+            let running = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Stopped) == PluginStatus::Running;
+            changed_was_running.insert(name.clone(), running);
+        }
+
         // Remove stale synthetic commands for servers being changed or removed
         let servers_to_clean: Vec<String> = delta.connection_changed.iter().chain(delta.removed.iter()).cloned().collect();
         for name in &servers_to_clean {
@@ -653,9 +669,21 @@ impl PluginEngine {
         // Build outcomes
         let mut outcomes = Vec::new();
 
-        // Handle unchanged servers — preserve their state
+        // Handle unchanged servers — preserve their state, unless a configure
+        // request explicitly asks to connect a currently stopped target.
         for name in &delta.unchanged {
+            let should_connect_target = matches!(
+                policy,
+                crate::config::ReloadPolicy::ConfigureTarget { name: target, connect }
+                    if target == name && *connect
+            );
             let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Unknown);
+            if should_connect_target && status != PluginStatus::Running {
+                let server = config.mcp_servers.get(name);
+                let outcome = self.apply_server_change(name, server, policy, guard, false).await;
+                outcomes.push(outcome);
+                continue;
+            }
             outcomes.push(crate::types::McpServerApplyOutcome {
                 name: name.to_string(),
                 status,
@@ -665,9 +693,21 @@ impl PluginEngine {
             });
         }
 
-        // Handle metadata-only changes — update metadata without reconnecting
+        // Handle metadata-only changes — update metadata without reconnecting,
+        // unless a configure request explicitly asks to connect a stopped target.
         for name in &delta.metadata_only {
+            let should_connect_target = matches!(
+                policy,
+                crate::config::ReloadPolicy::ConfigureTarget { name: target, connect }
+                    if target == name && *connect
+            );
             let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Unknown);
+            if should_connect_target && status != PluginStatus::Running {
+                let server = config.mcp_servers.get(name);
+                let outcome = self.apply_server_change(name, server, policy, guard, false).await;
+                outcomes.push(outcome);
+                continue;
+            }
             outcomes.push(crate::types::McpServerApplyOutcome {
                 name: name.to_string(),
                 status,
@@ -680,7 +720,8 @@ impl PluginEngine {
         // Handle connection changes and removals
         for name in &delta.connection_changed {
             let server = config.mcp_servers.get(name);
-            let outcome = self.apply_server_change(name, server, policy, guard).await;
+            let was_running = changed_was_running.get(name).copied().unwrap_or(false);
+            let outcome = self.apply_server_change(name, server, policy, guard, was_running).await;
             outcomes.push(outcome);
         }
         for name in &delta.removed {
@@ -698,7 +739,7 @@ impl PluginEngine {
         // Handle added servers
         for name in &delta.added {
             let server = config.mcp_servers.get(name);
-            let outcome = self.apply_server_change(name, server, policy, guard).await;
+            let outcome = self.apply_server_change(name, server, policy, guard, false).await;
             outcomes.push(outcome);
         }
 
@@ -774,14 +815,12 @@ impl PluginEngine {
         server: Option<&crate::McpServer>,
         policy: &crate::config::ReloadPolicy,
         guard: &McpOperationGuard,
+        was_running_before: bool,
     ) -> crate::types::McpServerApplyOutcome {
         // Determine if we should connect this server based on policy
         let should_connect = match policy {
             crate::config::ReloadPolicy::RestorePreviouslyRunning => {
-                // Check if it was running before
-                let was_running =
-                    self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Stopped) == PluginStatus::Running;
-                was_running && server.map(|s| !s.is_disabled()).unwrap_or(false)
+                was_running_before && server.map(|s| !s.is_disabled()).unwrap_or(false)
             }
             crate::config::ReloadPolicy::ConfigureTarget { name: target, connect } => name == target && *connect,
         };
