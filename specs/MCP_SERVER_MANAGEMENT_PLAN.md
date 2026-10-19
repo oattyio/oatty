@@ -43,17 +43,20 @@ Current behavior needs explicit handling:
 
 Add or edit one named upstream server and apply its configuration immediately.
 
+As-built (initial tool surface): the tool exposes a deliberately reduced input set. Add-versus-edit is derived server-side from the guarded document, and credential/collection patch inputs are not exposed through the tool in this phase — the shared service below supports them, and exposing them to agents is deferred to the follow-up work tracked in #80.
+
 | Input | Meaning |
 | --- | --- |
 | `name` | Existing server-name validation rules |
-| `mode` | Required `add` or `edit`; reject an existing name on add and a missing name on edit |
-| `configuration` | Partial configuration using existing names: `command`, `args`, `env`, `cwd`, `baseUrl`, `headers`, `auth`, `disabled`, `tags` |
-| `clear_fields` | Optional list explicitly clearing supported optional fields/collections |
-| `remove_env` | Optional environment keys to remove |
-| `remove_headers` | Optional header names to remove |
-| `connect` | Optional boolean, default `true` |
+| `transport` | `stdio` or `http` |
+| `command` | Command to execute (stdio transport) |
+| `args` | Command arguments (stdio transport) |
+| `base_url` | HTTP(S) base URL (http transport) |
+| `enabled` | Optional boolean, default enabled |
+| `tags` | Optional display/filter tags |
+| `connect` | Optional boolean, default `true` for enabled servers |
 
-Keep `configuration` typed and its generated JSON schema explicit. Reject unknown fields and conflicting operations before mutation. Do not accept runtime `err`, a filesystem destination, or the local Oatty `httpServer` settings through this tool.
+The generated JSON schema is explicit and rejects unknown fields. Do not accept runtime `err`, a filesystem destination, or the local Oatty `httpServer` settings through this tool. A transport switch auto-clears the other transport's connection fields (switching to stdio clears `baseUrl`, `headers`, and `auth`; switching to http clears `command`, `args`, and `env`), matching the shared-service switch rules below. Because the tool cannot supply env/header/auth values in this phase, an agent that switches transport cannot restore those values itself; document this limit in the tool description until #80 lands.
 
 Merge rules:
 
@@ -109,7 +112,7 @@ This is a mutating, open-world tool: connecting stdio executes the configured pr
 
 ### `mcp_servers_list`
 
-Read-only inventory, with an optional exact `name` filter. Return all configured servers by default, sorted by configured name, including disabled, stopped, and failed servers. An unknown exact name returns a structured not-found result.
+Read-only inventory, with an optional `limit` that truncates the sorted result; `total` reports the number of matching configured servers before truncation. Return all configured servers by default, sorted by configured name, including disabled, stopped, and failed servers. An exact-name filter with a structured not-found result is deferred to #80.
 
 Build an explicit response type from unresolved persisted configuration plus runtime status. Do not serialize `McpConfig` or `PluginDetail` directly, and do not call a detail getter that refreshes upstream tools as a side effect of inventory.
 
@@ -379,7 +382,7 @@ This deliberately serializes in-process configuration/lifecycle operations, incl
 
 Raw credentials use the existing `save_config_to_path` / tokenization behavior. The agent does not need separate keychain access. Existing placeholder inputs are still accepted.
 
-This does not make storage stronger than it is today: tokenization examines environment/header values using secret detection; arbitrary secrets are not guaranteed to be identified, `auth` fields are not tokenized by that helper, and the environment secrets backend can retain inline values. File/keychain updates are not one atomic transaction. Document these existing limits instead of claiming that every raw credential is stored in the keychain.
+This does not make storage stronger than it is today: tokenization examines environment, header, and `auth` field values using secret detection; arbitrary secrets are not guaranteed to be identified, so a value the heuristics do not flag persists as plaintext in the configuration file. `${secret:NAME}` and `${env:NAME}` placeholders pass through unchanged, and the environment secrets backend can retain inline values. Auth tokenization namespaces its store keys as `auth.<field>` so they cannot collide with env/header entries of the same name. File/keychain updates are not one atomic transaction. Document these existing limits instead of claiming that every raw credential is stored in the keychain.
 
 Use the explicit inventory projection for responses and configuration-related logging. Log only the selected server, operation, changed field names, safe status, and error category. Mask or omit configuration values before passing a request to core finalizers; their standard and parsed-response log payloads both retain the supplied request.
 

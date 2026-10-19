@@ -6,7 +6,7 @@
 //! [`super::mutation`] module.
 
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use indexmap::IndexSet;
@@ -15,7 +15,7 @@ use oatty_util::tokenize_env;
 use serde_json::Value;
 
 use super::io::{load_config_from_path, load_raw_config_document_from_path};
-use super::model::McpHttpServerConfig;
+use super::model::{McpConfig, McpHttpServerConfig};
 use super::mutation::{
     ConfigureServerMutation, ErrorCategory, ErrorStage, McpConfigMutation, McpConfigMutationError, McpConfigMutationOutcome, ReloadPolicy,
     SafeError, ServerStatus, apply_server_patch, deserialize_validated_candidate,
@@ -25,9 +25,11 @@ use crate::types::McpServerApplyOutcome;
 
 /// Apply a configuration mutation with shared operation guard semantics.
 ///
-/// This is the single entry point for tool and TUI mutation paths. It acquires
-/// the operation guard once and retains it across read, merge, save, and
-/// runtime reload.
+/// This is the single entry point for tool and TUI mutation paths. A detached
+/// worker task owns the operation guard and every input for the whole
+/// read/merge/save/reload sequence. The caller only awaits the worker's join
+/// result, so cancelling the caller future cannot release the guard while the
+/// mutation is still applying state.
 ///
 /// # Arguments
 /// * `engine` — The `PluginEngine` that owns the shared gateway.
@@ -43,55 +45,136 @@ pub async fn apply_config_mutation(
     mutation: McpConfigMutation,
     policy: ReloadPolicy,
 ) -> Result<McpConfigMutationOutcome, McpConfigMutationError> {
+    // The worker acquires the guard itself. Nothing inside it may acquire the
+    // guard again. Dropping the caller's future detaches this task rather than
+    // cancelling it, so persistence and runtime application still finish.
+    let worker = tokio::spawn(run_config_mutation_worker(engine, path, mutation, policy));
+    worker
+        .await
+        .map_err(|error| McpConfigMutationError::ValidationFailed(format!("configuration mutation worker failed to complete: {error}")))?
+}
+
+/// Complete one mutation while owning the operation guard.
+async fn run_config_mutation_worker(
+    engine: Arc<PluginEngine>,
+    path: PathBuf,
+    mutation: McpConfigMutation,
+    policy: ReloadPolicy,
+) -> Result<McpConfigMutationOutcome, McpConfigMutationError> {
     let guard = engine.acquire_operation_guard().await;
 
-    let (server_name, operation, changed_fields, document) = match mutation {
+    // Read, merge, validate, tokenize, and persist as one blocking unit under
+    // the guard. Tokenization may perform keychain round-trips, so it must not
+    // run on an async executor thread.
+    let candidate_path = path.clone();
+    let (server_name, operation, changed_fields) = tokio::task::spawn_blocking(move || {
+        let (server_name, operation, changed_fields, mut document) = build_candidate_document(&candidate_path, &mutation)?;
+
+        // Validate the complete candidate before touching disk so a rejected
+        // candidate is never persisted.
+        deserialize_validated_candidate(document.clone())?;
+
+        // Tokenize credential values in place. Serializing the typed candidate
+        // would discard root extensions and rewrite existing env/header shapes.
+        tokenize_document_values(&mut document)?;
+
+        persist_document(&candidate_path, &document)?;
+        Ok::<_, McpConfigMutationError>((server_name, operation, changed_fields))
+    })
+    .await
+    .map_err(|error| McpConfigMutationError::ValidationFailed(format!("configuration candidate task failed: {error}")))??;
+
+    // Reloading interpolates credentials and may perform keychain reads, so it
+    // is also blocking work. The guard stays owned by this worker across it.
+    let reload_path = path.clone();
+    let new_config = tokio::task::spawn_blocking(move || {
+        load_config_from_path(&reload_path).map_err(|error| McpConfigMutationError::RuntimeLoadFailed(error.to_string()))
+    })
+    .await
+    .map_err(|error| McpConfigMutationError::RuntimeLoadFailed(format!("configuration reload task failed: {error}")))??;
+
+    // Resolve any caller connect intent against the freshly read candidate so a
+    // disabled server can never be connected by a stale pre-read.
+    let policy = resolve_policy_connect_intent(policy, &new_config);
+
+    let apply_outcome = engine
+        .update_config_under_guard(new_config, &policy, &guard)
+        .await
+        .map_err(|error| McpConfigMutationError::RuntimeApplyFailed(error.to_string()))?;
+
+    let server_outcome = apply_outcome.applied_servers.iter().find(|outcome| outcome.name == server_name);
+    Ok(mutation_outcome_from_server_apply(
+        server_name,
+        operation,
+        changed_fields,
+        server_outcome,
+    ))
+}
+
+/// Compute the mutated candidate document without persisting it.
+fn build_candidate_document(
+    path: &Path,
+    mutation: &McpConfigMutation,
+) -> Result<(String, String, Vec<String>, Value), McpConfigMutationError> {
+    match mutation {
         McpConfigMutation::ConfigureServer { name, patch, mode } => {
-            let mut document = load_raw_config_document_from_path(&path)?;
-            let old_server = document.get("mcpServers").and_then(|m| m.get(&name)).cloned();
+            let mut document = load_raw_config_document_from_path(path)?;
+            let old_server = document.get("mcpServers").and_then(|servers| servers.get(name)).cloned();
             let mirror = ConfigureServerMutation {
                 name: name.clone(),
-                patch,
-                mode,
+                patch: patch.clone(),
+                mode: *mode,
             };
             apply_server_patch(&mut document, &mirror)?;
-            let new_server = document.get("mcpServers").and_then(|m| m.get(&name)).cloned();
+            let new_server = document.get("mcpServers").and_then(|servers| servers.get(name)).cloned();
             let changed_fields = diff_server_fields(old_server.as_ref(), new_server.as_ref());
-            (name, "configure".to_string(), changed_fields, document)
+            Ok((name.clone(), "configure".to_string(), changed_fields, document))
         }
         McpConfigMutation::ReplaceServer {
             old_name,
             new_name,
             server,
         } => {
-            let mut document = load_raw_config_document_from_path(&path)?;
-            let old_server = document.get("mcpServers").and_then(|m| m.get(&old_name)).cloned();
-            let server_value = serde_json::to_value(&server)
-                .map_err(|e| McpConfigMutationError::ValidationFailed(format!("failed to serialize replacement server: {e}")))?;
+            let mut document = load_raw_config_document_from_path(path)?;
             let root = document.as_object_mut().ok_or(McpConfigMutationError::InvalidRootShape)?;
             let mcp_servers = root
                 .get_mut("mcpServers")
                 .and_then(Value::as_object_mut)
                 .ok_or(McpConfigMutationError::InvalidRootShape)?;
+
+            let old_server = mcp_servers.get(old_name).cloned();
+            if old_server.is_none() {
+                return Err(McpConfigMutationError::ServerNotFound(old_name.clone()));
+            }
+            if old_name != new_name && mcp_servers.contains_key(new_name) {
+                return Err(McpConfigMutationError::ValidationFailed(format!(
+                    "server '{new_name}' already exists; rename target must not collide with an existing server"
+                )));
+            }
+
+            let server_value = serde_json::to_value(server)
+                .map_err(|error| McpConfigMutationError::ValidationFailed(format!("failed to serialize replacement server: {error}")))?;
+
             // A rename drops the old entry first; a same-name replacement
-            // overwrites the entry in place.
+            // overwrites the entry in place. Both require the source entry to
+            // exist, which was checked above.
             if old_name != new_name {
-                mcp_servers.remove(&old_name);
+                mcp_servers.remove(old_name);
             }
             mcp_servers.insert(new_name.clone(), server_value.clone());
             let changed_fields = diff_server_fields(old_server.as_ref(), Some(&server_value));
-            (new_name, "replace".to_string(), changed_fields, document)
+            Ok((new_name.clone(), "replace".to_string(), changed_fields, document))
         }
         McpConfigMutation::RemoveServer(name) => {
-            let mut document = load_raw_config_document_from_path(&path)?;
+            let mut document = load_raw_config_document_from_path(path)?;
             let root = document.as_object_mut().ok_or(McpConfigMutationError::InvalidRootShape)?;
             let mcp_servers = root
                 .get_mut("mcpServers")
                 .and_then(Value::as_object_mut)
                 .ok_or(McpConfigMutationError::InvalidRootShape)?;
-            let removed = mcp_servers.remove(&name);
+            let removed = mcp_servers.remove(name);
             if removed.is_none() {
-                return Err(McpConfigMutationError::ServerNotFound(name));
+                return Err(McpConfigMutationError::ServerNotFound(name.clone()));
             }
             // Every persisted field of the entry is gone after removal.
             let changed_fields = removed
@@ -99,65 +182,44 @@ pub async fn apply_config_mutation(
                 .and_then(Value::as_object)
                 .map(|entry| entry.keys().cloned().collect())
                 .unwrap_or_default();
-            (name, "remove".to_string(), changed_fields, document)
+            Ok((name.clone(), "remove".to_string(), changed_fields, document))
         }
         McpConfigMutation::SetHttpAutostart { auto_start } => {
-            let mut document = load_raw_config_document_from_path(&path)?;
+            let mut document = load_raw_config_document_from_path(path)?;
             let root = document.as_object_mut().ok_or(McpConfigMutationError::InvalidRootShape)?;
             let default_http_server = serde_json::to_value(McpHttpServerConfig::default())
-                .map_err(|e| McpConfigMutationError::ValidationFailed(format!("failed to serialize HTTP server defaults: {e}")))?;
+                .map_err(|error| McpConfigMutationError::ValidationFailed(format!("failed to serialize HTTP server defaults: {error}")))?;
             let http_server = root.entry("httpServer").or_insert(default_http_server);
             let http_server = http_server
                 .as_object_mut()
                 .ok_or_else(|| McpConfigMutationError::ValidationFailed("httpServer must be an object".to_string()))?;
-            http_server.insert("autoStart".to_string(), Value::Bool(auto_start));
-            (
+            http_server.insert("autoStart".to_string(), Value::Bool(*auto_start));
+            Ok((
                 "httpServer".to_string(),
                 "setHttpAutostart".to_string(),
                 vec!["autoStart".to_string()],
                 document,
-            )
+            ))
         }
-    };
+    }
+}
 
-    // Validate the complete candidate before touching disk so a rejected
-    // candidate is never persisted.
-    let mut document = document;
-    deserialize_validated_candidate(document.clone())?;
-
-    // Tokenize credential values in place. Serializing the typed candidate
-    // would discard root extensions and rewrite existing env/header shapes.
-    tokenize_document_values(&mut document)?;
-
-    persist_document(&path, &document)?;
-
-    // Reload the now-persisted configuration and apply it under the guard we
-    // already hold. Runtime application must not reacquire the guard.
-    // Run the reload in a spawned task so cancellation of the requesting
-    // future cannot interrupt it mid-flight or drop the operation guard
-    // before application completes.
-    let new_config = load_config_from_path(&path).map_err(|e| McpConfigMutationError::RuntimeLoadFailed(e.to_string()))?;
-    let apply_task = tokio::spawn({
-        let engine = Arc::clone(&engine);
-        let policy = policy.clone();
-        async move {
-            engine
-                .update_config_under_guard(new_config, &policy, &guard)
-                .await
-                .map_err(|e| McpConfigMutationError::RuntimeApplyFailed(e.to_string()))
+/// Resolve a caller's connect intent against the freshly loaded candidate.
+///
+/// [`ReloadPolicy::ConfigureTarget`] carries intent only: a server that is
+/// disabled in the resulting configuration is never connected. Other policies
+/// pass through unchanged.
+fn resolve_policy_connect_intent(policy: ReloadPolicy, config: &McpConfig) -> ReloadPolicy {
+    match policy {
+        ReloadPolicy::ConfigureTarget { name, connect } => {
+            let enabled = config.mcp_servers.get(&name).map(|server| !server.disabled).unwrap_or(false);
+            ReloadPolicy::ConfigureTarget {
+                name,
+                connect: connect && enabled,
+            }
         }
-    });
-    let apply_outcome = apply_task
-        .await
-        .map_err(|e| McpConfigMutationError::RuntimeApplyFailed(format!("runtime application task failed: {e}")))??;
-
-    let server_outcome = apply_outcome.applied_servers.iter().find(|o| o.name == server_name);
-    Ok(mutation_outcome_from_server_apply(
-        server_name,
-        operation,
-        changed_fields,
-        server_outcome,
-    ))
+        other => other,
+    }
 }
 
 fn mutation_outcome_from_server_apply(
@@ -205,36 +267,65 @@ fn safe_error_for_server_outcome(server_outcome: Option<&McpServerApplyOutcome>)
     }
 }
 
-/// Tokenize env and header values without rewriting the unresolved document.
+/// Tokenize env, header, and auth values without rewriting the unresolved document.
+///
+/// Env and header entries can be either object maps (`{ KEY: VALUE }`) or
+/// arrays of `{ key, value }` rows. Existing `${secret:NAME}` and
+/// `${env:NAME}` placeholders pass through unchanged. For all other values, the
+/// same secret heuristic used by `tokenize_env` decides whether a value is
+/// moved into the configured store; low-entropy values remain plaintext. Auth
+/// fields (`username`, `password`, `token`) use `auth.<field>` token keys so
+/// their store service names cannot collide with an env or header entry that is
+/// literally named e.g. `password`.
 fn tokenize_document_values(document: &mut Value) -> Result<(), McpConfigMutationError> {
     let servers = document
         .get_mut("mcpServers")
         .and_then(Value::as_object_mut)
         .ok_or(McpConfigMutationError::InvalidRootShape)?;
     for (name, server) in servers {
-        let server = server.as_object_mut().ok_or(McpConfigMutationError::InvalidRootShape)?;
+        let server = server
+            .as_object_mut()
+            .ok_or_else(|| value_path_error(format!("mcpServers.{name}"), "an object"))?;
         for field in ["env", "headers"] {
             let Some(collection) = server.get_mut(field) else {
                 continue;
             };
             if let Some(entries) = collection.as_object_mut() {
-                for (key, value) in entries {
-                    let raw = value.as_str().ok_or(McpConfigMutationError::InvalidRootShape)?;
+                for (key, value) in entries.iter_mut() {
+                    let raw = value
+                        .as_str()
+                        .ok_or_else(|| value_path_error(format!("mcpServers.{name}.{field}.{key}"), "a string"))?;
                     *value = Value::String(tokenize_value(name, key, raw)?.value);
                 }
             } else if let Some(entries) = collection.as_array_mut() {
-                for entry in entries {
-                    let item = entry.as_object_mut().ok_or(McpConfigMutationError::InvalidRootShape)?;
+                for (index, entry) in entries.iter_mut().enumerate() {
+                    let item = entry
+                        .as_object_mut()
+                        .ok_or_else(|| value_path_error(format!("mcpServers.{name}.{field}[{index}]"), "an object"))?;
                     let key = item
                         .get("key")
                         .and_then(Value::as_str)
-                        .ok_or(McpConfigMutationError::InvalidRootShape)?;
+                        .ok_or_else(|| value_path_error(format!("mcpServers.{name}.{field}[{index}].key"), "a string"))?
+                        .to_string();
                     let raw = item
                         .get("value")
                         .and_then(Value::as_str)
-                        .ok_or(McpConfigMutationError::InvalidRootShape)?;
-                    let tokenized = tokenize_value(name, key, raw)?;
-                    let update_source = tokenized.value != raw || matches!(tokenized.source, EnvSource::Secret | EnvSource::Env);
+                        .ok_or_else(|| value_path_error(format!("mcpServers.{name}.{field}.{key}.value"), "a string"))?
+                        .to_string();
+                    let tokenized = tokenize_value(name, &key, &raw)?;
+                    let persisted_source = item
+                        .get("source")
+                        .and_then(|source| serde_json::from_value::<EnvSource>(source.clone()).ok());
+                    // A plaintext replacement of a previously-secret value must
+                    // also refresh the source label; otherwise the runtime keeps
+                    // masking a value that is no longer a secret. Only the
+                    // masking-relevant Secret -> non-Secret transition is
+                    // rewritten, so unrelated File/Raw rows stay untouched.
+                    let stale_secret_label = persisted_source
+                        .as_ref()
+                        .is_some_and(|source| matches!(source, EnvSource::Secret) && !matches!(&tokenized.source, EnvSource::Secret));
+                    let update_source =
+                        tokenized.value != raw || matches!(&tokenized.source, EnvSource::Secret | EnvSource::Env) || stale_secret_label;
                     item.insert("value".to_string(), Value::String(tokenized.value));
                     if update_source {
                         item.insert(
@@ -243,10 +334,37 @@ fn tokenize_document_values(document: &mut Value) -> Result<(), McpConfigMutatio
                         );
                     }
                 }
+            } else {
+                return Err(value_path_error(format!("mcpServers.{name}.{field}"), "an object or an array"));
+            }
+        }
+
+        // Auth fields (`username`, `password`, `token`) support the same
+        // `${secret:NAME}` / `${env:NAME}` interpolation as env/header values.
+        if let Some(auth) = server.get_mut("auth").and_then(Value::as_object_mut) {
+            for field in ["username", "password", "token"] {
+                let Some(raw) = auth.get(field).and_then(Value::as_str).map(str::to_string) else {
+                    continue;
+                };
+                let tokenized = tokenize_value(name, &auth_token_key(field), &raw)?;
+                auth.insert(field.to_string(), Value::String(tokenized.value));
             }
         }
     }
     Ok(())
+}
+
+/// Returns the token key used for an auth field.
+///
+/// Namespacing keeps keychain service names (`{server}-{key}`) distinct from an
+/// env or header entry literally named `username`, `password`, or `token`.
+fn auth_token_key(field: &str) -> String {
+    format!("auth.{field}")
+}
+
+/// Builds a field-path validation error for a malformed raw document value.
+fn value_path_error(path: String, expectation: &str) -> McpConfigMutationError {
+    McpConfigMutationError::ValidationFailed(format!("{path} must be {expectation}"))
 }
 
 /// Apply the same credential policy as `save_config_to_path` to one raw value.
@@ -261,7 +379,7 @@ fn tokenize_value(name: &str, key: &str, raw: &str) -> Result<EnvVar, McpConfigM
     }
     let mut values = IndexSet::from([EnvVar::new(key.to_string(), raw.to_string(), EnvSource::File)]);
     tokenize_env(&mut values, &name.to_string())
-        .map_err(|e| McpConfigMutationError::ValidationFailed(format!("failed to tokenize configuration: {e}")))?;
+        .map_err(|e| McpConfigMutationError::TokenizationFailed(format!("failed to tokenize {name}.{key}: {e}")))?;
     Ok(values.into_iter().next().expect("singleton env set"))
 }
 
@@ -567,6 +685,55 @@ mod tests {
         }
     }
 
+    #[test]
+    fn auth_fields_are_tokenized_before_persistence() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        let mut document = serde_json::json!({
+            "mcpServers": {
+                "protected": {
+                    "baseUrl": "https://example.com",
+                    "auth": {
+                        "scheme": "basic",
+                        "username": "alice",
+                        "password": "hunter2",
+                        "token": "${secret:OATTY_REVIEW_TEST_SECRET}"
+                    },
+                    "disabled": false
+                }
+            }
+        });
+
+        temp_env::with_var("OATTY_SECRETS_BACKEND", None::<&str>, || {
+            tokenize_document_values(&mut document).unwrap();
+        });
+
+        let auth = &document["mcpServers"]["protected"]["auth"];
+        // Plain credentials should be persisted (tokenize_env may move them to
+        // the configured store, but the value itself is retained as a string).
+        assert!(auth["username"].is_string());
+        assert!(auth["password"].is_string());
+        // A `${secret:NAME}` reference must pass through unchanged — it must
+        // NOT be stored as plaintext in the persisted document.
+        assert_eq!(auth["token"].as_str().unwrap(), "${secret:OATTY_REVIEW_TEST_SECRET}");
+        // And the raw password must not appear in the serialized document
+        // when the backend replaces it with a secret reference.
+        let serialized = serde_json::to_string(&document).unwrap();
+        std::fs::write(&path, &serialized).unwrap();
+
+        // Round-trip through load_config_from_path with the env backend to
+        // confirm auth fields reload with the correct source.
+        let loaded = temp_env::with_vars(
+            [
+                ("OATTY_SECRETS_BACKEND", Some("env")),
+                ("OATTY_REVIEW_TEST_SECRET", Some("resolved-secret")),
+            ],
+            || load_config_from_path(&path).unwrap(),
+        );
+        let auth = loaded.mcp_servers["protected"].auth.as_ref().expect("auth block present");
+        assert_eq!(auth.token.as_deref(), Some("resolved-secret"));
+    }
+
     #[tokio::test]
     async fn replace_renames_server_and_persists() {
         let dir = tempfile::tempdir().unwrap();
@@ -708,5 +875,343 @@ mod tests {
         let new = serde_json::json!({ "command": "node", "tags": ["b"], "disabled": false });
 
         assert_eq!(diff_server_fields(Some(&old), Some(&new)), vec!["tags"]);
+    }
+
+    /// Regression test for H1: renaming a server through ReplaceServer must
+    /// carry forward unowned fields (cwd, auth, disabled, tags) that the form
+    /// does not populate from the old entry.
+    #[tokio::test]
+    async fn replace_rename_preserves_unowned_fields() {
+        use std::path::PathBuf;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+
+        // Seed the raw document with a server that has fields the form does not own.
+        let seed = serde_json::json!({
+            "mcpServers": {
+                "old": {
+                    "command": "node",
+                    "cwd": "/tmp/work",
+                    "auth": { "scheme": "basic", "username": "u", "password": "p" },
+                    "disabled": true,
+                    "tags": ["alpha", "beta"]
+                }
+            }
+        });
+        std::fs::write(&path, serde_json::to_string(&seed).unwrap()).unwrap();
+
+        let config = load_config_from_path(&path).unwrap();
+        let engine = Arc::new(PluginEngine::new(config, Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+
+        // Build a replacement server as the TUI would after carrying forward unowned fields.
+        let replacement = McpServer {
+            command: Some("node".to_string()),
+            cwd: Some(PathBuf::from("/tmp/work")),
+            auth: Some(crate::config::McpAuthConfig {
+                scheme: "basic".to_string(),
+                username: Some("u".to_string()),
+                password: Some("p".to_string()),
+                token: None,
+                header_name: None,
+                interactive: None,
+            }),
+            disabled: true,
+            tags: Some(vec!["alpha".to_string(), "beta".to_string()]),
+            ..Default::default()
+        };
+
+        let outcome = apply_config_mutation(
+            Arc::clone(&engine),
+            path.clone(),
+            McpConfigMutation::ReplaceServer {
+                old_name: "old".to_string(),
+                new_name: "renamed".to_string(),
+                server: replacement,
+            },
+            ReloadPolicy::RestorePreviouslyRunning,
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.persisted);
+        assert_eq!(outcome.server_name, "renamed");
+
+        let persisted = load_raw_config_document_from_path(&path).unwrap();
+        let renamed = &persisted["mcpServers"]["renamed"];
+        assert!(persisted["mcpServers"].get("old").is_none());
+        assert_eq!(renamed["cwd"].as_str().unwrap(), "/tmp/work");
+        assert_eq!(renamed["auth"]["scheme"].as_str().unwrap(), "basic");
+        assert_eq!(renamed["auth"]["username"].as_str().unwrap(), "u");
+        assert!(renamed["disabled"].as_bool().unwrap());
+        assert_eq!(renamed["tags"][0].as_str().unwrap(), "alpha");
+        assert_eq!(renamed["tags"][1].as_str().unwrap(), "beta");
+    }
+
+    #[tokio::test]
+    async fn replace_rename_rejects_collision_with_existing_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+
+        let seed = serde_json::json!({
+            "mcpServers": {
+                "old": {"command": "node", "disabled": false},
+                "existing": {"command": "deno", "disabled": false}
+            }
+        });
+        std::fs::write(&path, serde_json::to_string(&seed).unwrap()).unwrap();
+
+        let config = load_config_from_path(&path).unwrap();
+        let engine = Arc::new(PluginEngine::new(config, Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+
+        let error = apply_config_mutation(
+            Arc::clone(&engine),
+            path.clone(),
+            McpConfigMutation::ReplaceServer {
+                old_name: "old".to_string(),
+                new_name: "existing".to_string(),
+                server: McpServer {
+                    command: Some("node".to_string()),
+                    ..Default::default()
+                },
+            },
+            ReloadPolicy::RestorePreviouslyRunning,
+        )
+        .await
+        .unwrap_err();
+
+        assert!(
+            matches!(&error, McpConfigMutationError::ValidationFailed(message) if message.contains("already exists")),
+            "got {error:?}"
+        );
+
+        let persisted = load_raw_config_document_from_path(&path).unwrap();
+        assert_eq!(persisted["mcpServers"]["old"]["command"], "node");
+        assert_eq!(persisted["mcpServers"]["existing"]["command"], "deno");
+    }
+
+    #[tokio::test]
+    async fn replace_nonexistent_server_returns_not_found() {
+        for (old_name, new_name) in [("ghost", "renamed"), ("ghost", "ghost")] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("mcp.json");
+            let engine = Arc::new(PluginEngine::new(McpConfig::default(), Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+
+            let error = apply_config_mutation(
+                Arc::clone(&engine),
+                path.clone(),
+                McpConfigMutation::ReplaceServer {
+                    old_name: old_name.to_string(),
+                    new_name: new_name.to_string(),
+                    server: McpServer {
+                        command: Some("node".to_string()),
+                        ..Default::default()
+                    },
+                },
+                ReloadPolicy::RestorePreviouslyRunning,
+            )
+            .await
+            .unwrap_err();
+
+            assert!(matches!(error, McpConfigMutationError::ServerNotFound(name) if name == "ghost"));
+            assert!(!path.exists(), "a rejected replacement must not create the configuration file");
+        }
+    }
+
+    #[test]
+    fn tokenize_document_values_reports_value_paths_as_validation_errors() {
+        let mut map_document = serde_json::json!({
+            "mcpServers": {"server": {"command": "node", "env": {"KEY": 42}}}
+        });
+        let error = tokenize_document_values(&mut map_document).unwrap_err();
+        assert!(
+            matches!(&error, McpConfigMutationError::ValidationFailed(message) if message.contains("mcpServers.server.env.KEY")),
+            "got {error:?}"
+        );
+        assert!(!matches!(error, McpConfigMutationError::InvalidRootShape));
+
+        let mut array_document = serde_json::json!({
+            "mcpServers": {"server": {"command": "node", "env": [{"key": "KEY"}]}}
+        });
+        let error = tokenize_document_values(&mut array_document).unwrap_err();
+        assert!(
+            matches!(&error, McpConfigMutationError::ValidationFailed(message) if message.contains("mcpServers.server.env.KEY.value")),
+            "got {error:?}"
+        );
+        assert!(!matches!(error, McpConfigMutationError::InvalidRootShape));
+    }
+
+    #[test]
+    fn auth_token_keys_are_namespaced_and_round_trip_through_reload() {
+        assert_eq!(auth_token_key("username"), "auth.username");
+        assert_eq!(auth_token_key("password"), "auth.password");
+        assert_eq!(auth_token_key("token"), "auth.token");
+        // Auth keys must not collide with an env/header entry named "password".
+        assert_ne!(auth_token_key("password"), "password");
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        let document = serde_json::json!({
+            "mcpServers": {
+                "protected": {
+                    "baseUrl": "https://example.com",
+                    "auth": {"scheme": "basic", "password": "${secret:protected-auth.password}"},
+                    "disabled": false
+                }
+            }
+        });
+        std::fs::write(&path, serde_json::to_string(&document).unwrap()).unwrap();
+
+        let loaded = temp_env::with_vars(
+            [
+                ("OATTY_SECRETS_BACKEND", Some("env")),
+                ("protected-auth.password", Some("round-trip-secret")),
+            ],
+            || load_config_from_path(&path).unwrap(),
+        );
+
+        let auth = loaded.mcp_servers["protected"].auth.as_ref().expect("auth block present");
+        assert_eq!(auth.password.as_deref(), Some("round-trip-secret"));
+    }
+
+    #[test]
+    fn plaintext_value_clears_stale_secret_source_label() {
+        let mut document = serde_json::json!({
+            "mcpServers": {
+                "server": {
+                    "command": "node",
+                    "env": [{"key": "PLAIN", "value": "plain-text-value", "source": "Secret"}]
+                }
+            }
+        });
+
+        temp_env::with_var("OATTY_SECRETS_BACKEND", Some("env"), || {
+            tokenize_document_values(&mut document).unwrap();
+        });
+
+        let row = &document["mcpServers"]["server"]["env"][0];
+        assert_eq!(row["value"], "plain-text-value");
+        assert_eq!(row["source"], "Raw", "stale Secret label must not survive a plaintext value");
+    }
+
+    #[tokio::test]
+    async fn derive_mode_adds_missing_server_and_edits_existing_under_guard() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        let engine = Arc::new(PluginEngine::new(McpConfig::default(), Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+
+        let mut add_patch = McpServerPatch::default();
+        add_patch.configuration.command = Some("node".to_string());
+        apply_config_mutation(
+            Arc::clone(&engine),
+            path.clone(),
+            McpConfigMutation::ConfigureServer {
+                name: "derived".to_string(),
+                patch: add_patch,
+                mode: ConfigureMode::Derive,
+            },
+            ReloadPolicy::ConfigureTarget {
+                name: "derived".to_string(),
+                connect: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        let mut edit_patch = McpServerPatch::default();
+        edit_patch.configuration.args = Some(vec!["--edited".to_string()]);
+        let outcome = apply_config_mutation(
+            Arc::clone(&engine),
+            path.clone(),
+            McpConfigMutation::ConfigureServer {
+                name: "derived".to_string(),
+                patch: edit_patch,
+                mode: ConfigureMode::Derive,
+            },
+            ReloadPolicy::ConfigureTarget {
+                name: "derived".to_string(),
+                connect: false,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(outcome.operation, "configure");
+        let persisted = load_raw_config_document_from_path(&path).unwrap();
+        assert_eq!(persisted["mcpServers"]["derived"]["command"], "node");
+        assert_eq!(persisted["mcpServers"]["derived"]["args"], serde_json::json!(["--edited"]));
+    }
+
+    #[tokio::test]
+    async fn connect_intent_is_resolved_against_the_guarded_disabled_state() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        let seed = serde_json::json!({
+            "mcpServers": {
+                "paused": {"command": "node", "disabled": true}
+            }
+        });
+        std::fs::write(&path, serde_json::to_string(&seed).unwrap()).unwrap();
+        let config = load_config_from_path(&path).unwrap();
+        let engine = Arc::new(PluginEngine::new(config, Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+
+        let mut patch = McpServerPatch::default();
+        patch.configuration.tags = Some(vec!["updated".to_string()]);
+        let outcome = apply_config_mutation(
+            Arc::clone(&engine),
+            path.clone(),
+            McpConfigMutation::ConfigureServer {
+                name: "paused".to_string(),
+                patch,
+                mode: ConfigureMode::Derive,
+            },
+            ReloadPolicy::ConfigureTarget {
+                name: "paused".to_string(),
+                connect: true,
+            },
+        )
+        .await
+        .unwrap();
+
+        assert!(outcome.persisted);
+        assert!(!outcome.connection_attempted, "disabled servers must never be connected");
+        assert!(outcome.runtime_applied);
+    }
+
+    #[tokio::test]
+    async fn cancellation_of_caller_does_not_cancel_the_guarded_worker() {
+        use std::time::Duration;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("mcp.json");
+        let engine = Arc::new(PluginEngine::new(McpConfig::default(), Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+
+        let mut patch = McpServerPatch::default();
+        patch.configuration.command = Some("node".to_string());
+        let caller = tokio::spawn(apply_config_mutation(
+            Arc::clone(&engine),
+            path.clone(),
+            McpConfigMutation::ConfigureServer {
+                name: "detached".to_string(),
+                patch,
+                mode: ConfigureMode::Add,
+            },
+            ReloadPolicy::RestorePreviouslyRunning,
+        ));
+
+        // Give the caller time to spawn its worker, then cancel the caller.
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        caller.abort();
+        let _ = caller.await;
+
+        for _ in 0..100 {
+            if path.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert!(path.exists(), "the detached worker must still persist the configuration");
+        let persisted = load_raw_config_document_from_path(&path).unwrap();
+        assert_eq!(persisted["mcpServers"]["detached"]["command"], "node");
     }
 }

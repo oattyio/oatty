@@ -16,8 +16,8 @@ pub use model::{ConfigError, McpAuthConfig, McpConfig, McpServer};
 #[cfg(test)]
 pub(crate) use mutation::SafeError;
 pub use mutation::{
-    ClearField, ConfigureMode, McpConfigMutation, McpConfigMutationError, McpServerConfigurationPatch, McpServerPatch, ReloadPolicy,
-    ServerStatus,
+    ClearField, ConfigureMode, McpConfigMutation, McpConfigMutationError, McpConfigMutationOutcome, McpServerConfigurationPatch,
+    McpServerPatch, ReloadPolicy, ServerStatus,
 };
-pub(crate) use mutation::{ErrorCategory, ErrorStage, McpConfigMutationOutcome};
+pub(crate) use mutation::{ErrorCategory, ErrorStage};
 pub use validation::{ValidationError, validate_config, validate_server_name};
