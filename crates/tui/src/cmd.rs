@@ -1046,22 +1046,22 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
             .and_then(|s| s.get(mutation_name.as_str()))
             .and_then(|v| v.as_object())
     {
-                    let new_env_keys = planned_env_keys.clone();
-                    let old_env_keys = collect_persisted_keys(old_server.get("env"));
-                    for key in old_env_keys {
-                        if !new_env_keys.contains(&key) {
-                            patch.remove_env.push(key);
-                        }
-                    }
-
-                    let new_header_keys = planned_header_keys.clone();
-                    let old_header_keys = collect_persisted_keys(old_server.get("headers"));
-                    for key in old_header_keys {
-                        if !new_header_keys.contains(&key) {
-                            patch.remove_headers.push(key);
-                        }
-                    }
+        let new_env_keys = planned_env_keys.clone();
+        let old_env_keys = collect_persisted_keys(old_server.get("env"));
+        for key in old_env_keys {
+            if !new_env_keys.contains(&key) {
+                patch.remove_env.push(key);
+            }
         }
+
+        let new_header_keys = planned_header_keys.clone();
+        let old_header_keys = collect_persisted_keys(old_server.get("headers"));
+        for key in old_header_keys {
+            if !new_header_keys.contains(&key) {
+                patch.remove_headers.push(key);
+            }
+        }
+    }
 
     let engine = Arc::clone(&app.ctx.plugin_engine);
     if let Err(error) = apply_config_mutation(engine, default_config_path(), mutation, ReloadPolicy::RestorePreviouslyRunning).await {
