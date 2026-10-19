@@ -850,15 +850,9 @@ impl PluginEngine {
             match self.client_manager.guarded_start_plugin(name, guard).await {
                 Ok(()) => {
                     // Wait for start events
-                    self.wait_for_barrier().await.ok();
+                    let barrier_result = self.wait_for_barrier().await;
                     let status = self.client_manager.get_plugin_status(name).await.unwrap_or(PluginStatus::Unknown);
-                    crate::types::McpServerApplyOutcome {
-                        name: name.to_string(),
-                        status,
-                        runtime_applied: true,
-                        connection_attempted: true,
-                        connection_error: None,
-                    }
+                    Self::completed_start_outcome(name, status, barrier_result)
                 }
                 Err(e) => {
                     tracing::warn!(plugin = %name, error = %e, "Failed to start plugin during config update");
@@ -880,6 +874,26 @@ impl PluginEngine {
                 connection_attempted: false,
                 connection_error: None,
             }
+        }
+    }
+
+    /// A connection can succeed while its status and tool updates fail to
+    /// reach the engine. In that case the runtime projection is unverified.
+    fn completed_start_outcome(
+        name: &str,
+        status: PluginStatus,
+        barrier_result: Result<(), PluginEngineError>,
+    ) -> crate::types::McpServerApplyOutcome {
+        let runtime_applied = barrier_result.is_ok();
+        if let Err(error) = barrier_result {
+            tracing::warn!(plugin = %name, error = %error, "Failed to confirm plugin start events during config update");
+        }
+        crate::types::McpServerApplyOutcome {
+            name: name.to_string(),
+            status,
+            runtime_applied,
+            connection_attempted: true,
+            connection_error: None,
         }
     }
 
@@ -1909,6 +1923,38 @@ mod tests {
             assert_eq!(spec.name, "info");
             assert!(spec.mcp().is_some_and(|m| m.plugin_name == "demo" && m.tool_name == "demo_info"));
         }
+
+        engine.stop().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn completed_start_reports_barrier_failure_without_losing_connection_progress() {
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert("demo".into(), make_server("demo", false, None));
+        let engine = PluginEngine::new(config, Arc::new(Mutex::new(CommandRegistry::default()))).unwrap();
+
+        let unavailable = engine.wait_for_barrier().await.expect_err("listener is not running");
+        let failed = PluginEngine::completed_start_outcome("demo", PluginStatus::Running, Err(unavailable));
+        assert_eq!(failed.status, PluginStatus::Running);
+        assert!(!failed.runtime_applied);
+        assert!(failed.connection_attempted);
+        assert!(failed.connection_error.is_none());
+
+        engine.prepare_registry().await.unwrap();
+        let acknowledged = engine.wait_for_barrier().await;
+        let successful = PluginEngine::completed_start_outcome("demo", PluginStatus::Running, acknowledged);
+        assert!(successful.runtime_applied);
+        assert_eq!(successful.status, PluginStatus::Running);
+
+        engine.listener_dirty.store(true, Ordering::Release);
+        let dirty = engine
+            .wait_for_barrier()
+            .await
+            .expect_err("listener reports an application failure");
+        let failed = PluginEngine::completed_start_outcome("demo", PluginStatus::Running, Err(dirty));
+        assert!(!failed.runtime_applied);
+        assert!(failed.connection_attempted);
+        assert!(failed.connection_error.is_none());
 
         engine.stop().await.unwrap();
     }
