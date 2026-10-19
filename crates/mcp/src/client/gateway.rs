@@ -54,7 +54,6 @@ pub struct McpClientGateway {
     /// Whether the engine status listener has taken the internal receiver.
     internal_listener_active: Arc<AtomicBool>,
     /// Monotonic barrier sequence counter.
-    #[allow(dead_code)]
     barrier_counter: Arc<AtomicUsize>,
 }
 
@@ -483,7 +482,6 @@ impl McpClientGateway {
 
     /// Enqueue a barrier and return a receiver that resolves when the listener has
     /// applied all preceding events.
-    #[allow(dead_code)]
     pub(crate) fn emit_barrier(&self) -> Result<oneshot::Receiver<Result<(), BarrierLagError>>, BarrierLagError> {
         if !self.internal_listener_active.load(Ordering::Acquire) {
             return Err(BarrierLagError::ListenerUnavailable);
@@ -515,7 +513,6 @@ impl McpClientGateway {
 
     /// Enqueue a reconciliation event and return a receiver that resolves when the listener
     /// has rebuilt its state from the authoritative snapshot.
-    #[allow(dead_code)]
     pub(crate) fn emit_reconcile(&self, snapshot: EngineStateSnapshot) -> Result<oneshot::Receiver<Result<(), String>>, BarrierLagError> {
         if !self.internal_listener_active.load(Ordering::Acquire) {
             return Err(BarrierLagError::ListenerUnavailable);
@@ -573,7 +570,6 @@ pub(crate) struct McpOperationGuard {
 
 /// Errors that can occur while waiting for a barrier acknowledgement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-#[allow(dead_code)]
 pub(crate) enum BarrierLagError {
     /// The engine status listener is not available.
     #[error("engine status listener is unavailable")]
@@ -588,7 +584,6 @@ pub(crate) enum BarrierLagError {
 
 /// FIFO envelope for events sent from the gateway to the engine status listener.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(crate) enum InternalEvent {
     Lifecycle(ClientGatewayEvent),
     Barrier(AckFence),

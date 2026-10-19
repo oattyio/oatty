@@ -34,6 +34,18 @@ struct ConfigDelta {
     removed: Vec<String>,
 }
 
+/// Clears the gateway's listener-active flag when the status listener task
+/// ends, including when the task is aborted or panics.
+struct ListenerActiveGuard {
+    gateway: McpClientGateway,
+}
+
+impl Drop for ListenerActiveGuard {
+    fn drop(&mut self) {
+        self.gateway.mark_listener_active(false);
+    }
+}
+
 /// Plugin engine that orchestrates all MCP plugin operations.
 #[derive(Debug)]
 pub struct PluginEngine {
@@ -154,6 +166,9 @@ impl PluginEngine {
 
         self.client_manager.mark_listener_active(true);
         let handle = tokio::spawn(async move {
+            // Dropping this guard on normal exit, abort, or panic keeps the
+            // gateway's listener-active flag in sync with the task's lifetime.
+            let _listener_active = ListenerActiveGuard { gateway };
             let mut local_dirty = false;
             loop {
                 match internal_rx.recv().await {
@@ -194,7 +209,6 @@ impl PluginEngine {
                     None => break,
                 }
             }
-            gateway.mark_listener_active(false);
         });
 
         *guard = Some(handle);
@@ -227,15 +241,16 @@ impl PluginEngine {
                 let synthesized = PluginEngine::synthesize_mcp_specs(name, tools.as_ref(), auth_message.as_deref());
                 {
                     let mut synthetic_specs_lock = synthetic_specs.lock().await;
-                    if let Ok(mut registry_lock) = command_registry.lock() {
-                        registry_lock.remove_commands_for_plugin(name);
-                        if !synthesized.is_empty() {
-                            let syn_arc: Arc<[CommandSpec]> = Arc::from(synthesized);
-                            registry_lock.insert_commands(syn_arc.clone());
-                            synthetic_specs_lock.insert(name.clone(), syn_arc);
-                        } else {
-                            synthetic_specs_lock.remove(name);
-                        }
+                    // Registry invariants survive a panic elsewhere, so recover the
+                    // poisoned guard instead of silently skipping the update.
+                    let mut registry_lock = command_registry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                    registry_lock.remove_commands_for_plugin(name);
+                    if !synthesized.is_empty() {
+                        let syn_arc: Arc<[CommandSpec]> = Arc::from(synthesized);
+                        registry_lock.insert_commands(syn_arc.clone());
+                        synthetic_specs_lock.insert(name.clone(), syn_arc);
+                    } else {
+                        synthetic_specs_lock.remove(name);
                     }
                 }
                 Ok(())
@@ -295,13 +310,14 @@ impl PluginEngine {
             let synthesized = PluginEngine::synthesize_mcp_specs(&name, server_snapshot.tools.as_ref(), auth_message.as_deref());
             {
                 let mut synthetic_specs_lock = synthetic_specs.lock().await;
-                if let Ok(mut registry_lock) = command_registry.lock() {
-                    registry_lock.remove_commands_for_plugin(&name);
-                    if !synthesized.is_empty() {
-                        let syn_arc: Arc<[CommandSpec]> = Arc::from(synthesized);
-                        registry_lock.insert_commands(syn_arc.clone());
-                        synthetic_specs_lock.insert(name.clone(), syn_arc);
-                    }
+                // Registry invariants survive a panic elsewhere, so recover the
+                // poisoned guard instead of silently skipping the update.
+                let mut registry_lock = command_registry.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                registry_lock.remove_commands_for_plugin(&name);
+                if !synthesized.is_empty() {
+                    let syn_arc: Arc<[CommandSpec]> = Arc::from(synthesized);
+                    registry_lock.insert_commands(syn_arc.clone());
+                    synthetic_specs_lock.insert(name.clone(), syn_arc);
                 }
             }
         }
@@ -617,6 +633,10 @@ impl PluginEngine {
         policy: &crate::config::ReloadPolicy,
         guard: &McpOperationGuard,
     ) -> Result<crate::types::McpConfigApplyOutcome, PluginEngineError> {
+        if self.listener_dirty.load(Ordering::Acquire) {
+            self.reconcile_status_listener_under_guard(guard).await?;
+        }
+
         let old_config = self.config.read().await.clone();
 
         // Classify changes
@@ -927,7 +947,6 @@ impl PluginEngine {
     }
 
     /// Reconcile the status listener if it has been marked dirty.
-    #[allow(dead_code)]
     pub(crate) async fn reconcile_status_listener_under_guard(&self, _guard: &McpOperationGuard) -> Result<(), PluginEngineError> {
         if !self.listener_dirty.load(Ordering::Acquire) {
             return Ok(());
@@ -948,7 +967,6 @@ impl PluginEngine {
     }
 
     /// Build an authoritative snapshot of current engine state for reconciliation.
-    #[allow(dead_code)]
     async fn build_engine_snapshot(&self) -> EngineStateSnapshot {
         let config = self.config.read().await.clone();
         let mut servers = HashMap::new();

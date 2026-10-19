@@ -18,7 +18,6 @@ pub(crate) struct McpConfigApplyOutcome {
 
 /// Per-server outcome from a configuration update.
 #[derive(Debug)]
-#[allow(dead_code)]
 pub(crate) struct McpServerApplyOutcome {
     pub(crate) name: String,
     pub(crate) status: crate::config::ServerStatus,
