@@ -4,16 +4,50 @@
 //! management of the upstream MCP servers that provide command capabilities.
 
 use crate::config::{
-    ClearField, ConfigureMode, McpConfigMutation, McpServerPatch, ReloadPolicy, apply_config_mutation, default_config_path,
-    load_raw_config_document_from_path,
+    ClearField, ConfigureMode, McpConfigMutation, McpConfigMutationError, McpServerPatch, ReloadPolicy, apply_config_mutation,
+    default_config_path, load_raw_config_document_from_path,
 };
 use crate::server::schemas::{McpServerConfigureRequest, McpServerSetRunningRequest};
 use rmcp::model::ErrorData;
 use serde_json::{Map, Value};
 use std::sync::Arc;
 
+/// Log only fixed field names and non-secret request metadata. User-supplied
+/// strings can contain credentials regardless of which field carries them.
+pub(crate) fn configure_request_log_projection(request: &McpServerConfigureRequest) -> Value {
+    serde_json::json!({
+        "command_present": request.command.is_some(),
+        "argument_count": request.args.as_ref().map(Vec::len),
+        "base_url_present": request.base_url.is_some(),
+        "enabled": request.enabled,
+        "connect": request.connect,
+        "tag_count": request.tags.as_ref().map(Vec::len),
+    })
+}
+
 fn internal_error<T: std::fmt::Display>(message: T) -> ErrorData {
     ErrorData::internal_error(message.to_string(), None)
+}
+
+fn configure_error(code: &'static str) -> ErrorData {
+    ErrorData::internal_error(
+        "MCP server configuration failed",
+        Some(serde_json::json!({ "error_code": code, "next_step": "Review the server configuration and retry." })),
+    )
+}
+
+fn mutation_error_code(error: &McpConfigMutationError) -> &'static str {
+    match error {
+        McpConfigMutationError::ReadFailed(_) => "read_failed",
+        McpConfigMutationError::ParseFailed(_) | McpConfigMutationError::InvalidRootShape => "parse_failed",
+        McpConfigMutationError::ServerNotFound(_) => "server_not_found",
+        McpConfigMutationError::PatchConflict(_) => "patch_conflict",
+        McpConfigMutationError::ValidationFailed(_) => "validation_failed",
+        McpConfigMutationError::TokenizationFailed(_) => "tokenization_failed",
+        McpConfigMutationError::SaveFailed(_) => "save_failed",
+        McpConfigMutationError::RuntimeLoadFailed(_) => "runtime_load_failed",
+        McpConfigMutationError::RuntimeApplyFailed(_) => "runtime_apply_failed",
+    }
 }
 
 /// Configure an upstream MCP server.
@@ -26,7 +60,7 @@ pub(crate) async fn mcp_server_configure(
     // Read the persisted document once to determine add-vs-edit mode and the
     // effective enabled state so `connect` honors "disabled servers remain
     // disconnected". The shared service re-reads under the operation guard.
-    let doc = load_raw_config_document_from_path(&path).map_err(|e| internal_error(format!("Failed to load config: {e}")))?;
+    let doc = load_raw_config_document_from_path(&path).map_err(|e| configure_error(mutation_error_code(&e)))?;
     let existing = doc
         .get("mcpServers")
         .and_then(|v| v.as_object())
@@ -63,8 +97,8 @@ pub(crate) async fn mcp_server_configure(
             patch.configuration.base_url = request.base_url.clone();
             patch.clear_fields = vec![ClearField::Command, ClearField::Args, ClearField::Cwd, ClearField::Env];
         }
-        other => {
-            return Err(internal_error(format!("invalid transport type: {other}")));
+        _ => {
+            return Err(configure_error("invalid_transport"));
         }
     }
 
@@ -80,7 +114,7 @@ pub(crate) async fn mcp_server_configure(
 
     let outcome = apply_config_mutation(Arc::clone(plugin_engine), path, mutation, policy)
         .await
-        .map_err(|e| internal_error(e.to_string()))?;
+        .map_err(|e| configure_error(mutation_error_code(&e)))?;
 
     Ok(serde_json::json!({
         "name": outcome.server_name,
@@ -102,6 +136,8 @@ pub(crate) async fn mcp_server_configure(
 pub(crate) async fn mcp_servers_list(plugin_engine: &Arc<crate::PluginEngine>, limit: Option<usize>) -> Result<Value, ErrorData> {
     let path = crate::config::default_config_path();
 
+    let _guard = plugin_engine.acquire_operation_guard().await;
+
     let doc = match load_raw_config_document_from_path(&path) {
         Ok(doc) => doc,
         Err(e) => {
@@ -109,7 +145,12 @@ pub(crate) async fn mcp_servers_list(plugin_engine: &Arc<crate::PluginEngine>, l
         }
     };
 
+    Ok(build_inventory(plugin_engine, &doc, limit).await)
+}
+
+async fn build_inventory(plugin_engine: &Arc<crate::PluginEngine>, doc: &Value, limit: Option<usize>) -> Value {
     let mcp_servers = doc.get("mcpServers").and_then(|v| v.as_object()).cloned().unwrap_or_default();
+    let runtime_config = plugin_engine.config_snapshot().await;
 
     let mut servers = Vec::new();
 
@@ -128,17 +169,19 @@ pub(crate) async fn mcp_servers_list(plugin_engine: &Arc<crate::PluginEngine>, l
         };
 
         let masked = mask_server_config(config.as_object().unwrap_or(&Map::new()));
-        // Look up runtime status from the engine
-        let engine_status = plugin_engine.get_plugin_status(name).await;
-        let runtime_status = match &engine_status {
-            Ok(s) => format!("{s:?}").to_lowercase(),
-            Err(_) => "unknown".to_string(),
-        };
-        let runtime_available = engine_status.is_ok();
-        let effective_disabled = if runtime_available {
-            serde_json::json!(config.get("disabled").and_then(|v| v.as_bool()).unwrap_or(false))
+        let runtime_server = runtime_config.mcp_servers.get(name);
+        let cached_detail = plugin_engine.cached_plugin_detail(name).await;
+        let runtime_available = runtime_server.is_some() && cached_detail.is_some();
+        let runtime_status = cached_detail
+            .as_ref()
+            .filter(|_| runtime_available)
+            .map(|detail| format!("{:?}", detail.status).to_lowercase())
+            .unwrap_or_else(|| "unknown".to_string());
+        let effective_disabled = runtime_server.filter(|_| runtime_available).map(|server| server.disabled);
+        let tool_count = if runtime_available {
+            plugin_engine.plugin_tools(name).await.map(|tools| tools.len())
         } else {
-            serde_json::Value::Null
+            None
         };
         servers.push(serde_json::json!({
             "name": name,
@@ -147,7 +190,7 @@ pub(crate) async fn mcp_servers_list(plugin_engine: &Arc<crate::PluginEngine>, l
             "effective_disabled": effective_disabled,
             "runtime_available": runtime_available,
             "status": runtime_status,
-            "tool_count": serde_json::Value::Null,
+            "tool_count": tool_count,
             "masked_config": masked,
         }));
     }
@@ -156,10 +199,10 @@ pub(crate) async fn mcp_servers_list(plugin_engine: &Arc<crate::PluginEngine>, l
         servers.truncate(lim);
     }
 
-    Ok(serde_json::json!({
+    serde_json::json!({
         "servers": servers,
         "total": servers.len(),
-    }))
+    })
 }
 
 /// Start or stop a specific upstream MCP server.
@@ -191,31 +234,203 @@ fn mask_server_config(config: &Map<String, Value>) -> Value {
     const MASKED: &str = "<masked>";
     let mut masked = Map::new();
 
-    if config.contains_key("command") {
-        masked.insert("command".to_string(), serde_json::json!(MASKED));
+    for field in ["command", "cwd", "baseUrl"] {
+        if config.contains_key(field) {
+            masked.insert(field.to_string(), Value::String(MASKED.to_string()));
+        }
     }
     if let Some(args) = config.get("args").and_then(|v| v.as_array()) {
+        masked.insert(
+            "args".to_string(),
+            Value::Array(args.iter().map(|_| Value::String(MASKED.to_string())).collect()),
+        );
         masked.insert("argument_count".to_string(), serde_json::json!(args.len()));
     }
-    if config.contains_key("baseUrl") {
-        masked.insert("baseUrl".to_string(), serde_json::json!(MASKED));
+    if let Some(origin) = config
+        .get("baseUrl")
+        .and_then(Value::as_str)
+        .and_then(|url| url::Url::parse(url).ok())
+        .and_then(|url| match url.origin() {
+            url::Origin::Tuple(..) => Some(url.origin().ascii_serialization()),
+            _ => None,
+        })
+    {
+        masked.insert("connection_origin".to_string(), Value::String(origin));
     }
-    if let Some(headers) = config.get("headers").and_then(|v| v.as_array()) {
-        let mut masked_headers = Vec::new();
-        for header in headers {
-            if let Some(obj) = header.as_object() {
-                let mut masked_header = Map::new();
-                if let Some(key) = obj.get("key") {
-                    masked_header.insert("key".to_string(), key.clone());
-                }
-                if obj.get("value").is_some() {
-                    masked_header.insert("value".to_string(), serde_json::json!(MASKED));
-                }
-                masked_headers.push(serde_json::Value::Object(masked_header));
+    for field in ["env", "headers"] {
+        if let Some(values) = config.get(field) {
+            if let Some(entries) = values.as_object() {
+                let masked_entries = entries.keys().map(|key| (key.clone(), Value::String(MASKED.to_string()))).collect();
+                masked.insert(field.to_string(), Value::Object(masked_entries));
+            } else if let Some(entries) = values.as_array() {
+                let masked_entries = entries
+                    .iter()
+                    .filter_map(Value::as_object)
+                    .map(|entry| {
+                        let mut masked_entry = Map::new();
+                        if let Some(key) = entry.get("key") {
+                            masked_entry.insert("key".to_string(), key.clone());
+                        }
+                        if entry.contains_key("value") {
+                            masked_entry.insert("value".to_string(), Value::String(MASKED.to_string()));
+                        }
+                        Value::Object(masked_entry)
+                    })
+                    .collect();
+                masked.insert(field.to_string(), Value::Array(masked_entries));
             }
         }
-        masked.insert("headers".to_string(), serde_json::json!(masked_headers));
+    }
+    if let Some(auth) = config.get("auth").and_then(Value::as_object) {
+        let masked_auth = auth.keys().map(|key| (key.clone(), Value::String(MASKED.to_string()))).collect();
+        masked.insert("auth".to_string(), Value::Object(masked_auth));
     }
 
     serde_json::Value::Object(masked)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::client::gateway::{ClientGatewayEvent, McpClientGateway};
+    use crate::config::{McpConfig, McpServer};
+    use crate::types::McpToolMetadata;
+    use oatty_registry::CommandRegistry;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    #[test]
+    fn inventory_mask_covers_map_and_array_credentials() {
+        let config = serde_json::json!({
+            "command": "secret-command", "args": ["secret-arg"], "cwd": "/secret/path",
+            "baseUrl": "https://user:password@example.com:8443/secret?token=secret-query",
+            "env": {"TOKEN": "secret-env"},
+            "headers": [{"key": "Authorization", "value": "secret-header"}],
+            "auth": {"scheme": "secret-scheme", "username": "secret-user", "password": "secret-password"}
+        });
+        let masked = mask_server_config(config.as_object().unwrap());
+        let serialized = masked.to_string();
+        for secret in [
+            "secret-command",
+            "secret-arg",
+            "/secret/path",
+            "secret-query",
+            "secret-env",
+            "secret-header",
+            "secret-scheme",
+            "secret-user",
+            "secret-password",
+        ] {
+            assert!(!serialized.contains(secret), "masked inventory leaked {secret}");
+        }
+        assert_eq!(masked["connection_origin"], "https://example.com:8443");
+        assert_eq!(masked["argument_count"], 1);
+        assert_eq!(masked["env"]["TOKEN"], "<masked>");
+        assert_eq!(masked["headers"][0]["value"], "<masked>");
+        assert_eq!(masked["auth"]["scheme"], "<masked>");
+    }
+
+    #[test]
+    fn configure_error_response_omits_raw_failure_values() {
+        let source = McpConfigMutationError::ValidationFailed("secret-command failed".into());
+        let safe = configure_error(mutation_error_code(&source));
+        let serialized = serde_json::to_string(&safe).unwrap();
+        assert_eq!(safe.data.as_ref().unwrap()["error_code"], "validation_failed");
+        assert!(!serialized.contains("secret-command"));
+    }
+
+    #[tokio::test]
+    async fn inventory_uses_runtime_disabled_and_cached_tool_counts() {
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert(
+            "forced-disabled".into(),
+            McpServer {
+                command: Some("node".into()),
+                disabled: true,
+                ..Default::default()
+            },
+        );
+        config.mcp_servers.insert(
+            "known-empty".into(),
+            McpServer {
+                command: Some("node".into()),
+                ..Default::default()
+            },
+        );
+        config.mcp_servers.insert(
+            "live".into(),
+            McpServer {
+                command: Some("node".into()),
+                ..Default::default()
+            },
+        );
+        config.mcp_servers.insert(
+            "running-no-snapshot".into(),
+            McpServer {
+                command: Some("node".into()),
+                ..Default::default()
+            },
+        );
+        let mut updated_config = config.clone();
+        updated_config.mcp_servers.get_mut("known-empty").unwrap().tags = Some(vec!["changed".into()]);
+        let engine = Arc::new(crate::PluginEngine::new(config, Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+        engine.prepare_registry().await.unwrap();
+        let tools = Arc::new(
+            (0..3)
+                .map(|index| McpToolMetadata {
+                    name: format!("tool_{index}"),
+                    title: None,
+                    description: None,
+                    input_schema: serde_json::json!({"type": "object"}),
+                    output_schema: None,
+                    annotations: None,
+                    auth_summary: None,
+                })
+                .collect(),
+        );
+        engine.client_manager().guarded_emit_lifecycle(ClientGatewayEvent::ToolsUpdated {
+            name: "live".into(),
+            tools,
+        });
+        for name in ["forced-disabled", "known-empty"] {
+            engine.client_manager().guarded_emit_lifecycle(ClientGatewayEvent::ToolsUpdated {
+                name: name.into(),
+                tools: Arc::new(Vec::new()),
+            });
+        }
+        engine
+            .client_manager()
+            .guarded_emit_lifecycle(ClientGatewayEvent::Started { name: "live".into() });
+        engine.client_manager().guarded_emit_lifecycle(ClientGatewayEvent::Started {
+            name: "running-no-snapshot".into(),
+        });
+        let ack = engine.client_manager().emit_barrier().unwrap();
+        McpClientGateway::wait_for_barrier_ack(ack, Duration::from_secs(1)).await.unwrap();
+        engine.update_config(updated_config).await.unwrap();
+        let persisted = serde_json::json!({"mcpServers": {
+            "forced-disabled": {"command": "node", "disabled": false},
+            "known-empty": {"command": "node", "disabled": false},
+            "live": {"command": "node", "disabled": false},
+            "running-no-snapshot": {"command": "node", "disabled": false},
+            "configured-only": {"command": "node", "disabled": false}
+        }});
+        let inventory = build_inventory(&engine, &persisted, None).await;
+        let servers = inventory["servers"].as_array().unwrap();
+        let forced = servers.iter().find(|item| item["name"] == "forced-disabled").unwrap();
+        assert_eq!(forced["disabled"], false);
+        assert_eq!(forced["effective_disabled"], true);
+        assert_eq!(forced["tool_count"], 0);
+        let live = servers.iter().find(|item| item["name"] == "live").unwrap();
+        assert_eq!(live["status"], "running");
+        assert_eq!(live["tool_count"], 3);
+        let empty = servers.iter().find(|item| item["name"] == "known-empty").unwrap();
+        assert_eq!(empty["tool_count"], 0);
+        let unknown_tools = servers.iter().find(|item| item["name"] == "running-no-snapshot").unwrap();
+        assert_eq!(unknown_tools["status"], "running");
+        assert!(unknown_tools["tool_count"].is_null());
+        let absent = servers.iter().find(|item| item["name"] == "configured-only").unwrap();
+        assert_eq!(absent["runtime_available"], false);
+        assert!(absent["effective_disabled"].is_null());
+        assert!(absent["tool_count"].is_null());
+    }
 }
