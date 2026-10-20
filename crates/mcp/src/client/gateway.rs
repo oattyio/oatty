@@ -91,6 +91,10 @@ impl McpClientGateway {
     /// not block on potentially slow handshake operations. Errors are logged
     /// but do not stop initialization.
     pub async fn start(&self) -> Result<(), ClientGatewayError> {
+        // Keep registration and shutdown retirement in one order. Workers only
+        // take operation_guard, so holding this lock while capturing revisions
+        // cannot deadlock with them.
+        let mut autostart_tasks = self.autostart_tasks.lock().await;
         let config_snapshot = self.config.read().await.clone();
         for (name, server) in &config_snapshot.mcp_servers {
             if server.is_disabled() {
@@ -102,7 +106,7 @@ impl McpClientGateway {
             // later mutation can retire this queued intent.
             let revision = {
                 let _guard = self.acquire_operation_guard().await;
-                self.current_server_revision(&plugin_name)
+                *self.server_revisions.write().unwrap().entry(plugin_name.clone()).or_insert(0)
             };
             let autostart_handle = tokio::spawn(async move {
                 let guard = manager.acquire_operation_guard().await;
@@ -114,7 +118,7 @@ impl McpClientGateway {
                     tracing::warn!(plugin = %plugin_name, error = %err, "Autostart failed");
                 }
             });
-            self.autostart_tasks.lock().await.push(autostart_handle);
+            autostart_tasks.push(autostart_handle);
         }
         Ok(())
     }
@@ -163,17 +167,18 @@ impl McpClientGateway {
     pub async fn stop(&self) -> Result<(), ClientGatewayError> {
         // Retire any queued autostart intent before joining tasks so a superseded
         // startup cannot register an old client after shutdown returns.
-        {
+        // Keep start() blocked through disconnect so it cannot enqueue a new
+        // autostart while shutdown is in progress.
+        let mut handle_store = self.autostart_tasks.lock().await;
+        let autostart_handles = {
+            let config = self.config.read().await;
             let revisions = self.server_revisions.read().unwrap();
-            let names: Vec<String> = revisions.keys().cloned().collect();
+            let names: HashSet<String> = config.mcp_servers.keys().chain(revisions.keys()).cloned().collect();
             drop(revisions);
+            drop(config);
             for name in names {
                 self.increment_server_revision(&name);
             }
-        }
-
-        let autostart_handles = {
-            let mut handle_store = self.autostart_tasks.lock().await;
             handle_store.drain(..).collect::<Vec<JoinHandle<()>>>()
         };
 
@@ -651,6 +656,38 @@ mod tests {
         // Removal does not delete the tombstone; re-addition continues from it.
         gateway.increment_server_revision("alpha");
         assert_eq!(gateway.current_server_revision("alpha"), 2);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn shutdown_retires_fresh_queued_autostart_before_it_connects() {
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert("alpha".into(), Default::default());
+        let gateway = McpClientGateway::new(config).unwrap();
+        let mut events = gateway.subscribe();
+
+        gateway.start().await.unwrap();
+        let guard = gateway.acquire_operation_guard().await;
+        assert_eq!(gateway.current_server_revision("alpha"), 0);
+
+        let stopping_gateway = gateway.clone();
+        let shutdown = tokio::spawn(async move { stopping_gateway.stop().await });
+        timeout(Duration::from_secs(1), async {
+            while gateway.current_server_revision("alpha") == 0 {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("shutdown must retire a fresh queued autostart before waiting on the operation guard");
+        assert_eq!(gateway.current_server_revision("alpha"), 1);
+        assert!(
+            gateway.autostart_tasks.try_lock().is_err(),
+            "shutdown must keep autostart scheduling closed"
+        );
+
+        drop(guard);
+        timeout(Duration::from_secs(1), shutdown).await.unwrap().unwrap().unwrap();
+        assert!(gateway.get_client("alpha").await.is_none());
+        assert!(matches!(events.try_recv(), Err(broadcast::error::TryRecvError::Empty)));
     }
 
     #[tokio::test]
