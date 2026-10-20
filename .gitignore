@@ -18,6 +18,9 @@
 .env
 .env.local
 .env.*.local
+
+# Local review/demo artifacts
+/artifacts/
 node_modules/
 package-lock.json
 !oatty.io/package-lock.json

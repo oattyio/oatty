@@ -5,11 +5,14 @@ use crate::server::catalog::{
 };
 use crate::server::http::McpHttpLogEntry;
 use crate::server::log_payload::{build_log_payload, build_parsed_response_payload};
+use crate::server::mcp_server_tools::{
+    configure_request_log_projection, mcp_server_configure, mcp_server_set_running, mcp_servers_list, set_running_request_log_projection,
+};
 use crate::server::schemas::{
     CatalogApplyPatchRequest, CatalogEditHeadersRequest, CatalogGetMaskedHeadersRequest, CatalogImportOpenApiRequest,
     CatalogPreviewImportRequest, CatalogRemoveRequest, CatalogSetBaseUrlRequest, CatalogSetEnabledRequest, CatalogValidateOpenApiRequest,
-    CommandDetailRequest, CommandSummariesRequest, OutputSchemaDetail, ProviderMetadataDetail, RunCommandRequestParam, SearchInputsDetail,
-    SearchRequestParam,
+    CommandDetailRequest, CommandSummariesRequest, McpServerConfigureRequest, McpServerSetRunningRequest, McpServersListRequest,
+    OutputSchemaDetail, ProviderMetadataDetail, RunCommandRequestParam, SearchInputsDetail, SearchRequestParam,
 };
 #[cfg(feature = "workflow_admin_tools")]
 use crate::server::workflow::tools::{purge_workflow_history, types::WorkflowPurgeHistoryRequest};
@@ -394,6 +397,39 @@ impl OattyMcpCore {
     }
 
     #[tool(
+        name = "mcp_server_configure",
+        annotations(open_world_hint = true),
+        description = "Configure an upstream MCP server. Input: name (unique identifier), transport (stdio or http), command (for stdio), base_url (for http), optional args, enabled, tags, connect. Mutates local MCP config and can connect the server immediately. Use list_mcp_servers to inspect current configuration."
+    )]
+    async fn mcp_server_configure(&self, param: Parameters<McpServerConfigureRequest>) -> Result<CallToolResult, ErrorData> {
+        let request_payload = Some(configure_request_log_projection(&param.0));
+        let result = mcp_server_configure(&self.services.plugin_engine, &param.0).await;
+        Ok(self.finalize_sensitive_structured_tool_call("mcp_server_configure", request_payload, result))
+    }
+
+    #[tool(
+        name = "mcp_servers_list",
+        annotations(read_only_hint = true),
+        description = "List all configured upstream MCP servers with runtime status and masked configuration. Returns server names, transport types, disabled state, runtime availability, status, and tool counts. Sensitive values (tokens, passwords) are masked."
+    )]
+    async fn mcp_servers_list(&self, param: Parameters<McpServersListRequest>) -> Result<CallToolResult, ErrorData> {
+        let request_payload = Some(serde_json::to_value(&param.0).unwrap_or(Value::Null));
+        let result = mcp_servers_list(&self.services.plugin_engine, param.0.limit).await;
+        Ok(self.finalize_structured_tool_call("mcp_servers_list", request_payload, result))
+    }
+
+    #[tool(
+        name = "mcp_server_set_running",
+        annotations(open_world_hint = true),
+        description = "Start or stop a specific upstream MCP server. Input: name (server identifier), running (true to start, false to stop). Returns the new server status. Useful for recovering from connection failures or temporarily disabling servers."
+    )]
+    async fn mcp_server_set_running(&self, param: Parameters<McpServerSetRunningRequest>) -> Result<CallToolResult, ErrorData> {
+        let request_payload = Some(set_running_request_log_projection(&param.0));
+        let result = mcp_server_set_running(&self.services.plugin_engine, &param.0).await;
+        Ok(self.finalize_sensitive_structured_tool_call("mcp_server_set_running", request_payload, result))
+    }
+
+    #[tool(
         name = "workflow_get",
         annotations(read_only_hint = true),
         description = "Retrieve a workflow manifest by id. Returns content and version metadata. Flags: include_content (default true), include_parsed (default false)."
@@ -546,6 +582,24 @@ impl OattyMcpCore {
             Err(error) => build_structured_error_tool_result(error),
         };
         self.emit_log(tool_name, request, Some(serde_json::to_value(&response).unwrap_or(Value::Null)));
+        response
+    }
+
+    /// Emit a fixed response summary when either the input or an error could
+    /// contain arbitrary user-supplied configuration values.
+    fn finalize_sensitive_structured_tool_call(
+        &self,
+        tool_name: &str,
+        request: Option<Value>,
+        result: Result<Value, ErrorData>,
+    ) -> CallToolResult {
+        let succeeded = result.is_ok();
+        let response = match result {
+            Ok(payload) => build_structured_tool_result(payload),
+            Err(error) => build_structured_error_tool_result(error),
+        };
+        let log_response = build_structured_tool_result(serde_json::json!({ "succeeded": succeeded }));
+        self.emit_log(tool_name, request, Some(serde_json::to_value(log_response).unwrap_or(Value::Null)));
         response
     }
 
@@ -1814,6 +1868,7 @@ fn vendor_has_enabled_command_catalog(registry: &Arc<Mutex<CommandRegistry>>, ve
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::McpConfig;
     use indexmap::IndexSet;
     use oatty_registry::RegistryConfig;
     use oatty_types::manifest::{RegistryCatalog, RegistryManifest};
@@ -1822,6 +1877,100 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     const MAX_WORKFLOW_TOOL_METADATA_BYTES: usize = 16 * 1024;
+
+    #[test]
+    fn configure_http_logs_never_include_raw_request_values() {
+        let command_registry = Arc::new(Mutex::new(CommandRegistry::default()));
+        let engine = Arc::new(PluginEngine::new(McpConfig::default(), Arc::clone(&command_registry)).unwrap());
+        let search_handle = oatty_registry::create_search_handle(Arc::clone(&command_registry));
+        let services = Arc::new(McpToolServices::new(command_registry, engine, search_handle));
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let core = OattyMcpCore::new(Some(sender), services);
+        let request = McpServerConfigureRequest {
+            name: "secret-name".into(),
+            transport: "secret-transport".into(),
+            command: Some("secret-command".into()),
+            args: Some(vec!["secret-arg".into()]),
+            base_url: Some("https://secret-host/path".into()),
+            enabled: Some(true),
+            tags: Some(vec!["secret-tag".into()]),
+            connect: Some(false),
+            env: None,
+            cwd: None,
+            headers: None,
+            auth_scheme: None,
+            auth_username: None,
+            auth_password: None,
+            auth_token: None,
+            auth_header_name: None,
+        };
+        let safe_request = Some(configure_request_log_projection(&request));
+        for result in [
+            Ok(json!({"name": "secret-name", "changed_fields": ["secret-tag"]})),
+            Err(ErrorData::internal_error("secret-command failed", None)),
+        ] {
+            core.finalize_sensitive_structured_tool_call("mcp_server_configure", safe_request.clone(), result);
+            for _ in 0..2 {
+                let entry = receiver.try_recv().expect("standard and parsed-response log entries");
+                let payload = entry.payload.unwrap().to_string();
+                for secret in [
+                    "secret-name",
+                    "secret-transport",
+                    "secret-command",
+                    "secret-arg",
+                    "secret-host",
+                    "secret-tag",
+                ] {
+                    assert!(!payload.contains(secret), "configure log leaked a request value");
+                }
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn set_running_error_response_and_logs_omit_raw_failure_values() {
+        let command_registry = Arc::new(Mutex::new(CommandRegistry::default()));
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert(
+            "secret-server".into(),
+            crate::McpServer {
+                base_url: Some(url::Url::parse("http://127.0.0.1:1/secret-path?token=secret-token").unwrap()),
+                ..Default::default()
+            },
+        );
+        let engine = Arc::new(PluginEngine::new(config, Arc::clone(&command_registry)).unwrap());
+        engine.prepare_registry().await.unwrap();
+        let search_handle = oatty_registry::create_search_handle(Arc::clone(&command_registry));
+        let services = Arc::new(McpToolServices::new(command_registry, Arc::clone(&engine), search_handle));
+        let (sender, mut receiver) = tokio::sync::mpsc::unbounded_channel();
+        let core = OattyMcpCore::new(Some(sender), services);
+
+        let request = McpServerSetRunningRequest {
+            name: "secret-server".into(),
+            running: true,
+        };
+        let error = mcp_server_set_running(&engine, &request)
+            .await
+            .expect_err("connection to the closed local port must fail");
+        assert_eq!(error.data.as_ref().unwrap()["error_code"], "lifecycle_failed");
+
+        let response = core.finalize_sensitive_structured_tool_call(
+            "mcp_server_set_running",
+            Some(set_running_request_log_projection(&request)),
+            Err(error),
+        );
+        let serialized_response = serde_json::to_string(&response).unwrap();
+        assert!(!serialized_response.contains("secret-token"));
+        assert!(!serialized_response.contains("secret-path"));
+
+        for _ in 0..2 {
+            let entry = receiver.try_recv().expect("standard and parsed-response log entries");
+            let payload = entry.payload.unwrap().to_string();
+            assert!(!payload.contains("secret-server"), "set_running log leaked a server name");
+            assert!(!payload.contains("secret-token"), "set_running log leaked an interpolated URL");
+            assert!(!payload.contains("secret-path"), "set_running log leaked an interpolated URL");
+        }
+    }
 
     fn default_workflow_tools() -> Vec<rmcp::model::Tool> {
         OattyMcpCore::default_tool_router()

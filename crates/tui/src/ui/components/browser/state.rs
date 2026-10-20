@@ -264,4 +264,32 @@ mod tests {
 
         assert_eq!(state.search_query(), "");
     }
+
+    #[test]
+    fn update_browser_filtered_keeps_indices_within_registry_bounds() {
+        let command = |name: &str| {
+            CommandSpec::new_http(
+                "apps".to_string(),
+                name.to_string(),
+                "List apps".to_string(),
+                Vec::new(),
+                Vec::new(),
+                oatty_types::HttpCommandSpec::new("GET", "/apps", None, None),
+                0,
+            )
+        };
+        let registry = Arc::new(Mutex::new(
+            CommandRegistry::default().with_commands(vec![command("one"), command("two")]),
+        ));
+        let mut state = BrowserState::new(Arc::clone(&registry));
+
+        state.update_browser_filtered();
+        assert_eq!(state.filtered().len(), 2);
+
+        // Simulate a runtime mutation (e.g. catalog removal) shrinking the registry.
+        registry.lock().unwrap().commands.truncate(1);
+
+        state.update_browser_filtered();
+        assert!(state.filtered().iter().all(|index| *index < 1));
+    }
 }

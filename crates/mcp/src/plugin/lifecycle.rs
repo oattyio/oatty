@@ -165,7 +165,7 @@ impl LifecycleManager {
     pub async fn stop_plugin<F, Fut>(&self, name: &str, stop_fn: F) -> Result<(), LifecycleError>
     where
         F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<(), String>> + Send + 'static,
+        Fut: Future<Output = Result<(), String>> + Send,
     {
         let shutdown_time = SystemTime::now();
 
