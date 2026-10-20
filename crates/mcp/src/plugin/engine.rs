@@ -383,6 +383,12 @@ impl PluginEngine {
 
     /// Start a plugin.
     pub async fn start_plugin(&self, name: &str) -> Result<(), PluginEngineError> {
+        let guard = self.client_manager.acquire_operation_guard().await;
+        self.guarded_start_plugin(name, &guard).await
+    }
+
+    /// Start a plugin while the caller holds the gateway operation guard.
+    pub(crate) async fn guarded_start_plugin(&self, name: &str, guard: &McpOperationGuard) -> Result<(), PluginEngineError> {
         let Ok(mut registry) = self.prepare_registry().await else {
             return Err(PluginEngineError::RegistryError(RegistryError::OperationFailed {
                 reason: "registry unavailable".into(),
@@ -393,18 +399,19 @@ impl PluginEngine {
             return Err(PluginEngineError::PluginNotFound { name: name.to_string() });
         }
 
-        // Start the plugin using lifecycle management
-        let start_fn = {
-            let client_manager = self.client_manager.clone();
-            let name = name.to_string();
-            move || {
-                let client_manager = client_manager.clone();
-                let name = name.clone();
-                async move { client_manager.start_plugin(&name).await.map_err(|e| e.to_string()) }
-            }
-        };
-
-        self.lifecycle_manager.start_plugin(name, start_fn).await?;
+        self.client_manager.increment_server_revision(name);
+        let lifecycle_result = self
+            .lifecycle_manager
+            .start_plugin(name, || async {
+                self.client_manager
+                    .guarded_start_plugin(name, guard)
+                    .await
+                    .map_err(|e| e.to_string())
+            })
+            .await;
+        let barrier_result = self.wait_for_barrier().await;
+        lifecycle_result?;
+        barrier_result?;
 
         // Update registry
         registry.set_plugin_status(name, PluginStatus::Running)?;
@@ -415,6 +422,12 @@ impl PluginEngine {
 
     /// Stop a plugin.
     pub async fn stop_plugin(&self, name: &str) -> Result<(), PluginEngineError> {
+        let guard = self.client_manager.acquire_operation_guard().await;
+        self.guarded_stop_plugin(name, &guard).await
+    }
+
+    /// Stop a plugin while the caller holds the gateway operation guard.
+    pub(crate) async fn guarded_stop_plugin(&self, name: &str, guard: &McpOperationGuard) -> Result<(), PluginEngineError> {
         let Ok(mut registry) = self.prepare_registry().await else {
             return Err(PluginEngineError::RegistryError(RegistryError::OperationFailed {
                 reason: "registry unavailable".into(),
@@ -425,18 +438,19 @@ impl PluginEngine {
             return Err(PluginEngineError::PluginNotFound { name: name.to_string() });
         }
 
-        // Stop the plugin using lifecycle management
-        let stop_fn = {
-            let client_manager = self.client_manager.clone();
-            let name = name.to_string();
-            move || {
-                let client_manager = client_manager.clone();
-                let name = name.clone();
-                async move { client_manager.stop_plugin(&name).await.map_err(|e| e.to_string()) }
-            }
-        };
-
-        self.lifecycle_manager.stop_plugin(name, stop_fn).await?;
+        self.client_manager.increment_server_revision(name);
+        let lifecycle_result = self
+            .lifecycle_manager
+            .stop_plugin(name, || async {
+                self.client_manager
+                    .guarded_stop_plugin(name, guard)
+                    .await
+                    .map_err(|e| e.to_string())
+            })
+            .await;
+        let barrier_result = self.wait_for_barrier().await;
+        lifecycle_result?;
+        barrier_result?;
 
         // Update registry
         registry.set_plugin_status(name, PluginStatus::Stopped)?;
@@ -932,7 +946,7 @@ impl PluginEngine {
     }
 
     /// Wait for a barrier to be acknowledged by the status listener.
-    async fn wait_for_barrier(&self) -> Result<(), PluginEngineError> {
+    pub(crate) async fn wait_for_barrier(&self) -> Result<(), PluginEngineError> {
         match self.client_manager.emit_barrier() {
             Ok(ack) => match tokio::time::timeout(Duration::from_secs(30), ack).await {
                 Ok(Ok(Ok(()))) => Ok(()),

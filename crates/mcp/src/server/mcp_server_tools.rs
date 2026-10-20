@@ -253,27 +253,40 @@ pub(crate) async fn mcp_server_set_running(
     plugin_engine: &Arc<crate::PluginEngine>,
     request: &McpServerSetRunningRequest,
 ) -> Result<Value, ErrorData> {
+    let guard = plugin_engine.client_manager().acquire_operation_guard().await;
+    plugin_engine
+        .prepare_registry()
+        .await
+        .map_err(|error| set_running_error(plugin_engine_error_code(&error)))?;
+    // Drain preceding lifecycle events before testing whether this request is a no-op.
+    plugin_engine
+        .wait_for_barrier()
+        .await
+        .map_err(|error| set_running_error(plugin_engine_error_code(&error)))?;
+
     // Re-applying the current state is a successful no-op. In particular,
     // starting an already-running server must not reach the lifecycle state
     // machine, which would flip a healthy server to Starting/Error.
-    if request.running
-        && matches!(
-            plugin_engine.get_plugin_status(&request.name).await,
-            Ok(crate::types::PluginStatus::Running)
-        )
-    {
+    let current_status = plugin_engine.get_plugin_status(&request.name).await;
+    let already_in_state = matches!(
+        (&current_status, request.running),
+        (Ok(crate::types::PluginStatus::Running), true) | (Ok(crate::types::PluginStatus::Stopped), false)
+    );
+    if already_in_state {
+        // Even a no-op explicit request supersedes a queued autostart.
+        plugin_engine.client_manager().increment_server_revision(&request.name);
         return Ok(serde_json::json!({
             "name": request.name,
-            "running": true,
-            "status": "running",
+            "running": request.running,
+            "status": if request.running { "running" } else { "stopped" },
             "already_in_state": true,
         }));
     }
 
     let result = if request.running {
-        plugin_engine.start_plugin(&request.name).await
+        plugin_engine.guarded_start_plugin(&request.name, &guard).await
     } else {
-        plugin_engine.stop_plugin(&request.name).await
+        plugin_engine.guarded_stop_plugin(&request.name, &guard).await
     };
     result.map_err(|error| set_running_error(plugin_engine_error_code(&error)))?;
 
@@ -621,6 +634,167 @@ mod tests {
         assert_eq!(detail_after.status, crate::types::PluginStatus::Running);
         assert_eq!(detail_after.health.failure_count, detail_before.health.failure_count);
         assert_eq!(detail_after.health.last_error, detail_before.health.last_error);
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn set_running_checks_no_op_after_acquiring_operation_guard() {
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert(
+            "live".into(),
+            McpServer {
+                command: Some("/nonexistent/mcp-server".into()),
+                ..Default::default()
+            },
+        );
+        let engine = Arc::new(crate::PluginEngine::new(config, Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+        engine.prepare_registry().await.unwrap();
+        let guard = engine.client_manager().acquire_operation_guard().await;
+
+        let request = McpServerSetRunningRequest {
+            name: "live".into(),
+            running: true,
+        };
+        let engine_for_request = Arc::clone(&engine);
+        let pending = tokio::spawn(async move { mcp_server_set_running(&engine_for_request, &request).await });
+        tokio::task::yield_now().await;
+        assert!(
+            !pending.is_finished(),
+            "set_running must wait for the operation guard before checking status"
+        );
+
+        engine
+            .client_manager()
+            .guarded_emit_lifecycle(ClientGatewayEvent::Started { name: "live".into() });
+        drop(guard);
+        let response = pending.await.unwrap().unwrap();
+        assert_eq!(response["already_in_state"], true);
+        assert_eq!(response["status"], "running");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn set_running_no_op_stop_retires_queued_autostart() {
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert(
+            "demo".into(),
+            McpServer {
+                command: Some("/nonexistent/mcp-server".into()),
+                ..Default::default()
+            },
+        );
+        let engine = Arc::new(crate::PluginEngine::new(config, Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+        engine.prepare_registry().await.unwrap();
+        let mut events = engine.client_manager().subscribe();
+        engine.client_manager().start().await.unwrap();
+        assert_eq!(engine.client_manager().current_server_revision("demo"), 0);
+
+        let request = McpServerSetRunningRequest {
+            name: "demo".into(),
+            running: false,
+        };
+        let response = mcp_server_set_running(&engine, &request).await.unwrap();
+        assert_eq!(response["already_in_state"], true);
+        assert_eq!(engine.client_manager().current_server_revision("demo"), 1);
+        engine.client_manager().stop().await.unwrap();
+        assert!(matches!(events.try_recv(), Err(tokio::sync::broadcast::error::TryRecvError::Empty)));
+    }
+
+    #[tokio::test]
+    async fn set_running_reports_listener_unavailable_instead_of_success() {
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert(
+            "demo".into(),
+            McpServer {
+                command: Some("/nonexistent/mcp-server".into()),
+                ..Default::default()
+            },
+        );
+        let engine = Arc::new(crate::PluginEngine::new(config, Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+        engine.prepare_registry().await.unwrap();
+        engine.stop().await.unwrap();
+
+        let request = McpServerSetRunningRequest {
+            name: "demo".into(),
+            running: false,
+        };
+        let error = mcp_server_set_running(&engine, &request).await.unwrap_err();
+        assert_eq!(error.data.unwrap()["error_code"], "client_manager_failed");
+    }
+
+    #[tokio::test]
+    async fn set_running_reports_dirty_listener_instead_of_success() {
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert(
+            "demo".into(),
+            McpServer {
+                command: Some("/nonexistent/mcp-server".into()),
+                ..Default::default()
+            },
+        );
+        let engine = Arc::new(crate::PluginEngine::new(config, Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+        engine.prepare_registry().await.unwrap();
+        engine
+            .client_manager()
+            .guarded_emit_lifecycle(ClientGatewayEvent::Started { name: "unknown".into() });
+
+        let request = McpServerSetRunningRequest {
+            name: "demo".into(),
+            running: false,
+        };
+        let error = mcp_server_set_running(&engine, &request).await.unwrap_err();
+        assert_eq!(error.data.unwrap()["error_code"], "client_manager_failed");
+    }
+
+    #[tokio::test]
+    async fn set_running_start_and_stop_return_after_tool_projection_updates() {
+        let host_registry = Arc::new(Mutex::new(CommandRegistry::default()));
+        let host_engine = Arc::new(crate::PluginEngine::new(McpConfig::default(), Arc::clone(&host_registry)).unwrap());
+        let host = crate::McpHttpServer::new("127.0.0.1:0".parse().unwrap(), host_registry, host_engine)
+            .start()
+            .await
+            .unwrap();
+
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert(
+            "remote".into(),
+            McpServer {
+                base_url: Some(url::Url::parse(&format!("http://{}/mcp", host.bound_address())).unwrap()),
+                ..Default::default()
+            },
+        );
+        let commands = Arc::new(Mutex::new(CommandRegistry::default()));
+        let engine = Arc::new(crate::PluginEngine::new(config, Arc::clone(&commands)).unwrap());
+        let start = McpServerSetRunningRequest {
+            name: "remote".into(),
+            running: true,
+        };
+        let started = mcp_server_set_running(&engine, &start).await.unwrap();
+        assert_eq!(started["status"], "running");
+        assert!(engine.plugin_tools("remote").await.is_some_and(|tools| !tools.is_empty()));
+        assert!(
+            commands
+                .lock()
+                .unwrap()
+                .commands
+                .iter()
+                .any(|spec| spec.mcp().is_some_and(|mcp| mcp.plugin_name == "remote"))
+        );
+
+        let stop = McpServerSetRunningRequest {
+            name: "remote".into(),
+            running: false,
+        };
+        let stopped = mcp_server_set_running(&engine, &stop).await.unwrap();
+        assert_eq!(stopped["status"], "stopped");
+        assert!(engine.plugin_tools("remote").await.is_some_and(|tools| tools.is_empty()));
+        assert!(
+            !commands
+                .lock()
+                .unwrap()
+                .commands
+                .iter()
+                .any(|spec| spec.mcp().is_some_and(|mcp| mcp.plugin_name == "remote"))
+        );
+        host.stop().await.unwrap();
     }
 
     #[tokio::test]
