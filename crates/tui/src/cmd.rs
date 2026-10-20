@@ -1061,8 +1061,8 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
             };
         };
 
-        if let Err(error) = carry_forward_plugin_fields(server, old_obj, transport, previous) {
-            return error;
+        if let Err(field) = carry_forward_plugin_fields(server, old_obj, transport) {
+            return carry_forward_error(previous, field);
         }
     }
 
@@ -1142,20 +1142,19 @@ fn carry_forward_plugin_fields(
     server: &mut McpServer,
     old_obj: &Map<String, Value>,
     transport: PluginTransport,
-    previous: &str,
-) -> Result<(), ExecOutcome> {
+) -> Result<(), &'static str> {
     if transport == PluginTransport::Local {
         if let Some(cwd) = old_obj.get("cwd") {
-            server.cwd = serde_json::from_value(cwd.clone()).map_err(|_| carry_forward_error(previous, "cwd"))?;
+            server.cwd = serde_json::from_value(cwd.clone()).map_err(|_| "cwd")?;
         }
     } else if let Some(auth) = old_obj.get("auth") {
-        server.auth = serde_json::from_value(auth.clone()).map_err(|_| carry_forward_error(previous, "auth"))?;
+        server.auth = serde_json::from_value(auth.clone()).map_err(|_| "auth")?;
     }
     if let Some(disabled) = old_obj.get("disabled") {
-        server.disabled = serde_json::from_value(disabled.clone()).map_err(|_| carry_forward_error(previous, "disabled"))?;
+        server.disabled = serde_json::from_value(disabled.clone()).map_err(|_| "disabled")?;
     }
     if let Some(tags) = old_obj.get("tags") {
-        server.tags = serde_json::from_value(tags.clone()).map_err(|_| carry_forward_error(previous, "tags"))?;
+        server.tags = serde_json::from_value(tags.clone()).map_err(|_| "tags")?;
     }
     Ok(())
 }
@@ -1597,7 +1596,7 @@ mod tests {
             command: Some("node".into()),
             ..Default::default()
         };
-        carry_forward_plugin_fields(&mut local, old_obj, PluginTransport::Local, "old").unwrap();
+        carry_forward_plugin_fields(&mut local, old_obj, PluginTransport::Local).unwrap();
         assert_eq!(local.cwd.as_deref(), Some(Path::new("/tmp/plugin")));
         assert!(local.auth.is_none());
         assert!(local.disabled);
@@ -1607,10 +1606,31 @@ mod tests {
             base_url: Some(Url::parse("https://example.com").unwrap()),
             ..Default::default()
         };
-        carry_forward_plugin_fields(&mut remote, old_obj, PluginTransport::Remote, "old").unwrap();
+        carry_forward_plugin_fields(&mut remote, old_obj, PluginTransport::Remote).unwrap();
         assert!(remote.cwd.is_none());
         assert_eq!(remote.auth.as_ref().and_then(|auth| auth.token.as_deref()), Some("secret"));
         assert!(remote.disabled);
         assert_eq!(remote.tags, Some(vec!["saved".to_string()]));
+    }
+
+    #[test]
+    fn rename_reports_invalid_compatible_hidden_field_without_exposing_value() {
+        let old_obj = serde_json::json!({"cwd": 42, "auth": {"scheme": 42}});
+        let old_obj = old_obj.as_object().unwrap();
+        let mut server = McpServer::default();
+
+        for (transport, expected_field) in [(PluginTransport::Local, "cwd"), (PluginTransport::Remote, "auth")] {
+            let field = carry_forward_plugin_fields(&mut server, old_obj, transport).unwrap_err();
+            assert_eq!(field, expected_field);
+            match carry_forward_error("old", field) {
+                ExecOutcome::PluginValidationErr { message } => {
+                    assert_eq!(
+                        message,
+                        format!("cannot carry forward settings for 'old': invalid {expected_field}")
+                    );
+                }
+                other => panic!("unexpected rename error: {other:?}"),
+            }
+        }
     }
 }
