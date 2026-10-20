@@ -1,7 +1,7 @@
 {
   "name": "oatty",
   "version": "0.1.12",
-  "description": "API access for agents through MCP and OpenAPI, with a shared terminal command catalog",
+  "description": "API commands and MCP tools in one catalog for you and your agent, with a terminal interface and reusable HTTP workflows",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
