@@ -456,23 +456,31 @@ fn read_file_contents(path: PathBuf) -> ExecOutcome {
 
 /// Imports a catalog from OpenAPI content using the shared registry import service.
 fn import_registry_catalog_from(app: &mut App, content: String, maybe_prefix: Option<String>) -> ExecOutcome {
-    let Ok(mut registry_guard) = app.ctx.command_registry.try_lock() else {
-        return ExecOutcome::RegistryCatalogGenerationError("System busy".to_string());
+    let import_result = {
+        let Ok(mut registry_guard) = app.ctx.command_registry.try_lock() else {
+            return ExecOutcome::RegistryCatalogGenerationError("System busy".to_string());
+        };
+
+        import_openapi_catalog_into_registry(
+            &mut registry_guard,
+            OpenApiCatalogImportRequest {
+                source_content: content,
+                catalog_title_override: None,
+                vendor_override: maybe_prefix,
+                base_url_override: None,
+                source: None,
+                source_type: None,
+                enabled: Some(true),
+                overwrite: false,
+            },
+        )
     };
 
-    let import_result = import_openapi_catalog_into_registry(
-        &mut registry_guard,
-        OpenApiCatalogImportRequest {
-            source_content: content,
-            catalog_title_override: None,
-            vendor_override: maybe_prefix,
-            base_url_override: None,
-            source: None,
-            source_type: None,
-            enabled: Some(true),
-            overwrite: false,
-        },
-    );
+    if import_result.is_ok() {
+        // The import re-sorted and extended `registry.commands`; refresh the
+        // browser's cached indices so they don't point at stale entries.
+        app.browser.update_browser_filtered();
+    }
 
     match import_result {
         Ok(result) => ExecOutcome::RegistryCatalogGenerated(result.catalog),
@@ -683,6 +691,9 @@ where
     let Ok(()) = update_enabled_state(title.as_ref(), is_enabled, app) else {
         return ExecOutcome::RegistryConfigSaveError("Could not update enabled state".to_string());
     };
+    // Enabling/disabling a catalog rebuilds `registry.commands`; refresh the
+    // browser's cached indices so they don't point at stale entries.
+    app.browser.update_browser_filtered();
     save_registry_config(app)
 }
 
@@ -739,6 +750,9 @@ where
             return ExecOutcome::RegistryConfigSaveError("Could not remove catalog".to_string());
         };
     }
+    // Removing a catalog shrinks `registry.commands`; refresh the browser's
+    // cached indices so they don't point past the end of the list.
+    app.browser.update_browser_filtered();
     save_registry_config(app)
 }
 

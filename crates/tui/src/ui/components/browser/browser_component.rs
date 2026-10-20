@@ -434,7 +434,7 @@ impl BrowserComponent {
                     // mutated at runtime (catalog import/removal/enablement). Skip any
                     // stale index instead of panicking; the browser state refreshes the
                     // list after mutations, so this is a transient safety net.
-                    let CommandSpec{group, name, ..} = all_commands.get(*command_index)?;
+                    let CommandSpec { group, name, .. } = all_commands.get(*command_index)?;
                     let mut spans: Vec<Span<'_>> = Vec::new();
                     if !group.is_empty() {
                         spans.extend(highlight_segments(

@@ -745,6 +745,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn set_running_rejects_disabled_start_without_connecting() {
+        let mut config = McpConfig::default();
+        config.mcp_servers.insert(
+            "disabled".into(),
+            McpServer {
+                command: Some("/nonexistent/mcp-server".into()),
+                disabled: true,
+                ..Default::default()
+            },
+        );
+        let engine = Arc::new(crate::PluginEngine::new(config, Arc::new(Mutex::new(CommandRegistry::default()))).unwrap());
+        let request = McpServerSetRunningRequest {
+            name: "disabled".into(),
+            running: true,
+        };
+        let error = mcp_server_set_running(&engine, &request).await.unwrap_err();
+        assert_eq!(error.data.unwrap()["error_code"], "lifecycle_failed");
+        assert_eq!(
+            engine.get_plugin_status("disabled").await.unwrap(),
+            crate::types::PluginStatus::Stopped
+        );
+        assert!(engine.client_manager().get_client("disabled").await.is_none());
+    }
+
+    #[tokio::test]
     async fn set_running_start_and_stop_return_after_tool_projection_updates() {
         let host_registry = Arc::new(Mutex::new(CommandRegistry::default()));
         let host_engine = Arc::new(crate::PluginEngine::new(McpConfig::default(), Arc::clone(&host_registry)).unwrap());
