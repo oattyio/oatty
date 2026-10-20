@@ -52,7 +52,7 @@
 - Plugin engine manages transport lifecycle (stdio + HTTP/SSE).
 - MCP tools are surfaced into command search and execution paths.
 - Workflow authoring/runtime tools are served from `crates/mcp/src/server/workflow`.
-- Catalog import tools are served from `crates/mcp/src/server/catalog`.
+- Catalog import tools are served from `crates/mcp/src/server/catalog.rs`.
 
 ## Related specs
 
