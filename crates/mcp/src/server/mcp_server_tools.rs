@@ -151,14 +151,23 @@ pub(crate) async fn mcp_server_configure(
         "http" => {
             patch.configuration.base_url = request.base_url.clone();
             patch.configuration.headers = request.headers.clone();
-            patch.configuration.auth = request.auth_scheme.clone().map(|scheme| crate::config::McpAuthPatch {
-                scheme: Some(scheme),
-                username: request.auth_username.clone(),
-                password: request.auth_password.clone(),
-                token: request.auth_token.clone(),
-                header_name: request.auth_header_name.clone(),
-                interactive: None,
-            });
+            if request.auth_scheme.is_some()
+                || request.auth_username.is_some()
+                || request.auth_password.is_some()
+                || request.auth_token.is_some()
+                || request.auth_header_name.is_some()
+            {
+                patch.configuration.auth = Some(crate::config::McpAuthPatch {
+                    scheme: request.auth_scheme.clone(),
+                    username: request.auth_username.clone(),
+                    password: request.auth_password.clone(),
+                    token: request.auth_token.clone(),
+                    header_name: request.auth_header_name.clone(),
+                    interactive: None,
+                });
+            } else {
+                patch.configuration.auth = None;
+            }
             patch.clear_fields = vec![ClearField::Command, ClearField::Args, ClearField::Cwd, ClearField::Env];
         }
         _ => {
