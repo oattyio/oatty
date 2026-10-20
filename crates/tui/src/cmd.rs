@@ -1005,8 +1005,8 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
     // Persist and reload through the shared mutation service so tool and TUI
     // writes share one operation guard. Renames replace the old entry with
     // the form-built server; new and same-name saves go through the configure
-    // contract, which enforces add/edit name existence rules, preserves fields
-    // the form does not own (cwd, auth, tags, disabled), and prunes removed
+    // contract, which enforces add/edit name existence rules, preserves compatible
+    // fields the form does not own (cwd, auth, tags, disabled), and prunes removed
     // env/header keys under the guard via the patch's exact key sets.
     let mut mutation = match original_name {
         Some(previous) if previous != name => McpConfigMutation::ReplaceServer {
@@ -1034,7 +1034,7 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
         None => "added",
     };
 
-    // When renaming, carry forward fields not owned by the form (cwd, auth, disabled, tags)
+    // When renaming, carry forward compatible fields not owned by the form
     // from the old server entry to avoid persisting the renamed server without them.
     // Fail loudly instead of silently dropping a value the raw document cannot deserialize.
     if let McpConfigMutation::ReplaceServer {
@@ -1061,29 +1061,8 @@ async fn execute_plugins_save(app: &mut App<'_>) -> ExecOutcome {
             };
         };
 
-        if let Some(cwd) = old_obj.get("cwd") {
-            server.cwd = match serde_json::from_value(cwd.clone()) {
-                Ok(cwd) => cwd,
-                Err(_) => return carry_forward_error(previous, "cwd"),
-            };
-        }
-        if let Some(auth) = old_obj.get("auth") {
-            server.auth = match serde_json::from_value(auth.clone()) {
-                Ok(auth) => auth,
-                Err(_) => return carry_forward_error(previous, "auth"),
-            };
-        }
-        if let Some(disabled) = old_obj.get("disabled") {
-            server.disabled = match serde_json::from_value(disabled.clone()) {
-                Ok(disabled) => disabled,
-                Err(_) => return carry_forward_error(previous, "disabled"),
-            };
-        }
-        if let Some(tags) = old_obj.get("tags") {
-            server.tags = match serde_json::from_value(tags.clone()) {
-                Ok(tags) => tags,
-                Err(_) => return carry_forward_error(previous, "tags"),
-            };
+        if let Err(error) = carry_forward_plugin_fields(server, old_obj, transport, previous) {
+            return error;
         }
     }
 
@@ -1158,6 +1137,29 @@ fn carry_forward_error(server_name: &str, field: &str) -> ExecOutcome {
     }
 }
 
+/// Preserve hidden fields that remain valid for the selected transport during a rename.
+fn carry_forward_plugin_fields(
+    server: &mut McpServer,
+    old_obj: &Map<String, Value>,
+    transport: PluginTransport,
+    previous: &str,
+) -> Result<(), ExecOutcome> {
+    if transport == PluginTransport::Local {
+        if let Some(cwd) = old_obj.get("cwd") {
+            server.cwd = serde_json::from_value(cwd.clone()).map_err(|_| carry_forward_error(previous, "cwd"))?;
+        }
+    } else if let Some(auth) = old_obj.get("auth") {
+        server.auth = serde_json::from_value(auth.clone()).map_err(|_| carry_forward_error(previous, "auth"))?;
+    }
+    if let Some(disabled) = old_obj.get("disabled") {
+        server.disabled = serde_json::from_value(disabled.clone()).map_err(|_| carry_forward_error(previous, "disabled"))?;
+    }
+    if let Some(tags) = old_obj.get("tags") {
+        server.tags = serde_json::from_value(tags.clone()).map_err(|_| carry_forward_error(previous, "tags"))?;
+    }
+    Ok(())
+}
+
 /// Build the shared configure patch for the Add Plugin form.
 ///
 /// The patch supplies the form-controlled fields for the selected transport
@@ -1165,8 +1167,8 @@ fn carry_forward_error(server_name: &str, field: &str) -> ExecOutcome {
 /// leave ambiguous leftovers behind. Each collection is reduced to the form's
 /// exact key set; the opposite transport's collection is reduced to an empty
 /// set, so cleared and exact-set operations never target the same collection.
-/// Fields the form does not own (cwd, auth, tags, disabled) are preserved by
-/// the patch contract.
+/// Compatible fields the form does not own (cwd for local, auth for remote,
+/// tags, disabled) are preserved by the patch contract.
 fn plugin_form_patch(server: &McpServer, transport: PluginTransport) -> McpServerPatch {
     let mut configuration = McpServerConfigurationPatch::default();
     let mut clear_fields = Vec::new();
@@ -1175,7 +1177,7 @@ fn plugin_form_patch(server: &McpServer, transport: PluginTransport) -> McpServe
         PluginTransport::Remote => {
             configuration.base_url = server.base_url.as_ref().map(|url| url.to_string());
             configuration.headers = Some(env_rows_to_upsert_map(&server.headers));
-            clear_fields.extend([ClearField::Command, ClearField::Args]);
+            clear_fields.extend([ClearField::Command, ClearField::Args, ClearField::Cwd]);
             (Vec::new(), server.headers.iter().map(|entry| entry.key.clone()).collect())
         }
         PluginTransport::Local => {
@@ -1186,7 +1188,7 @@ fn plugin_form_patch(server: &McpServer, transport: PluginTransport) -> McpServe
                 clear_fields.push(ClearField::Args);
             }
             configuration.env = Some(env_rows_to_upsert_map(&server.env));
-            clear_fields.push(ClearField::BaseUrl);
+            clear_fields.extend([ClearField::BaseUrl, ClearField::Auth]);
             (server.env.iter().map(|entry| entry.key.clone()).collect(), Vec::new())
         }
     };
@@ -1509,6 +1511,8 @@ mod tests {
             Some(&"value".to_string())
         );
         assert!(patch.clear_fields.contains(&ClearField::BaseUrl));
+        assert!(patch.clear_fields.contains(&ClearField::Auth));
+        assert!(!patch.clear_fields.contains(&ClearField::Cwd));
         assert!(!patch.clear_fields.contains(&ClearField::Headers));
         assert!(!patch.clear_fields.contains(&ClearField::Env));
         assert_eq!(patch.env_keys_exact, Some(vec!["KEY".to_string()]));
@@ -1544,6 +1548,8 @@ mod tests {
         );
         assert!(patch.clear_fields.contains(&ClearField::Command));
         assert!(patch.clear_fields.contains(&ClearField::Args));
+        assert!(patch.clear_fields.contains(&ClearField::Cwd));
+        assert!(!patch.clear_fields.contains(&ClearField::Auth));
         assert!(!patch.clear_fields.contains(&ClearField::Env));
         assert!(!patch.clear_fields.contains(&ClearField::Headers));
         assert_eq!(patch.env_keys_exact, Some(Vec::new()));
@@ -1575,5 +1581,36 @@ mod tests {
                 assert!(!patch.clear_fields.contains(&ClearField::Headers));
             }
         }
+    }
+
+    #[test]
+    fn rename_carries_only_hidden_fields_compatible_with_selected_transport() {
+        let old_obj = serde_json::json!({
+            "cwd": "/tmp/plugin",
+            "auth": {"scheme": "basic", "token": "secret"},
+            "disabled": true,
+            "tags": ["saved"]
+        });
+        let old_obj = old_obj.as_object().unwrap();
+
+        let mut local = McpServer {
+            command: Some("node".into()),
+            ..Default::default()
+        };
+        carry_forward_plugin_fields(&mut local, old_obj, PluginTransport::Local, "old").unwrap();
+        assert_eq!(local.cwd.as_deref(), Some(Path::new("/tmp/plugin")));
+        assert!(local.auth.is_none());
+        assert!(local.disabled);
+        assert_eq!(local.tags, Some(vec!["saved".to_string()]));
+
+        let mut remote = McpServer {
+            base_url: Some(Url::parse("https://example.com").unwrap()),
+            ..Default::default()
+        };
+        carry_forward_plugin_fields(&mut remote, old_obj, PluginTransport::Remote, "old").unwrap();
+        assert!(remote.cwd.is_none());
+        assert_eq!(remote.auth.as_ref().and_then(|auth| auth.token.as_deref()), Some("secret"));
+        assert!(remote.disabled);
+        assert_eq!(remote.tags, Some(vec!["saved".to_string()]));
     }
 }
