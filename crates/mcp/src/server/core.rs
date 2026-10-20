@@ -1895,6 +1895,14 @@ mod tests {
             enabled: Some(true),
             tags: Some(vec!["secret-tag".into()]),
             connect: Some(false),
+            env: None,
+            cwd: None,
+            headers: None,
+            auth_scheme: None,
+            auth_username: None,
+            auth_password: None,
+            auth_token: None,
+            auth_header_name: None,
         };
         let safe_request = Some(configure_request_log_projection(&request));
         for result in [

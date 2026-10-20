@@ -2,6 +2,20 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+fn named_flags_schema(_generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::Schema::try_from(serde_json::json!({
+        "type": ["array", "null"],
+        "items": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "items": {}
+        },
+        "description": "Named flag/value pairs as [name, value]. Value may be string/number/boolean/object/array. Boolean flags accept explicit true/false values."
+    }))
+    .expect("named_flags schema must be valid")
+}
+
 /// Parameters for configuring an upstream MCP server.
 #[derive(JsonSchema, Serialize, Deserialize, Debug, Clone, PartialEq)]
 pub struct McpServerConfigureRequest {
@@ -17,9 +31,33 @@ pub struct McpServerConfigureRequest {
     /// Arguments for the command (for stdio transport).
     #[schemars(description = "Arguments for the command (stdio transport).")]
     pub args: Option<Vec<String>>,
+    /// Environment variables to set for the process (key-value pairs).
+    #[schemars(description = "Environment variables to set (stdio transport).")]
+    pub env: Option<indexmap::IndexMap<String, String>>,
+    /// Working directory for the process.
+    #[schemars(description = "Working directory for the process (stdio transport).")]
+    pub cwd: Option<String>,
     /// Base URL (required for HTTP transport).
     #[schemars(description = "Base URL for HTTP transport.")]
     pub base_url: Option<String>,
+    /// HTTP headers to include in requests (key-value pairs).
+    #[schemars(description = "HTTP headers to include in requests (HTTP transport).")]
+    pub headers: Option<indexmap::IndexMap<String, String>>,
+    /// Token-based authorization scheme (e.g., "basic").
+    #[schemars(description = "Authorization scheme (e.g., 'basic') for HTTP transport.")]
+    pub auth_scheme: Option<String>,
+    /// Username for basic auth.
+    #[schemars(description = "Username for basic auth.")]
+    pub auth_username: Option<String>,
+    /// Password for basic auth.
+    #[schemars(description = "Password for basic auth.")]
+    pub auth_password: Option<String>,
+    /// Bearer token for HTTP transport.
+    #[schemars(description = "Bearer token for HTTP transport.")]
+    pub auth_token: Option<String>,
+    /// Custom header name for token auth.
+    #[schemars(description = "Custom header name for token auth (e.g., 'X-Api-Key').")]
+    pub auth_header_name: Option<String>,
     /// Whether to enable or disable this server.
     #[schemars(description = "Whether to enable or disable this server. Defaults to enabled.")]
     pub enabled: Option<bool>,
@@ -128,6 +166,8 @@ pub struct RunCommandRequestParam {
     #[schemars(
         description = "Named flag/value pairs as [name, value]. Value may be string/number/boolean/object/array. Boolean flags accept explicit true/false values."
     )]
+    #[schemars(default)]
+    #[schemars(schema_with = "named_flags_schema")]
     pub named_flags: Option<Vec<(String, Value)>>,
 }
 
