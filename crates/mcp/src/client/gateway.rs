@@ -258,6 +258,29 @@ impl McpClientGateway {
             }
         }
 
+        // RAII guard: guarantees the transitional `starting` entry is removed on
+        // normal completion, cancellation, or panic, so it can never leak.
+        let _starting = {
+            struct StartingGuard {
+                set: Arc<Mutex<HashSet<String>>>,
+                name: String,
+            }
+            impl Drop for StartingGuard {
+                fn drop(&mut self) {
+                    let set = Arc::clone(&self.set);
+                    let name = self.name.clone();
+                    tokio::spawn(async move {
+                        let mut guard = set.lock().await;
+                        guard.remove(&name);
+                    });
+                }
+            }
+            StartingGuard {
+                set: Arc::clone(&self.starting),
+                name: plugin_name.clone(),
+            }
+        };
+
         self.guarded_emit_lifecycle(ClientGatewayEvent::Starting { name: plugin_name.clone() });
 
         let connect_result = async {
@@ -269,11 +292,6 @@ impl McpClientGateway {
                 .map_err(|e| ClientGatewayError::ConnectionError { message: e.to_string() })
         }
         .await;
-
-        {
-            let mut starting = self.starting.lock().await;
-            starting.remove(name);
-        }
 
         match connect_result {
             Ok((client, tools)) => {
@@ -324,6 +342,27 @@ impl McpClientGateway {
                 let mut stopping = self.stopping.lock().await;
                 stopping.insert(name.to_string());
             }
+            let _stopping = {
+                struct StoppingGuard {
+                    set: Arc<Mutex<HashSet<String>>>,
+                    name: String,
+                }
+                impl Drop for StoppingGuard {
+                    fn drop(&mut self) {
+                        let set = Arc::clone(&self.set);
+                        let name = self.name.clone();
+                        tokio::spawn(async move {
+                            let mut guard = set.lock().await;
+                            guard.remove(&name);
+                        });
+                    }
+                }
+                StoppingGuard {
+                    set: Arc::clone(&self.stopping),
+                    name: name.to_string(),
+                }
+            };
+
             self.guarded_emit_lifecycle(ClientGatewayEvent::Stopping { name: name.to_string() });
 
             let disconnect_result = {
@@ -331,12 +370,15 @@ impl McpClientGateway {
                 client.disconnect().await
             };
 
-            disconnect_result.map_err(|e| ClientGatewayError::ConnectionError { message: e.to_string() })?;
-
-            {
-                let mut stopping = self.stopping.lock().await;
-                stopping.remove(name);
+            if let Err(e) = disconnect_result {
+                self.guarded_emit_lifecycle(ClientGatewayEvent::Stopped { name: name.to_string() });
+                self.guarded_emit_lifecycle(ClientGatewayEvent::ToolsUpdated {
+                    name: name.to_string(),
+                    tools: Arc::new(Vec::new()),
+                });
+                return Err(ClientGatewayError::ConnectionError { message: e.to_string() });
             }
+
             self.guarded_emit_lifecycle(ClientGatewayEvent::Stopped { name: name.to_string() });
             self.guarded_emit_lifecycle(ClientGatewayEvent::ToolsUpdated {
                 name: name.to_string(),
