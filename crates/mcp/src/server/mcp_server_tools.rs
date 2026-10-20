@@ -144,10 +144,21 @@ pub(crate) async fn mcp_server_configure(
         "stdio" => {
             patch.configuration.command = request.command.clone();
             patch.configuration.args = request.args.clone();
+            patch.configuration.env = request.env.clone();
+            patch.configuration.cwd = request.cwd.clone();
             patch.clear_fields = vec![ClearField::BaseUrl, ClearField::Headers, ClearField::Auth];
         }
         "http" => {
             patch.configuration.base_url = request.base_url.clone();
+            patch.configuration.headers = request.headers.clone();
+            patch.configuration.auth = request.auth_scheme.clone().map(|scheme| crate::config::McpAuthPatch {
+                scheme: Some(scheme),
+                username: request.auth_username.clone(),
+                password: request.auth_password.clone(),
+                token: request.auth_token.clone(),
+                header_name: request.auth_header_name.clone(),
+                interactive: None,
+            });
             patch.clear_fields = vec![ClearField::Command, ClearField::Args, ClearField::Cwd, ClearField::Env];
         }
         _ => {
@@ -496,6 +507,14 @@ mod tests {
                         enabled: Some(true),
                         tags: Some(tags.into_iter().map(str::to_string).collect()),
                         connect: Some(false),
+                        env: None,
+                        cwd: None,
+                        headers: None,
+                        auth_scheme: None,
+                        auth_username: None,
+                        auth_password: None,
+                        auth_token: None,
+                        auth_header_name: None,
                     };
                     let outcome = mcp_server_configure(&engine, &request).await.unwrap();
                     assert_eq!(outcome["operation"], "configure");
