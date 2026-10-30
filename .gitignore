@@ -20,4 +20,13 @@
 .env.*.local
 node_modules/
 package-lock.json
+!/package-lock.json
 !oatty.io/package-lock.json
+
+# Generated distribution license materials (prepare before packing).
+/THIRD-PARTY-NOTICES.txt
+/third-party-licenses/
+/third-party-sources/
+/.license-manifest.json
+/dist/
+/*.tgz

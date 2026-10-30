@@ -1,0 +1,30 @@
+[package]
+name = "rat-focus"
+version = "2.1.1"
+edition = "2024"
+authors = ["thscharler <thscharler@gmail.com>"]
+description = "focus handling for ratatui widgets"
+license = "MIT/Apache-2.0"
+repository = "https://github.com/thscharler/rat-salsa"
+readme = "readme.md"
+keywords = ["ratatui", "focus"]
+categories = ["command-line-interface"]
+exclude = [".idea/*", ".gitignore"]
+
+[lints]
+workspace = true
+
+[dependencies]
+log = "0.4"
+fxhash = "0.2"
+
+ratatui-core = { version = "0.1", features = ["std", "layout-cache"] }
+ratatui-crossterm = { version = "0.1" }
+
+rat-event = { workspace = true }
+
+[dev-dependencies]
+fern = "0.7"
+anyhow = "1.0"
+unicode-segmentation = "1.11"
+ratatui-widgets = { version = "0.3", features = ["std", "unstable-rendered-line-info"] }

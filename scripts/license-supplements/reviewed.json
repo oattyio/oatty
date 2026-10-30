@@ -1,0 +1,229 @@
+{
+  "alloc-stdlib@0.3.0": {
+    "crate-checksum": "0b5c1865780388bfa186411ab5f247819487fc4864c6e9c3106611fa347586e1",
+    "files": [
+      {
+        "file": "alloc-stdlib-0.3.0-LICENSE.txt",
+        "sha256": "c0c56f26d9c051cac4d200c34c84e7ae9aaa853e01a982a1df08b09931e518ae",
+        "source": "https://raw.githubusercontent.com/dropbox/rust-alloc-no-stdlib/0a81fd6928ea3b33c8cd484aa4575d50ffb98012/LICENSE"
+      }
+    ],
+    "vcs-commit": "0a81fd6928ea3b33c8cd484aa4575d50ffb98012"
+  },
+  "aws-lc-sys@0.45.0": {
+    "crate-checksum": "9bff6c3b54fad79a2e60b8102caf565819711497c1f5f092f49508e2f5c31b27",
+    "files": [
+      {
+        "file": "aws-lc-sys-0.45.0-builder-main.rs-header.txt",
+        "sha256": "3298d128e09ee9e6fed2039bf9e6ef3131ea2c5e5d37710fc61e250dc74263dc",
+        "source": "https://static.crates.io/crates/aws-lc-sys/aws-lc-sys-0.45.0.crate#builder/main.rs:1-4",
+        "source-path": "builder/main.rs",
+        "source-sha256": "d97291c63449110d16a01df0b71bdeeca597c8379173c158298b097014e89c6a"
+      }
+    ],
+    "reason": "Preserve actual source-header copyright/grant notices in addition to all packaged license files; full selected license terms are included in THIRD-PARTY-NOTICES.txt.",
+    "vcs-commit": "7943223c99d909bc399bdf1b856821bb04f1f3c5"
+  },
+  "brotli-decompressor@6.0.1": {
+    "crate-checksum": "941cd9bd4ddab83cb46fa5a2d428f1c857b24ac78cb876cf7beb710840934bd7",
+    "files": [
+      {
+        "file": "brotli-decompressor-6.0.1-src-context.rs-header.txt",
+        "sha256": "5395155e88c8736f4ea46123bf481894fae46665e740e73571055e36bb95da94",
+        "source": "https://raw.githubusercontent.com/dropbox/rust-brotli-decompressor/e4f3bf3326256a5dc23e5fa9276d803f6a4ad527/src/context.rs#L5-L9",
+        "source-path": "src/context.rs",
+        "source-sha256": "8fe7865962916fa7ce820b9fb407e6a2dd9b9c373191ad4a41c507b6be373e40"
+      }
+    ],
+    "reason": "Preserve actual source-header copyright/grant notices in addition to all packaged license files; full selected license terms are included in THIRD-PARTY-NOTICES.txt.",
+    "vcs-commit": "e4f3bf3326256a5dc23e5fa9276d803f6a4ad527"
+  },
+  "chrono@0.4.45": {
+    "crate-checksum": "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327",
+    "files": [
+      {
+        "file": "chrono-0.4.45-src-time_delta.rs-header.txt",
+        "sha256": "f3e4452a50490fd9b5f1c5fea4cd3ed45a7ada46f81ddf2dd66bfab28a742b51",
+        "source": "https://raw.githubusercontent.com/chronotope/chrono/170338250e836976a211e64728ec956e45e78a39/src/time_delta.rs#L1-L9",
+        "source-path": "src/time_delta.rs",
+        "source-sha256": "647ea215f6c9c58060c3f82db09147d857a4075890e331e55e6256e02cdbd425"
+      },
+      {
+        "file": "chrono-0.4.45-src-offset-local-unix.rs-header.txt",
+        "sha256": "f3e4452a50490fd9b5f1c5fea4cd3ed45a7ada46f81ddf2dd66bfab28a742b51",
+        "source": "https://raw.githubusercontent.com/chronotope/chrono/170338250e836976a211e64728ec956e45e78a39/src/offset/local/unix.rs#L1-L9",
+        "source-path": "src/offset/local/unix.rs",
+        "source-sha256": "b9900a80a669f32b3f9112087c269b1bf877d5ed1d5a388702938e1caa864d8a"
+      },
+      {
+        "file": "chrono-0.4.45-src-offset-local-windows.rs-header.txt",
+        "sha256": "f3e4452a50490fd9b5f1c5fea4cd3ed45a7ada46f81ddf2dd66bfab28a742b51",
+        "source": "https://raw.githubusercontent.com/chronotope/chrono/170338250e836976a211e64728ec956e45e78a39/src/offset/local/windows.rs#L1-L9",
+        "source-path": "src/offset/local/windows.rs",
+        "source-sha256": "e9909f06e84c6334433fe24e1db14ca61c116889df9db6903917a3083fdd4606"
+      },
+      {
+        "file": "chrono-0.4.45-src-format-parse.rs-header.txt",
+        "sha256": "118929e2af641db591b373fe6a3c607fedca84f7f877f81e68743cfaf69f1cfd",
+        "source": "https://raw.githubusercontent.com/chronotope/chrono/170338250e836976a211e64728ec956e45e78a39/src/format/parse.rs#L1-L3",
+        "source-path": "src/format/parse.rs",
+        "source-sha256": "0114cc8f7cee11af7fd091f874c609c71e2ba094e2d793459f440150bb3cb1ed"
+      }
+    ],
+    "reason": "Preserve actual source-header copyright/grant notices in addition to all packaged license files; full selected license terms are included in THIRD-PARTY-NOTICES.txt.",
+    "vcs-commit": "170338250e836976a211e64728ec956e45e78a39"
+  },
+  "clipboard-win@5.4.1": {
+    "crate-checksum": "bde03770d3df201d4fb868f2c9c59e66a3e4e2bd06692a0fe701e7103c7e84d4",
+    "files": [],
+    "reason": "BSL-1.0 explicitly exempts distributions solely as machine-executable object code from retaining its copyright notices; the complete selected BSL-1.0 text is included in THIRD-PARTY-NOTICES.txt. This crate has no separate notice files in its published source.",
+    "source": "https://static.crates.io/crates/clipboard-win/clipboard-win-5.4.1.crate"
+  },
+  "fxhash@0.2.1": {
+    "crate-checksum": "c31b6d751ae2c7f11320402d34e41349dd1016f8d5d45e48c4312bc8625af50c",
+    "files": [
+      {
+        "file": "fxhash-0.2.1-header.txt",
+        "sha256": "5d392ff1ac69a18c9beb41720ecbfd56f7792a1ec4321428e73757d4283f5a61",
+        "source": "https://static.crates.io/crates/fxhash/fxhash-0.2.1.crate#lib.rs:1-9",
+        "source-path": "lib.rs",
+        "source-sha256": "885b72a1c977dc1c3ff4e0652719e62b6d8c3e713403e571afd581283f72df7b"
+      }
+    ]
+  },
+  "linux-keyutils@0.2.5": {
+    "crate-checksum": "83270a18e9f90d0707c41e9f35efada77b64c0e6f3f1810e71c8368a864d5590",
+    "files": [
+      {
+        "file": "linux-keyutils-0.2.5-Cargo.toml.orig.txt",
+        "sha256": "39c3e0c1f3d1f4605922a9cbb1ddf7d22a1f266f451334d21ab4bb91983cbbc7",
+        "source": "https://raw.githubusercontent.com/landhb/linux-keyutils/7b508d396669fd046136e9928283b2eca4bd7bf6/Cargo.toml",
+        "source-path": "Cargo.toml.orig",
+        "source-sha256": "39c3e0c1f3d1f4605922a9cbb1ddf7d22a1f266f451334d21ab4bb91983cbbc7"
+      },
+      {
+        "file": "linux-keyutils-0.2.5-README.md.txt",
+        "sha256": "60eaaa21859394c2a1679d47763c4d2c31b3fdab7de327ac72f4b4244cac5695",
+        "source": "https://raw.githubusercontent.com/landhb/linux-keyutils/7b508d396669fd046136e9928283b2eca4bd7bf6/README.md",
+        "source-path": "README.md",
+        "source-sha256": "60eaaa21859394c2a1679d47763c4d2c31b3fdab7de327ac72f4b4244cac5695"
+      }
+    ],
+    "reason": "Reviewed immutable upstream and published crate license declarations explicitly offer MIT or Apache-2.0, but supply no separate copyright notice or license file. Preserve exact declarations and full selected MIT terms. Authors, where listed, are reproduced as metadata without inventing copyright ownership or year.",
+    "vcs-commit": "7b508d396669fd046136e9928283b2eca4bd7bf6"
+  },
+  "objc2-app-kit@0.3.2": {
+    "crate-checksum": "d49e936b501e5c5bf01fda3a9452ff86dc3ea98ad5f283e1455153142d97518c",
+    "files": [
+      {
+        "file": "objc2-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+      }
+    ],
+    "reason": "The immutable upstream LICENSE.md explicitly grants these licenses and supplies no separate copyright owner/year notice. Preserve its exact declaration and Apple SDK provenance statement alongside the complete selected MIT text; do not invent an attribution.",
+    "vcs-commit": "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+  },
+  "objc2-core-foundation@0.3.2": {
+    "crate-checksum": "2a180dd8642fa45cdb7dd721cd4c11b1cadd4929ce112ebd8b9f5803cc79d536",
+    "files": [
+      {
+        "file": "objc2-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+      }
+    ],
+    "reason": "The immutable upstream LICENSE.md explicitly grants these licenses and supplies no separate copyright owner/year notice. Preserve its exact declaration and Apple SDK provenance statement alongside the complete selected MIT text; do not invent an attribution.",
+    "vcs-commit": "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+  },
+  "objc2-core-graphics@0.3.2": {
+    "crate-checksum": "e022c9d066895efa1345f8e33e584b9f958da2fd4cd116792e15e07e4720a807",
+    "files": [
+      {
+        "file": "objc2-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+      }
+    ],
+    "reason": "The immutable upstream LICENSE.md explicitly grants these licenses and supplies no separate copyright owner/year notice. Preserve its exact declaration and Apple SDK provenance statement alongside the complete selected MIT text; do not invent an attribution.",
+    "vcs-commit": "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+  },
+  "objc2-encode@4.1.0": {
+    "crate-checksum": "ef25abbcd74fb2609453eb695bd2f860d389e457f67dc17cafc8b8cbc89d0c33",
+    "files": [
+      {
+        "file": "objc2-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/8d214f5477365ffcbcbb7de058c86ed9a518efb7/LICENSE.md"
+      }
+    ],
+    "reason": "The immutable upstream LICENSE.md explicitly grants these licenses and supplies no separate copyright owner/year notice. Preserve its exact declaration and Apple SDK provenance statement alongside the complete selected MIT text; do not invent an attribution.",
+    "vcs-commit": "8d214f5477365ffcbcbb7de058c86ed9a518efb7"
+  },
+  "objc2-foundation@0.3.2": {
+    "crate-checksum": "e3e0adef53c21f888deb4fa59fc59f7eb17404926ee8a6f59f5df0fd7f9f3272",
+    "files": [
+      {
+        "file": "objc2-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/7b1abfd750a2cacaea71d6a56ecfb83cb7de560b/LICENSE.md"
+      }
+    ],
+    "reason": "The immutable upstream LICENSE.md explicitly grants these licenses and supplies no separate copyright owner/year notice. Preserve its exact declaration and Apple SDK provenance statement alongside the complete selected MIT text; do not invent an attribution.",
+    "vcs-commit": "7b1abfd750a2cacaea71d6a56ecfb83cb7de560b"
+  },
+  "objc2@0.6.5": {
+    "crate-checksum": "08849bbd4767dfae9457696856ae1c84fe4e0281bbe4a7abff2d0e06fb7981f8",
+    "files": [
+      {
+        "file": "objc2-LICENSE.md",
+        "sha256": "7f976f7e9cb2d87df7230606feb932c3f21ac0e664045a775b600046ff850c54",
+        "source": "https://raw.githubusercontent.com/madsmtm/objc2/d7d2fa23ceaa5e6096c923b081040e5d81b3b9df/LICENSE.md"
+      }
+    ],
+    "reason": "The immutable upstream LICENSE.md explicitly grants these licenses and supplies no separate copyright owner/year notice. Preserve its exact declaration and Apple SDK provenance statement alongside the complete selected MIT text; do not invent an attribution.",
+    "vcs-commit": "d7d2fa23ceaa5e6096c923b081040e5d81b3b9df"
+  },
+  "rat-event@2.1.0": {
+    "crate-checksum": "b8791fc15b399e958369ce532e9bf2bc3588f364d1e508d0ae122d0fb76a3065",
+    "files": [
+      {
+        "file": "rat-event-2.1.0-Cargo.toml.orig.txt",
+        "sha256": "31a8ea12b6518334a5d791ba34c5038fdd91dfb636f187861fc1287c4fd0d3d9",
+        "source": "https://raw.githubusercontent.com/thscharler/rat-salsa/e6cfe29084672c6a71a224b90d0eff93bfd655d1/rat-event/Cargo.toml",
+        "source-path": "Cargo.toml.orig",
+        "source-sha256": "7807bd7f0ccc760141c87a08740bf3dbb6927b26d828820ab481ae6d2b696c7b"
+      },
+      {
+        "file": "rat-event-2.1.0-README.md.txt",
+        "sha256": "fe276ef50e5d51f9e1d037004f4f0b107c674270041693f72792c6598fc1c1a5",
+        "source": "https://raw.githubusercontent.com/thscharler/rat-salsa/e6cfe29084672c6a71a224b90d0eff93bfd655d1/rat-event/readme.md",
+        "source-path": "readme.md",
+        "source-sha256": "b059987a7273d1741e2cdf7d42bdf95e46cb47812618d5add6bc2d7a15f6edbc"
+      }
+    ],
+    "reason": "Reviewed immutable upstream and published crate license declarations explicitly offer MIT or Apache-2.0, but supply no separate copyright notice or license file. Preserve exact declarations and full selected MIT terms. Authors, where listed, are reproduced as metadata without inventing copyright ownership or year.",
+    "vcs-commit": "e6cfe29084672c6a71a224b90d0eff93bfd655d1"
+  },
+  "rat-focus@2.1.1": {
+    "crate-checksum": "de995d0bfa85aa8a716997903487cf250a35159695cf576be220239bbe1e2bfb",
+    "files": [
+      {
+        "file": "rat-focus-2.1.1-Cargo.toml.orig.txt",
+        "sha256": "6508e40833d5ebab85b6739893085e3f3e1441dd3f39421b0321ab43f0ae66d6",
+        "source": "https://raw.githubusercontent.com/thscharler/rat-salsa/12ba3f873761f24d25baa97eb8892e7617e340fd/rat-focus/Cargo.toml",
+        "source-path": "Cargo.toml.orig",
+        "source-sha256": "0b2841a8ddb2d80533f1b7edc2a1b4b7464456da3c69b7e4564952cf0eb9b7a2"
+      },
+      {
+        "file": "rat-focus-2.1.1-README.md.txt",
+        "sha256": "f0eb6ed4c5da79d7a981da6792b10cb240ffaeba1d05a5a737b8f0a15dcf13b1",
+        "source": "https://raw.githubusercontent.com/thscharler/rat-salsa/12ba3f873761f24d25baa97eb8892e7617e340fd/rat-focus/readme.md",
+        "source-path": "readme.md",
+        "source-sha256": "0f818a4682d368f2e1cadd78c04ea2e85b4d831ae1a4aa22fe74acbe2f7ecdc0"
+      }
+    ],
+    "reason": "Reviewed immutable upstream and published crate license declarations explicitly offer MIT or Apache-2.0, but supply no separate copyright notice or license file. Preserve exact declarations and full selected MIT terms. Authors, where listed, are reproduced as metadata without inventing copyright ownership or year.",
+    "vcs-commit": "12ba3f873761f24d25baa97eb8892e7617e340fd"
+  }
+}

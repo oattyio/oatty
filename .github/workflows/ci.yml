@@ -52,3 +52,33 @@ jobs:
         if: ${{ matrix.os == 'ubuntu-latest' }}
         run: |
           cargo build --workspace --locked --release
+
+  licenses:
+    name: Distribution licensing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install pinned license generator
+        run: cargo install cargo-about --version 0.9.2 --features cli --locked
+      - name: Fetch locked crate sources for offline license harvesting
+        run: cargo fetch --locked
+      - name: Install locked npm dependencies without downloading Oatty
+        run: npm ci --ignore-scripts
+      - name: Prepare and verify notices and covered source
+        run: npm run licenses:prepare
+      - name: Test fail-closed checks and actual distribution archives
+        run: npm run test:licenses
+      - name: Check generation is deterministic
+        shell: bash
+        run: |
+          cp .license-manifest.json "$RUNNER_TEMP/license-manifest.json"
+          npm run licenses:prepare
+          cmp .license-manifest.json "$RUNNER_TEMP/license-manifest.json"

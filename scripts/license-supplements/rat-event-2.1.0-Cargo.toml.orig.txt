@@ -1,0 +1,20 @@
+[package]
+name = "rat-event"
+version = "2.1.0"
+edition = "2024"
+description = "ratatui event handler trait for widgets"
+license = "MIT/Apache-2.0"
+repository = "https://github.com/thscharler/rat-salsa"
+readme = "readme.md"
+keywords = ["ratatui", "input", "event"]
+categories = ["command-line-interface"]
+exclude = [".idea/*", ".gitignore"]
+
+[lints]
+workspace = true
+
+[dependencies]
+log = "0.4"
+
+ratatui-core = { version = "0.1", features = ["std", "layout-cache"] }
+ratatui-crossterm = { version = "0.1" }

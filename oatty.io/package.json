@@ -8,5 +8,6 @@
     "build": "node ./scripts/build-static.mjs",
     "check:static": "python3 ./scripts/verify-static.py",
     "preview": "node ./scripts/serve.mjs"
-  }
+  },
+  "license": "MIT"
 }

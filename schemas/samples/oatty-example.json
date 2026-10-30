@@ -1,0 +1,82 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Oatty Example API",
+    "version": "1.0.0",
+    "description": "An illustrative project API for importing an Oatty catalog. No server implementation is supplied.",
+    "license": { "name": "MIT", "url": "https://github.com/oattyio/oatty/blob/main/LICENSE" }
+  },
+  "servers": [{ "url": "http://127.0.0.1:4010", "description": "Illustrative local server" }],
+  "paths": {
+    "/projects": {
+      "get": {
+        "operationId": "listProjects",
+        "summary": "List projects",
+        "parameters": [{
+          "name": "limit",
+          "in": "query",
+          "description": "Maximum number of projects to return.",
+          "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 }
+        }],
+        "responses": {
+          "200": {
+            "description": "The matching projects.",
+            "content": { "application/json": { "schema": {
+              "type": "array",
+              "items": { "$ref": "#/components/schemas/Project" }
+            } } }
+          }
+        }
+      },
+      "post": {
+        "operationId": "createProject",
+        "summary": "Create a project",
+        "requestBody": {
+          "required": true,
+          "content": { "application/json": { "schema": {
+            "type": "object",
+            "required": ["name"],
+            "properties": { "name": { "type": "string", "description": "Name of the new project." } }
+          } } }
+        },
+        "responses": {
+          "201": {
+            "description": "The created project.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Project" } } }
+          }
+        }
+      }
+    },
+    "/projects/{project_id}": {
+      "get": {
+        "operationId": "getProject",
+        "summary": "Get a project",
+        "parameters": [{
+          "name": "project_id",
+          "in": "path",
+          "required": true,
+          "description": "Identifier of the project to retrieve.",
+          "schema": { "type": "string" }
+        }],
+        "responses": {
+          "200": {
+            "description": "The requested project.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Project" } } }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Project": {
+        "type": "object",
+        "required": ["id", "name"],
+        "properties": {
+          "id": { "type": "string", "description": "Project identifier." },
+          "name": { "type": "string", "description": "Project name." }
+        }
+      }
+    }
+  }
+}

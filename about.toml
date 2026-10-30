@@ -1,0 +1,10 @@
+# MIT first where upstream offers a choice. Build and transitive dependencies stay included.
+accepted = ["MIT", "Apache-2.0", "ISC", "BSD-3-Clause", "BSD-2-Clause", "Zlib", "Unicode-3.0", "CC0-1.0", "MIT-0", "Unlicense", "BSL-1.0"]
+ignore-dev-dependencies = true
+ignore-build-dependencies = false
+ignore-transitive-dependencies = false
+targets = ["x86_64-unknown-linux-gnu", "x86_64-apple-darwin", "aarch64-apple-darwin", "x86_64-pc-windows-msvc"]
+
+# File-level copyleft; unchanged complete crate source is bundled with every distribution.
+[nucleo-matcher]
+accepted = ["MPL-2.0"]

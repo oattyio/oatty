@@ -16,7 +16,8 @@ resolver = "2"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.93.0"
-license = "MIT OR Apache-2.0"
+license = "MIT"
+license-file = "LICENSE"
 authors = ["Oatty CLI Team <devnull@example.com>"]
 repository = "https://example.com/oatty"
 

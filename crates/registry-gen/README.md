@@ -32,7 +32,7 @@ use std::path::PathBuf;
 use oatty_registry_gen::{io::ManifestInput, write_manifest};
 
 fn main() -> anyhow::Result<()> {
-    let schema = PathBuf::from("schemas/samples/render-public-api.json");
+    let schema = PathBuf::from("schemas/samples/oatty-example.json");
     let input = ManifestInput::new(Some(schema), None, None);
     let output = PathBuf::from("commands.bin");
     write_manifest(input, output)?;
@@ -41,7 +41,7 @@ fn main() -> anyhow::Result<()> {
 ```
 
 This will:
-1. Read the OpenAPI document from `schemas/samples/render-public-api.json`.
+1. Read the OpenAPI document from `schemas/samples/oatty-example.json`.
 2. Parse it to generate `CommandSpec` entries.
 3. Serialize the manifest to `commands.bin` using `postcard`.
 4. Create parent directories for the output file if they don't exist.
@@ -127,5 +127,5 @@ functionality.
 
 ## License
 
-This crate is licensed under the MIT License. See the `LICENSE` file for
+This crate is licensed under the MIT License. See the [LICENSE](../../LICENSE) file for
 details.
