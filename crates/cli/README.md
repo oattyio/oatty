@@ -30,7 +30,7 @@ Usage
 - Enable workflows:
   - `cargo run -p oatty-cli -- workflow preview --file workflows/create_app_and_db.yaml`
 - Import a catalog from OpenAPI:
-  - `cargo run -p oatty-cli -- import schemas/samples/render-public-api.json --kind catalog`
+  - `cargo run -p oatty-cli -- import schemas/samples/oatty-example.json --kind catalog`
 - Import a workflow manifest:
   - `cargo run -p oatty-cli -- import workflows/create_app_and_db.yaml --kind workflow`
 

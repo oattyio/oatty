@@ -1,0 +1,2 @@
+# Preserve whitespace in immutable upstream README license evidence.
+scripts/license-supplements/rat-*-README.md.txt -whitespace

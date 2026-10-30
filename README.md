@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/oattyio/oatty/actions/workflows/ci.yml/badge.svg)](https://github.com/oattyio/oatty/actions/workflows/ci.yml)
 ![Rust](https://img.shields.io/badge/rust-1.93%2B-orange)
-![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue)
+![License](https://img.shields.io/badge/license-MIT-blue)
 ![Status](https://img.shields.io/badge/status-experimental-yellow)
 
 # Oatty
@@ -44,6 +44,16 @@ oatty --help
 cargo build --workspace
 cargo run -p oatty -- --help
 ```
+
+### Native updates
+
+`oatty update` keeps the complete downloaded release archive, including dependency notices and required source. Each download is saved separately under:
+
+- Linux: `$XDG_DATA_HOME/oatty/releases`, or `~/.local/share/oatty/releases`.
+- macOS: `~/Library/Application Support/oatty/releases`.
+- Windows: `%LOCALAPPDATA%\oatty\releases`.
+
+The saved path is printed after installation unless `--quiet` is set, and included in an error if installation fails after saving. If Oatty cannot save the archive, it leaves the installed binary unchanged. Archives accumulate until you delete them manually. `--check`, an already current version, and npm-managed installs do not save archives; update npm installs with `npm update -g oatty`.
 
 ## 60-Second Quick Start
 
@@ -99,4 +109,4 @@ Release process: [RELEASE.md](RELEASE.md)
 
 ## License
 
-Dual-licensed under MIT OR Apache-2.0.
+Oatty-owned code is licensed under the [MIT License](LICENSE). Third-party dependencies and samples retain their own terms. Release archives and the npm package include dependency notices and required source; see [sample attribution](schemas/README.md) for source-only fixtures.

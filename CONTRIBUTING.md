@@ -17,3 +17,7 @@ Thank you for your interest in contributing!
 - Prefer small, focused pull requests with tests.
 - Redact tokens/secrets in logs and test snapshots.
 - Keep docs/spec updates aligned with implementation changes (`specs/` + root docs).
+
+## License
+
+By submitting a contribution, you agree to license it under the project’s [MIT License](LICENSE). Keep third-party notices intact and follow the [release licensing checks](RELEASE.md#dependency-licenses) when changing dependencies.
