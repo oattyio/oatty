@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "npm run build && node ./scripts/serve.mjs",
     "build": "node ./scripts/build-static.mjs",
+    "test": "python3 ./scripts/test_verify_static.py && node --test ./scripts/test-copy-prompt.mjs",
     "check:static": "python3 ./scripts/verify-static.py",
     "preview": "node ./scripts/serve.mjs"
   }

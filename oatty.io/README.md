@@ -1,12 +1,13 @@
 # Oatty site
 
-Static HTML and CSS site for https://oatty.io. The homepage and all documentation routes are complete in the HTTP response, with no client-side JavaScript.
+Static HTML and CSS site for https://oatty.io. The homepage and all documentation routes are complete in the HTTP response. A small clipboard script enhances the setup prompt on the homepage and API access guide; the full prompt remains selectable without JavaScript.
 
 ## Commands
 
 - `npm ci` installs build dependencies.
 - `npm run build` writes the site to `dist/`.
-- `npm run check:static` verifies page structure, script-free output, and local links.
+- `npm test` checks the static validator and clipboard behavior without dependencies.
+- `npm run check:static` verifies page structure, the clipboard-only script policy, prompt parity, and local links.
 - `npm run dev` builds and serves the site at http://127.0.0.1:4173.
 - `npm run preview` serves the existing build.
 

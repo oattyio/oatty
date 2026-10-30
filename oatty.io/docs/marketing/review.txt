@@ -1,0 +1,196 @@
+I read all six documents plus the repo (crates/, specs/, README.md) and ran two parallel research briefings on 2025–26 trends. Findings below, organized to your four questions.
+Provenance note: the trend evidence comes from delegated web research, not from my own browsing. Each claim carries a source and date; items the researchers could not verify against a primary source are flagged. Re-check anything load-bearing before publishing it.
+1. Consistency in messaging
+1.1 The series is internally consistent on the load-bearing definitions — and you should say so
+These hold verbatim or near-verbatim across all six documents, which is unusually good:
+Activation = "a verified useful task spanning at least two vendors" — README:19, 01:237, 04:153, 05:116, 06:153
+The HTTP-only workflow limit — 01:99, 03:21, 03:73, 04:92, 05:94, 06:186
+The three entry questions — 01:79-85, 02:33-35, 05:47-49, 06:91
+Campaign lead, product promise, adoption message, explanation — identical in README:17, 01:11/29/33/37, 02:13/17/27/41, 03:57, 04:13, 05:9, 06:11
+That consistency is the strongest asset in the series. The problems are elsewhere.
+1.2 There are two live strategy sources, and they contradict each other
+specs/OATTY_PRODUCT_OPPORTUNITIES.md:13 recommends a different wedge entirely — "Oatty is where API fixes and their verification survive schema churn" — and at line 30 it explicitly narrows the market:
+"Operations is a downstream use of the maintained integration. Existing operational commands remain useful, but incident response, continuous production discovery, and autonomous remediation do not drive this roadmap."
+That is a direct contradiction of the series’ enduring promise "Understand and operate your stack with Oatty." (01:29) and of the “Understand your stack / Operate your stack” lifecycle table (01:91-97). The file also proposes a different adoption event: "The adoption event to test is a verified repair" rather than the cross-vendor activation event the series defines everywhere else.
+The precedence rules don’t cover this. README:48 only says "When public copy and this series disagree, resolve the discrepancy deliberately" — specs/ is not public copy, and README:58 excludes "Operational product documentation, integration runbooks, and workflow examples" from being strategy documents, without addressing a file that self-describes as making positioning recommendations.
+Fix: extend the precedence rule to name specs/OATTY_PRODUCT_OPPORTUNITIES.md explicitly as a recommendation input subordinate to 01, and reconcile the operations/dev-first narrowing. Right now a reader of the repo cannot tell which audience Oatty is for.
+1.3 03 uses an undeclared claim vocabulary
+README:40-44 defines five decision states: Approved, Verified, Documented, Hypothesis, Blocked claim. The capability table in 03:13-23 uses a different set — "Verified in source", "Verified in current checkout", "Qualified" — none of which appear in the README’s vocabulary. A reader reconciling the two has no mapping, and "Qualified" is the only state in the series with no definition anywhere.
+Fix: make 03’s table use the README’s five states verbatim, or define the mapping once in README:40-44.
+1.4 03’s baseline is eight days stale relative to the messaging revision
+03:5 says "Source baseline reviewed: October 13, 2026" while README:9, 01:5, 02:5, 05:5, 06:5 all say October 18. Every capability claim in 03 is "Verified in source" against an Oct 13 checkout, yet README:25 asserts the Oct 18 revision aligns the series with code. If anything changed in the checkout between those dates, 03 is asserting alignment it cannot support.
+Fix: either re-audit 03 against the current commit and date it, or state that the capability baseline is deliberately pinned to Oct 13 and that no source changes occurred since.
+1.5 The docs violate their own voice rules
+02:132 mandates "Write for a technically capable developer. Be direct, calm, and specific." The series’ own prose is the opposite: 01:13 is a single ~500-character sentence containing four embedded qualifications; 04:23 and 04:53 are similarly dense. The defensive register required by the blocked-claims discipline in 03:123-144 has bled into the strategy prose, which now reads like a legal memo rather than the direct voice 02 mandates.
+Concretely: 01:13 should be three sentences.
+1.6 02‘s terminology list is incomplete relative to the series’ actual vocabulary
+02:182-189 defines connected agent, stack, catalog, command/operation, API workflow, TUI, generated command definition. But the terms that actually carry the measurement model — activation, onboarding, retention, control, advocacy, wedge — are used across 01:232-245, 05:110-119, 06:151 and defined nowhere in 02. wedge appears only in the competing specs/ file, which is itself a symptom of the vocabulary gap.
+1.7 “Your agent” vs. “connected agent”
+02:182 mandates "Connected agent" for the external coding agent using Oatty through MCP. But the Explanation sentence — the one repeated in 01:33, 02:27, and the root README:12 — says "Oatty connects you and your agent to the APIs...". The most-repeated sentence in the entire corpus violates its own terminology rule.
+1.8 The series never names an MCP client, though it requires one twice
+03:167 requires "Connect the named MCP client using published instructions." 06:5 and 06:114 repeat the requirement ("the selected agent client"). No client is named anywhere in the six documents. This is the largest untestable obligation in the claims baseline.
+1.9 The series never names an MCP protocol revision
+This is the most consequential omission, and it touches consistency, claims, and roadmap at once. 03’s entire baseline table is MCP-centric, yet no document states which spec revision Oatty implements. The repo is on 2025-06-18 — crates/mcp/src/server/core.rs:646 sets ProtocolVersion::LATEST, which in rmcp 0.17.0 resolves to 2025-06-18 (rmcp-0.17.0/src/model.rs:153).
+Two revisions have shipped since: 2025-11-25 and 2026-07-28. The latter is, in the maintainers’ words, "the largest revision of the protocol since launch" (blog.modelcontextprotocol.io, 2026-05-21): it removes initialize/sessions, makes server/discover mandatory, requires ttlMs/cacheScope on tools/list, and documents OTel traceparent propagation in _meta (SEP-414). None of this appears in any document, and protocol-revision support is absent from the roadmap in 01:249-253 and 04:112-125.
+1.10 The capability baseline is incomplete relative to specs/
+03:25-38 lists 12 implementation references. specs/ contains 31 files. Entirely unmentioned in the series: VALUE_PROVIDERS.md / VALUE_PROVIDER_REGISTRY.md (async value-provider suggestions, TTL caching, in-flight dedup, workflow-input binding — per specs/VALUE_PROVIDERS.md, already implemented and wired into the palette and workflow collector), WASM_MCP_RUNTIME.md, WASM_MCP_POSTGRES.md, MCP_SERVER_MANAGEMENT_CONTRACTS.md, PLUGINS.md, LOGGING.md, COMMAND_SEARCH.md, AUTOCOMPLETE.md.
+A document titled “Product truth and claims” that omits a shipped, spec-documented capability is a partial truth. Add a “not yet marketed, verified in source” section so the baseline is auditable against specs/.
+1.11 One unclaimed capability that the docs actively mis-describe
+03:117 states: "Current documentation describes token and header configuration. Do not imply native OAuth authorization-code, PKCE, refresh-token, SSO, or credential-broker support." That is correct as written. But the code shows Oatty consumes OAuth bearer tokens for remote MCP plugins — crates/mcp/src/client/http.rs:26-36 injects an OAuth bearer from an explicit token or load_oauth_token_from_keyring, backed by keyring service oatty-mcp-oauth.
+The true capability — “point Oatty at an OAuth-protected remote MCP server with a keychain-backed bearer” — is materially stronger than “token and header configuration,” is implemented today, and is claimed nowhere. See §3.5 for why it matters.
+1.12 Minor: category error and unresolved naming
+03:55 files the campaign lead under "Claims that require qualification". The lead is not a product claim; it is positioning. Filing it there invites the misreading that the message itself is provisional.
+The three entry questions are called "three entry needs" (README:19), "Immediate reasons to try" (01:77), "starting question" (02:33), "distinct developer questions" (05:45), and "three entry questions" (06:91). Pick one term.
+2. Alignment with engineering mental-model and hiring trends
+2.1 The lead is correct, and the strongest supporting evidence is being left on the table
+03:57 disciplines the lead properly: it "does not establish that AI caused changes in hiring expectations." Good. But 04 cites the weakest available slice of its best source.
+04:147 cites Stack Overflow’s 2026 survey (published Oct 6, 2026; 30,903 respondents) for three AI use-case percentages — architecture/design exploration 47.4%, data/log analysis 41.9%, production deploy/operate/troubleshoot 19.9%. Meanwhile the same survey’s headline findings, which are the single most on-message evidence available anywhere, are unmentioned:
+48% of developers trust AI output “when they can easily verify it”; only 6.6% trust it for important work decisions
+78.7% say source attribution is important or very important
+76.5% run AI output locally; only 9.6% use it as-is
+AI is trusted near the code (69.3% familiar-area generation, 63.8% debugging) and "once that code reaches prod server, it gets shown the door" (~20%)
+(Stack Overflow 2026 Developer Survey, Oct 6, 2026 — survey.stackoverflow.co/2026/ai/data/ai-trust; stackoverflow.blog/2026/10/06/)
+This reframes Oatty’s category. Oatty is not primarily a stack-operations tool; it is the artifact that lets an engineer satisfy the condition under which they already trust agents — inspectability. "Understand and operate your stack" is a good promise, but it is a use-case-shaped promise. The trust-conditioned finding supports a purpose-shaped promise: Oatty makes the engineer’s verification cheap enough that agent-assisted work becomes trustworthy at the boundary where it currently stops.
+Recommend adding a supporting message alongside 02:49-51’s "Keep your agent grounded in the system you actually run" — something to the effect of: verification is the condition on which agent trust is granted; Oatty supplies the inspectable operations that satisfy it. Then 04’s evidence section leads with trust/verification rather than use-case distribution.
+2.2 Oatty sits at the 19.9% end of AI use, and the docs never say so
+04:147 lists architecture/design exploration at 47.4% as the largest AI work category — and Oatty’s positioning does not address it at all. Production ops at 19.9% is where Oatty lives.
+That is a defensible and correct position, because the verification-conditioned trust finding (6.6% for important decisions) means the production boundary is precisely where agent trust collapses and human verification is most valuable. But the docs never state the reasoning, so a reader can reasonably assume Oatty is claiming the 47.4% bucket. Add one sentence in 04 making the deliberate choice explicit.
+2.3 Hiring: the docs are right to be cautious, but give no reason for it
+01:169 states "Hiring signals alone do not establish demand for Oatty." 04:144 correctly qualifies HackerRank’s 82% system-design invitation growth as2024 data about invitations rather than outcomes. 02:144 and 06:85 correctly avoid prompting career anxiety.
+That posture is well-supported and should stay. What’s missing is the evidence that justifies the avoidance, which currently reads as unexplained caution. The data says AI-driven career anxiety is real but modest for engineers specifically:
+IZA/LISER (DP 18723): 14–15% relative decline in junior vs. senior SWE vacancies post-ChatGPT — and the mechanism is employers raising experience requirements within the same job titles, not changing title mix
+SignalFire, State of Tech Talent (Jun 22, 2026): entry-level hiring down ~65% at Tech Majors vs. 2019 — but engineering is among the least hit (−11%, vs. −48% design, −39% PM); engineering is 55% of Tech Major hiring, up from 46%
+Add these to 04 with the nuance. The conclusion — do not lead with career anxiety — becomes an evidenced decision rather than a stylistic preference, and it inoculates against a competitor running that play.
+2.4 The largest single ICP signal in the market is missing from all six documents
+“AI Enablement Engineer” is now a real, senior-paid, named role, and its job descriptions literally name Oatty’s category. Verified live postings: Staff-level AI Enablement Engineer at Talkiatry ($190–230K, Sep 9 2026), Sprinter Health ($180–260K), Skin Analytics, Fabletics, and Head of AI Engineering & Enablement at Tebra ($256K). Common JDs name shared context systems, evaluation frameworks, agentic workflows — and Sprinter’s posting explicitly lists "MCP servers, internal tools, and shared knowledge systems."
+Gartner published "Emerging Jobs to Succeed With AI Agents at Scale" on Sept 30, 2026 — a 13-role starter list (gartner.com/en/documents/8450713). (Caveat: no quantified headcount study for the role exists; prevalence is unquantified. Gartner’s frequently-cited 2026 forecasting percentages date from an Aug 2025 press release — do not present as 2026 data.)
+No document in the series mentions this audience. 01:52 targets "a senior backend/product engineer, technical lead, or hands-on founder"; 06:63-71 recruits from that profile only. This is the highest-intent, self-identifying audience available, at zero acquisition cost, and it should be added to 01’s audience table and 06’s recruitment screen as a named segment.
+2.5 The “no platform team” case is stated but never quantified — and it’s the majority case
+01:60 says "Small teams without a dedicated platform team are a recruitment starting point." The trend data shows this is not a niche, it is the norm:
+CNCF/SlashData (Mar 24, 2026): only 28% of orgs have a dedicated platform engineering team; 41% use a multi-team coalition; 31% have no formal approach. SlashData’s own read: many orgs rely on "a coalition of willing DevOps engineers" as the platform team.
+(Do not use the common DORA misquote that "90% of organizations have adopted platform engineering" — the2025 report says 90% have adopted at least one platform, and separates that from multi-platform environments and dedicated teams. Also do not use Neojn’s contradicting 82% figure; its methodology is unverifiable.)
+The "coalition of willing DevOps engineers" is precisely 01:60’s primary user, at69% prevalence. Quantify it.
+2.6 Two trend areas where Oatty is aligned but silent
+Sprawl is growing, not consolidating. BetterCloud 2026 State of SaaS (Jul 15, 2026): after two years of consolidation the average app count is rising again, +11% YoY; mid-market orgs went 116 → 164 apps in one year; 90% of IT leaders still lack true cross-app orchestration. Fortinet Cloud Security Report 2026 (1,163 leaders): 88% hybrid/multi-cloud; 81% rely on 2+ providers for critical workloads; 69% cite tool sprawl and visibility gaps as the top barrier to cloud security; 74% report an active security talent shortage. Flexera 2026: 73% hybrid, multi-cloud up 2pp YoY.
+This is the demand argument the series does not make. 04:75 describes the fragmented-access problem in the abstract but never establishes that it is widespread and growing. Add these to 04’s evidence section with dates.
+Security/skills inflation. Talenbrium 2026: AI/ML +163% and security +124% YoY in US postings; System Engineer and Data Engineer among the most common non-SWE-adjacent titles; AI Engineer share at 14x its 2019 level. Combined with Fortinet’s 74% security talent shortage, there is budget behind credential handling and inspectable access. 03:23 already discloses the redaction gap honestly — that honesty is an asset that should be converted into a named posture, not just a caveat.
+2.7 Evidence-hygiene corrections required in 04
+Re-verify the DORA citation at 04:146. DORA announced around Sept 3, 2026 that it will not run an annual survey in 2026 and will not publish a 2026 State of AI-assisted Software Development report, shifting to qualitative research. If the cited March 2026 piece is that observational analysis, relabel it and stop referring to it as a report.
+SO trust figures are not a trend line. SO 2026 reports 87% with some level of trust under a reworded question; SO 2025’s 46% distrust / 33% trust split is not comparable. 04 doesn’t currently cite trust — keep it that way unless correctly relabeled, or cite only the 2026 conditional-trust finding.
+Don’t import the “almost right but not quite = 45%” conflation. In SO 2025, 66% cited “almost right, but not quite”; 45% cited debugging AI code as more time-consuming. Stack Overflow’s own December 2025 blog swapped these. Uncited today — keep it that way or cite correctly.
+METR’s “19% slower” is retracted in practice. METR annotated its July 2025 post as out of date; the Feb 24, 2026 follow-up (57 devs, 800+ tasks) returned −18% (CI −38% to +9%) and −4% (CI −15% to +9%), neither significant, with the study declared unreliable. Good that the series doesn’t cite it; note it as a known trap.
+3. Connecting Oatty’s capabilities to engineers managing cross-vendor stacks
+This is where the largest opportunity sits. The series is disciplined about not overclaiming, and in doing so has systematically under-connected capabilities the market is now actively asking for.
+3.1 The composed multi-vendor workspace is Oatty’s strongest asset and is never sold
+Every entry point in the series is scoped down to "one service, integration, or intended change" (01:85, 02:37). Correct for first use — but the retention model at 01:240 and 05:118 requires returning, and nothing in the series tells a user what changes after activation.
+The answer is obvious and unwritten: after the first cross-vendor task, the user’s workspace is N vendors in one searchable catalog, queried by one agent, runnable by one human, checkable in one place. No competitor offers this. Composio and Speakeasy give you per-vendor hosted toolkits; Bruno gives you one collection; an agent with five MCP servers gives you five disconnected toolsets at ~55K tokens.
+01:120-126 (Progression after activation) lists five steps that are all additive setup (import another API, save a workflow, reuse the catalog). None of them is “now you have one catalog spanning your whole stack.” That sentence is missing, and it is the retention story.
+3.2 Cross-vendor verification is the defensible wedge, and it is under-positioned
+The strongest quantified trend finding available anywhere is that “false success” is a named, measured failure mode of coding agents. An ICML 2026 paper (arXiv:2606.09863, submitted 2026-06-01) analyzed 9,876 tau2-bench and 1,879 AppWorld trajectories:
+False success was 75.8% of failures among self-assessing coding-agent trajectories with explicit status claims
+45–48% in single-control tau2 domains, 3% in dual-control telecom
+LLM judges could not detect it: no configuration across 5 judges and 5 prompt strategies exceeded AUROC 0.65; on API-call traces, 0.54. Lightweight TF-IDF detectors hit 0.83–0.95
+Separately, SOTA coding agents still fail >20% of SWE-bench Verified as of Feb 2026 (arXiv:2604.02547). And Stack Overflow 2026: only 6.6% trust AI for important work decisions.
+(arXiv:2606.09863 is peer-reviewed/accepted; arXiv:2604.02547 is a preprint. Both worth citing with their status stated.)
+This is a market-wide, quantified problem, and Oatty’s activation definition is already the answer — "an operational outcome checked against external state" (01:237), "A successful tool call or HTTP response does not guarantee the requested external outcome" (03:85). Not one document cites this evidence.
+The campaign lead currently sells ownership (responsibility). The stronger, better-evidenced claim available is verification: Oatty exists because agents report success they did not achieve, and checking is what you do instead of believing. This reframes Oatty from an ops convenience into a correctness instrument, and it aligns exactly with the 6.6% trust figure and the 48% verification-conditioned trust figure.
+Recommend promoting verification from a qualification (03:83-85) to a first-class supporting message, backed by the ICML data.
+3.3 Multi-client tool sprawl is provable, quantified, and nearly absent from the series
+This is the sharpest demonstration available, and it requires no trust in a claim because the reader can count it themselves:
+Anthropic measured a five-server MCP setup (GitHub 35 tools, Slack 11, Sentry 5, Grafana 5, Splunk 2) at ~55K tokens before the conversation starts, and states that "Claude's ability to pick the right tool degrades once you exceed 30–50 available tools" (anthropic.com/engineering/advanced-tool-use, 2025-11-24)
+Cloudflare: 2,500+ endpoints exposed as MCP tools would consume >2 million tokens; Code Mode collapsed it to two tools and ~1,000 tokens (blog.cloudflare.com/code-mode-mcp/, 2026-02-20)
+Anthropic’s Tool Search Tool + defer_loading claims 85% token reduction, with MCP eval accuracy gains (Opus 4: 49%→74%; Opus 4.5: 79.5%→88.1%); programmatic tool calling (code_execution_20260120) reports ~38% input-token reduction on a 75-tool benchmark with no accuracy loss
+03:22 correctly blocks publishing token savings without measurement. Right call. But 04:69 treats client-native discovery only as a risk ("Oatty must remain useful when the client already handles discovery well"). It is also the most legible demonstration: install GitHub + Cloudflare + Grafana MCP servers in the same client, count the tools, then add Oatty and count again.
+Recommend a named demonstration format: same agent, same vendors, tool count before vs. after. That is the one comparison a skeptical senior engineer will believe without a benchmark harness.
+3.4 Oatty’s search-first design is now a spec-endorsed pattern — say so
+MCP 2026-07-28 requires ttlMs and cacheScope on tools/list, and the spec asks servers to return tools in deterministic order precisely "to enable client-side caching and improve LLM prompt cache hit rates" (modelcontextprotocol.io/specification/2026-07-28/changelog). Anthropic’s own guidance recommends a server-side search_tools tool with a detail-level parameter — name only / name+description / full schema (anthropic.com/engineering/code-execution-with-mcp, 2025-11-04). Programmatic tool calling is explicitly an MCP use case.
+Oatty’s catalog is that shape. Two consequences:
+Messaging: 04:69 frames search-first discovery as a thing Oatty must defend against client natives. It is actually the pattern the leading client vendors have independently validated. Say that — it converts a defensive position into an alignment claim.
+Product: 2026-07-28 makes server/discover mandatory, and MCP now carries OTel traceparent/tracestate in _meta (SEP-414). Oatty is two revisions behind (01.9). A discovery-native server has a real reason to adopt the new spec rather than a compatibility chore.
+3.5 Auth is where the external evidence is strongest and internal support is weakest
+A 2026 academic measurement study of 7,973 live remote MCP servers found 40.55% expose tools with no authentication; of 119 OAuth-enabled servers tested, every one had at least one flaw, with 96.6% having dynamic-client-registration flaws; 9 CVEs were issued (arXiv:2605.22333).
+A separate 2026 agent-compatibility survey found only 2.2% of agent-compatible SaaS tools ship an MCP server at all, with auth the weakest readiness dimension (47.3 vs. 91.9 pricing, 59.5 discovery); 27.3% of tools require OAuth/SAML/manual approval needing a human with a browser (agentnativeregistry.com — vendor/secondary source, treat with attribution). Zuplo’s State of MCP survey reports 50% of MCP builders cite security/access as the top challenge and 25% ship no auth (vendor survey, n unstated — attribution required).
+The demand argument this enables, which the series never makes: agents cannot natively reach across vendor APIs, so the engineer hand-builds a local catalog once. That is precisely Oatty’s use case, and it is a demand claim rather than a differentiation claim — much stronger ground than 01:178’s current "Adoption, comparative performance, and willingness to return remain unproven until tested."
+But it must be earned, and today the docs under-describe what exists. Per 01.11, crates/mcp/src/client/http.rs:26-36 shows Oatty consumes OAuth bearer tokens for remote MCP plugins, from an explicit token or a keychain fallback (oatty-mcp-oauth service). The truthful and considerably stronger claim is: “point Oatty at an OAuth-protected remote MCP server with a bearer from your OS keychain.” Note the regulatory boundary — MCP’s 2026-07-28 authorization spec scopes OAuth2.1 resource-server requirements to remotely-hosted HTTP transports, so the whole RFC 8707 / RFC 9207 regime explicitly does not apply to a local stdio server. That is a defensible local-trust position, and it should be stated as a deliberate choice (03:117 currently states only what not to imply).
+3.6 “Cross-vendor” is framed as vendor-SaaS; the internal-API frame is stronger and unexploited
+01:64 and 06:201 mention internal APIs in passing. The unclaimed opportunity: an internal API is exactly where no vendor ships an MCP server, no OpenAPI document is published, and there is no alternative tool at all. It is the strongest possible demonstration of the shared-catalog value because the competitor set is empty. 02:106-108’s agent-authored-schema capability is the enabling mechanism and is currently positioned as an onboarding convenience, not as a wedge.
+Recommend a fourth entry question: “What does this internal service actually do, and can my agent call it safely?”
+3.7 The governance counter-position needs to be stated, not just declined
+01:198-200 chooses local developer value over enterprise governance and calls the control plane "a possible future direction". The choice is right. But 04:67 lists Speakeasy and Zuplo only under "API gateway and enterprise control plane" and does not record that both now ship MCP gateways specifically:
+Speakeasy MCP Gateway launched 2026-03-10 — one governed URL, SSO, RBAC, per-tool-call audit trail, curated server catalog
+Zuplo MCP Gateway public beta 2026-06-02 — single OAuth-protected endpoint fronting many upstreams, credential brokering, tool curation, per-call analytics
+Eficode ROOT added per-MCP-server allow/deny policy in beta 2026-10-01
+(These three are verified from vendor primary sources. Pricing posture for all was not verified.)
+Omitting this from 04 will read as unawareness rather than as a deliberate choice. State the counter-position: Oatty’s answer is local ownership, a keychain-backed credential store, and inspectable commands — and the nearest thing to a team-scale story that isn’t a control plane is the sanitized, shareable integration project already proposed in specs/OATTY_PRODUCT_OPPORTUNITIES.md. (Pricing/commercial strength of these gateways is the real unknown; verify before making the choice load-bearing.)
+3.8 The observability window is open right now and 04 doesn’t know it
+04:112-125 correctly states Oatty has no durable correlated trace, then lists "Export standard trace data" as an adjacent opportunity. It misses that the standards window is unusually favorable:
+OpenTelemetry GenAI conventions moved to a dedicated repo in May 2026; core v1.42.0 deprecated gen_ai.*, v1.43.0 ships none
+As of 2026-07-17, no GenAI span/event/metric is Stable and the dedicated repo has no tagged release; frameworks emit multiple generations of attributes simultaneously (john-hodge.com, 2026-07-17)
+MCP 2026-07-28 documents traceparent/tracestate propagation in _meta (SEP-414)
+Relevant surfaces: execute_tool, invoke_agent (client/internal split, v1.41.0), plan spans, gen_ai.evaluation.result (v1.38.0)
+A small project can ship conformant MCP + OTel tracing ahead of the standards and the platforms. 04:118-123 should name the specific target surfaces and note that the window is open — otherwise this reads as a someday item.
+4. Alignment with other trends in skill demand, AI use, and engineering needs
+4.1 Constrained agent access is becoming a purchasing criterion
+Converging 2026 evidence:9 CVEs against live MCP servers and 40.55% unauthenticated tool exposure (arXiv:2605.22333); 50% of MCP builders naming security/access as the top challenge (Zuplo); and client-side hardening — VS Code now sandboxes stdio MCP servers with per-server filesystem/network allow-deny and auto-approves tool calls only for sandboxed servers (code.visualstudio.com/docs/agents/run/agent-sandboxing, 2026-10-14), while Claude Code refuses to auto-approve specific classes even under bypassPermissions (code.claude.com/docs/en/permission-modes).
+Oatty’s local stdio server, explicit command catalog, and inspectable inputs are well aligned with this. The missing half is a positive constrained-access story. 03:95 honestly discloses that run_safe_command "accepts MCP-backed commands without enforcing downstream read-only annotations" — good disclosure, no positive counterpart. A per-session allowlist of catalog operations is a small feature with a large buyer, and it converts 03:95 from a caveat into a roadmap item.
+4.2 Evidence as a collaboration primitive is unexploited
+Stack Overflow 2026: developers trust project goals/requirements (85%), code and docs (73%), and people (72%) as context; 63.9% compare AI output against codebase context. 01:161-165 (Preserve understanding as well as operations) gestures at this and then calls packaging it "a product opportunity, not a current claim".
+In 2026 this is more than preservation — it is how AI-assisted work stays reviewable. The evidence attached to a change is what lets a reviewer, a teammate, or a future maintainer trust work an agent produced. Oatty’s least-used asset is that it produces retrievable, inspectable evidence that can travel with a change into a PR, an incident note, or an onboarding doc. The series treats preservation as a retention benefit; it is a collaboration primitive. Recommend a supporting message — the evidence travels with the change — and treat specs/OATTY_PRODUCT_OPPORTUNITIES.md’s sanitized project directory as the mechanism.
+4.3 Live state vs. documentation is a contrast the series implies nowhere
+04:145 cites Atlassian’s 3,500-developer survey identifying "finding information about services, documentation, and APIs" plus tool-switching as friction sources. Correctly, the docs never claim Oatty reduces documentation friction — it can’t, since Oatty reads no prose documentation except whatever an agent authors into a schema (02:106-108).
+But the contrast is free and honest: documentation is stale by definition; Oatty reads live vendor state. Position Oatty explicitly as the live-state complement to documentation rather than as a documentation substitute. This reframes a capability limit (03 never claims doc understanding) into a positioning strength.
+4.4 Declining, correctly, but say so publicly with a reason
+The governed-agent-infrastructure wave (Speakeasy and Zuplo MCP gateways, Eficode ROOT, ChatGPT developer mode framed as "powerful but dangerous") is real and growing. 01:198-200 already declines to compete there. Keep declining — but publish the reason, or the absence of a governance story reads as an absence of a strategy to a security-minded buyer who is otherwise a strong fit.
+4.5 Two audience additions to test in 01 and 06
+AI Enablement / AI platform engineer — see §2.4. Named role, senior-compensated, JDs literally naming MCP servers and shared knowledge systems. Highest-intent audience available.
+Security-adjacent infra ownership — Fortinet’s 74% security talent shortage plus +124% YoY security postings gives budgeted urgency to credential handling and inspectable access. 03:23’s honest redaction disclosure plus a documented keychain-backed store is a defensible local-trust posture against hosted gateways — see §2.6.
+Recommended changes, ordered
+#
+Change
+Files
+Rationale
+1
+Reconcile specs/OATTY_PRODUCT_OPPORTUNITIES.md against 01; extend README:48 precedence to cover specs/
+README, 01
+Two contradictory live strategies; audience is currently ambiguous
+2
+Name the MCP protocol revision (2025-06-18) and add spec-revision support to the roadmap
+03, 01, 04
+Largest untested obligation; 2026-07-28 is mandatory-discovery and already shipping in clients
+3
+Promote verification from qualification to supporting message, backed by arXiv:2606.09863 + SO 2026’s 6.6%/48%
+02, 03, 04
+Strongest quantified trend evidence, currently unused
+4
+Re-base 04’s evidence on trust/verification; demote HackerRank; add IZA + SignalFire to justify the no-career-anxiety posture
+04
+Cites the weakest slice of its best source; leaves its own caution unexplained
+5
+Add AI Enablement Engineer and quantified “no platform team” (CNCF 28%) to audience + recruitment
+01, 06
+Highest-intent ICP, self-identifying, zero acquisition cost, 69% prevalence
+6
+Add the “composed workspace” retention story after activation
+01, 02, 05
+The strongest unclaimed asset and the missing retention message
+7
+Add the before/after tool-count demonstration format
+04, 05, 06
+Provable without benchmarks; Anthropic’s 55K/30–50-tool figures are the hook
+8
+Correct the auth description to the truthful, stronger claim; frame local stdio trust as deliberate
+03, 04
+crates/mcp/src/client/http.go:26-36 already supports a better claim than the docs make
+9
+Add internal-API entry question; reposition value providers and portability as verified-but-unmarketed
+01, 03
+Empty competitor set; 03 currently omits shipped capabilities
+10
+Add MCP gateway launches to 04 with an explicit counter-position; name OTel GenAI surfaces and the open window
+04
+Avoids reading as unaware; exploits a narrow standards lead
+11
+Apply the README decision-state vocabulary to 03’s table; re-date 03’s source baseline; name an MCP client
+README, 03
+Three undeclared-vocabulary / untestable-obligation gaps
+One caution on all of the above: the discipline in 03 is genuinely good and is the reason this corpus is credible. The risk in §3 is not that the claims are wrong — it’s that the docs’ own fear of overclaiming has led them to under-claim capabilities that are already implemented and verifiable (01.9, 01.11, 01.10), while leaving the strongest available external evidence entirely uncited. Adding measured, dated evidence is the opposite of weakening the discipline.

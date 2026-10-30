@@ -8,6 +8,7 @@
   <link rel="canonical" href="https://oatty.io/docs/api-access/">
   <link rel="icon" href="/favicon.png">
   <link rel="stylesheet" href="/site.css">
+  <script src="/copy-prompt.js" defer></script>
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
@@ -18,6 +19,7 @@
     <h1>Give your agent access to an API</h1>
     <p>Connect your existing agent to Oatty through MCP. Import an OpenAPI document, find one operation, and run it. You can then find and run the same command in Oatty's terminal interface.</p>
     <p>This guide uses a read operation. Have the API's OpenAPI document or URL, its base URL, and any required credentials ready. Use an API and credentials you are allowed to access.</p>
+    <p><a href="#setup-prompt">Ask your agent to set up Oatty</a>, or follow the manual steps below.</p>
     <ol>
       <li><a href="#install">Install and start Oatty</a></li>
       <li><a href="#connect">Connect your MCP client</a></li>
@@ -25,6 +27,16 @@
       <li><a href="#run">Run one call</a></li>
       <li><a href="#inspect">Run it yourself</a></li>
     </ol>
+
+    <section id="setup-prompt" aria-labelledby="setup-title"><h2 id="setup-title">Ask your agent to set up Oatty</h2>
+      <p>Paste this prompt into your existing assistant. Ask it to install or reuse Oatty, connect this client, and check the connection. You may need to start the TUI, reconnect your client, or provide API access. For manual setup, <a href="#install">start with installation</a>.</p>
+    <div class="setup-prompt" data-setup-prompt>
+      <div class="prompt-controls"><button class="button button-secondary prompt-copy" type="button" data-copy-prompt aria-describedby="copy-prompt-status" hidden>Copy prompt</button><a href="/setup-prompt.txt">Open plain text</a></div>
+      <pre><code id="setup-prompt-text" data-prompt-text>Install or reuse Oatty, connect it to this assistant, and verify its tools are available. Preserve existing settings; ask me only for required access or manual steps.
+</code></pre>
+      <p id="copy-prompt-status" class="prompt-status" role="status" aria-live="polite" aria-atomic="true" data-copy-status>Select the prompt text to copy it manually.</p>
+    </div>
+    </section>
 
     <section id="install"><h2>Install and start Oatty</h2>
       <pre><code>npm install -g oatty
@@ -62,7 +74,7 @@ Inspect its required inputs, run it, and show the response status and body.</cod
 
     <aside><h2>Release check</h2><p>These steps describe mechanisms present in the inspected source. A published release and a named MCP client have not yet been tested together for this guide. Confirm your installed version exposes the listed tools before relying on this procedure.</p></aside>
     <nav aria-label="Related guides"><a href="/docs/agent-authored-schema/">No OpenAPI document? Author one with your agent</a><a href="/docs/repair-command/">Correct a failed operation</a></nav>
-  </main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#install">Install and start</a><a href="#connect">Connect your client</a><a href="#import">Import the API</a><a href="#run">Run one call</a><a href="#inspect">Run it yourself</a></aside></div>
+  </main><aside class="docs-toc" aria-label="On this page"><h2>On this page</h2><a href="#setup-prompt">Ask your agent to set up Oatty</a><a href="#install">Install and start</a><a href="#connect">Connect your client</a><a href="#import">Import the API</a><a href="#run">Run one call</a><a href="#inspect">Run it yourself</a></aside></div>
   <footer><p><a href="/">Oatty</a> · <a href="/docs/">Documentation</a></p></footer>
 </body>
 </html>

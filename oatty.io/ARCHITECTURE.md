@@ -1,11 +1,12 @@
 # Oatty.io architecture
 
-The site is built as static HTML and CSS. Visitors receive the complete homepage, documentation content, metadata, and navigation in each HTTP response. The output contains no client-side JavaScript.
+The site is built as static HTML and CSS. Visitors receive the complete homepage, documentation content, metadata, and navigation in each HTTP response. The only client-side JavaScript is a clipboard enhancement for the setup prompt on the homepage and API access guide.
 
 ## Source and output
 
 - `index.html` contains the homepage.
 - `public/site.css` styles the static markup using the site's established palette and type scale. It imports the document reset, theme tokens, and base rules from `public/styles/css/`.
+- `public/setup-prompt.txt` is the canonical setup prompt. Both prompt pages contain its complete decoded text, including exactly one terminal LF. There is no whitespace normalization when copying. `public/copy-prompt.js` reveals a Copy prompt button only after binding its listener and detecting secure Clipboard API support; it writes the displayed text only on a click. Selection and a plain-text link remain available without it.
 - `static-docs/<route>/index.html` contains every documentation page, including the existing guides and the API access guides.
 - `static-pages/404.html` contains the not-found page.
 - `scripts/build-static.mjs` copies authored HTML and assets, generates the `/docs/` alias and discovery files, and publishes the existing runbook link. It does not render page content.
@@ -15,6 +16,6 @@ The build also writes `/docs` as an alias of `/docs/quick-start`, plus `robots.t
 
 ## Local checks
 
-Run `npm run build`, then `npm run check:static`. The latter checks every built page for a title, main region, H1, script elements, event-handler attributes, JavaScript URLs, and broken root-relative links. `npm run preview` serves `dist/` locally on port 4173 for visual checks.
+Run `npm test`, `npm run build`, then `npm run check:static`. The static check verifies every built page's title, main region, H1, and local links. It rejects event-handler attributes, JavaScript URLs, and scripts except one exact deferred `/copy-prompt.js` reference on each prompt page. It also checks canonical prompt text and published asset bytes, and rejects other JavaScript output. `npm run preview` serves `dist/` locally on port 4173 for visual checks.
 
-The former LitElement application, TypeScript page model, and Vite build have been removed. The build uses Node.js, but the published site needs no browser JavaScript.
+The former LitElement application, TypeScript page model, and Vite build have been removed. The build uses Node.js; reading and navigating the published site needs no browser JavaScript.

@@ -1,0 +1,574 @@
+{
+  "as_of": "2026-10-10",
+  "method": "Unauthenticated HTTP GET; raw initial HTML, not rendered DOM",
+  "pages": [
+    {
+      "requested_url": "https://oatty.io/",
+      "final_url": "https://oatty.io/",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "title": "Oatty - Unified TUI & CLI for OpenAPI APIs | Schema-Driven Discovery & Workflows",
+      "description": "Schema-driven OpenAPI command discovery, workflow orchestration, and MCP execution with reviewable safety gates.",
+      "robots": "index, follow",
+      "canonical": "https://oatty.io/",
+      "headings": [
+        [
+          "h1",
+          "Oatty: One CLI for Every API"
+        ]
+      ],
+      "initial_text_words": 55,
+      "links": [
+        "/docs/quick-start",
+        "/docs/learn/how-oatty-executes-safely",
+        "/docs/learn/getting-oriented",
+        "/docs/learn/library-and-catalogs",
+        "/docs/learn/search-and-run-commands",
+        "/docs/learn/workflows-basics",
+        "/docs/learn/plugins",
+        "/docs/learn/mcp-http-server"
+      ],
+      "scripts": [
+        "/assets/index-WmbqQ4rM.js",
+        "https://js.sentry-cdn.com/69d0d519add6966441e7b4275fbc8082.min.js"
+      ],
+      "text_excerpt": "Oatty - Unified TUI & CLI for OpenAPI APIs | Schema-Driven Discovery & Workflows Oatty: One CLI for Every API Schema-driven command discovery, interactive terminal UI, and workflow automation for API operations. Primary documentation: Quick Start How Oatty Executes Safely Getting Oriented Library and Catalogs Search and Run Commands Workflows Basics Plugins MCP HTTP Server"
+    },
+    {
+      "requested_url": "https://oatty.io/robots.txt",
+      "final_url": "https://oatty.io/robots.txt",
+      "status": 200,
+      "content_type": "text/plain; charset=utf-8",
+      "x_robots_tag": null,
+      "body": "User-agent: *\nAllow: /\nSitemap: https://oatty.io/sitemap.xml\n"
+    },
+    {
+      "requested_url": "https://oatty.io/sitemap.xml",
+      "final_url": "https://oatty.io/sitemap.xml",
+      "status": 200,
+      "content_type": "application/xml",
+      "x_robots_tag": null,
+      "locations": [
+        "https://oatty.io",
+        "https://oatty.io/docs/quick-start",
+        "https://oatty.io/docs/guides/sentry-bootstrap",
+        "https://oatty.io/docs/guides/sentry-datadog-pagerduty-playbook",
+        "https://oatty.io/docs/guides/vercel-to-render-migration-playbook",
+        "https://oatty.io/docs/guides/access-review-collection-playbook",
+        "https://oatty.io/docs/guides/credential-rotation-readiness-playbook",
+        "https://oatty.io/docs/learn/how-oatty-executes-safely",
+        "https://oatty.io/docs/learn/getting-oriented",
+        "https://oatty.io/docs/learn/library-and-catalogs",
+        "https://oatty.io/docs/learn/search-and-run-commands",
+        "https://oatty.io/docs/learn/workflows-basics",
+        "https://oatty.io/docs/learn/plugins",
+        "https://oatty.io/docs/learn/mcp-http-server",
+        "https://oatty.io/docs/reference/cli-commands",
+        "https://oatty.io/docs/reference/tui-interactions"
+      ],
+      "lastmod": [
+        "2026-07-01T14:25:46.688Z",
+        "2026-07-01T14:25:46.688Z",
+        "2026-07-01T14:25:46.688Z",
+        "2026-07-01T14:25:46.688Z",
+        "2026-07-01T14:25:46.688Z",
+        "2026-07-01T14:25:46.688Z",
+        "2026-07-01T14:25:46.688Z",
+        "2026-07-01T14:25:46.688Z",
+        "2026-07-01T14:25:46.688Z",
+        "2026-07-01T14:25:46.688Z",
+        "2026-07-01T14:25:46.688Z",
+        "2026-07-01T14:25:46.688Z",
+        "2026-07-01T14:25:46.688Z",
+        "2026-07-01T14:25:46.688Z",
+        "2026-07-01T14:25:46.688Z",
+        "2026-07-01T14:25:46.688Z"
+      ]
+    },
+    {
+      "requested_url": "https://oatty.io/docs/quick-start",
+      "final_url": "https://oatty.io/docs/quick-start/",
+      "status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "title": "Quick Start | Oatty Docs",
+      "description": "Start in the TUI, import a catalog, run a real command, then run a workflow with CLI fallback when needed.",
+      "robots": "index, follow",
+      "canonical": "https://oatty.io/docs/quick-start",
+      "headings": [
+        [
+          "h1",
+          "Quick Start"
+        ],
+        [
+          "h2",
+          "What You Will Learn"
+        ],
+        [
+          "h2",
+          "Install Oatty"
+        ],
+        [
+          "h2",
+          "Launch the TUI"
+        ],
+        [
+          "h2",
+          "Import Your First Catalog"
+        ],
+        [
+          "h3",
+          "Optional Command Prefix"
+        ],
+        [
+          "h3",
+          "Complete Import"
+        ],
+        [
+          "h2",
+          "Discover and Run a Command"
+        ],
+        [
+          "h2",
+          "Import and Run a Workflow"
+        ]
+      ],
+      "initial_text_words": 848,
+      "links": [],
+      "scripts": [
+        "/assets/index-WmbqQ4rM.js",
+        "https://js.sentry-cdn.com/69d0d519add6966441e7b4275fbc8082.min.js"
+      ],
+      "text_excerpt": "Quick Start | Oatty Docs Quick Start Start in the TUI, import a catalog, run a real command, then run a workflow with CLI fallback when needed. Estimated time: 10-15 min What You Will Learn Use the TUI layout, focus movement, and help affordances with confidence. Import a catalog and discover commands through the interactive TUI path. Run a command and verify results in the logs and result views. Run a workflow end-to-end with structured inputs and step status. Install Oatty Install Oatty with npm for the fastest setup. Run `oatty --help` to verify the install. npm install -g oatty oatty --help expected The `oatty --help` command prints usage and exits successfully. recovery If the command is missing, restart the shell and check your PATH. For source builds, run from the release binary path. fallback Alternative installation: If npm is unavailable, build from source: `cargo build --release` and run `./target/release/oatty`. Launch the TUI Launch the interface with `oatty` in your terminal. Identify the left navigation, main content pane, and the hints bar. oatty expected The TUI opens with visible navigation and an empty Library view. Default TUI landing state with left nav and hin"
+    },
+    {
+      "requested_url": "https://oatty.io/discoverability-audit-missing-page-20261010",
+      "final_url": "https://oatty.io/discoverability-audit-missing-page-20261010",
+      "status": 404,
+      "content_type": "text/html; charset=utf-8",
+      "x_robots_tag": null,
+      "title": "Oatty - Unified TUI & CLI for OpenAPI APIs | Schema-Driven Discovery & Workflows",
+      "description": "Schema-driven OpenAPI command discovery, workflow orchestration, and MCP execution with reviewable safety gates.",
+      "robots": "index, follow",
+      "canonical": "https://oatty.io/",
+      "headings": [
+        [
+          "h1",
+          "Oatty: One CLI for Every API"
+        ]
+      ],
+      "initial_text_words": 55,
+      "links": [
+        "/docs/quick-start",
+        "/docs/learn/how-oatty-executes-safely",
+        "/docs/learn/getting-oriented",
+        "/docs/learn/library-and-catalogs",
+        "/docs/learn/search-and-run-commands",
+        "/docs/learn/workflows-basics",
+        "/docs/learn/plugins",
+        "/docs/learn/mcp-http-server"
+      ],
+      "scripts": [
+        "/assets/index-WmbqQ4rM.js",
+        "https://js.sentry-cdn.com/69d0d519add6966441e7b4275fbc8082.min.js"
+      ],
+      "text_excerpt": "Oatty - Unified TUI & CLI for OpenAPI APIs | Schema-Driven Discovery & Workflows Oatty: One CLI for Every API Schema-driven command discovery, interactive terminal UI, and workflow automation for API operations. Primary documentation: Quick Start How Oatty Executes Safely Getting Oriented Library and Catalogs Search and Run Commands Workflows Basics Plugins MCP HTTP Server"
+    }
+  ],
+  "sitemap_route_audit": [
+    {
+      "requested_url": "https://oatty.io",
+      "final_url": "https://oatty.io",
+      "status": 200,
+      "title": "Oatty - Unified TUI & CLI for OpenAPI APIs | Schema-Driven Discovery & Workflows",
+      "description": "Schema-driven OpenAPI command discovery, workflow orchestration, and MCP execution with reviewable safety gates.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/",
+      "initial_text_words": 55,
+      "initial_anchor_count": 8,
+      "topic_mentions": {
+        "OpenAPI": 1,
+        "MCP": 1,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    },
+    {
+      "requested_url": "https://oatty.io/docs/quick-start",
+      "final_url": "https://oatty.io/docs/quick-start/",
+      "status": 200,
+      "title": "Quick Start | Oatty Docs",
+      "description": "Start in the TUI, import a catalog, run a real command, then run a workflow with CLI fallback when needed.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/docs/quick-start",
+      "initial_text_words": 848,
+      "initial_anchor_count": 0,
+      "topic_mentions": {
+        "OpenAPI": 3,
+        "MCP": 0,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    },
+    {
+      "requested_url": "https://oatty.io/docs/guides/sentry-bootstrap",
+      "final_url": "https://oatty.io/docs/guides/sentry-bootstrap/",
+      "status": 200,
+      "title": "Bootstrap Sentry with an Agent + MCP | Oatty Docs",
+      "description": "Import Sentry\u2019s OpenAPI catalog, then use an MCP-connected agent to propose and run reviewable workflows for alerts, dashboards, and hardening.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/docs/guides/sentry-bootstrap",
+      "initial_text_words": 1681,
+      "initial_anchor_count": 0,
+      "topic_mentions": {
+        "OpenAPI": 8,
+        "MCP": 15,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    },
+    {
+      "requested_url": "https://oatty.io/docs/guides/sentry-datadog-pagerduty-playbook",
+      "final_url": "https://oatty.io/docs/guides/sentry-datadog-pagerduty-playbook/",
+      "status": 200,
+      "title": "Sentry + Datadog + PagerDuty Integration Playbook | Oatty Docs",
+      "description": "A natural-language, agent-driven procedure to configure, verify, and roll back Sentry \u2192 PagerDuty and Datadog \u2192 PagerDuty integrations through Oatty.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/docs/guides/sentry-datadog-pagerduty-playbook",
+      "initial_text_words": 2595,
+      "initial_anchor_count": 0,
+      "topic_mentions": {
+        "OpenAPI": 9,
+        "MCP": 13,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    },
+    {
+      "requested_url": "https://oatty.io/docs/guides/vercel-to-render-migration-playbook",
+      "final_url": "https://oatty.io/docs/guides/vercel-to-render-migration-playbook/",
+      "status": 200,
+      "title": "Vercel -> Render Migration Playbook (Reuse Existing Postgres URL) | Oatty Docs",
+      "description": "A prompt-driven, workflow-aligned guide for migrating a Vercel app to Render while reusing the existing Postgres `DATABASE_URL`.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/docs/guides/vercel-to-render-migration-playbook",
+      "initial_text_words": 1305,
+      "initial_anchor_count": 0,
+      "topic_mentions": {
+        "OpenAPI": 0,
+        "MCP": 0,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    },
+    {
+      "requested_url": "https://oatty.io/docs/guides/access-review-collection-playbook",
+      "final_url": "https://oatty.io/docs/guides/access-review-collection-playbook/",
+      "status": 200,
+      "title": "Access Review Collection Playbook (Okta + AWS IAM + Datadog) | Oatty Docs",
+      "description": "A prompt-driven, agent-assisted guide to collect user lists, permission grants, and audit evidence for quarterly reviews or incidents using read-only workflows.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/docs/guides/access-review-collection-playbook",
+      "initial_text_words": 1080,
+      "initial_anchor_count": 0,
+      "topic_mentions": {
+        "OpenAPI": 0,
+        "MCP": 3,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    },
+    {
+      "requested_url": "https://oatty.io/docs/guides/credential-rotation-readiness-playbook",
+      "final_url": "https://oatty.io/docs/guides/credential-rotation-readiness-playbook/",
+      "status": 200,
+      "title": "Credential Rotation Readiness Playbook | Oatty Docs",
+      "description": "A prompt-driven, read-only guide to assess token/key age, usage, and rotation risk across GitHub, AWS IAM, and Datadog before any write actions.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/docs/guides/credential-rotation-readiness-playbook",
+      "initial_text_words": 753,
+      "initial_anchor_count": 0,
+      "topic_mentions": {
+        "OpenAPI": 0,
+        "MCP": 0,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    },
+    {
+      "requested_url": "https://oatty.io/docs/learn/how-oatty-executes-safely",
+      "final_url": "https://oatty.io/docs/learn/how-oatty-executes-safely/",
+      "status": 200,
+      "title": "How Oatty Executes Safely | Oatty Docs",
+      "description": "Understand the trust model: suggestion, preview, validation, and explicit operator control before execution.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/docs/learn/how-oatty-executes-safely",
+      "initial_text_words": 437,
+      "initial_anchor_count": 0,
+      "topic_mentions": {
+        "OpenAPI": 0,
+        "MCP": 3,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    },
+    {
+      "requested_url": "https://oatty.io/docs/learn/getting-oriented",
+      "final_url": "https://oatty.io/docs/learn/getting-oriented/",
+      "status": 200,
+      "title": "Getting Oriented | Oatty Docs",
+      "description": "Learn the core interaction model so you can navigate Oatty quickly and recover from common UI friction.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/docs/learn/getting-oriented",
+      "initial_text_words": 668,
+      "initial_anchor_count": 0,
+      "topic_mentions": {
+        "OpenAPI": 0,
+        "MCP": 1,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    },
+    {
+      "requested_url": "https://oatty.io/docs/learn/library-and-catalogs",
+      "final_url": "https://oatty.io/docs/learn/library-and-catalogs/",
+      "status": 200,
+      "title": "Library and Catalogs | Oatty Docs",
+      "description": "Manage catalogs as your command source of truth, including import, enablement, base URLs, and removal.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/docs/learn/library-and-catalogs",
+      "initial_text_words": 556,
+      "initial_anchor_count": 0,
+      "topic_mentions": {
+        "OpenAPI": 2,
+        "MCP": 2,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    },
+    {
+      "requested_url": "https://oatty.io/docs/learn/search-and-run-commands",
+      "final_url": "https://oatty.io/docs/learn/search-and-run-commands/",
+      "status": 200,
+      "title": "Search for and Run Commands | Oatty Docs",
+      "description": "Use the TUI command flow to find commands quickly, execute with confidence, and inspect results after completion.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/docs/learn/search-and-run-commands",
+      "initial_text_words": 668,
+      "initial_anchor_count": 0,
+      "topic_mentions": {
+        "OpenAPI": 0,
+        "MCP": 0,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    },
+    {
+      "requested_url": "https://oatty.io/docs/learn/workflows-basics",
+      "final_url": "https://oatty.io/docs/learn/workflows-basics/",
+      "status": 200,
+      "title": "Workflows Basics | Oatty Docs",
+      "description": "Move from workflow selection to input collection to execution, then control active runs from the run view.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/docs/learn/workflows-basics",
+      "initial_text_words": 505,
+      "initial_anchor_count": 0,
+      "topic_mentions": {
+        "OpenAPI": 0,
+        "MCP": 2,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    },
+    {
+      "requested_url": "https://oatty.io/docs/learn/plugins",
+      "final_url": "https://oatty.io/docs/learn/plugins/",
+      "status": 200,
+      "title": "MCP Plugins | Oatty Docs",
+      "description": "Manage plugin lifecycle and configuration from one TUI workflow, including details, validation, and save paths.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/docs/learn/plugins",
+      "initial_text_words": 498,
+      "initial_anchor_count": 0,
+      "topic_mentions": {
+        "OpenAPI": 0,
+        "MCP": 11,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    },
+    {
+      "requested_url": "https://oatty.io/docs/learn/mcp-http-server",
+      "final_url": "https://oatty.io/docs/learn/mcp-http-server/",
+      "status": 200,
+      "title": "MCP HTTP Server | Oatty Docs",
+      "description": "Start the local MCP HTTP server, verify endpoint details, and configure clients to connect reliably.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/docs/learn/mcp-http-server",
+      "initial_text_words": 727,
+      "initial_anchor_count": 0,
+      "topic_mentions": {
+        "OpenAPI": 0,
+        "MCP": 38,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    },
+    {
+      "requested_url": "https://oatty.io/docs/reference/cli-commands",
+      "final_url": "https://oatty.io/docs/reference/cli-commands/",
+      "status": 200,
+      "title": "CLI Command Reference | Oatty Docs",
+      "description": "Use this page as a command lookup for discovery, inspection, and execution flows in Oatty CLI mode.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/docs/reference/cli-commands",
+      "initial_text_words": 522,
+      "initial_anchor_count": 0,
+      "topic_mentions": {
+        "OpenAPI": 0,
+        "MCP": 0,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    },
+    {
+      "requested_url": "https://oatty.io/docs/reference/tui-interactions",
+      "final_url": "https://oatty.io/docs/reference/tui-interactions/",
+      "status": 200,
+      "title": "TUI Interactions Reference | Oatty Docs",
+      "description": "Use this page as a fast reference for keybindings, focus movement, and view-level interaction rules in Oatty.",
+      "robots": "index, follow",
+      "x_robots_tag": null,
+      "canonical": "https://oatty.io/docs/reference/tui-interactions",
+      "initial_text_words": 431,
+      "initial_anchor_count": 0,
+      "topic_mentions": {
+        "OpenAPI": 0,
+        "MCP": 0,
+        "catalog_import_openapi": 0,
+        "catalog_validate_openapi": 0,
+        "catalog_apply_patch": 0,
+        "inline": 0
+      }
+    }
+  ],
+  "repository_metadata": {
+    "html_url": "https://github.com/oattyio/oatty",
+    "description": null,
+    "homepage": null,
+    "topics": [],
+    "stargazers_count": 1,
+    "forks_count": 0,
+    "pushed_at": "2026-07-01T17:45:31Z"
+  },
+  "scope": "Website/search engines, as clarified by the user. Public responses and one live browser homepage inspection; no Search Console access or Google ranking measurement.",
+  "methodology_notes": [
+    "Counts include title text and code samples but exclude script/style text; approximate initial-HTML extraction, not visible body-only text or a content-quality threshold.",
+    "The nonexistent route was deliberately constructed as a status-code probe; it is not a broken on-site link.",
+    "All 16 sitemap locations fetched with unauthenticated GET, following redirects.",
+    "Search-tool results are discovery evidence, not a Google index census, rank tracker, search-volume estimate, or backlink audit.",
+    "Source reviewed: oatty.io/index.html; scripts/postbuild-seo.ts; src/app/oatty-site-app.ts; src/docs/pages/index.ts and mcp-http-server-page.ts."
+  ],
+  "rendered_homepage_observations": {
+    "method": "In-app browser accessibility tree of https://oatty.io/",
+    "h1": "Stop duct-taping curl, bash, CI YAML, and vendor CLIs together.",
+    "hero_description": "Ship the same workflows across vendors without rewriting glue. One consistent execution surface across the APIs you operate. Keep large command surfaces available without flooding agent context windows.",
+    "demo_placeholder": "Short teaser loop coming soon",
+    "schema_authorship_mentioned": true,
+    "google_rendered_or_indexed_html_verified": false
+  },
+  "public_search_samples": [
+    {
+      "queries": [
+        "site:oatty.io",
+        "\"Oatty\" MCP OpenAPI",
+        "\"oatty.io\"",
+        "agent OpenAPI MCP API tools terminal"
+      ],
+      "observed_relevant_pages": [
+        "https://oatty.io/"
+      ],
+      "note": "Combined results; cannot attribute a rank or returned page to each individual query."
+    },
+    {
+      "queries": [
+        "site:oatty.io"
+      ],
+      "observed_relevant_pages": [],
+      "note": "Standalone search returned no results; inconsistent retrieval is not proof of deindexing."
+    },
+    {
+      "queries": [
+        "\"oatty.io\" MCP",
+        "\"Oatty\" OpenAPI MCP -site:developers.google.com -site:learn.microsoft.com"
+      ],
+      "observed_relevant_pages": [
+        "https://oatty.io/",
+        "https://oatty.io/docs/learn/search-and-run-commands/",
+        "https://www.npmjs.com/~justinwilaby"
+      ],
+      "note": "Combined results; evidence that some product pages are retrievable."
+    },
+    {
+      "queries": [
+        "OpenAPI to MCP server",
+        "MCP import API schema repair"
+      ],
+      "observed_relevant_pages": [
+        "https://scalar.com/learn/mcp/openapi-to-mcp-server",
+        "https://github.com/dx-corp/mcp-openapi"
+      ],
+      "note": "Competitive search surfaces and terminology; not measured search demand or stable Google rankings."
+    }
+  ],
+  "independently_inspected_competitor_pages": [
+    "https://gofastmcp.com/integrations/openapi",
+    "https://scalar.com/learn/mcp/openapi-to-mcp-server"
+  ]
+}

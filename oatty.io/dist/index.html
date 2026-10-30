@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#1a1f2e">
   <meta name="color-scheme" content="dark">
-  <title>Oatty — API access for agents through MCP and OpenAPI</title>
-  <meta name="description" content="Connect your agent to APIs using OpenAPI schemas and MCP. Search, autocomplete, run, and inspect the same API commands in Oatty's terminal interface.">
+  <title>Oatty — Understand and operate your stack</title>
+  <meta name="description" content="API commands and MCP tools in one catalog for you and your agent. Check configuration across services, run commands in the terminal, and verify changes.">
   <meta name="robots" content="index, follow">
   <link rel="canonical" href="https://oatty.io/">
   <link rel="icon" type="image/svg+xml" href="/icons/logo-icon.svg">
@@ -15,14 +15,15 @@
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Oatty">
   <meta property="og:url" content="https://oatty.io/">
-  <meta property="og:title" content="Oatty — API access for agents through MCP and OpenAPI">
-  <meta property="og:description" content="Connect your agent to APIs using OpenAPI schemas and MCP. Search, autocomplete, run, and inspect the same API commands in Oatty's terminal interface.">
+  <meta property="og:title" content="Oatty — Understand and operate your stack">
+  <meta property="og:description" content="API commands and MCP tools in one catalog for you and your agent. Check configuration across services, run commands in the terminal, and verify changes.">
   <meta property="og:image" content="https://oatty.io/Oatty-command-suggestions.png">
   <meta property="og:image:alt" content="Oatty terminal command catalog with search suggestions.">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Oatty — API access for agents through MCP and OpenAPI">
-  <meta name="twitter:description" content="Connect your agent to APIs using OpenAPI schemas and MCP. Run the same commands yourself in Oatty's terminal interface.">
+  <meta name="twitter:title" content="Oatty — Understand and operate your stack">
+  <meta name="twitter:description" content="API commands and MCP tools in one catalog for you and your agent. Check configuration across services, run commands in the terminal, and verify changes.">
   <meta name="twitter:image" content="https://oatty.io/Oatty-command-suggestions.png">
+  <script src="/copy-prompt.js" defer></script>
 </head>
 <body>
 <a class="skip-link" href="#main">Skip to content</a>
@@ -32,39 +33,49 @@
 </div></header>
 <main id="main">
   <section class="hero container" aria-labelledby="hero-title">
-    <div class="hero-copy"><img class="hero-mark" src="/logo-lockup.svg" alt="Oatty" width="600" height="180"><p class="eyebrow">An API environment for agents and developers</p><h1 id="hero-title">Give your agent access to your APIs.</h1>
-      <p class="lead">Connect your agent to Oatty through MCP. Import an OpenAPI schema, or let the agent create one from your API documentation. Search, autocomplete, and run the same commands yourself in Oatty’s terminal interface.</p>
-      <div class="actions"><a class="button button-primary" href="/docs/api-access">Get started <span aria-hidden="true">→</span></a><a class="button button-secondary" href="#api-call">See the API call path <span aria-hidden="true">↓</span></a></div>
-      <p class="hero-note">For developers using a coding agent with an internal, custom, or less commonly supported API.</p>
+    <div class="hero-copy"><img class="hero-mark" src="/logo-lockup.svg" alt="Oatty" width="600" height="180"><p class="eyebrow">Understand and operate your stack with Oatty.</p><h1 id="hero-title">AI is changing how you build. You still own the system.</h1>
+      <p class="lead">Oatty brings API commands and MCP tools into one catalog for you and your agent. Check configuration across services, run the same commands in the terminal, and verify changes.</p>
+      <div class="actions"><a class="button button-primary" href="/docs/api-access">Explore your environment <span aria-hidden="true">→</span></a><a class="button button-secondary" href="#api-call">Choose a starting question <span aria-hidden="true">↓</span></a></div>
+      <p><a class="text-link" href="#setup-prompt">Copy a setup prompt for your assistant</a></p>
+      <p class="hero-note">Free and open source. Built for engineers and their agents.</p>
     </div>
-    <figure class="hero-visual"><div class="visual-heading"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>Oatty terminal interface</div><img src="/Oatty-command-suggestions.png" alt="Search suggestions in Oatty’s terminal command catalog" width="1858" height="1032" fetchpriority="high"><figcaption>Search the command catalog and complete an operation from the terminal.</figcaption></figure>
+    <figure class="hero-visual"><div class="visual-heading"><span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>Oatty terminal interface</div><img src="/Oatty-command-suggestions.png" alt="Search suggestions in Oatty’s terminal command catalog" width="1858" height="1032" fetchpriority="high"><figcaption>Find a command, fill in its inputs, and run it in the terminal.</figcaption></figure>
+  </section>
+  <section class="section container" id="setup-prompt" aria-labelledby="setup-title">
+    <div class="section-intro"><p class="eyebrow">Use your existing assistant</p><h2 id="setup-title">Ask your agent to set up Oatty</h2><p>Copy this prompt into the assistant you already use. Ask it to install or reuse Oatty, connect this client, and check the connection.</p><p>You may need to start the TUI or reconnect your client. You can also follow the <a href="/docs/api-access/#install">manual setup guide</a>.</p></div>
+    <div class="setup-prompt" data-setup-prompt>
+      <div class="prompt-controls"><button class="button button-secondary prompt-copy" type="button" data-copy-prompt aria-describedby="copy-prompt-status" hidden>Copy prompt</button><a href="/setup-prompt.txt">Open plain text</a></div>
+      <pre><code id="setup-prompt-text" data-prompt-text>Install or reuse Oatty, connect it to this assistant, and verify its tools are available. Preserve existing settings; ask me only for required access or manual steps.
+</code></pre>
+      <p id="copy-prompt-status" class="prompt-status" role="status" aria-live="polite" aria-atomic="true" data-copy-status>Select the prompt text to copy it manually.</p>
+    </div>
   </section>
   <section class="section section-contrast" id="api-call" aria-labelledby="call-title"><div class="container">
-    <div class="section-intro"><p class="eyebrow">One catalog, two ways to work</p><h2 id="call-title">Make the API call. Then run it yourself.</h2><p>Oatty exposes imported API operations to a connected agent through MCP. Those operations also appear in the terminal catalog, where you can find a command, supply its inputs, run it, and inspect the result.</p></div>
+    <div class="section-intro"><p class="eyebrow">Start with your own environment</p><h2 id="call-title">What do you need to know about your stack?</h2><p>The deployment passed, but the app still fails. The hosting domain changed, but the login callback didn’t. Finding the cause means checking more than one service. You can also check those settings before a change.</p></div>
     <div class="call-grid"><div class="call-steps">
-      <div class="call-step"><span class="step-number">01</span><div><h3>Connect and import</h3><p>Connect your MCP client, then supply a supported OpenAPI document from the provider or one your agent has authored from usable API documentation.</p></div></div>
-      <div class="call-step"><span class="step-number">02</span><div><h3>Discover and execute</h3><p>The agent can find an imported operation and call it through Oatty. Start with one useful read so the connection and command are easy to check.</p></div></div>
-      <div class="call-step"><span class="step-number">03</span><div><h3>Use the same command</h3><p>Open Oatty’s TUI, search for that operation, complete its inputs, and run it directly. Inspect the response and execution logs as you work.</p></div></div>
-      <a class="text-link" href="/docs/api-access">Follow the API access guide <span aria-hidden="true">→</span></a>
-    </div><figure class="screen-figure"><img src="/Oatty-command-results.png" alt="Oatty terminal interface displaying an API command result" width="1858" height="1032" loading="lazy"><figcaption>Existing TUI result view. This screenshot does not show an agent call.</figcaption></figure></div>
+      <div class="call-step"><span class="step-number">01</span><div><h3>What does this service connect to?</h3><p>Ask your agent to compare configuration across services. Have it show the settings behind its answer, identify the environment, and say what it couldn’t check.</p></div></div>
+      <div class="call-step"><span class="step-number">02</span><div><h3>What changed around this failure?</h3><p>Compare deployment records, audit events, or saved snapshots. Today’s settings alone don’t show what changed.</p></div></div>
+      <div class="call-step"><span class="step-number">03</span><div><h3>What should I check before changing this?</h3><p>Before changing a domain, compare hosting settings, DNS records, and login callbacks. Ask which services were checked and what still needs checking. Then verify the result after the change.</p></div></div>
+      <a class="text-link" href="/docs/api-access">Connect your agent and try a question <span aria-hidden="true">→</span></a>
+    </div><figure class="screen-figure"><img src="/Oatty-command-results.png" alt="Oatty terminal interface displaying an API command result" width="1858" height="1032" loading="lazy"><figcaption>An API command result in the TUI. This screenshot does not show an agent call.</figcaption></figure></div>
   </section>
-  <section class="section container" id="how-it-works" aria-labelledby="works-title"><div class="section-intro"><p class="eyebrow">From access to a useful command</p><h2 id="works-title">Bring the API your task needs.</h2><p>The agent can help build and maintain the command catalog. You can work with that catalog directly whenever you want to inspect a call or make it yourself.</p></div>
+  <section class="section container" id="how-it-works" aria-labelledby="works-title"><div class="section-intro"><p class="eyebrow">One catalog, two ways to work</p><h2 id="works-title">Check that the change worked.</h2><p>Read back the configuration after a change. Ask your agent to show the values behind its conclusion and say what it couldn’t check. You can inspect and repeat those commands in the terminal. A successful API response doesn’t prove the integration works.</p></div>
     <div class="feature-grid">
-      <article class="feature-card"><span class="feature-index">01 / Add</span><h3>Add the API you need.</h3><p>Use a supported OpenAPI schema from your provider, or have your agent author one from documentation and request examples. The agent can validate, preview, and import the document through Oatty’s MCP tools.</p><a href="/docs/agent-authored-schema">When there is no published schema <span aria-hidden="true">→</span></a></article>
-      <article class="feature-card"><span class="feature-index">02 / Run</span><h3>Use the same commands as your agent.</h3><p>Find an operation in the searchable catalog, complete its inputs, and run it in the TUI. Inspect the response and execution logs as you work.</p><a href="/docs/learn/search-and-run-commands">Explore the TUI <span aria-hidden="true">→</span></a></article>
-      <article class="feature-card"><span class="feature-index">03 / Correct</span><h3>Correct the catalog when an operation fails.</h3><p>A connected agent can update generated command definitions and connection settings through MCP. Inspect the change and retry the operation. The agent supplies the diagnosis; Oatty supplies the catalog tools and execution path.</p><a href="/docs/repair-command">See catalog repair <span aria-hidden="true">→</span></a></article>
-      <article class="feature-card"><span class="feature-index">04 / Repeat</span><h3>Keep a task you will use again.</h3><p>Once the individual calls work, turn a useful sequence of commands into a reusable workflow.</p><a href="/docs/learn/workflows-basics">Learn about workflows <span aria-hidden="true">→</span></a></article>
+      <article class="feature-card"><span class="feature-index">01 / Add</span><h3>Add the API you need.</h3><p>Have an internal deployment API with docs but no schema? Ask your agent to write a supported OpenAPI document, validate and import it, and test a generated command. Keep it alongside your vendor commands.</p><a href="/docs/agent-authored-schema">When there is no published schema <span aria-hidden="true">→</span></a></article>
+      <article class="feature-card"><span class="feature-index">02 / Run</span><h3>Use the same commands as your agent.</h3><p>Find a command, fill in its inputs, and run it in the TUI. Inspect the response and execution logs as you work.</p><a href="/docs/learn/search-and-run-commands">Explore the TUI <span aria-hidden="true">→</span></a></article>
+      <article class="feature-card"><span class="feature-index">03 / Correct</span><h3>Fix a command that fails.</h3><p>Your agent can update a generated command or its connection settings through MCP. Inspect the change and retry. The agent supplies the diagnosis and correction.</p><a href="/docs/repair-command">See catalog repair <span aria-hidden="true">→</span></a></article>
+      <article class="feature-card"><span class="feature-index">04 / Repeat</span><h3>Keep a task you will use again.</h3><p>Save tested HTTP commands as a reusable workflow. You and your agent can also use what you learn to write clients, tests, and infrastructure in your development tools.</p><a href="/docs/learn/workflows-basics">Learn about workflows <span aria-hidden="true">→</span></a></article>
     </div>
   </section>
   <section class="section section-contrast" aria-labelledby="questions-title"><div class="container questions-grid"><div class="section-intro"><p class="eyebrow">Practical questions</p><h2 id="questions-title">What you need to get started.</h2><p>The <a href="/docs/api-access">API access guide</a> covers installation, MCP connection, importing a schema, and making a first call.</p></div><div class="question-list">
-    <details><summary>Does the API need to publish an OpenAPI document?</summary><p>No. A connected agent can author a compatible document from usable documentation or request examples. Validate the document and the resulting commands before relying on them.</p></details>
+    <details><summary>Does the API need to publish an OpenAPI document?</summary><p>No. Your agent can write a supported document from API docs or request examples. Validate it and test the generated commands before relying on them.</p></details>
     <details><summary>Can I use Oatty without an agent?</summary><p>Yes. Search the catalog, use autocomplete, execute commands, and inspect results in the TUI.</p></details>
-    <details><summary>Does Oatty include its own language model?</summary><p>No. Your connected agent supplies the reasoning and, when needed, authors the schema. Oatty supplies the catalog and execution tools.</p></details>
-    <details><summary>What changes when a command is repaired?</summary><p>Catalog patching changes generated command definitions. It does not rewrite the API provider’s original OpenAPI document.</p></details>
+    <details><summary>Does Oatty include its own language model?</summary><p>No. You connect your own agent. Oatty provides the catalog, command execution, results, and workflows.</p></details>
+    <details><summary>What changes when a command is repaired?</summary><p>Oatty changes the generated command definition. It doesn’t rewrite the API provider’s OpenAPI document.</p></details>
     <details><summary>How do I configure authentication?</summary><p>The current source supports catalog request headers with raw, environment, file, or secret-backed values. Check your installed release and the API’s requirements. Native OAuth token refresh has not been established.</p></details>
   </div></div></section>
-  <section class="section container final-call" aria-labelledby="final-title"><p class="eyebrow">Start with one useful call</p><h2 id="final-title">Connect your agent to an API you use.</h2><p>Import a schema, discover an operation, and run it through the same catalog you can open in the terminal.</p><div class="actions"><a class="button button-primary" href="/docs/api-access">Get started <span aria-hidden="true">→</span></a><a class="button button-secondary" href="/docs/quick-start">Browse all docs</a></div></section>
+  <section class="section container final-call" aria-labelledby="final-title"><p class="eyebrow">The next task</p><h2 id="final-title">Keep the commands you’ll need again.</h2><p>Your catalog stays available as you add services and take on new tasks. Reuse the commands that worked, check the current configuration, and save useful HTTP sequences as workflows.</p><div class="actions"><a class="button button-primary" href="/docs/api-access">Explore your environment <span aria-hidden="true">→</span></a><a class="button button-secondary" href="/docs/quick-start">Browse all docs</a></div></section>
 </main>
-<footer class="site-footer"><div class="container footer-inner"><a class="footer-brand" href="/">Oatty</a><p>API access for agents and developers.</p><nav aria-label="Footer navigation"><a href="/docs/api-access">API access</a><a href="/docs/agent-authored-schema">Agent-authored schema</a><a href="/docs/repair-command">Catalog repair</a><a href="/docs/learn/mcp-http-server">MCP server</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></div></footer>
+<footer class="site-footer"><div class="container footer-inner"><a class="footer-brand" href="/">Oatty</a><p>Understand and operate your stack.</p><nav aria-label="Footer navigation"><a href="/docs/api-access">API access</a><a href="/docs/agent-authored-schema">Agent-authored schema</a><a href="/docs/repair-command">Catalog repair</a><a href="/docs/learn/mcp-http-server">MCP server</a><a href="https://github.com/oattyio/oatty">GitHub</a></nav></div></footer>
 </body>
 </html>

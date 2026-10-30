@@ -8,7 +8,7 @@ body { background: var(--surface-glow); color: var(--color-text-primary); line-h
 img { max-width: 100%; height: auto; }
 a { color: var(--color-accent); }
 a:hover { color: var(--color-accent-strong); }
-a:focus-visible, summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+a:focus-visible, button:focus-visible, summary:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 
 /* The static HTML uses the same header and centered hero layout as the former app. */
 .container { width: min(var(--page-max-width), calc(100% - var(--space-xl))); margin-inline: auto; }
@@ -59,6 +59,15 @@ figcaption { padding: var(--space-sm) var(--space-md); color: var(--color-text-t
 .step-number, .feature-index { color: var(--color-accent); font-size: var(--font-size-sm); font-weight: 700; }
 .call-step p, .feature-card p { color: var(--color-text-secondary); }
 .text-link { align-self: start; font-weight: 600; }
+.setup-prompt { min-width: 0; }
+.prompt-controls { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-md); }
+.prompt-copy { cursor: pointer; font-family: inherit; }
+.prompt-copy[hidden] { display: none; }
+.prompt-copy:disabled { cursor: wait; opacity: .7; }
+.setup-prompt pre { max-width: 100%; margin: var(--space-lg) 0; padding: var(--space-lg); border: 1px solid var(--color-divider); border-radius: var(--radius-md); background: var(--color-background-alt); color: var(--color-text-primary); font-family: var(--font-mono); font-size: var(--font-size-sm); line-height: var(--line-height-relaxed); }
+.setup-prompt pre, .setup-prompt pre code[data-prompt-text] { white-space: pre-wrap; overflow-wrap: anywhere; }
+.prompt-status { min-height: 1.5em; color: var(--color-text-secondary); font-size: var(--font-size-sm); }
+#setup-prompt { scroll-margin-top: calc(var(--nav-height) + var(--space-lg)); }
 .screen-figure { margin: 0; }
 .feature-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-lg); }
 .feature-card { display: flex; flex-direction: column; gap: var(--space-md); padding: var(--space-xl); border: 1px solid var(--color-divider); border-radius: var(--radius-lg); background: var(--color-surface); }
@@ -105,7 +114,7 @@ figcaption { padding: var(--space-sm) var(--space-md); color: var(--color-text-t
 .docs-content figure img { display: block; width: 100%; }
 .docs-footer-links { margin-top: var(--space-2xl); padding-top: var(--space-lg); border-top: 1px solid var(--color-divider); }
 .docs-layout { display: grid; grid-template-columns: 240px minmax(0, 1fr) 240px; gap: var(--space-3xl); width: min(var(--page-max-width), calc(100% - var(--space-xl))); margin-inline: auto; }
-.docs-layout .docs-content { width: 100%; margin-inline: 0; }
+.docs-layout .docs-content { min-width: 0; width: 100%; margin-inline: 0; }
 .docs-sidebar { padding-top: var(--space-4xl); }
 .docs-sidebar nav { position: sticky; top: calc(var(--nav-height) + var(--space-md)); max-height: calc(100vh - var(--nav-height) - var(--space-xl)); overflow: auto; padding-right: var(--space-md); border-right: 1px solid var(--color-divider); }
 .docs-sidebar h2 { margin: 0 0 var(--space-md); font-size: var(--font-size-sm); text-transform: uppercase; letter-spacing: .08em; }
@@ -132,6 +141,7 @@ body > footer:not(.site-footer) { width: min(var(--content-max-width), calc(100%
 }
 @media (max-width: 640px) {
   .container, .docs-layout { width: calc(100% - var(--space-lg)); }
+  #setup-prompt { scroll-margin-top: 10rem; }
   .header-inner { align-items: flex-start; flex-direction: column; padding-block: var(--space-md); }
   .legacy-header { align-items: flex-start; flex-direction: column; padding-block: var(--space-md); }
   .hero, .section { padding-block: var(--space-2xl); }

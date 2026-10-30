@@ -44,6 +44,10 @@ jobs:
         run: npm run build
         working-directory: oatty.io
 
+      - name: Test site enhancements
+        run: npm test
+        working-directory: oatty.io
+
       - name: Verify static site
         run: npm run check:static
         working-directory: oatty.io

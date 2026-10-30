@@ -1,0 +1,1 @@
+Install or reuse Oatty, connect it to this assistant, and verify its tools are available. Preserve existing settings; ask me only for required access or manual steps.

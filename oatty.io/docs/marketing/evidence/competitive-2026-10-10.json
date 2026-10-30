@@ -1,0 +1,455 @@
+{
+  "as_of": "2026-10-10",
+  "issues": [
+    {
+      "repository": "knowsuchagency/mcp2cli",
+      "number": 119,
+      "title": "Optional tool params (`anyOf: [T, null]`) lose their type: `--tags a,b` sent as a string, `--verbose` needs a value",
+      "url": "https://github.com/knowsuchagency/mcp2cli/issues/119",
+      "state": "open",
+      "created_at": "2026-09-23T22:34:45Z",
+      "updated_at": "2026-09-23T22:34:45Z",
+      "reporter": "kv-248",
+      "comments": 0
+    },
+    {
+      "repository": "knowsuchagency/mcp2cli",
+      "number": 116,
+      "title": "OpenAPI path values change URL structure and skip parameter serialization",
+      "url": "https://github.com/knowsuchagency/mcp2cli/issues/116",
+      "state": "open",
+      "created_at": "2026-09-13T13:03:49Z",
+      "updated_at": "2026-09-13T13:03:49Z",
+      "reporter": "adity982",
+      "comments": 0
+    },
+    {
+      "repository": "rest-sh/restish",
+      "number": 438,
+      "title": "Support interactive formatter sessions",
+      "url": "https://github.com/rest-sh/restish/issues/438",
+      "state": "open",
+      "created_at": "2026-09-21T11:32:37Z",
+      "updated_at": "2026-09-21T11:32:37Z",
+      "reporter": "natalie-o-perret",
+      "comments": 0
+    },
+    {
+      "repository": "rest-sh/restish",
+      "number": 434,
+      "title": "Approve external-tool auth commands non-interactively",
+      "url": "https://github.com/rest-sh/restish/issues/434",
+      "state": "open",
+      "created_at": "2026-09-08T03:47:19Z",
+      "updated_at": "2026-09-08T05:37:37Z",
+      "reporter": "KTibow",
+      "comments": 1
+    },
+    {
+      "repository": "rest-sh/restish",
+      "number": 447,
+      "title": "Synced spec with a deeply nested request schema silently falls back to generic requests",
+      "url": "https://github.com/rest-sh/restish/issues/447",
+      "state": "open",
+      "created_at": "2026-10-01T00:58:34Z",
+      "updated_at": "2026-10-01T00:58:34Z",
+      "reporter": "adamrfish",
+      "comments": 0
+    },
+    {
+      "repository": "PrefectHQ/fastmcp",
+      "number": 1385,
+      "title": "Optional Response model validation when openapi OAS3 null fields or types aren't declared",
+      "url": "https://github.com/PrefectHQ/fastmcp/issues/1385",
+      "state": "open",
+      "created_at": "2025-08-06T19:14:01Z",
+      "updated_at": "2025-08-06T19:14:01Z",
+      "reporter": "chris-allnutt",
+      "comments": 0
+    },
+    {
+      "repository": "PrefectHQ/fastmcp",
+      "number": 3839,
+      "title": "json_schema_to_type silently returns Any for allOf and oneOf schemas",
+      "url": "https://github.com/PrefectHQ/fastmcp/issues/3839",
+      "state": "open",
+      "created_at": "2026-04-11T18:26:29Z",
+      "updated_at": "2026-04-11T18:32:12Z",
+      "reporter": "strawgate",
+      "comments": 1
+    },
+    {
+      "repository": "PrefectHQ/fastmcp",
+      "number": 5367,
+      "title": "from_openapi: tool calls fail when a successful response is not JSON",
+      "url": "https://github.com/PrefectHQ/fastmcp/issues/5367",
+      "state": "open",
+      "created_at": "2026-09-30T21:53:09Z",
+      "updated_at": "2026-09-30T21:54:02Z",
+      "reporter": "ekarankow",
+      "comments": 1
+    },
+    {
+      "repository": "PrefectHQ/fastmcp",
+      "number": 2377,
+      "title": "Add support for scope selection in OAuth consent screen",
+      "url": "https://github.com/PrefectHQ/fastmcp/issues/2377",
+      "state": "open",
+      "created_at": "2025-11-05T13:00:49Z",
+      "updated_at": "2025-12-04T02:27:38Z",
+      "reporter": "xsreality",
+      "comments": 4
+    },
+    {
+      "repository": "ComposioHQ/composio",
+      "number": 4248,
+      "title": "[Feature]: Allow multiple SHARED connections per toolkit in multi-account Tool Router sessions",
+      "url": "https://github.com/ComposioHQ/composio/issues/4248",
+      "state": "open",
+      "created_at": "2026-08-26T02:03:07Z",
+      "updated_at": "2026-10-06T14:07:18Z",
+      "reporter": "jaijuneja",
+      "comments": 4
+    },
+    {
+      "repository": "ComposioHQ/composio",
+      "number": 3777,
+      "title": "[Bug]: Tool-router session.search omits Google Ads tools that exist in catalog and are executable",
+      "url": "https://github.com/ComposioHQ/composio/issues/3777",
+      "state": "open",
+      "created_at": "2026-07-09T03:20:57Z",
+      "updated_at": "2026-09-15T14:47:25Z",
+      "reporter": "jaijuneja",
+      "comments": 3
+    },
+    {
+      "repository": "ComposioHQ/composio",
+      "number": 4013,
+      "title": "YOUTUBE_UPDATE_VIDEO silently destroys embeddable / publicStatsViewable when changing privacy_status",
+      "url": "https://github.com/ComposioHQ/composio/issues/4013",
+      "state": "open",
+      "created_at": "2026-07-31T18:14:33Z",
+      "updated_at": "2026-09-24T15:40:05Z",
+      "reporter": "nathanpelton",
+      "comments": 4
+    },
+    {
+      "repository": "PipedreamHQ/pipedream",
+      "number": 16537,
+      "title": "[FEATURE] MCP for User-Generated Workflows",
+      "url": "https://github.com/PipedreamHQ/pipedream/issues/16537",
+      "state": "open",
+      "created_at": "2025-05-02T00:47:30Z",
+      "updated_at": "2025-05-12T19:59:48Z",
+      "reporter": "coyotespike",
+      "comments": 3
+    },
+    {
+      "repository": "PipedreamHQ/pipedream",
+      "number": 16379,
+      "title": "[BUG] reloadProps is not supported in Pipedream MCP servers",
+      "url": "https://github.com/PipedreamHQ/pipedream/issues/16379",
+      "state": "open",
+      "created_at": "2025-04-21T19:57:57Z",
+      "updated_at": "2025-04-30T05:50:04Z",
+      "reporter": "dannyroosevelt",
+      "comments": 6
+    },
+    {
+      "repository": "PipedreamHQ/pipedream",
+      "number": 16380,
+      "title": "[FEATURE] as a user, I want to specify exactly which tools I expose to my MCP client",
+      "url": "https://github.com/PipedreamHQ/pipedream/issues/16380",
+      "state": "open",
+      "created_at": "2025-04-21T20:03:11Z",
+      "updated_at": "2025-04-21T20:03:19Z",
+      "reporter": "dannyroosevelt",
+      "comments": 0
+    },
+    {
+      "repository": "PipedreamHQ/pipedream",
+      "number": 21910,
+      "title": "[APP] The Grid",
+      "url": "https://github.com/PipedreamHQ/pipedream/issues/21910",
+      "state": "open",
+      "created_at": "2026-09-05T17:13:27Z",
+      "updated_at": "2026-09-05T17:13:27Z",
+      "reporter": "CastilloLuis",
+      "comments": 0
+    },
+    {
+      "repository": "PipedreamHQ/pipedream",
+      "number": 22170,
+      "title": "Xero Accounting missing from hosted MCP catalogue",
+      "url": "https://github.com/PipedreamHQ/pipedream/issues/22170",
+      "state": "open",
+      "created_at": "2026-10-06T20:48:38Z",
+      "updated_at": "2026-10-09T00:04:50Z",
+      "reporter": "wgnd74hvpg-bot",
+      "comments": 0
+    },
+    {
+      "repository": "openclaw/mcporter",
+      "number": 408,
+      "title": "Option to encrypt the OAuth vault at rest",
+      "url": "https://github.com/openclaw/mcporter/issues/408",
+      "state": "open",
+      "created_at": "2026-10-02T21:52:07Z",
+      "updated_at": "2026-10-08T06:14:52Z",
+      "reporter": "stenh0use",
+      "comments": 4
+    }
+  ],
+  "methodology": "Selected public GitHub issues fetched individually; open status is not proof that a reported limitation persists. Issue bodies and secrets omitted.",
+  "repository_metrics": [
+    {
+      "full_name": "knowsuchagency/mcp2cli",
+      "html_url": "https://github.com/knowsuchagency/mcp2cli",
+      "description": "Turn any MCP, OpenAPI, or GraphQL server into a CLI \u2014 at runtime, with zero codegen",
+      "stargazers_count": 2416,
+      "forks_count": 179,
+      "open_issues_count": 8,
+      "created_at": "2026-03-09T03:46:37Z",
+      "pushed_at": "2026-09-12T20:52:36Z",
+      "homepage": "https://pypi.org/project/mcp2cli/",
+      "archived": false
+    },
+    {
+      "full_name": "rest-sh/restish",
+      "html_url": "https://github.com/rest-sh/restish",
+      "description": "Restish is a CLI for interacting with REST-ish HTTP APIs with some nice features built-in",
+      "stargazers_count": 1384,
+      "forks_count": 107,
+      "open_issues_count": 36,
+      "created_at": "2020-05-15T06:45:59Z",
+      "pushed_at": "2026-09-29T04:52:07Z",
+      "homepage": "https://rest.sh/",
+      "archived": false
+    },
+    {
+      "full_name": "PrefectHQ/fastmcp",
+      "html_url": "https://github.com/PrefectHQ/fastmcp",
+      "description": "\ud83d\ude80 The fast, Pythonic way to build MCP servers and clients.",
+      "stargazers_count": 28030,
+      "forks_count": 2455,
+      "open_issues_count": 420,
+      "created_at": "2024-11-30T01:47:40Z",
+      "pushed_at": "2026-10-10T13:11:45Z",
+      "homepage": "https://gofastmcp.com",
+      "archived": false
+    },
+    {
+      "full_name": "ComposioHQ/composio",
+      "html_url": "https://github.com/ComposioHQ/composio",
+      "description": "Composio powers 1000+ toolkits, tool search, context management, authentication, and a sandboxed workbench to help you build AI agents that turn intent into action.",
+      "stargazers_count": 30483,
+      "forks_count": 4847,
+      "open_issues_count": 125,
+      "created_at": "2024-02-23T13:58:27Z",
+      "pushed_at": "2026-10-10T12:37:30Z",
+      "homepage": "https://docs.composio.dev",
+      "archived": false
+    },
+    {
+      "full_name": "PipedreamHQ/pipedream",
+      "html_url": "https://github.com/PipedreamHQ/pipedream",
+      "description": "Connect APIs, remarkably fast.  Free for developers.",
+      "stargazers_count": 11720,
+      "forks_count": 5823,
+      "open_issues_count": 4516,
+      "created_at": "2020-01-22T00:28:31Z",
+      "pushed_at": "2026-10-09T18:14:44Z",
+      "homepage": "https://pipedream.com",
+      "archived": false
+    },
+    {
+      "full_name": "openclaw/mcporter",
+      "html_url": "https://github.com/openclaw/mcporter",
+      "description": "Call MCPs via TypeScript, masquerading as simple TypeScript API. Or package them as cli.",
+      "stargazers_count": 5055,
+      "forks_count": 349,
+      "open_issues_count": 2,
+      "created_at": "2025-11-05T03:29:59Z",
+      "pushed_at": "2026-10-10T07:41:41Z",
+      "homepage": "https://mcporter.sh",
+      "archived": false
+    },
+    {
+      "full_name": "speakeasy-api/gram",
+      "html_url": "https://github.com/speakeasy-api/gram",
+      "description": "Securely scale AI usage across your organization. A single stack to Connect, Secure, Observe and Distribute agents, MCPs, and Skills within your company.",
+      "stargazers_count": 273,
+      "forks_count": 35,
+      "open_issues_count": 219,
+      "created_at": "2025-08-06T19:24:20Z",
+      "pushed_at": "2026-10-10T16:03:19Z",
+      "homepage": "https://www.speakeasy.com",
+      "archived": false
+    },
+    {
+      "full_name": "oattyio/oatty",
+      "html_url": "https://github.com/oattyio/oatty",
+      "description": null,
+      "stargazers_count": 1,
+      "forks_count": 0,
+      "open_issues_count": 12,
+      "created_at": "2025-08-14T04:28:06Z",
+      "pushed_at": "2026-07-01T17:45:31Z",
+      "homepage": null,
+      "archived": false
+    }
+  ],
+  "package_downloads_and_related_pull_requests": [
+    {
+      "source": "https://api.github.com/repos/openclaw/mcporter/pulls/425",
+      "number": 425,
+      "title": "feat(vault): encrypt OAuth vault secret values at rest with `MCPORTER_VAULT_PASSWORD` (#408)",
+      "state": "open",
+      "merged": false,
+      "merged_at": null,
+      "created_at": "2026-10-07T13:01:47Z",
+      "updated_at": "2026-10-08T06:19:40Z",
+      "html_url": "https://github.com/openclaw/mcporter/pull/425"
+    },
+    {
+      "source": "https://api.npmjs.org/downloads/point/2026-09-09:2026-10-08/oatty",
+      "downloads": 57,
+      "start": "2026-09-09",
+      "end": "2026-10-08",
+      "package": "oatty"
+    },
+    {
+      "source": "https://api.npmjs.org/downloads/point/2026-09-09:2026-10-08/mcporter",
+      "downloads": 1919398,
+      "start": "2026-09-09",
+      "end": "2026-10-08",
+      "package": "mcporter"
+    },
+    {
+      "source": "https://api.npmjs.org/downloads/point/2026-09-09:2026-10-08/@composio/core",
+      "downloads": 4532963,
+      "start": "2026-09-09",
+      "end": "2026-10-08",
+      "package": "@composio/core"
+    }
+  ],
+  "caveats": [
+    "Stars and downloads measure interest/distribution, not retained users or revenue. Repository open_issues_count includes pull requests.",
+    "Bot-authored or bot-triaged material is not counted as an independent human demand signal.",
+    "Older open tickets may concern behavior changed by later releases. Reports were not independently reproduced.",
+    "MCPorter PR 425 was open and unmerged when inspected.",
+    "Targeted X searches did not yield verifiable customer requests; coverage is incomplete."
+  ],
+  "agent_configuration_followup": {
+    "verified_at": "2026-10-10",
+    "scope": "Documented supplied interfaces; no runtime repair benchmark performed",
+    "sources": [
+      "https://www.speakeasy.com/docs/ai-control-plane/reference/platform-mcp",
+      "https://github.com/knowsuchagency/mcp2cli",
+      "https://mcporter.sh/config.html",
+      "https://gofastmcp.com/integrations/openapi",
+      "https://docs.composio.dev/docs/extending-sessions/custom-mcp"
+    ],
+    "conclusion": "Partial overlaps exist. No documented supplied equivalent to the full local MCP-callable OpenAPI import, catalog patch, configuration repair, and shared TUI execution loop was verified among reviewed competitors. This is not a universal uniqueness claim."
+  },
+  "agent_authored_schema_followup": {
+    "verified_at": "2026-10-10",
+    "clarification": "A vendor-published OpenAPI document is not required. An external agent can author a supported document and pass its JSON/YAML string directly to MCP validation, preview, and import through source, optionally setting source_type=inline. Structured document strings are auto-detected when the type is omitted. Paths and URLs remain supported; no intermediate source file is required.",
+    "implementation_sources": [
+      "crates/mcp/src/server/schemas.rs:132",
+      "crates/mcp/src/server/catalog.rs:27",
+      "specs/MCP_CATALOG_TOOLS.md"
+    ],
+    "verification": "18 MCP catalog tests passed, including inline JSON/YAML validation, preview, import/persistence/reload, malformed document errors, and explicit/inferred path/URL loading against a local fixture server. Isolated full workspace tests passed: 538 passed, 0 failed, 27 ignored. Tests used temporary REGISTRY_CONFIG_PATH/REGISTRY_CATALOGS_PATH and OATTY_SECRETS_BACKEND=env, with --test-threads=1. Formatting and diff checks passed. Strict workspace Clippy encountered existing useless_borrows_in_formatting and async-trait-generated double_must_use warnings under Rust 1.99; workspace Clippy and MCP all-targets Clippy passed with those two baseline categories exempted. Agent schema generation and live vendor API correctness were not benchmarked.",
+    "competitive_inference": "Other products accepting supplied OpenAPI documents can also consume compatible agent-authored schemas; the integrated MCP onboarding, repair, and shared TUI execution loop remains the bounded differentiation hypothesis.",
+    "implementation_change": "Inline MCP source input was added in the current local checkout after review confirmed the earlier interface supported only path/URL. This does not establish availability in the published release.",
+    "validation_commands": [
+      "cargo test -p oatty-mcp server::catalog::tests",
+      "REGISTRY_CONFIG_PATH=<temporary>/registry.json REGISTRY_CATALOGS_PATH=<temporary>/catalogs OATTY_SECRETS_BACKEND=env cargo test --workspace -- --test-threads=1",
+      "cargo fmt --all -- --check",
+      "git diff --check",
+      "cargo clippy --workspace -- -D warnings (existing baseline warnings)",
+      "cargo clippy --workspace -- -D warnings -A clippy::useless_borrows_in_formatting -A clippy::double_must_use (passed)",
+      "cargo clippy -p oatty-mcp --all-targets -- -D warnings -A clippy::useless_borrows_in_formatting -A clippy::double_must_use (passed)"
+    ]
+  },
+  "agent_observability_followup": {
+    "as_of": "2026-10-10",
+    "methodology": "Primary product documentation and static source inspection; GitHub issue state checked through the public GitHub API. No runtime integration, comparative benchmark, representative demand study, or customer interview performed.",
+    "issues": [
+      {
+        "repository": "langfuse/langfuse",
+        "number": 9293,
+        "title": "bug: LlamaIndex FunctionTool call not traced within span context",
+        "url": "https://github.com/langfuse/langfuse/issues/9293",
+        "state": "open",
+        "created_at": "2025-09-22T14:01:10Z",
+        "updated_at": "2026-07-06T11:35:10Z",
+        "closed_at": null,
+        "reporter": "simon376",
+        "comments": 9
+      },
+      {
+        "repository": "langfuse/langfuse",
+        "number": 15142,
+        "title": "MCP server (/api/public/mcp) exposes no trace/session read or tag-write tools, despite docs claiming it can \"inspect traces\"",
+        "url": "https://github.com/langfuse/langfuse/issues/15142",
+        "state": "closed",
+        "created_at": "2026-07-15T23:33:04Z",
+        "updated_at": "2026-07-16T09:44:31Z",
+        "closed_at": "2026-07-16T09:34:58Z",
+        "reporter": "tilusnet",
+        "comments": 9
+      },
+      {
+        "repository": "langfuse/langfuse",
+        "number": 14135,
+        "title": "bug: cannot filter Observations by parent trace metadata in the UI (used to work)",
+        "url": "https://github.com/langfuse/langfuse/issues/14135",
+        "state": "open",
+        "created_at": "2026-06-09T19:21:11Z",
+        "updated_at": "2026-08-12T13:31:07Z",
+        "closed_at": null,
+        "reporter": "ronancummins",
+        "comments": 4
+      },
+      {
+        "repository": "Arize-ai/openinference",
+        "number": 1616,
+        "title": "[bug] MCP instrumentation and context propagation is not working",
+        "url": "https://github.com/Arize-ai/openinference/issues/1616",
+        "state": "closed",
+        "created_at": "2025-05-13T02:08:08Z",
+        "updated_at": "2026-05-01T18:11:29Z",
+        "closed_at": "2025-05-14T23:05:10Z",
+        "reporter": "CakeCrusher",
+        "comments": 1
+      }
+    ],
+    "sources": [
+      "https://langfuse.com/docs/observability/features/mcp-tracing",
+      "https://langfuse.com/docs/observability/features/agentic-access",
+      "https://docs.langchain.com/langsmith/observability",
+      "https://docs.langchain.com/langsmith/engine",
+      "https://arize.com/docs/phoenix/tracing",
+      "https://www.braintrust.dev/product/observe",
+      "https://www.mcpspy.dev/",
+      "https://github.com/kerlenton/mcpsnoop",
+      "https://github.com/modelcontextprotocol/inspector",
+      "https://github.com/MCPJam/inspector",
+      "https://github.com/AshwinUgale/tracelint",
+      "https://schemathesis.readthedocs.io/en/stable/guides/stateful-testing/",
+      "https://schemathesis.readthedocs.io/en/stable/explanations/adaptive-testing/",
+      "https://docs.composio.dev/reference/api-reference/tool-router",
+      "https://www.speakeasy.com/docs/ai-control-plane/mcp-gateway"
+    ],
+    "interpretation": [
+      "Terminal visibility, saved sessions, replay, trace export, and agent-assisted diagnosis already have documented alternatives.",
+      "Current Oatty code includes structured request/result inspection, best-effort persistent TUI logs, plugin invocation audit, workflow step events, and limited workflow history.",
+      "MCP runner request IDs are zero on inspected execution paths; unified causal correlation, schema revision lineage, and OpenTelemetry export require development and validation.",
+      "Oatty opportunity hypothesis: connect API execution evidence to agent-configurable catalogs, direct human execution, repair, and verification.",
+      "Closed issue reports record historical needs and are not counted as current unresolved competitor gaps; issue state does not prove a bug is reproduced or fixed.",
+      "Adjacent hypotheses added: versioned tested repairs, catalog drift, declared outcome verification, portable integration bundles, and concrete action review. Schemathesis documents stateful API testing and adaptive constraint learning; these mechanisms are not novel in isolation. No added hypotheses were runtime-tested."
+    ]
+  }
+}
