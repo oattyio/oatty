@@ -26,6 +26,8 @@ oatty-types = { path = "../types" }
 reqwest = { workspace = true }
 indexmap.workspace = true
 self_update = { workspace = true }
+dirs-next = { workspace = true }
+tempfile = { workspace = true }
 
 [[bin]]
 name = "oatty"

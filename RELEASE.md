@@ -174,3 +174,14 @@ python3 scripts/package-release.py --binary target/release/oatty \
 ```
 
 When bumping the npm version, commit both `package.json` and `package-lock.json`.
+
+
+## Native update archive retention
+
+Native `oatty update` saves the entire downloaded ZIP or tar.gz before extraction and executable replacement, preserving the release's license notices and corresponding dependency source. The original asset filename is kept inside a new `release-*` directory for every attempt, including repeated or concurrent downloads of the same version. Oatty copies, flushes, and synchronizes the archive before publishing it without overwriting an existing file. A retention failure rejects installation. If a later extraction or installation step fails, the saved archive remains and its path is included in the error.
+
+The root is the platform's local application data directory plus `oatty/releases`: Linux uses `$XDG_DATA_HOME` or `~/.local/share`; macOS uses `~/Library/Application Support`; Windows uses `%LOCALAPPDATA%`. Resolution and directory creation occur only when an archive has actually downloaded. There is no working-directory fallback when the platform data directory is unavailable. Checking for updates, finding no newer version, and npm-managed installations create no retention artifacts. A successful native update prints the retained path unless `--quiet` is set; confirmation behavior remains unchanged.
+
+These archives are not automatically pruned and consume disk space until the user deletes them. They may be removed manually when no longer needed. Keep the updater's release-name validation aligned with the four supported archive targets if the release matrix changes. The `compression-zip-deflate` feature is required because the macOS and Windows release ZIPs use DEFLATE.
+
+Offline updater tests use a custom release source, loopback HTTP, temporary installation paths, and compressed fixture archives. They verify replacement and retention without GitHub requests or replacing the running executable. Release validation also extracts archives produced by the actual packager through the pinned updater library, checking executable and licensing/source bytes.

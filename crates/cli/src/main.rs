@@ -38,6 +38,8 @@ use tokio::time::timeout;
 use tracing::warn;
 use tracing_subscriber::fmt;
 
+mod update_retention;
+
 static TUI_ACTIVE: AtomicBool = AtomicBool::new(false);
 
 struct GatedStderr;
@@ -636,11 +638,14 @@ fn handle_update_command(matches: &ArgMatches) -> Result<()> {
         return Ok(());
     }
 
+    let retention = update_retention::ArchiveRetention::default();
+    let retention_callback = retention.clone();
     let updater = self_update::backends::github::Update::configure()
         .repo_owner("oattyio")
         .repo_name("oatty")
         .bin_name("oatty")
         .show_download_progress(!quiet)
+        .verify_archive(move |archive| retention_callback.verify(archive))
         .current_version(env!("CARGO_PKG_VERSION"))
         .build()?;
 
@@ -672,9 +677,12 @@ fn handle_update_command(matches: &ArgMatches) -> Result<()> {
         return Ok(());
     }
 
-    let status = updater.update()?;
+    let status = retention.complete(updater.update())?;
     if !quiet {
         println!("Update status: `{}`!", status.version());
+        if let Some(path) = retention.saved_path()? {
+            println!("Release archive saved to {}", path.display());
+        }
     }
     Ok(())
 }
