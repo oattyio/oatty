@@ -9,6 +9,7 @@ members = [
     "crates/util",
     "crates/types",
     "crates/mcp",
+    "crates/xtask",
 ]
 resolver = "2"
 
@@ -62,6 +63,7 @@ unicode-width = "0.2.2"
 postcard = { version = "1.1.3", features = ["use-std"] }
 schemars = { version = "1.2.1", features = ["indexmap2"] }
 libc = "0.2"
+flate2 = "1.1"
 self_update = { version = "1.3.0", features = ["archive-zip", "archive-tar", "compression-zip-deflate"] }
 nucleo-matcher = "0.3.1"
 

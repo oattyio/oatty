@@ -39,9 +39,8 @@ cargo test --workspace
 cargo install cargo-about --version 0.9.2 --features cli --locked
 cargo fetch --locked
 npm ci --omit=optional --ignore-scripts
-npm run licenses:prepare
-npm run test:licenses
-python3 -m unittest discover -s scripts/tests -p test_npm_distribution.py -v
+cargo xtask licenses prepare
+cargo test -p oatty-xtask
 npm pack --dry-run
 ```
 
@@ -165,21 +164,21 @@ Avoid deleting/reusing tags once consumed externally.
 
 Oatty-owned code is MIT licensed. Dependencies retain their upstream terms; MIT is selected when upstream offers a choice. Source-only sample provenance is documented in [schemas/README.md](schemas/README.md).
 
-Before packing or publishing (including a manual `npm publish`), install Python 3.11+, Rust, Node, and the pinned license generator, then run:
+Before packing or publishing (including a manual `npm publish`), install Rust, Node, and the pinned license generator, then run:
 
 ```bash
 cargo install cargo-about --version 0.9.2 --features cli --locked
 cargo fetch --locked
 npm ci --omit=optional --ignore-scripts
-npm run licenses:prepare
-npm run licenses:verify
-npm run test:licenses
+cargo xtask licenses prepare
+cargo xtask licenses verify
+cargo test -p oatty-xtask
 npm pack --dry-run
 ```
 
-`--omit=optional` avoids fetching unpublished platform packages during source preparation; `--ignore-scripts` keeps dependency lifecycle scripts disabled. The source-checkout `prepack` guard requires Python and rejects missing, changed, or stale materials on both `npm pack` and `npm publish`. Do not bypass it when packing the source checkout. `scripts/package-npm.py` verifies the same inputs, then stages a launcher manifest without development scripts. Published packages require Node, with no Python, Rust, or lifecycle scripts needed during installation or launch.
+`--omit=optional` avoids fetching unpublished platform packages during source preparation; `--ignore-scripts` keeps dependency lifecycle scripts disabled. The source-checkout `prepack` guard requires Cargo and rejects missing, changed, or stale materials on both `npm pack` and `npm publish`. Do not bypass it when packing the source checkout. `cargo xtask npm package` verifies the same inputs, then stages a launcher manifest without development scripts. Published packages require Node, with no Python, Rust, or lifecycle scripts needed during installation or launch.
 
-Use a registry release for ordinary npm installation. Direct npm Git URL installs are unsupported because their fresh checkout lacks the generated licensing materials. To create release artifacts, prepare the tagged source checkout as described above, keep its prepack guard enabled, and use `scripts/package-npm.py` to verify and stage the distribution. Published manifests contain no scripts, so npm can repack them without Python; the source verifier and packager remain the supported way to construct verified release artifacts.
+Use a registry release for ordinary npm installation. Direct npm Git URL installs are unsupported because their fresh checkout lacks the generated licensing materials. To create release artifacts, prepare the tagged source checkout as described above, keep its prepack guard enabled, and use `cargo xtask npm package` to verify and stage the distribution. Published manifests contain no scripts, so npm can repack them without Rust; the source verifier and packager remain the supported way to construct verified release artifacts.
 
 `about.toml` declares the MIT-first license choices and the union of all four release targets. Generation uses `crates/cli/Cargo.toml` with default features and includes build and transitive dependencies, excluding dev-only dependencies. `cargo-about --locked --offline --fail` must resolve every selected crate and license text; the supplemental pass preserves upstream LICENSE, NOTICE, COPYRIGHT, and COPYING files recursively, including native AWS-LC/ring terms and encoding_rs attribution. The launcher has no third-party JavaScript dependencies. Its four first-party optional packages are validated against an exact platform/version allowlist and ship the same Rust legal materials; other npm dependencies still require their upstream license files. The website has no runtime npm dependencies in its separate package.
 
@@ -190,16 +189,16 @@ The generated materials and `.license-manifest.json` are ignored build outputs. 
 To package a local binary after preparation:
 
 ```bash
-python3 scripts/package-release.py --binary target/release/oatty \
+cargo xtask release-package --binary target/release/oatty \
   --target x86_64-unknown-linux-gnu --version vX.Y.Z
-python3 scripts/package-npm.py --binary target/release/oatty \
+cargo xtask npm package --binary target/release/oatty \
   --target x86_64-unknown-linux-gnu --output dist
-python3 scripts/package-npm.py --umbrella --output dist
+cargo xtask npm package --umbrella --output dist
 ```
 
 Platform packages preserve the signed binary and carry `bin/.oatty-installed-version` beside it, so the existing updater treats npm installations as managed. macOS npm payloads are staged only after the unchanged release ZIP passes notarization. Release macOS x64 builds run on an Intel runner so installation smoke tests execute the matching native payload.
 
-Publish the prepared set with `python3 scripts/publish-npm.py --directory dist` only from the authorized release environment after the npm prerequisites above are complete. This command performs live publication; packing and tests alone do not publish anything.
+Publish the prepared set with `cargo xtask npm publish --directory dist` only from the authorized release environment after the npm prerequisites above are complete. This command performs live publication; packing and tests alone do not publish anything.
 
 
 ## Native update archive retention

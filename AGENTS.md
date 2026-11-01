@@ -7,13 +7,15 @@
 ## Project Structure & Module Organization
 
 - Workspace crates: `crates/cli` (binary), `crates/tui`, `crates/registry`, `crates/engine`, `crates/api`,
-  `crates/util`, `crates/mcp` (MCP plugin infrastructure).
+  `crates/util`, `crates/mcp` (MCP plugin infrastructure), `crates/xtask` (auxiliary development tasks).
 - Supporting assets: `schemas/` (schemas), `workflows/` (sample workflow YAML/JSON), `specs/` (as-built product specs).
 - Example layout:
     - `crates/cli/src/main.rs` — CLI entrypoint
     - `crates/tui/` — Ratatui UI
     - `crates/registry/` — schema → command registry
     - `crates/mcp/` — MCP plugin engine, client management, logging
+    - `crates/xtask/` — auxiliary development tasks run as `cargo xtask` (setup, licensing materials,
+      npm packaging/publication, release archives, release metadata)
     - Tests live inline (`#[cfg(test)]`) or under each crate's `tests/`.
 
 ## Build, Test, and Development Commands
@@ -24,6 +26,8 @@
 - Tests: `cargo test --workspace` — run unit/integration tests.
 - Single test: `cargo test --workspace <test_name>` — run specific test function.
 - Single crate tests: `cargo test -p <crate_name>` — run tests for specific crate.
+- Auxiliary tasks: `cargo xtask <task>` — the `Makefile` wraps cargo directly or `cargo xtask` for auxiliary tasks;
+  run `make help` for the task list.
 - Lint: `cargo clippy --workspace -- -D warnings` — fail on warnings.
 - Format: `cargo fmt --all` — apply repo `rustfmt` settings.
 - Helpful env: `OATTY_LOG=debug` (stderr logs are silenced during TUI),

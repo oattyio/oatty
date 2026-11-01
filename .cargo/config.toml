@@ -31,3 +31,7 @@ progress = { when = "auto" }
 git-fetch-with-cli = true
 # Reasonable retry policy for flaky networks.
 retry = 3
+
+[alias]
+# Run the auxiliary workspace task binary.
+xtask = "run --package oatty-xtask --"

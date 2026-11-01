@@ -1,0 +1,26 @@
+[package]
+name = "oatty-xtask"
+description = "Auxiliary development and release engineering tasks for Oatty"
+publish = false
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+flate2.workspace = true
+dirs-next.workspace = true
+regex.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.10.9"
+base64 = "0.22.1"
+hex = "0.4.3"
+tar = "0.4.44"
+zip = { version = "0.6.6", features = ["deflate"] }
+toml = "0.9.7"
+tempfile.workspace = true
