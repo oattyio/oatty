@@ -6,7 +6,7 @@
 //! outcome of each provider argument resolution, including manual overrides
 //! supplied through the UI.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     RunContext,
@@ -61,11 +61,21 @@ pub struct WorkflowRunState {
 }
 
 impl WorkflowRunState {
-    /// Creates a new workflow run state with an empty execution context.
+    /// Creates a new workflow run state with an execution context seeded from
+    /// the process environment.
+    ///
+    /// Seeding [`RunContext::environment_variables`] from the host process makes
+    /// `${{ env.NAME }}` template expressions resolve on every execution
+    /// surface (TUI, MCP, and previews) without each caller having to forward
+    /// variables manually. See issue #94.
     pub fn new(workflow: RuntimeWorkflow) -> Self {
+        let run_context = RunContext {
+            environment_variables: process_environment_variables(),
+            ..RunContext::default()
+        };
         Self {
             workflow,
-            run_context: RunContext::default(),
+            run_context,
             input_provider_states: IndexMap::new(),
             locked_arguments: HashSet::new(),
             telemetry: WorkflowTelemetry::default(),
@@ -217,6 +227,30 @@ impl WorkflowRunState {
     pub fn telemetry(&self) -> &WorkflowTelemetry {
         &self.telemetry
     }
+}
+
+/// Collects the host process environment for template resolution.
+///
+/// `${{ env.NAME }}` expressions resolve against
+/// [`RunContext::environment_variables`], so seeding this map from the process
+/// environment makes host variables available to every workflow execution
+/// surface (TUI, MCP tools, and previews) instead of requiring each caller to
+/// forward them manually. See issue #94.
+///
+/// Values are copied verbatim and are **not** redacted here; they flow through
+/// the same redaction paths as any other template-resolved value.
+///
+/// Uses [`std::env::vars_os`] rather than [`std::env::vars`] so entries with
+/// non-UTF-8 keys or values are skipped instead of panicking.
+///
+/// # Returns
+///
+/// Returns the UTF-8 environment variables keyed by name. Entries whose key or
+/// value cannot be converted to a [`String`] are omitted.
+fn process_environment_variables() -> HashMap<String, String> {
+    env::vars_os()
+        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+        .collect()
 }
 
 /// Applies workflow input defaults directly to a [`RunContext`].
@@ -564,6 +598,42 @@ mod tests {
         let provider_state = state.provider_state_for("addon").expect("missing addon provider state");
         let outcome = provider_state.argument_outcomes.get("app").expect("missing resolved argument");
         assert!(matches!(outcome.outcome, ProviderBindingOutcome::Resolved(Value::String(ref value)) if value == "chosen-app"));
+    }
+
+    #[test]
+    fn seeds_run_context_environment_from_process_environment() {
+        let key = "OATTY_TEST_SEEDED_ENV_VAR";
+        let previous = env::var(key).ok();
+        unsafe {
+            env::set_var(key, "seeded-value");
+        }
+
+        let mut state = WorkflowRunState::new(demo_workflow());
+
+        assert!(
+            !state.run_context.environment_variables.is_empty(),
+            "run context environment should be seeded from the process environment"
+        );
+        assert_eq!(
+            state.run_context.environment_variables.get(key).map(String::as_str),
+            Some("seeded-value")
+        );
+
+        // An explicitly provided value replaces the seeded one, mirroring what
+        // TUI and MCP callers do when forwarding their own environment maps.
+        state
+            .run_context
+            .environment_variables
+            .insert(key.to_string(), "explicit-value".into());
+        assert_eq!(
+            state.run_context.environment_variables.get(key).map(String::as_str),
+            Some("explicit-value")
+        );
+
+        match previous {
+            Some(original) => unsafe { env::set_var(key, original) },
+            None => unsafe { env::remove_var(key) },
+        }
     }
 
     #[test]

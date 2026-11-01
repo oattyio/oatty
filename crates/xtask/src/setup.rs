@@ -1,10 +1,10 @@
 //! Prepare the local development environment for the Oatty workspace.
 //!
 //! Ported from `scripts/dev-setup.sh`. The setup verifies the Rust toolchain
-//! and required components, creates configuration files from templates, and
-//! runs the first workspace build, test, and lint passes. Toolchain problems
-//! fail the setup; test and lint findings warn without failing, matching the
-//! original script's behavior.
+//! and required components, creates the MCP configuration directory when
+//! missing, and runs the first workspace build, test, and lint passes.
+//! Toolchain problems fail the setup; test and lint findings warn without
+//! failing, matching the original script's behavior.
 
 use std::process::Command;
 
@@ -95,23 +95,6 @@ fn ensure_component(component: &str) -> Result<()> {
     Ok(())
 }
 
-/// Create the local `.env` file from the template when it is missing.
-///
-/// # Arguments
-///
-/// * `root` - The workspace root directory.
-fn ensure_local_environment(root: &std::path::Path) -> Result<()> {
-    let env_path = root.join(".env");
-    if env_path.is_file() {
-        println!(".env file already exists");
-        return Ok(());
-    }
-    std::fs::copy(root.join(".env.example"), &env_path).context("failed to create .env from .env.example")?;
-    println!("Created .env file - please edit it with your API key");
-    println!("Do not forget to set OATTY_API_TOKEN in .env!");
-    Ok(())
-}
-
 /// Create the MCP configuration directory in the user's home when missing.
 fn ensure_mcp_config_directory() -> Result<()> {
     let home = dirs_next::home_dir().context("cannot determine the home directory")?;
@@ -147,7 +130,8 @@ fn run_workspace_check(description: &str, arguments: &[&str]) -> Result<bool> {
 fn print_next_steps() {
     println!();
     println!("Next steps:");
-    println!("  1. Edit .env with your Oatty API key");
+    println!("  1. Configure API credentials via catalog header interpolation");
+    println!("     (e.g. an Authorization header using ${{env:...}} or ${{secret:...}})");
     println!("  2. Run the TUI: cargo run -p oatty-cli");
     println!("  3. Or run CLI commands: make run-cli ARGS=\"apps list\"");
     println!("Documentation: DEVELOPMENT.md, ARCHITECTURE.md, README.md");
@@ -155,8 +139,9 @@ fn print_next_steps() {
 
 /// Run the development environment setup.
 ///
-/// Verify the Rust toolchain and required components, create configuration
-/// files from templates, then build, test, and lint the workspace.
+/// Verify the Rust toolchain and required components, create the MCP
+/// configuration directory when missing, then build, test, and lint the
+/// workspace.
 ///
 /// # Returns
 ///
@@ -178,7 +163,6 @@ pub(crate) fn run() -> Result<()> {
     }
     ensure_component("clippy")?;
     ensure_component("rustfmt")?;
-    ensure_local_environment(&root)?;
     ensure_mcp_config_directory()?;
     if !run_workspace_check("Building the workspace (this may take a few minutes...", &["build", "--workspace"])? {
         bail!("Workspace build failed");
