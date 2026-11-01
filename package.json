@@ -24,10 +24,10 @@
     "third-party-sources"
   ],
   "scripts": {
-    "licenses:prepare": "python3 scripts/licenses.py prepare",
-    "licenses:verify": "python3 scripts/licenses.py verify",
-    "test:licenses": "python3 -m unittest discover -s scripts/tests -v",
-    "prepack": "python3 scripts/licenses.py verify"
+    "licenses:prepare": "cargo xtask licenses prepare",
+    "licenses:verify": "cargo xtask licenses verify",
+    "test:licenses": "cargo test -p oatty-xtask",
+    "prepack": "cargo xtask licenses verify"
   },
   "keywords": [
     "cli",

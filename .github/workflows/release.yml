@@ -15,24 +15,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
       - name: Require matching Cargo, npm, and tag versions
         env:
           RELEASE_REF: ${{ github.ref }}
           RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          python - <<'PY'
-          import json, os, tomllib
-          from pathlib import Path
-          npm_version = json.loads(Path('package.json').read_text())['version']
-          cargo_version = tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version']
-          if npm_version != cargo_version:
-              raise SystemExit(f'Cargo version {cargo_version} does not match npm version {npm_version}')
-          if os.environ['RELEASE_REF'].startswith('refs/tags/') and os.environ['RELEASE_TAG'] != f'v{npm_version}':
-              raise SystemExit(f'Release tag must be v{npm_version}')
-          PY
+        run: cargo xtask release-metadata
 
   licenses:
     name: Prepare distribution licensing
@@ -45,9 +34,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
       - name: Install pinned license generator
         run: cargo install cargo-about --version 0.9.2 --features cli --locked
       - name: Fetch locked crate sources for offline license harvesting
@@ -56,8 +42,8 @@ jobs:
         run: npm ci --omit=optional --ignore-scripts
       - name: Prepare legal materials and test packaging
         run: |
-          npm run licenses:prepare
-          npm run test:licenses
+          cargo xtask licenses prepare
+          cargo test -p oatty-xtask --locked
       - name: Upload verified legal materials
         uses: actions/upload-artifact@v4
         with:
@@ -113,10 +99,6 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -131,7 +113,7 @@ jobs:
           path: .
 
       - name: Verify legal materials against this checkout
-        run: python scripts/licenses.py verify
+        run: cargo xtask licenses verify
 
       - name: Validate macOS release secrets
         if: runner.os == 'macOS'
@@ -245,7 +227,7 @@ jobs:
         if: runner.os != 'Windows'
         shell: bash
         run: |
-          python scripts/package-release.py \
+          cargo xtask release-package \
             --binary "target/${{ matrix.target }}/release/oatty" \
             --target "${{ matrix.target }}" --version "${GITHUB_REF_NAME}"
 
@@ -371,12 +353,12 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          python scripts/package-release.py --binary "target/${{ matrix.target }}/release/oatty.exe" --target "${{ matrix.target }}" --version "$env:GITHUB_REF_NAME"
+          cargo xtask release-package --binary "target/${{ matrix.target }}/release/oatty.exe" --target "${{ matrix.target }}" --version "$env:GITHUB_REF_NAME"
 
       - name: Package npm payload from the verified release executable
         shell: bash
         run: |
-          python scripts/package-npm.py \
+          cargo xtask npm package \
             --binary "target/${{ matrix.target }}/release/${{ matrix.binary }}" \
             --target "${{ matrix.target }}" --output dist
 
@@ -384,7 +366,7 @@ jobs:
         env:
           OATTY_NPM_TEST_BINARY: ${{ github.workspace }}/target/${{ matrix.target }}/release/${{ matrix.binary }}
           OATTY_NPM_TEST_TARGET: ${{ matrix.target }}
-        run: python -m unittest discover -s scripts/tests -p test_npm_distribution.py -v
+        run: cargo test -p oatty-xtask npm_distribution
 
       - name: Upload platform artifact
         uses: actions/upload-artifact@v4
@@ -548,9 +530,10 @@ jobs:
       - name: Use the pinned release npm CLI
         run: npm install --global npm@12.2.1 --ignore-scripts --no-audit --no-fund
 
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
+      - name: Setup Rust for license verification
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
 
       - name: Download verified legal materials
         uses: actions/download-artifact@v4
@@ -567,7 +550,7 @@ jobs:
       - name: Install source dependencies and verify licensing
         run: |
           npm ci --omit=optional --ignore-scripts
-          npm run licenses:verify
+          cargo xtask licenses verify
 
       - name: Validate release tag matches package version
         shell: bash
@@ -582,7 +565,7 @@ jobs:
           fi
 
       - name: Pack the npm launcher with verified legal materials
-        run: python scripts/package-npm.py --umbrella --output dist
+        run: cargo xtask npm package --umbrella --output dist
 
       - name: Publish visible platform packages before the launcher
-        run: python scripts/publish-npm.py --directory dist
+        run: cargo xtask npm publish --directory dist
