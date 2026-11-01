@@ -957,6 +957,29 @@ fn signal_number(_name: &str) -> Option<i32> {
     None
 }
 
+/// Normalize one `npm view --json` response into the registry manifest.
+///
+/// npm 12 keeps the version result array; npm 11 returns a single manifest
+/// object. This mirrors `npm_publish::registry_manifest` so the test asserts
+/// on the same normalization the publisher runs in production.
+fn npm_single_view(stdout: &str) -> Value {
+    let mut metadata: Value = serde_json::from_str(stdout).expect("npm view did not return JSON");
+    if let Value::Array(entries) = &metadata {
+        assert_eq!(entries.len(), 1, "npm view must return exactly one version result");
+        metadata = entries[0].clone();
+    }
+    assert!(metadata.is_object(), "npm view must return an object or a single-element array");
+    metadata
+}
+
+/// Mirror `npm_publish::is_not_found_response` for an unpublished specifier.
+fn npm_view_is_not_found(stdout: &str) -> bool {
+    serde_json::from_str::<Value>(stdout)
+        .ok()
+        .and_then(|payload| payload.get("error").and_then(|error| error.get("code")).cloned())
+        == Some(json!("E404"))
+}
+
 #[test]
 fn npm_distribution_registry_reads_exact_metadata_and_distinguishes_e404() -> Result<()> {
     let Some(harness) = Harness::new()? else {
@@ -964,7 +987,7 @@ fn npm_distribution_registry_reads_exact_metadata_and_distinguishes_e404() -> Re
     };
     let view = harness.npm_view(&format!("oatty@{}", harness.version))?;
     assert!(view.status.success(), "npm view failed:\n{}\n{}", view.stdout, view.stderr);
-    let registry: Value = serde_json::from_str(&view.stdout).context("npm view returned no JSON")?;
+    let registry = npm_single_view(&view.stdout);
     assert_eq!(registry["version"], json!(harness.version));
     let umbrella_bytes = fs::read(&harness.umbrella.path)?;
     let expected_integrity = format!("sha512-{}", BASE64_STANDARD.encode(Sha512::digest(&umbrella_bytes)));
@@ -972,8 +995,7 @@ fn npm_distribution_registry_reads_exact_metadata_and_distinguishes_e404() -> Re
 
     let missing = harness.npm_view(&format!("@oattyio/not-a-real-package@{}", harness.version))?;
     assert!(!missing.status.success(), "an unpublished package must not resolve");
-    let error: Value = serde_json::from_str(&missing.stdout).context("npm view returned no JSON for the E404")?;
-    assert_eq!(error["error"]["code"], json!("E404"));
+    assert!(npm_view_is_not_found(&missing.stdout), "npm view must report a structured E404");
     Ok(())
 }
 
