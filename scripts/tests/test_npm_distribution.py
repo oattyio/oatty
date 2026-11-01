@@ -89,7 +89,7 @@ class Registry(http.server.BaseHTTPRequestHandler):
         package = self.server.packages.get(name)
         if package:
             return self.respond(200, json.dumps(package).encode(), 'application/json')
-        self.respond(404, b'{"error":"not found"}', 'application/json')
+        return self.respond(404, b'{"error":"not found"}', 'application/json')
 
     def respond(self, status, data, content_type):
         self.send_response(status)
@@ -326,7 +326,6 @@ class NpmDistribution(unittest.TestCase):
 
     def test_rejects_mismatch_unsupported_musl_and_missing_marker(self):
         module = self.fixture_module()
-        platform = self.platforms[self.host]
         metadata_path = self.native_directory(module) / 'package.json'
         original = metadata_path.read_bytes()
         manifest = json.loads(original)
