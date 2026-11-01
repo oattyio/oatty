@@ -32,6 +32,7 @@ use flate2::Compression;
 use flate2::GzBuilder;
 use flate2::read::GzDecoder;
 use zip::write::FileOptions;
+use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 /// The release targets accepted by the packaging step.
@@ -354,7 +355,7 @@ fn write_resource_fork_zip(stage: &Path, archive: &Path) -> Result<()> {
 fn write_zip(stage: &Path, archive: &Path) -> Result<()> {
     let output = fs::File::create(archive).with_context(|| format!("failed to create {}", archive.display()))?;
     let mut writer = ZipWriter::new(output);
-    let options = FileOptions::default().compression_method(CompressionMethod::Deflated);
+    let options: SimpleFileOptions = FileOptions::default().compression_method(CompressionMethod::Deflated);
 
     let mut relative_paths = Vec::new();
     collect_relative_files(stage, Path::new(""), &mut relative_paths)?;
@@ -528,13 +529,19 @@ fn read_zip_contents(archive: &Path) -> Result<std::collections::BTreeMap<String
         let mut entry = reader
             .by_index(index)
             .with_context(|| format!("failed to read an entry from {}", archive.display()))?;
-        let name = entry.name().to_owned();
-        if name.ends_with('/') || name.starts_with("__MACOSX/") {
+        if entry.is_dir() {
+            continue;
+        }
+        let entry_name = entry
+            .name()
+            .with_context(|| format!("failed to read an entry name from {}", archive.display()))?
+            .into_owned();
+        if entry_name.starts_with("__MACOSX/") {
             continue;
         }
         let mut bytes = Vec::new();
         entry.read_to_end(&mut bytes)?;
-        contents.insert(name, bytes);
+        contents.insert(entry_name, bytes);
     }
     Ok(contents)
 }
