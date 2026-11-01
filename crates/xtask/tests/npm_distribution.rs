@@ -20,6 +20,17 @@
 //!
 //! Tests early-return quietly when `npm` or `node` is unavailable so ordinary
 //! developer machines without a Node toolchain still pass.
+//!
+//! # Release smoke test
+//!
+//! `npm_distribution_release_native_binary_installs_and_reports_marker` is gated on
+//! `OATTY_NPM_TEST_BINARY` and `OATTY_NPM_TEST_TARGET`, which the release workflow
+//! supplies. It dispatches the real `oatty-xtask` binary (through
+//! `CARGO_BIN_EXE_oatty-xtask`) to package the actual release executable with
+//! production packaging, serves exactly the produced payload and umbrella archives
+//! from a loopback registry, installs the umbrella locally and globally, and asserts
+//! the installed launcher, the npm-managed update guidance, the installed shim, and
+//! byte-identical native executable contents.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -34,6 +45,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, bail};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
+use flate2::read::GzDecoder;
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha512};
 use tempfile::TempDir;
@@ -148,6 +160,50 @@ struct Tarball {
     integrity: String,
 }
 
+impl Tarball {
+    /// Read an archive the production packaging binary produced.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The archive path reported on the packaging command's standard output.
+    ///
+    /// # Returns
+    ///
+    /// Returns the archive metadata required to serve it from the registry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the archive or its embedded manifest cannot be read.
+    fn read(path: &Path) -> Result<Self> {
+        let file_name = path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .with_context(|| format!("the packed archive has no file name: {}", path.display()))?
+            .to_owned();
+        let bytes = fs::read(path).with_context(|| format!("failed to read {}", path.display()))?;
+        let mut archive = tar::Archive::new(GzDecoder::new(fs::File::open(path)?));
+        let mut manifest = None;
+        for entry in archive.entries().with_context(|| format!("failed to read {}", path.display()))? {
+            let mut entry = entry.with_context(|| format!("failed to read an entry from {}", path.display()))?;
+            if entry.path()?.as_ref() == Path::new("package/package.json") {
+                let mut encoded = Vec::new();
+                entry.read_to_end(&mut encoded)?;
+                manifest = Some(
+                    serde_json::from_slice(&encoded).with_context(|| format!("failed to parse the manifest inside {}", path.display()))?,
+                );
+                break;
+            }
+        }
+        let manifest = manifest.with_context(|| format!("{} contains no package manifest", path.display()))?;
+        Ok(Self {
+            file_name,
+            path: path.to_path_buf(),
+            manifest,
+            integrity: format!("sha512-{}", BASE64_STANDARD.encode(Sha512::digest(&bytes))),
+        })
+    }
+}
+
 /// The captured outcome of one child process.
 struct ProcessOutcome {
     /// The exit status of the child process.
@@ -189,10 +245,184 @@ impl RegistryState {
     }
 }
 
-/// The per-test fixture: packed tarballs, a loopback registry, and the installs.
-struct Harness {
-    /// The isolated base directory holding every generated path.
+/// The isolated npm environment every install in a test shares.
+///
+/// It owns a temporary base directory, the loopback registry that serves a fixed set
+/// of archives, and empty npm configuration files that shadow the developer's
+/// `~/.npmrc`.
+struct InstallEnvironment {
+    /// The isolated base directory holding prefixes, caches, and configuration files.
     base: TempDir,
+    /// The registry state, including the observed request paths.
+    registry_state: Arc<RegistryState>,
+    /// The base URL of the loopback registry.
+    registry_address: String,
+    /// An empty user npm configuration that shadows `~/.npmrc`.
+    user_config: PathBuf,
+    /// An empty global npm configuration.
+    global_config: PathBuf,
+}
+
+impl InstallEnvironment {
+    /// Start a loopback registry serving exactly the supplied archives.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the registry cannot bind or an archive cannot be read.
+    fn start(archives: &[&Tarball]) -> Result<Self> {
+        let base = TempDir::new().context("failed to create the integration base directory")?;
+        Self::with_base(base, archives)
+    }
+
+    /// Start a loopback registry serving the supplied archives inside an existing base.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the registry cannot bind or an archive cannot be read.
+    fn with_base(base: TempDir, archives: &[&Tarball]) -> Result<Self> {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).context("failed to bind the loopback npm registry")?;
+        let registry_address = format!("http://{}", listener.local_addr()?);
+        let mut registry_state = RegistryState::default();
+        for tarball in archives {
+            registry_state.tarballs.insert(tarball.file_name.clone(), fs::read(&tarball.path)?);
+            let package_name = tarball
+                .manifest
+                .get("name")
+                .and_then(Value::as_str)
+                .context("a registry archive has no package name")?;
+            registry_state.packuments.insert(
+                package_name.to_owned(),
+                serde_json::to_vec(&packument(tarball, &registry_address)?)?,
+            );
+        }
+        let registry_state = Arc::new(registry_state);
+        serve_registry(listener, Arc::clone(&registry_state));
+
+        let user_config = base.path().join("empty.npmrc");
+        write_file(&user_config, b"")?;
+        let global_config = base.path().join("empty-global.npmrc");
+        write_file(&global_config, b"")?;
+
+        Ok(Self {
+            base,
+            registry_state,
+            registry_address,
+            user_config,
+            global_config,
+        })
+    }
+
+    /// Return the isolated base directory.
+    fn base(&self) -> &Path {
+        self.base.path()
+    }
+
+    /// Return the empty user npm configuration path.
+    fn user_config(&self) -> &Path {
+        &self.user_config
+    }
+
+    /// Return the empty global npm configuration path.
+    fn global_config(&self) -> &Path {
+        &self.global_config
+    }
+
+    /// Install a real tarball against the loopback registry and an empty cache.
+    ///
+    /// The archive is installed from its local path while its optional native
+    /// dependency is still resolved through the registry, exactly like the Python
+    /// suite.
+    ///
+    /// # Arguments
+    ///
+    /// * `label` - The fixture-unique installation label used for prefixes and caches.
+    /// * `archive` - The tarball to install.
+    /// * `globally` - Whether to install into the prefix as a global package.
+    /// * `omit_optional` - Whether to omit optional dependencies.
+    /// * `platform_flags` - Extra npm platform-selection flags, for example `--os=linux`.
+    ///
+    /// # Returns
+    ///
+    /// Returns the installed `oatty` module directory.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when npm cannot be spawned or reports a non-zero exit status.
+    fn install(&self, label: &str, archive: &Path, globally: bool, omit_optional: bool, platform_flags: &[String]) -> Result<PathBuf> {
+        let prefix = self.base().join(label);
+        let cache = self.base().join(format!("{label}-cache"));
+        fs::create_dir_all(&prefix)?;
+        fs::create_dir_all(&cache)?;
+        let mut arguments = vec![
+            "install".to_owned(),
+            "--ignore-scripts".to_owned(),
+            "--prefix".to_owned(),
+            prefix.display().to_string(),
+            "--cache".to_owned(),
+            cache.display().to_string(),
+            "--registry".to_owned(),
+            self.registry_address.clone(),
+            "--no-audit".to_owned(),
+            "--no-fund".to_owned(),
+            "--userconfig".to_owned(),
+            self.user_config.display().to_string(),
+            "--globalconfig".to_owned(),
+            self.global_config.display().to_string(),
+        ];
+        if globally {
+            arguments.push("--global".to_owned());
+        }
+        if omit_optional {
+            arguments.push("--omit=optional".to_owned());
+        }
+        arguments.extend(platform_flags.iter().cloned());
+        arguments.push(archive.display().to_string());
+
+        let mut command = npm_command(&arguments, None);
+        command.env("npm_config_prefix", &prefix).env("npm_config_cache", &cache);
+        let outcome = run_process(command, NPM_TIMEOUT, "npm install")?;
+        if !outcome.status.success() {
+            bail!(
+                "npm install failed for {label}\ncommand: npm {}\nstdout:\n{}\nstderr:\n{}",
+                arguments.join(" "),
+                outcome.stdout,
+                outcome.stderr
+            );
+        }
+        let module = if globally && !cfg!(windows) {
+            prefix.join("lib").join("node_modules").join("oatty")
+        } else {
+            prefix.join("node_modules").join("oatty")
+        };
+        if !module.is_dir() {
+            bail!("npm install did not create {}", module.display());
+        }
+        Ok(module)
+    }
+
+    /// Run `npm view <specification> --json` against the loopback registry.
+    fn npm_view(&self, specification: &str) -> Result<ProcessOutcome> {
+        let cache = self.base().join("view-cache");
+        fs::create_dir_all(&cache)?;
+        let arguments = vec![
+            "view".to_owned(),
+            specification.to_owned(),
+            "--json".to_owned(),
+            "--registry".to_owned(),
+            self.registry_address.clone(),
+            "--cache".to_owned(),
+            cache.display().to_string(),
+            "--userconfig".to_owned(),
+            self.user_config.display().to_string(),
+        ];
+        run_process(npm_command(&arguments, None), NPM_TIMEOUT, "npm view")
+    }
+}
+
+/// The per-test fixture: packed tarballs, its install environment, and the installs.
+struct Harness {
+    /// The isolated install environment and loopback registry.
+    environment: InstallEnvironment,
     /// The fixture release version.
     version: &'static str,
     /// The canonical platform contracts the fixture published.
@@ -201,14 +431,6 @@ struct Harness {
     host_key: Option<String>,
     /// The scripted native executable that all payloads embed.
     binary: PathBuf,
-    /// The integrated registry state, including the observed requests.
-    registry_state: Arc<RegistryState>,
-    /// The base URL of the loopback registry.
-    registry_address: String,
-    /// An empty user npm configuration that shadows `~/.npmrc`.
-    user_config: PathBuf,
-    /// An empty global npm configuration.
-    global_config: PathBuf,
     /// The umbrella package tarball.
     umbrella: Tarball,
     /// The local installation's `oatty` module directory, when the host is supported.
@@ -247,40 +469,14 @@ impl Harness {
         }
         let umbrella = pack_umbrella(base.path(), &dist, &pack_cache, version)?;
 
-        let listener = TcpListener::bind(("127.0.0.1", 0)).context("failed to bind the loopback npm registry")?;
-        let registry_address = format!("http://{}", listener.local_addr()?);
-        let mut registry_state = RegistryState::default();
-        for tarball in payloads.iter().chain(std::iter::once(&umbrella)) {
-            registry_state.tarballs.insert(tarball.file_name.clone(), fs::read(&tarball.path)?);
-            let package_name = tarball
-                .manifest
-                .get("name")
-                .and_then(Value::as_str)
-                .context("fixture tarball has no package name")?;
-            registry_state.packuments.insert(
-                package_name.to_owned(),
-                serde_json::to_vec(&packument(tarball, &registry_address)?)?,
-            );
-        }
-        let registry_state = Arc::new(registry_state);
-        serve_registry(listener, Arc::clone(&registry_state));
-
-        let user_config = base.path().join("empty.npmrc");
-        write_file(&user_config, b"")?;
-        let global_config = base.path().join("empty-global.npmrc");
-        write_file(&global_config, b"")?;
-
+        let archives: Vec<&Tarball> = payloads.iter().chain(std::iter::once(&umbrella)).collect();
         let host_key = host_platform_key();
         let mut harness = Self {
-            base,
+            environment: InstallEnvironment::with_base(base, &archives)?,
             version,
             platforms: &FIXTURE_PLATFORMS,
             host_key,
             binary,
-            registry_state,
-            registry_address,
-            user_config,
-            global_config,
             umbrella,
             local_module: None,
             global_module: None,
@@ -300,13 +496,12 @@ impl Harness {
 
     /// Return the base directory of the fixture.
     fn base(&self) -> &Path {
-        self.base.path()
+        self.environment.base()
     }
 
     /// Return the canonical host platform contract, if it is supported.
-    fn host_platform(&self) -> Option<&FixturePlatform> {
-        let host_key = self.host_key.as_deref()?;
-        self.platforms.iter().find(|platform| platform.key == host_key)
+    fn host_platform(&self) -> Option<&'static FixturePlatform> {
+        platform_for_key(self.host_key.as_deref())
     }
 
     /// Return the local installation's `oatty` module directory.
@@ -324,121 +519,68 @@ impl Harness {
         fs::read(&self.binary).with_context(|| format!("failed to read {}", self.binary.display()))
     }
 
-    /// Return the launcher script path of an installed `oatty` module.
-    fn launcher_script(&self, module: &Path) -> PathBuf {
-        module.join("npm").join("bin").join("oatty.js")
-    }
-
-    /// Build a command that runs the installed launcher.
-    fn launcher_command(&self, module: &Path) -> Command {
-        let mut command = Command::new("node");
-        command.arg(self.launcher_script(module));
-        command
-    }
-
-    /// Run the installed launcher with the supplied arguments.
-    fn launcher(&self, module: &Path, arguments: &[&str]) -> Result<ProcessOutcome> {
-        let mut command = self.launcher_command(module);
-        command.args(arguments);
-        run_process(command, LAUNCHER_TIMEOUT, "node launcher")
-    }
-
-    /// Resolve the installed directory of one native payload package.
-    ///
-    /// npm may hoist the optional package next to the `oatty` module or keep it nested
-    /// inside it, so both layouts are probed exactly like the Python suite.
-    fn native_directory(&self, module: &Path, platform: &FixturePlatform) -> PathBuf {
-        let nested = module.join("node_modules").join(platform.package_name);
-        if nested.exists() {
-            return nested;
-        }
-        module.parent().map(|parent| parent.join(platform.package_name)).unwrap_or(nested)
-    }
-
-    /// Install a real tarball against the loopback registry and an empty cache.
+    /// Install a fixture tarball against the loopback registry and an empty cache.
     ///
     /// # Arguments
     ///
     /// * `label` - The fixture-unique installation label used for prefixes and caches.
     /// * `options` - The installation mode, archive, and platform-selection flags.
     ///
-    /// # Returns
-    ///
-    /// Returns the installed `oatty` module directory.
-    ///
     /// # Errors
     ///
     /// Returns an error when npm cannot be spawned or reports a non-zero exit status.
     fn install(&self, label: &str, options: InstallOptions<'_>) -> Result<PathBuf> {
-        let prefix = self.base().join(label);
-        let cache = self.base().join(format!("{label}-cache"));
-        fs::create_dir_all(&prefix)?;
-        fs::create_dir_all(&cache)?;
         let archive = options.archive.unwrap_or(&self.umbrella);
-        let mut arguments = vec![
-            "install".to_owned(),
-            "--ignore-scripts".to_owned(),
-            "--prefix".to_owned(),
-            prefix.display().to_string(),
-            "--cache".to_owned(),
-            cache.display().to_string(),
-            "--registry".to_owned(),
-            self.registry_address.clone(),
-            "--no-audit".to_owned(),
-            "--no-fund".to_owned(),
-            "--userconfig".to_owned(),
-            self.user_config.display().to_string(),
-            "--globalconfig".to_owned(),
-            self.global_config.display().to_string(),
-        ];
-        if options.globally {
-            arguments.push("--global".to_owned());
-        }
-        if options.omit_optional {
-            arguments.push("--omit=optional".to_owned());
-        }
-        arguments.extend(options.platform_flags);
-        arguments.push(archive.path.display().to_string());
-
-        let mut command = npm_command(&arguments, None);
-        command.env("npm_config_prefix", &prefix).env("npm_config_cache", &cache);
-        let outcome = run_process(command, NPM_TIMEOUT, "npm install")?;
-        if !outcome.status.success() {
-            bail!(
-                "npm install failed for {label}\ncommand: npm {}\nstdout:\n{}\nstderr:\n{}",
-                arguments.join(" "),
-                outcome.stdout,
-                outcome.stderr
-            );
-        }
-        let module = if options.globally && !cfg!(windows) {
-            prefix.join("lib").join("node_modules").join("oatty")
-        } else {
-            prefix.join("node_modules").join("oatty")
-        };
-        if !module.is_dir() {
-            bail!("npm install did not create {}", module.display());
-        }
-        Ok(module)
+        self.environment.install(
+            label,
+            &archive.path,
+            options.globally,
+            options.omit_optional,
+            &options.platform_flags,
+        )
     }
 
     /// Run `npm view <specification> --json` against the loopback registry.
     fn npm_view(&self, specification: &str) -> Result<ProcessOutcome> {
-        let cache = self.base().join("view-cache");
-        fs::create_dir_all(&cache)?;
-        let arguments = vec![
-            "view".to_owned(),
-            specification.to_owned(),
-            "--json".to_owned(),
-            "--registry".to_owned(),
-            self.registry_address.clone(),
-            "--cache".to_owned(),
-            cache.display().to_string(),
-            "--userconfig".to_owned(),
-            self.user_config.display().to_string(),
-        ];
-        run_process(npm_command(&arguments, None), NPM_TIMEOUT, "npm view")
+        self.environment.npm_view(specification)
     }
+}
+
+/// Resolve the canonical platform contract for one host platform key.
+fn platform_for_key(host_key: Option<&str>) -> Option<&'static FixturePlatform> {
+    let host_key = host_key?;
+    FIXTURE_PLATFORMS.iter().find(|platform| platform.key == host_key)
+}
+
+/// Return the launcher script path of an installed `oatty` module.
+fn launcher_script(module: &Path) -> PathBuf {
+    module.join("npm").join("bin").join("oatty.js")
+}
+
+/// Build a command that runs the installed launcher.
+fn launcher_command(module: &Path) -> Command {
+    let mut command = Command::new("node");
+    command.arg(launcher_script(module));
+    command
+}
+
+/// Run the installed launcher with the supplied arguments.
+fn run_launcher(module: &Path, arguments: &[&str]) -> Result<ProcessOutcome> {
+    let mut command = launcher_command(module);
+    command.args(arguments);
+    run_process(command, LAUNCHER_TIMEOUT, "node launcher")
+}
+
+/// Resolve the installed directory of one native payload package.
+///
+/// npm may hoist the optional package next to the `oatty` module or keep it nested
+/// inside it, so both layouts are probed exactly like the Python suite.
+fn native_directory(module: &Path, platform: &FixturePlatform) -> PathBuf {
+    let nested = module.join("node_modules").join(platform.package_name);
+    if nested.exists() {
+        return nested;
+    }
+    module.parent().map(|parent| parent.join(platform.package_name)).unwrap_or(nested)
 }
 
 /// Run the npm command line tool with the supplied arguments.
@@ -913,12 +1055,15 @@ fn fixture_script_supported() -> bool {
 fn shim_path(module: &Path, globally: bool) -> PathBuf {
     let shim_name = if cfg!(windows) { "oatty.cmd" } else { "oatty" };
     if globally {
-        let prefix = module
-            .parent()
-            .and_then(Path::parent)
-            .and_then(Path::parent)
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| module.to_path_buf());
+        // Global installs nest the module differently per platform:
+        // `<prefix>/lib/node_modules/oatty` on POSIX and `<prefix>/node_modules/oatty`
+        // on Windows, so the prefix is two or three hops above the module.
+        let prefix = if cfg!(windows) {
+            module.parent().and_then(Path::parent)
+        } else {
+            module.parent().and_then(Path::parent).and_then(Path::parent)
+        };
+        let prefix = prefix.map(Path::to_path_buf).unwrap_or_else(|| module.to_path_buf());
         if cfg!(windows) {
             return prefix.join(shim_name);
         }
@@ -1050,9 +1195,9 @@ fn npm_distribution_source_lock_bootstraps_without_registry_or_scripts() -> Resu
         "--cache".to_owned(),
         cache.display().to_string(),
         "--userconfig".to_owned(),
-        harness.user_config.display().to_string(),
+        harness.environment.user_config().display().to_string(),
         "--globalconfig".to_owned(),
-        harness.global_config.display().to_string(),
+        harness.environment.global_config().display().to_string(),
     ];
     let outcome = run_process(npm_command(&arguments, Some(&work)), NPM_TIMEOUT, "npm ci")?;
     assert!(outcome.status.success(), "npm ci failed:\n{}\n{}", outcome.stdout, outcome.stderr);
@@ -1100,10 +1245,10 @@ fn npm_distribution_local_global_ignore_scripts_installs_run_unchanged_tarballs(
         (true, harness.global_module().context("the global fixture install is missing")?),
     ];
     for (globally, module) in installs {
-        let version = harness.launcher(module, &["--version"])?;
+        let version = run_launcher(module, &["--version"])?;
         assert_eq!(version.stdout.trim(), format!("oatty {}", harness.version));
 
-        let check = harness.launcher(module, &["update", "--check"])?;
+        let check = run_launcher(module, &["update", "--check"])?;
         assert_eq!(Some(0), check.status.code(), "{}", check.stderr);
         assert!(
             check.stdout.contains(&format!("Installed version: {}", harness.version)),
@@ -1111,7 +1256,7 @@ fn npm_distribution_local_global_ignore_scripts_installs_run_unchanged_tarballs(
             check.stdout
         );
 
-        let native = harness.native_directory(module, host).join("bin").join(host.binary);
+        let native = native_directory(module, host).join("bin").join(host.binary);
         assert_eq!(fs::read(&native)?, binary_bytes, "installed payload bytes changed");
 
         for platform in harness.platforms.iter() {
@@ -1133,6 +1278,7 @@ fn npm_distribution_local_global_ignore_scripts_installs_run_unchanged_tarballs(
     }
     assert!(
         harness
+            .environment
             .registry_state
             .requests()
             .iter()
@@ -1154,7 +1300,7 @@ fn npm_distribution_arguments_cwd_environment_and_status_are_preserved() -> Resu
         return Ok(());
     }
     let arguments = ["one two", "quote\"", "--flag=x", "💚"];
-    let mut command = harness.launcher_command(module);
+    let mut command = launcher_command(module);
     command
         .args(arguments)
         .current_dir(harness.base())
@@ -1166,7 +1312,7 @@ fn npm_distribution_arguments_cwd_environment_and_status_are_preserved() -> Resu
     assert_eq!(forwarded["cwd"], json!(fs::canonicalize(harness.base())?.display().to_string()));
     assert_eq!(forwarded["environment"], json!("forwarded"));
 
-    let status = harness.launcher(module, &["status", "37"])?;
+    let status = run_launcher(module, &["status", "37"])?;
     assert_eq!(Some(37), status.status.code());
     Ok(())
 }
@@ -1183,14 +1329,14 @@ fn npm_distribution_child_and_parent_directed_signals_preserve_status() -> Resul
         return Ok(());
     }
     for (name, number) in [("SIGINT", signal_number("SIGINT")), ("SIGTERM", signal_number("SIGTERM"))] {
-        let child_outcome = harness.launcher(module, &["signal", name])?;
+        let child_outcome = run_launcher(module, &["signal", name])?;
         assert_eq!(
             terminated_signal(&child_outcome.status),
             number,
             "{name} was not preserved by the launcher"
         );
 
-        let mut command = harness.launcher_command(module);
+        let mut command = launcher_command(module);
         command.arg("wait").stdout(Stdio::piped()).stderr(Stdio::piped());
         let mut child = command.spawn().context("failed to spawn the waiting launcher")?;
         let stdout = child.stdout.take().context("the launcher stdout pipe is missing")?;
@@ -1224,7 +1370,7 @@ fn npm_distribution_omit_optional_gives_reinstall_guidance() -> Result<()> {
             ..InstallOptions::default()
         },
     )?;
-    let outcome = harness.launcher(&module, &["--version"])?;
+    let outcome = run_launcher(&module, &["--version"])?;
     assert_eq!(Some(1), outcome.status.code());
     assert!(outcome.stderr.contains("--include=optional"), "{}", outcome.stderr);
     assert!(
@@ -1249,7 +1395,7 @@ fn npm_distribution_rejects_mismatch_unsupported_musl_and_missing_marker() -> Re
     if !fixture_script_supported() {
         return Ok(());
     }
-    let metadata_path = harness.native_directory(module, host).join("package.json");
+    let metadata_path = native_directory(module, host).join("package.json");
     let original = fs::read(&metadata_path)?;
     let manifest: Value = serde_json::from_slice(&original)?;
     for (field, value) in [
@@ -1261,7 +1407,7 @@ fn npm_distribution_rejects_mismatch_unsupported_musl_and_missing_marker() -> Re
         let mut modified = manifest.clone();
         modified[field] = value;
         write_json(&metadata_path, &modified)?;
-        let outcome = harness.launcher(module, &[])?;
+        let outcome = run_launcher(module, &[])?;
         assert_eq!(Some(1), outcome.status.code(), "{field} must be rejected");
         assert!(outcome.stderr.contains(&format!("metadata: {field}")), "{}", outcome.stderr);
         assert!(outcome.stderr.contains("--include=optional"), "{}", outcome.stderr);
@@ -1274,11 +1420,11 @@ fn npm_distribution_rejects_mismatch_unsupported_musl_and_missing_marker() -> Re
         .context("the payload directory has no parent")?;
     let original_marker = fs::read(&marker)?;
     fs::remove_file(&marker)?;
-    let missing_marker = harness.launcher(module, &[])?;
+    let missing_marker = run_launcher(module, &[])?;
     assert_eq!(Some(1), missing_marker.status.code());
     write_file(&marker, &original_marker)?;
 
-    let launcher_literal = json!(harness.launcher_script(module).display().to_string());
+    let launcher_literal = json!(launcher_script(module).display().to_string());
     let overrides = [
         (
             r#"Object.defineProperty(process,'arch',{value:'riscv64'});"#,
@@ -1298,4 +1444,121 @@ fn npm_distribution_rejects_mismatch_unsupported_musl_and_missing_marker() -> Re
         assert!(outcome.stderr.contains(expected), "{}", outcome.stderr);
     }
     Ok(())
+}
+
+#[test]
+fn npm_distribution_release_native_binary_installs_and_reports_marker() -> Result<()> {
+    let Ok(binary) = std::env::var("OATTY_NPM_TEST_BINARY") else {
+        return Ok(());
+    };
+    let Ok(target) = std::env::var("OATTY_NPM_TEST_TARGET") else {
+        return Ok(());
+    };
+    let host_key = host_platform_key();
+    let Some(host_platform) = platform_for_key(host_key.as_deref()) else {
+        return Ok(());
+    };
+    if !toolchain_available() {
+        return Ok(());
+    }
+    assert_eq!(
+        target, host_platform.target,
+        "OATTY_NPM_TEST_TARGET must match the host target triple"
+    );
+
+    let binary = resolve_test_binary(&binary)?;
+    let source_bytes = fs::read(&binary).with_context(|| format!("failed to read {}", binary.display()))?;
+    let output = TempDir::new().context("failed to create the release packaging directory")?;
+
+    // Package with the production binary so the archives below are exactly what a
+    // release publishes, then serve both of them from a fresh loopback registry.
+    let payload = package_release_payload(&binary, &target, output.path())?;
+    let umbrella = package_release_umbrella(output.path())?;
+    let environment = InstallEnvironment::start(&[&payload, &umbrella])?;
+    let version = project_version()?;
+
+    for (label, globally) in [("native-local", false), ("native-global", true)] {
+        let module = environment.install(label, &umbrella.path, globally, false, &[])?;
+
+        let version_outcome = run_launcher(&module, &["--version"])?;
+        assert_eq!(Some(0), version_outcome.status.code(), "{}", version_outcome.stderr);
+        assert!(
+            version_outcome.stdout.contains(&version),
+            "the launcher did not report the release version:\n{}",
+            version_outcome.stdout
+        );
+
+        let check = run_launcher(&module, &["update", "--check"])?;
+        assert_eq!(Some(0), check.status.code(), "{}", check.stderr);
+        assert!(
+            check
+                .stdout
+                .contains("This installation is managed by npm. Please run `npm update -g oatty`."),
+            "the release executable did not report npm-managed updates:\n{}",
+            check.stdout
+        );
+
+        let shim = run_shim(&module, globally)?;
+        assert_eq!(Some(0), shim.status.code(), "the installed shim failed:\n{}", shim.stderr);
+
+        let native = native_directory(&module, host_platform).join("bin").join(host_platform.binary);
+        assert_eq!(fs::read(&native)?, source_bytes, "the installed release executable changed");
+    }
+    Ok(())
+}
+
+/// Run `oatty-xtask npm package` through the real binary and return its archive path.
+fn run_xtask_npm_package(arguments: &[String]) -> Result<PathBuf> {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_oatty-xtask"));
+    command.arg("npm").arg("package").args(arguments);
+    let outcome = run_process(command, NPM_TIMEOUT, "oatty-xtask npm package")?;
+    if !outcome.status.success() {
+        bail!(
+            "oatty-xtask npm package {} failed:\nstdout:\n{}\nstderr:\n{}",
+            arguments.join(" "),
+            outcome.stdout,
+            outcome.stderr
+        );
+    }
+    let archive = outcome
+        .stdout
+        .lines()
+        .next_back()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .context("oatty-xtask npm package reported no archive path")?;
+    Ok(PathBuf::from(archive))
+}
+
+/// Package the release executable's native payload through production packaging.
+fn package_release_payload(binary: &Path, target: &str, output: &Path) -> Result<Tarball> {
+    let arguments = vec![
+        "--binary".to_owned(),
+        binary.display().to_string(),
+        "--target".to_owned(),
+        target.to_owned(),
+        "--output".to_owned(),
+        output.display().to_string(),
+    ];
+    Tarball::read(&run_xtask_npm_package(&arguments)?)
+}
+
+/// Package the umbrella launcher through production packaging.
+fn package_release_umbrella(output: &Path) -> Result<Tarball> {
+    let arguments = vec!["--umbrella".to_owned(), "--output".to_owned(), output.display().to_string()];
+    Tarball::read(&run_xtask_npm_package(&arguments)?)
+}
+
+/// Resolve `OATTY_NPM_TEST_BINARY` to an existing absolute path.
+///
+/// Relative values resolve against the workspace root, which is where the release
+/// workflow and the Python suite resolved them.
+fn resolve_test_binary(value: &str) -> Result<PathBuf> {
+    let candidate = Path::new(value);
+    let candidate = if candidate.is_absolute() {
+        candidate.to_path_buf()
+    } else {
+        project_root()?.join(candidate)
+    };
+    fs::canonicalize(&candidate).with_context(|| format!("OATTY_NPM_TEST_BINARY does not exist: {}", candidate.display()))
 }
