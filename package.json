@@ -15,16 +15,15 @@
     "oatty": "npm/bin/oatty.js"
   },
   "files": [
-    "npm/bin",
-    "npm/scripts",
+    "npm/bin/oatty.js",
+    "npm/platforms.json",
     "README.md",
-    "LICENSE*",
+    "LICENSE",
     "THIRD-PARTY-NOTICES.txt",
     "third-party-licenses",
     "third-party-sources"
   ],
   "scripts": {
-    "postinstall": "node npm/scripts/postinstall.js",
     "licenses:prepare": "python3 scripts/licenses.py prepare",
     "licenses:verify": "python3 scripts/licenses.py verify",
     "test:licenses": "python3 -m unittest discover -s scripts/tests -v",
@@ -40,8 +39,10 @@
   "engines": {
     "node": ">=18"
   },
-  "dependencies": {
-    "adm-zip": "^0.6.1",
-    "tar": "^7.4.3"
+  "optionalDependencies": {
+    "@oattyio/cli-darwin-x64": "0.1.12",
+    "@oattyio/cli-darwin-arm64": "0.1.12",
+    "@oattyio/cli-linux-x64": "0.1.12",
+    "@oattyio/cli-win32-x64": "0.1.12"
   }
 }

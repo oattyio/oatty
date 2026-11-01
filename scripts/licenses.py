@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Prepare and verify deterministic licensing materials for every Oatty distribution.
 
-Requires Python 3.11+, cargo-about 0.9.2, Cargo, and `npm ci --ignore-scripts`.
+Requires Python 3.11+, cargo-about 0.9.2, Cargo, and `npm ci --omit=optional --ignore-scripts`.
 Generation uses the CLI's default features and about.toml's union of release targets.
 """
 import argparse
@@ -29,6 +29,12 @@ REQUIRED = {
     'encoding_rs': ('COPYRIGHT', 'LICENSE-APACHE', 'LICENSE-MIT', 'LICENSE-WHATWG'),
 }
 NPM_LICENSES = {'MIT', 'ISC', 'BlueOak-1.0.0'}
+NPM_BINARY_TARGETS = {
+    'darwin-x64': 'x86_64-apple-darwin',
+    'darwin-arm64': 'aarch64-apple-darwin',
+    'linux-x64': 'x86_64-unknown-linux-gnu',
+    'win32-x64': 'x86_64-pc-windows-msvc',
+}
 
 
 def sha256(path):
@@ -38,7 +44,7 @@ def sha256(path):
 def inputs(root):
     """Fingerprint locks, policy, generation code, and every workspace manifest."""
     paths = ['LICENSE', 'Cargo.toml', 'Cargo.lock', 'package.json', 'package-lock.json',
-             'about.toml', 'scripts/licenses.py']
+             'about.toml', 'scripts/licenses.py', 'npm/platforms.json', 'scripts/package-npm.py']
     paths.extend(p.relative_to(root).as_posix() for p in (root / 'crates').rglob('Cargo.toml'))
     paths.extend(p.relative_to(root).as_posix() for p in (root / 'scripts/license-supplements').rglob('*') if p.is_file())
     # Git may check out these committed text files with CRLF on Windows.
@@ -193,6 +199,63 @@ def bundle_source(archive, destination, checksum):
     shutil.copyfile(archive, destination)
 
 
+def npm_binary_packages(root, own_package, packages):
+    """Validate the exact first-party binary family before excluding duplicate legal inventory.
+
+    These packages carry the same Rust license/source bundle generated here. They
+    may be unpublished or intentionally omitted during generation, so their locked
+    metadata must be sufficient to validate them without reading node_modules.
+    Other packages, including other names in the same scope, remain third parties.
+    """
+    if own_package.get('name') != 'oatty':
+        return set()
+    platforms = json.loads((root / 'npm/platforms.json').read_text())
+    if set(platforms) != set(NPM_BINARY_TARGETS):
+        raise ValueError('Unexpected first-party npm platform mapping')
+    locations = set()
+    for platform_name, target in NPM_BINARY_TARGETS.items():
+        operating_system, architecture = platform_name.split('-')
+        expected = {'package': f'@oattyio/cli-{platform_name}', 'target': target,
+                    'os': operating_system, 'cpu': architecture,
+                    'binary': 'oatty.exe' if operating_system == 'win32' else 'oatty'}
+        if operating_system == 'linux':
+            expected['libc'] = 'glibc'
+        if platforms[platform_name] != expected:
+            raise ValueError(f'Unexpected first-party npm platform mapping: {platform_name}')
+        name = expected['package']
+        if own_package.get('optionalDependencies', {}).get(name) != own_package['version']:
+            raise ValueError(f'First-party npm package must pin the Oatty version: {name}')
+        location = f'node_modules/{name}'
+        locked = packages.get(location, {})
+        validate_npm_binary_metadata(locked, expected, own_package['version'], location, locked=True)
+        installed = root / location / 'package.json'
+        if installed.exists():
+            validate_npm_binary_metadata(json.loads(installed.read_text()), expected,
+                                         own_package['version'], location, locked=False)
+        locations.add(location)
+    return locations
+
+
+def validate_npm_binary_metadata(package, platform, version, location, *, locked):
+    """Reject stale, platform-independent, or executable dependency metadata in an owned payload."""
+    expected = {'version': version, 'license': 'MIT', 'os': [platform['os']], 'cpu': [platform['cpu']]}
+    if 'libc' in platform:
+        expected['libc'] = [platform['libc']]
+    elif package.get('libc'):
+        raise ValueError(f'Unexpected first-party npm libc metadata: {location}')
+    if locked:
+        expected['optional'] = True
+    else:
+        expected['name'] = platform['package']
+    invalid = any(package.get(key) != value for key, value in expected.items())
+    forbidden = ('dependencies', 'optionalDependencies', 'peerDependencies', 'devDependencies',
+                 'scripts', 'hasInstallScript', 'link', 'inBundle', 'bundleDependencies', 'bundledDependencies')
+    if invalid or any(package.get(key) for key in forbidden):
+        raise ValueError(f'Unresolved or stale first-party npm binary metadata: {location}')
+    if package.get('name', platform['package']) != platform['package']:
+        raise ValueError(f'Unexpected first-party npm package identity: {location}')
+
+
 def npm_notices(root, output):
     lock = json.loads((root / 'package-lock.json').read_text())
     sections = []
@@ -202,9 +265,11 @@ def npm_notices(root, output):
     dependencies_changed = any(locked_root.get(key, {}) != own_package.get(key, {})
                                for key in ('dependencies', 'optionalDependencies'))
     if metadata_changed or dependencies_changed:
-        raise ValueError('Stale npm package-lock root metadata; update the lock with npm install --package-lock-only --ignore-scripts, then npm ci --ignore-scripts')
+        raise ValueError('Stale npm package-lock root metadata; synchronize package metadata and the committed lock, '
+                         'then run npm ci --omit=optional --ignore-scripts')
+    binary_packages = npm_binary_packages(root, own_package, lock['packages'])
     for location, package in sorted(lock['packages'].items()):
-        if not location:
+        if not location or location in binary_packages:
             continue
         source = root / location
         installed = json.loads((source / 'package.json').read_text())
@@ -216,7 +281,8 @@ def npm_notices(root, output):
         if not names:
             raise ValueError(f'Missing npm license text: {location}')
         sections.append(f"- {installed['name']} {installed['version']}: {license_id}; full text in third-party-licenses/npm/{location.removeprefix('node_modules/')}/")
-    return '## npm installer dependencies\n\n' + '\n'.join(sections) + '\n'
+    inventory_text = '\n'.join(sections) if sections else 'None. Platform packages contain the Rust binary and the same legal materials.'
+    return '## npm launcher dependencies\n\n' + inventory_text + '\n'
 
 
 def prepare(root):

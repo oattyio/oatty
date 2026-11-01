@@ -25,7 +25,7 @@ class LicensingFailures(unittest.TestCase):
             root = Path(temporary)
             for name in ('LICENSE', 'Cargo.toml', 'Cargo.lock', 'package.json', 'package-lock.json',
                          'about.toml', 'scripts/licenses.py', 'scripts/license-supplements/reviewed.json',
-                         'crates/example/Cargo.toml'):
+                         'crates/example/Cargo.toml', 'npm/platforms.json', 'scripts/package-npm.py'):
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b'line one\nline two\n')
@@ -121,6 +121,104 @@ class LicensingFailures(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, error):
                     licenses.npm_notices(root, root / 'output')
 
+    def prepare_binary_package_fixture(self, root):
+        """Write an uninstalled, complete first-party lock as used before the first npm release."""
+        platforms = json.loads((licenses.ROOT / 'npm/platforms.json').read_text())
+        (root / 'npm').mkdir()
+        (root / 'npm/platforms.json').write_text(json.dumps(platforms))
+        own_package = {'name': 'oatty', 'version': '1.2.3', 'license': 'MIT',
+                       'optionalDependencies': {entry['package']: '1.2.3' for entry in platforms.values()}}
+        packages = {'': own_package}
+        for entry in platforms.values():
+            metadata = {'version': '1.2.3', 'license': 'MIT', 'optional': True,
+                        'os': [entry['os']], 'cpu': [entry['cpu']]}
+            if 'libc' in entry:
+                metadata['libc'] = [entry['libc']]
+            packages[f"node_modules/{entry['package']}"] = metadata
+        (root / 'package.json').write_text(json.dumps(own_package))
+        (root / 'package-lock.json').write_text(json.dumps({'packages': packages}))
+        return platforms, own_package, packages
+
+    def test_unpublished_owned_binaries_need_no_installed_license_duplicates(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            self.prepare_binary_package_fixture(root)
+            notices = licenses.npm_notices(root, root / 'output')
+            self.assertIn('same legal materials', notices)
+            self.assertFalse((root / 'node_modules').exists())
+
+    def test_owned_binary_lock_rejects_platform_version_and_dependency_drift(self):
+        mutations = ({'version': '1.2.2'}, {'license': 'UNKNOWN'}, {'os': ['linux']},
+                     {'cpu': ['arm64']}, {'optional': False}, {'libc': ['musl']},
+                     {'scripts': {'postinstall': 'download'}}, {'hasInstallScript': True},
+                     {'dependencies': {'foreign': '1'}}, {'optionalDependencies': {'foreign': '1'}},
+                     {'peerDependencies': {'foreign': '1'}}, {'name': '@oattyio/foreign'})
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, _, packages = self.prepare_binary_package_fixture(root)
+            location = 'node_modules/@oattyio/cli-darwin-x64'
+            original = packages[location]
+            for mutation in mutations:
+                with self.subTest(mutation=mutation):
+                    packages[location] = original | mutation
+                    (root / 'package-lock.json').write_text(json.dumps({'packages': packages}))
+                    with self.assertRaisesRegex(ValueError, 'first-party npm'):
+                        licenses.npm_notices(root, root / 'output')
+            packages.pop(location)
+            (root / 'package-lock.json').write_text(json.dumps({'packages': packages}))
+            with self.assertRaisesRegex(ValueError, 'first-party npm'):
+                licenses.npm_notices(root, root / 'output')
+
+    def test_owned_binary_pin_and_mapping_cannot_widen_license_exemption(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            platforms, own_package, packages = self.prepare_binary_package_fixture(root)
+            own_package['optionalDependencies']['@oattyio/cli-darwin-x64'] = '^1.2.3'
+            (root / 'package.json').write_text(json.dumps(own_package))
+            (root / 'package-lock.json').write_text(json.dumps({'packages': packages}))
+            with self.assertRaisesRegex(ValueError, 'must pin'):
+                licenses.npm_notices(root, root / 'output')
+            own_package['optionalDependencies']['@oattyio/cli-darwin-x64'] = '1.2.3'
+            (root / 'package.json').write_text(json.dumps(own_package))
+            (root / 'package-lock.json').write_text(json.dumps({'packages': packages}))
+            platforms['darwin-x64']['package'] = '@oattyio/unreviewed'
+            (root / 'npm/platforms.json').write_text(json.dumps(platforms))
+            with self.assertRaisesRegex(ValueError, 'platform mapping'):
+                licenses.npm_notices(root, root / 'output')
+
+    def test_other_packages_in_owned_scope_still_need_reviewed_licenses(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, _, packages = self.prepare_binary_package_fixture(root)
+            location = 'node_modules/@oattyio/unreviewed'
+            metadata = {'name': '@oattyio/unreviewed', 'version': '1', 'license': 'UNKNOWN'}
+            packages[location] = metadata
+            source = root / location
+            source.mkdir(parents=True)
+            (source / 'package.json').write_text(json.dumps(metadata))
+            (root / 'package-lock.json').write_text(json.dumps({'packages': packages}))
+            with self.assertRaisesRegex(ValueError, 'Unresolved or stale npm licensing'):
+                licenses.npm_notices(root, root / 'output')
+
+    def test_linux_lock_requires_glibc_and_installed_owned_package_has_no_hooks(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, _, packages = self.prepare_binary_package_fixture(root)
+            location = 'node_modules/@oattyio/cli-linux-x64'
+            metadata = packages[location]
+            metadata.pop('libc')
+            (root / 'package-lock.json').write_text(json.dumps({'packages': packages}))
+            with self.assertRaisesRegex(ValueError, 'first-party npm'):
+                licenses.npm_notices(root, root / 'output')
+            metadata['libc'] = ['glibc']
+            (root / 'package-lock.json').write_text(json.dumps({'packages': packages}))
+            source = root / location
+            source.mkdir(parents=True)
+            installed = metadata | {'name': '@oattyio/cli-linux-x64', 'scripts': {'postinstall': 'download'}}
+            (source / 'package.json').write_text(json.dumps(installed))
+            with self.assertRaisesRegex(ValueError, 'first-party npm'):
+                licenses.npm_notices(root, root / 'output')
+
     def test_missing_stale_and_changed_materials(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -198,8 +296,11 @@ class DistributionContracts(unittest.TestCase):
             directory = Path(temporary)
             root = directory / 'fixture'
             (root / 'scripts').mkdir(parents=True)
-            for name in ('LICENSE', 'Cargo.toml', 'Cargo.lock', 'package-lock.json', 'about.toml'):
-                (root / name).write_text('fixture')
+            for name in ('LICENSE', 'Cargo.toml', 'Cargo.lock', 'package-lock.json', 'about.toml',
+                         'npm/platforms.json', 'scripts/package-npm.py'):
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text('fixture')
             (root / 'scripts/licenses.py').write_bytes((SCRIPTS / 'licenses.py').read_bytes())
             (root / 'package.json').write_text(json.dumps({
                 'name': 'licensing-guard-fixture', 'version': '1.0.0',
@@ -223,17 +324,23 @@ class DistributionContracts(unittest.TestCase):
             self.assertNotEqual(0, missing.returncode)
             self.assertIn('Missing or changed licensing output/source', missing.stderr)
 
-    def test_actual_npm_tarball_contains_notices_source_and_installer(self):
+    def test_actual_npm_tarball_contains_notices_source_and_launcher_only(self):
         with tempfile.TemporaryDirectory() as temporary:
             packed = subprocess.check_output(['npm', 'pack', '--json', '--cache', str(Path(temporary) / 'cache'), '--pack-destination', temporary], cwd=licenses.ROOT, text=True)
             filename = json.loads(packed)[0]['filename']
             with tarfile.open(Path(temporary) / filename) as archive:
                 names = set(archive.getnames())
                 expected = {'package/LICENSE', 'package/THIRD-PARTY-NOTICES.txt',
-                            'package/npm/bin/oatty.js', 'package/npm/scripts/postinstall.js'}
+                            'package/npm/bin/oatty.js', 'package/npm/platforms.json'}
                 expected.update('package/' + name for name in licenses.inventory(licenses.ROOT))
                 self.assertTrue(expected.issubset(names), expected - names)
                 self.assertFalse(any('/node_modules/' in name for name in names))
+                self.assertFalse(any('/npm/scripts/' in name for name in names))
+                self.assertFalse({'package/npm/bin/oatty', 'package/npm/bin/oatty.exe',
+                                  'package/npm/bin/.oatty-installed-version'} & names)
+                metadata = json.load(archive.extractfile('package/package.json'))
+                self.assertFalse(metadata.get('dependencies'))
+                self.assertFalse({'preinstall', 'install', 'postinstall', 'prepare'} & set(metadata.get('scripts', {})))
 
 
 if __name__ == '__main__':
