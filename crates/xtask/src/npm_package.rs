@@ -2205,6 +2205,7 @@ mod tests {
     fn host_platform_key() -> Option<String> {
         let os = match env::consts::OS {
             "macos" => "darwin",
+            "windows" => "win32",
             other => other,
         };
         let cpu = match env::consts::ARCH {

@@ -31,8 +31,7 @@ use anyhow::{Context, Result, bail};
 use flate2::Compression;
 use flate2::GzBuilder;
 use flate2::read::GzDecoder;
-use zip::write::FileOptions;
-use zip::write::SimpleFileOptions;
+use zip::write::{FileOptions, SimpleFileOptions};
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 /// The release targets accepted by the packaging step.
@@ -342,7 +341,12 @@ fn write_resource_fork_zip(stage: &Path, archive: &Path) -> Result<()> {
 /// Write every staged file into a deflated zip archive.
 ///
 /// Only regular files are written, keyed by their staging-relative POSIX path,
-/// matching Python's `stage.rglob('*')` selection.
+/// matching Python's `stage.rglob('*')` selection. Every entry records the
+/// staged file's `stat` mode so executable bits survive Unix extraction,
+/// mirroring what CPython's `zipfile` packaging recorded: Unix hosts preserve
+/// the filesystem mode including the executable bit, while Windows hosts
+/// emulate `os.stat` (Windows cannot express an executable bit; the recorded
+/// mode reflects readability instead).
 ///
 /// # Arguments
 ///
@@ -351,7 +355,8 @@ fn write_resource_fork_zip(stage: &Path, archive: &Path) -> Result<()> {
 ///
 /// # Errors
 ///
-/// Returns an error when the staged tree or the archive cannot be written.
+/// Returns an error when the staged tree or archive cannot be written or
+/// finished.
 fn write_zip(stage: &Path, archive: &Path) -> Result<()> {
     let output = fs::File::create(archive).with_context(|| format!("failed to create {}", archive.display()))?;
     let mut writer = ZipWriter::new(output);
@@ -361,11 +366,12 @@ fn write_zip(stage: &Path, archive: &Path) -> Result<()> {
     collect_relative_files(stage, Path::new(""), &mut relative_paths)?;
     relative_paths.sort();
     for relative_path in relative_paths {
+        let source = stage.join(&relative_path);
+        let recorded_mode = recorded_file_mode(&source).with_context(|| format!("failed to read the mode of {}", source.display()))?;
         let name = relative_path.to_string_lossy().replace('\\', "/");
-        let bytes =
-            fs::read(stage.join(&relative_path)).with_context(|| format!("failed to read {}", stage.join(&relative_path).display()))?;
+        let bytes = fs::read(&source).with_context(|| format!("failed to read {}", source.display()))?;
         writer
-            .start_file(name, options)
+            .start_file(name, options.unix_permissions(recorded_mode))
             .with_context(|| format!("failed to add an entry to {}", archive.display()))?;
         writer
             .write_all(&bytes)
@@ -373,6 +379,30 @@ fn write_zip(stage: &Path, archive: &Path) -> Result<()> {
     }
     writer.finish().with_context(|| format!("failed to finish {}", archive.display()))?;
     Ok(())
+}
+
+/// Report the staged file's `stat` mode recorded in zip entries.
+///
+/// # Arguments
+///
+/// * `path` - The staged file whose recorded mode is needed.
+///
+/// # Returns
+///
+/// Returns the full `stat` mode. Unix hosts report the filesystem mode, which
+/// carries the executable bit unchanged; Windows hosts emulate CPython's
+/// `os.stat` result because Windows cannot express an executable bit.
+fn recorded_file_mode(path: &Path) -> std::io::Result<u32> {
+    let permissions = fs::metadata(path)?.permissions();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        Ok(permissions.mode())
+    }
+    #[cfg(not(unix))]
+    {
+        if permissions.readonly() { Ok(0o100444) } else { Ok(0o100666) }
+    }
 }
 
 /// Collect every regular file below a directory as a staging-relative path.
@@ -763,6 +793,51 @@ mod tests {
             "expected {expected:?} in {:?}",
             error.to_string()
         );
+    }
+
+    /// Return the archive index of one entry name.
+    fn zip_entry_index(reader: &mut zip::ZipArchive<fs::File>, name: &str) -> Result<usize> {
+        for index in 0..reader.len() {
+            let entry_name = reader
+                .by_index(index)?
+                .name()
+                .expect("archive entry names are readable")
+                .into_owned();
+            if entry_name == name {
+                return Ok(index);
+            }
+        }
+        bail!("{name} is missing from the zip archive");
+    }
+
+    #[test]
+    fn release_fallback_zip_records_staged_file_modes() -> Result<()> {
+        // Pick a target whose packaging path never uses ditto on any host so
+        // the fallback zip writer is exercised. On apple-darwin hosts the
+        // Windows MSVC target is packaged right here too, so both are safe.
+        let zip_target = "x86_64-pc-windows-msvc";
+        let fixture = Fixture::new()?;
+        let binary = fixture.binary()?;
+        let destination = TempDir::new()?;
+        let archive = package_release_with(
+            fixture.root(),
+            &binary,
+            zip_target,
+            FIXTURE_VERSION,
+            destination.path(),
+            &no_licensing_verification,
+        )?;
+
+        let mut reader = zip::ZipArchive::new(fs::File::open(&archive)?)?;
+        let executable = release_binary_name(zip_target);
+        let binary_index = zip_entry_index(&mut reader, executable)?;
+        let binary_mode = reader.by_index(binary_index)?.unix_mode().unwrap_or_default();
+        assert_eq!(binary_mode & 0o777, 0o755, "the packaged executable must stay executable");
+
+        let license_index = zip_entry_index(&mut reader, LICENSE_NAME)?;
+        let license_mode = reader.by_index(license_index)?.unix_mode().unwrap_or_default();
+        assert_eq!(license_mode & 0o777, 0o644, "legal files must keep their readable mode");
+        Ok(())
     }
 
     #[test]

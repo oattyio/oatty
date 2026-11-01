@@ -602,9 +602,18 @@ fn npm_command(arguments: &[String], working_directory: Option<&Path>) -> Comman
 }
 
 /// Return the argv prefix used to invoke npm, honoring `NPM_CLI`.
+///
+/// Windows resolves npm first here because `npm` is a `.cmd` wrapper and
+/// `Command::new("npm")` cannot launch it: Rust's process creation does not
+/// apply `PATHEXT`, so plain `npm` probes fail before availability is ever
+/// tested. Invoking the documented wrapper name `npm.cmd` resolves on `PATH`
+/// and launches through the shell handling in the standard library.
 fn npm_prefix() -> Vec<String> {
     if let Some(cli) = std::env::var_os("NPM_CLI").filter(|value| !value.is_empty()) {
         return vec!["node".to_owned(), cli.to_string_lossy().into_owned()];
+    }
+    if std::env::consts::OS == "windows" {
+        return vec!["npm.cmd".to_owned()];
     }
     vec!["npm".to_owned()]
 }
