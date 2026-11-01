@@ -10,33 +10,33 @@
     ],
     "vcs-commit": "0a81fd6928ea3b33c8cd484aa4575d50ffb98012"
   },
-  "aws-lc-sys@0.45.0": {
-    "crate-checksum": "9bff6c3b54fad79a2e60b8102caf565819711497c1f5f092f49508e2f5c31b27",
+  "aws-lc-sys@0.47.0": {
+    "crate-checksum": "8bfbe32ac36b3c428696ce315464181bc4029d689fd58e3f2a4e58c252242f52",
     "files": [
       {
-        "file": "aws-lc-sys-0.45.0-builder-main.rs-header.txt",
+        "file": "aws-lc-sys-0.47.0-builder-main.rs-header.txt",
         "sha256": "3298d128e09ee9e6fed2039bf9e6ef3131ea2c5e5d37710fc61e250dc74263dc",
-        "source": "https://static.crates.io/crates/aws-lc-sys/aws-lc-sys-0.45.0.crate#builder/main.rs:1-4",
+        "source": "https://static.crates.io/crates/aws-lc-sys/aws-lc-sys-0.47.0.crate#builder/main.rs:1-4",
         "source-path": "builder/main.rs",
-        "source-sha256": "d97291c63449110d16a01df0b71bdeeca597c8379173c158298b097014e89c6a"
+        "source-sha256": "c6d21709e49e952cd068b1ec2b99aa27552192f579db3137da6ce1f12280c88a"
       }
     ],
     "reason": "Preserve actual source-header copyright/grant notices in addition to all packaged license files; full selected license terms are included in THIRD-PARTY-NOTICES.txt.",
-    "vcs-commit": "7943223c99d909bc399bdf1b856821bb04f1f3c5"
+    "vcs-commit": "5d496f88b40f327e28315deecc1a5a1fd1e81e95"
   },
-  "brotli-decompressor@6.0.1": {
-    "crate-checksum": "941cd9bd4ddab83cb46fa5a2d428f1c857b24ac78cb876cf7beb710840934bd7",
+  "brotli-decompressor@6.2.0": {
+    "crate-checksum": "34c6783f42c21c952ad7112b354f0ba2f10760e9decea5b1b60523d6e270faaf",
     "files": [
       {
-        "file": "brotli-decompressor-6.0.1-src-context.rs-header.txt",
+        "file": "brotli-decompressor-6.2.0-src-context.rs-header.txt",
         "sha256": "5395155e88c8736f4ea46123bf481894fae46665e740e73571055e36bb95da94",
-        "source": "https://raw.githubusercontent.com/dropbox/rust-brotli-decompressor/e4f3bf3326256a5dc23e5fa9276d803f6a4ad527/src/context.rs#L5-L9",
+        "source": "https://raw.githubusercontent.com/dropbox/rust-brotli-decompressor/072acf0f7b7514144e90eaabf2d46d4d0617d94e/src/context.rs#L5-L9",
         "source-path": "src/context.rs",
         "source-sha256": "8fe7865962916fa7ce820b9fb407e6a2dd9b9c373191ad4a41c507b6be373e40"
       }
     ],
     "reason": "Preserve actual source-header copyright/grant notices in addition to all packaged license files; full selected license terms are included in THIRD-PARTY-NOTICES.txt.",
-    "vcs-commit": "e4f3bf3326256a5dc23e5fa9276d803f6a4ad527"
+    "vcs-commit": "072acf0f7b7514144e90eaabf2d46d4d0617d94e"
   },
   "chrono@0.4.45": {
     "crate-checksum": "1aa79e62e7697b8e29b513a68abacf485adcd1fe8284a4316c5ae868e6633327",
@@ -73,11 +73,12 @@
     "reason": "Preserve actual source-header copyright/grant notices in addition to all packaged license files; full selected license terms are included in THIRD-PARTY-NOTICES.txt.",
     "vcs-commit": "170338250e836976a211e64728ec956e45e78a39"
   },
-  "clipboard-win@5.4.1": {
-    "crate-checksum": "bde03770d3df201d4fb868f2c9c59e66a3e4e2bd06692a0fe701e7103c7e84d4",
+  "clipboard-win@5.4.3": {
+    "crate-checksum": "052af7878466feccda12ba7a6a67d019d712f296809559b47c12c8cc196d3a9a",
     "files": [],
     "reason": "BSL-1.0 explicitly exempts distributions solely as machine-executable object code from retaining its copyright notices; the complete selected BSL-1.0 text is included in THIRD-PARTY-NOTICES.txt. This crate has no separate notice files in its published source.",
-    "source": "https://static.crates.io/crates/clipboard-win/clipboard-win-5.4.1.crate"
+    "source": "https://static.crates.io/crates/clipboard-win/clipboard-win-5.4.3.crate",
+    "vcs-commit": "ed27008ae5d1f10cfbb266de039f0fb35fd05a56"
   },
   "fxhash@0.2.1": {
     "crate-checksum": "c31b6d751ae2c7f11320402d34e41349dd1016f8d5d45e48c4312bc8625af50c",

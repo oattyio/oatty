@@ -176,7 +176,7 @@ class DistributionContracts(unittest.TestCase):
                       (evidence / 'alloc-stdlib-0.3.0/alloc-stdlib-0.3.0-LICENSE.txt').read_text())
         self.assertIn('Apple SDKs', (evidence / 'objc2-foundation-0.3.2/objc2-LICENSE.md').read_text())
         self.assertIn('Copyright 2013 Google Inc.',
-                      (evidence / 'brotli-decompressor-6.0.1/brotli-decompressor-6.0.1-src-context.rs-header.txt').read_text())
+                      (evidence / 'brotli-decompressor-6.2.0/brotli-decompressor-6.2.0-src-context.rs-header.txt').read_text())
         self.assertIn('John Nagle',
                       (evidence / 'chrono-0.4.45/chrono-0.4.45-src-format-parse.rs-header.txt').read_text())
         self.assertIn('license = "MIT/Apache-2.0"',
