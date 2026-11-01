@@ -38,6 +38,10 @@ npm i -g oatty
 oatty --help
 ```
 
+Installation works with lifecycle scripts disabled (`npm i -g oatty --ignore-scripts`). npm installs the matching binary package for macOS x64/arm64, Linux x64 with glibc, or Windows x64; Node 18 or newer is required. Linux musl and other architectures are unsupported.
+
+Keep optional dependencies enabled: they contain the executable. If Oatty reports a missing `@oattyio/cli-*` package, reinstall with `npm i -g oatty --include=optional --ignore-scripts`. For a project install, run `npm i oatty --include=optional --ignore-scripts` and launch with `npx oatty`. npm fetches the executable as a package; installation and launch require no downloader or install scripts.
+
 ### from source
 
 ```bash

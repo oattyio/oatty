@@ -3,14 +3,14 @@
 use std::{
     fs,
     io::{Read, Write},
-    net::TcpListener,
+    net::{TcpListener, TcpStream},
     path::Path,
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use self_update::{Release, ReleaseAsset, ReleaseSource};
@@ -21,6 +21,12 @@ use super::{ArchiveRetention, release_directory, validate_archive_name};
 const NEW_BINARY: &[u8] = b"new executable bytes\n";
 const MAC_NAME: &str = "oatty-v1.1.0-aarch64-apple-darwin.zip";
 const MAC_ZIP: &[u8] = include_bytes!("fixtures/macos.zip");
+
+/// Bound on the update client's HTTP request line and headers, once complete.
+const MAXIMUM_REQUEST_BYTES: usize = 16384;
+
+/// Total wait before a connected client that never finishes its request is abandoned.
+const REQUEST_HEADER_DEADLINE: Duration = Duration::from_secs(5);
 
 struct FixtureServer {
     url: String,
@@ -42,25 +48,12 @@ impl FixtureServer {
             while !worker_stopped.load(Ordering::SeqCst) {
                 match listener.accept() {
                     Ok((mut connection, _)) => {
-                        connection.set_read_timeout(Some(Duration::from_secs(5))).expect("read timeout");
-                        let mut request = Vec::new();
-                        let mut buffer = [0; 1024];
-                        while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
-                            let length = connection.read(&mut buffer).expect("request headers");
-                            assert!(length > 0 && request.len() < 16384, "bounded HTTP request");
-                            request.extend_from_slice(&buffer[..length]);
-                        }
-                        write!(
-                            connection,
-                            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                            payload.len()
-                        )
-                        .expect("response headers");
-                        connection.write_all(payload).expect("response archive");
-                        worker_requests.fetch_add(1, Ordering::SeqCst);
+                        serve_connection(&mut connection, payload, &worker_requests);
                     }
                     Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => thread::sleep(Duration::from_millis(2)),
-                    Err(error) => panic!("loopback accept: {error}"),
+                    // A dead listener cannot serve anything; exit so subsequent requests
+                    // fail fast with a transport error instead of hanging.
+                    Err(_) => break,
                 }
             }
         });
@@ -76,8 +69,54 @@ impl FixtureServer {
 impl Drop for FixtureServer {
     fn drop(&mut self) {
         self.stopped.store(true, Ordering::SeqCst);
-        self.worker.take().expect("server worker").join().expect("server completed");
+        if let Some(worker) = self.worker.take() {
+            // A panicked worker already surfaced its own failure to the test that used
+            // it. Joining quietly keeps teardown from turning that first failure into a
+            // second, non-unwinding panic that aborts the whole test binary.
+            let _ = worker.join();
+        }
     }
+}
+
+/// Serves one HTTP request on `connection`, responding with `payload`, and increments
+/// `requests` once the complete response has been written.
+///
+/// Returns whether the response was delivered. Connection-level hiccups — read
+/// timeouts, a peer that never sends or hangs up early, oversized requests, write
+/// failures — all abandon that connection gracefully so a flaky socket can never
+/// panic the fixture worker.
+fn serve_connection(connection: &mut TcpStream, payload: &[u8], requests: &AtomicUsize) -> bool {
+    if connection.set_read_timeout(Some(Duration::from_secs(5))).is_err() {
+        return false;
+    }
+    let mut request = Vec::new();
+    let mut buffer = [0; 1024];
+    let deadline = Instant::now() + REQUEST_HEADER_DEADLINE;
+    while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+        if Instant::now() > deadline {
+            return false;
+        }
+        match connection.read(&mut buffer) {
+            Ok(0) => return false,
+            Ok(length) if request.len() + length > MAXIMUM_REQUEST_BYTES => return false,
+            Ok(length) => request.extend_from_slice(&buffer[..length]),
+            Err(error) if matches!(error.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                // The 5s read timeout can fire repeatedly for a slow peer; the deadline
+                // checked above bounds the total wait.
+            }
+            Err(_) => return false,
+        }
+    }
+    let response_headers = format!("HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", payload.len());
+    let delivered = connection
+        .write_all(response_headers.as_bytes())
+        .and_then(|()| connection.write_all(payload))
+        .and_then(|()| connection.flush())
+        .is_ok();
+    if delivered {
+        requests.fetch_add(1, Ordering::SeqCst);
+    }
+    delivered
 }
 
 struct FixtureSource(Release);
