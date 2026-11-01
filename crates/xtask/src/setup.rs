@@ -107,8 +107,10 @@ fn ensure_local_environment(root: &std::path::Path) -> Result<()> {
         return Ok(());
     }
     std::fs::copy(root.join(".env.example"), &env_path).context("failed to create .env from .env.example")?;
-    println!("Created .env file - please edit it with your API key");
-    println!("Do not forget to set OATTY_API_TOKEN in .env!");
+    println!("Created .env from .env.example (informational only;");
+    println!("nothing loads .env automatically).");
+    println!("Configure API credentials via catalog header interpolation");
+    println!("(e.g. an Authorization header using ${{env:...}} or ${{secret:...}})");
     Ok(())
 }
 
@@ -147,7 +149,8 @@ fn run_workspace_check(description: &str, arguments: &[&str]) -> Result<bool> {
 fn print_next_steps() {
     println!();
     println!("Next steps:");
-    println!("  1. Edit .env with your Oatty API key");
+    println!("  1. Configure API credentials via catalog header");
+    println!("     interpolation (e.g. an Authorization header)");
     println!("  2. Run the TUI: cargo run -p oatty-cli");
     println!("  3. Or run CLI commands: make run-cli ARGS=\"apps list\"");
     println!("Documentation: DEVELOPMENT.md, ARCHITECTURE.md, README.md");

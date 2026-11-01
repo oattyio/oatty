@@ -81,9 +81,14 @@ assert!(!results.is_empty());
 
 ```rust
 use oatty_engine::{parse_workflow_file, RunContext, execute_workflow_with_runner, RegistryCommandRunner};
+use oatty_registry::CommandRegistry;
 
-// Requires OATTY_API_TOKEN in the environment
-let runner = RegistryCommandRunner::from_env()?;
+// Build the runner from the loaded catalog configuration. Header values (for
+// example an `Authorization` header using `${env:...}` or `${secret:...}`)
+// are interpolated by the registry at execution time.
+let registry = CommandRegistry::from_config()?;
+let runner = RegistryCommandRunner::new(registry);
+// Illustrative path; replace with a workflow file available in your installation.
 let bundle = parse_workflow_file("crates/engine/workflows/collaborator_lifecycle.yaml")?;
 let spec = bundle.workflows.values().next().unwrap();
 
@@ -165,7 +170,7 @@ The engine supports rich template expressions for dynamic value resolution:
 ### Environment Variables
 ```yaml
 region: "${{ env.REGION }}"
-api_key: "${{ env.OATTY_API_TOKEN }}"
+api_key: "${{ env.DEPLOY_API_KEY }}"
 ```
 
 ### Workflow Inputs

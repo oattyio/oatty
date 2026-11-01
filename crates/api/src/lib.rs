@@ -4,7 +4,7 @@
 //! It focuses on:
 //!
 //! - Constructing an HTTP client with sensible defaults
-//! - Discovering credentials from `OATTY_API_TOKEN`
+//! - Applying authentication headers supplied explicitly by the caller
 //! - Validating base URLs for safety
 //! - Building requests with a consistent User-Agent and Accept headers
 //!
@@ -49,7 +49,9 @@ const DEFAULT_ACCEPT_HEADER: &str = "application/json";
 /// Thin wrapper around a configured `reqwest::Client` for Oatty API access.
 ///
 /// The client pre-configures default headers and builds requests against a
-/// validated base URL. Authentication is read from the environment only.
+/// validated base URL. Authentication headers are supplied by the caller via
+/// the `headers` parameter (typically interpolated from `${env:...}` or
+/// `${secret:...}` catalog configuration by the registry).
 pub struct OattyClient {
     pub base_url: String,
     pub http: Client,
@@ -62,7 +64,9 @@ impl OattyClient {
     /// # Arguments
     ///
     /// * `base_url` - The full base URL for API requests (for example, `https://api.example.com`).
-    /// * `headers` - Additional headers (for example, `Authorization`) pulled from the current environment.
+    /// * `headers` - Additional headers (for example, `Authorization`) whose
+    ///   values the caller has already resolved (typically via `${env:...}` or
+    ///   `${secret:...}` interpolation in catalog configuration).
     ///
     /// # Returns
     ///
