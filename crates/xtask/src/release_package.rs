@@ -813,8 +813,9 @@ mod tests {
     #[test]
     fn release_fallback_zip_records_staged_file_modes() -> Result<()> {
         // Pick a target whose packaging path never uses ditto on any host so
-        // the fallback zip writer is exercised. On apple-darwin hosts the
-        // Windows MSVC target is packaged right here too, so both are safe.
+        // the fallback zip writer is exercised. The Windows MSVC target is
+        // packaged on every host, including apple-darwin hosts, so it always
+        // takes the fallback zip path.
         let zip_target = "x86_64-pc-windows-msvc";
         let fixture = Fixture::new()?;
         let binary = fixture.binary()?;
@@ -832,11 +833,24 @@ mod tests {
         let executable = release_binary_name(zip_target);
         let binary_index = zip_entry_index(&mut reader, executable)?;
         let binary_mode = reader.by_index(binary_index)?.unix_mode().unwrap_or_default();
-        assert_eq!(binary_mode & 0o777, 0o755, "the packaged executable must stay executable");
-
         let license_index = zip_entry_index(&mut reader, LICENSE_NAME)?;
         let license_mode = reader.by_index(license_index)?.unix_mode().unwrap_or_default();
-        assert_eq!(license_mode & 0o777, 0o644, "legal files must keep their readable mode");
+        // Unix hosts record the real filesystem mode, so the executable bit
+        // written by the fixture setup survives extraction.
+        #[cfg(unix)]
+        {
+            assert_eq!(binary_mode & 0o777, 0o755, "the packaged executable must stay executable");
+            assert_eq!(license_mode & 0o777, 0o644, "legal files must keep their readable mode");
+        }
+        // Windows fixtures are plain writable files (chmod cannot express an
+        // executable bit) and zip 9 records `System::Dos` entries there: its
+        // `unix_mode` read-back maps a writable regular file to 0o100664, so
+        // both entries carry the writable mapping instead of Unix modes.
+        #[cfg(not(unix))]
+        {
+            assert_eq!(binary_mode & 0o777, 0o664, "Windows writable files must record the DOS mapping");
+            assert_eq!(license_mode & 0o777, 0o664, "Windows writable files must record the DOS mapping");
+        }
         Ok(())
     }
 
