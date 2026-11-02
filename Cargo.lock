@@ -2286,7 +2286,7 @@ dependencies = [
 
 [[package]]
 name = "oatty"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "clap",
@@ -2311,7 +2311,7 @@ dependencies = [
 
 [[package]]
 name = "oatty-api"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "indexmap",
@@ -2322,7 +2322,7 @@ dependencies = [
 
 [[package]]
 name = "oatty-engine"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2342,7 +2342,7 @@ dependencies = [
 
 [[package]]
 name = "oatty-mcp"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2376,7 +2376,7 @@ dependencies = [
 
 [[package]]
 name = "oatty-registry"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "clap",
@@ -2398,7 +2398,7 @@ dependencies = [
 
 [[package]]
 name = "oatty-registry-gen"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "heck",
@@ -2413,7 +2413,7 @@ dependencies = [
 
 [[package]]
 name = "oatty-tui"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "arboard",
@@ -2444,7 +2444,7 @@ dependencies = [
 
 [[package]]
 name = "oatty-types"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2460,7 +2460,7 @@ dependencies = [
 
 [[package]]
 name = "oatty-util"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2483,7 +2483,7 @@ dependencies = [
 
 [[package]]
 name = "oatty-xtask"
-version = "0.1.12"
+version = "0.1.13"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
