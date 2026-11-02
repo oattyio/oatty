@@ -1,6 +1,6 @@
 {
   "name": "oatty",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "description": "API access for agents through MCP and OpenAPI, with a shared terminal command catalog",
   "license": "MIT",
   "repository": {
@@ -40,9 +40,9 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "@oattyio/cli-darwin-x64": "0.1.14",
-    "@oattyio/cli-darwin-arm64": "0.1.14",
-    "@oattyio/cli-linux-x64": "0.1.14",
-    "@oattyio/cli-win32-x64": "0.1.14"
+    "@oattyio/cli-darwin-x64": "0.1.15",
+    "@oattyio/cli-darwin-arm64": "0.1.15",
+    "@oattyio/cli-linux-x64": "0.1.15",
+    "@oattyio/cli-win32-x64": "0.1.15"
   }
 }
