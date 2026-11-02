@@ -14,6 +14,7 @@ mod context;
 mod licenses;
 mod npm_package;
 mod npm_publish;
+mod paths;
 mod release_metadata;
 mod release_package;
 mod setup;
