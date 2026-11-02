@@ -368,7 +368,11 @@ fn ensure_published(archive: &Path, manifest: &Value, hooks: &PublishHooks<'_>) 
 ///
 /// Returns an error when the archive cannot be resolved or npm exits non-zero.
 fn publish_artifact(archive: &Path, name: &str, version: &str, hooks: &PublishHooks<'_>) -> Result<()> {
-    let resolved = fs::canonicalize(archive).with_context(|| format!("failed to resolve {}", archive.display()))?;
+    // npm cannot resolve `\\?\`-prefixed paths (npm turns `\\?\D:\...` into
+    // `file:D:/?/D/...`, see issue #97), so normalize before building npm argv.
+    let resolved = fs::canonicalize(archive)
+        .map(|resolved| crate::paths::normalize_windows_extended_length_path(&resolved))
+        .with_context(|| format!("failed to resolve {}", archive.display()))?;
     let resolved = resolved.to_string_lossy().into_owned();
     let prefix = (hooks.npm_command)()?;
     let outcome = (hooks.run_npm)(

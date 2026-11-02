@@ -822,7 +822,11 @@ fn set_executable_mode(_path: &Path) -> Result<()> {
 /// does not declare a safe package name and version, or the archive cannot be written.
 fn pack_stage_with(stage: &Path, destination: &Path) -> Result<PathBuf> {
     fs::create_dir_all(destination).with_context(|| format!("failed to create {}", destination.display()))?;
-    let resolved_destination = fs::canonicalize(destination).with_context(|| format!("failed to resolve {}", destination.display()))?;
+    // npm cannot resolve `\\?\`-prefixed paths (npm turns `\\?\D:\...` into
+    // `file:D:/?/D/...`, see issue #97), so normalize before any npm-facing use.
+    let resolved_destination = fs::canonicalize(destination)
+        .map(|resolved| crate::paths::normalize_windows_extended_length_path(&resolved))
+        .with_context(|| format!("failed to resolve {}", destination.display()))?;
 
     let manifest = staged_manifest(stage)?;
     let package_name = manifest
@@ -1878,6 +1882,43 @@ mod tests {
         let second = pack_stage_with(&stage, &fixture.scratch("determinism-second"))?;
         assert_eq!(first.file_name(), second.file_name());
         assert_eq!(fs::read(&first)?, fs::read(&second)?);
+        Ok(())
+    }
+
+    #[test]
+    fn npm_distribution_packed_archive_paths_are_npm_argument_safe() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let binary = fixture.write_binary(FIXTURE_BINARY)?;
+        let hooks = fixture_hooks(&no_licensing_verification);
+        let platforms = fixture.platforms()?;
+        let platform = &platforms["win32-x64"];
+
+        let native = package_binary_with(
+            fixture.root(),
+            &binary,
+            &platform.target_triple,
+            &fixture.scratch("npm-safe-native"),
+            &hooks,
+        )?;
+        let umbrella = package_umbrella_with(fixture.root(), &fixture.scratch("npm-safe-umbrella"), &hooks)?;
+
+        // The returned archive paths feed npm install/publish arguments, so they must
+        // be ordinary absolute paths; npm mangles `\\?\D:\...` into `file:D:/?/...`
+        // and fails with ENOENT (issue #97).
+        for packed_archive in [native, umbrella] {
+            assert!(packed_archive.is_absolute(), "packing must return an absolute archive path");
+            assert!(
+                packed_archive.is_file(),
+                "the packed archive must exist: {}",
+                packed_archive.display()
+            );
+            #[cfg(windows)]
+            assert!(
+                !packed_archive.as_os_str().to_string_lossy().starts_with("\\\\?\\"),
+                "packed archives must not carry the extended-length prefix: {}",
+                packed_archive.display()
+            );
+        }
         Ok(())
     }
 
