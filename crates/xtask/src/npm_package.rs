@@ -1,29 +1,26 @@
 //! Pack script-free npm packages from verified legal files and unchanged executables.
 //!
-//! Ported from `scripts/package-npm.py`. Packaging always runs `npm pack` against an
-//! isolated staging directory with lifecycle scripts explicitly disabled, and every
-//! produced archive is re-verified before its path is returned. Behavior is
-//! fail-closed throughout: licensing materials must verify before packing, every
-//! archive is re-verified against the current legal bytes afterwards, signed
-//! executable bytes must stay byte-for-byte identical, and tar metadata is normalized
-//! so that npm archives built on Windows still carry Unix execute bits.
+//! Ported from `scripts/package-npm.py`. Packaging stages an isolated directory and
+//! writes it into a deterministic in-process tar.gz archive, so release builds never
+//! depend on npm's tar implementation. Every produced archive is re-verified before
+//! its path is returned. Behavior is fail-closed throughout: licensing materials must
+//! verify before packing, every archive is re-verified against the current legal bytes
+//! afterwards, and signed executable bytes must stay byte-for-byte identical.
 //!
 //! `npm_publish` consumes [`npm_command`], [`root_manifest`], [`load_platforms`], and
 //! [`verify_artifact`], so keep their signatures stable.
 //!
 //! # Testability
 //!
-//! Licensing materials and the npm toolchain are reachable only through
-//! [`crate::licenses::verify`], [`crate::licenses::inventory`], and a child process.
-//! [`PackagingHooks`] injects all three so unit tests run against deterministic
-//! stand-ins instead of the real materials and the real npm installation.
+//! Licensing materials are reachable only through [`crate::licenses::verify`] and
+//! [`crate::licenses::inventory`]. [`PackagingHooks`] injects both so unit tests run
+//! against deterministic stand-ins instead of the real materials.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::fs;
-use std::io::{Cursor, Read};
+use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use flate2::Compression;
@@ -419,18 +416,13 @@ pub(crate) fn verify_artifact(root: &Path, archive: &Path, platform: Option<&Pla
 /// The replaceable collaborators npm packaging depends on.
 ///
 /// Production code uses [`PackagingHooks::production`]. Unit tests substitute a no-op
-/// licensing verifier, a deterministic licensing inventory, a fixed npm argv prefix,
-/// and an in-process npm runner so they never require the real licensing materials,
-/// the real npm toolchain, or network access.
+/// licensing verifier and a deterministic licensing inventory so they never require
+/// the real licensing materials or network access.
 struct PackagingHooks<'a> {
     /// Rejects missing, stale, edited, or extra licensing materials.
     verify_licenses: &'a dyn Fn(&Path) -> Result<()>,
     /// Returns the relative-path-to-sha256 inventory of generated materials.
     inventory_legal_files: &'a dyn Fn(&Path) -> Result<BTreeMap<String, String>>,
-    /// Returns the npm argv prefix to execute.
-    npm_command: &'a dyn Fn() -> Result<Vec<String>>,
-    /// Executes the npm argv prefix in the supplied working directory.
-    run_npm: &'a dyn Fn(&[String], &Path) -> Result<CommandOutcome>,
 }
 
 impl PackagingHooks<'static> {
@@ -438,58 +430,13 @@ impl PackagingHooks<'static> {
     ///
     /// # Returns
     ///
-    /// Returns hooks backed by the real licensing module and the real npm process.
+    /// Returns hooks backed by the real licensing module.
     fn production() -> Self {
         Self {
             verify_licenses: &crate::licenses::verify,
             inventory_legal_files: &crate::licenses::inventory,
-            npm_command: &npm_command,
-            run_npm: &run_npm_command,
         }
     }
-}
-
-/// The captured outcome of one npm child process.
-struct CommandOutcome {
-    /// Whether npm reported a successful exit status.
-    exit_success: bool,
-    /// The standard output captured from npm.
-    standard_output: Vec<u8>,
-    /// The standard error captured from npm, decoded lossily for messages.
-    standard_error: String,
-}
-
-/// Execute npm and capture its output.
-///
-/// Lifecycle scripts and the npm cache are pinned through the environment so a
-/// staging directory can never execute package scripts or touch a shared cache.
-///
-/// # Arguments
-///
-/// * `arguments` - The full argv prefix, whose first element is the program.
-/// * `working_directory` - The isolated staging directory npm runs inside.
-///
-/// # Returns
-///
-/// Returns the captured exit status and output.
-///
-/// # Errors
-///
-/// Returns an error when the child process cannot be spawned.
-fn run_npm_command(arguments: &[String], working_directory: &Path) -> Result<CommandOutcome> {
-    let (program, program_arguments) = arguments.split_first().ok_or_else(|| anyhow!("The npm command is empty"))?;
-    let output = Command::new(program)
-        .args(program_arguments)
-        .current_dir(working_directory)
-        .env("npm_config_ignore_scripts", "true")
-        .env("npm_config_cache", working_directory.join(".npm-cache"))
-        .output()
-        .with_context(|| format!("failed to execute {program} in {}", working_directory.display()))?;
-    Ok(CommandOutcome {
-        exit_success: output.status.success(),
-        standard_output: output.stdout,
-        standard_error: String::from_utf8_lossy(&output.stderr).into_owned(),
-    })
 }
 
 /// Pack one native payload using the supplied collaborators.
@@ -500,7 +447,7 @@ fn run_npm_command(arguments: &[String], working_directory: &Path) -> Result<Com
 /// * `binary` - The native executable to embed unchanged.
 /// * `target` - The Rust target triple the executable was built for.
 /// * `destination` - The directory to write the tarball into.
-/// * `hooks` - The licensing and npm collaborators, injectable for tests.
+/// * `hooks` - The licensing collaborators, injectable for tests.
 ///
 /// # Returns
 ///
@@ -508,8 +455,9 @@ fn run_npm_command(arguments: &[String], working_directory: &Path) -> Result<Com
 ///
 /// # Errors
 ///
-/// Returns an error when licensing verification fails, the target is unsupported, npm
-/// fails, or the packed executable bytes differ from the input bytes.
+/// Returns an error when licensing verification fails, the target is unsupported, the
+/// staged tree cannot be archived, or the packed executable bytes differ from the
+/// input bytes.
 fn package_binary_with(root: &Path, binary: &Path, target: &str, destination: &Path, hooks: &PackagingHooks<'_>) -> Result<PathBuf> {
     (hooks.verify_licenses)(root)?;
     let platforms = load_platforms(root)?;
@@ -523,7 +471,39 @@ fn package_binary_with(root: &Path, binary: &Path, target: &str, destination: &P
         .tempdir()
         .context("failed to create the npm staging directory")?;
     let stage = stage_directory.path();
-    stage_legal_files(root, stage, hooks.inventory_legal_files)?;
+    stage_native_payload(root, stage, platform, binary, hooks.inventory_legal_files)?;
+
+    let archive = pack_stage_with(stage, destination)?;
+    let (contents, _) = verify_artifact_with(root, &archive, Some(platform), hooks.inventory_legal_files)?;
+    let binary_name = format!("bin/{}", platform.binary);
+    verify_packed_executable(binary, &contents, &binary_name)?;
+    Ok(archive)
+}
+
+/// Stage one native payload into an isolated directory.
+///
+/// The staged tree contains the verified legal materials, dependency-free metadata,
+/// the unchanged executable, and the static installed-version marker.
+///
+/// # Arguments
+///
+/// * `root` - The workspace root directory.
+/// * `stage` - The staging directory to populate.
+/// * `platform` - The platform contract being packed.
+/// * `binary` - The signed/notarized native executable to embed unchanged.
+/// * `inventory_legal_files` - Returns the generated-material inventory.
+///
+/// # Errors
+///
+/// Returns an error when any staging write fails or the root manifest is invalid.
+fn stage_native_payload(
+    root: &Path,
+    stage: &Path,
+    platform: &Platform,
+    binary: &Path,
+    inventory_legal_files: &dyn Fn(&Path) -> Result<BTreeMap<String, String>>,
+) -> Result<()> {
+    stage_legal_files(root, stage, inventory_legal_files)?;
     write_manifest(stage, &payload_manifest(root, platform)?)?;
 
     let bin_directory = stage.join("bin");
@@ -541,16 +521,7 @@ fn package_binary_with(root: &Path, binary: &Path, target: &str, destination: &P
     write_document(
         &bin_directory.join(INSTALLED_VERSION_MARKER_FILE_NAME),
         format!("{version}\n").as_bytes(),
-    )?;
-
-    let archive = pack_stage_with(stage, destination, hooks)?;
-    let (contents, _) = verify_artifact_with(root, &archive, Some(platform), hooks.inventory_legal_files)?;
-    let binary_name = format!("bin/{}", platform.binary);
-    let original_bytes = fs::read(binary).with_context(|| format!("failed to read {}", binary.display()))?;
-    if contents.files.get(&binary_name).map(Vec::as_slice) != Some(original_bytes.as_slice()) {
-        bail!("npm packing changed signed executable bytes");
-    }
-    Ok(archive)
+    )
 }
 
 /// Pack the umbrella launcher package using the supplied collaborators.
@@ -559,7 +530,7 @@ fn package_binary_with(root: &Path, binary: &Path, target: &str, destination: &P
 ///
 /// * `root` - The workspace root directory.
 /// * `destination` - The directory to write the tarball into.
-/// * `hooks` - The licensing and npm collaborators, injectable for tests.
+/// * `hooks` - The licensing collaborators, injectable for tests.
 ///
 /// # Returns
 ///
@@ -567,8 +538,8 @@ fn package_binary_with(root: &Path, binary: &Path, target: &str, destination: &P
 ///
 /// # Errors
 ///
-/// Returns an error when licensing verification fails, npm fails, or the packed
-/// artifact deviates from the launcher package contract.
+/// Returns an error when licensing verification fails, the staged tree cannot be
+/// archived, or the packed artifact deviates from the launcher package contract.
 fn package_umbrella_with(root: &Path, destination: &Path, hooks: &PackagingHooks<'_>) -> Result<PathBuf> {
     (hooks.verify_licenses)(root)?;
 
@@ -577,16 +548,35 @@ fn package_umbrella_with(root: &Path, destination: &Path, hooks: &PackagingHooks
         .tempdir()
         .context("failed to create the npm staging directory")?;
     let stage = stage_directory.path();
-    stage_legal_files(root, stage, hooks.inventory_legal_files)?;
+    stage_umbrella_payload(root, stage, hooks.inventory_legal_files)?;
+
+    let archive = pack_stage_with(stage, destination)?;
+    verify_artifact_with(root, &archive, None, hooks.inventory_legal_files)?;
+    Ok(archive)
+}
+
+/// Stage the umbrella launcher package into an isolated directory.
+///
+/// # Arguments
+///
+/// * `root` - The workspace root directory.
+/// * `stage` - The staging directory to populate.
+/// * `inventory_legal_files` - Returns the generated-material inventory.
+///
+/// # Errors
+///
+/// Returns an error when any staging write fails or a first-party file is unreadable.
+fn stage_umbrella_payload(
+    root: &Path,
+    stage: &Path,
+    inventory_legal_files: &dyn Fn(&Path) -> Result<BTreeMap<String, String>>,
+) -> Result<()> {
+    stage_legal_files(root, stage, inventory_legal_files)?;
     write_manifest(stage, &umbrella_manifest(root)?)?;
     for name in UMBRELLA_FILES {
         write_document(&stage.join(name), &source_bytes(root, name)?)?;
     }
-    set_executable_mode(&stage.join(LAUNCHER_NAME))?;
-
-    let archive = pack_stage_with(stage, destination, hooks)?;
-    verify_artifact_with(root, &archive, None, hooks.inventory_legal_files)?;
-    Ok(archive)
+    set_executable_mode(&stage.join(LAUNCHER_NAME))
 }
 
 /// Construct dependency-free metadata for one exact-version native payload.
@@ -774,7 +764,7 @@ fn write_document(path: &Path, bytes: &[u8]) -> Result<()> {
 /// Mark one staged path as executable.
 ///
 /// Windows cannot express Unix execute bits in the filesystem, so archive metadata is
-/// normalized by [`normalize_executable_mode`] instead.
+/// derived from the entry name by [`staged_file_mode`] instead.
 ///
 /// # Arguments
 ///
@@ -808,43 +798,99 @@ fn set_executable_mode(_path: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Run guarded npm pack with all lifecycle execution explicitly disabled.
+/// Write one staged npm package into a deterministic tar.gz archive.
+///
+/// This replaces `npm pack` for staging so release builds never depend on npm's
+/// platform-specific tar implementation. The archive mirrors what npm produced: every
+/// staged file is stored below a top-level `package/` prefix, directories are implied
+/// by their children, entries are sorted for reproducibility, and each file carries
+/// mode 644 except the staged executable, which is always mode 755. The gzip header
+/// has a fixed zero timestamp, so identical inputs produce byte-identical archives.
 ///
 /// # Arguments
 ///
-/// * `stage` - The isolated staging directory npm packs.
+/// * `stage` - The isolated staging directory to archive.
 /// * `destination` - The directory receiving the tarball.
-/// * `hooks` - The licensing and npm collaborators, injectable for tests.
 ///
 /// # Returns
 ///
-/// Returns the absolute path of the single packed tarball.
+/// Returns the absolute path of the packed tarball.
 ///
 /// # Errors
 ///
-/// Returns an error when npm fails, reports anything other than exactly one plain
-/// artifact filename, or the packed executable cannot be normalized.
-fn pack_stage_with(stage: &Path, destination: &Path, hooks: &PackagingHooks<'_>) -> Result<PathBuf> {
+/// Returns an error when the staging directory cannot be read, the staged manifest
+/// does not declare a safe package name and version, or the archive cannot be written.
+fn pack_stage_with(stage: &Path, destination: &Path) -> Result<PathBuf> {
     fs::create_dir_all(destination).with_context(|| format!("failed to create {}", destination.display()))?;
     let resolved_destination = fs::canonicalize(destination).with_context(|| format!("failed to resolve {}", destination.display()))?;
 
-    let mut arguments = (hooks.npm_command)()?;
-    arguments.extend([
-        "pack".to_owned(),
-        "--ignore-scripts".to_owned(),
-        "--json".to_owned(),
-        "--pack-destination".to_owned(),
-        resolved_destination.to_string_lossy().into_owned(),
-    ]);
-    let outcome = (hooks.run_npm)(&arguments, stage)?;
-    if !outcome.exit_success {
-        bail!("npm pack failed in {}: {}", stage.display(), outcome.standard_error.trim());
+    let manifest = staged_manifest(stage)?;
+    let package_name = manifest
+        .get("name")
+        .and_then(Value::as_str)
+        .context("Staged npm package manifest must declare a name")?;
+    let version = manifest
+        .get("version")
+        .and_then(Value::as_str)
+        .context("Staged npm package manifest must declare a version")?;
+    let file_name = artifact_file_name(package_name, version);
+    if !is_plain_file_name(&file_name) {
+        bail!("Invalid npm artifact filename: {file_name}");
     }
 
-    let file_name = parse_pack_report(&outcome.standard_output)?;
     let archive = resolved_destination.join(file_name);
-    normalize_executable_mode(&archive, &staged_executable_name(stage))?;
+    write_staged_tarball(stage, &archive, &staged_executable_name(stage))?;
     Ok(archive)
+}
+
+/// Compute the artifact prefix npm uses for one package name.
+///
+/// npm strips the scope marker and flattens the scope separator, so
+/// `@oattyio/cli-linux-x64` becomes `oattyio-cli-linux-x64`.
+///
+/// # Arguments
+///
+/// * `package_name` - The package name declared in the staged manifest.
+///
+/// # Returns
+///
+/// Returns the artifact prefix without the version or extension.
+fn npm_artifact_name(package_name: &str) -> String {
+    package_name.replace('@', "").replace('/', "-")
+}
+
+/// Compute the tarball file name for one package name and version.
+///
+/// # Arguments
+///
+/// * `package_name` - The package name declared in the staged manifest.
+/// * `version` - The package version declared in the staged manifest.
+///
+/// # Returns
+///
+/// Returns `<scope-stripped-name>-<version>.tgz`, for example
+/// `oattyio-cli-linux-x64-0.1.14.tgz` or `oatty-0.1.14.tgz`.
+fn artifact_file_name(package_name: &str, version: &str) -> String {
+    format!("{}-{version}.tgz", npm_artifact_name(package_name))
+}
+
+/// Read and parse the manifest a staging directory will publish.
+///
+/// # Arguments
+///
+/// * `stage` - The isolated staging directory.
+///
+/// # Returns
+///
+/// Returns the parsed `package.json` value.
+///
+/// # Errors
+///
+/// Returns an error when the manifest is missing or malformed.
+fn staged_manifest(stage: &Path) -> Result<Value> {
+    let manifest_path = stage.join("package.json");
+    let encoded = fs::read(&manifest_path).with_context(|| format!("failed to read {}", manifest_path.display()))?;
+    serde_json::from_slice(&encoded).with_context(|| format!("failed to parse {}", manifest_path.display()))
 }
 
 /// Determine which executable the staged tree ships.
@@ -867,48 +913,11 @@ fn staged_executable_name(stage: &Path) -> String {
     }
 }
 
-/// Parse the `npm pack --json` report and return its single artifact filename.
-///
-/// npm 11 prints a JSON list while npm 12 prints an object of values, so both shapes
-/// are accepted. Exactly one entry with a plain file name is required.
-///
-/// # Arguments
-///
-/// * `standard_output` - The raw standard output of `npm pack --json`.
-///
-/// # Returns
-///
-/// Returns the artifact file name, guaranteed to contain no path separators.
-///
-/// # Errors
-///
-/// Returns an error when the report is not JSON, does not contain exactly one entry,
-/// or names anything other than a plain file.
-fn parse_pack_report(standard_output: &[u8]) -> Result<String> {
-    let report: Value = serde_json::from_slice(standard_output).context("Expected exactly one npm pack artifact filename")?;
-    let packages: Vec<&Value> = match &report {
-        Value::Array(entries) => entries.iter().collect(),
-        Value::Object(entries) => entries.values().collect(),
-        _ => bail!("Expected exactly one npm pack artifact filename"),
-    };
-    if packages.len() != 1 {
-        bail!("Expected exactly one npm pack artifact filename");
-    }
-    let file_name = packages[0]
-        .get("filename")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow!("Expected exactly one npm pack artifact filename"))?;
-    if !is_plain_file_name(file_name) {
-        bail!("Expected exactly one npm pack artifact filename");
-    }
-    Ok(file_name.to_owned())
-}
-
 /// Report whether a name is a bare file name without any directory component.
 ///
 /// # Arguments
 ///
-/// * `file_name` - The artifact name reported by npm.
+/// * `file_name` - The artifact name to validate.
 ///
 /// # Returns
 ///
@@ -917,140 +926,144 @@ fn is_plain_file_name(file_name: &str) -> bool {
     !file_name.is_empty() && file_name != "." && file_name != ".." && !file_name.contains(['/', '\\'])
 }
 
-/// Ensure Unix executable metadata even when npm pack runs on Windows.
+/// Write a staged tree as a deterministic npm-style tar.gz archive.
 ///
-/// Only tar metadata changes; signed executable content stays byte-for-byte unchanged.
-/// Existing mode-755 npm output is retained exactly. Rewritten archives are
-/// deterministic: the gzip header carries a fixed zero timestamp and no file name,
-/// source member metadata is preserved, and the executable member is forced to mode
-/// 755.
+/// Every staged regular file becomes one `package/<relative-path>` member, ordered by
+/// its POSIX relative path. Directory members are omitted because tar represents them
+/// implicitly through their children, matching the layout [`verify_artifact_with`]
+/// expects. Each member uses a fixed zero timestamp, zero ownership, and a mode of 644
+/// unless it is the staged executable, which is forced to 755.
 ///
 /// # Arguments
 ///
-/// * `archive` - The npm tarball to normalize in place.
+/// * `stage` - The staging directory to archive.
+/// * `archive` - The archive file to create.
 /// * `executable` - The npm-relative executable path, for example `bin/oatty`.
 ///
 /// # Errors
 ///
-/// Returns an error when the archive cannot be read or rewritten, or when the
-/// executable member is absent.
-fn normalize_executable_mode(archive: &Path, executable: &str) -> Result<()> {
-    let executable_path = Path::new(PACKAGE_PREFIX).join(executable);
-    let members = read_archive_members(archive)?;
-    let staged_executable = members
-        .iter()
-        .find(|member| member.path == executable_path)
-        .ok_or_else(|| anyhow!("Archive is missing the npm executable member: {}", executable_path.display()))?;
-    if staged_executable.header.mode()? == EXECUTABLE_MODE {
-        return Ok(());
-    }
-    rewrite_archive_with_executable_mode(archive, members, &executable_path)
-}
+/// Returns an error when the staged tree cannot be read or the archive cannot be
+/// written or finished.
+fn write_staged_tarball(stage: &Path, archive: &Path, executable: &str) -> Result<()> {
+    let mut relative_paths = Vec::new();
+    collect_staged_files(stage, Path::new(""), &mut relative_paths)?;
+    relative_paths.sort();
 
-/// Rewrite every member, forcing the executable mode and fixing the gzip header.
-///
-/// # Arguments
-///
-/// * `archive` - The tarball to rewrite in place.
-/// * `members` - The members read from the original archive.
-/// * `executable_path` - The full archive path of the executable member, if any.
-///
-/// # Errors
-///
-/// Returns an error when the archive cannot be rewritten.
-fn rewrite_archive_with_executable_mode(archive: &Path, members: Vec<ArchiveMember>, executable_path: &Path) -> Result<()> {
-    let forced = members
-        .into_iter()
-        .map(|member| {
-            let ArchiveMember { path, mut header, data } = member;
-            if path == executable_path {
-                header.set_mode(EXECUTABLE_MODE);
-            }
-            ArchiveMember { path, header, data }
-        })
-        .collect();
-    write_archive_members(archive, forced)
-}
-
-/// Write every supplied member into a deterministic tar.gz archive.
-///
-/// The gzip header carries a fixed zero timestamp and no file name, and each member
-/// header is written with its own preserved metadata. This is the single writer used
-/// by archive normalization and by the test fixtures.
-///
-/// # Arguments
-///
-/// * `archive` - The tarball to create or replace.
-/// * `members` - The members to write, in order.
-///
-/// # Errors
-///
-/// Returns an error when the archive cannot be written.
-fn write_archive_members(archive: &Path, members: Vec<ArchiveMember>) -> Result<()> {
-    let output = fs::File::create(archive).with_context(|| format!("failed to rewrite {}", archive.display()))?;
+    let output = fs::File::create(archive).with_context(|| format!("failed to create {}", archive.display()))?;
     let encoder = GzBuilder::new().mtime(0).write(output, Compression::default());
     let mut builder = tar::Builder::new(encoder);
-
-    for member in members {
-        let ArchiveMember { path, mut header, data } = member;
-        let content: Box<dyn Read> = match data {
-            Some(bytes) => Box::new(Cursor::new(bytes)),
-            None => Box::new(std::io::empty()),
-        };
-        builder
-            .append_data(&mut header, &path, content)
-            .with_context(|| format!("failed to append {} to {}", path.display(), archive.display()))?;
+    for relative_path in relative_paths {
+        append_staged_file(&mut builder, stage, &relative_path, executable)?;
     }
 
-    let encoder = builder.into_inner().context("failed to finish the normalized tar stream")?;
-    let output = encoder.finish().context("failed to finish the normalized gzip stream")?;
+    let encoder = builder.into_inner().context("failed to finish the npm tar stream")?;
+    let output = encoder.finish().context("failed to finish the npm gzip stream")?;
     output.sync_all().with_context(|| format!("failed to flush {}", archive.display()))
 }
 
-/// One member read from an npm tarball.
-struct ArchiveMember {
-    /// The full archive path including the `package/` prefix.
-    path: PathBuf,
-    /// The source header, carrying every preserved piece of member metadata.
-    header: Header,
-    /// The member bytes for regular files; `None` for every other entry type.
-    data: Option<Vec<u8>>,
-}
-
-/// Read every member of an npm tarball, including non-regular entries.
+/// Collect every regular file below a staging directory as a relative path.
 ///
 /// # Arguments
 ///
-/// * `archive` - The npm tarball to read.
-///
-/// # Returns
-///
-/// Returns every member in archive order with its header and content.
+/// * `directory` - The directory to walk.
+/// * `prefix` - The relative path accumulated so far; empty at the staging root.
+/// * `collected` - The relative paths collected in directory order.
 ///
 /// # Errors
 ///
-/// Returns an error when the archive cannot be opened or any member is unreadable.
-fn read_archive_members(archive: &Path) -> Result<Vec<ArchiveMember>> {
-    let archive_file = fs::File::open(archive).with_context(|| format!("failed to open {}", archive.display()))?;
-    let mut reader = tar::Archive::new(GzDecoder::new(archive_file));
-    let mut members = Vec::new();
-    for entry in reader.entries().with_context(|| format!("failed to read {}", archive.display()))? {
-        let mut entry = entry.with_context(|| format!("failed to read an entry from {}", archive.display()))?;
-        let path = entry
-            .path()
-            .with_context(|| format!("failed to read an entry path from {}", archive.display()))?
-            .into_owned();
-        let header = entry.header().clone();
-        let data = if header.entry_type().is_file() {
-            let mut bytes = Vec::new();
-            entry.read_to_end(&mut bytes)?;
-            Some(bytes)
+/// Returns an error when a directory cannot be read or contains an entry that is
+/// neither a regular file nor a directory.
+fn collect_staged_files(directory: &Path, prefix: &Path, collected: &mut Vec<PathBuf>) -> Result<()> {
+    for entry in sorted_directory_entries(directory)? {
+        let relative_path = prefix.join(entry.file_name());
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("failed to inspect {}", entry.path().display()))?;
+        if file_type.is_dir() {
+            collect_staged_files(&entry.path(), &relative_path, collected)?;
+        } else if file_type.is_file() {
+            collected.push(relative_path);
         } else {
-            None
-        };
-        members.push(ArchiveMember { path, header, data });
+            bail!("Unsupported npm staging entry: {}", entry.path().display());
+        }
     }
-    Ok(members)
+    Ok(())
+}
+
+/// Return a directory's entries sorted by file name.
+///
+/// Sorting makes archive member order independent of filesystem enumeration order, so
+/// identical staged trees always produce identical tarballs.
+///
+/// # Arguments
+///
+/// * `directory` - The directory to list.
+///
+/// # Returns
+///
+/// Returns the entries sorted by file name.
+///
+/// # Errors
+///
+/// Returns an error when the directory cannot be read.
+fn sorted_directory_entries(directory: &Path) -> Result<Vec<fs::DirEntry>> {
+    let mut entries = fs::read_dir(directory)
+        .with_context(|| format!("failed to read {}", directory.display()))?
+        .collect::<std::io::Result<Vec<_>>>()
+        .with_context(|| format!("failed to read {}", directory.display()))?;
+    entries.sort_by_key(fs::DirEntry::file_name);
+    Ok(entries)
+}
+
+/// Append one staged regular file as a `package/`-prefixed tar member.
+///
+/// # Arguments
+///
+/// * `builder` - The tar builder receiving the member.
+/// * `stage` - The staging directory holding the file.
+/// * `relative_path` - The staging-relative file path.
+/// * `executable` - The npm-relative executable path that must carry mode 755.
+///
+/// # Errors
+///
+/// Returns an error when the file cannot be inspected, opened, or appended.
+fn append_staged_file<W: Write>(builder: &mut tar::Builder<W>, stage: &Path, relative_path: &Path, executable: &str) -> Result<()> {
+    let staged_path = stage.join(relative_path);
+    let metadata = fs::metadata(&staged_path).with_context(|| format!("failed to inspect {}", staged_path.display()))?;
+    let posix_name = relative_path.to_string_lossy().replace('\\', "/");
+    let archive_name = format!("{PACKAGE_PREFIX}{posix_name}");
+
+    let mut header = Header::new_ustar();
+    header
+        .set_path(&archive_name)
+        .with_context(|| format!("failed to set the archive name {archive_name}"))?;
+    header.set_mode(staged_file_mode(&posix_name, executable));
+    header.set_size(metadata.len());
+    header.set_mtime(0);
+    header.set_uid(0);
+    header.set_gid(0);
+    header.set_entry_type(tar::EntryType::Regular);
+    header.set_cksum();
+
+    let data = fs::File::open(&staged_path).with_context(|| format!("failed to open {}", staged_path.display()))?;
+    builder
+        .append(&header, data)
+        .with_context(|| format!("failed to append {} to the npm archive", staged_path.display()))
+}
+
+/// Return the mode one staged file must carry inside the archive.
+///
+/// # Arguments
+///
+/// * `relative_name` - The POSIX staging-relative file name.
+/// * `executable` - The npm-relative executable path that must carry mode 755.
+///
+/// # Returns
+///
+/// Returns [`EXECUTABLE_MODE`] for the executable and `0o644` for everything else, so
+/// Windows staging trees produce the same metadata as Unix ones.
+fn staged_file_mode(relative_name: &str, executable: &str) -> u32 {
+    if relative_name == executable { EXECUTABLE_MODE } else { 0o644 }
 }
 
 /// The verified byte contents and modes of an npm tarball.
@@ -1155,8 +1168,7 @@ fn verify_artifact_with(
 
     let actual_names: BTreeSet<String> = contents.files.keys().cloned().collect();
     if actual_names != expected_names {
-        let difference: Vec<&String> = actual_names.symmetric_difference(&expected_names).collect();
-        bail!("Missing or unexpected npm package files: {difference:?}");
+        report_artifact_mismatch(archive, &expected_names, &actual_names)?;
     }
     for name in &legal_file_names {
         let expected_bytes = source_bytes(root, name)?;
@@ -1165,6 +1177,80 @@ fn verify_artifact_with(
         }
     }
     Ok((contents, manifest))
+}
+
+/// Report the file-list difference between the expected and actual archive entries.
+///
+/// The returned error carries everything a CI log needs: the archive path, the
+/// expected and actual entry counts, and the missing and unexpected entry names
+/// (truncated to a compact list) so callers only surface one message.
+///
+/// # Arguments
+///
+/// * `archive` - The archive being verified.
+/// * `expected_names` - The npm-relative names the archive must contain.
+/// * `actual_names` - The npm-relative names the archive actually contains.
+///
+/// # Returns
+///
+/// Never returns successfully; the return type lets callers use `?` directly.
+///
+/// # Errors
+///
+/// Always returns an error describing the missing and unexpected entries.
+fn report_artifact_mismatch(archive: &Path, expected_names: &BTreeSet<String>, actual_names: &BTreeSet<String>) -> Result<()> {
+    let missing: Vec<&String> = expected_names.difference(actual_names).collect();
+    let unexpected: Vec<&String> = actual_names.difference(expected_names).collect();
+    bail!(
+        "npm archive verification mismatch in {}: {} expected file(s), {} actual file(s); \
+         missing: {} {}; unexpected: {} {}",
+        archive.display(),
+        expected_names.len(),
+        actual_names.len(),
+        missing.len(),
+        summarize_entry_names(&missing),
+        unexpected.len(),
+        summarize_entry_names(&unexpected)
+    )
+}
+
+/// Render at most ten entry names for a compact mismatch message.
+///
+/// # Arguments
+///
+/// * `names` - The entry names to summarize.
+///
+/// # Returns
+///
+/// Returns a debug-formatted list with an ellipsis marker when entries were omitted.
+fn summarize_entry_names(names: &[&String]) -> String {
+    const MAX_REPORTED_NAMES: usize = 10;
+    let displayed: Vec<&&String> = names.iter().take(MAX_REPORTED_NAMES).collect();
+    let omitted = names.len().saturating_sub(MAX_REPORTED_NAMES);
+    if omitted == 0 {
+        format!("{displayed:?}")
+    } else {
+        format!("{displayed:?} and {omitted} more")
+    }
+}
+
+/// Require the packed executable bytes to match the signed input bytes.
+///
+/// # Arguments
+///
+/// * `binary` - The signed/notarized executable that was staged.
+/// * `contents` - The verified archive contents.
+/// * `binary_name` - The npm-relative executable path inside the archive.
+///
+/// # Errors
+///
+/// Returns an error when the packed bytes differ from the input bytes.
+fn verify_packed_executable(binary: &Path, contents: &NpmArchiveContents, binary_name: &str) -> Result<()> {
+    let original_bytes = fs::read(binary).with_context(|| format!("failed to read {}", binary.display()))?;
+    if contents.files.get(binary_name).map(Vec::as_slice) != Some(original_bytes.as_slice()) {
+        bail!("npm packing changed signed executable bytes");
+    }
+    Ok(())
 }
 
 /// Validate the native payload layout and add its entries to the expected set.
@@ -1232,7 +1318,7 @@ fn verify_umbrella_layout(root: &Path, contents: &NpmArchiveContents, expected_n
 
 #[cfg(test)]
 mod tests {
-    use std::cell::RefCell;
+    use std::io::Cursor;
 
     use flate2::GzBuilder;
     use serde_json::json;
@@ -1298,128 +1384,12 @@ mod tests {
         Ok(inventory)
     }
 
-    /// The npm argv prefix used by packaging tests.
-    fn fixture_npm_command() -> Result<Vec<String>> {
-        Ok(vec!["fixture-npm".to_owned()])
-    }
-
-    /// The report shape the fake npm prints.
-    #[derive(Clone, Copy, Default)]
-    enum PackReportShape {
-        /// A JSON list, as printed by npm 11.
-        #[default]
-        List,
-        /// A JSON object of values, as printed by npm 12.
-        Object,
-    }
-
-    /// An in-process npm replacement that packs staging trees deterministically.
-    #[derive(Default)]
-    struct FakeNpm {
-        /// The JSON report shape to print.
-        report_shape: PackReportShape,
-        /// Raw JSON to print instead of packing, for malformed-report tests.
-        raw_report: Option<String>,
-        /// A standard error message that simulates a failed npm invocation.
-        failure: Option<String>,
-        /// Archive-path-to-mode overrides applied while packing.
-        mode_overrides: RefCell<BTreeMap<String, u32>>,
-        /// Member whose packed bytes are altered, simulating a mutating toolchain.
-        tampered_member: Option<String>,
-        /// Every npm argv prefix observed by the fake.
-        invocations: RefCell<Vec<Vec<String>>>,
-    }
-
-    impl FakeNpm {
-        /// Build a fake npm that always fails with the supplied message.
-        fn failing(message: &str) -> Self {
-            Self {
-                failure: Some(message.to_owned()),
-                ..Self::default()
-            }
+    /// Build hooks with the fixture inventory and the supplied licensing verifier.
+    fn fixture_hooks<'a>(verify_licenses: &'a dyn Fn(&Path) -> Result<()>) -> PackagingHooks<'a> {
+        PackagingHooks {
+            verify_licenses,
+            inventory_legal_files: &fixture_inventory,
         }
-
-        /// Build a fake npm that prints the supplied raw report.
-        fn reporting(report: &str) -> Self {
-            Self {
-                raw_report: Some(report.to_owned()),
-                ..Self::default()
-            }
-        }
-
-        /// Record an invocation and emulate `npm pack`.
-        fn run(&self, arguments: &[String], working_directory: &Path) -> Result<CommandOutcome> {
-            self.invocations.borrow_mut().push(arguments.to_vec());
-            if let Some(message) = &self.failure {
-                return Ok(CommandOutcome {
-                    exit_success: false,
-                    standard_output: Vec::new(),
-                    standard_error: message.clone(),
-                });
-            }
-            if let Some(report) = &self.raw_report {
-                return Ok(CommandOutcome {
-                    exit_success: true,
-                    standard_output: report.as_bytes().to_vec(),
-                    standard_error: String::new(),
-                });
-            }
-            let destination = pack_destination(arguments)?;
-            let manifest = read_json_file(&working_directory.join("package.json"))?;
-            let name = manifest
-                .get("name")
-                .and_then(Value::as_str)
-                .context("fixture package name is missing")?;
-            let version = manifest
-                .get("version")
-                .and_then(Value::as_str)
-                .context("fixture package version is missing")?;
-            let file_name = format!("{}-{}.tgz", npm_artifact_name(name), version);
-            let archive = destination.join(&file_name);
-            write_npm_style_archive(working_directory, &archive, &self.mode_overrides.borrow())?;
-            if let Some(member_name) = &self.tampered_member {
-                replace_archive_member_data(&archive, member_name, b"tampered executable bytes\n")?;
-            }
-            let report = match self.report_shape {
-                PackReportShape::List => json!([{ "filename": file_name, "name": name, "version": version }]),
-                PackReportShape::Object => json!({ "0": { "filename": file_name, "name": name, "version": version } }),
-            };
-            Ok(CommandOutcome {
-                exit_success: true,
-                standard_output: serde_json::to_vec(&report)?,
-                standard_error: String::new(),
-            })
-        }
-    }
-
-    /// Convert a package name into the artifact prefix npm uses for tarball names.
-    ///
-    /// npm strips the scope marker and flattens the scope separator, so
-    /// `@oattyio/cli-linux-x64` becomes `oattyio-cli-linux-x64`.
-    fn npm_artifact_name(package_name: &str) -> String {
-        package_name.replace('@', "").replace('/', "-")
-    }
-
-    /// Replace one archive member's bytes while preserving every other member.
-    fn replace_archive_member_data(archive: &Path, member_name: &str, replacement: &[u8]) -> Result<()> {
-        let target = Path::new(member_name);
-        let mut rewritten = Vec::new();
-        for member in read_archive_members(archive)? {
-            let ArchiveMember { path, header, data } = member;
-            let data = if path == target { Some(replacement.to_vec()) } else { data };
-            rewritten.push(ArchiveMember { path, header, data });
-        }
-        write_archive_members(archive, rewritten)
-    }
-
-    /// Read the `--pack-destination` value from an npm argv prefix.
-    fn pack_destination(arguments: &[String]) -> Result<PathBuf> {
-        let position = arguments
-            .iter()
-            .position(|argument| argument == "--pack-destination")
-            .context("fixture npm was not told where to pack")?;
-        let destination = arguments.get(position + 1).context("fixture npm received no pack destination")?;
-        Ok(PathBuf::from(destination))
     }
 
     /// Read and parse one JSON document.
@@ -1428,66 +1398,107 @@ mod tests {
         serde_json::from_slice(&encoded).with_context(|| format!("failed to parse {}", path.display()))
     }
 
-    /// Write one npm-style tarball from a staging tree with deterministic metadata.
-    fn write_npm_style_archive(stage: &Path, archive: &Path, mode_overrides: &BTreeMap<String, u32>) -> Result<()> {
-        let mut relative_paths = Vec::new();
-        collect_relative_files(stage, Path::new(""), &mut relative_paths)?;
-        relative_paths.sort();
+    /// One member read from a tarball, including non-regular entries.
+    struct ArchiveMember {
+        /// The full archive path including the `package/` prefix.
+        path: PathBuf,
+        /// The member header carrying its metadata.
+        header: Header,
+        /// The member bytes for regular files; `None` for every other entry type.
+        data: Option<Vec<u8>>,
+    }
 
-        if let Some(parent) = archive.parent() {
-            fs::create_dir_all(parent)?;
+    /// Read every member of a tarball, including non-regular entries.
+    ///
+    /// # Arguments
+    ///
+    /// * `archive` - The tarball to read.
+    ///
+    /// # Returns
+    ///
+    /// Returns every member in archive order with its header and content.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the archive cannot be opened or any member is unreadable.
+    fn read_archive_members(archive: &Path) -> Result<Vec<ArchiveMember>> {
+        let archive_file = fs::File::open(archive).with_context(|| format!("failed to open {}", archive.display()))?;
+        let mut reader = tar::Archive::new(GzDecoder::new(archive_file));
+        let mut members = Vec::new();
+        for entry in reader.entries().with_context(|| format!("failed to read {}", archive.display()))? {
+            let mut entry = entry.with_context(|| format!("failed to read an entry from {}", archive.display()))?;
+            let path = entry
+                .path()
+                .with_context(|| format!("failed to read an entry path from {}", archive.display()))?
+                .into_owned();
+            let header = entry.header().clone();
+            let data = if header.entry_type().is_file() {
+                let mut bytes = Vec::new();
+                entry.read_to_end(&mut bytes)?;
+                Some(bytes)
+            } else {
+                None
+            };
+            members.push(ArchiveMember { path, header, data });
         }
-        let archive_file = fs::File::create(archive).with_context(|| format!("failed to create {}", archive.display()))?;
-        let encoder = GzBuilder::new().mtime(0).write(archive_file, Compression::default());
+        Ok(members)
+    }
+
+    /// Rewrite a tarball from raw members with deterministic gzip metadata.
+    ///
+    /// # Arguments
+    ///
+    /// * `archive` - The tarball to create or replace.
+    /// * `members` - The members to write, in order.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the archive cannot be written.
+    fn write_archive_members(archive: &Path, members: Vec<ArchiveMember>) -> Result<()> {
+        let output = fs::File::create(archive).with_context(|| format!("failed to rewrite {}", archive.display()))?;
+        let encoder = GzBuilder::new().mtime(0).write(output, Compression::default());
         let mut builder = tar::Builder::new(encoder);
-        for relative_path in relative_paths {
-            let staged_path = stage.join(&relative_path);
-            let archive_name = format!("{PACKAGE_PREFIX}{}", relative_path.to_string_lossy().replace('\\', "/"));
-            let metadata = fs::metadata(&staged_path)?;
-            let mut header = tar::Header::new_ustar();
-            header.set_path(&archive_name)?;
-            header.set_mode(mode_overrides.get(&archive_name).copied().unwrap_or_else(|| staged_mode(&metadata)));
-            header.set_size(metadata.len());
-            header.set_mtime(0);
-            header.set_uid(0);
-            header.set_gid(0);
-            header.set_entry_type(tar::EntryType::Regular);
-            header.set_cksum();
-            builder.append(&header, fs::File::open(&staged_path)?)?;
+
+        for member in members {
+            let ArchiveMember { path, mut header, data } = member;
+            let content: Box<dyn Read> = match data {
+                Some(bytes) => {
+                    header.set_size(bytes.len() as u64);
+                    Box::new(Cursor::new(bytes))
+                }
+                None => {
+                    header.set_size(0);
+                    Box::new(std::io::empty())
+                }
+            };
+            builder
+                .append_data(&mut header, &path, content)
+                .with_context(|| format!("failed to append {} to {}", path.display(), archive.display()))?;
         }
-        let encoder = builder.into_inner()?;
-        encoder.finish()?.sync_all()?;
-        Ok(())
+
+        let encoder = builder.into_inner().context("failed to finish the fixture tar stream")?;
+        let output = encoder.finish().context("failed to finish the fixture gzip stream")?;
+        output.sync_all().with_context(|| format!("failed to flush {}", archive.display()))
     }
 
-    /// Report the Unix mode of a staged file, or a portable default elsewhere.
-    #[cfg(unix)]
-    fn staged_mode(metadata: &fs::Metadata) -> u32 {
-        use std::os::unix::fs::PermissionsExt as _;
-
-        metadata.permissions().mode() & 0o777
-    }
-
-    /// Report the default mode of a staged file where Unix modes are unavailable.
-    #[cfg(not(unix))]
-    fn staged_mode(_metadata: &fs::Metadata) -> u32 {
-        0o644
-    }
-
-    /// Collect every regular file below a directory as a relative path.
-    fn collect_relative_files(directory: &Path, prefix: &Path, collected: &mut Vec<PathBuf>) -> Result<()> {
-        let mut entries = fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
-        entries.sort_by_key(|entry| entry.file_name());
-        for entry in entries {
-            let relative_path = prefix.join(entry.file_name());
-            let metadata = entry.metadata()?;
-            if metadata.is_dir() {
-                collect_relative_files(&entry.path(), &relative_path, collected)?;
-            } else if metadata.is_file() {
-                collected.push(relative_path);
-            }
-        }
-        Ok(())
+    /// List a tarball's member paths as POSIX strings in archive order.
+    ///
+    /// # Arguments
+    ///
+    /// * `archive` - The tarball to list.
+    ///
+    /// # Returns
+    ///
+    /// Returns every member path with forward-slash separators.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the archive cannot be read.
+    fn archive_member_names(archive: &Path) -> Result<Vec<String>> {
+        Ok(read_archive_members(archive)?
+            .into_iter()
+            .map(|member| member.path.to_string_lossy().replace('\\', "/"))
+            .collect())
     }
 
     /// Write a minimal tar.gz archive from raw member descriptions.
@@ -1522,6 +1533,28 @@ mod tests {
         }
         ustar.name[..bytes.len()].copy_from_slice(bytes);
         Ok(())
+    }
+
+    /// Force one staged file to a specific Unix mode where the platform supports it.
+    #[cfg(unix)]
+    fn force_staged_mode(path: &Path, mode: u32) -> Result<()> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        fs::set_permissions(path, fs::Permissions::from_mode(mode)).with_context(|| format!("failed to set the mode of {}", path.display()))
+    }
+
+    /// Do nothing where the platform cannot express Unix execute bits.
+    #[cfg(not(unix))]
+    fn force_staged_mode(_path: &Path, _mode: u32) -> Result<()> {
+        Ok(())
+    }
+
+    /// Report one file's permission bits.
+    #[cfg(unix)]
+    fn file_mode(path: &Path) -> Result<u32> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        Ok(fs::metadata(path)?.permissions().mode() & 0o777)
     }
 
     /// Build the canonical root package manifest the fixture publishes.
@@ -1692,19 +1725,6 @@ mod tests {
         }
     }
 
-    /// Build hooks that use the fake npm and the supplied verifier.
-    fn fixture_hooks<'a>(
-        run_npm: &'a dyn Fn(&[String], &Path) -> Result<CommandOutcome>,
-        verify_licenses: &'a dyn Fn(&Path) -> Result<()>,
-    ) -> PackagingHooks<'a> {
-        PackagingHooks {
-            verify_licenses,
-            inventory_legal_files: &fixture_inventory,
-            npm_command: &fixture_npm_command,
-            run_npm,
-        }
-    }
-
     /// Assert that one packaging error carries the expected message.
     fn assert_error_contains(outcome: Result<impl std::fmt::Debug>, expected: &str) {
         let error = outcome.unwrap_err();
@@ -1719,9 +1739,7 @@ mod tests {
     fn npm_distribution_all_four_metadata_legal_bytes_modes_and_determinism() -> Result<()> {
         let fixture = Fixture::new()?;
         let binary = fixture.write_binary(FIXTURE_BINARY)?;
-        let fake_npm = FakeNpm::default();
-        let run_npm = |arguments: &[String], working_directory: &Path| fake_npm.run(arguments, working_directory);
-        let hooks = fixture_hooks(&run_npm, &no_licensing_verification);
+        let hooks = fixture_hooks(&no_licensing_verification);
         let destination = fixture.scratch("dist");
         let platforms = fixture.platforms()?;
         assert_eq!(platforms.len(), 4);
@@ -1729,6 +1747,8 @@ mod tests {
         for platform in platforms.values() {
             let binary_name = format!("bin/{}", platform.binary);
             let archive = package_binary_with(fixture.root(), &binary, &platform.target_triple, &destination, &hooks)?;
+            let expected_name = artifact_file_name(&platform.package_name, FIXTURE_VERSION);
+            assert_eq!(archive.file_name().and_then(|name| name.to_str()), Some(expected_name.as_str()));
             let (contents, manifest) = verify_artifact_with(fixture.root(), &archive, Some(platform), &fixture_inventory)?;
             assert_eq!(contents.files.get(&binary_name).map(Vec::as_slice), Some(FIXTURE_BINARY));
             assert_eq!(manifest, payload_manifest(fixture.root(), platform)?);
@@ -1739,19 +1759,15 @@ mod tests {
         }
 
         let umbrella = package_umbrella_with(fixture.root(), &destination, &hooks)?;
+        assert_eq!(
+            umbrella.file_name().and_then(|name| name.to_str()),
+            Some(artifact_file_name("oatty", FIXTURE_VERSION).as_str())
+        );
         let (contents, manifest) = verify_artifact_with(fixture.root(), &umbrella, None, &fixture_inventory)?;
         assert_eq!(manifest, umbrella_manifest(fixture.root())?);
         assert_eq!(contents.modes.get(LAUNCHER_NAME), Some(&EXECUTABLE_MODE));
         let repeated_umbrella = package_umbrella_with(fixture.root(), &fixture.scratch("repeat"), &hooks)?;
         assert_eq!(fs::read(&umbrella)?, fs::read(&repeated_umbrella)?);
-
-        let first_invocation = fake_npm.invocations.borrow()[0].clone();
-        assert_eq!(first_invocation.len(), 6);
-        assert_eq!(first_invocation[0], "fixture-npm");
-        assert_eq!(first_invocation[1], "pack");
-        assert_eq!(first_invocation[2], "--ignore-scripts");
-        assert_eq!(first_invocation[3], "--json");
-        assert_eq!(first_invocation[4], "--pack-destination");
         Ok(())
     }
 
@@ -1788,44 +1804,29 @@ mod tests {
     }
 
     #[test]
-    fn npm_distribution_windows_mode_normalization_preserves_every_file_byte() -> Result<()> {
+    fn npm_distribution_packed_executable_is_always_mode_755_without_changing_bytes() -> Result<()> {
         let fixture = Fixture::new()?;
         let binary = fixture.write_binary(FIXTURE_BINARY)?;
         let platforms = fixture.platforms()?;
-        let platform = platforms.values().next().context("fixture has no platforms")?;
+        let platform = &platforms["win32-x64"];
+        let binary_name = format!("bin/{}", platform.binary);
 
-        // Recreate what npm produces on Windows: a 0644 executable member.
-        let stage = fixture.scratch("stage");
-        stage_legal_files(fixture.root(), &stage, &fixture_inventory)?;
-        write_manifest(&stage, &payload_manifest(fixture.root(), platform)?)?;
-        fs::create_dir_all(stage.join("bin"))?;
-        fs::copy(&binary, stage.join("bin").join("oatty"))?;
-        write_document(&stage.join(INSTALLED_VERSION_MARKER), format!("{FIXTURE_VERSION}\n").as_bytes())?;
-        let archive = fixture.scratch("windows-mode").join("oatty-mode.tgz");
-        write_npm_style_archive(&stage, &archive, &BTreeMap::from([("package/bin/oatty".to_owned(), 0o644)]))?;
+        let stage = fixture.scratch("mode-stage");
+        stage_native_payload(fixture.root(), &stage, platform, &binary, &fixture_inventory)?;
+        let staged_executable = stage.join(&binary_name);
+        // A Windows staging tree cannot carry Unix execute bits, so the writer must
+        // derive mode 755 from the entry name instead of the staged permissions.
+        force_staged_mode(&staged_executable, 0o644)?;
+        #[cfg(unix)]
+        assert_eq!(file_mode(&staged_executable)?, 0o644);
 
-        let before = read_artifact(&archive)?;
-        assert_eq!(before.modes.get("bin/oatty"), Some(&0o644));
-        normalize_executable_mode(&archive, "bin/oatty")?;
-        let after = read_artifact(&archive)?;
-        assert_eq!(before.files, after.files);
-        assert_eq!(after.modes.get("bin/oatty"), Some(&EXECUTABLE_MODE));
+        let archive = pack_stage_with(&stage, &fixture.scratch("mode-dist"))?;
+        let contents = read_artifact(&archive)?;
+        assert_eq!(contents.modes.get(&binary_name), Some(&EXECUTABLE_MODE));
+        assert_eq!(contents.files.get(&binary_name).map(Vec::as_slice), Some(FIXTURE_BINARY));
+        assert_eq!(contents.modes.get("package.json"), Some(&0o644));
+        assert_eq!(contents.modes.get(INSTALLED_VERSION_MARKER), Some(&0o644));
         verify_artifact_with(fixture.root(), &archive, Some(platform), &fixture_inventory)?;
-
-        // An already-normalized archive is retained byte for byte.
-        let normalized_bytes = fs::read(&archive)?;
-        normalize_executable_mode(&archive, "bin/oatty")?;
-        assert_eq!(normalized_bytes, fs::read(&archive)?);
-
-        // The packaging pipeline normalizes npm's 0644 output as well.
-        let fake_npm = FakeNpm::default();
-        fake_npm.mode_overrides.borrow_mut().insert("package/bin/oatty".to_owned(), 0o644);
-        let run_npm = |arguments: &[String], working_directory: &Path| fake_npm.run(arguments, working_directory);
-        let hooks = fixture_hooks(&run_npm, &no_licensing_verification);
-        let packed = package_binary_with(fixture.root(), &binary, &platform.target_triple, &fixture.scratch("dist"), &hooks)?;
-        let packed_contents = verify_artifact_with(fixture.root(), &packed, Some(platform), &fixture_inventory)?.0;
-        assert_eq!(packed_contents.modes.get("bin/oatty"), Some(&EXECUTABLE_MODE));
-        assert_eq!(packed_contents.files.get("bin/oatty").map(Vec::as_slice), Some(FIXTURE_BINARY));
         Ok(())
     }
 
@@ -1833,9 +1834,7 @@ mod tests {
     fn npm_distribution_first_party_crlf_checkout_produces_identical_archives() -> Result<()> {
         let fixture = Fixture::new()?;
         let binary = fixture.write_binary(FIXTURE_BINARY)?;
-        let fake_npm = FakeNpm::default();
-        let run_npm = |arguments: &[String], working_directory: &Path| fake_npm.run(arguments, working_directory);
-        let hooks = fixture_hooks(&run_npm, &no_licensing_verification);
+        let hooks = fixture_hooks(&no_licensing_verification);
         let platforms = fixture.platforms()?;
         let platform = platforms.values().next().context("fixture has no platforms")?;
 
@@ -1853,68 +1852,177 @@ mod tests {
     }
 
     #[test]
-    fn npm_distribution_stale_legal_material_aborts_before_npm_pack() -> Result<()> {
+    fn npm_distribution_stale_legal_material_aborts_before_packing() -> Result<()> {
         let fixture = Fixture::new()?;
         write_document(&fixture.path("THIRD-PARTY-NOTICES.txt"), b"changed")?;
-        let fake_npm = FakeNpm::default();
-        let run_npm = |arguments: &[String], working_directory: &Path| fake_npm.run(arguments, working_directory);
-        let hooks = fixture_hooks(&run_npm, &fixture_licensing_verification);
+        let hooks = fixture_hooks(&fixture_licensing_verification);
+        let destination = fixture.scratch("invalid");
 
-        let outcome = package_umbrella_with(fixture.root(), &fixture.scratch("invalid"), &hooks);
+        let outcome = package_umbrella_with(fixture.root(), &destination, &hooks);
         assert_error_contains(outcome, "Missing or changed");
+        assert!(!destination.exists(), "packing must not start for stale materials");
+        Ok(())
+    }
+
+    #[test]
+    fn npm_distribution_packing_the_same_stage_is_byte_identical() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let binary = fixture.write_binary(FIXTURE_BINARY)?;
+        let platforms = fixture.platforms()?;
+        let platform = &platforms["win32-x64"];
+
+        let stage = fixture.scratch("determinism-stage");
+        stage_native_payload(fixture.root(), &stage, platform, &binary, &fixture_inventory)?;
+
+        let first = pack_stage_with(&stage, &fixture.scratch("determinism-first"))?;
+        let second = pack_stage_with(&stage, &fixture.scratch("determinism-second"))?;
+        assert_eq!(first.file_name(), second.file_name());
+        assert_eq!(fs::read(&first)?, fs::read(&second)?);
+        Ok(())
+    }
+
+    #[test]
+    fn npm_distribution_artifact_names_match_npm_conventions() -> Result<()> {
+        assert_eq!(npm_artifact_name("@oattyio/cli-linux-x64"), "oattyio-cli-linux-x64");
+        assert_eq!(
+            artifact_file_name("@oattyio/cli-linux-x64", "0.1.14"),
+            "oattyio-cli-linux-x64-0.1.14.tgz"
+        );
+        assert_eq!(artifact_file_name("oatty", "0.1.14"), "oatty-0.1.14.tgz");
+
+        let fixture = Fixture::new()?;
+        let binary = fixture.write_binary(FIXTURE_BINARY)?;
+        let hooks = fixture_hooks(&no_licensing_verification);
+        let platforms = fixture.platforms()?;
+        let platform = &platforms["win32-x64"];
+
+        let native = package_binary_with(fixture.root(), &binary, &platform.target_triple, &fixture.scratch("names"), &hooks)?;
+        assert_eq!(
+            native.file_name().and_then(|name| name.to_str()),
+            Some("oattyio-cli-win32-x64-0.1.12.tgz")
+        );
+        let umbrella = package_umbrella_with(fixture.root(), &fixture.scratch("names"), &hooks)?;
+        assert_eq!(umbrella.file_name().and_then(|name| name.to_str()), Some("oatty-0.1.12.tgz"));
+        Ok(())
+    }
+
+    #[test]
+    fn npm_distribution_tarball_entry_names_carry_the_package_prefix() -> Result<()> {
+        let fixture = Fixture::new()?;
+        let binary = fixture.write_binary(FIXTURE_BINARY)?;
+        let platforms = fixture.platforms()?;
+        let platform = &platforms["win32-x64"];
+
+        let native_stage = fixture.scratch("entry-native-stage");
+        stage_native_payload(fixture.root(), &native_stage, platform, &binary, &fixture_inventory)?;
+        let native_archive = pack_stage_with(&native_stage, &fixture.scratch("entry-native-dist"))?;
+        assert_eq!(
+            archive_member_names(&native_archive)?,
+            vec![
+                "package/LICENSE",
+                "package/THIRD-PARTY-NOTICES.txt",
+                "package/bin/.oatty-installed-version",
+                "package/bin/oatty.exe",
+                "package/package.json",
+                "package/third-party-licenses/example/LICENSE",
+                "package/third-party-sources/example.crate",
+            ]
+        );
         assert!(
-            fake_npm.invocations.borrow().is_empty(),
-            "npm pack must never run for stale materials"
+            read_archive_members(&native_archive)?
+                .iter()
+                .all(|member| member.header.entry_type().is_file()),
+            "directories are implicit; only regular files carry members"
+        );
+
+        let umbrella_stage = fixture.scratch("entry-umbrella-stage");
+        stage_umbrella_payload(fixture.root(), &umbrella_stage, &fixture_inventory)?;
+        let umbrella_archive = pack_stage_with(&umbrella_stage, &fixture.scratch("entry-umbrella-dist"))?;
+        assert_eq!(
+            archive_member_names(&umbrella_archive)?,
+            vec![
+                "package/LICENSE",
+                "package/README.md",
+                "package/THIRD-PARTY-NOTICES.txt",
+                "package/npm/bin/oatty.js",
+                "package/npm/platforms.json",
+                "package/package.json",
+                "package/third-party-licenses/example/LICENSE",
+                "package/third-party-sources/example.crate",
+            ]
         );
         Ok(())
     }
 
     #[test]
-    fn npm_distribution_pack_report_accepts_list_and_object_shapes() -> Result<()> {
-        for report_shape in [PackReportShape::List, PackReportShape::Object] {
-            let fixture = Fixture::new()?;
-            let fake_npm = FakeNpm {
-                report_shape,
-                ..FakeNpm::default()
-            };
-            let run_npm = |arguments: &[String], working_directory: &Path| fake_npm.run(arguments, working_directory);
-            let hooks = fixture_hooks(&run_npm, &no_licensing_verification);
-            let archive = package_umbrella_with(fixture.root(), &fixture.scratch("dist"), &hooks)?;
-            assert_eq!(archive.file_name().and_then(|name| name.to_str()), Some("oatty-0.1.12.tgz"));
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn npm_distribution_pack_report_rejects_malformed_artifacts() -> Result<()> {
-        let malformed_reports = [
-            "[]",
-            r#"[{"filename": "one.tgz"}, {"filename": "two.tgz"}]"#,
-            r#"[{"filename": "nested/oatty-0.1.12.tgz"}]"#,
-            r#"[{"filename": "../escape.tgz"}]"#,
-            r#"[{"name": "oatty"}]"#,
-            "not json",
-        ];
-        for report in malformed_reports {
-            let fixture = Fixture::new()?;
-            let fake_npm = FakeNpm::reporting(report);
-            let run_npm = |arguments: &[String], working_directory: &Path| fake_npm.run(arguments, working_directory);
-            let hooks = fixture_hooks(&run_npm, &no_licensing_verification);
-            let outcome = package_umbrella_with(fixture.root(), &fixture.scratch("dist"), &hooks);
-            assert_error_contains(outcome, "Expected exactly one npm pack artifact filename");
-        }
-        Ok(())
-    }
-
-    #[test]
-    fn npm_distribution_pack_failure_reports_standard_error() -> Result<()> {
+    fn npm_distribution_mismatch_reports_missing_and_unexpected_entries() -> Result<()> {
         let fixture = Fixture::new()?;
-        let fake_npm = FakeNpm::failing("npm error code EACCES");
-        let run_npm = |arguments: &[String], working_directory: &Path| fake_npm.run(arguments, working_directory);
-        let hooks = fixture_hooks(&run_npm, &no_licensing_verification);
-        let error = package_umbrella_with(fixture.root(), &fixture.scratch("dist"), &hooks).unwrap_err();
-        assert!(error.to_string().contains("npm pack failed"), "unexpected error: {error}");
-        assert!(error.to_string().contains("npm error code EACCES"), "unexpected error: {error}");
+        let hooks = fixture_hooks(&no_licensing_verification);
+        let archive = package_umbrella_with(fixture.root(), &fixture.scratch("mismatch"), &hooks)?;
+        let pristine_entry_count = read_artifact(&archive)?.files.len();
+
+        let mut members = read_archive_members(&archive)?;
+        members.retain(|member| member.path != Path::new("package/third-party-sources/example.crate"));
+        let mut extra_header = Header::new_ustar();
+        extra_header.set_mode(0o644);
+        extra_header.set_entry_type(tar::EntryType::Regular);
+        members.push(ArchiveMember {
+            path: PathBuf::from("package/EXTRA.txt"),
+            header: extra_header,
+            data: Some(b"unexpected entry\n".to_vec()),
+        });
+        write_archive_members(&archive, members)?;
+
+        let error = verify_artifact_with(fixture.root(), &archive, None, &fixture_inventory)
+            .unwrap_err()
+            .to_string();
+        // Removing one entry and adding another leaves the counts unchanged.
+        assert!(error.contains("npm archive verification mismatch"), "unexpected error: {error}");
+        assert!(
+            error.contains(&format!("{pristine_entry_count} expected file(s)")),
+            "unexpected error: {error}"
+        );
+        assert!(
+            error.contains(&format!("{pristine_entry_count} actual file(s)")),
+            "unexpected error: {error}"
+        );
+        assert!(error.contains("missing: 1"), "unexpected error: {error}");
+        assert!(error.contains("unexpected: 1"), "unexpected error: {error}");
+        assert!(error.contains("third-party-sources/example.crate"), "unexpected error: {error}");
+        assert!(error.contains("EXTRA.txt"), "unexpected error: {error}");
+        Ok(())
+    }
+
+    #[test]
+    fn npm_distribution_packs_entries_at_the_ustar_name_boundary() -> Result<()> {
+        /// The exact path that regressed on Windows: 92 bytes, 100 with `package/`.
+        const BOUNDARY_NAME: &str = "third-party-licenses/rust/chrono-0.4.45/chrono-0.4.45-src-offset-local-windows.rs-header.txt";
+        const BOUNDARY_BYTES: &[u8] = b"boundary upstream license\n";
+        assert_eq!(format!("{PACKAGE_PREFIX}{BOUNDARY_NAME}").len(), 100);
+
+        let fixture = Fixture::new()?;
+        let binary = fixture.write_binary(FIXTURE_BINARY)?;
+        write_document(&fixture.path(BOUNDARY_NAME), BOUNDARY_BYTES)?;
+        let boundary_sha = hex::encode(Sha256::digest(BOUNDARY_BYTES));
+        let inventory = |root: &Path| -> Result<BTreeMap<String, String>> {
+            let mut inventory = fixture_inventory(root)?;
+            inventory.insert(BOUNDARY_NAME.to_owned(), boundary_sha.clone());
+            Ok(inventory)
+        };
+        let platforms = fixture.platforms()?;
+        let platform = &platforms["win32-x64"];
+
+        let stage = fixture.scratch("boundary-stage");
+        stage_native_payload(fixture.root(), &stage, platform, &binary, &inventory)?;
+        let archive = pack_stage_with(&stage, &fixture.scratch("boundary-dist"))?;
+
+        assert!(
+            archive_member_names(&archive)?.contains(&format!("{PACKAGE_PREFIX}{BOUNDARY_NAME}")),
+            "the 100-byte ustar name must survive packing"
+        );
+        let contents = read_artifact(&archive)?;
+        assert_eq!(contents.files.get(BOUNDARY_NAME).map(Vec::as_slice), Some(BOUNDARY_BYTES));
+        verify_artifact_with(fixture.root(), &archive, Some(platform), &inventory)?;
         Ok(())
     }
 
@@ -1964,9 +2072,7 @@ mod tests {
     fn npm_distribution_verify_rejects_wrong_modes_marker_and_legal_bytes() -> Result<()> {
         let fixture = Fixture::new()?;
         let binary = fixture.write_binary(FIXTURE_BINARY)?;
-        let fake_npm = FakeNpm::default();
-        let run_npm = |arguments: &[String], working_directory: &Path| fake_npm.run(arguments, working_directory);
-        let hooks = fixture_hooks(&run_npm, &no_licensing_verification);
+        let hooks = fixture_hooks(&no_licensing_verification);
         let platforms = fixture.platforms()?;
         let platform = platforms.values().next().context("fixture has no platforms")?;
 
@@ -2004,16 +2110,23 @@ mod tests {
     fn npm_distribution_changed_executable_bytes_are_rejected() -> Result<()> {
         let fixture = Fixture::new()?;
         let binary = fixture.write_binary(FIXTURE_BINARY)?;
-        let fake_npm = FakeNpm {
-            tampered_member: Some("package/bin/oatty".to_owned()),
-            ..FakeNpm::default()
-        };
-        let run_npm = |arguments: &[String], working_directory: &Path| fake_npm.run(arguments, working_directory);
-        let hooks = fixture_hooks(&run_npm, &no_licensing_verification);
+        let hooks = fixture_hooks(&no_licensing_verification);
         let platforms = fixture.platforms()?;
         let platform = platforms.values().next().context("fixture has no platforms")?;
-        let outcome = package_binary_with(fixture.root(), &binary, &platform.target_triple, &fixture.scratch("dist"), &hooks);
-        assert_error_contains(outcome, "npm packing changed signed executable bytes");
+        let binary_name = format!("bin/{}", platform.binary);
+
+        let archive = package_binary_with(fixture.root(), &binary, &platform.target_triple, &fixture.scratch("dist"), &hooks)?;
+        fixture.rewrite_member(
+            &archive,
+            &format!("package/{binary_name}"),
+            None,
+            Some(b"tampered executable bytes\n"),
+        )?;
+        let contents = read_artifact(&archive)?;
+        assert_error_contains(
+            verify_packed_executable(&binary, &contents, &binary_name),
+            "npm packing changed signed executable bytes",
+        );
         Ok(())
     }
 
@@ -2021,18 +2134,11 @@ mod tests {
     fn npm_distribution_unsupported_target_is_rejected() -> Result<()> {
         let fixture = Fixture::new()?;
         let binary = fixture.write_binary(FIXTURE_BINARY)?;
-        let fake_npm = FakeNpm::default();
-        let run_npm = |arguments: &[String], working_directory: &Path| fake_npm.run(arguments, working_directory);
-        let hooks = fixture_hooks(&run_npm, &no_licensing_verification);
-        let outcome = package_binary_with(
-            fixture.root(),
-            &binary,
-            "aarch64-unknown-linux-musl",
-            &fixture.scratch("dist"),
-            &hooks,
-        );
+        let hooks = fixture_hooks(&no_licensing_verification);
+        let destination = fixture.scratch("dist");
+        let outcome = package_binary_with(fixture.root(), &binary, "aarch64-unknown-linux-musl", &destination, &hooks);
         assert_error_contains(outcome, "Unsupported Rust target: aarch64-unknown-linux-musl");
-        assert!(fake_npm.invocations.borrow().is_empty());
+        assert!(!destination.exists(), "packing must not start for unsupported targets");
         Ok(())
     }
 
