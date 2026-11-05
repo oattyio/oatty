@@ -203,7 +203,7 @@ fn artifact_integrity(archive: &Path) -> Result<String> {
 ///
 /// # Arguments
 ///
-/// * `name` - The package name to look up, for example `@oattyio/cli-linux-x64`.
+/// * `name` - The package name to look up, for example `@oatty/cli-linux-x64`.
 /// * `version` - The exact release version to look up.
 /// * `hooks` - The npm collaborators, injectable for tests.
 ///
@@ -470,7 +470,7 @@ fn collect_artifacts_with(root: &Path, directory: &Path, verify_licenses: &dyn F
 /// Return the tarball file name of one native payload package.
 ///
 /// npm strips the scope marker and flattens the scope separator, so
-/// `@oattyio/cli-linux-x64` becomes `oattyio-cli-linux-x64-<version>.tgz`.
+/// `@oatty/cli-linux-x64` becomes `oatty-cli-linux-x64-<version>.tgz`.
 ///
 /// # Arguments
 ///
@@ -501,11 +501,11 @@ fn umbrella_artifact_name(version: &str) -> String {
 ///
 /// # Arguments
 ///
-/// * `package_name` - The package name, for example `@oattyio/cli-darwin-x64`.
+/// * `package_name` - The package name, for example `@oatty/cli-darwin-x64`.
 ///
 /// # Returns
 ///
-/// Returns the flattened artifact prefix, for example `oattyio-cli-darwin-x64`.
+/// Returns the flattened artifact prefix, for example `oatty-cli-darwin-x64`.
 fn npm_artifact_name(package_name: &str) -> String {
     package_name.replace('@', "").replace('/', "-")
 }
@@ -650,10 +650,10 @@ mod tests {
             "repository": { "type": "git", "url": FIXTURE_REPOSITORY_URL },
             "scripts": { "prepack": FIXTURE_PREPACK_GUARD },
             "optionalDependencies": {
-                "@oattyio/cli-darwin-x64": FIXTURE_VERSION,
-                "@oattyio/cli-darwin-arm64": FIXTURE_VERSION,
-                "@oattyio/cli-linux-x64": FIXTURE_VERSION,
-                "@oattyio/cli-win32-x64": FIXTURE_VERSION,
+                "@oatty/cli-darwin-x64": FIXTURE_VERSION,
+                "@oatty/cli-darwin-arm64": FIXTURE_VERSION,
+                "@oatty/cli-linux-x64": FIXTURE_VERSION,
+                "@oatty/cli-win32-x64": FIXTURE_VERSION,
             },
         })
     }
@@ -662,21 +662,21 @@ mod tests {
     fn fixture_platforms() -> Value {
         json!({
             "darwin-x64": {
-                "package": "@oattyio/cli-darwin-x64",
+                "package": "@oatty/cli-darwin-x64",
                 "target": "x86_64-apple-darwin",
                 "os": "darwin",
                 "cpu": "x64",
                 "binary": "oatty"
             },
             "darwin-arm64": {
-                "package": "@oattyio/cli-darwin-arm64",
+                "package": "@oatty/cli-darwin-arm64",
                 "target": "aarch64-apple-darwin",
                 "os": "darwin",
                 "cpu": "arm64",
                 "binary": "oatty"
             },
             "linux-x64": {
-                "package": "@oattyio/cli-linux-x64",
+                "package": "@oatty/cli-linux-x64",
                 "target": "x86_64-unknown-linux-gnu",
                 "os": "linux",
                 "cpu": "x64",
@@ -684,7 +684,7 @@ mod tests {
                 "libc": "glibc"
             },
             "win32-x64": {
-                "package": "@oattyio/cli-win32-x64",
+                "package": "@oatty/cli-win32-x64",
                 "target": "x86_64-pc-windows-msvc",
                 "os": "win32",
                 "cpu": "x64",
@@ -1140,11 +1140,11 @@ mod tests {
     fn npm_distribution_payload_failure_blocks_umbrella() -> Result<()> {
         let fixture = Fixture::new()?;
         let fake = FakeNpm::new(fixture.artifacts());
-        fake.state().fail_publish = Some("@oattyio/cli-linux-x64".to_owned());
+        fake.state().fail_publish = Some("@oatty/cli-linux-x64".to_owned());
 
         let error = run_publish(&fixture, &fake).unwrap_err();
         assert!(
-            error.to_string().contains("npm publish failed for @oattyio/cli-linux-x64@"),
+            error.to_string().contains("npm publish failed for @oatty/cli-linux-x64@"),
             "expected the payload publish failure, got {error}"
         );
         assert!(
@@ -1165,7 +1165,7 @@ mod tests {
     fn npm_distribution_unconfirmed_payload_visibility_blocks_umbrella() -> Result<()> {
         let fixture = Fixture::new()?;
         let fake = FakeNpm::new(fixture.artifacts());
-        fake.state().invisible = Some(format!("@oattyio/cli-darwin-x64@{}", fixture.version()));
+        fake.state().invisible = Some(format!("@oatty/cli-darwin-x64@{}", fixture.version()));
 
         let error = run_publish(&fixture, &fake).unwrap_err();
         assert!(

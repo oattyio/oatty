@@ -1030,7 +1030,7 @@ fn npm_binary_packages(root: &Path, own_package: &Value, packages: &Map<String, 
         let (operating_system, architecture) = platform_name
             .split_once('-')
             .with_context(|| format!("invalid platform name {platform_name}"))?;
-        let package_name = format!("@oattyio/cli-{platform_name}");
+        let package_name = format!("@oatty/cli-{platform_name}");
         let expectation = FirstPartyBinaryExpectation {
             package_name: package_name.clone(),
             target_triple,
@@ -1997,13 +1997,13 @@ mod tests {
             json!({"dependencies": {"foreign": "1"}}),
             json!({"optionalDependencies": {"foreign": "1"}}),
             json!({"peerDependencies": {"foreign": "1"}}),
-            json!({"name": "@oattyio/foreign"}),
+            json!({"name": "@oatty/foreign"}),
         ];
 
         let directory = tempdir().expect("temporary directory");
         let root = directory.path();
         let (_, _, mut packages) = prepare_binary_package_fixture(root);
-        let location = "node_modules/@oattyio/cli-darwin-x64";
+        let location = "node_modules/@oatty/cli-darwin-x64";
         let original = packages
             .get(location)
             .expect("fixture should contain the darwin-x64 lock entry")
@@ -2029,7 +2029,7 @@ mod tests {
         let (mut platforms, own_package, packages) = prepare_binary_package_fixture(root);
 
         let mut widened = own_package.clone();
-        widened["optionalDependencies"]["@oattyio/cli-darwin-x64"] = json!("^1.2.3");
+        widened["optionalDependencies"]["@oatty/cli-darwin-x64"] = json!("^1.2.3");
         // The Python fixture aliases `own_package` into the lock root, so a
         // mutation of the published manifest also updates the locked root.
         let mut widened_packages = packages.clone();
@@ -2040,10 +2040,10 @@ mod tests {
         assert!(error.to_string().contains("must pin"), "unexpected error: {error}");
 
         let mut pinned = own_package.clone();
-        pinned["optionalDependencies"]["@oattyio/cli-darwin-x64"] = json!("1.2.3");
+        pinned["optionalDependencies"]["@oatty/cli-darwin-x64"] = json!("1.2.3");
         write_fixture_json(&root.join("package.json"), &pinned);
         write_fixture_json(&root.join("package-lock.json"), &json!({"packages": packages}));
-        platforms["darwin-x64"]["package"] = json!("@oattyio/unreviewed");
+        platforms["darwin-x64"]["package"] = json!("@oatty/unreviewed");
         write_fixture_json(&root.join("npm").join("platforms.json"), &platforms);
         let error = npm_notices(root, &root.join("output")).expect_err("a widened mapping must fail");
         assert!(error.to_string().contains("platform mapping"), "unexpected error: {error}");
@@ -2055,8 +2055,8 @@ mod tests {
         let root = directory.path();
         let (_, _, mut packages) = prepare_binary_package_fixture(root);
 
-        let location = "node_modules/@oattyio/unreviewed";
-        let metadata = json!({"name": "@oattyio/unreviewed", "version": "1", "license": "UNKNOWN"});
+        let location = "node_modules/@oatty/unreviewed";
+        let metadata = json!({"name": "@oatty/unreviewed", "version": "1", "license": "UNKNOWN"});
         packages.insert(location.to_owned(), metadata.clone());
         write_fixture_json(&root.join(location).join("package.json"), &metadata);
         write_fixture_json(&root.join("package-lock.json"), &json!({"packages": packages}));
@@ -2073,7 +2073,7 @@ mod tests {
         let directory = tempdir().expect("temporary directory");
         let root = directory.path();
         let (_, _, mut packages) = prepare_binary_package_fixture(root);
-        let location = "node_modules/@oattyio/cli-linux-x64";
+        let location = "node_modules/@oatty/cli-linux-x64";
         let mut metadata = packages[location]
             .as_object()
             .expect("fixture metadata should be an object")
@@ -2088,7 +2088,7 @@ mod tests {
         packages.insert(location.to_owned(), Value::Object(metadata.clone()));
         write_fixture_json(&root.join("package-lock.json"), &json!({"packages": packages}));
         let mut installed = metadata;
-        installed.insert("name".to_owned(), json!("@oattyio/cli-linux-x64"));
+        installed.insert("name".to_owned(), json!("@oatty/cli-linux-x64"));
         installed.insert("scripts".to_owned(), json!({"postinstall": "download"}));
         write_fixture_json(&root.join(location).join("package.json"), &Value::Object(installed));
 

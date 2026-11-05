@@ -40,9 +40,9 @@
     "node": ">=18"
   },
   "optionalDependencies": {
-    "@oattyio/cli-darwin-x64": "0.1.16",
-    "@oattyio/cli-darwin-arm64": "0.1.16",
-    "@oattyio/cli-linux-x64": "0.1.16",
-    "@oattyio/cli-win32-x64": "0.1.16"
+    "@oatty/cli-darwin-x64": "0.1.16",
+    "@oatty/cli-darwin-arm64": "0.1.16",
+    "@oatty/cli-linux-x64": "0.1.16",
+    "@oatty/cli-win32-x64": "0.1.16"
   }
 }
