@@ -10,15 +10,17 @@ This document describes the standard release process for Oatty.
 
 ## Prerequisites
 
-- npm publish ownership for `oatty` and all four public packages in the `@oattyio` scope:
-  `@oattyio/cli-darwin-x64`, `@oattyio/cli-darwin-arm64`, `@oattyio/cli-linux-x64`, and `@oattyio/cli-win32-x64`.
+- npm publish ownership for `oatty` and all four public packages in the `@oatty` scope:
+  `@oatty/cli-darwin-x64`, `@oatty/cli-darwin-arm64`, `@oatty/cli-linux-x64`, and `@oatty/cli-win32-x64`.
 - A separate npm Trusted Publisher for **each of the five packages**, with GitHub organization `oattyio`, repository `oatty`, workflow filename `release.yml` (not its full path), and environment `oatty`. Permit direct `npm publish`; staging permission alone does not authorize this workflow. The workflow retains `id-token: write` and publishes with provenance.
 - GitHub environment `oatty` configured (reviewers/restrictions as desired).
 - Clean working tree on `main`.
 
 New trusted publishers default to staging permission. A newly configured publisher must complete its first successful publish within two days; recreate an expired configuration before retrying. These settings belong to npm package maintainers and are not configured by this repository. See [npm's trusted publisher setup](https://docs.npmjs.com/trusted-publishers/).
 
-For scoped names that do not exist yet, a maintainer with publish access to `@oattyio` must establish the package before its package-level publisher can be configured. Use an authenticated maintainer session with 2FA for an initial publication, or stage a reviewed platform tarball with `npm stage publish <tarball> --access public`. Staging a new name creates a public `0.0.0-stage` placeholder; the intended version remains unavailable until a maintainer approves it with 2FA. Configure the package's publisher, approve the intended version, then rerun the release job. Do not publish the launcher while any pinned platform version is only staged. See [npm's staged publishing process](https://docs.npmjs.com/staged-publishing/).
+The npm scope belongs to the owned npm organization `oatty`. It is separate from the GitHub organization `oattyio`; keep the Trusted Publisher's GitHub organization set to `oattyio` for `oattyio/oatty`.
+
+For scoped names that do not exist yet, a maintainer with publish access to `@oatty` must establish the package before its package-level publisher can be configured. Use an authenticated maintainer session with 2FA for an initial publication, or stage a reviewed platform tarball with `npm stage publish <tarball> --access public`. Staging a new name creates a public `0.0.0-stage` placeholder; the intended version remains unavailable until a maintainer approves it with 2FA. Configure the package's publisher, approve the intended version, then rerun the release job. Do not publish the launcher while any pinned platform version is only staged. See [npm's staged publishing process](https://docs.npmjs.com/staged-publishing/).
 
 The automated helper uses direct publication. A stage-only publisher or a package requiring staged publication needs a maintainer decision and an explicit staged-release process: approve all four platform versions before the launcher. The workflow does not silently switch publication modes or provision a long-lived npm token.
 
@@ -81,10 +83,10 @@ For tag `vX.Y.Z`, release must include:
 - `oatty-vX.Y.Z-x86_64-apple-darwin.zip`
 - `oatty-vX.Y.Z-aarch64-apple-darwin.zip`
 - `oatty-vX.Y.Z-x86_64-pc-windows-msvc.zip`
-- `oattyio-cli-darwin-x64-X.Y.Z.tgz`
-- `oattyio-cli-darwin-arm64-X.Y.Z.tgz`
-- `oattyio-cli-linux-x64-X.Y.Z.tgz`
-- `oattyio-cli-win32-x64-X.Y.Z.tgz`
+- `oatty-cli-darwin-x64-X.Y.Z.tgz`
+- `oatty-cli-darwin-arm64-X.Y.Z.tgz`
+- `oatty-cli-linux-x64-X.Y.Z.tgz`
+- `oatty-cli-win32-x64-X.Y.Z.tgz`
 
 Each platform tarball joins the existing archives in checksum, cosign, and build-provenance coverage. The launcher tarball is packed from the tagged source and verified legal bundle in the npm publication job.
 
@@ -94,10 +96,10 @@ Each platform tarball joins the existing archives in checksum, cosign, and build
 
 ```bash
 npm view oatty dist-tags
-npm view @oattyio/cli-darwin-x64@X.Y.Z version
-npm view @oattyio/cli-darwin-arm64@X.Y.Z version
-npm view @oattyio/cli-linux-x64@X.Y.Z version
-npm view @oattyio/cli-win32-x64@X.Y.Z version
+npm view @oatty/cli-darwin-x64@X.Y.Z version
+npm view @oatty/cli-darwin-arm64@X.Y.Z version
+npm view @oatty/cli-linux-x64@X.Y.Z version
+npm view @oatty/cli-win32-x64@X.Y.Z version
 ```
 
 2. Verify fresh install:
@@ -147,6 +149,8 @@ If npm publish fails:
 - Fix configuration or workflow issue.
 - Re-run failed GitHub workflow job.
 - The helper checks every package independently: an existing platform version is skipped only when its registry integrity matches the prepared tarball. Authentication and network failures abort rather than being treated as absent versions. Identical retries complete missing platform packages before publishing the launcher; different bytes require a new version and release tag.
+
+The `v0.1.16` tag predates the npm scope migration to `@oatty`. The release workflow checks out the tag, so rerunning that release does not pick up the migrated source. The standard recovery is a new patch release tag from the migrated source. Recovering the same version requires separately reviewed source and rebuilt, verified artifacts; do not rewrite the consumed tag. This playbook does not define a same-version recovery workflow.
 
 If release assets are incomplete:
 

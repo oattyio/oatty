@@ -112,7 +112,7 @@ struct FixturePlatform {
 const FIXTURE_PLATFORMS: [FixturePlatform; 4] = [
     FixturePlatform {
         key: "darwin-x64",
-        package_name: "@oattyio/cli-darwin-x64",
+        package_name: "@oatty/cli-darwin-x64",
         target: "x86_64-apple-darwin",
         os: "darwin",
         cpu: "x64",
@@ -121,7 +121,7 @@ const FIXTURE_PLATFORMS: [FixturePlatform; 4] = [
     },
     FixturePlatform {
         key: "darwin-arm64",
-        package_name: "@oattyio/cli-darwin-arm64",
+        package_name: "@oatty/cli-darwin-arm64",
         target: "aarch64-apple-darwin",
         os: "darwin",
         cpu: "arm64",
@@ -130,7 +130,7 @@ const FIXTURE_PLATFORMS: [FixturePlatform; 4] = [
     },
     FixturePlatform {
         key: "linux-x64",
-        package_name: "@oattyio/cli-linux-x64",
+        package_name: "@oatty/cli-linux-x64",
         target: "x86_64-unknown-linux-gnu",
         os: "linux",
         cpu: "x64",
@@ -139,7 +139,7 @@ const FIXTURE_PLATFORMS: [FixturePlatform; 4] = [
     },
     FixturePlatform {
         key: "win32-x64",
-        package_name: "@oattyio/cli-win32-x64",
+        package_name: "@oatty/cli-win32-x64",
         target: "x86_64-pc-windows-msvc",
         os: "win32",
         cpu: "x64",
@@ -1147,7 +1147,7 @@ fn npm_distribution_registry_reads_exact_metadata_and_distinguishes_e404() -> Re
     let expected_integrity = format!("sha512-{}", BASE64_STANDARD.encode(Sha512::digest(&umbrella_bytes)));
     assert_eq!(registry["dist"]["integrity"], json!(expected_integrity));
 
-    let missing = harness.npm_view(&format!("@oattyio/not-a-real-package@{}", harness.version))?;
+    let missing = harness.npm_view(&format!("@oatty/not-a-real-package@{}", harness.version))?;
     assert!(!missing.status.success(), "an unpublished package must not resolve");
     assert!(npm_view_is_not_found(&missing.stdout), "npm view must report a structured E404");
     Ok(())
@@ -1291,7 +1291,7 @@ fn npm_distribution_local_global_ignore_scripts_installs_run_unchanged_tarballs(
             .registry_state
             .requests()
             .iter()
-            .any(|name| name.starts_with("tarballs/oattyio-cli-")),
+            .any(|name| name.starts_with("tarballs/oatty-cli-")),
         "the install never downloaded a native payload tarball"
     );
     Ok(())

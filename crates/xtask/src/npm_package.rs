@@ -99,7 +99,7 @@ const CANONICAL_PLATFORMS: [(&str, &str, &str, &str); 4] = [
 /// glibc-based Linux targets.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct Platform {
-    /// The npm package name, for example `@oattyio/cli-darwin-arm64`.
+    /// The npm package name, for example `@oatty/cli-darwin-arm64`.
     #[serde(rename = "package")]
     pub package_name: String,
     /// The Rust target triple, for example `aarch64-apple-darwin`.
@@ -251,7 +251,7 @@ fn canonical_platform(key: &str) -> Result<Platform> {
         .find(|(candidate_key, _, _, _)| *candidate_key == key)
         .ok_or_else(|| anyhow!("Invalid canonical platform key: {key}"))?;
     Ok(Platform {
-        package_name: format!("@oattyio/cli-{key}"),
+        package_name: format!("@oatty/cli-{key}"),
         target_triple: (*target_triple).to_owned(),
         os: (*os).to_owned(),
         cpu: (*cpu).to_owned(),
@@ -850,7 +850,7 @@ fn pack_stage_with(stage: &Path, destination: &Path) -> Result<PathBuf> {
 /// Compute the artifact prefix npm uses for one package name.
 ///
 /// npm strips the scope marker and flattens the scope separator, so
-/// `@oattyio/cli-linux-x64` becomes `oattyio-cli-linux-x64`.
+/// `@oatty/cli-linux-x64` becomes `oatty-cli-linux-x64`.
 ///
 /// # Arguments
 ///
@@ -873,7 +873,7 @@ fn npm_artifact_name(package_name: &str) -> String {
 /// # Returns
 ///
 /// Returns `<scope-stripped-name>-<version>.tgz`, for example
-/// `oattyio-cli-linux-x64-0.1.14.tgz` or `oatty-0.1.14.tgz`.
+/// `oatty-cli-linux-x64-0.1.14.tgz` or `oatty-0.1.14.tgz`.
 fn artifact_file_name(package_name: &str, version: &str) -> String {
     format!("{}-{version}.tgz", npm_artifact_name(package_name))
 }
@@ -1571,10 +1571,10 @@ mod tests {
             "repository": { "type": "git", "url": "git+https://github.com/oattyio/oatty.git" },
             "scripts": { "prepack": REQUIRED_PREPACK_GUARD },
             "optionalDependencies": {
-                "@oattyio/cli-darwin-x64": FIXTURE_VERSION,
-                "@oattyio/cli-darwin-arm64": FIXTURE_VERSION,
-                "@oattyio/cli-linux-x64": FIXTURE_VERSION,
-                "@oattyio/cli-win32-x64": FIXTURE_VERSION,
+                "@oatty/cli-darwin-x64": FIXTURE_VERSION,
+                "@oatty/cli-darwin-arm64": FIXTURE_VERSION,
+                "@oatty/cli-linux-x64": FIXTURE_VERSION,
+                "@oatty/cli-win32-x64": FIXTURE_VERSION,
             },
         })
     }
@@ -1583,21 +1583,21 @@ mod tests {
     fn fixture_platforms() -> Value {
         json!({
             "darwin-x64": {
-                "package": "@oattyio/cli-darwin-x64",
+                "package": "@oatty/cli-darwin-x64",
                 "target": "x86_64-apple-darwin",
                 "os": "darwin",
                 "cpu": "x64",
                 "binary": "oatty"
             },
             "darwin-arm64": {
-                "package": "@oattyio/cli-darwin-arm64",
+                "package": "@oatty/cli-darwin-arm64",
                 "target": "aarch64-apple-darwin",
                 "os": "darwin",
                 "cpu": "arm64",
                 "binary": "oatty"
             },
             "linux-x64": {
-                "package": "@oattyio/cli-linux-x64",
+                "package": "@oatty/cli-linux-x64",
                 "target": "x86_64-unknown-linux-gnu",
                 "os": "linux",
                 "cpu": "x64",
@@ -1605,7 +1605,7 @@ mod tests {
                 "libc": "glibc"
             },
             "win32-x64": {
-                "package": "@oattyio/cli-win32-x64",
+                "package": "@oatty/cli-win32-x64",
                 "target": "x86_64-pc-windows-msvc",
                 "os": "win32",
                 "cpu": "x64",
@@ -1783,7 +1783,7 @@ mod tests {
         assert_eq!(
             linux_manifest,
             json!({
-                "name": "@oattyio/cli-linux-x64",
+                "name": "@oatty/cli-linux-x64",
                 "version": FIXTURE_VERSION,
                 "description": "Oatty native executable for x86_64-unknown-linux-gnu",
                 "license": "MIT",
@@ -1803,7 +1803,7 @@ mod tests {
         let umbrella = umbrella_manifest(fixture.root())?;
         assert_eq!(umbrella.get("scripts"), None);
         assert_eq!(umbrella["version"], json!(FIXTURE_VERSION));
-        assert_eq!(umbrella["optionalDependencies"]["@oattyio/cli-win32-x64"], json!(FIXTURE_VERSION));
+        assert_eq!(umbrella["optionalDependencies"]["@oatty/cli-win32-x64"], json!(FIXTURE_VERSION));
         Ok(())
     }
 
@@ -1924,10 +1924,10 @@ mod tests {
 
     #[test]
     fn npm_distribution_artifact_names_match_npm_conventions() -> Result<()> {
-        assert_eq!(npm_artifact_name("@oattyio/cli-linux-x64"), "oattyio-cli-linux-x64");
+        assert_eq!(npm_artifact_name("@oatty/cli-linux-x64"), "oatty-cli-linux-x64");
         assert_eq!(
-            artifact_file_name("@oattyio/cli-linux-x64", "0.1.14"),
-            "oattyio-cli-linux-x64-0.1.14.tgz"
+            artifact_file_name("@oatty/cli-linux-x64", "0.1.14"),
+            "oatty-cli-linux-x64-0.1.14.tgz"
         );
         assert_eq!(artifact_file_name("oatty", "0.1.14"), "oatty-0.1.14.tgz");
 
@@ -1940,7 +1940,7 @@ mod tests {
         let native = package_binary_with(fixture.root(), &binary, &platform.target_triple, &fixture.scratch("names"), &hooks)?;
         assert_eq!(
             native.file_name().and_then(|name| name.to_str()),
-            Some("oattyio-cli-win32-x64-0.1.12.tgz")
+            Some("oatty-cli-win32-x64-0.1.12.tgz")
         );
         let umbrella = package_umbrella_with(fixture.root(), &fixture.scratch("names"), &hooks)?;
         assert_eq!(umbrella.file_name().and_then(|name| name.to_str()), Some("oatty-0.1.12.tgz"));
@@ -2255,10 +2255,16 @@ mod tests {
     fn npm_distribution_load_platforms_rejects_non_canonical_metadata() -> Result<()> {
         let fixture = Fixture::new()?;
         fixture.rewrite_platforms(|platforms| {
+            platforms.get_mut("darwin-x64").expect("fixture platform")["package"] = json!("@oattyio/cli-darwin-x64");
+        })?;
+        assert_error_contains(load_platforms(fixture.root()), "Invalid canonical platform metadata: darwin-x64");
+
+        let fixture = Fixture::new()?;
+        fixture.rewrite_platforms(|platforms| {
             platforms.insert(
                 "darwin-x64".to_owned(),
                 json!({
-                    "package": "@oattyio/cli-darwin-x64",
+                    "package": "@oatty/cli-darwin-x64",
                     "target": "x86_64-apple-darwin",
                     "os": "darwin",
                     "cpu": "arm64",
