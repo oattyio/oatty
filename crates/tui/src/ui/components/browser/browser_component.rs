@@ -23,7 +23,7 @@ use crate::ui::components::browser::state::CursorDirection;
 use crate::ui::theme::theme_helpers::{create_list_with_highlight, highlight_segments};
 use crate::ui::{components::component::Component, theme::theme_helpers as th};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
-use oatty_types::{Effect, Route};
+use oatty_types::{CommandSpec, Effect, Route};
 use ratatui::layout::Position;
 use ratatui::style::Modifier;
 use ratatui::symbols::merge::MergeStrategy;
@@ -429,9 +429,12 @@ impl BrowserComponent {
                 .filtered()
                 .iter()
                 .enumerate()
-                .map(|(idx, command_index)| {
-                    let group = &all_commands[*command_index].group;
-                    let name = &all_commands[*command_index].name;
+                .filter_map(|(idx, command_index)| {
+                    // `filtered` holds indices into the registry's commands, which can be
+                    // mutated at runtime (catalog import/removal/enablement). Skip any
+                    // stale index instead of panicking; the browser state refreshes the
+                    // list after mutations, so this is a transient safety net.
+                    let CommandSpec { group, name, .. } = all_commands.get(*command_index)?;
                     let mut spans: Vec<Span<'_>> = Vec::new();
                     if !group.is_empty() {
                         spans.extend(highlight_segments(
@@ -457,7 +460,7 @@ impl BrowserComponent {
                         list_item = list_item.style(selection_style);
                     }
 
-                    list_item
+                    Some(list_item)
                 })
                 .collect()
         };

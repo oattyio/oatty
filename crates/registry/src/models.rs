@@ -579,6 +579,22 @@ impl CommandRegistry {
         }
     }
 
+    /// Removes every MCP-backed command owned by `plugin_name`, identified by
+    /// [`CommandSpec::mcp`] metadata, and emits [`CommandRegistryEvent::CommandsRemoved`] with
+    /// exactly the removed commands. Canonical-ID-based removal is available through
+    /// [`CommandRegistry::remove_commands`].
+    pub fn remove_commands_for_plugin(&mut self, plugin_name: &str) {
+        let commands: Vec<_> = self
+            .commands
+            .extract_if(.., |command| {
+                command.mcp().is_some_and(|metadata| metadata.plugin_name == plugin_name)
+            })
+            .collect();
+        if let Some(tx) = self.event_tx.as_ref() {
+            let _ = tx.send(CommandRegistryEvent::CommandsRemoved(Arc::from(commands)));
+        }
+    }
+
     pub fn remove_workflows(&mut self, workflow_ids: Vec<String>) {
         let set: HashSet<String> = workflow_ids.into_iter().collect();
         let workflows: Vec<_> = self.workflows.extract_if(.., |w| set.contains(&w.workflow)).collect();
@@ -875,7 +891,7 @@ pub enum CommandRegistryEvent {
 mod tests {
     use super::*;
     use indexmap::IndexSet;
-    use oatty_types::{command::HttpCommandSpec, manifest::RegistryCatalog};
+    use oatty_types::{McpCommandSpec, command::HttpCommandSpec, manifest::RegistryCatalog};
 
     fn catalog_with_title(title: &str) -> RegistryCatalog {
         RegistryCatalog {
@@ -1156,6 +1172,66 @@ mod tests {
         assert_eq!(resolved_command.command.summary, "List Render projects");
         assert_eq!(resolved_command.vendor.as_deref(), Some("render"));
         assert_eq!(resolved_command.catalog_identifier, Some(0));
+    }
+
+    #[test]
+    fn remove_commands_for_plugin_emits_removed_specs_and_preserves_colliding_ids() {
+        let plugin_a = CommandSpec::new_mcp(
+            "plugins".to_string(),
+            "list".to_string(),
+            "List plugin A tools".to_string(),
+            Vec::new(),
+            Vec::new(),
+            McpCommandSpec {
+                plugin_name: "plugin-a".to_string(),
+                tool_name: "list".to_string(),
+                ..Default::default()
+            },
+        );
+        let plugin_b = CommandSpec::new_mcp(
+            "plugins".to_string(),
+            "list".to_string(),
+            "List plugin B tools".to_string(),
+            Vec::new(),
+            Vec::new(),
+            McpCommandSpec {
+                plugin_name: "plugin-b".to_string(),
+                tool_name: "list".to_string(),
+                ..Default::default()
+            },
+        );
+        let http_command = CommandSpec::new_http(
+            "plugins".to_string(),
+            "list".to_string(),
+            "List catalog plugins".to_string(),
+            Vec::new(),
+            Vec::new(),
+            HttpCommandSpec::new("GET", "/plugins", None, None),
+            0,
+        );
+
+        // All three commands share the canonical ID "plugins list".
+        let mut registry = CommandRegistry::default().with_commands(vec![plugin_a.clone(), plugin_b.clone(), http_command.clone()]);
+        let mut subscriber = registry.subscribe();
+
+        registry.remove_commands_for_plugin("plugin-a");
+
+        assert_eq!(registry.commands.len(), 2);
+        assert!(registry.commands.contains(&plugin_b));
+        assert!(registry.commands.contains(&http_command));
+
+        let event = subscriber.try_recv().expect("removal should emit an event");
+        match event {
+            CommandRegistryEvent::CommandsRemoved(removed) => {
+                assert_eq!(
+                    removed.as_ref(),
+                    &[plugin_a],
+                    "event payload should contain exactly the removed specs"
+                );
+            }
+            other => panic!("unexpected registry event: {other:?}"),
+        }
+        assert!(subscriber.try_recv().is_err(), "no additional registry events should be emitted");
     }
 
     fn catalog_with_commands(title: &str, vendor: &str, commands: Vec<CommandSpec>) -> RegistryCatalog {

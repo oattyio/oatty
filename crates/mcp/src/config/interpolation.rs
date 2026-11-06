@@ -9,6 +9,9 @@ use tracing::debug;
 /// Interpolate environment variables and secrets in the configuration.
 pub fn interpolate_config(config: &mut McpConfig) -> Result<(), InterpolationError> {
     for (name, server) in config.mcp_servers.iter_mut() {
+        // Clear stale diagnostics before each fresh interpolation so a repaired
+        // server is not forced to the previous runtime disabled state.
+        server.err = None;
         if let Err(e) = interpolate_server(server) {
             server.err = Some(e.to_string());
             server.disabled = true;
